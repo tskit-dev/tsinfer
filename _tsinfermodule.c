@@ -22,6 +22,7 @@ static PyObject *TsinfLibraryError;
 typedef struct {
     PyObject_HEAD
     reference_panel_t *reference_panel;
+    double sequence_length;
     unsigned int num_haplotypes;
     unsigned int num_sites;
     unsigned int num_samples;
@@ -71,30 +72,35 @@ ReferencePanel_init(ReferencePanel *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"array", NULL};
-    PyObject *array_obj =  NULL;
-    PyArrayObject *local_array = NULL;
+    static char *kwlist[] = {"array", "positions", "sequence_length", NULL};
+    PyObject *haplotypes_input =  NULL;
+    PyArrayObject *haplotypes_array = NULL;
+    PyObject *positions_input =  NULL;
+    PyArrayObject *positions_array = NULL;
     npy_intp *shape;
+    double sequence_length;
     uint32_t num_samples, num_sites;
 
     self->reference_panel = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &array_obj)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd", kwlist,
+                &haplotypes_input, &positions_input, &sequence_length)) {
         goto out;
     }
-    local_array = (PyArrayObject *) PyArray_FROM_OTF(array_obj,
+    haplotypes_array = (PyArrayObject *) PyArray_FROM_OTF(haplotypes_input,
             NPY_UINT8, NPY_ARRAY_IN_ARRAY);
-    if (local_array == NULL) {
+    if (haplotypes_array == NULL) {
         goto out;
     }
-    if (PyArray_NDIM(local_array) != 2) {
+    if (PyArray_NDIM(haplotypes_array) != 2) {
         PyErr_SetString(PyExc_ValueError, "Dim != 2");
         goto out;
     }
-    shape = PyArray_DIMS(local_array);
+    shape = PyArray_DIMS(haplotypes_array);
     num_sites = (uint32_t) shape[1];
     num_samples = (uint32_t) shape[0];
     self->num_samples = (unsigned int) num_samples;
     self->num_sites = (unsigned int) num_sites;
+    self->sequence_length = sequence_length;
     if (num_samples < 1) {
         PyErr_Format(PyExc_ValueError, "At least one haplotype required.");
         goto out;
@@ -103,14 +109,27 @@ ReferencePanel_init(ReferencePanel *self, PyObject *args, PyObject *kwds)
         PyErr_Format(PyExc_ValueError, "At least one site required.");
         goto out;
     }
+    positions_array = (PyArrayObject *) PyArray_FROM_OTF(positions_input,
+            NPY_FLOAT64, NPY_ARRAY_IN_ARRAY);
+    if (positions_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(positions_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(positions_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "Wrong dimensions for positions");
+        goto out;
+    }
     self->reference_panel = PyMem_Malloc(sizeof(reference_panel_t));
     if (self->reference_panel == NULL) {
         PyErr_NoMemory();
         goto out;
     }
-
     err = reference_panel_alloc(self->reference_panel, num_samples, num_sites,
-           PyArray_DATA(local_array));
+           PyArray_DATA(haplotypes_array), PyArray_DATA(positions_array));
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -119,7 +138,8 @@ ReferencePanel_init(ReferencePanel *self, PyObject *args, PyObject *kwds)
     /* reference_panel_print_state(self->reference_panel); */
     ret = 0;
 out:
-    Py_XDECREF(local_array);
+    Py_XDECREF(haplotypes_array);
+    Py_XDECREF(positions_array);
     return ret;
 }
 
@@ -150,6 +170,32 @@ out:
     return ret;
 }
 
+static PyObject *
+ReferencePanel_get_positions(ReferencePanel *self)
+{
+    PyObject *ret = NULL;
+    PyArrayObject *array = NULL;
+    npy_intp dims[1];
+
+    if (ReferencePanel_check_state(self) != 0) {
+        goto out;
+    }
+    dims[0] = self->num_sites + 2;
+    /* TODO we could avoid copying the memory here by using PyArray_SimpleNewFromData
+     * and incrementing the refcount on this object. See
+     * https://docs.scipy.org/doc/numpy/user/c-info.how-to-extend.html#c.PyArray_SimpleNewFromData
+     */
+    array = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_FLOAT64);
+    if (array == NULL) {
+        goto out;
+    }
+    memcpy(PyArray_DATA(array), self->reference_panel->positions,
+            (self->num_sites + 2) * sizeof(double));
+    ret = (PyObject*) array;
+out:
+    return ret;
+}
+
 static PyMemberDef ReferencePanel_members[] = {
     {"num_haplotypes", T_UINT, offsetof(ReferencePanel, num_haplotypes), 0,
          "Number of haplotypes in the reference panel."},
@@ -157,12 +203,16 @@ static PyMemberDef ReferencePanel_members[] = {
          "Number of sites in the reference panel."},
     {"num_samples", T_UINT, offsetof(ReferencePanel, num_samples), 0,
          "Number of samples in the reference panel."},
+    {"sequence_length", T_DOUBLE, offsetof(ReferencePanel, sequence_length), 0,
+         "Length of the sequence."},
     {NULL}  /* Sentinel */
 };
 
 static PyMethodDef ReferencePanel_methods[] = {
     {"get_haplotypes", (PyCFunction) ReferencePanel_get_haplotypes, METH_NOARGS,
         "Returns a numpy array of the haplotypes in the panel."},
+    {"get_positions", (PyCFunction) ReferencePanel_get_positions, METH_NOARGS,
+        "Returns a numpy array of the positions in the panel."},
     {NULL}  /* Sentinel */
 };
 
@@ -276,20 +326,25 @@ Threader_run(Threader *self, PyObject *args, PyObject *kwds)
     int err;
     PyObject *ret = NULL;
     static char *kwlist[] = {"haplotype_index", "panel_size", "recombination_rate",
-        "path", "algorithm", NULL};
+        "error_probablilty", "path", "algorithm", NULL};
     PyObject *path = NULL;
     PyArrayObject *path_array = NULL;
     unsigned int panel_size, haplotype_index;
     double recombination_rate;
+    uint32_t *mutations = NULL;
+    uint32_t num_mutations;
+    double error_probablilty;
+    PyObject *mutations_array = NULL;
     npy_intp *shape;
+    npy_intp mutations_shape;
     int algorithm = 0;
 
     if (Threader_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "IIdO|i", kwlist,
-            &haplotype_index, &panel_size, &recombination_rate, &path,
-            &algorithm)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "IIddO|i", kwlist,
+            &haplotype_index, &panel_size, &recombination_rate, &error_probablilty,
+            &path, &algorithm)) {
         goto out;
     }
     if (haplotype_index >= self->threader->reference_panel->num_haplotypes) {
@@ -310,21 +365,63 @@ Threader_run(Threader *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "input path wrong size");
         goto out;
     }
+    mutations = PyMem_Malloc(self->threader->reference_panel->num_sites * sizeof(uint32_t));
+    if (mutations == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
     Py_BEGIN_ALLOW_THREADS
     err = threader_run(self->threader, (uint32_t) haplotype_index,
-            (uint32_t) panel_size, recombination_rate,
-            (uint32_t *) PyArray_DATA(path_array));
+            (uint32_t) panel_size, recombination_rate, error_probablilty,
+            (uint32_t *) PyArray_DATA(path_array), &num_mutations, mutations);
     Py_END_ALLOW_THREADS
     err = 0;
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("");
+    mutations_shape = (npy_intp) num_mutations;
+    mutations_array = PyArray_EMPTY(1, &mutations_shape, NPY_UINT32, 0);
+    if (mutations_array == NULL) {
+        goto out;
+    }
+    memcpy(PyArray_DATA((PyArrayObject *) mutations_array), mutations,
+            num_mutations * sizeof(uint32_t));
+    ret = mutations_array;
 out:
     Py_XDECREF(path_array);
     return ret;
 }
+
+static PyObject *
+Threader_get_traceback(Threader *self, void *closure)
+{
+    PyObject *ret = NULL;
+    PyArrayObject *array;
+    npy_intp dims[2];
+    size_t N, m;
+
+    if (Threader_check_state(self) != 0) {
+        goto out;
+    }
+    N = self->threader->reference_panel->num_haplotypes;
+    m = self->threader->reference_panel->num_sites;
+    dims[0] = N;
+    dims[1] = m;
+    array = (PyArrayObject *) PyArray_EMPTY(2, dims, NPY_UINT32, 0);
+    if (array == NULL) {
+        goto out;
+    }
+    memcpy(PyArray_DATA(array), self->threader->T, N * m * sizeof(uint32_t));
+    ret = (PyObject *) array;
+out:
+    return ret;
+}
+
+static PyGetSetDef Threader_getsetters[] = {
+    {"traceback", (getter) Threader_get_traceback, NULL, "The flags array"},
+    {NULL}  /* Sentinel */
+};
 
 static PyMemberDef Threader_members[] = {
     {NULL}  /* Sentinel */
@@ -366,7 +463,7 @@ static PyTypeObject ThreaderType = {
     0,                     /* tp_iternext */
     Threader_methods,             /* tp_methods */
     Threader_members,             /* tp_members */
-    0,                         /* tp_getset */
+    Threader_getsetters,          /* tp_getset */
     0,                         /* tp_base */
     0,                         /* tp_dict */
     0,                         /* tp_descr_get */
