@@ -1,5 +1,5 @@
 """
-Tests for the tsinfer code.
+Tests for the inference code.
 """
 import unittest
 
@@ -16,19 +16,15 @@ class TestRoundTrip(unittest.TestCase):
     def verify_round_trip(self, ts, rho):
         S = np.zeros((ts.sample_size, ts.num_mutations), dtype="u1")
         for variant in ts.variants():
-            S[:,variant.index] = variant.genotypes
+            S[:, variant.index] = variant.genotypes
         sites = [mut.position for mut in ts.mutations()]
         panel = tsinfer.ReferencePanel(S, sites, ts.sequence_length)
-        P = panel.infer_paths(rho, num_workers=1)
-        ts_new = panel.convert_records(P)
+        P, mutations = panel.infer_paths(rho, num_workers=1)
+        ts_new = panel.convert_records(P, mutations)
         self.assertEqual(ts.num_mutations, ts_new.num_mutations)
         for m1, m2 in zip(ts.mutations(), ts_new.mutations()):
             self.assertEqual(m1.position, m2.position)
         for v1, v2 in zip(ts.variants(), ts_new.variants()):
-            if not np.all(v1.genotypes == v2.genotypes):
-                print("HERE")
-                print(v1)
-                print(v2)
             self.assertTrue(np.all(v1.genotypes == v2.genotypes))
         ts_simplified = ts_new.simplify()
         # Check that we get the same variants.
@@ -54,3 +50,19 @@ class TestRoundTrip(unittest.TestCase):
         ts = msprime.simulate(2, mutation_rate=1, recombination_rate=0, random_seed=3)
         self.assertGreater(ts.num_mutations, 0)
         self.verify_round_trip(ts, 0)
+
+
+class TestThreads(unittest.TestCase):
+
+    def test_equivalance(self):
+        rho = 2
+        ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
+        S = np.zeros((ts.sample_size, ts.num_mutations), dtype="u1")
+        for variant in ts.variants():
+            S[:, variant.index] = variant.genotypes
+        sites = [mut.position for mut in ts.mutations()]
+        panel = tsinfer.ReferencePanel(S, sites, ts.sequence_length)
+        P1, mutations1 = panel.infer_paths(rho, num_workers=1)
+        P2, mutations2 = panel.infer_paths(rho, num_workers=4)
+        self.assertTrue(np.all(P1 == P2))
+        self.assertTrue(np.all(mutations1 == mutations2))
