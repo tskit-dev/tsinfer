@@ -13,3 +13,4 @@ if sys.version_info[0] < 3:
     raise Exception("Python 3 only")
 
 from .inference import ReferencePanel
+from .inference import Illustrator

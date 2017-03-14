@@ -11,7 +11,7 @@ _tsinfer.cpython-34m.so: _tsinfermodule.c
 	CFLAGS="${CFLAGS}" python3 setup.py build_ext --inplace
 
 ctags:
-	ctags *.c *.h
+	ctags lib/*.c lib/*.h tsinfer/*.py
 
 clean:
 	rm -f *.so *.o tags
