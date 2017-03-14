@@ -130,8 +130,12 @@ class ReferencePanel(object):
             if len(last_c) > 0:
                 edgeset_table.add_row(
                     left=left, right=L, parent=u, children=tuple(last_c))
+        site_table = msprime.SiteTable(len(mutations), len(mutations))
         mutation_table = msprime.MutationTable(len(mutations), len(mutations))
-        for index, nodes in mutations:
-            mutation_table.add_row(position=X[index], nodes=nodes)
+        for j, (index, nodes) in enumerate(mutations):
+            site_table.add_row(position=X[index], ancestral_state="0")
+            for node in nodes:
+                mutation_table.add_row(site=j, node=node, derived_state="1")
         return msprime.load_tables(
-            nodes=node_table, edgesets=edgeset_table, mutations=mutation_table)
+            nodes=node_table, edgesets=edgeset_table, sites=site_table,
+            mutations=mutation_table)
