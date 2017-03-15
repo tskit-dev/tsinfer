@@ -308,10 +308,9 @@ threader_run(threader_t *self,
             if (new_mutation) {
                 emission_p = 1;
             } else {
-                if (H[j * m + l] == 0 && h[l] == 1) {
+                emission_p = 1;
+                if (H[j * m + l] != h[l]) {
                     emission_p = error_probablilty;
-                } else {
-                    emission_p = h[l] == H[j * m + l];
                 }
             }
             V_next[j] = max_p * emission_p;
@@ -337,7 +336,6 @@ threader_run(threader_t *self,
     j = 0;
     for (l = 0; l < m; l++) {
         if (h[l] != H[P[l] * m + l]) {
-            assert(h[l] == 1);
             mutations[j] = l;
             j++;
         }

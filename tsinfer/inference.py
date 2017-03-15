@@ -168,6 +168,10 @@ class ReferencePanel(object):
         return P, mutations
 
     @property
+    def num_haplotypes(self):
+        return self._ll_reference_panel.num_haplotypes
+
+    @property
     def num_samples(self):
         return self._ll_reference_panel.num_samples
 
@@ -242,13 +246,10 @@ class Illustrator(object):
         self.errors = []
 
     def run(self, focal, filename):
-    # def make_illustration(n, H, P, mutations, errors, filename, focal=0):
         H = self.reference_panel.haplotypes
         N, M = H.shape
         n = self.reference_panel.num_samples
         P = self.P.astype(np.int32)
-        print(P)
-
         mutation_nodes = list(self.mutations.values())
         out = tempfile.NamedTemporaryFile("w", prefix="ls_fig_")
         matrix_gap = 2
