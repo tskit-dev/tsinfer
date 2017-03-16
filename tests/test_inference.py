@@ -75,10 +75,12 @@ class TestRoundTrip(unittest.TestCase):
             for variant in ts_new.variants():
                 self.assertTrue(np.all(variant.genotypes == S[:, variant.index]))
             self.assertEqual(num_sites, ts_new.num_sites)
-            # ts_simplified = ts_new.simplify()
-            # self.assertEqual(num_sites, ts_simplified.num_sites)
-            # for variant in ts_simplified.variants():
-            #     self.assertTrue(np.all(variant.genotypes == S[:, variant.index]))
+            ts_simplified = ts_new.simplify()
+            self.assertEqual(num_sites, ts_simplified.num_sites)
+            S2 = np.empty(S.shape, np.uint8)
+            for j, h in enumerate(ts_simplified.haplotypes()):
+                S2[j,:] = np.fromstring(h, np.uint8) - ord('0')
+            self.assertTrue(np.all(S2, S))
 
     def test_random_data_high_recombination(self):
         S = get_random_data_example(20, 30)
