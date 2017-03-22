@@ -80,7 +80,7 @@ class TestRoundTrip(unittest.TestCase):
             S2 = np.empty(S.shape, np.uint8)
             for j, h in enumerate(ts_simplified.haplotypes()):
                 S2[j,:] = np.fromstring(h, np.uint8) - ord('0')
-            self.assertTrue(np.all(S2, S))
+            self.assertTrue(np.all(S2 == S))
 
     def test_random_data_high_recombination(self):
         S = get_random_data_example(20, 30)
