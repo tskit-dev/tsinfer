@@ -245,8 +245,8 @@ class Illustrator(object):
         self.mutations = mutations
         self.errors = []
 
-    def run(self, focal, filename):
-        H = self.reference_panel.haplotypes
+    def run(self, focal, filename, H):
+        # H = self.reference_panel.haplotypes
         N, M = H.shape
         n = self.reference_panel.num_samples
         P = self.P.astype(np.int32)
