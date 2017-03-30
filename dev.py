@@ -4,6 +4,7 @@ import subprocess
 import os
 import numpy as np
 import itertools
+import multiprocessing
 
 import msprime
 
@@ -56,7 +57,10 @@ def make_ancestors(S):
     return H
 
 
-def get_gap_density(ts):
+def get_gap_density(n, length, seed):
+    ts = msprime.simulate(
+        sample_size=n, recombination_rate=1, mutation_rate=1,
+        length=length, random_seed=seed)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -66,7 +70,11 @@ def get_gap_density(ts):
     # print()
     # print(A)
     gaps = np.sum(A == -1, axis=0)
-    return gaps / A.shape[0]
+    # normalalise and take the mean
+    return ts.num_sites, A.shape[0], np.mean(gaps / A.shape[0])
+
+def gap_density_worker(work):
+    return get_gap_density(*work)
 
 def main():
     # for seed in range(10000):
@@ -74,18 +82,29 @@ def main():
     # np.random.seed(seed)
     # S = get_random_data_example(100, 1000)
     rho = 1
-    num_replicates = 100
-    for n in [10, 50, 100]:
+    num_replicates = 80
+    print("n", "L", "sites", "ancestors", "density", sep="\t")
+    for n in [10, 50, 100, 1000]:
         for length in [10, 100, 1000]:
+
+            # for j in range(num_replicates):
+            #     s, g = get_gap_density(n, length, j + 1)
+            #     gap_density[j] = g
+            #     num_sites[j] = s
+            with multiprocessing.Pool(processes=40) as pool:
+                work = [(n, length, j + 1) for j in range(num_replicates)]
+                results = pool.map(gap_density_worker, work)
             num_sites = np.zeros(num_replicates)
+            num_ancestors = np.zeros(num_replicates)
             gap_density = np.zeros(num_replicates)
-            replicates = msprime.simulate(
-                sample_size=n, recombination_rate=rho, mutation_rate=1,
-                length=length, num_replicates=num_replicates)
-            for j, ts in enumerate(replicates):
-                gap_density[j] = np.mean(get_gap_density(ts))
-                num_sites[j] = ts.num_sites
-            print(n, length, np.mean(num_sites), np.mean(gap_density))
+            for j, (s, a, g) in enumerate(results):
+                num_sites[j] = s
+                num_ancestors[j] = a
+                gap_density[j] = g
+            print(
+                n, length, np.mean(num_sites), np.mean(num_ancestors),
+                np.mean(gap_density), sep="\t")
+
     # for tree in ts.trees():
     #     print("tree: ", tree.interval, tree.parent_dict)
 
