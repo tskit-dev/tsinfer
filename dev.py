@@ -5,6 +5,7 @@ import os
 import numpy as np
 import itertools
 import multiprocessing
+import pandas as pd
 
 import msprime
 
@@ -22,39 +23,49 @@ def make_ancestors(S):
     n, m = S.shape
     frequency = np.sum(S, axis=0)
     num_ancestors = np.sum(frequency > 1)
-    site_order = frequency.argsort()[::-1]
+    site_order = frequency.argsort(kind="mergesort")[::-1]
     N = n + num_ancestors + 1
     H = np.zeros((N, m), dtype=np.int8)
 
     for j in range(n):
         H[j] = S[j]
-
+    mask = np.zeros(m, dtype=np.int8)
     for j in range(num_ancestors):
         site = site_order[j]
-        # Find all samples that have a 1 at this site.
+        mask[site] = 1
+        # Find all samples that have a 1 at this site
         R = S[S[:,site] == 1]
+        # Mask out mutations that haven't happened yet.
+        M = np.logical_and(R, mask).astype(int)
         # Get the consensus sequence among these ancestors.
-        A = (np.sum(R, axis=0) >= R.shape[0] / 2).astype(int)
+        A = (np.sum(M, axis=0) >= M.shape[0] / 2).astype(int)
         left_bound = site - 1
         patterns = set([(1, 1)])
-        while left_bound > 0:
-            for k in range(R.shape[0]):
-                patterns.add((A[left_bound], R[k, left_bound]))
+        # print("site = ", site)
+        # print("A = \n", A)
+        # print("R = ")
+        # print(R)
+        while left_bound >= 0:
+            for v in np.unique(M[:, left_bound]):
+                patterns.add((A[left_bound], v))
             if len(patterns) == 4:
                 break
             left_bound -= 1
+        left_bound += 1
         right_bound = site + 1
         patterns = set([(1, 1)])
         while right_bound < m:
-            for k in range(R.shape[0]):
-                patterns.add((A[right_bound], R[k, right_bound]))
+            for v in np.unique(M[:, right_bound]):
+                patterns.add((A[right_bound], v))
             if len(patterns) == 4:
                 break
             right_bound += 1
+        # print("site = ", site, "bounds = ", left_bound, right_bound)
         A[0: left_bound] = -1
         A[right_bound:] = -1
         H[N - j - 2] = A
     return H
+
 
 
 def get_gap_density(n, length, seed):
@@ -86,7 +97,6 @@ def main():
     print("n", "L", "sites", "ancestors", "density", sep="\t")
     for n in [10, 50, 100, 1000]:
         for length in [10, 100, 1000]:
-
             # for j in range(num_replicates):
             #     s, g = get_gap_density(n, length, j + 1)
             #     gap_density[j] = g
@@ -94,6 +104,7 @@ def main():
             with multiprocessing.Pool(processes=40) as pool:
                 work = [(n, length, j + 1) for j in range(num_replicates)]
                 results = pool.map(gap_density_worker, work)
+
             num_sites = np.zeros(num_replicates)
             num_ancestors = np.zeros(num_replicates)
             gap_density = np.zeros(num_replicates)
@@ -131,6 +142,7 @@ def main():
     #     illustrator.run(j, pdf_file, H)
     #     subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
     #         pdf_file, png_file), shell=True)
+
     #     print(png_file)
     #     os.unlink(pdf_file)
 
@@ -153,4 +165,70 @@ def main():
 #         S2[j,:] = np.fromstring(h, np.uint8) - ord('0')
 #     assert np.all(S == S2)
 
-main()
+def verify_breaks(n, H, P):
+    """
+    Make sure that the trees defined by P do not include any matrix
+    entries marked as rubbish in H.
+    """
+    N, m = H.shape
+
+    for l in range(m):
+        for j in range(n):
+            u = j
+            stack = []
+            # Trace this leaf back up through the tree at this locus.
+            while u != -1:
+                stack.append(u)
+                if H[u, l] == -1:
+                    print("sample ", j, "locus ", l)
+                    print("ERROR at ", u)
+                    print("STACK = ", stack)
+                assert H[u, l] != -1
+                u = P[u, l]
+
+
+def example():
+    np.set_printoptions(linewidth=100)
+    pd.options.display.max_rows = 999
+    pd.options.display.max_columns = 999
+    pd.options.display.width = 999
+
+    rho = 3
+    # for seed in range(1, 100):
+    for seed in [32]:
+        ts = msprime.simulate(
+            sample_size=5, recombination_rate=rho, mutation_rate=1,
+            length=2, random_seed=seed)
+        print("seed = ", seed)
+        sites = [site.position for site in ts.sites()]
+        S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+        for variant in ts.variants():
+            S[:, variant.index] = variant.genotypes
+        H = make_ancestors(S)
+        df = pd.DataFrame(H)
+        print(df[ts.sample_size:])
+
+        panel = tsinfer.ReferencePanel(
+            S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
+            algorithm="c")
+        index = H != -1
+        assert np.all(H[index] == panel.haplotypes[index])
+        P, mutations = panel.infer_paths(num_workers=1)
+        P = P.astype(np.int32)
+        verify_breaks(ts.sample_size, H, P)
+
+        illustrator = tsinfer.Illustrator(panel, P, mutations)
+        for j in range(panel.num_haplotypes):
+            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+            png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+            illustrator.run(j, pdf_file, panel.haplotypes)
+            subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
+                pdf_file, png_file), shell=True)
+            print(png_file)
+            os.unlink(pdf_file)
+
+
+
+if __name__ == "__main__":
+    main()
+    # example()

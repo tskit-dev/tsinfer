@@ -14,14 +14,15 @@ typedef struct {
     size_t frequency;
 } site_t;
 
-/* Order site by reverse frequency and index */
+/* Order site by reverse frequency and reverse index. We reverse index here
+ * for simplicity when comparing with stable argsort methods (i.e. numpy) */
 static int
 cmp_site(const void *a, const void *b) {
     const site_t *ca = (const site_t *) a;
     const site_t *cb = (const site_t *) b;
     int ret = (ca->frequency < cb->frequency) - (ca->frequency > cb->frequency);
     if (ret == 0) {
-        ret = (ca->index > cb->index) - (ca->index < cb->index);
+        ret = (cb->index > ca->index) - (cb->index < ca->index);
     }
     return ret;
 }
