@@ -213,8 +213,8 @@ def example():
     pd.options.display.width = 999
 
     rho = 3
-    for seed in range(1, 10000):
-    # for seed in [33]:
+    # for seed in range(1, 10000):
+    for seed in [36]:
         ts = msprime.simulate(
             sample_size=10, recombination_rate=rho, mutation_rate=1,
             length=2, random_seed=seed)
@@ -246,15 +246,16 @@ def example():
 
         # verify_breaks(ts.sample_size, H, P)
 
-        # illustrator = tsinfer.Illustrator(panel, P, mutations)
+        illustrator = tsinfer.Illustrator(panel, P, mutations)
         # for j in range(panel.num_haplotypes):
-        #     pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
-        #     png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
-        #     illustrator.run(j, pdf_file, panel.haplotypes)
-        #     subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
-        #         pdf_file, png_file), shell=True)
-        #     print(png_file)
-        #     os.unlink(pdf_file)
+        for j in [0]:
+            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+            png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+            illustrator.run(j, pdf_file, panel.haplotypes)
+            subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
+                pdf_file, png_file), shell=True)
+            print(png_file)
+            os.unlink(pdf_file)
 
 
 def bug():
@@ -280,6 +281,6 @@ def bug():
 
 if __name__ == "__main__":
     # main()
-    # example()
-    bug()
+    example()
+    # bug()
 
