@@ -227,7 +227,8 @@ class ReferencePanel(object):
             site_table.add_row(X[j], ancestral_state="0")
         mutation_table = msprime.MutationTable(len(mutations), len(mutations))
         for site, rows in mutations.items():
-            for row in rows:
+            # We need to ensure that the mutations are sorted in reverse time order.
+            for row in reversed(sorted(rows)):
                 derived_state = str(H[row, site])
                 mutation_table.add_row(site=site, node=row, derived_state=derived_state)
         return msprime.load_tables(
