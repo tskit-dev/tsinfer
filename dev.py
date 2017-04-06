@@ -9,6 +9,28 @@ import pandas as pd
 
 import msprime
 
+def bug():
+    samples_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.npy"
+    pos_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.pos.npy"
+    length = 10000
+    rho = 0.0005
+    error_probability = 0.1
+
+    S = np.load(samples_file)
+    pos = np.load(pos_file)
+    panel = tsinfer.ReferencePanel(
+        S, pos, length, rho, ancestor_error=0, sample_error=error_probability)
+    P, mutations = panel.infer_paths(1)
+    ts_new = panel.convert_records(P, mutations)
+    ts_simplified = ts_new.simplify()
+    ts_simplified.dump(args.output)
+    # Quickly verify that we get the sample output.
+    Sp = np.zeros(S.shape)
+    for j, h in enumerate(ts_simplified.haplotypes()):
+        Sp[j] = np.fromstring(h, np.uint8) - ord('0')
+    assert np.all(Sp == S)
+
+
 def get_random_data_example(num_samples, num_sites):
     S = np.random.randint(2, size=(num_samples, num_sites)).astype(np.uint8)
     # Weed out any invariant sites
@@ -213,17 +235,18 @@ def example():
     pd.options.display.width = 999
 
     rho = 3
-    # for seed in range(1, 10000):
-    for seed in [36]:
+    for seed in range(1, 10000):
+    # for seed in [2]:
         ts = msprime.simulate(
             sample_size=10, recombination_rate=rho, mutation_rate=1,
-            length=2, random_seed=seed)
+            length=6, random_seed=seed)
         print("seed = ", seed)
         sites = [site.position for site in ts.sites()]
         S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
         for variant in ts.variants():
             S[:, variant.index] = variant.genotypes
         H = make_ancestors(S)
+        print(H.shape)
         # df = pd.DataFrame(H)
         # print(df[ts.sample_size:])
 
@@ -249,35 +272,15 @@ def example():
         illustrator = tsinfer.Illustrator(panel, P, mutations)
         # for j in range(panel.num_haplotypes):
         for j in [0]:
-            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
-            png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+            # pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+            # png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(seed)
+            png_file = "tmp__NOBACKUP__/temp_{}.png".format(seed)
             illustrator.run(j, pdf_file, panel.haplotypes)
             subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
                 pdf_file, png_file), shell=True)
             print(png_file)
             os.unlink(pdf_file)
-
-
-def bug():
-    samples_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.npy"
-    pos_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.pos.npy"
-    length = 10000
-    rho = 0.0005
-    error_probability = 0.1
-
-    S = np.load(samples_file)
-    pos = np.load(pos_file)
-    panel = tsinfer.ReferencePanel(
-        S, pos, length, rho, ancestor_error=0, sample_error=error_probability)
-    P, mutations = panel.infer_paths(1)
-    ts_new = panel.convert_records(P, mutations)
-    ts_simplified = ts_new.simplify()
-    ts_simplified.dump(args.output)
-    # Quickly verify that we get the sample output.
-    Sp = np.zeros(S.shape)
-    for j, h in enumerate(ts_simplified.haplotypes()):
-        Sp[j] = np.fromstring(h, np.uint8) - ord('0')
-    assert np.all(Sp == S)
 
 if __name__ == "__main__":
     # main()

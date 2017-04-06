@@ -313,7 +313,8 @@ class Illustrator(object):
                     colour = "0.5 * white"
                 print('fill(shift(({}, {})) * cellbox, {});'.format(
                     x - 0.5, y - 0.5, colour), file=out)
-                print('label("{}", ({}, {}), cellpen);'.format(H[j, k], x, y), file=out)
+                if H[j, k] != -1:
+                    print('label("{}", ({}, {}), cellpen);'.format(H[j, k], x, y), file=out)
                 if (j, k) in self.errors:
                     print('draw(shift(({}, {})) * error_marker, red);'.format(x, y), file=out)
                 if j in mutation_nodes[k]:
@@ -332,8 +333,7 @@ class Illustrator(object):
                 if P[j, k] < N:
                     print('fill(shift(({}, {})) * cellbox, {});'.format(
                         x - 0.5, y - 0.5, copy_colours[P[j, k]]), file=out)
-                    print('label("{}", ({}, {}), cellpen);'.format(P[j, k], x, y), file=out)
-
+                    # print('label("{}", ({}, {}), cellpen);'.format(P[j, k], x, y), file=out)
 
         print('filldraw(shift(({}, {})) * focal_marker, black);'.format(
             M + matrix_gap / 2 - 0.5, -focal), file=out)
