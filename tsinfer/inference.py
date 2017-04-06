@@ -23,28 +23,29 @@ class PythonThreader(object):
         Thread the haplotype with the specified index through the
         reference panel of the n oldest haplotypes.
         """
-        H = self._reference_panel.get_haplotypes()
-        X = self._reference_panel.get_positions()
+        H = self._reference_panel.haplotypes
+        X = self._reference_panel.positions
         h = H[haplotype_index]
         N, m = H.shape
+        H = np.vstack((H, -1 * np.ones(m, dtype=np.int)))
+        N += 1
         r = 1 - np.exp(-rho / n)
         recomb_proba = r / n
         no_recomb_proba = 1 - r + r / n
 
         V = np.ones(N)
         T = np.zeros((N, m), dtype=int)
-        condition = np.logical_and(h == 1, np.sum(H[N - n:], axis=0) == 0)
+        condition = np.logical_and(h == 1, np.sum(H[N - n - 1: N - 1] == 1, axis=0) == 0)
         mutated_loci = set(np.argwhere(condition).flatten())
 
-        max_V_index = N - n
+        max_V_index = N - n - 1
         d = 1
         assert rho > 0 or err > 0
         for l in range(m):
-            assert V[max_V_index] > 0
             V /= V[max_V_index]
             Vn = np.zeros(N)
-            max_Vn_index = N - n
-            for j in range(N - n, N):
+            max_Vn_index = N - n - 1
+            for j in range(N - n - 1, N):
                 x = V[j] * no_recomb_proba * d
                 assert V[max_V_index] == 1.0
                 y = V[max_V_index] * recomb_proba * d
@@ -55,13 +56,21 @@ class PythonThreader(object):
                     max_p = y
                     max_k = max_V_index
                 T[j, l] = max_k
-                emission_p = 1
-                if l in mutated_loci:
-                    assert h[l] == 1 and H[j, l] == 0
-                else:
-                    emission_p = err
-                    if H[j, l] == h[l]:
+                if h[l] == -1:
+                    if j == N - 1:
                         emission_p = 1
+                    else:
+                        emission_p = 0
+                elif H[j, l] == -1:
+                    emission_p = 0
+                else:
+                    emission_p = 1
+                    if l in mutated_loci:
+                        assert h[l] == 1 and H[j, l] == 0
+                    else:
+                        emission_p = err
+                        if H[j, l] == h[l]:
+                            emission_p = 1
                 Vn[j] = max_p * emission_p
                 if Vn[j] >= Vn[max_Vn_index]:
                     # If we have several haplotypes with equal liklihood, we choose the
@@ -87,7 +96,7 @@ class ReferencePanel(object):
     """
     def __init__(
             self, samples, positions, sequence_length, rho=None,
-            sample_error=0, ancestor_error=0, algorithm=None):
+            sample_error=0, ancestor_error=0, algorithm=None, haplotypes=None):
         self._ll_reference_panel = _tsinfer.ReferencePanel(
                 samples, positions, sequence_length)
         self._threader_class = _tsinfer.Threader
@@ -100,14 +109,20 @@ class ReferencePanel(object):
                 "python": PythonThreader
             }
             self._threader_class = algorithm_map[algorithm]
-
+        # Note: this isn't a long term interface. It's just here to allow for
+        # experimentation with the set of haplotypes used by the Python
+        # algorithm.
+        if haplotypes is None:
+            self.haplotypes = self._ll_reference_panel.get_haplotypes()
+        else:
+            self.haplotypes = haplotypes
 
     def _infer_paths_simple(self):
         N = self._ll_reference_panel.num_haplotypes
         n = self._ll_reference_panel.num_samples
         m = self._ll_reference_panel.num_sites
         H = self._ll_reference_panel.get_haplotypes()
-        threader = self._threader_class(self._ll_reference_panel)
+        threader = self._threader_class(self)
         P = np.zeros((N, m), dtype=np.uint32)
         p = np.zeros(m, dtype=np.uint32)
         P[-1, :] = -1
@@ -176,8 +191,8 @@ class ReferencePanel(object):
         return self._ll_reference_panel.num_samples
 
     @property
-    def haplotypes(self):
-        return self._ll_reference_panel.get_haplotypes()
+    def positions(self):
+        return self._ll_reference_panel.get_positions()
 
     def infer_paths(self, num_workers=None):
         if num_workers == 1:
@@ -201,7 +216,12 @@ class ReferencePanel(object):
 
         for j in range(N - 1):
             for l in range(m):
-                C[P[j][l]][l].append(j)
+                if P[j][l] != N:
+                    C[P[j][l]][l].append(j)
+                else:
+                    # This is inelegant, but these links should all get filtered out
+                    # by simplify.
+                    C[N - 1][l].append(j)
 
         node_table = msprime.NodeTable(N)
         edgeset_table = msprime.EdgesetTable(N, 2 * N)
@@ -308,9 +328,10 @@ class Illustrator(object):
             for k in range(M):
                 x = k + M + matrix_gap
                 y = -j
-                print('fill(shift(({}, {})) * cellbox, {});'.format(
-                    x - 0.5, y - 0.5, copy_colours[P[j, k]]), file=out)
-                print('label("{}", ({}, {}), cellpen);'.format(P[j, k], x, y), file=out)
+                if P[j, k] < N:
+                    print('fill(shift(({}, {})) * cellbox, {});'.format(
+                        x - 0.5, y - 0.5, copy_colours[P[j, k]]), file=out)
+                    print('label("{}", ({}, {}), cellpen);'.format(P[j, k], x, y), file=out)
 
 
         print('filldraw(shift(({}, {})) * focal_marker, black);'.format(

@@ -37,32 +37,51 @@ def make_ancestors(S):
         R = S[S[:,site] == 1]
         # Mask out mutations that haven't happened yet.
         M = np.logical_and(R, mask).astype(int)
-        # Get the consensus sequence among these ancestors.
-        A = (np.sum(M, axis=0) >= M.shape[0] / 2).astype(int)
-        left_bound = site - 1
-        patterns = set([(1, 1)])
-        # print("site = ", site)
-        # print("A = \n", A)
-        # print("R = ")
-        # print(R)
-        while left_bound >= 0:
-            for v in np.unique(M[:, left_bound]):
-                patterns.add((A[left_bound], v))
-            if len(patterns) == 4:
-                break
-            left_bound -= 1
-        left_bound += 1
-        right_bound = site + 1
-        patterns = set([(1, 1)])
-        while right_bound < m:
-            for v in np.unique(M[:, right_bound]):
-                patterns.add((A[right_bound], v))
-            if len(patterns) == 4:
-                break
-            right_bound += 1
-        # print("site = ", site, "bounds = ", left_bound, right_bound)
-        A[0: left_bound] = -1
-        A[right_bound:] = -1
+        A = -1 * np.ones(m, dtype=int)
+        A[site] = 1
+        l = site - 1
+        consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
+        while l >= 0 and len(consistent_samples) > 0:
+            # print("l = ", l, consistent_samples)
+            # Get the consensus among the consistent samples for this locus.
+            # Only mutations older than this site are considered.
+            s = 0
+            for k in consistent_samples.keys():
+                s += M[k, l]
+            A[l] = int(s >= len(consistent_samples) / 2)
+            # Now we have computed the ancestor, go through the samples and
+            # update their four-gametes patterns with the ancestor. Any
+            # samples inconsistent with the ancestor are dropped.
+            dropped = []
+            for k, patterns in consistent_samples.items():
+                patterns.add((A[l], S[k, l]))
+                if len(patterns) == 4:
+                    dropped.append(k)
+            for k in dropped:
+                del consistent_samples[k]
+            l -= 1
+        l = site + 1
+        consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
+        while l < m and len(consistent_samples) > 0:
+            # print("l = ", l, consistent_samples)
+            # Get the consensus among the consistent samples for this locus.
+            s = 0
+            for k in consistent_samples.keys():
+                s += M[k, l]
+            # print("s = ", s)
+            A[l] = int(s >= len(consistent_samples) / 2)
+            # Now we have computed the ancestor, go through the samples and
+            # update their four-gametes patterns with the ancestor. Any
+            # samples inconsistent with the ancestor are dropped.
+            dropped = []
+            for k, patterns in consistent_samples.items():
+                patterns.add((A[l], S[k, l]))
+                if len(patterns) == 4:
+                    dropped.append(k)
+            for k in dropped:
+                del consistent_samples[k]
+            l += 1
+        # print("A = ", A)
         H[N - j - 2] = A
     return H
 
@@ -194,10 +213,10 @@ def example():
     pd.options.display.width = 999
 
     rho = 3
-    # for seed in range(1, 100):
-    for seed in [32]:
+    for seed in range(1, 10000):
+    # for seed in [33]:
         ts = msprime.simulate(
-            sample_size=5, recombination_rate=rho, mutation_rate=1,
+            sample_size=10, recombination_rate=rho, mutation_rate=1,
             length=2, random_seed=seed)
         print("seed = ", seed)
         sites = [site.position for site in ts.sites()]
@@ -205,30 +224,62 @@ def example():
         for variant in ts.variants():
             S[:, variant.index] = variant.genotypes
         H = make_ancestors(S)
-        df = pd.DataFrame(H)
-        print(df[ts.sample_size:])
+        # df = pd.DataFrame(H)
+        # print(df[ts.sample_size:])
 
         panel = tsinfer.ReferencePanel(
             S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
-            algorithm="c")
-        index = H != -1
-        assert np.all(H[index] == panel.haplotypes[index])
+            algorithm="python", haplotypes=H)
+        # print(panel.haplotypes)
+        # index = H != -1
+        # assert np.all(H[index] == panel.haplotypes[index])
+
         P, mutations = panel.infer_paths(num_workers=1)
         P = P.astype(np.int32)
-        verify_breaks(ts.sample_size, H, P)
 
-        illustrator = tsinfer.Illustrator(panel, P, mutations)
-        for j in range(panel.num_haplotypes):
-            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
-            png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
-            illustrator.run(j, pdf_file, panel.haplotypes)
-            subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
-                pdf_file, png_file), shell=True)
-            print(png_file)
-            os.unlink(pdf_file)
+        new_ts = panel.convert_records(P, mutations)
+        Sp = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+        for variant in new_ts.variants():
+            Sp[:, variant.index] = variant.genotypes
+        assert np.all(Sp == S)
+        tss = new_ts.simplify()
+
+        # verify_breaks(ts.sample_size, H, P)
+
+        # illustrator = tsinfer.Illustrator(panel, P, mutations)
+        # for j in range(panel.num_haplotypes):
+        #     pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+        #     png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+        #     illustrator.run(j, pdf_file, panel.haplotypes)
+        #     subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
+        #         pdf_file, png_file), shell=True)
+        #     print(png_file)
+        #     os.unlink(pdf_file)
 
 
+def bug():
+    samples_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.npy"
+    pos_file = "../treeseq-inference/data/raw__NOBACKUP__/metrics_by_mutation_rate/simulations/msprime-n10_Ne5000.0_l10000_rho0.000000025_mu0.000000237734-gs1865676553_ms1865676553err0.1.pos.npy"
+    length = 10000
+    rho = 0.0005
+    error_probability = 0.1
+
+    S = np.load(samples_file)
+    pos = np.load(pos_file)
+    panel = tsinfer.ReferencePanel(
+        S, pos, length, rho, ancestor_error=0, sample_error=error_probability)
+    P, mutations = panel.infer_paths(1)
+    ts_new = panel.convert_records(P, mutations)
+    ts_simplified = ts_new.simplify()
+    ts_simplified.dump(args.output)
+    # Quickly verify that we get the sample output.
+    Sp = np.zeros(S.shape)
+    for j, h in enumerate(ts_simplified.haplotypes()):
+        Sp[j] = np.fromstring(h, np.uint8) - ord('0')
+    assert np.all(Sp == S)
 
 if __name__ == "__main__":
-    main()
+    # main()
     # example()
+    bug()
+

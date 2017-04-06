@@ -40,6 +40,7 @@ reference_panel_infer_ancestors(reference_panel_t *self, size_t num_sites, site_
     for (j = 0; j < num_sites; j++) {
         site_j = sites[j];
         self->haplotypes[(N - j - 2) * m + site_j.index] = 1;
+        printf("site %d\n", (int) j);
         for (k = 0; k < j; k++) {
             site_k = sites[k];
             total_samples = 0;
