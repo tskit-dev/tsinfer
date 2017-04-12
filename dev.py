@@ -228,6 +228,54 @@ def verify_breaks(n, H, P):
                 u = P[u, l]
 
 
+def ls_copy(h, segments, N):
+    """
+    Runs the copying process on the specified haplotype for the specified
+    reference panel expressed in run-length encoded segments.
+    """
+    rho = 1e-3
+    m = len(segments)
+    print("copy ", h)
+    print(segments)
+    V = [(0, 1, N)]
+    for l in range(m):
+        print("locus", l)
+        recomb_proba = len(segments)[l] * rho
+        for s, e, v in segments[l]:
+            print("\t", s, e, v)
+
+
+
+
+
+def run_length_encode(H, n):
+    print("Creating ancestors and rle for H")
+    A = H[n:]
+    S = H[:n]
+    m = A.shape[1]
+    print("S = \n", S, sep="")
+    print("A = \n", A, sep="")
+    segments = [[] for _ in range(m)]
+    for l in range(m):
+        s = 0
+        v = A[s, l]
+        for j in range(1, A.shape[0]):
+            if A[j, l] != v:
+                if v != -1:
+                    segments[l].append((s, j, v))
+                v = A[j, l]
+                s = j
+        if v != -1:
+            segments[l].append((s, j, v))
+        print(A[:, l])
+        print(segments[l])
+    ls_copy(S[0], segments, A.shape[0])
+
+
+
+
+
+
 def example():
     np.set_printoptions(linewidth=100)
     pd.options.display.max_rows = 999
@@ -235,11 +283,11 @@ def example():
     pd.options.display.width = 999
 
     rho = 3
-    for seed in range(1, 10000):
-    # for seed in [2]:
+    # for seed in range(1, 10000):
+    for seed in [2]:
         ts = msprime.simulate(
             sample_size=10, recombination_rate=rho, mutation_rate=1,
-            length=6, random_seed=seed)
+            length=2, random_seed=seed)
         print("seed = ", seed)
         sites = [site.position for site in ts.sites()]
         S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
@@ -247,40 +295,43 @@ def example():
             S[:, variant.index] = variant.genotypes
         H = make_ancestors(S)
         print(H.shape)
+        print(H)
+        run_length_encode(H, ts.sample_size)
+
         # df = pd.DataFrame(H)
         # print(df[ts.sample_size:])
 
-        panel = tsinfer.ReferencePanel(
-            S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
-            algorithm="python", haplotypes=H)
-        # print(panel.haplotypes)
-        # index = H != -1
-        # assert np.all(H[index] == panel.haplotypes[index])
+        # panel = tsinfer.ReferencePanel(
+        #     S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
+        #     algorithm="python", haplotypes=H)
+        # # print(panel.haplotypes)
+        # # index = H != -1
+        # # assert np.all(H[index] == panel.haplotypes[index])
 
-        P, mutations = panel.infer_paths(num_workers=1)
-        P = P.astype(np.int32)
+        # P, mutations = panel.infer_paths(num_workers=1)
+        # P = P.astype(np.int32)
 
-        new_ts = panel.convert_records(P, mutations)
-        Sp = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
-        for variant in new_ts.variants():
-            Sp[:, variant.index] = variant.genotypes
-        assert np.all(Sp == S)
-        tss = new_ts.simplify()
+        # new_ts = panel.convert_records(P, mutations)
+        # Sp = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+        # for variant in new_ts.variants():
+        #     Sp[:, variant.index] = variant.genotypes
+        # assert np.all(Sp == S)
+        # tss = new_ts.simplify()
 
-        # verify_breaks(ts.sample_size, H, P)
+        # # verify_breaks(ts.sample_size, H, P)
 
-        illustrator = tsinfer.Illustrator(panel, P, mutations)
-        # for j in range(panel.num_haplotypes):
-        for j in [0]:
-            # pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
-            # png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
-            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(seed)
-            png_file = "tmp__NOBACKUP__/temp_{}.png".format(seed)
-            illustrator.run(j, pdf_file, panel.haplotypes)
-            subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
-                pdf_file, png_file), shell=True)
-            print(png_file)
-            os.unlink(pdf_file)
+        # illustrator = tsinfer.Illustrator(panel, P, mutations)
+        # # for j in range(panel.num_haplotypes):
+        # for j in [0]:
+        #     # pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+        #     # png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+        #     pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(seed)
+        #     png_file = "tmp__NOBACKUP__/temp_{}.png".format(seed)
+        #     illustrator.run(j, pdf_file, panel.haplotypes)
+        #     subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
+        #         pdf_file, png_file), shell=True)
+        #     print(png_file)
+        #     os.unlink(pdf_file)
 
 if __name__ == "__main__":
     # main()
