@@ -103,7 +103,6 @@ def make_ancestors(S):
             for k in dropped:
                 del consistent_samples[k]
             l += 1
-        # print("A = ", A)
         H[N - j - 2] = A
     return H
 
@@ -227,6 +226,37 @@ def verify_breaks(n, H, P):
                 assert H[u, l] != -1
                 u = P[u, l]
 
+def segments_intersection(A, B):
+    """
+    Returns an iterator over the intersection of the specified ordered lists of
+    segments [(start, end, value), ...]. For each (start, end) intersection that
+    we find, return the pair of values in order A, B.
+    """
+    # print("INTERSECT")
+    # print("\t", A)
+    # print("\t", B)
+    A_iter = iter(A)
+    B_iter = iter(B)
+    A_head = next(A_iter)
+    B_head = next(B_iter)
+    while A_head is not None and B_head is not None:
+        A_s, A_e, A_v = A_head
+        B_s, B_e, B_v = B_head
+        # print("A_head = ", A_head)
+        # print("B_head = ", B_head)
+        if A_s <= B_s:
+            if A_e > B_s:
+                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+        else:
+            if B_e > A_s:
+                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+
+        if A_e <= B_e:
+            A_head = next(A_iter, None)
+        if B_e <= A_e:
+            B_head = next(B_iter, None)
+
+
 
 def ls_copy(h, segments, N):
     """
@@ -234,18 +264,68 @@ def ls_copy(h, segments, N):
     reference panel expressed in run-length encoded segments.
     """
     rho = 1e-3
+    mu = 1e-7
     m = len(segments)
     print("copy ", h)
-    print(segments)
-    V = [(0, 1, N)]
-    for l in range(m):
-        print("locus", l)
-        recomb_proba = len(segments)[l] * rho
-        for s, e, v in segments[l]:
-            print("\t", s, e, v)
+    for segs in segments:
+        print(segs)
+    # The intial value of V is determinined only by the emission probabilities.
+    p = rho / N
+    q = 1 - rho + rho / N
+
+    V = []
+    for start, end, v in segments[0]:
+        if v == h[0]:
+            V.append((start, end, 1))
+    for l in range(1, m):
+        print("V = ", V)
+        max_p = -1
+        for seg in V:
+            if seg[-1] >= max_p:
+                V_max = seg
+                max_p = V_max[-1]
+        assert max_p > 0
+        V = [[s, e, p / max_p] for (s, e, p) in V]
+        # Merge edjacent equal values.
+        Vp = [V[0]]
+        for s, e, p in V[1:]:
+            sp, ep, pp = Vp[-1]
+            if sp == e and p == pp:
+                print("Squashing", (sp, ep, pp), ":", s, e, p)
+                Vp[-1][1] = e
+            else:
+                Vp.append((s, e, p))
+        V = Vp
+        print("locus ", l)
+        print("V = ", V)
+        print("V_max = ", V_max)
+        print("A = ", segments[l])
+        V_next = []
+        for s, e, proba, v in segments_intersection(V, segments[l]):
+            emission = 1 - mu
+            if v != h[l]:
+                emission = mu
+            x = q * proba
+            y = p # V_max is by 1 by normalisation
+            V_next.append((s, e, emission * max(x, y)))
+            print("\tINTER", v == h[l], s, e, proba)
+        V = V_next
 
 
+    # for l in range(m):
+    #     print("locus", l)
+    #     recomb_proba = len(segments[l]) * rho
+    #     for s, e, v in segments[l]:
+    #         print("\t", s, e, v)
 
+
+def run_length_decode(segments, N):
+    m = len(segments)
+    A = -1 * np.ones((N, m), dtype=int)
+    for k, col in enumerate(segments):
+        for start, end, value in col:
+            A[start:end, k] = value
+    return A
 
 
 def run_length_encode(H, n):
@@ -266,15 +346,16 @@ def run_length_encode(H, n):
                 v = A[j, l]
                 s = j
         if v != -1:
-            segments[l].append((s, j, v))
-        print(A[:, l])
-        print(segments[l])
+            segments[l].append((s, j + 1, v))
+    # Sanity check -- we should get the same array back.
+    Ap = run_length_decode(segments, A.shape[0])
+    assert np.all(A == Ap)
+
+    # for l in range(1, m):
+    #     for x in segments_intersection(segments[l - 1], segments[l]):
+    #         print("INTERSECT", x)
+
     ls_copy(S[0], segments, A.shape[0])
-
-
-
-
-
 
 def example():
     np.set_printoptions(linewidth=100)
@@ -286,8 +367,8 @@ def example():
     # for seed in range(1, 10000):
     for seed in [2]:
         ts = msprime.simulate(
-            sample_size=10, recombination_rate=rho, mutation_rate=1,
-            length=2, random_seed=seed)
+            sample_size=15, recombination_rate=rho, mutation_rate=1,
+            length=7, random_seed=seed)
         print("seed = ", seed)
         sites = [site.position for site in ts.sites()]
         S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
@@ -307,6 +388,9 @@ def example():
         # # print(panel.haplotypes)
         # # index = H != -1
         # # assert np.all(H[index] == panel.haplotypes[index])
+        # threader = tsinfer.inference.PythonThreader(panel)
+        # p = np.zeros(H.shape[1], dtype=np.uint32)
+        # threader.run(0, ts.sample_size, rho, 0, p)
 
         # P, mutations = panel.infer_paths(num_workers=1)
         # P = P.astype(np.int32)

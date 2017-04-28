@@ -42,6 +42,8 @@ class PythonThreader(object):
         d = 1
         assert rho > 0 or err > 0
         for l in range(m):
+            print("l = ", l)
+            print(V)
             V /= V[max_V_index]
             Vn = np.zeros(N)
             max_Vn_index = N - n - 1
