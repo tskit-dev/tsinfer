@@ -6,6 +6,7 @@ import numpy as np
 import itertools
 import multiprocessing
 import pandas as pd
+import random
 
 import msprime
 
@@ -375,25 +376,25 @@ def example():
         for variant in ts.variants():
             S[:, variant.index] = variant.genotypes
         H = make_ancestors(S)
-        print(H.shape)
-        print(H)
-        run_length_encode(H, ts.sample_size)
+        # print(H.shape)
+        # print(H)
+        # run_length_encode(H, ts.sample_size)
 
         # df = pd.DataFrame(H)
         # print(df[ts.sample_size:])
 
-        # panel = tsinfer.ReferencePanel(
-        #     S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
-        #     algorithm="python", haplotypes=H)
-        # # print(panel.haplotypes)
-        # # index = H != -1
-        # # assert np.all(H[index] == panel.haplotypes[index])
-        # threader = tsinfer.inference.PythonThreader(panel)
-        # p = np.zeros(H.shape[1], dtype=np.uint32)
-        # threader.run(0, ts.sample_size, rho, 0, p)
+        panel = tsinfer.ReferencePanel(
+            S, sites, ts.sequence_length, rho=rho, sample_error=0, ancestor_error=0,
+            algorithm="python", haplotypes=H)
+        # print(panel.haplotypes)
+        # index = H != -1
+        # assert np.all(H[index] == panel.haplotypes[index])
+        threader = tsinfer.inference.PythonThreader(panel)
+        p = np.zeros(H.shape[1], dtype=np.uint32)
+        threader.run(0, ts.sample_size, rho, 0, p)
 
-        # P, mutations = panel.infer_paths(num_workers=1)
-        # P = P.astype(np.int32)
+        P, mutations = panel.infer_paths(num_workers=1)
+        P = P.astype(np.int32)
 
         # new_ts = panel.convert_records(P, mutations)
         # Sp = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
@@ -404,21 +405,274 @@ def example():
 
         # # verify_breaks(ts.sample_size, H, P)
 
-        # illustrator = tsinfer.Illustrator(panel, P, mutations)
-        # # for j in range(panel.num_haplotypes):
-        # for j in [0]:
-        #     # pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
-        #     # png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
-        #     pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(seed)
-        #     png_file = "tmp__NOBACKUP__/temp_{}.png".format(seed)
-        #     illustrator.run(j, pdf_file, panel.haplotypes)
-        #     subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
-        #         pdf_file, png_file), shell=True)
-        #     print(png_file)
-        #     os.unlink(pdf_file)
+        illustrator = tsinfer.Illustrator(panel, P, mutations)
+        # for j in range(panel.num_haplotypes):
+        for j in [0]:
+            # pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(j)
+            # png_file = "tmp__NOBACKUP__/temp_{}.png".format(j)
+            pdf_file = "tmp__NOBACKUP__/temp_{}.pdf".format(seed)
+            png_file = "tmp__NOBACKUP__/temp_{}.png".format(seed)
+            illustrator.run(j, pdf_file, panel.haplotypes)
+            subprocess.check_call("convert -geometry 3000 -density 600 {} {}".format(
+                pdf_file, png_file), shell=True)
+            print(png_file)
+            os.unlink(pdf_file)
+
+def match_haplotype(R, n, h, rho):
+    r = 1 - np.exp(-rho / n)
+    recomb_proba = r / n
+    no_recomb_proba = 1 - r + r / n
+    print(recomb_proba, no_recomb_proba)
+    V = [[left, right, int(state == h[0])] for left, right, state in R[0]]
+    T = [[] for _ in R]
+    for l in range(1, len(R)):
+        # Find the maximum probabilty and normalise
+        max_V_index = 0
+        max_p = -1
+        for j, seg in enumerate(V):
+            if seg[-1] >= max_p:
+                max_p = seg[-1]
+                max_V_index = j
+        for seg in V:
+            seg[-1] /= max_p
+        # print("max_index = ", max_V_index)
+        # print("V = ", V)
+        # print("R = ", R[l])
+        Vp = []
+        for left, right, v, state in segments_intersection(V, R[l]):
+            x = v * no_recomb_proba
+            assert V[max_V_index][-1] == 1.0
+            y = V[max_V_index][-1] * recomb_proba
+            if x > y:
+                T[l].append([[left, right], [left, right]])
+            else:
+                T[l].append([[left, right], V[max_V_index][:2]])
+            # print("\t", left, right, v, state, x, y, sep="\t")
+            emission = max(x, y) * int(state == h[l])
+            Vp.append([left, right, emission])
+        # Compress the adjacent segments.
+        # print("Vp = ", Vp)
+        V = [Vp[0]]
+        for left, right, v in Vp[1:]:
+            if V[-1][-1] == v:
+                # print("Sqaushing:", V[-1], left, right, v)
+                assert V[-1][1] == left
+                V[-1][1] = right
+            else:
+                V.append([left, right, v])
+    print("TRACEBACK")
+    print(V)
+    max_V_index = 0
+    max_p = -1
+    for j, seg in enumerate(V):
+        if seg[-1] >= max_p:
+            max_p = seg[-1]
+            max_V_index = j
+    print("max V = ", V[max_V_index])
+    left, right = V[max_V_index][:2]
+    traceback = [[(left, right)]]
+    for segs in T[::-1]:
+        print("T:", left, right)
+        next_left, next_right = None, None
+        # Find the segment that overlaps with left, right
+        print("\t", segs)
+        for current, prev in segs:
+            if current[0] == left and current[1] == right:
+                print("Found overlap!")
+                next_left, next_right = current
+                traceback = [[(left, right)]]
+
+        left, right = next_left, next_right
+
+
+def decode_traceback(E, n):
+    """
+    Decode the specified encoded traceback matrix into the standard integer
+    matrix.
+    """
+    m = len(E)
+    T = np.zeros((n, m), dtype=int)
+    for l in range(1, m):
+        T[:,l] = np.arange(n)
+        for start, end, value in E[l]:
+            T[start:end, l] = value
+    return T
+
+def run_traceback(E, n, starting_point):
+    """
+    Returns the array of haplotype indexes that the specified encoded traceback
+    defines for the given startin point at locus m - 1.
+    """
+    m = len(E)
+    P = np.zeros(m, dtype=int)
+    P[-1] = starting_point
+    for l in range(m - 1, 0, -1):
+        v = None
+        for start, end, value in E[l]:
+            if start <= P[l] < end:
+                v = value
+                break
+            if start > P[l]:
+                break
+        if v is None:
+            v = P[l]
+        P[l - 1] = v
+    return P
+
+
+def encode_traceback(T):
+    """
+    Encode the traceback matrix column-wise with segments (a, b, v) denoting
+    a section of the column s.t. T[a:b, k] = v. All other values are assumed
+    to be such that T[x, k] = x
+    """
+    n, m = T.shape
+    E = [[] for j in range(m)]
+    for l in range(1, m):
+        col = T[:, l]
+        seg = None
+        for j in range(n):
+            if col[j] != j:
+                if seg is None:
+                    seg = [j, None, col[j]]
+                elif seg[-1] != col[j]:
+                    seg[1] = j
+                    E[l].append(seg)
+                    seg = [j, None, col[j]]
+            elif seg is not None:
+                seg[1] = j
+                E[l].append(seg)
+                seg = None
+        if seg is not None:
+            seg[1] = n
+            E[l].append(seg)
+        # print(col)
+        # print(E[l])
+        # print()
+    return E
+
+def match_haplotype_simple(H, h, rho, theta):
+    n, m = H.shape
+    r = 1 - np.exp(-rho / n)
+    pr = r / n
+    qr = 1 - r + r / n
+    # pm = mutation; qm no mutation
+    pm = 0.5 * theta / (n + theta)
+    qm = n / (n + theta) + 0.5 * theta / (n + theta)
+    # print("p = ", p, "q  = ", q)
+    V = (H[:,0] == h[0]).astype(int)
+    T = np.zeros_like(H)
+    for l in range(1, m):
+        V_next = np.zeros(n)
+        # Find the maximum of V and normalise
+        max_V_index = np.argmax(V)
+        V = V / V[max_V_index]
+        # print("l = ", l, "max_V_index = ", max_V_index)
+        # print("h = ", h[l])
+        # print("H = ", H[:,l])
+        # print("V = ", V)
+        for j in range(n):
+            x = V[j] * qr
+            y = V[max_V_index] * pr
+            if x > y:
+                T[j, l] = j
+                z = x
+            else:
+                T[j, l] = max_V_index
+                z = y
+            if H[j][l] == h[l]:
+                V_next[j] = z * qm
+            else:
+                V_next[j] = z * pm
+        V = V_next
+
+    E = encode_traceback(T)
+    Tp = decode_traceback(E, n)
+    assert np.all(Tp == T)
+
+    # print()
+    # print(pd.DataFrame(T))
+    # Start the traceback.
+    P = np.zeros(m, dtype=int)
+    P[-1] = np.argmax(V)
+    for l in range(m - 2, -1, -1):
+        P[l] = T[P[l + 1], l + 1]
+
+    Q = run_traceback(E, n, np.argmax(V))
+    assert np.all(P == Q)
+    for q in E:
+        print(q)
+
+    print()
+    print(pd.DataFrame(P).T)
+    # print("\n", p)
+    return P
+
+def ts_ls():
+    """
+    Experimental code to run L&S on a tree sequence.
+    """
+
+    np.set_printoptions(linewidth=200)
+    pd.options.display.max_rows = 999
+    pd.options.display.max_columns = 999
+    pd.options.display.width = 999
+    random.seed(2)
+
+    ts = msprime.simulate(
+        45, length=5, recombination_rate=0, mutation_rate=1, random_seed=1)
+    print(ts.num_trees, ts.num_sites)
+    t = next(ts.trees())
+    # t.draw("tree.svg")
+    order = np.array(list(t.leaves(t.root)), dtype=int)
+    R = []
+    V = np.zeros((ts.num_sites, ts.sample_size), dtype=int)
+    for variant in ts.variants():
+        col = variant.genotypes[order]
+        # col = variant.genotypes
+        V[variant.index] = col
+        # Run length encode col
+        segs = [[0, 1, col[0]]]
+        for j in range(1, col.shape[0]):
+            if col[j] == segs[-1][-1]:
+                segs[-1][1] += 1
+            else:
+                segs.append([j, j + 1, col[j]])
+        # print(col, segs)
+        R.append(segs)
+    # Make sure our encoding is correct
+    Vp = np.zeros((ts.num_sites, ts.sample_size), dtype=int)
+    for j, segs in enumerate(R):
+        for l, r, v in segs:
+            Vp[j, l:r] = v
+    assert np.all(V == Vp)
+    H = V.T
+    # print(pd.DataFrame(H))
+    # df = pd.DataFrame(H)
+    n = ts.sample_size
+    h = np.copy(H[0])
+    j = 0
+    P = np.zeros(ts.num_sites, dtype=int)
+    # for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
+    for k in [10, ts.num_sites]:
+        haplotype = random.randint(0, n)
+        h[j: k] = H[haplotype][j:k]
+        P[j: k] = haplotype
+        j = k
+
+    # print("\n", h)
+    print()
+    # print(pd.DataFrame(h).T)
+    Q = match_haplotype_simple(H, h, 0.01, 0.01)
+    print("P = ", P)
+    print("Q = ", Q)
+    # match_haplotype(R, ts.sample_size, h, 0.01)
+
+
 
 if __name__ == "__main__":
     # main()
-    example()
+    # example()
     # bug()
+    ts_ls()
 
