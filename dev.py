@@ -418,71 +418,95 @@ def example():
             print(png_file)
             os.unlink(pdf_file)
 
-def match_haplotype(R, n, h, rho):
-    r = 1 - np.exp(-rho / n)
-    recomb_proba = r / n
-    no_recomb_proba = 1 - r + r / n
-    print(recomb_proba, no_recomb_proba)
-    V = [[left, right, int(state == h[0])] for left, right, state in R[0]]
-    T = [[] for _ in R]
-    for l in range(1, len(R)):
-        # Find the maximum probabilty and normalise
-        max_V_index = 0
-        max_p = -1
-        for j, seg in enumerate(V):
-            if seg[-1] >= max_p:
-                max_p = seg[-1]
-                max_V_index = j
-        for seg in V:
-            seg[-1] /= max_p
-        # print("max_index = ", max_V_index)
-        # print("V = ", V)
-        # print("R = ", R[l])
-        Vp = []
-        for left, right, v, state in segments_intersection(V, R[l]):
-            x = v * no_recomb_proba
-            assert V[max_V_index][-1] == 1.0
-            y = V[max_V_index][-1] * recomb_proba
-            if x > y:
-                T[l].append([[left, right], [left, right]])
-            else:
-                T[l].append([[left, right], V[max_V_index][:2]])
-            # print("\t", left, right, v, state, x, y, sep="\t")
-            emission = max(x, y) * int(state == h[l])
-            Vp.append([left, right, emission])
-        # Compress the adjacent segments.
-        # print("Vp = ", Vp)
-        V = [Vp[0]]
-        for left, right, v in Vp[1:]:
-            if V[-1][-1] == v:
-                # print("Sqaushing:", V[-1], left, right, v)
-                assert V[-1][1] == left
-                V[-1][1] = right
-            else:
-                V.append([left, right, v])
-    print("TRACEBACK")
-    print(V)
-    max_V_index = 0
-    max_p = -1
-    for j, seg in enumerate(V):
-        if seg[-1] >= max_p:
-            max_p = seg[-1]
-            max_V_index = j
-    print("max V = ", V[max_V_index])
-    left, right = V[max_V_index][:2]
-    traceback = [[(left, right)]]
-    for segs in T[::-1]:
-        print("T:", left, right)
-        next_left, next_right = None, None
-        # Find the segment that overlaps with left, right
-        print("\t", segs)
-        for current, prev in segs:
-            if current[0] == left and current[1] == right:
-                print("Found overlap!")
-                next_left, next_right = current
-                traceback = [[(left, right)]]
+    # # print("p = ", p, "q  = ", q)
+    # V = (H[:,0] == h[0]).astype(int)
+    # T = np.zeros_like(H)
+    # for l in range(1, m):
+    #     V_next = np.zeros(n)
+    #     # Find the maximum of V and normalise
+    #     max_V_index = np.argmax(V)
+    #     V = V / V[max_V_index]
+    #     # print("l = ", l, "max_V_index = ", max_V_index)
+    #     # print("h = ", h[l])
+    #     # print("H = ", H[:,l])
+    #     # print("V = ", V)
+    #     for j in range(n):
+    #         x = V[j] * qr
+    #         y = V[max_V_index] * pr
+    #         if x > y:
+    #             T[j, l] = j
+    #             z = x
+    #         else:
+    #             T[j, l] = max_V_index
+    #             z = y
+    #         if H[j][l] == h[l]:
+    #             V_next[j] = z * qm
+    #         else:
+    #             V_next[j] = z * pm
+    #     V = V_next
+    # recomb_proba = r / n
+    # no_recomb_proba = 1 - r + r / n
+    # print(recomb_proba, no_recomb_proba)
+    # V = [[left, right, int(state == h[0])] for left, right, state in R[0]]
+    # T = [[] for _ in R]
+    # for l in range(1, len(R)):
+    #     # Find the maximum probabilty and normalise
+    #     max_V_index = 0
+    #     max_p = -1
+    #     for j, seg in enumerate(V):
+    #         if seg[-1] >= max_p:
+    #             max_p = seg[-1]
+    #             max_V_index = j
+    #     for seg in V:
+    #         seg[-1] /= max_p
+    #     # print("max_index = ", max_V_index)
+    #     # print("V = ", V)
+    #     # print("R = ", R[l])
+    #     Vp = []
+    #     for left, right, v, state in segments_intersection(V, R[l]):
+    #         x = v * no_recomb_proba
+    #         assert V[max_V_index][-1] == 1.0
+    #         y = V[max_V_index][-1] * recomb_proba
+    #         if x > y:
+    #             T[l].append([[left, right], [left, right]])
+    #         else:
+    #             T[l].append([[left, right], V[max_V_index][:2]])
+    #         # print("\t", left, right, v, state, x, y, sep="\t")
+    #         emission = max(x, y) * int(state == h[l])
+    #         Vp.append([left, right, emission])
+    #     # Compress the adjacent segments.
+    #     # print("Vp = ", Vp)
+    #     V = [Vp[0]]
+    #     for left, right, v in Vp[1:]:
+    #         if V[-1][-1] == v:
+    #             # print("Sqaushing:", V[-1], left, right, v)
+    #             assert V[-1][1] == left
+    #             V[-1][1] = right
+    #         else:
+    #             V.append([left, right, v])
+    # print("TRACEBACK")
+    # print(V)
+    # max_V_index = 0
+    # max_p = -1
+    # for j, seg in enumerate(V):
+    #     if seg[-1] >= max_p:
+    #         max_p = seg[-1]
+    #         max_V_index = j
+    # print("max V = ", V[max_V_index])
+    # left, right = V[max_V_index][:2]
+    # traceback = [[(left, right)]]
+    # for segs in T[::-1]:
+    #     print("T:", left, right)
+    #     next_left, next_right = None, None
+    #     # Find the segment that overlaps with left, right
+    #     print("\t", segs)
+    #     for current, prev in segs:
+    #         if current[0] == left and current[1] == right:
+    #             print("Found overlap!")
+    #             next_left, next_right = current
+    #             traceback = [[(left, right)]]
 
-        left, right = next_left, next_right
+    #     left, right = next_left, next_right
 
 
 def decode_traceback(E, n):
@@ -498,7 +522,7 @@ def decode_traceback(E, n):
             T[start:end, l] = value
     return T
 
-def run_traceback(E, n, starting_point):
+def run_traceback_encoded(E, n, starting_point):
     """
     Returns the array of haplotype indexes that the specified encoded traceback
     defines for the given startin point at locus m - 1.
@@ -517,6 +541,14 @@ def run_traceback(E, n, starting_point):
         if v is None:
             v = P[l]
         P[l - 1] = v
+    return P
+
+def run_traceback(T, starting_point):
+    n, m = T.shape
+    P = np.zeros(m, dtype=int)
+    P[-1] = starting_point
+    for l in range(m - 2, -1, -1):
+        P[l] = T[P[l + 1], l + 1]
     return P
 
 
@@ -551,6 +583,71 @@ def encode_traceback(T):
         # print()
     return E
 
+def match_haplotype_encoded(R, n, h, rho, theta):
+    m = len(R)
+    r = 1 - np.exp(-rho / n)
+    pr = r / n
+    qr = 1 - r + r / n
+    # pm = mutation; qm no mutation
+    pm = 0.5 * theta / (n + theta)
+    qm = n / (n + theta) + 0.5 * theta / (n + theta)
+
+    V = [
+        [left, right, qm if h[0] == state else pm] for left, right, state in R[0]]
+    T = [[] for l in range(m)]
+    print("V = ", V)
+    for l in range(1, m):
+        max_v = -1
+        best_haplotype = -1
+        for start, end, v in V:
+            if v >= max_v:
+                max_v = v
+                best_haplotype = end - 1
+        # Renormalise V
+        for seg in V:
+            seg[-1] /= max_v
+        V_next = []
+        print("R = ", R[l])
+        print("V = ", V)
+        for start, end, v, state in segments_intersection(V, R[l]):
+            print("\t", start, end, v, state)
+            x = v * qr
+            y = pr  # v for maximum is 1 by normalisation
+            if x > y:
+                z = x
+            else:
+                z = y
+                if len(T[l]) == 0:
+                    T[l].append([start, end, best_haplotype])
+                else:
+                    if T[l][-1][1] == start:
+                        T[l][-1][1] = end
+                    else:
+                        T[l].append([start, end, best_haplotype])
+            if state == h[l]:
+                V_next.append([start, end, z * qm])
+            else:
+                V_next.append([start, end, z * pm])
+        # Compress the adjacent segments.
+        # print("Vp = ", Vp)
+        V = [V_next[0]]
+        for start, end, v in V_next[1:]:
+            if V[-1][-1] == v:
+                # print("Sqaushing:", V[-1], left, right, v)
+                assert V[-1][1] == start
+                V[-1][1] = end
+            else:
+                V.append([start, end, v])
+        # print("T = ", T[l])
+    best_haplotype = -1
+    for start, end, v in V:
+        if v >= max_v:
+            max_v = v
+            best_haplotype = end - 1
+    return T, best_haplotype
+
+
+
 def match_haplotype_simple(H, h, rho, theta):
     n, m = H.shape
     r = 1 - np.exp(-rho / n)
@@ -560,8 +657,12 @@ def match_haplotype_simple(H, h, rho, theta):
     pm = 0.5 * theta / (n + theta)
     qm = n / (n + theta) + 0.5 * theta / (n + theta)
     # print("p = ", p, "q  = ", q)
-    V = (H[:,0] == h[0]).astype(int)
+    condition = H[:,0] == h[0]
+    V = np.zeros(n)
+    V[condition] = qm
+    V[np.logical_not(condition)] = pm
     T = np.zeros_like(H)
+    print("V = ", V)
     for l in range(1, m):
         V_next = np.zeros(n)
         # Find the maximum of V and normalise
@@ -585,28 +686,29 @@ def match_haplotype_simple(H, h, rho, theta):
             else:
                 V_next[j] = z * pm
         V = V_next
+    return T, np.argmax(V)
 
-    E = encode_traceback(T)
-    Tp = decode_traceback(E, n)
-    assert np.all(Tp == T)
+    # E = encode_traceback(T)
+    # Tp = decode_traceback(E, n)
+    # assert np.all(Tp == T)
 
     # print()
     # print(pd.DataFrame(T))
     # Start the traceback.
-    P = np.zeros(m, dtype=int)
-    P[-1] = np.argmax(V)
-    for l in range(m - 2, -1, -1):
-        P[l] = T[P[l + 1], l + 1]
+    # P = np.zeros(m, dtype=int)
+    # P[-1] = np.argmax(V)
+    # for l in range(m - 2, -1, -1):
+    #     P[l] = T[P[l + 1], l + 1]
 
-    Q = run_traceback(E, n, np.argmax(V))
-    assert np.all(P == Q)
-    for q in E:
-        print(q)
+    # Q = run_traceback(E, n, np.argmax(V))
+    # assert np.all(P == Q)
+    # for q in E:
+    #     print(q)
 
-    print()
-    print(pd.DataFrame(P).T)
-    # print("\n", p)
-    return P
+    # print()
+    # print(pd.DataFrame(P).T)
+    # # print("\n", p)
+    # return P
 
 def ts_ls():
     """
@@ -620,7 +722,7 @@ def ts_ls():
     random.seed(2)
 
     ts = msprime.simulate(
-        45, length=5, recombination_rate=0, mutation_rate=1, random_seed=1)
+        20, length=5, recombination_rate=0, mutation_rate=1, random_seed=1)
     print(ts.num_trees, ts.num_sites)
     t = next(ts.trees())
     # t.draw("tree.svg")
@@ -647,8 +749,7 @@ def ts_ls():
             Vp[j, l:r] = v
     assert np.all(V == Vp)
     H = V.T
-    # print(pd.DataFrame(H))
-    # df = pd.DataFrame(H)
+    print(pd.DataFrame(H))
     n = ts.sample_size
     h = np.copy(H[0])
     j = 0
@@ -663,10 +764,24 @@ def ts_ls():
     # print("\n", h)
     print()
     # print(pd.DataFrame(h).T)
-    Q = match_haplotype_simple(H, h, 0.01, 0.01)
-    print("P = ", P)
-    print("Q = ", Q)
-    # match_haplotype(R, ts.sample_size, h, 0.01)
+    T, start1 = match_haplotype_simple(H, h, 0.01, 0.01)
+    P1 = run_traceback(T, start1)
+    # print(T, start)
+    # print("P = ", P)
+    # print("Q = ", Q)
+    E, start2 = match_haplotype_encoded(R, n, h, 0.01, 0.01)
+    P2 = run_traceback_encoded(E, n, start2)
+    # print(E, start)
+    print(start1, start2)
+    Tp = decode_traceback(E, n)
+
+    print("T = ")
+    print(pd.DataFrame(T))
+    print("Tp =")
+    print(pd.DataFrame(Tp))
+
+    print("P1 = ", P1)
+    print("P2 = ", P2)
 
 
 
