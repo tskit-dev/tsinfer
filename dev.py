@@ -595,7 +595,7 @@ def match_haplotype_encoded(R, n, h, rho, theta):
     V = [
         [left, right, qm if h[0] == state else pm] for left, right, state in R[0]]
     T = [[] for l in range(m)]
-    print("V = ", V)
+    # print("V = ", V)
     for l in range(1, m):
         max_v = -1
         best_haplotype = -1
@@ -607,13 +607,13 @@ def match_haplotype_encoded(R, n, h, rho, theta):
         for seg in V:
             seg[-1] /= max_v
         V_next = []
-        print("R = ", R[l])
-        print("V = ", V)
+        # print("R = ", len(R[l]))
+        # print("V = ", len(V))
         for start, end, v, state in segments_intersection(V, R[l]):
-            print("\t", start, end, v, state)
+            # print("\t", start, end, v, state)
             x = v * qr
             y = pr  # v for maximum is 1 by normalisation
-            if x > y:
+            if x >= y:
                 z = x
             else:
                 z = y
@@ -639,6 +639,7 @@ def match_haplotype_encoded(R, n, h, rho, theta):
             else:
                 V.append([start, end, v])
         # print("T = ", T[l])
+    max_v = -1
     best_haplotype = -1
     for start, end, v in V:
         if v >= max_v:
@@ -662,7 +663,7 @@ def match_haplotype_simple(H, h, rho, theta):
     V[condition] = qm
     V[np.logical_not(condition)] = pm
     T = np.zeros_like(H)
-    print("V = ", V)
+    # print("V = ", V)
     for l in range(1, m):
         V_next = np.zeros(n)
         # Find the maximum of V and normalise
@@ -675,7 +676,7 @@ def match_haplotype_simple(H, h, rho, theta):
         for j in range(n):
             x = V[j] * qr
             y = V[max_V_index] * pr
-            if x > y:
+            if x >= y:
                 T[j, l] = j
                 z = x
             else:
@@ -710,7 +711,7 @@ def match_haplotype_simple(H, h, rho, theta):
     # # print("\n", p)
     # return P
 
-def ts_ls():
+def ts_ls(n):
     """
     Experimental code to run L&S on a tree sequence.
     """
@@ -722,8 +723,8 @@ def ts_ls():
     random.seed(2)
 
     ts = msprime.simulate(
-        20, length=5, recombination_rate=0, mutation_rate=1, random_seed=1)
-    print(ts.num_trees, ts.num_sites)
+        n, length=500, recombination_rate=0, mutation_rate=1, random_seed=1)
+    # print(ts.num_trees, ts.num_sites)
     t = next(ts.trees())
     # t.draw("tree.svg")
     order = np.array(list(t.leaves(t.root)), dtype=int)
@@ -749,13 +750,13 @@ def ts_ls():
             Vp[j, l:r] = v
     assert np.all(V == Vp)
     H = V.T
-    print(pd.DataFrame(H))
+    # print(pd.DataFrame(H))
     n = ts.sample_size
     h = np.copy(H[0])
     j = 0
     P = np.zeros(ts.num_sites, dtype=int)
-    # for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
-    for k in [10, ts.num_sites]:
+    for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
+    # for k in [10, ts.num_sites]:
         haplotype = random.randint(0, n)
         h[j: k] = H[haplotype][j:k]
         P[j: k] = haplotype
@@ -764,23 +765,28 @@ def ts_ls():
     # print("\n", h)
     print()
     # print(pd.DataFrame(h).T)
-    T, start1 = match_haplotype_simple(H, h, 0.01, 0.01)
-    P1 = run_traceback(T, start1)
+    # T, start1 = match_haplotype_simple(H, h, 0.01, 0.01)
+    # P1 = run_traceback(T, start1)
     # print(T, start)
     # print("P = ", P)
     # print("Q = ", Q)
     E, start2 = match_haplotype_encoded(R, n, h, 0.01, 0.01)
     P2 = run_traceback_encoded(E, n, start2)
+    for row in E:
+        print(row)
+    # print(P2)
+    # print("start = ", start2)
     # print(E, start)
-    print(start1, start2)
-    Tp = decode_traceback(E, n)
+    # print("Starts = ", start1, start2)
+    # Tp = decode_traceback(E, n)
 
-    print("T = ")
-    print(pd.DataFrame(T))
-    print("Tp =")
-    print(pd.DataFrame(Tp))
+    # print("T = ")
+    # print(pd.DataFrame(T))
+    # print("Tp =")
+    # print(pd.DataFrame(Tp))
 
-    print("P1 = ", P1)
+    # print("P1 = ", P1)
+    print("P  = ", P)
     print("P2 = ", P2)
 
 
@@ -789,5 +795,7 @@ if __name__ == "__main__":
     # main()
     # example()
     # bug()
-    ts_ls()
+    # for n in [100, 1000, 10000, 20000, 10**5]:
+    #     ts_ls(n)
+    ts_ls(100)
 
