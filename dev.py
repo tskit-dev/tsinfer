@@ -595,7 +595,7 @@ def match_haplotype_encoded(R, n, h, rho, theta):
     V = [
         [left, right, qm if h[0] == state else pm] for left, right, state in R[0]]
     T = [[] for l in range(m)]
-    # print("V = ", V)
+    print("V = ", V)
     for l in range(1, m):
         max_v = -1
         best_haplotype = -1
@@ -607,8 +607,8 @@ def match_haplotype_encoded(R, n, h, rho, theta):
         for seg in V:
             seg[-1] /= max_v
         V_next = []
-        # print("R = ", len(R[l]))
-        # print("V = ", len(V))
+        print("R = ", R[l])
+        print("V = ", V)
         for start, end, v, state in segments_intersection(V, R[l]):
             # print("\t", start, end, v, state)
             x = v * qr
@@ -689,27 +689,83 @@ def match_haplotype_simple(H, h, rho, theta):
         V = V_next
     return T, np.argmax(V)
 
-    # E = encode_traceback(T)
-    # Tp = decode_traceback(E, n)
-    # assert np.all(Tp == T)
 
-    # print()
-    # print(pd.DataFrame(T))
-    # Start the traceback.
-    # P = np.zeros(m, dtype=int)
-    # P[-1] = np.argmax(V)
-    # for l in range(m - 2, -1, -1):
-    #     P[l] = T[P[l + 1], l + 1]
+def trees_leaf_lists(ts):
+    """
+    Returns an iterator over the trees and leaf lists of this speficied tree
+    sequence.
+    """
+    trees = ts.trees()
+    for pi, xi, head, tail in leaf_sets(ts, list(ts.samples())):
+        t = next(trees)
+        pi_prime = [t.parent(u) for u in range(ts.num_nodes)]
+        assert pi == pi_prime
+        yield t, head, tail
 
-    # Q = run_traceback(E, n, np.argmax(V))
-    # assert np.all(P == Q)
-    # for q in E:
-    #     print(q)
+def leaf_list_partition(tree, head, tail, u):
+    """
+    Returns the partition of (h, t) pairs defining the partition of
+    leaf list to the left, under and right of the specified node.
+    If left and right are empty they are returned as None.
+    """
+    l_h = None
+    l_t = None
+    m_h = head[u]
+    m_t = tail[u]
+    r_h = None
+    r_t = None
+    root_h = head[tree.root]
+    root_t = tail[tree.root]
+    if m_h != root_h:
+        l_h = root_h
+        l_t = m_h.prev
+    if m_t != root_t:
+        r_h = m_t.next
+        r_t = root_t
+    l = l_h, l_t
+    r = r_h, r_t
+    assert m_h is not None
+    assert m_t is not None
+    return l, (m_h, m_t), r
 
-    # print()
-    # print(pd.DataFrame(P).T)
-    # # print("\n", p)
-    # return P
+def match_haplotype_ts(ts, h, rho, theta):
+    # Abandoning this because the problem of finding the intersection of
+    # the leaf lists in V and in the mutation partition is difficult. We
+    # need some way of telling where we are in the leaf list, which isn't
+    # possible with the current linked list approach. We need some more
+    # sophisticated data structure that maintains order, and allows us to
+    # move chunks of leaves around within the tree. There is most likely
+    # a very fast implementation of L&S here, but it doesn't get us any
+    # closer to the immediate goal.
+    n = ts.sample_size
+    m = ts.num_sites
+    r = 1 - np.exp(-rho / n)
+    pr = r / n
+    qr = 1 - r + r / n
+    # pm = mutation; qm no mutation
+    pm = 0.5 * theta / (n + theta)
+    qm = n / (n + theta) + 0.5 * theta / (n + theta)
+
+    V = []
+    iterator = trees_leaf_lists(ts)
+    tree, head, tail = next(iterator)
+    for site in tree.sites():
+        for mutation in site.mutations:
+            print(site.position, mutation.node)
+            (l_h, l_t), (m_h, m_t), (r_h, r_t) = leaf_list_partition(
+                    tree, head, tail, mutation.node)
+            print("\t", leaf_list(l_h, l_t), leaf_list(m_h, m_t), leaf_list(r_h, r_t))
+            if l_h is not None:
+                V.append([l_h, l_t, pm])
+            V.append([m_h, m_t, qm])
+            if r_h is not None:
+                V.append([r_h, r_t, pm])
+            # l, m, r = leaf_list_intersection(tree, head, tail, V, mutation.node)
+
+            # print("V = ", V)
+        break
+
+
 
 def ts_ls(n):
     """
@@ -723,7 +779,7 @@ def ts_ls(n):
     random.seed(2)
 
     ts = msprime.simulate(
-        n, length=500, recombination_rate=0, mutation_rate=1, random_seed=1)
+        n, length=10, recombination_rate=0, mutation_rate=1, random_seed=1)
     # print(ts.num_trees, ts.num_sites)
     t = next(ts.trees())
     # t.draw("tree.svg")
@@ -750,13 +806,13 @@ def ts_ls(n):
             Vp[j, l:r] = v
     assert np.all(V == Vp)
     H = V.T
-    # print(pd.DataFrame(H))
+    print(pd.DataFrame(H))
     n = ts.sample_size
     h = np.copy(H[0])
     j = 0
     P = np.zeros(ts.num_sites, dtype=int)
-    for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
-    # for k in [10, ts.num_sites]:
+    # for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
+    for k in [10, ts.num_sites]:
         haplotype = random.randint(0, n)
         h[j: k] = H[haplotype][j:k]
         P[j: k] = haplotype
@@ -772,8 +828,8 @@ def ts_ls(n):
     # print("Q = ", Q)
     E, start2 = match_haplotype_encoded(R, n, h, 0.01, 0.01)
     P2 = run_traceback_encoded(E, n, start2)
-    for row in E:
-        print(row)
+    # for row in E:
+    #     print(row)
     # print(P2)
     # print("start = ", start2)
     # print(E, start)
@@ -790,6 +846,168 @@ def ts_ls(n):
     print("P2 = ", P2)
 
 
+class LeafListNode(object):
+    def __init__(self, value):
+        self.value = value
+        self.next = None
+        self.prev = None
+
+    def __str__(self):
+        next = -1 if self.next is None else self.next.value
+        return "{}->{}".format(self.value, next)
+
+    def __repr__(self):
+        return str(self.value)
+
+def update_leaf_lists(u, pi, xi, head, tail):
+    while u != -1:
+        head[u] = None
+        tail[u] = None
+        for v in xi[u]:
+            if head[v] is not None:
+                if head[u] is None:
+                    head[u] = head[v]
+                    tail[u] = tail[v]
+                else:
+                    tail[u].next = head[v]
+                    head[v].prev = tail[u]
+                    tail[u] = tail[v]
+        u = pi[u]
+
+
+def leaf_sets(ts, S):
+    """
+    Sequentially visits all trees in the specified
+    tree sequence and maintain the leaf sets for all leaves in
+    specified set for each node.
+    """
+    l = [e.left for e in ts.edgesets()]
+    r = [e.right for e in ts.edgesets()]
+    u = [e.parent for e in ts.edgesets()]
+    c = [e.children for e in ts.edgesets()]
+    t = [r.time for r in ts.records()]
+    # Calculate the index vectors
+    M = ts.num_edgesets
+    I = sorted(range(M), key=lambda j: (l[j], t[j]))
+    O = sorted(range(M), key=lambda j: (r[j], -t[j]))
+    pi = [-1 for j in range(max(u) + 1)]
+    xi = [[] for j in range(max(u) + 1)]
+    head = [None for j in range(max(u) + 1)]
+    tail = [None for j in range(max(u) + 1)]
+    for j in S:
+        node = LeafListNode(j)
+        head[j] = node
+        tail[j] = node
+    j = 0
+    k = 0
+    while j < M:
+        x = l[I[j]]
+        while r[O[k]] == x:
+            h = O[k]
+            xi[u[h]] = []
+            for q in c[h]:
+                pi[q] = -1
+            update_leaf_lists(u[h], pi, xi, head, tail)
+            k += 1
+        while j < M and l[I[j]] == x:
+            h = I[j]
+            for q in c[h]:
+                pi[q] = u[h]
+            xi[u[h]] = c[h]
+            update_leaf_lists(u[h], pi, xi, head, tail)
+            j += 1
+        yield pi, xi, head, tail
+
+
+def leaf_list(head, tail, forward=True):
+    if head is None:
+        return []
+    ret = []
+    if forward:
+        u = head
+        while True:
+            ret.append(u.value)
+            if u == tail:
+                break
+            u = u.next
+    else:
+        u = tail
+        while True:
+            ret.append(u.value)
+            if u == head:
+                break
+            u = u.prev
+    return ret
+
+def leaf_lists_dev():
+
+    random.seed(1)
+    ts = msprime.simulate(
+        10, length=1, recombination_rate=0.1, mutation_rate=1, random_seed=1)
+
+    V = np.zeros((ts.num_sites, ts.sample_size), dtype=int)
+    for variant in ts.variants():
+        V[variant.index, :] = variant.genotypes
+    H = V.T
+    print(pd.DataFrame(H))
+    n = ts.sample_size
+    h = np.copy(H[0])
+    j = 0
+    # for k in [8, 20, 60, 100, ts.num_sites - 10, ts.num_sites]:
+    P = np.zeros(ts.num_sites, dtype=int)
+    for k in [10, ts.num_sites]:
+        haplotype = random.randint(0, n)
+        h[j: k] = H[haplotype][j:k]
+        P[j: k] = haplotype
+        j = k
+    print(h)
+    match_haplotype_ts(ts, h, 0.01, 0.01)
+
+
+
+    # trees = ts.trees(leaf_lists=True)
+    # for pi, xi, head, tail in leaf_sets(ts, list(ts.samples())):
+    #     print("NEW TREE")
+    #     t = next(trees)
+    #     pi_prime = [t.parent(u) for u in range(ts.num_nodes)]
+    #     assert pi == pi_prime
+    #     # print(pi)
+    #     # print(pi_prime)
+    #     # print(leaf_list(head[t.root], tail[t.root]))
+    #     leaves = list(t.leaves(t.root))
+    #     # print(leaves)
+    #     assert leaf_list(head[t.root], tail[t.root]) == leaves
+    #     assert leaf_list(head[t.root], tail[t.root], forward=False) == list(reversed(leaves))
+    #     for site in t.sites():
+    #         for mutation in site.mutations:
+    #             u = mutation.node
+    #             l_h = None
+    #             l_t = None
+    #             m_h = head[u]
+    #             m_t = tail[u]
+    #             r_h = None
+    #             r_t = None
+    #             root_h = head[t.root]
+    #             root_t = tail[t.root]
+    #             if m_h != root_h:
+    #                 l_h = root_h
+    #                 l_t = m_h.prev
+    #             if m_t != root_t:
+    #                 r_h = m_t.next
+    #                 r_t = root_t
+    #             l = []
+    #             if l_h is not None:
+    #                 l = leaf_list(l_h, l_t)
+    #             r = []
+    #             if r_h is not None:
+    #                 r = leaf_list(r_h, r_t)
+    #             m = leaf_list(m_h, m_t)
+    #             assert leaves == l + m + r
+    #             assert leaves == leaf_list(root_h, root_t)
+    #             print(l, m, r)
+
+
+    # for t in ts.trees():
 
 if __name__ == "__main__":
     # main()
@@ -797,5 +1015,7 @@ if __name__ == "__main__":
     # bug()
     # for n in [100, 1000, 10000, 20000, 10**5]:
     #     ts_ls(n)
-    ts_ls(100)
+    # ts_ls(20)
+    leaf_lists_dev()
+
 
