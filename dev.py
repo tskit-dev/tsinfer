@@ -7,6 +7,7 @@ import itertools
 import multiprocessing
 import pandas as pd
 import random
+import statistics
 
 import msprime
 
@@ -1009,6 +1010,116 @@ def leaf_lists_dev():
 
     # for t in ts.trees():
 
+####################################################
+
+
+class HaplotypeStore(object):
+    """
+    Stores haplotypes as a per-locus run-length encoded arrays. Visualised
+    as a column encoding of the haplotype matrix, i.e., each column is a variant,
+    which is run-lenght encoded internally.
+    """
+    def __init__(self, num_haplotypes, num_sites):
+        self.num_sites = num_sites
+        self.num_haplotypes = num_haplotypes
+        self.sites = [[] for _ in range(num_sites)]
+
+    def run_length_encode(self, A):
+        s = 0
+        v = A[s]
+        segments = []
+        for j in range(1, A.shape[0]):
+            if A[j] != v:
+                if v != -1:
+                    segments.append((s, j, v))
+                v = A[j]
+                s = j
+        if v != -1:
+            segments.append((s, j + 1, v))
+        return segments
+
+    def run_length_decode(self, segments):
+        A = -1 * np.ones(self.num_haplotypes, dtype=int)
+        for start, end, value in segments:
+            A[start:end] = value
+        return A
+
+    def set_column(self, l, genotypes):
+        self.sites[l] = self.run_length_encode(genotypes)
+
+    def print_state(self):
+        print("n = ", self.num_haplotypes)
+        print("m = ", self.num_sites)
+        print("Encoded")
+        for j, site in enumerate(self.sites):
+            print(j, site, sep="\t")
+        print("Decoded")
+        H = np.zeros((self.num_haplotypes, self.num_sites), dtype=int)
+        for l, sites in enumerate(self.sites):
+            H[:,l] = self.run_length_decode(sites)
+        print(H)
+
+
+class AncestorGenerator(object):
+    """
+    Infers a set of ancestors for a given haplotype store of samples.
+    """
+    def __init__(self, samples):
+        self.samples = samples
+        self.num_sites = samples.num_sites
+        self.frequency = np.zeros(samples.num_sites, dtype=int)
+        for l, site in enumerate(self.samples.sites):
+            for start, end, value in site:
+                if value == 1:
+                    self.frequency[l] += end - start
+        self.site_order = np.argsort(self.frequency[self.frequency > 1])[::-1]
+
+    def generate(self, k):
+        """
+        Generates the kth oldest ancestor.
+        """
+        focal_site = self.site_order[k]
+        print("Generate the", k, " ancestor for site", focal_site)
+
+
+
+
+    def print_state(self):
+        print("Samples = ")
+        self.samples.print_state
+        print("frequency  = ", self.frequency)
+        print("site order = ", self.site_order)
+
+
+def segment_stats():
+
+    for n in [10, 100, 1000, 10000]:
+        ts = msprime.simulate(
+            n, length=1000, recombination_rate=0.1, mutation_rate=1, random_seed=3)
+        hs = HaplotypeStore(ts.sample_size, ts.num_sites)
+        for variant in ts.variants():
+            hs.set_column(variant.index, variant.genotypes)
+        mean_segments = statistics.mean(len(site) for site in hs.sites)
+        print(n, ts.num_sites, ts.num_trees, mean_segments, sep="\t")
+
+def segment_algorithm():
+
+    ts = msprime.simulate(
+        10, length=1, recombination_rate=0.1, mutation_rate=1, random_seed=3)
+    samples = HaplotypeStore(ts.sample_size, ts.num_sites)
+    for variant in ts.variants():
+        samples.set_column(variant.index, variant.genotypes)
+    samples.print_state()
+
+    ag = AncestorGenerator(samples)
+    ag.print_state()
+    for site in range(ag.site_order.shape[0]):
+        a = ag.generate(site)
+
+
+
+    # ancestors = hs.infer_ancestors()
+
 if __name__ == "__main__":
     # main()
     # example()
@@ -1016,6 +1127,8 @@ if __name__ == "__main__":
     # for n in [100, 1000, 10000, 20000, 10**5]:
     #     ts_ls(n)
     # ts_ls(20)
-    leaf_lists_dev()
+    # leaf_lists_dev()
 
+    segment_algorithm()
+    # segment_stats()
 
