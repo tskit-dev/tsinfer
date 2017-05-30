@@ -8,6 +8,8 @@ import multiprocessing
 import pandas as pd
 import random
 import statistics
+import attr
+import collections
 
 import msprime
 
@@ -228,35 +230,35 @@ def verify_breaks(n, H, P):
                 assert H[u, l] != -1
                 u = P[u, l]
 
-def segments_intersection(A, B):
-    """
-    Returns an iterator over the intersection of the specified ordered lists of
-    segments [(start, end, value), ...]. For each (start, end) intersection that
-    we find, return the pair of values in order A, B.
-    """
-    # print("INTERSECT")
-    # print("\t", A)
-    # print("\t", B)
-    A_iter = iter(A)
-    B_iter = iter(B)
-    A_head = next(A_iter)
-    B_head = next(B_iter)
-    while A_head is not None and B_head is not None:
-        A_s, A_e, A_v = A_head
-        B_s, B_e, B_v = B_head
-        # print("A_head = ", A_head)
-        # print("B_head = ", B_head)
-        if A_s <= B_s:
-            if A_e > B_s:
-                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
-        else:
-            if B_e > A_s:
-                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+# def segments_intersection(A, B):
+#     """
+#     Returns an iterator over the intersection of the specified ordered lists of
+#     segments [(start, end, value), ...]. For each (start, end) intersection that
+#     we find, return the pair of values in order A, B.
+#     """
+#     # print("INTERSECT")
+#     # print("\t", A)
+#     # print("\t", B)
+#     A_iter = iter(A)
+#     B_iter = iter(B)
+#     A_head = next(A_iter)
+#     B_head = next(B_iter)
+#     while A_head is not None and B_head is not None:
+#         A_s, A_e, A_v = A_head
+#         B_s, B_e, B_v = B_head
+#         # print("A_head = ", A_head)
+#         # print("B_head = ", B_head)
+#         if A_s <= B_s:
+#             if A_e > B_s:
+#                 yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+#         else:
+#             if B_e > A_s:
+#                 yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
 
-        if A_e <= B_e:
-            A_head = next(A_iter, None)
-        if B_e <= A_e:
-            B_head = next(B_iter, None)
+#         if A_e <= B_e:
+#             A_head = next(A_iter, None)
+#         if B_e <= A_e:
+#             B_head = next(B_iter, None)
 
 
 
@@ -1012,6 +1014,12 @@ def leaf_lists_dev():
 
 ####################################################
 
+@attr.s
+class Segment(object):
+    start = attr.ib(default=None)
+    end = attr.ib(default=None)
+    value = attr.ib(default=None)
+
 
 class HaplotypeStore(object):
     """
@@ -1031,17 +1039,17 @@ class HaplotypeStore(object):
         for j in range(1, A.shape[0]):
             if A[j] != v:
                 if v != -1:
-                    segments.append((s, j, v))
+                    segments.append(Segment(s, j, v))
                 v = A[j]
                 s = j
         if v != -1:
-            segments.append((s, j + 1, v))
+            segments.append(Segment(s, j + 1, v))
         return segments
 
     def run_length_decode(self, segments):
         A = -1 * np.ones(self.num_haplotypes, dtype=int)
-        for start, end, value in segments:
-            A[start:end] = value
+        for seg in segments:
+            A[seg.start:seg.end] = seg.value
         return A
 
     def set_column(self, l, genotypes):
@@ -1060,6 +1068,38 @@ class HaplotypeStore(object):
         print(H)
 
 
+def segments_intersection(A, B):
+    """
+    Returns an iterator over the intersection of the specified ordered lists of
+    segments [(start, end, value), ...]. For each (start, end) intersection that
+    we find, return the pair of values in order A, B.
+    """
+    # print("INTERSECT")
+    # print("\t", A)
+    # print("\t", B)
+    A_iter = iter(A)
+    B_iter = iter(B)
+    A_head = next(A_iter)
+    B_head = next(B_iter)
+    while A_head is not None and B_head is not None:
+        A_s, A_e, A_v = A_head.start, A_head.end, A_head.value
+        B_s, B_e, B_v = B_head.start, B_head.end, B_head.value
+        # print("A_head = ", A_head)
+        # print("B_head = ", B_head)
+        if A_s <= B_s:
+            if A_e > B_s:
+                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+        else:
+            if B_e > A_s:
+                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+
+        if A_e <= B_e:
+            A_head = next(A_iter, None)
+        if B_e <= A_e:
+            B_head = next(B_iter, None)
+
+
+
 class AncestorGenerator(object):
     """
     Infers a set of ancestors for a given haplotype store of samples.
@@ -1069,26 +1109,84 @@ class AncestorGenerator(object):
         self.num_sites = samples.num_sites
         self.frequency = np.zeros(samples.num_sites, dtype=int)
         for l, site in enumerate(self.samples.sites):
-            for start, end, value in site:
-                if value == 1:
-                    self.frequency[l] += end - start
+            for seg in site:
+                if seg.value == 1:
+                    self.frequency[l] += seg.end - seg.start
         self.site_order = np.argsort(self.frequency[self.frequency > 1])[::-1]
 
     def generate(self, k):
         """
         Generates the kth oldest ancestor.
         """
+        # This is a partial implementation. It seems like that the code for
+        # finding the frequency at each site and choosing the state of the
+        # ancestor is good, and can be implemented efficiently. However,
+        # choosing the set of samples that we can copy from based on 4 gametes
+        # violations is more difficult. We'll probably need to have a binary
+        # tree representing the various intervals, each interval holding a
+        # list of up to 4 values (similar to the approach taken in the
+        # simulator for tracking extant ancestral material). An interval
+        # here represents a run-length encoded set of ancestors. As ancestors
+        # fail the 4 gametes tests we remove them from the run-length encoded list
+        # of potential ancestors.
         focal_site = self.site_order[k]
-        print("Generate the", k, " ancestor for site", focal_site)
+        print("Generate the", k, " ancestor for site", focal_site,
+                self.samples.sites[focal_site])
+        all_sites = self.site_order[:k]
+        all_sites.sort()
+        print("all =  ", all_sites)
+        split = np.searchsorted(all_sites, focal_site)
+        print("split = ", split)
+        left = all_sites[:split][::-1]
+        right = all_sites[split:]
+        print("left = ", left)
+        print("LEFT")
+        samples = [
+            seg for seg in self.samples.sites[focal_site] if seg.value == 1]
+        patterns = collections.defaultdict(set)
+        ancestor = {}
+        for site in left:
+            allele_counts = [0, 0]
+            for start, end, _, v, in segments_intersection(
+                    samples, self.samples.sites[site]):
+                # print("\t\t", start, end, v, sep="\t")
+                allele_counts[v] += end - start
+            allele = np.argmax(allele_counts)
+            ancestor[site] = allele
+            print("\t older site:", site, allele_counts, allele)
+            # After assigning the alleleic value to the ancestor at this
+            # site, update the observed pairs among samples. For each
+            # interval that breaks the four gametes test requirement remove
+            # this interval from the samples.
+            for start, end, _, v, in segments_intersection(
+                    samples, self.samples.sites[site]):
+                print("\t\t", start, end, v, allele, sep="\t")
+                pattern = v, allele
+                patterns[(start, end)].add(pattern)
+                if len(patterns[(start, end)]) == 4:
+                    print("CONFLICT")
+            print("\t\tpatterns")
+            for k, v in patterns.items():
+                print("\t\t", k, "->", v)
 
+        # print("RIGHT")
+        # samples = self.samples.sites[focal_site]
+        # for j in right:
+        #     allele_counts = [0, 0]
+        #     for start, end, v_focal, v, in segments_intersection(
+        #             samples, self.samples.sites[j]):
+        #         if v_focal == 1:
+        #             # print("\t\t", start, end, v)
+        #             allele_counts[v] += end - start
+        #     print("\t older site:", j, allele_counts)
 
 
 
     def print_state(self):
         print("Samples = ")
         self.samples.print_state
-        print("frequency  = ", self.frequency)
-        print("site order = ", self.site_order)
+        print("frequency  = \n", self.frequency, sep="")
+        print("site order = \n", self.site_order, sep="")
 
 
 def segment_stats():
@@ -1105,7 +1203,7 @@ def segment_stats():
 def segment_algorithm():
 
     ts = msprime.simulate(
-        10, length=1, recombination_rate=0.1, mutation_rate=1, random_seed=3)
+        10, length=10, recombination_rate=0.1, mutation_rate=1, random_seed=3)
     samples = HaplotypeStore(ts.sample_size, ts.num_sites)
     for variant in ts.variants():
         samples.set_column(variant.index, variant.genotypes)
