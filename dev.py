@@ -1067,6 +1067,176 @@ class HaplotypeStore(object):
             H[:,l] = self.run_length_decode(sites)
         print(H)
 
+    def decode_traceback(self, E):
+        """
+        Decode the specified encoded traceback matrix into the standard integer
+        matrix.
+        """
+        m = len(E)
+        n = self.num_haplotypes
+        T = np.zeros((n, m), dtype=int)
+        for l in range(1, m):
+            T[:,l] = np.arange(n)
+            for seg in E[l]:
+                T[seg.start:seg.end, l] = seg.value
+        return T
+
+    def run_traceback(self, E, starting_point):
+        """
+        Returns the array of haplotype indexes that the specified encoded traceback
+        defines for the given startin point at locus m - 1.
+        """
+        m = len(E)
+        n = self.num_haplotypes
+        P = np.zeros(m, dtype=int)
+        P[-1] = starting_point
+        for l in range(m - 1, 0, -1):
+            v = None
+            for seg in E[l]:
+                if seg.start <= P[l] < seg.end:
+                    v = seg.value
+                    break
+                if seg.start > P[l]:
+                    break
+            if v is None:
+                v = P[l]
+            P[l - 1] = v
+        return P
+
+    def best_path(self, h, rho, theta):
+        m = self.num_sites
+        n = self.num_haplotypes
+        r = 1 - np.exp(-rho / n)
+        pr = r / n
+        qr = 1 - r + r / n
+        # pm = mutation; qm no mutation
+        pm = 0.5 * theta / (n + theta)
+        qm = n / (n + theta) + 0.5 * theta / (n + theta)
+        print(h)
+        V = [
+            Segment(seg.start, seg.end, pm if h[0] == seg.value else pm)
+                for seg in self.sites[0]]
+        T = [[] for l in range(m)]
+        # print("V = ", V)
+        for l in range(1, m):
+            max_v = -1
+            best_haplotype = -1
+            for seg in V:
+                if seg.value >= max_v:
+                    max_v = seg.value
+                    best_haplotype = seg.end - 1
+            # Renormalise V
+            for seg in V:
+                seg.value /= max_v
+            V_next = []
+            # print("R = ", self.sites[l])
+            # print("V = ", V)
+            for start, end, v, state in segments_intersection(V, self.sites[l]):
+                # print("\t", start, end, v, state)
+                x = v * qr
+                y = pr  # v for maximum is 1 by normalisation
+                if x >= y:
+                    z = x
+                else:
+                    z = y
+                    if len(T[l]) == 0:
+                        T[l].append(Segment(start, end, best_haplotype))
+                    else:
+                        if T[l][-1].end == start:
+                            T[l][-1].end = end
+                        else:
+                            T[l].append(Segment(start, end, best_haplotype))
+                if state == h[l]:
+                    V_next.append(Segment(start, end, z * qm))
+                else:
+                    V_next.append(Segment(start, end, z * pm))
+            # Compress the adjacent segments.
+            # print("Vp = ", V_next)
+            V = [V_next[0]]
+            for seg in V_next[1:]:
+                if V[-1].value == seg.value and V[-1].end == seg.start:
+                    # print("Sqaushing:", V[-1], left, right, v)
+                    # assert V[-1].end == seg.start
+                    V[-1].end = seg.end
+                else:
+                    V.append(seg)
+            # print("T = ", T[l])
+        max_v = -1
+        best_haplotype = -1
+        for seg in V:
+            if seg.value >= max_v:
+                max_v = seg.value
+                best_haplotype = seg.end - 1
+        return T, best_haplotype
+
+
+    # def match_haplotype_encoded(R, n, h, rho, theta):
+    #     m = len(R)
+    #     r = 1 - np.exp(-rho / n)
+    #     pr = r / n
+    #     qr = 1 - r + r / n
+    #     # pm = mutation; qm no mutation
+    #     pm = 0.5 * theta / (n + theta)
+    #     qm = n / (n + theta) + 0.5 * theta / (n + theta)
+
+    #     V = [
+    #         [left, right, qm if h[0] == state else pm] for left, right, state in R[0]]
+    #     T = [[] for l in range(m)]
+    #     print("V = ", V)
+    #     for l in range(1, m):
+    #         max_v = -1
+    #         best_haplotype = -1
+    #         for start, end, v in V:
+    #             if v >= max_v:
+    #                 max_v = v
+    #                 best_haplotype = end - 1
+    #         # Renormalise V
+    #         for seg in V:
+    #             seg[-1] /= max_v
+    #         V_next = []
+    #         print("R = ", R[l])
+    #         print("V = ", V)
+    #         for start, end, v, state in segments_intersection(V, R[l]):
+    #             # print("\t", start, end, v, state)
+    #             x = v * qr
+    #             y = pr  # v for maximum is 1 by normalisation
+    #             if x >= y:
+    #                 z = x
+    #             else:
+    #                 z = y
+    #                 if len(T[l]) == 0:
+    #                     T[l].append([start, end, best_haplotype])
+    #                 else:
+    #                     if T[l][-1][1] == start:
+    #                         T[l][-1][1] = end
+    #                     else:
+    #                         T[l].append([start, end, best_haplotype])
+    #             if state == h[l]:
+    #                 V_next.append([start, end, z * qm])
+    #             else:
+    #                 V_next.append([start, end, z * pm])
+    #         # Compress the adjacent segments.
+    #         # print("Vp = ", Vp)
+    #         V = [V_next[0]]
+    #         for start, end, v in V_next[1:]:
+    #             if V[-1][-1] == v:
+    #                 # print("Sqaushing:", V[-1], left, right, v)
+    #                 assert V[-1][1] == start
+    #                 V[-1][1] = end
+    #             else:
+    #                 V.append([start, end, v])
+    #         # print("T = ", T[l])
+    #     max_v = -1
+    #     best_haplotype = -1
+    #     for start, end, v in V:
+    #         if v >= max_v:
+    #             max_v = v
+    #             best_haplotype = end - 1
+    #     return T, best_haplotype
+
+
+
+
 
 def segments_intersection(A, B):
     """
@@ -1181,7 +1351,6 @@ class AncestorGenerator(object):
         #     print("\t older site:", j, allele_counts)
 
 
-
     def print_state(self):
         print("Samples = ")
         self.samples.print_state
@@ -1203,20 +1372,43 @@ def segment_stats():
 def segment_algorithm():
 
     ts = msprime.simulate(
-        10, length=10, recombination_rate=0.1, mutation_rate=1, random_seed=3)
-    samples = HaplotypeStore(ts.sample_size, ts.num_sites)
+        10, length=6, recombination_rate=0.5, mutation_rate=1, random_seed=3)
+    # samples = HaplotypeStore(ts.sample_size, ts.num_sites)
+    # for variant in ts.variants():
+    #     samples.set_column(variant.index, variant.genotypes)
+    # samples.print_state()
+    # ag = AncestorGenerator(samples)
+    # ag.print_state()
+    # for site in range(ag.site_order.shape[0]):
+    #     a = ag.generate(site)
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
-        samples.set_column(variant.index, variant.genotypes)
-    samples.print_state()
-
-    ag = AncestorGenerator(samples)
-    ag.print_state()
-    for site in range(ag.site_order.shape[0]):
-        a = ag.generate(site)
-
-
-
-    # ancestors = hs.infer_ancestors()
+        S[:, variant.index] = variant.genotypes
+    print("S = ")
+    print(S)
+    H = make_ancestors(S)[ts.sample_size:]
+    print("Ancestors:")
+    print(H)
+    # for a in H:
+    #     print(a)
+    ancestors = HaplotypeStore(H.shape[0], H.shape[1])
+    for j in range(H.shape[1]):
+        ancestors.set_column(j, H[:, j])
+    ancestors.print_state()
+    for j in range(ts.sample_size):
+        h = S[j]
+        T, best_haplotype = ancestors.best_path(h, 0.001, 0.001)
+        # print(best_haplotype)
+        # print(T)
+        T_decoded = ancestors.decode_traceback(T)
+        print(T_decoded)
+        P = ancestors.run_traceback(T, best_haplotype)
+        print(P)
+        hp = H[P, np.arange(ancestors.num_sites)]
+        # ancestors = hs.infer_ancestors()
+        print(hp)
+        print(h)
+        print()
 
 if __name__ == "__main__":
     # main()
