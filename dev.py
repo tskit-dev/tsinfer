@@ -10,6 +10,7 @@ import random
 import statistics
 import attr
 import collections
+import profilehooks
 
 import msprime
 
@@ -1067,6 +1068,10 @@ class HaplotypeStore(object):
             H[:,l] = self.run_length_decode(sites)
         print(H)
 
+    def print_stats(self):
+        mean_segments = statistics.mean(len(s) for s in self.sites)
+        print("Mean ancestry segments = ", mean_segments)
+
     def decode_traceback(self, E):
         """
         Decode the specified encoded traceback matrix into the standard integer
@@ -1103,7 +1108,30 @@ class HaplotypeStore(object):
             P[l - 1] = v
         return P
 
-    def best_path(self, h, rho, theta):
+    def get_site(self, site, haplotype_start):
+        """
+        Returns the run-length encoding for the specified site beginning at the
+        specified haplotype index. That is, only haplotypes >= haplotype_start
+        will be returned in the encoding.
+        """
+        rle = self.sites[site]
+        ret = []
+        # Skip the initial segments
+        j = 0
+        while j < len(rle) and rle[j].end <= haplotype_start:
+            j += 1
+        if j < len(rle):
+            # Split a segment, if necessary.
+            if rle[j].start < haplotype_start:
+                ret = [Segment(haplotype_start, rle[j].end, rle[j].value)]
+                j += 1
+            ret.extend(rle[j:])
+        # print("get_site", site, haplotype_start, self.sites[site])
+        # print("\t=>", ret)
+        return ret
+
+    @profilehooks.profile
+    def best_path(self, h, rho, theta, haplotype_start=0):
         m = self.num_sites
         n = self.num_haplotypes
         r = 1 - np.exp(-rho / n)
@@ -1112,10 +1140,9 @@ class HaplotypeStore(object):
         # pm = mutation; qm no mutation
         pm = 0.5 * theta / (n + theta)
         qm = n / (n + theta) + 0.5 * theta / (n + theta)
-        print(h)
         V = [
             Segment(seg.start, seg.end, pm if h[0] == seg.value else pm)
-                for seg in self.sites[0]]
+                for seg in self.get_site(0, haplotype_start)]
         T = [[] for l in range(m)]
         # print("V = ", V)
         for l in range(1, m):
@@ -1131,7 +1158,7 @@ class HaplotypeStore(object):
             V_next = []
             # print("R = ", self.sites[l])
             # print("V = ", V)
-            for start, end, v, state in segments_intersection(V, self.sites[l]):
+            for start, end, v, state in segments_intersection(V, self.get_site(l, haplotype_start)):
                 # print("\t", start, end, v, state)
                 x = v * qr
                 y = pr  # v for maximum is 1 by normalisation
@@ -1369,10 +1396,10 @@ def segment_stats():
         mean_segments = statistics.mean(len(site) for site in hs.sites)
         print(n, ts.num_sites, ts.num_trees, mean_segments, sep="\t")
 
-def segment_algorithm():
+def segment_algorithm(n, m):
 
     ts = msprime.simulate(
-        10, length=6, recombination_rate=0.5, mutation_rate=1, random_seed=3)
+        n, length=m, recombination_rate=0.5, mutation_rate=1, random_seed=3)
     # samples = HaplotypeStore(ts.sample_size, ts.num_sites)
     # for variant in ts.variants():
     #     samples.set_column(variant.index, variant.genotypes)
@@ -1384,31 +1411,56 @@ def segment_algorithm():
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    print("S = ")
-    print(S)
+    # print("S = ")
+    # print(S)
     H = make_ancestors(S)[ts.sample_size:]
-    print("Ancestors:")
-    print(H)
+    print("n = ", n)
+    print("num_sites = ", ts.num_sites)
+    print("num_haplotypes = ", H.shape[1])
+    # print("Ancestors:")
+    # print(H)
     # for a in H:
     #     print(a)
     ancestors = HaplotypeStore(H.shape[0], H.shape[1])
     for j in range(H.shape[1]):
         ancestors.set_column(j, H[:, j])
-    ancestors.print_state()
-    for j in range(ts.sample_size):
-        h = S[j]
-        T, best_haplotype = ancestors.best_path(h, 0.001, 0.001)
-        # print(best_haplotype)
+    # ancestors.print_state()
+    # print("MATCH ANCESTORS")
+    ancestors.print_stats()
+    mean_tb_length = []
+    for j in range(H.shape[0] - 2, -1, -1):
+        h = H[j]
+        T, best_haplotype = ancestors.best_path(h, 0.001, 0.001, haplotype_start=j + 1)
+        mean_tb_length.append(statistics.mean(len(site) for site in T))
+    print("Mean TB segments = ", statistics.mean(mean_tb_length))
         # print(T)
-        T_decoded = ancestors.decode_traceback(T)
-        print(T_decoded)
-        P = ancestors.run_traceback(T, best_haplotype)
-        print(P)
-        hp = H[P, np.arange(ancestors.num_sites)]
+        # T_decoded = ancestors.decode_traceback(T)
+        # print(T_decoded)
+        # P = ancestors.run_traceback(T, best_haplotype)
+        # hp = H[P, np.arange(ancestors.num_sites)]
         # ancestors = hs.infer_ancestors()
-        print(hp)
-        print(h)
-        print()
+        # print("j = ", j)
+        # print("P = ", P)
+        # print("m = ", hp)
+        # print("h = ", h)
+        # print()
+
+
+    # print("MATCH SAMPLES")
+    # for j in range(ts.sample_size):
+    #     h = S[j]
+    #     T, best_haplotype = ancestors.best_path(h, 0.001, 0.001)
+    #     # print(best_haplotype)
+    #     # print(T)
+    #     T_decoded = ancestors.decode_traceback(T)
+    #     print(T_decoded)
+    #     P = ancestors.run_traceback(T, best_haplotype)
+    #     print(P)
+    #     hp = H[P, np.arange(ancestors.num_sites)]
+    #     # ancestors = hs.infer_ancestors()
+    #     print(hp)
+    #     print(h)
+    #     print()
 
 if __name__ == "__main__":
     # main()
@@ -1419,6 +1471,8 @@ if __name__ == "__main__":
     # ts_ls(20)
     # leaf_lists_dev()
 
-    segment_algorithm()
+    for m in [40]:
+        segment_algorithm(100, m)
+        print()
     # segment_stats()
 
