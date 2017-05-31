@@ -10,7 +10,7 @@ import random
 import statistics
 import attr
 import collections
-import profilehooks
+# import profilehooks
 
 import msprime
 
@@ -1130,7 +1130,7 @@ class HaplotypeStore(object):
         # print("\t=>", ret)
         return ret
 
-    @profilehooks.profile
+    # @profilehooks.profile
     def best_path(self, h, rho, theta, haplotype_start=0):
         m = self.num_sites
         n = self.num_haplotypes
@@ -1462,6 +1462,51 @@ def segment_algorithm(n, m):
     #     print(h)
     #     print()
 
+def new_segments(n, L):
+
+    np.set_printoptions(linewidth=2000)
+    np.set_printoptions(threshold=20000)
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=5)
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    builder = tsinfer.AncestorBuilder(ts.sample_size, ts.num_sites, S)
+    matcher = tsinfer.AncestorMatcher(ts.num_sites)
+
+    for j in range(builder.num_ancestors):
+        focal_site = builder.site_order[j]
+        A = builder.build(j)
+        P = matcher.best_path(A, 0.01, 0.000001)
+        H = matcher.decode_ancestors()
+        # print(H)
+        B = H[P, np.arange(ts.num_sites)]
+        B[A == -1] = -1
+        assert B[focal_site] == 0
+        assert A[focal_site] == 1
+        B[focal_site] = 1
+        # assert np.all(A == B)
+        if not np.all(A == B):
+            matcher.print_state()
+            print(matcher.decode_ancestors())
+            print("index = ", j, "focal = ", focal_site)
+            print("P", P)
+            print("A",  A)
+            print("B",  B)
+            print(A == B)
+            print()
+            assert False
+
+        matcher.add(A)
+
+        # matcher.print_state()
+        # print(matcher.decode_ancestors())
+    # matcher.print_state()
+    # print(matcher.decode_ancestors())
+
+
+
 if __name__ == "__main__":
     # main()
     # example()
@@ -1471,8 +1516,8 @@ if __name__ == "__main__":
     # ts_ls(20)
     # leaf_lists_dev()
 
-    for m in [40]:
-        segment_algorithm(100, m)
-        print()
+    # for m in [40]:
+    #     segment_algorithm(100, m)
+        # print()
     # segment_stats()
-
+    new_segments(8, 5)
