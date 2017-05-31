@@ -179,8 +179,8 @@ class AncestorMatcher(object):
         Returns the array of haplotype indexes that the specified encoded traceback
         defines for the given startin point at the last site.
         """
-        print("Running traceback on ", start_site, end_site, end_site_value)
-        print(self.decode_traceback(T))
+        # print("Running traceback on ", start_site, end_site, end_site_value)
+        # print(self.decode_traceback(T))
         P = np.zeros(self.num_sites, dtype=int) - 1
         P[end_site] = end_site_value
         for l in range(end_site, start_site, -1):
@@ -218,16 +218,17 @@ class AncestorMatcher(object):
         while h[start_site] == -1:
             start_site += 1
         u = self.sites_head[start_site]
-        V = None
-        prev = None
+        V_head = None
+        V_tail = None
         while u is not None:
             # TODO deal with -1
             v = Segment(u.start, u.end, pm if h[start_site] == u.value else pm)
-            if V is None:
-                V = v
+            if V_head is None:
+                V_head = v
+                V_tail = v
             else:
-                prev.next = v
-            prev = v
+                V_tail.next = v
+                V_tail = v
             u = u.next
         T_head = [None for l in range(m)]
         T_tail = [None for l in range(m)]
@@ -238,25 +239,33 @@ class AncestorMatcher(object):
                 break
             end_site = l
 
+            if V_tail.end < self.sites_tail[l].end:
+                # print("EXTEND NEEDED")
+                v = Segment(V_tail.end, self.sites_tail[l].end, 0)
+                V_tail.next = v
+                V_tail = v
+
             max_value = -1
             best_haplotype = -1
-            v = V
+            v = V_head
             while v is not None:
                 if v.value >= max_value:
                     max_value = v.value
                     best_haplotype = v.end - 1
                 v = v.next
             # Renormalise V
-            v = V
+            v = V_head
             while v is not None:
                 v.value /= max_value
                 v = v.next
             V_next_head = None
             V_next_tail = None
+            # print("l = ", l)
             # print("R = ", chain_str(self.sites_head[l]))
-            # print("V = ", chain_str(V))
-            for start, end, value, state in segments_intersection(V, self.sites_head[l]):
-                # print("\t", start, end, v, state)
+            # print("V = ", chain_str(V_head))
+            # print("h = ", h[l])
+            for start, end, value, state in segments_intersection(V_head, self.sites_head[l]):
+                # print("\t", start, end, value, state, sep="\t")
                 x = value * qr
                 y = pr  # v for maximum is 1 by normalisation
                 if x >= y:
@@ -288,13 +297,14 @@ class AncestorMatcher(object):
                         tail = Segment(start, end, value)
                         V_next_tail.next = tail
                         V_next_tail = tail
-                V = V_next_head
+            V_head = V_next_head
+            V_tail = V_next_tail
 
-        print("finding best value for ", end_site)
-        print("V = ", chain_str(V))
+        # print("finding best value for ", end_site)
+        # print("V = ", chain_str(V_head))
         max_value = -1
         best_haplotype = -1
-        v = V
+        v = V_head
         while v is not None:
             if v.value >= max_value:
                 max_value = v.value

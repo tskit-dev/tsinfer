@@ -1478,7 +1478,7 @@ def new_segments(n, L):
     for j in range(builder.num_ancestors):
         focal_site = builder.site_order[j]
         A = builder.build(j)
-        P = matcher.best_path(A, 0.01, 0.000001)
+        P = matcher.best_path(A, 0.1, 0.000001)
         H = matcher.decode_ancestors()
         # print(H)
         B = H[P, np.arange(ts.num_sites)]
@@ -1520,4 +1520,4 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    new_segments(8, 5)
+    new_segments(4, 10)
