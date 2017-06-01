@@ -22,12 +22,16 @@ __tsi_safe_free(void **ptr) {
 
 
 static void
-print_segment_chain(segment_t *head, FILE *out)
+print_segment_chain(segment_t *head, bool as_int, FILE *out)
 {
     segment_t *u = head;
 
     while (u != NULL) {
-        fprintf(out, "(%d-%d:%f)", u->start, u->end, u->value);
+        if (as_int) {
+            fprintf(out, "(%d-%d:%d)", u->start, u->end, (int) u->value);
+        } else {
+            fprintf(out, "(%d-%d:%f)", u->start, u->end, u->value);
+        }
         u = u->next;
         if (u != NULL) {
             fprintf(out, "=>");
@@ -36,8 +40,8 @@ print_segment_chain(segment_t *head, FILE *out)
 }
 
 static inline segment_t * WARN_UNUSED
-ancestor_matcher_alloc_segment(ancestor_matcher_t *self, site_id_t start,
-        site_id_t end, double value)
+ancestor_matcher_alloc_segment(ancestor_matcher_t *self, ancestor_id_t start,
+        ancestor_id_t end, double value)
 {
     segment_t *ret = NULL;
 
@@ -110,8 +114,41 @@ int
 ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype)
 {
     int ret = 0;
+    site_id_t l;
+    segment_t *tail;
+    ancestor_id_t n = (ancestor_id_t) self->num_ancestors;
 
+    for (l = 0; l < self->num_sites; l++) {
+        tail = self->sites_tail[l];
+        if (tail->value == (double) haplotype[l]) {
+            tail->end++;
+        } else {
+            tail = ancestor_matcher_alloc_segment(self, n, n + 1, haplotype[l]);
+            self->sites_tail[l]->next = tail;
+            self->sites_tail[l] = tail;
+        }
+    }
+    self->num_ancestors++;
     return ret;
+}
+
+static void
+ancestor_matcher_check_state(ancestor_matcher_t *self)
+{
+    site_id_t l;
+    segment_t *u;
+
+    for (l = 0; l < self->num_sites; l++) {
+        u = self->sites_head[l];
+        assert(u != NULL);
+        assert(u->start == 0);
+        while (u->next != NULL) {
+            assert(u->next->start == u->end);
+            u = u->next;
+        }
+        assert(self->sites_tail[l] == u);
+        assert(u->end == self->num_ancestors);
+    }
 }
 
 int
@@ -126,8 +163,9 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 
     for (l = 0; l < self->num_sites; l++) {
         fprintf(out, "%d\t:", l);
-        print_segment_chain(self->sites_head[l], out);
+        print_segment_chain(self->sites_head[l], true, out);
         fprintf(out, "\n");
     }
+    ancestor_matcher_check_state(self);
     return 0;
 }

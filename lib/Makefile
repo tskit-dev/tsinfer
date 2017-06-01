@@ -1,6 +1,6 @@
 
 CC=gcc
-CFLAGS=-std=c99 -pedantic -Werror -Wall -W \
+CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
   -Wno-unused-parameter\
   -Wmissing-prototypes -Wstrict-prototypes \
   -Wconversion -Wshadow -Wpointer-arith \

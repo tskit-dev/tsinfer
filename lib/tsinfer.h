@@ -4,12 +4,13 @@
 
 #include "object_heap.h"
 
+typedef uint32_t ancestor_id_t;
 typedef uint32_t site_id_t;
 typedef int8_t allele_t;
 
 typedef struct _segment_t {
-    site_id_t start;
-    site_id_t end;
+    ancestor_id_t start;
+    ancestor_id_t end;
     double value;
     struct _segment_t *next;
 } segment_t;

@@ -1509,6 +1509,21 @@ def new_segments(n, L, seed):
     # builder.print_state()
 
 
+def export_ancestors(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    builder = tsinfer.AncestorBuilder(ts.sample_size, ts.num_sites, S)
+    H = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
+    for j in range(builder.num_ancestors):
+        focal_site = builder.site_order[j]
+        H[j,:] = builder.build(j)
+    print(H)
+    np.savetxt("ancestors.txt", H, fmt="%d", delimiter="\t")
+
 
 if __name__ == "__main__":
     # main()
@@ -1523,7 +1538,8 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(8, 200, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(8, 200, j)
     # new_segments(4, 4, 72)
+    export_ancestors(4, 4, 1)
