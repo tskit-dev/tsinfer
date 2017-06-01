@@ -88,9 +88,11 @@ int
 main(int argc, char **argv)
 {
     int8_t *ancestors = NULL;
+    int8_t *h;
+    ancestor_id_t *path = NULL;
     size_t num_ancestors;
     size_t num_sites;
-    size_t j;
+    size_t j, l;
     ancestor_matcher_t am;
     int ret;
 
@@ -99,19 +101,38 @@ main(int argc, char **argv)
     }
     read_ancestors(argv[1], &num_ancestors, &num_sites, &ancestors);
 
-    ret = ancestor_matcher_alloc(&am, 10, 1);
+    ret = ancestor_matcher_alloc(&am, num_sites, 8192);
     if (ret != 0) {
         fatal_error("alloc error");
     }
+    path = calloc(num_sites, sizeof(ancestor_id_t));
+    if (path == NULL) {
+        fatal_error("alloc error");
+    }
     for (j = 0; j < num_ancestors; j++) {
-        ret = ancestor_matcher_add(&am, ancestors + j * num_sites);
+        h = ancestors + j * num_sites;
+        ret = ancestor_matcher_best_match(&am, h, path);
         if (ret != 0) {
-            fatal_error("alloc error");
+            fatal_error("match error");
         }
-        ancestor_matcher_print_state(&am, stdout);
+        /* printf("Best match = \n"); */
+        for (l = 0; l < num_sites; l++) {
+            printf("%d", path[l]);
+            if (l < num_sites - 1) {
+                printf("\t");
+            }
+        }
+        printf("\n");
+        ret = ancestor_matcher_add(&am, h);
+        if (ret != 0) {
+            fatal_error("add error");
+        }
+        /* printf("\n"); */
+        /* ancestor_matcher_print_state(&am, stdout); */
     }
 
     ancestor_matcher_free(&am);
     free(ancestors);
+    free(path);
     return EXIT_SUCCESS;
 }

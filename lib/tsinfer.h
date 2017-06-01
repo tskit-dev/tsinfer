@@ -27,8 +27,9 @@ int ancestor_matcher_alloc(ancestor_matcher_t *self, size_t num_sites,
         size_t segment_block_size);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype);
+int ancestor_matcher_best_match(ancestor_matcher_t *self,
+        allele_t *haplotype, ancestor_id_t *path);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
-
 
 void __tsi_safe_free(void **ptr);
 

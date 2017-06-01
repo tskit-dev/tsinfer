@@ -1517,12 +1517,21 @@ def export_ancestors(n, L, seed):
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
     builder = tsinfer.AncestorBuilder(ts.sample_size, ts.num_sites, S)
-    H = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
+    matcher = tsinfer.AncestorMatcher(ts.num_sites)
+    A = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
+    P = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     for j in range(builder.num_ancestors):
-        focal_site = builder.site_order[j]
-        H[j,:] = builder.build(j)
-    print(H)
-    np.savetxt("ancestors.txt", H, fmt="%d", delimiter="\t")
+        a = builder.build(j)
+        A[j,:] = a
+        p = matcher.best_path(a, 0.01, 1e-200)
+        P[j,:] = p
+        matcher.add(a)
+    print("A = ")
+    print(A)
+    print("P = ")
+    print(P)
+    np.savetxt("tmp__NOBACKUP__/ancestors.txt", A, fmt="%d", delimiter="\t")
+    np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
 
 
 if __name__ == "__main__":
@@ -1542,4 +1551,4 @@ if __name__ == "__main__":
     #     print(j)
     #     new_segments(8, 200, j)
     # new_segments(4, 4, 72)
-    export_ancestors(4, 4, 1)
+    export_ancestors(8, 20, 3)
