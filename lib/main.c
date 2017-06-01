@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "tsinfer.h"
 
@@ -95,13 +96,14 @@ main(int argc, char **argv)
     size_t j, l;
     ancestor_matcher_t am;
     int ret;
+    bool show_matches = false;
 
     if (argc != 2) {
         fatal_error("usage: main <ancestors-file>");
     }
     read_ancestors(argv[1], &num_ancestors, &num_sites, &ancestors);
 
-    ret = ancestor_matcher_alloc(&am, num_sites, 8192);
+    ret = ancestor_matcher_alloc(&am, num_sites, 1024 * 1024);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -109,20 +111,26 @@ main(int argc, char **argv)
     if (path == NULL) {
         fatal_error("alloc error");
     }
+    printf("total ancestors = %d\n", (int) num_ancestors);
     for (j = 0; j < num_ancestors; j++) {
+        if (j % 100 == 0) {
+            printf("Completed %d\n", (int) j);
+        }
         h = ancestors + j * num_sites;
         ret = ancestor_matcher_best_match(&am, h, path);
         if (ret != 0) {
             fatal_error("match error");
         }
         /* printf("Best match = \n"); */
-        for (l = 0; l < num_sites; l++) {
-            printf("%d", path[l]);
-            if (l < num_sites - 1) {
-                printf("\t");
+        if (show_matches) {
+            for (l = 0; l < num_sites; l++) {
+                printf("%d", path[l]);
+                if (l < num_sites - 1) {
+                    printf("\t");
+                }
             }
+            printf("\n");
         }
-        printf("\n");
         ret = ancestor_matcher_add(&am, h);
         if (ret != 0) {
             fatal_error("add error");
@@ -130,6 +138,7 @@ main(int argc, char **argv)
         /* printf("\n"); */
         /* ancestor_matcher_print_state(&am, stdout); */
     }
+    /* ancestor_matcher_print_state(&am, stdout); */
 
     ancestor_matcher_free(&am);
     free(ancestors);

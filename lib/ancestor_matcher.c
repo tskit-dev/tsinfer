@@ -376,14 +376,21 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
 int
 ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
-
     site_id_t l;
+    segment_t *seg;
+    int num_segments;
 
     fprintf(out, "Ancestor matcher state\n");
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     for (l = 0; l < self->num_sites; l++) {
-        fprintf(out, "%d\t:", l);
+        num_segments = 0;
+        seg = self->sites_head[l];
+        while (seg != NULL) {
+            seg = seg->next;
+            num_segments++;
+        }
+        fprintf(out, "%d\t(%d):", l, num_segments);
         print_segment_chain(self->sites_head[l], true, out);
         fprintf(out, "\n");
     }

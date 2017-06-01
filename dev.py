@@ -1513,25 +1513,29 @@ def export_ancestors(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    print("num_sites = ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
     builder = tsinfer.AncestorBuilder(ts.sample_size, ts.num_sites, S)
-    matcher = tsinfer.AncestorMatcher(ts.num_sites)
+    print("total ancestors = ", builder.num_ancestors)
+    # matcher = tsinfer.AncestorMatcher(ts.num_sites)
     A = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     P = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     for j in range(builder.num_ancestors):
         a = builder.build(j)
         A[j,:] = a
-        p = matcher.best_path(a, 0.01, 1e-200)
-        P[j,:] = p
-        matcher.add(a)
-    print("A = ")
-    print(A)
-    print("P = ")
-    print(P)
+        if j % 100 == 0:
+            print("done", j)
+        # p = matcher.best_path(a, 0.01, 1e-200)
+        # P[j,:] = p
+        # matcher.add(a)
+    # print("A = ")
+    # print(A)
+    # print("P = ")
+    # print(P)
     np.savetxt("tmp__NOBACKUP__/ancestors.txt", A, fmt="%d", delimiter="\t")
-    np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
+    # np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
 
 
 if __name__ == "__main__":
@@ -1551,4 +1555,4 @@ if __name__ == "__main__":
     #     print(j)
     #     new_segments(8, 200, j)
     # new_segments(4, 4, 72)
-    export_ancestors(8, 20, 3)
+    export_ancestors(20, 2000, 3)
