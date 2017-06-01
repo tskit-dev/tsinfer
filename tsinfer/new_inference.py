@@ -168,7 +168,7 @@ class AncestorMatcher(object):
             tail = self.sites_tail[j]
             if tail.end == x and tail.value == h[j]:
                 tail.end += 1
-            elif h[j] != -1:
+            else:
                 seg = Segment(x, x + 1, h[j])
                 tail.next = seg
                 self.sites_tail[j] = seg
@@ -218,18 +218,21 @@ class AncestorMatcher(object):
         while h[start_site] == -1:
             start_site += 1
         u = self.sites_head[start_site]
-        V_head = None
-        V_tail = None
-        while u is not None:
-            # TODO deal with -1
-            v = Segment(u.start, u.end, pm if h[start_site] == u.value else pm)
-            if V_head is None:
-                V_head = v
-                V_tail = v
-            else:
-                V_tail.next = v
-                V_tail = v
-            u = u.next
+
+        # V_head = None
+        # V_tail = None
+        # while u is not None:
+        #     # TODO deal with -1
+        #     v = Segment(u.start, u.end, pm if h[start_site] == u.value else pm)
+        #     if V_head is None:
+        #         V_head = v
+        #         V_tail = v
+        #     else:
+        #         V_tail.next = v
+        #         V_tail = v
+        #     u = u.next
+        V_head = Segment(0, self.num_ancestors, 1)
+        V_tail = V_head
         T_head = [None for l in range(m)]
         T_tail = [None for l in range(m)]
 
@@ -239,14 +242,16 @@ class AncestorMatcher(object):
                 break
             end_site = l
 
-            if V_tail.end < self.sites_tail[l].end:
-                # print("EXTEND NEEDED")
-                v = Segment(V_tail.end, self.sites_tail[l].end, 0)
-                V_tail.next = v
-                V_tail = v
+#             if V_tail.end < self.sites_tail[l].end:
+#                 # print("EXTEND NEEDED")
+#                 v = Segment(V_tail.end, self.sites_tail[l].end, 0)
+#                 V_tail.next = v
+#                 V_tail = v
 
             max_value = -1
             best_haplotype = -1
+            assert V_head.start == 0
+            assert V_tail.end == self.num_ancestors
             v = V_head
             while v is not None:
                 if v.value >= max_value:
@@ -260,14 +265,38 @@ class AncestorMatcher(object):
                 v = v.next
             V_next_head = None
             V_next_tail = None
+
             # print("l = ", l)
             # print("R = ", chain_str(self.sites_head[l]))
             # print("V = ", chain_str(V_head))
             # print("h = ", h[l])
-            for start, end, value, state in segments_intersection(V_head, self.sites_head[l]):
+            # print("b = ", best_haplotype)
+
+            # for start, end, value, state in segments_intersection(V_head, self.sites_head[l]):
                 # print("\t", start, end, value, state, sep="\t")
+            R = self.sites_head[l]
+            V = V_head
+            while R is not None and V is not None:
+                # print("\tLOOP HEAD")
+                # print("\tR = ", chain_str(R))
+                # print("\tV = ", chain_str(V))
+                # print("\tV_next = ", chain_str(V_next_head))
+                start = max(V.start, R.start)
+                end = min(V.end, R.end)
+                value = V.value
+                state = R.value
+                if R.end == V.end:
+                    R = R.next
+                    V = V.next
+                elif R.end < V.end:
+                    R = R.next
+                elif V.end < R.end:
+                    V = V.next
+                # print("", start, end, value, state, sep="\t")
+
                 x = value * qr
                 y = pr  # v for maximum is 1 by normalisation
+                # print("\tx = ", x, "y = ", y)
                 if x >= y:
                     z = x
                 else:
@@ -276,14 +305,15 @@ class AncestorMatcher(object):
                         T_head[l] = Segment(start, end, best_haplotype)
                         T_tail[l] = T_head[l]
                     else:
-                        if T_tail[l].end == start:
+                        if T_tail[l].end == start and T_tail[l].value == best_haplotype:
                             T_tail[l].end = end
                         else:
                             tail = Segment(start, end, best_haplotype)
                             T_tail[l].next = tail
                             T_tail[l] = tail
-                # TODO deal with -1
-                if state == h[l]:
+                if state == -1:
+                    value = 0
+                elif state == h[l]:
                     value = z * qm
                 else:
                     value = z * pm
@@ -297,8 +327,17 @@ class AncestorMatcher(object):
                         tail = Segment(start, end, value)
                         V_next_tail.next = tail
                         V_next_tail = tail
+            # print("T = ", chain_str(T_head[l]))
+            # print()
             V_head = V_next_head
             V_tail = V_next_tail
+            # Make sure V is complete.
+            v = V_head
+            assert v.start == 0
+            while v.next is not None:
+                assert v.end == v.next.start
+                v = v.next
+            assert v.end == self.num_ancestors
 
         # print("finding best value for ", end_site)
         # print("V = ", chain_str(V_head))
@@ -310,6 +349,7 @@ class AncestorMatcher(object):
                 max_value = v.value
                 best_haplotype = v.end - 1
             v = v.next
+
 
         P = self.run_traceback(T_head, start_site, end_site, best_haplotype)
         return P
@@ -329,9 +369,15 @@ class AncestorMatcher(object):
         H = np.zeros((self.num_ancestors, self.num_sites), dtype=int) - 1
         for j in range(self.num_sites):
             u = self.sites_head[j]
+            # Check for complete list.
+            assert u.start == 0
             while u is not None:
                 H[u.start:u.end, j] = u.value
+                prev = u
                 u = u.next
+                if u is not None:
+                    assert prev.end == u.start
+            assert prev.end == self.num_ancestors
         return H
 
     def decode_traceback(self, E):

@@ -1462,13 +1462,13 @@ def segment_algorithm(n, m):
     #     print(h)
     #     print()
 
-def new_segments(n, L):
+def new_segments(n, L, seed):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
 
     ts = msprime.simulate(
-        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=5)
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -1478,7 +1478,8 @@ def new_segments(n, L):
     for j in range(builder.num_ancestors):
         focal_site = builder.site_order[j]
         A = builder.build(j)
-        P = matcher.best_path(A, 0.1, 0.000001)
+        # print(j, focal_site, A, sep="\t")
+        P = matcher.best_path(A, 0.1, 1e-200)
         H = matcher.decode_ancestors()
         # print(H)
         B = H[P, np.arange(ts.num_sites)]
@@ -1488,6 +1489,7 @@ def new_segments(n, L):
         B[focal_site] = 1
         # assert np.all(A == B)
         if not np.all(A == B):
+            builder.print_state()
             matcher.print_state()
             print(matcher.decode_ancestors())
             print("index = ", j, "focal = ", focal_site)
@@ -1504,6 +1506,7 @@ def new_segments(n, L):
         # print(matcher.decode_ancestors())
     # matcher.print_state()
     # print(matcher.decode_ancestors())
+    # builder.print_state()
 
 
 
@@ -1520,4 +1523,7 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    new_segments(4, 10)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(8, 200, j)
+    # new_segments(4, 4, 72)
