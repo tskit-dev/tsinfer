@@ -8,7 +8,7 @@
 #include <errno.h>
 #include <string.h>
 
-#include "ls.h"
+#include "tsinfer.h"
 
 static void
 fatal_error(const char *msg, ...)
@@ -170,7 +170,14 @@ main(int argc, char **argv)
     /* thread(panel, rho, verbose); */
     /* reference_panel_free(panel); */
     /* free(panel); */
-    fatal_error("nothing happens");
+    ancestor_matcher_t am;
+    int ret = ancestor_matcher_alloc(&am, 10, 1);
+
+    if (ret != 0) {
+        fatal_error("alloc error");
+    }
+    ancestor_matcher_print_state(&am, stdout);
+    ancestor_matcher_free(&am);
 
     return EXIT_SUCCESS;
 }

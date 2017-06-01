@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
+
 
 #include "err.h"
 #include "object_heap.h"
@@ -48,13 +50,13 @@ object_heap_expand(object_heap_t *self)
 
     p = realloc(self->mem_blocks, (self->num_blocks + 1) * sizeof(void *));
     if (p == NULL) {
-        ret = MSP_ERR_NO_MEMORY;
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     self->mem_blocks = p;
     p = malloc(self->block_size * self->object_size);
     if (p == NULL) {
-        ret = MSP_ERR_NO_MEMORY;
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     self->mem_blocks[self->num_blocks] = p;
@@ -68,7 +70,7 @@ object_heap_expand(object_heap_t *self)
     self->size += self->block_size;
     self->heap = malloc(self->size * sizeof(void *));
     if (self->heap == NULL) {
-        ret = MSP_ERR_NO_MEMORY;
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     object_heap_add_block(self, p);
@@ -135,12 +137,12 @@ object_heap_init(object_heap_t *self, size_t object_size, size_t block_size,
     self->heap = malloc(self->size * sizeof(void *));
     self->mem_blocks = malloc(sizeof(void *));
     if (self->heap == NULL || self->mem_blocks == NULL) {
-        ret = MSP_ERR_NO_MEMORY;
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     self->mem_blocks[0] = malloc(self->size * self->object_size);
     if (self->mem_blocks[0] == NULL) {
-        ret = MSP_ERR_NO_MEMORY;
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     self->top = 0;
