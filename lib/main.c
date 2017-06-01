@@ -10,8 +10,8 @@
 
 #include "ls.h"
 
-void
-fatal_error(char *msg, ...)
+static void
+fatal_error(const char *msg, ...)
 {
     va_list argp;
     fprintf(stderr, "infer:");
@@ -22,6 +22,7 @@ fatal_error(char *msg, ...)
     exit(EXIT_FAILURE);
 }
 
+#if 0
 static reference_panel_t *
 build_reference_panel(const char *input_file)
 {
@@ -147,25 +148,29 @@ thread(reference_panel_t *panel, double recombination_rate, int verbose)
     free(mutations);
 }
 
+#endif
+
 int
 main(int argc, char **argv)
 {
-    reference_panel_t *panel;
-    double rho;
-    int verbose = 1;
+    /* reference_panel_t *panel; */
+    /* double rho; */
+    /* int verbose = 1; */
 
-    if (argc != 3) {
-        fatal_error("usage: main <samples-file> <rho> ");
-    }
-    panel = build_reference_panel(argv[1]);
-    rho = atof(argv[2]);
-    printf("Read panel with %d samples, %d haplotypes and %d sites\n",
-            (int) panel->num_samples, (int) panel->num_haplotypes, (int) panel->num_sites);
-    if (verbose > 0) {
-        reference_panel_print_state(panel);
-    }
-    thread(panel, rho, verbose);
-    reference_panel_free(panel);
-    free(panel);
+    /* if (argc != 3) { */
+    /*     fatal_error("usage: main <samples-file> <rho> "); */
+    /* } */
+    /* panel = build_reference_panel(argv[1]); */
+    /* rho = atof(argv[2]); */
+    /* printf("Read panel with %d samples, %d haplotypes and %d sites\n", */
+    /*         (int) panel->num_samples, (int) panel->num_haplotypes, (int) panel->num_sites); */
+    /* if (verbose > 0) { */
+    /*     reference_panel_print_state(panel); */
+    /* } */
+    /* thread(panel, rho, verbose); */
+    /* reference_panel_free(panel); */
+    /* free(panel); */
+    fatal_error("nothing happens");
+
     return EXIT_SUCCESS;
 }
