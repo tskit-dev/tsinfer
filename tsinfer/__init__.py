@@ -18,3 +18,4 @@ from .inference import Illustrator
 
 from .new_inference import AncestorBuilder
 from .new_inference import AncestorMatcher
+from .new_inference import infer

@@ -20,7 +20,9 @@ long_description = "TODO"
 d = "lib/"
 _tsinfer_module = Extension(
     '_tsinfer',
-    sources=["_tsinfermodule.c", d + "ls.c"],
+    sources=[
+        "_tsinfermodule.c", d + "ls.c", d + "ancestor_matcher.c",
+        d + "object_heap.c"],
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
     libraries=["m"],

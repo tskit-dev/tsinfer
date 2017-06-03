@@ -3,6 +3,51 @@
 import numpy as np
 import attr
 
+import msprime
+
+import _tsinfer
+
+def split_parent_array(P):
+    num_sites = P.shape[0]
+    start = 0
+    for j in range(num_sites - 1):
+        if P[j + 1] != P[j]:
+            if P[j] != -1:
+                yield start, j + 1, P[j]
+            start = j + 1
+    if P[-1] != -1:
+        yield start, num_sites, P[-1]
+
+
+def infer(samples, matcher_algorithm="C"):
+    num_samples, num_sites = samples.shape
+    builder = AncestorBuilder(samples)
+    if matcher_algorithm == "C":
+        matcher = _tsinfer.AncestorMatcher(num_sites)
+    else:
+        matcher = AncestorMatcher(num_sites)
+    num_ancestors = builder.num_ancestors
+    tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
+
+    A = np.zeros(num_sites, dtype=np.int8)
+    P = np.zeros(num_sites, dtype=np.int32)
+    for j in range(builder.num_ancestors):
+        focal_site = builder.site_order[j]
+        builder.build(j, A)
+        matcher.best_path(A, P, 0.01, 1e-200)
+        matcher.add(A)
+        tree_sequence_builder.add_path(j + 1, P)
+
+    for j in range(num_samples):
+        matcher.best_path(samples[j], P, 0.01, 1e-200)
+        tree_sequence_builder.add_path(num_ancestors + j + 1, P)
+    tree_sequence_builder.print_state()
+    ts = tree_sequence_builder.finalise()
+    tss = ts.simplify()
+    for e in tss.edgesets():
+        print(e)
+    return tss
+
 
 @attr.s
 class Segment(object):
@@ -29,34 +74,102 @@ def chain_str(head):
             ret += "=>"
     return ret
 
+class TreeSequenceBuilder(object):
+    """
+    Builds a tree sequence from the copying paths of ancestors and samples.
+    """
+    def __init__(self, num_samples, num_ancestors, num_sites):
+        self.num_sites = num_sites
+        self.num_samples = num_samples
+        self.num_ancestors = num_ancestors
+        self.parent_mappings = {}
 
-def segments_intersection(A, B):
-    """
-    Returns an iterator over the intersection of the specified linked lists of segments.
-    For each (start, end) intersection that we find, return the pair of values in
-    order A, B.
-    """
-    # print("INTERSECT")
-    # print("\t", chain_str(A))
-    # print("\t", chain_str(B))
-    A_head = A
-    B_head = B
-    while A_head is not None and B_head is not None:
-        A_s, A_e, A_v = A_head.start, A_head.end, A_head.value
-        B_s, B_e, B_v = B_head.start, B_head.end, B_head.value
-        # print("A_head = ", A_head)
-        # print("B_head = ", B_head)
-        if A_s <= B_s:
-            if A_e > B_s:
-                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+    def print_state(self):
+        print("Tree sequence builder state:")
+        for j in sorted(list(self.parent_mappings.keys())):
+            print(j, ":", chain_str(self.parent_mappings[j]))
+
+    def __add_mapping(self, start, end, parent, child):
+        """
+        Adds a mapping for the specified parent-child relationship over the
+        specified interval.
+        """
+        print("\tadd mapping:", start, end, parent, child)
+        if parent not in self.parent_mappings:
+            self.parent_mappings[parent] = Segment(start, end, [child])
         else:
-            if B_e > A_s:
-                yield max(A_s, B_s), min(A_e, B_e), A_v, B_v
+            v = self.parent_mappings[parent]
+            u = None
 
-        if A_e <= B_e:
-            A_head = A_head.next
-        if B_e <= A_e:
-            B_head = B_head.next
+            # TODO finish this.
+            print("\tInserting into", chain_str(u))
+            while v is not None and v.end < end:
+                print("start = ", start, "end = ", end, "v.start = ", v.start,
+                        "v.end = ", v.end)
+                if v.start < start < v.end:
+                    # if start falls within v, create a new leading segment
+                    w = Segment(v.start, start, list(v.value), v)
+                    if u is not None:
+                        u.next = w
+                    v.start = start
+                if v.start == start:
+                    v.value.append(child)
+                if v.start < end < v.end:
+                    # if end falls within v, create a new trailing segment
+
+
+                u = v
+                v = v.next
+            # while u is not None and u.start < start:
+            #     tail = u
+            #     u = u.next
+            # if u is None:
+            #     print("\t\tAdding new tail")
+            #     tail.next = Segment(start, end, [child])
+            # else:
+            #     print("\t\tSplicing into", chain_str(u))
+            #     while u is not None and u.end <= end:
+            #         u.value.append(child)
+            #         u = u.next
+        print("\tDONE:", parent, "->", chain_str(self.parent_mappings[parent]))
+        # check the integrity
+        u = self.parent_mappings[parent]
+        while u.next is not None:
+            assert u.end <= u.next.start
+            u = u.next
+
+
+
+
+
+    def add_path(self, child, P):
+        print("Add path:", child, P)
+        # Quick check to ensure we're correct. TODO remove
+        Pp = np.zeros(self.num_sites, dtype=int) - 1
+        for left, right, parent in split_parent_array(P):
+            self.__add_mapping(left, right, parent, child)
+            Pp[left:right] = parent
+        assert np.all(Pp == P)
+
+    def finalise(self):
+        # Allocate the nodes.
+        nodes = msprime.NodeTable(self.num_ancestors + self.num_samples + 1)
+        nodes.add_row(time=self.num_ancestors + 1)
+        for j in range(self.num_ancestors):
+            nodes.add_row(time=self.num_ancestors - j)
+        for j in range(self.num_samples):
+            nodes.add_row(time=0, flags=msprime.NODE_IS_SAMPLE)
+
+        edgesets = msprime.EdgesetTable()
+        for j in sorted(list(self.parent_mappings.keys()), reverse=True):
+            u = self.parent_mappings[j]
+            while u is not None:
+                edgesets.add_row(u.start, u.end, j, tuple(sorted(u.value)))
+                u = u.next
+        ts = msprime.load_tables(nodes=nodes, edgesets=edgesets)
+        return ts
+
+
 
 
 class AncestorBuilder(object):
@@ -64,11 +177,10 @@ class AncestorBuilder(object):
     Sequentially build ancestors for non-singleton sites in a supplied
     sample-haplotype matrix.
     """
-    def __init__(self, num_samples, num_sites, sample_matrix):
-        self.num_samples = num_samples
-        self.num_sites = num_sites
+    def __init__(self, sample_matrix):
         self.sample_matrix = sample_matrix
-        assert self.sample_matrix.shape == (num_samples, num_sites)
+        self.num_samples = sample_matrix.shape[0]
+        self.num_sites = sample_matrix.shape[1]
         # Compute the frequencies at each site.
         self.frequency = np.sum(self.sample_matrix, axis=0)
         self.num_ancestors = np.sum(self.frequency > 1)
@@ -87,7 +199,7 @@ class AncestorBuilder(object):
         print("site order = ")
         print(self.site_order)
 
-    def build(self, site_index):
+    def build(self, site_index, A):
         # TODO check that these are called sequentially. We currently have
         # state in the site_mask variable which requires that there are generated
         # in order.
@@ -98,7 +210,7 @@ class AncestorBuilder(object):
         R = S[S[:,site] == 1]
         # Mask out mutations that haven't happened yet.
         M = np.logical_and(R, self.site_mask).astype(int)
-        A = -1 * np.ones(self.num_sites, dtype=int)
+        A[:] = -1
         A[site] = 1
         l = site - 1
         consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
@@ -142,7 +254,6 @@ class AncestorBuilder(object):
             for k in dropped:
                 del consistent_samples[k]
             l += 1
-        return A
 
 class AncestorMatcher(object):
     """
@@ -174,14 +285,14 @@ class AncestorMatcher(object):
                 self.sites_tail[j] = seg
         self.num_ancestors += 1
 
-    def run_traceback(self, T, start_site, end_site, end_site_value):
+    def run_traceback(self, T, start_site, end_site, end_site_value, P):
         """
         Returns the array of haplotype indexes that the specified encoded traceback
         defines for the given startin point at the last site.
         """
         # print("Running traceback on ", start_site, end_site, end_site_value)
         # print(self.decode_traceback(T))
-        P = np.zeros(self.num_sites, dtype=int) - 1
+        P[:] = -1
         P[end_site] = end_site_value
         for l in range(end_site, start_site, -1):
             value = None
@@ -196,9 +307,8 @@ class AncestorMatcher(object):
             if value is None:
                 value = P[l]
             P[l - 1] = value
-        return P
 
-    def best_path(self, h, rho, theta):
+    def best_path(self, h, P, rho, theta):
         """
         Returns the best path through the list of ancestors for the specified
         haplotype.
@@ -219,18 +329,6 @@ class AncestorMatcher(object):
             start_site += 1
         u = self.sites_head[start_site]
 
-        # V_head = None
-        # V_tail = None
-        # while u is not None:
-        #     # TODO deal with -1
-        #     v = Segment(u.start, u.end, pm if h[start_site] == u.value else pm)
-        #     if V_head is None:
-        #         V_head = v
-        #         V_tail = v
-        #     else:
-        #         V_tail.next = v
-        #         V_tail = v
-        #     u = u.next
         V_head = Segment(0, self.num_ancestors, 1)
         V_tail = V_head
         T_head = [None for l in range(m)]
@@ -241,12 +339,6 @@ class AncestorMatcher(object):
             if h[l] == -1:
                 break
             end_site = l
-
-#             if V_tail.end < self.sites_tail[l].end:
-#                 # print("EXTEND NEEDED")
-#                 v = Segment(V_tail.end, self.sites_tail[l].end, 0)
-#                 V_tail.next = v
-#                 V_tail = v
 
             max_value = -1
             best_haplotype = -1
@@ -272,8 +364,6 @@ class AncestorMatcher(object):
             # print("h = ", h[l])
             # print("b = ", best_haplotype)
 
-            # for start, end, value, state in segments_intersection(V_head, self.sites_head[l]):
-                # print("\t", start, end, value, state, sep="\t")
             R = self.sites_head[l]
             V = V_head
             while R is not None and V is not None:
@@ -350,9 +440,7 @@ class AncestorMatcher(object):
                 best_haplotype = v.end - 1
             v = v.next
 
-
-        P = self.run_traceback(T_head, start_site, end_site, best_haplotype)
-        return P
+        self.run_traceback(T_head, start_site, end_site, best_haplotype, P)
 
     def print_state(self):
         print("Matcher state")
@@ -394,3 +482,6 @@ class AncestorMatcher(object):
                 T[u.start:u.end, l] = u.value
                 u = u.next
         return T
+
+
+

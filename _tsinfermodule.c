@@ -8,6 +8,8 @@
 #include <float.h>
 #include <stdbool.h>
 
+#include "lib/tsinfer.h"
+// deprecated
 #include "lib/ls.h"
 
 #if PY_MAJOR_VERSION >= 3
@@ -19,6 +21,12 @@
 
 static PyObject *TsinfLibraryError;
 
+typedef struct {
+    PyObject_HEAD
+    ancestor_matcher_t *ancestor_matcher;
+} AncestorMatcher;
+
+/* Deprecated */
 typedef struct {
     PyObject_HEAD
     reference_panel_t *reference_panel;
@@ -39,6 +47,229 @@ handle_library_error(int err)
 {
     PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
 }
+
+/*===================================================================
+ * AncestorMatcher
+ *===================================================================
+ */
+
+static int
+AncestorMatcher_check_state(AncestorMatcher *self)
+{
+    int ret = 0;
+    if (self->ancestor_matcher == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorMatcher not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+AncestorMatcher_dealloc(AncestorMatcher* self)
+{
+    if (self->ancestor_matcher != NULL) {
+        ancestor_matcher_free(self->ancestor_matcher);
+        PyMem_Free(self->ancestor_matcher);
+        self->ancestor_matcher = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"num_sites", "segment_block_size", NULL};
+    unsigned long num_sites;
+    unsigned long segment_block_size = 1024;
+
+    self->ancestor_matcher = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k|k", kwlist,
+                &num_sites, &segment_block_size)) {
+        goto out;
+    }
+    if (num_sites < 1) {
+        PyErr_SetString(PyExc_ValueError, "num have > 0 sites");
+        goto out;
+    }
+    self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
+    if (self->ancestor_matcher == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = ancestor_matcher_alloc(self->ancestor_matcher, num_sites, segment_block_size);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"haplotype", "path", "recombination_rate",
+        "mutation_rate", NULL};
+    PyObject *haplotype = NULL;
+    PyObject *path = NULL;
+    PyArrayObject *path_array = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    double recombination_rate;
+    double mutation_rate;
+    npy_intp *shape;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!dd", kwlist,
+            &haplotype, &PyArray_Type, &path, &recombination_rate, &mutation_rate)) {
+        goto fail;
+    }
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (haplotype_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
+        goto fail;
+    }
+    path_array = (PyArrayObject *) PyArray_FROM_OTF(path, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (path_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(path_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(path_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input path wrong size");
+        goto fail;
+    }
+    err = ancestor_matcher_best_path(self->ancestor_matcher,
+        (int8_t *) PyArray_DATA(haplotype_array),
+        recombination_rate, mutation_rate,
+        (int32_t *) PyArray_DATA(path_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(haplotype_array);
+    Py_DECREF(path_array);
+    Py_INCREF(Py_None);
+    return Py_None;
+fail:
+    Py_XDECREF(haplotype_array);
+    PyArray_XDECREF_ERR(path_array);
+    return NULL;
+}
+
+static PyObject *
+AncestorMatcher_add(AncestorMatcher *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"haplotype", NULL};
+    PyObject *haplotype = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    npy_intp *shape;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &haplotype)) {
+        goto fail;
+    }
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (haplotype_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
+        goto fail;
+    }
+    err = ancestor_matcher_add(self->ancestor_matcher, (int8_t *) PyArray_DATA(haplotype_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(haplotype_array);
+    Py_INCREF(Py_None);
+    return Py_None;
+fail:
+    Py_XDECREF(haplotype_array);
+    return NULL;
+}
+
+static PyMemberDef AncestorMatcher_members[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef AncestorMatcher_methods[] = {
+    {"best_path", (PyCFunction) AncestorMatcher_best_path,
+        METH_VARARGS|METH_KEYWORDS,
+        "Fills the specified numpy array with the best path through the ancestors."},
+    {"add", (PyCFunction) AncestorMatcher_add,
+        METH_VARARGS|METH_KEYWORDS,
+        "Adds the specified ancestor."},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject AncestorMatcherType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.AncestorMatcher",             /* tp_name */
+    sizeof(AncestorMatcher),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)AncestorMatcher_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "AncestorMatcher objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    AncestorMatcher_methods,             /* tp_methods */
+    AncestorMatcher_members,             /* tp_members */
+    0,                         /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)AncestorMatcher_init,      /* tp_init */
+};
+
 
 /*===================================================================
  * ReferencePanel
@@ -521,6 +752,13 @@ init_tsinfer(void)
     /* Initialise numpy */
     import_array();
 
+    /* AncestorMatcher type */
+    AncestorMatcherType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&AncestorMatcherType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&AncestorMatcherType);
+    PyModule_AddObject(module, "AncestorMatcher", (PyObject *) &AncestorMatcherType);
     /* ReferencePanel type */
     ReferencePanelType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&ReferencePanelType) < 0) {

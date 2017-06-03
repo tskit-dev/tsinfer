@@ -117,7 +117,7 @@ main(int argc, char **argv)
             printf("Completed %d\n", (int) j);
         }
         h = ancestors + j * num_sites;
-        ret = ancestor_matcher_best_match(&am, h, path);
+        ret = ancestor_matcher_best_path(&am, h, 0.01, 1e-200, path);
         if (ret != 0) {
             fatal_error("match error");
         }

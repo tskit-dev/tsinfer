@@ -170,12 +170,12 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, segment_t **T_head,
 }
 
 int
-ancestor_matcher_best_match(ancestor_matcher_t *self, allele_t *haplotype,
-        ancestor_id_t *path)
+ancestor_matcher_best_path(ancestor_matcher_t *self, allele_t *haplotype,
+        double recombination_rate, double mutation_rate, ancestor_id_t *path)
 {
     int ret = 0;
-    double rho = 0.01;
-    double theta = 1e-200;
+    double rho = recombination_rate;
+    double theta = mutation_rate;
     double n = (double) self->num_ancestors;
     double r = 1 - exp(-rho / n);
     double pr = r / n;
@@ -203,6 +203,7 @@ ancestor_matcher_best_match(ancestor_matcher_t *self, allele_t *haplotype,
 
     /* skip any leading unset values in the input haplotype */
     start_site = 0;
+    end_site = (site_id_t) self->num_sites - 1;
     while (haplotype[start_site] == -1) {
         start_site++;
         // TODO error check this properly
@@ -368,7 +369,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
         }
         total_segments++;
         assert(self->sites_tail[l] == u);
-        assert(u->end == self->num_ancestors);
+        assert(u->end == (ancestor_id_t) self->num_ancestors);
     }
     assert(total_segments == object_heap_get_num_allocated(&self->segment_heap));
 }
