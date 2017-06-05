@@ -1471,12 +1471,44 @@ def new_segments(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    if ts.num_sites == 0:
+        print("zero sites; skipping")
+        return
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    print(S)
+    tsp = tsinfer.infer(S, matcher_algorithm="python")
 
-    tsp = tsinfer.infer(S)
+    # print()
+    # assert ts.num_sites == tsp.num_sites
+    # for v1, v2 in zip(ts.variants(), tsp.variants()):
+    #     # print(v1.genotypes)
+    #     # print(v2.genotypes)
+    #     if not np.all(v1.genotypes == v2.genotypes):
+    #         print("DIFF at", v1.index)
+    #     # assert np.all(v1.genotypes == v2.genotypes)
+
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
+    # print(S)
+    # print()
+    # print(Sp)
+
+    # for t in tsp.trees():
+    #     print(t.interval, t)
+    ts_simplified = tsp.simplify()
+    # for h in ts_simplified.haplotypes():
+    #     print(h)
+    # for e in ts_simplified.edgesets():
+    #     print(e.left, e.right, e.parent, e.children, sep="\t")
+    # print()
+
+    Sp = np.zeros((ts_simplified.sample_size, ts_simplified.num_sites), dtype="i1")
+    for variant in ts_simplified.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
 
     # builder = tsinfer.AncestorBuilder(S)
     # # matcher_p = tsinfer.AncestorMatcher(ts.num_sites)
@@ -1572,8 +1604,9 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(8, 10, j)
-    new_segments(6, 4, 2)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(40, 6, j)
+    # new_segments(3, 5, 11)
+    # new_segments(5, 5, 304)
     # export_ancestors(20, 2000, 3)
