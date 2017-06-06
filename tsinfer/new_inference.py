@@ -28,7 +28,7 @@ def infer(samples, matcher_algorithm="C"):
         matcher = AncestorMatcher(num_sites)
     num_ancestors = builder.num_ancestors
     # tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
-    tree_sequence_builder = TestTreeSequenceBuilder(num_samples, num_ancestors, num_sites)
+    tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
 
     A = np.zeros(num_sites, dtype=np.int8)
     P = np.zeros(num_sites, dtype=np.int32)
@@ -182,7 +182,7 @@ def chain_str(head):
 #         ts = msprime.load_tables(nodes=nodes, edgesets=edgesets)
 #         return ts
 
-class TestTreeSequenceBuilder(object):
+class TreeSequenceBuilder(object):
     """
     Builds a tree sequence from the copying paths of ancestors and samples.
     This uses a simpler extensional list algorithm.

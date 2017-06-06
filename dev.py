@@ -10,6 +10,7 @@ import random
 import statistics
 import attr
 import collections
+import time
 # import profilehooks
 
 import tsinfer
@@ -1477,8 +1478,8 @@ def new_segments(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    # tsp = tsinfer.infer(S, matcher_algorithm="python")
-    tsp = tsinfer.infer(S, matcher_algorithm="C")
+    tsp = tsinfer.infer(S, matcher_algorithm="python")
+    # tsp = tsinfer.infer(S, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1532,6 +1533,73 @@ def export_ancestors(n, L, seed):
     # np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
 
 
+def compare_timings(n, L, seed):
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    if ts.num_sites == 0:
+        print("zero sites; skipping")
+        return
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+
+    total_matching_time_new = 0
+    # Inline the code here so we can time it.
+    samples = S
+    num_samples, num_sites = samples.shape
+    builder = tsinfer.AncestorBuilder(samples)
+    matcher = _tsinfer.AncestorMatcher(num_sites)
+    num_ancestors = builder.num_ancestors
+    # tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
+    tree_sequence_builder = tsinfer.TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
+
+    A = np.zeros(num_sites, dtype=np.int8)
+    P = np.zeros(num_sites, dtype=np.int32)
+    M = np.zeros(num_sites, dtype=np.uint32)
+    for j in range(builder.num_ancestors):
+        focal_site = builder.site_order[j]
+        builder.build(j, A)
+        before = time.clock()
+        num_mutations = matcher.best_path(A, P, M, 0.01, 1e-200)
+        total_matching_time_new += time.clock() - before
+        # print(A)
+        # print(P)
+        # print("num_mutations = ", num_mutations, M[:num_mutations])
+        assert num_mutations == 1
+        assert M[0] == focal_site
+        matcher.add(A)
+        tree_sequence_builder.add_path(j + 1, P, A, M[:num_mutations])
+    # tree_sequence_builder.print_state()
+
+    for j in range(num_samples):
+        before = time.clock()
+        num_mutations = matcher.best_path(samples[j], P, M, 0.01, 1e-200)
+        total_matching_time_new += time.clock() - before
+        u = num_ancestors + j + 1
+        tree_sequence_builder.add_path(u, P, samples[j], M[:num_mutations])
+    # tree_sequence_builder.print_state()
+    tsp = tree_sequence_builder.finalise()
+
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
+
+    S = S.astype(np.uint8)
+    panel = tsinfer.ReferencePanel(
+        S, [site.position for site in ts.sites()], ts.sequence_length,
+        rho=0.001, algorithm="c")
+    before = time.clock()
+    P, mutations = panel.infer_paths(num_workers=1)
+    total_matching_time_old = time.clock() - before
+    ts_new = panel.convert_records(P, mutations)
+    Sp = np.zeros((ts_new.sample_size, ts_new.num_sites), dtype="u1")
+    for variant in ts_new.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
+    print(n, L, total_matching_time_old, total_matching_time_new, sep="\t")
+
+
 if __name__ == "__main__":
     # main()
     # example()
@@ -1545,9 +1613,12 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(40, 200, j)
-    # new_segments(3, 5, 11)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(40, 200, j)
+    new_segments(3, 5, 11)
     # new_segments(5, 5, 304)
     # export_ancestors(20, 20, 3)
+    # n = 10
+    # for L in np.linspace(100, 1000, 10):
+    #     compare_timings(n, L, 1)

@@ -92,6 +92,7 @@ class PythonThreader(object):
 
 
 class ReferencePanel(object):
+
     """
     Class representing the reference panel for inferring a tree sequence
     from observed data.
@@ -124,7 +125,7 @@ class ReferencePanel(object):
         n = self._ll_reference_panel.num_samples
         m = self._ll_reference_panel.num_sites
         H = self._ll_reference_panel.get_haplotypes()
-        threader = self._threader_class(self)
+        threader = self._threader_class(self._ll_reference_panel)
         P = np.zeros((N, m), dtype=np.uint32)
         p = np.zeros(m, dtype=np.uint32)
         P[-1, :] = -1
