@@ -1477,16 +1477,8 @@ def new_segments(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    tsp = tsinfer.infer(S, matcher_algorithm="python")
-
-    # print()
-    # assert ts.num_sites == tsp.num_sites
-    # for v1, v2 in zip(ts.variants(), tsp.variants()):
-    #     # print(v1.genotypes)
-    #     # print(v2.genotypes)
-    #     if not np.all(v1.genotypes == v2.genotypes):
-    #         print("DIFF at", v1.index)
-    #     # assert np.all(v1.genotypes == v2.genotypes)
+    # tsp = tsinfer.infer(S, matcher_algorithm="python")
+    tsp = tsinfer.infer(S, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1510,56 +1502,6 @@ def new_segments(n, L, seed):
         Sp[:, variant.index] = variant.genotypes
     assert np.all(Sp == S)
 
-    # builder = tsinfer.AncestorBuilder(S)
-    # # matcher_p = tsinfer.AncestorMatcher(ts.num_sites)
-    # matcher = _tsinfer.AncestorMatcher(ts.num_sites)
-    # A = np.zeros(ts.num_sites, dtype=np.int8)
-    # P = np.zeros(ts.num_sites, dtype=np.int32)
-    # # Pp = np.zeros(ts.num_sites, dtype=np.int32)
-
-    # for j in range(builder.num_ancestors):
-    #     focal_site = builder.site_order[j]
-    #     builder.build(j, A)
-    #     # print(j, focal_site, A, sep="\t")
-    #     matcher.best_path(A, P, 0.1, 1e-200)
-    #     # matcher_p.best_path(A, Pp, 0.1, 1e-200)
-    #     print(P)
-    #     # print(Pp)
-    #     # print()
-    #     # H = matcher_p.decode_ancestors()
-    #     # print(H)
-    #     # B = H[P, np.arange(ts.num_sites)]
-    #     # B[A == -1] = -1
-    #     # assert B[focal_site] == 0
-    #     # assert A[focal_site] == 1
-    #     # B[focal_site] = 1
-    #     # # assert np.all(A == B)
-    #     # if not np.all(A == B):
-    #     #     builder.print_state()
-    #     #     matcher.print_state()
-    #     #     print(matcher.decode_ancestors())
-    #     #     print("index = ", j, "focal = ", focal_site)
-    #     #     print("P", P)
-    #     #     print("A",  A)
-    #     #     print("B",  B)
-    #     #     print(A == B)
-    #     #     print()
-    #     #     assert False
-
-    #     # assert np.all(P == Pp)
-
-    #     matcher.add(A)
-    #     # matcher_p.add(A)
-    # print("samples")
-    # for j in range(ts.sample_size):
-    #     matcher.best_path(S[j], P, 0.1, 1e-200)
-    #     print(P)
-
-    #     # matcher.print_state()
-    #     # print(matcher.decode_ancestors())
-    # # matcher.print_state()
-    # # print(matcher.decode_ancestors())
-    # # builder.print_state()
 
 
 def export_ancestors(n, L, seed):
@@ -1570,14 +1512,13 @@ def export_ancestors(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    builder = tsinfer.AncestorBuilder(ts.sample_size, ts.num_sites, S)
+    builder = tsinfer.AncestorBuilder(S)
     print("total ancestors = ", builder.num_ancestors)
     # matcher = tsinfer.AncestorMatcher(ts.num_sites)
     A = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     P = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     for j in range(builder.num_ancestors):
-        a = builder.build(j)
-        A[j,:] = a
+        builder.build(j, A[j,:])
         if j % 100 == 0:
             print("done", j)
         # p = matcher.best_path(a, 0.01, 1e-200)
@@ -1606,7 +1547,7 @@ if __name__ == "__main__":
     # segment_stats()
     for j in range(1, 100000):
         print(j)
-        new_segments(40, 6, j)
+        new_segments(40, 200, j)
     # new_segments(3, 5, 11)
     # new_segments(5, 5, 304)
-    # export_ancestors(20, 2000, 3)
+    # export_ancestors(20, 20, 3)

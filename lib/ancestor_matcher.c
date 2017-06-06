@@ -133,15 +133,37 @@ ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype)
     return ret;
 }
 
+/*
+Returns the state of the specified ancestor at the specified site.
+*/
 static int
-ancestor_matcher_run_traceback(ancestor_matcher_t *self, segment_t **T_head,
-        site_id_t start_site, site_id_t end_site, ancestor_id_t best_match,
-        ancestor_id_t *path)
+ancestor_matcher_get_state(ancestor_matcher_t *self, site_id_t site,
+        ancestor_id_t ancestor, allele_t *state)
+{
+    int ret = 0;
+    segment_t *seg = self->sites_head[site];
+
+    while (seg != NULL && seg->end <= ancestor) {
+        seg = seg->next;
+    }
+    assert(seg != NULL);
+    assert(seg->start <= ancestor && ancestor < seg->end);
+    *state = (allele_t) seg->value;
+    return ret;
+}
+
+static int
+ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype,
+        segment_t **T_head, site_id_t start_site, site_id_t end_site,
+        ancestor_id_t best_match, ancestor_id_t *path, size_t *num_mutations,
+        site_id_t *mutation_sites)
 {
     int ret = 0;
     site_id_t l;
     ancestor_id_t p;
     segment_t *u;
+    allele_t state;
+    size_t local_num_mutations = 0;
 
     /* printf("traceback for %d-%d, best=%d\n", start_site, end_site, best_match); */
     /* Set everything to -1 */
@@ -149,6 +171,15 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, segment_t **T_head,
     path[end_site] = best_match;
     for (l = end_site; l > start_site; l--) {
         /* printf("Tracing back at site %d\n", l); */
+        ret = ancestor_matcher_get_state(self, l, path[l], &state);
+        if (ret != 0) {
+            goto out;
+        }
+        if (state != haplotype[l]) {
+            mutation_sites[local_num_mutations] = l;
+            local_num_mutations++;
+        }
+
         p = (ancestor_id_t) -1;
         u = T_head[l];
         while (u != NULL) {
@@ -166,12 +197,24 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, segment_t **T_head,
         }
         path[l - 1] = p;
     }
+    l = start_site;
+    ret = ancestor_matcher_get_state(self, l, path[l], &state);
+    if (ret != 0) {
+        goto out;
+    }
+    if (state != haplotype[l]) {
+        mutation_sites[local_num_mutations] = l;
+        local_num_mutations++;
+    }
+    *num_mutations = local_num_mutations;
+out:
     return ret;
 }
 
 int
 ancestor_matcher_best_path(ancestor_matcher_t *self, allele_t *haplotype,
-        double recombination_rate, double mutation_rate, ancestor_id_t *path)
+        double recombination_rate, double mutation_rate, ancestor_id_t *path,
+        size_t *num_mutations, site_id_t *mutation_sites)
 {
     int ret = 0;
     double rho = recombination_rate;
@@ -199,7 +242,6 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, allele_t *haplotype,
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-
 
     /* skip any leading unset values in the input haplotype */
     start_site = 0;
@@ -333,8 +375,8 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, allele_t *haplotype,
         v = v->next;
         ancestor_matcher_free_segment(self, tmp);
     }
-    ret = ancestor_matcher_run_traceback(self, T_head, start_site, end_site,
-            best_match, path);
+    ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site,
+            best_match, path, num_mutations, mutation_sites);
     /* free the segments in T */
     for (l = 0; l < self->num_sites; l++) {
         v = T_head[l];

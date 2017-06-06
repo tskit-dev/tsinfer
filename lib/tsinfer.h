@@ -29,7 +29,8 @@ int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype);
 int ancestor_matcher_best_path(ancestor_matcher_t *self,
         allele_t *haplotype, double recombination_rate,
-        double mutation_rate, ancestor_id_t *path);
+        double mutation_rate, ancestor_id_t *path,
+        size_t *num_mutations, site_id_t *mutation_sites);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 
 void __tsi_safe_free(void **ptr);

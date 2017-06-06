@@ -91,12 +91,12 @@ main(int argc, char **argv)
     int8_t *ancestors = NULL;
     int8_t *h;
     ancestor_id_t *path = NULL;
-    size_t num_ancestors;
-    size_t num_sites;
+    site_id_t *mutation_sites = NULL;
+    size_t num_ancestors, num_sites, num_mutations;
     size_t j, l;
     ancestor_matcher_t am;
     int ret;
-    bool show_matches = false;
+    bool show_matches = true;
 
     if (argc != 2) {
         fatal_error("usage: main <ancestors-file>");
@@ -108,7 +108,8 @@ main(int argc, char **argv)
         fatal_error("alloc error");
     }
     path = calloc(num_sites, sizeof(ancestor_id_t));
-    if (path == NULL) {
+    mutation_sites = malloc(num_sites * sizeof(site_id_t));
+    if (path == NULL || mutation_sites == NULL) {
         fatal_error("alloc error");
     }
     printf("total ancestors = %d\n", (int) num_ancestors);
@@ -117,12 +118,14 @@ main(int argc, char **argv)
             printf("Completed %d\n", (int) j);
         }
         h = ancestors + j * num_sites;
-        ret = ancestor_matcher_best_path(&am, h, 0.01, 1e-200, path);
+        ret = ancestor_matcher_best_path(&am, h, 0.01, 1e-200, path,
+                &num_mutations, mutation_sites);
         if (ret != 0) {
             fatal_error("match error");
         }
         /* printf("Best match = \n"); */
         if (show_matches) {
+            printf("%d:\t", (int) num_mutations);
             for (l = 0; l < num_sites; l++) {
                 printf("%d", path[l]);
                 if (l < num_sites - 1) {
@@ -142,6 +145,7 @@ main(int argc, char **argv)
 
     ancestor_matcher_free(&am);
     free(ancestors);
+    free(mutation_sites);
     free(path);
     return EXIT_SUCCESS;
 }

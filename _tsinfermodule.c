@@ -112,21 +112,25 @@ static PyObject *
 AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"haplotype", "path", "recombination_rate",
+    static char *kwlist[] = {"haplotype", "path", "mutation_sites", "recombination_rate",
         "mutation_rate", NULL};
     PyObject *haplotype = NULL;
     PyObject *path = NULL;
+    PyObject *mutation_sites = NULL;
     PyArrayObject *path_array = NULL;
     PyArrayObject *haplotype_array = NULL;
+    PyArrayObject *mutation_sites_array = NULL;
     double recombination_rate;
     double mutation_rate;
+    size_t num_mutations;
     npy_intp *shape;
 
     if (AncestorMatcher_check_state(self) != 0) {
         goto fail;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!dd", kwlist,
-            &haplotype, &PyArray_Type, &path, &recombination_rate, &mutation_rate)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!O!dd", kwlist,
+            &haplotype, &PyArray_Type, &path, &PyArray_Type, &mutation_sites,
+            &recombination_rate, &mutation_rate)) {
         goto fail;
     }
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
@@ -157,21 +161,38 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "input path wrong size");
         goto fail;
     }
+    mutation_sites_array = (PyArrayObject *) PyArray_FROM_OTF(mutation_sites, NPY_UINT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (mutation_sites_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(mutation_sites_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(mutation_sites_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input mutation_sites wrong size");
+        goto fail;
+    }
     err = ancestor_matcher_best_path(self->ancestor_matcher,
         (int8_t *) PyArray_DATA(haplotype_array),
         recombination_rate, mutation_rate,
-        (int32_t *) PyArray_DATA(path_array));
+        (int32_t *) PyArray_DATA(path_array),
+        &num_mutations, (uint32_t *) PyArray_DATA(mutation_sites_array));
+
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
     Py_DECREF(haplotype_array);
     Py_DECREF(path_array);
-    Py_INCREF(Py_None);
-    return Py_None;
+    Py_DECREF(mutation_sites_array);
+    return Py_BuildValue("k", (unsigned long) num_mutations);
 fail:
     Py_XDECREF(haplotype_array);
     PyArray_XDECREF_ERR(path_array);
+    PyArray_XDECREF_ERR(mutation_sites_array);
     return NULL;
 }
 
