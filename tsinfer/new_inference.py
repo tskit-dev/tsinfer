@@ -33,20 +33,21 @@ def infer(samples, recombination_rate, mutation_rate, matcher_algorithm="C"):
     A = np.zeros(num_sites, dtype=np.int8)
     P = np.zeros(num_sites, dtype=np.int32)
     M = np.zeros(num_sites, dtype=np.uint32)
-    for j in range(builder.num_ancestors):
-        focal_site = builder.site_order[j]
-        builder.build(j, A)
+    # for j in range(builder.num_ancestors):
+        # focal_site = builder.site_order[j]
+        # builder.build(j, A)
+    for j, A in enumerate(builder.build_all_ancestors()):
         num_mutations = matcher.best_path(A, P, M, recombination_rate, mutation_rate)
         # print(A)
         # print(P)
         # print("num_mutations = ", num_mutations, M[:num_mutations])
         assert num_mutations == 1
-        assert M[0] == focal_site
+        # assert M[0] == focal_site
         matcher.add(A)
         tree_sequence_builder.add_path(j + 1, P, A, M[:num_mutations])
     # tree_sequence_builder.print_state()
-    print("HERE")
-    matcher.print_state()
+    # print("HERE")
+    # matcher.print_state()
 
     for j in range(num_samples):
         num_mutations = matcher.best_path(samples[j], P, M, recombination_rate, mutation_rate)
@@ -313,131 +314,127 @@ class AncestorBuilder(object):
         df["s"] = sites
         print(df)
 
-    def build_all_ancestors(self):
-        S = self.sample_matrix
+    def __build_ancestors(self, frequency_class):
+        """
+        Builds the ancestors for the specified frequency class.
+        """
+        sites = np.where(self.frequency == frequency_class)[0]
         site_mask = np.zeros(self.num_sites, dtype=np.int8)
+        site_mask[np.where(self.frequency > frequency_class)] = 1
+        S = self.sample_matrix
+        B = np.zeros((sites.shape[0], self.num_sites), dtype=np.int8)
+        # print(frequency_class, sites)
+        for index, site in enumerate(sites):
+            A = B[index, :]
+            # Find all samples that have a 1 at this site
+            R = S[S[:,site] == 1]
+            # Mask out mutations that haven't happened yet.
+            M = np.logical_and(R, site_mask).astype(int)
+            A[:] = -1
+            A[site] = 1
+            l = site - 1
+            consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
+            while l >= 0 and len(consistent_samples) > 0:
+                # print("l = ", l, consistent_samples)
+                # Get the consensus among the consistent samples for this locus.
+                # Only mutations older than this site are considered.
+                s = 0
+                for k in consistent_samples.keys():
+                    s += M[k, l]
+                A[l] = int(s >= len(consistent_samples) / 2)
+                # Now we have computed the ancestor, go through the samples and
+                # update their four-gametes patterns with the ancestor. Any
+                # samples inconsistent with the ancestor are dropped.
+                dropped = []
+                for k, patterns in consistent_samples.items():
+                    patterns.add((A[l], S[k, l]))
+                    if len(patterns) == 4:
+                        dropped.append(k)
+                for k in dropped:
+                    del consistent_samples[k]
+                l -= 1
+            l = site + 1
+            consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
+            while l < self.num_sites and len(consistent_samples) > 0:
+                # print("l = ", l, consistent_samples)
+                # Get the consensus among the consistent samples for this locus.
+                s = 0
+                for k in consistent_samples.keys():
+                    s += M[k, l]
+                # print("s = ", s)
+                A[l] = int(s >= len(consistent_samples) / 2)
+                # Now we have computed the ancestor, go through the samples and
+                # update their four-gametes patterns with the ancestor. Any
+                # samples inconsistent with the ancestor are dropped.
+                dropped = []
+                for k, patterns in consistent_samples.items():
+                    patterns.add((A[l], S[k, l]))
+                    if len(patterns) == 4:
+                        dropped.append(k)
+                for k in dropped:
+                    del consistent_samples[k]
+                l += 1
+        return B
+
+    def __sort_slice(self, A, start, end, column, sort_order, depth=0):
+        """
+        Find the first column in the rows start:end in A that is not sorted, and
+        resort to establish sortedness. Then, for each subslice of this array,
+        recursively call this sorting until the destination slice is empty.
+        """
+        # print("  " * depth, "SORT SLICE", start, end, column, sort_order)
+        col = column
+        while col < A.shape[1] and np.all(np.sort(A[start:end, col]) == A[start:end, col]):
+            # print("Skipping", col, A[start:end, col])
+            col += 1
+        if col < A.shape[1]:
+            # print("Mismatch col = ", col, A[start:end, col])
+            # print("Before:")
+            # print(A[start:end])
+            order = A[start:end, col].argsort(kind="mergesort")
+            if sort_order == 1:
+                order = order[::-1]
+
+            A[start:end,:] = A[start:end,:][order]
+            # print("Sorted:")
+            # print(A[start:end])
+            if col < A.shape[1] - 1:
+                # Partition A[start:end] into distinct values.
+                values, indexes = np.unique(A[start:end, col], return_index=True)
+                # print(indexes)
+                # print(values)
+                indexes.sort()
+                assert indexes[0] == 0
+                partitions = list(indexes) + [end - start]
+                for j in range(len(partitions) - 1):
+                    partition_start = start + partitions[j]
+                    partition_end = start + partitions[j + 1]
+                    assert partition_start >= start and partition_end <= end
+                    if partition_end - partition_start > 1:
+                        # print("PARTITION:", partitions[j], partitions[j + 1], col + 1)
+                        self.__sort_slice(
+                            A, partition_start, partition_end, col + 1, sort_order,
+                            depth + 1)
+
+    def build_all_ancestors(self):
+        order = 0
         for frequency_class in np.unique(self.frequency)[::-1][:-1]:
-            sites = np.where(self.frequency == frequency_class)[0]
-            B = np.zeros((sites.shape[0], self.num_sites), dtype=int)
-            print(frequency_class, sites)
-            for index, site in enumerate(sites):
-                A = B[index, :]
-                # Find all samples that have a 1 at this site
-                R = S[S[:,site] == 1]
-                # Mask out mutations that haven't happened yet.
-                M = np.logical_and(R, site_mask).astype(int)
-                A[:] = -1
-                A[site] = 1
-                l = site - 1
-                consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-                while l >= 0 and len(consistent_samples) > 0:
-                    # print("l = ", l, consistent_samples)
-                    # Get the consensus among the consistent samples for this locus.
-                    # Only mutations older than this site are considered.
-                    s = 0
-                    for k in consistent_samples.keys():
-                        s += M[k, l]
-                    A[l] = int(s >= len(consistent_samples) / 2)
-                    # Now we have computed the ancestor, go through the samples and
-                    # update their four-gametes patterns with the ancestor. Any
-                    # samples inconsistent with the ancestor are dropped.
-                    dropped = []
-                    for k, patterns in consistent_samples.items():
-                        patterns.add((A[l], S[k, l]))
-                        if len(patterns) == 4:
-                            dropped.append(k)
-                    for k in dropped:
-                        del consistent_samples[k]
-                    l -= 1
-                l = site + 1
-                consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-                while l < self.num_sites and len(consistent_samples) > 0:
-                    # print("l = ", l, consistent_samples)
-                    # Get the consensus among the consistent samples for this locus.
-                    s = 0
-                    for k in consistent_samples.keys():
-                        s += M[k, l]
-                    # print("s = ", s)
-                    A[l] = int(s >= len(consistent_samples) / 2)
-                    # Now we have computed the ancestor, go through the samples and
-                    # update their four-gametes patterns with the ancestor. Any
-                    # samples inconsistent with the ancestor are dropped.
-                    dropped = []
-                    for k, patterns in consistent_samples.items():
-                        patterns.add((A[l], S[k, l]))
-                        if len(patterns) == 4:
-                            dropped.append(k)
-                    for k in dropped:
-                        del consistent_samples[k]
-                    l += 1
-                # site_mask[site] = 1
+            B = self.__build_ancestors(frequency_class)
+            # print("FREQUENCY CLASS", frequency_class)
+            # print("pre-sort")
+            # print(B)
+            self.__sort_slice(B, 0, B.shape[0], 0, order)
+            for A in B:
+                yield A
+            order = (order + 1) % 2
 
-
-            # Now mask out these sites
-            print("pre-sort")
-            print(B)
-
-            order = B[:,0].argsort()
-            print(order)
-            print("sorted:")
-            B = B[order,:]
-            print(B)
-            site_mask[sites] = 1
-            # print("mask = ", site_mask)
-
-        # site = self.site_order[site_index]
-        # self.site_mask[site] = 1
-        # # Find all samples that have a 1 at this site
-        # R = S[S[:,site] == 1]
-        # # Mask out mutations that haven't happened yet.
-        # M = np.logical_and(R, self.site_mask).astype(int)
-        # A[:] = -1
-        # A[site] = 1
-        # l = site - 1
-        # consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-        # while l >= 0 and len(consistent_samples) > 0:
-        #     # print("l = ", l, consistent_samples)
-        #     # Get the consensus among the consistent samples for this locus.
-        #     # Only mutations older than this site are considered.
-        #     s = 0
-        #     for k in consistent_samples.keys():
-        #         s += M[k, l]
-        #     A[l] = int(s >= len(consistent_samples) / 2)
-        #     # Now we have computed the ancestor, go through the samples and
-        #     # update their four-gametes patterns with the ancestor. Any
-        #     # samples inconsistent with the ancestor are dropped.
-        #     dropped = []
-        #     for k, patterns in consistent_samples.items():
-        #         patterns.add((A[l], S[k, l]))
-        #         if len(patterns) == 4:
-        #             dropped.append(k)
-        #     for k in dropped:
-        #         del consistent_samples[k]
-        #     l -= 1
-        # l = site + 1
-        # consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-        # while l < self.num_sites and len(consistent_samples) > 0:
-        #     # print("l = ", l, consistent_samples)
-        #     # Get the consensus among the consistent samples for this locus.
-        #     s = 0
-        #     for k in consistent_samples.keys():
-        #         s += M[k, l]
-        #     # print("s = ", s)
-        #     A[l] = int(s >= len(consistent_samples) / 2)
-        #     # Now we have computed the ancestor, go through the samples and
-        #     # update their four-gametes patterns with the ancestor. Any
-        #     # samples inconsistent with the ancestor are dropped.
-        #     dropped = []
-        #     for k, patterns in consistent_samples.items():
-        #         patterns.add((A[l], S[k, l]))
-        #         if len(patterns) == 4:
-        #             dropped.append(k)
-        #     for k in dropped:
-        #         del consistent_samples[k]
-        #     l += 1
-
-
-
+            # print("DONE")
+            # print(B)
+            # order = B[:,0].argsort()
+            # print(order)
+            # print("sorted:")
+            # B = B[order,:]
+            # print(B)
 
 
     def build(self, site_index, A):

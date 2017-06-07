@@ -1478,8 +1478,8 @@ def new_segments(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    # tsp = tsinfer.infer(S, matcher_algorithm="C")
+    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
+    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1612,52 +1612,51 @@ def ancestor_gap_density(n, L, seed):
     samples = S
     num_samples, num_sites = samples.shape
     builder = tsinfer.AncestorBuilder(samples)
-    builder.print_state()
+    # builder.print_state()
     matcher = tsinfer.AncestorMatcher(num_sites)
     num_ancestors = builder.num_ancestors
 
-    A = np.zeros(num_sites, dtype=np.int8)
+    # A = np.zeros(num_sites, dtype=np.int8)
     P = np.zeros(num_sites, dtype=np.int32)
     M = np.zeros(num_sites, dtype=np.uint32)
-    builder.build_all_ancestors()
+    for A in builder.build_all_ancestors():
+        matcher.add(A)
 
 #     for j in range(builder.num_ancestors):
 #         focal_site = builder.site_order[j]
 #         builder.build(j, A)
 #         matcher.add(A)
-#     matcher.print_state()
+    # matcher.print_state()
 #     builder.print_state()
 #     builder.print_all_ancestors()
 
+    total_segments = np.zeros(ts.num_sites)
+    total_blank_segments = np.zeros(ts.num_sites)
+    total_blank_segments_distance = 0
 
+    for l in range(matcher.num_sites):
+        seg = matcher.sites_head[l]
+        while seg is not None:
+            # print(seg.start, seg.end, seg.value)
+            total_segments[l] += 1
+            if seg.value == -1:
+                total_blank_segments[l] += 1
+                total_blank_segments_distance += seg.end - seg.start
+            seg = seg.next
 
-#     total_segments = np.zeros(ts.num_sites)
-#     total_blank_segments = np.zeros(ts.num_sites)
-#     total_blank_segments_distance = 0
-
-#     for l in range(matcher.num_sites):
-#         seg = matcher.sites_head[l]
-#         while seg is not None:
-#             # print(seg.start, seg.end, seg.value)
-#             total_segments[l] += 1
-#             if seg.value == -1:
-#                 total_blank_segments[l] += 1
-#                 total_blank_segments_distance += seg.end - seg.start
-#             seg = seg.next
-
-#     return {
-#         "n": n, "L": L,
-#         "num_sites":matcher.num_sites,
-#         "num_ancestors": matcher.num_ancestors,
-#         "mean_total_segments": np.mean(total_segments),
-#         "mean_blank_segments": np.mean(total_blank_segments),
-#         "total_blank_fraction": total_blank_segments_distance / (num_sites * num_ancestors)
-#     }
+    return {
+        "n": n, "L": L,
+        "num_sites":matcher.num_sites,
+        "num_ancestors": matcher.num_ancestors,
+        "mean_total_segments": np.mean(total_segments),
+        "mean_blank_segments": np.mean(total_blank_segments),
+        "total_blank_fraction": total_blank_segments_distance / (num_sites * num_ancestors)
+    }
 
 if __name__ == "__main__":
 
-    np.set_printoptions(linewidth=2000)
-    np.set_printoptions(threshold=20000)
+    np.set_printoptions(linewidth=20000)
+    np.set_printoptions(threshold=200000)
     # main()
     # example()
     # bug()
@@ -1675,19 +1674,21 @@ if __name__ == "__main__":
     #     new_segments(40, 200, j)
     # new_segments(5, 17, 11)
     # new_segments(5, 5, 304)
+
     # export_ancestors(20, 20, 3)
     # n = 10
     # for L in np.linspace(100, 1000, 10):
     #     compare_timings(n, L, 1)
-    # rows = []
 
-    d = ancestor_gap_density(10, 20, 1)
-    # n = 10
-    # for L in np.linspace(10, 500, 10):
-    #     d = ancestor_gap_density(n, L, 1)
-    #     rows.append(d)
-    #     df = pd.DataFrame(rows)
-    #     print(df)
-        # df.to_csv("gap-analysis.csv")
+    # d = ancestor_gap_density(20, 40, 1)
+
+    rows = []
+    n = 10
+    for L in np.linspace(10, 500, 10):
+        d = ancestor_gap_density(n, L, 1)
+        rows.append(d)
+        df = pd.DataFrame(rows)
+        print(df)
+        df.to_csv("gap-analysis.csv")
 
 
