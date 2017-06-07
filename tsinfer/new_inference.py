@@ -1,4 +1,5 @@
 
+import collections
 
 import numpy as np
 import attr
@@ -416,6 +417,50 @@ class AncestorBuilder(object):
                             A, partition_start, partition_end, col + 1, sort_order,
                             depth + 1)
 
+    def __sort_ancestor_slice(self, A, start, end, sort_order, depth=0):
+        # print("  " * depth, "SORT ANC SLICE", start, end, sort_order)
+        candidates = collections.defaultdict(list)
+        for col in range(A.shape[1]):
+            if not np.all(np.sort(A[start:end, col]) == A[start:end, col]):
+                v, c = np.unique(A[start:end, col], return_counts=True)
+                c = sorted(c, reverse=True)
+                # We're only interested in columns in which the minor value is greater
+                # than 1
+                if c[1] > 1:
+                    # print("col:", col, v, c)
+                    candidates[c[0]].append(col)
+        if len(candidates) > 0:
+            sites = candidates[max(candidates.keys())]
+            # print("Candidatate = ", sites)
+            col = sites[len(sites) // 2]
+            # print("CHOOSE", col)
+
+            order = A[start:end, col].argsort(kind="mergesort")
+            if sort_order == 1:
+                order = order[::-1]
+
+            A[start:end,:] = A[start:end,:][order]
+            # print("Sorted:")
+            # print(A[start:end])
+            if col < A.shape[1] - 1:
+                # Partition A[start:end] into distinct values.
+                values, indexes = np.unique(A[start:end, col], return_index=True)
+                # print(indexes)
+                # print(values)
+                indexes.sort()
+                assert indexes[0] == 0
+                partitions = list(indexes) + [end - start]
+                for j in range(len(partitions) - 1):
+                    partition_start = start + partitions[j]
+                    partition_end = start + partitions[j + 1]
+                    assert partition_start >= start and partition_end <= end
+                    if partition_end - partition_start > 1:
+                        # print("PARTITION:", partitions[j], partitions[j + 1], col + 1)
+                        self.__sort_ancestor_slice(
+                            A, partition_start, partition_end, sort_order,
+                            depth + 1)
+
+
     def build_all_ancestors(self):
         order = 0
         for frequency_class in np.unique(self.frequency)[::-1][:-1]:
@@ -423,19 +468,14 @@ class AncestorBuilder(object):
             # print("FREQUENCY CLASS", frequency_class)
             # print("pre-sort")
             # print(B)
-            self.__sort_slice(B, 0, B.shape[0], 0, order)
+            # self.__sort_slice(B, 0, B.shape[0], 0, order)
+            self.__sort_ancestor_slice(B, 0, B.shape[0], order)
             for A in B:
                 yield A
             order = (order + 1) % 2
 
             # print("DONE")
             # print(B)
-            # order = B[:,0].argsort()
-            # print(order)
-            # print("sorted:")
-            # B = B[order,:]
-            # print(B)
-
 
     def build(self, site_index, A):
         # TODO check that these are called sequentially. We currently have
