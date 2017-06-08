@@ -49,6 +49,9 @@ def infer(samples, recombination_rate, mutation_rate, matcher_algorithm="C"):
     # tree_sequence_builder.print_state()
     # print("HERE")
     # matcher.print_state()
+    # builder.print_all_ancestors()
+    # H = matcher.decode_ancestors()
+    # print(H)
 
     for j in range(num_samples):
         num_mutations = matcher.best_path(samples[j], P, M, recombination_rate, mutation_rate)
@@ -73,7 +76,7 @@ def infer(samples, recombination_rate, mutation_rate, matcher_algorithm="C"):
 
 
 @attr.s
-class Segment(object):
+class LinkedSegment(object):
     """
     A mapping of a half-open interval to a specific value in a linked list.
     Lists of segments must not contain overlapping intervals.
@@ -82,6 +85,15 @@ class Segment(object):
     end = attr.ib(default=None)
     value = attr.ib(default=None)
     next = attr.ib(default=None)
+
+@attr.s
+class Segment(object):
+    """
+    A mapping of a half-open interval to a specific value.
+    """
+    start = attr.ib(default=None)
+    end = attr.ib(default=None)
+    value = attr.ib(default=None)
 
 
 def chain_str(head):
@@ -306,8 +318,8 @@ class AncestorBuilder(object):
         pd.set_option("display.max_columns",10001)
         pd.set_option("display.width",10001)
         H = np.zeros((self.num_ancestors, self.num_sites), dtype=int)
-        for j in range(self.num_ancestors):
-            self.build(j, H[j, :])
+        for j, A in enumerate(self.build_all_ancestors()):
+            H[j, :] = A
         df = pd.DataFrame(H)
         frequencies = self.frequency[self.site_order][:self.num_ancestors]
         sites = self.site_order[:self.num_ancestors]
@@ -473,7 +485,6 @@ class AncestorBuilder(object):
             for A in B:
                 yield A
             order = (order + 1) % 2
-
             # print("DONE")
             # print(B)
 
@@ -543,8 +554,7 @@ class AncestorMatcher(object):
     def __init__(self, num_sites):
         self.num_sites = num_sites
         self.num_ancestors = 1
-        self.sites_head = [Segment(0, self.num_ancestors, 0) for _ in range(num_sites)]
-        self.sites_tail = list(self.sites_head)
+        self.sites = [[Segment(0, self.num_ancestors, 0)] for _ in range(num_sites)]
 
     def add(self, h):
         """
@@ -554,24 +564,25 @@ class AncestorMatcher(object):
         x = self.num_ancestors
         assert h.shape == (self.num_sites,)
         for j in range(self.num_sites):
-            tail = self.sites_tail[j]
-            if tail.end == x and tail.value == h[j]:
-                tail.end += 1
-            else:
-                seg = Segment(x, x + 1, h[j])
-                tail.next = seg
-                self.sites_tail[j] = seg
+            if h[j] != -1:
+                tail = self.sites[j][-1]
+                if tail.end == x and tail.value == h[j]:
+                    tail.end += 1
+                else:
+                    self.sites[j].append(Segment(x, x + 1, h[j]))
         self.num_ancestors += 1
 
     def get_state(self, site, ancestor):
         """
         Returns the state of the specified ancestor at the specified site.
         """
-        seg = self.sites_head[site]
-        while seg.end <= ancestor:
-            seg = seg.next
-        assert seg.start <= ancestor < seg.end
-        return seg.value
+        for seg in self.sites[site]:
+            if seg.start <= ancestor < seg.end:
+                break
+        if seg.start <= ancestor < seg.end:
+            return seg.value
+        else:
+            return -1
 
 
     def run_traceback(self, T, h, start_site, end_site, end_site_value, P, M):
@@ -586,6 +597,9 @@ class AncestorMatcher(object):
         num_mutations = 0
         for l in range(end_site, start_site, -1):
             state = self.get_state(l, P[l])
+            # if state == -1:
+            #     print("state error at ", l)
+            assert state != -1
             if state != h[l]:
                 M[num_mutations] = l
                 num_mutations += 1
@@ -603,6 +617,7 @@ class AncestorMatcher(object):
             P[l - 1] = value
         l = start_site
         state = self.get_state(l, P[l])
+        assert state != -1
         if state != h[l]:
             M[num_mutations] = l
             num_mutations += 1
@@ -627,14 +642,12 @@ class AncestorMatcher(object):
         start_site = 0
         while h[start_site] == -1:
             start_site += 1
-        u = self.sites_head[start_site]
 
-        V_head = Segment(0, self.num_ancestors, 1)
-        V_tail = V_head
+        V = [Segment(0, self.num_ancestors, 1)]
         T_head = [None for l in range(m)]
         T_tail = [None for l in range(m)]
 
-        # print("V = ", chain_str(V))
+        # print("V = ", V)
         for l in range(start_site, m):
             if h[l] == -1:
                 break
@@ -642,104 +655,130 @@ class AncestorMatcher(object):
 
             max_value = -1
             best_haplotype = -1
-            assert V_head.start == 0
-            assert V_tail.end == self.num_ancestors
-            v = V_head
-            while v is not None:
+            assert V[0].start == 0
+            assert V[-1].end == self.num_ancestors
+            for v in V:
+                assert v.start < v.end
                 if v.value >= max_value:
                     max_value = v.value
                     best_haplotype = v.end - 1
-                v = v.next
             # Renormalise V
-            v = V_head
-            while v is not None:
+            for v in V:
                 v.value /= max_value
-                v = v.next
-            V_next_head = None
-            V_next_tail = None
+            V_next = []
+            R = self.sites[l]
 
-            print("l = ", l)
-            print("R = ", chain_str(self.sites_head[l]))
-            print("V = ", chain_str(V_head))
-            print("h = ", h[l])
-            print("b = ", best_haplotype)
-
-            R = self.sites_head[l]
-            V = V_head
-            while R is not None and V is not None:
-                print("\tLOOP HEAD")
-                print("\tR = ", chain_str(R))
-                print("\tV = ", chain_str(V_head))
-                print("\tV_next = ", chain_str(V_next_head))
-                start = max(V.start, R.start)
-                end = min(V.end, R.end)
-                value = V.value
-                state = R.value
-                if R.end == V.end:
-                    R = R.next
-                    V = V.next
-                elif R.end < V.end:
-                    R = R.next
-                elif V.end < R.end:
-                    V = V.next
-                # print("", start, end, value, state, sep="\t")
-
-                x = value * qr
-                y = pr  # v for maximum is 1 by normalisation
-                # print("\tx = ", x, "y = ", y)
-                if x >= y:
-                    z = x
-                else:
-                    z = y
-                    if T_head[l] is None:
-                        T_head[l] = Segment(start, end, best_haplotype)
-                        T_tail[l] = T_head[l]
-                    else:
-                        if T_tail[l].end == start and T_tail[l].value == best_haplotype:
-                            T_tail[l].end = end
-                        else:
-                            tail = Segment(start, end, best_haplotype)
-                            T_tail[l].next = tail
-                            T_tail[l] = tail
-                if state == -1:
-                    value = 0
-                elif state == h[l]:
-                    value = z * qm
-                else:
-                    value = z * pm
-                if V_next_head is None:
-                    V_next_head = Segment(start, end, value)
-                    V_next_tail = V_next_head
-                else:
-                    if V_next_tail.end == start and V_next_tail.value == value:
-                        V_next_tail.end = end
-                    else:
-                        tail = Segment(start, end, value)
-                        V_next_tail.next = tail
-                        V_next_tail = tail
-            # print("T = ", chain_str(T_head[l]))
             # print()
-            V_head = V_next_head
-            V_tail = V_next_tail
-            # Make sure V is complete.
-            v = V_head
-            assert v.start == 0
-            while v.next is not None:
-                assert v.end == v.next.start
-                v = v.next
-            assert v.end == self.num_ancestors
+            # print("l = ", l)
+            # print("R = ", R)
+            # print("V = ", V)
+            # print("h = ", h[l])
+            # print("b = ", best_haplotype)
+
+            r_index = 0
+            v_index = 0
+            last_R_end = 0
+            while r_index < len(R):
+                # print("R LOOP HEAD:", r_index, R[r_index])
+                if R[r_index].start != last_R_end:
+                    # print("R GAP!!", last_R_end, R[r_index].start)
+                    # print("V = ", V)
+                    # print("V_next = ", V_next)
+                    start = last_R_end
+                    end = R[r_index].start
+                    value = 0
+                    if len(V_next) == 0:
+                        V_next = [Segment(start, end, value)]
+                    else:
+                        if V_next[-1].end == start and V_next[-1].value == value:
+                            V_next[-1].end = end
+                        else:
+                            V_next.append(Segment(start, end, value))
+                    # Consume any V values intersecting with this gap
+                    while V[v_index].end <= end:
+                        v_index += 1
+                    V[v_index].start = R[r_index].start
+                    last_R_end = R[r_index].start
+                else:
+                    # Consume all segments in V
+                    assert V[v_index].start == R[r_index].start
+                    while v_index < len(V) and V[v_index].start < R[r_index].end:
+                        # print("V LOOP HEAD:", v_index, V[v_index])
+                        start = V[v_index].start
+                        end = min(V[v_index].end, R[r_index].end)
+                        value = V[v_index].value
+                        state = R[r_index].value
+
+                        x = value * qr
+                        y = pr  # v for maximum is 1 by normalisation
+                        # print("\tx = ", x, "y = ", y)
+                        if x >= y:
+                            z = x
+                        else:
+                            z = y
+                            # Update the traceback to reflect a recombination
+                            if T_head[l] is None:
+                                T_head[l] = LinkedSegment(start, end, best_haplotype)
+                                T_tail[l] = T_head[l]
+                            else:
+                                if T_tail[l].end == start and T_tail[l].value == best_haplotype:
+                                    T_tail[l].end = end
+                                else:
+                                    tail = LinkedSegment(start, end, best_haplotype)
+                                    T_tail[l].next = tail
+                                    T_tail[l] = tail
+                        # Determine the likelihood for this segment.
+                        if state == -1:
+                            value = 0
+                        elif state == h[l]:
+                            value = z * qm
+                        else:
+                            value = z * pm
+                        if len(V_next) == 0:
+                            V_next = [Segment(start, end, value)]
+                        else:
+                            if V_next[-1].end == start and V_next[-1].value == value:
+                                V_next[-1].end = end
+                            else:
+                                V_next.append(Segment(start, end, value))
+                        v_index += 1
+
+                    if V[v_index - 1].end > R[r_index].end:
+                        # Make sure we account for the overhang in the next iteration.
+                        # print("OVERRUN PATCHUP")
+                        v_index -= 1
+                        V[v_index].start = R[r_index].end
+                    last_R_end = R[r_index].end
+                    r_index += 1
+
+            if last_R_end != self.num_ancestors:
+                # print("ADDING MISSING")
+                value = 0
+                start = end
+                end = self.num_ancestors
+                if len(V_next) == 0:
+                    V_next = [Segment(start, end, value)]
+                else:
+                    if V_next[-1].end == start and V_next[-1].value == value:
+                        V_next[-1].end = end
+                    else:
+                        V_next.append(Segment(start, end, value))
+            # print("END of loop:", V_next)
+            V = V_next
+            assert V[0].start == 0
+            for v_index in range(1, len(V)):
+                assert V[v_index].start == V[v_index - 1].end
+            assert V[-1].end == self.num_ancestors
 
         # print("finding best value for ", end_site)
         # print("V = ", chain_str(V_head))
         max_value = -1
         best_haplotype = -1
-        v = V_head
-        while v is not None:
+        for v in V:
             if v.value >= max_value:
                 max_value = v.value
                 best_haplotype = v.end - 1
-            v = v.next
-
+        # print(self.decode_ancestors())
         return self.run_traceback(T_head, h, start_site, end_site, best_haplotype, P, M)
 
     def print_state(self):
@@ -747,8 +786,8 @@ class AncestorMatcher(object):
         print("num_ancestors = ", self.num_ancestors)
         print("num_sites = ", self.num_sites)
         print("Sites:")
-        for j, u in enumerate(self.sites_head):
-            print(j, "\t:", chain_str(u))
+        for j, R in enumerate(self.sites):
+            print(j, "\t:", R)
 
     def decode_ancestors(self):
         """
@@ -756,16 +795,8 @@ class AncestorMatcher(object):
         """
         H = np.zeros((self.num_ancestors, self.num_sites), dtype=int) - 1
         for j in range(self.num_sites):
-            u = self.sites_head[j]
-            # Check for complete list.
-            assert u.start == 0
-            while u is not None:
+            for u in self.sites[j]:
                 H[u.start:u.end, j] = u.value
-                prev = u
-                u = u.next
-                if u is not None:
-                    assert prev.end == u.start
-            assert prev.end == self.num_ancestors
         return H
 
     def decode_traceback(self, E):
@@ -782,8 +813,3 @@ class AncestorMatcher(object):
                 T[u.start:u.end, l] = u.value
                 u = u.next
         return T
-
-
-
-
-

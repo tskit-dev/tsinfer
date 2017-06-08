@@ -1478,8 +1478,8 @@ def new_segments(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
+    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
+    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1669,11 +1669,11 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(40, 200, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(10, 20, j)
     # new_segments(5, 17, 11)
-    # new_segments(5, 5, 304)
+    # new_segments(10, 16, 304)
 
     # export_ancestors(20, 20, 3)
     # n = 10
@@ -1682,13 +1682,13 @@ if __name__ == "__main__":
 
     # d = ancestor_gap_density(20, 40, 1)
 
-    rows = []
-    n = 10
-    for L in np.linspace(10, 500, 10):
-        d = ancestor_gap_density(n, L, 1)
-        rows.append(d)
-        df = pd.DataFrame(rows)
-        print(df)
-        df.to_csv("gap-analysis.csv")
+    # rows = []
+    # n = 10
+    # for L in np.linspace(10, 5000, 20):
+    #     d = ancestor_gap_density(n, L, 2)
+    #     rows.append(d)
+    #     df = pd.DataFrame(rows)
+    #     print(df)
+    #     df.to_csv("gap-analysis.csv")
 
 
