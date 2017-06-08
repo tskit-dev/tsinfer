@@ -1673,7 +1673,7 @@ if __name__ == "__main__":
         print(j)
         new_segments(10, 20, j)
     # new_segments(5, 17, 11)
-    # new_segments(10, 16, 304)
+    # new_segments(10, 20, 304)
 
     # export_ancestors(20, 20, 3)
     # n = 10

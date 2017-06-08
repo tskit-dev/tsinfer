@@ -597,8 +597,8 @@ class AncestorMatcher(object):
         num_mutations = 0
         for l in range(end_site, start_site, -1):
             state = self.get_state(l, P[l])
-            # if state == -1:
-            #     print("state error at ", l)
+            if state == -1:
+                print("state error at ", l)
             assert state != -1
             if state != h[l]:
                 M[num_mutations] = l
@@ -617,6 +617,8 @@ class AncestorMatcher(object):
             P[l - 1] = value
         l = start_site
         state = self.get_state(l, P[l])
+        if state == -1:
+            print("state error at ", l)
         assert state != -1
         if state != h[l]:
             M[num_mutations] = l
@@ -624,6 +626,126 @@ class AncestorMatcher(object):
         return num_mutations
 
     def best_path(self, h, P, M, rho, theta):
+        """
+        Returns the best path through the list of ancestors for the specified
+        haplotype.
+        """
+        assert h.shape == (self.num_sites,)
+        m = self.num_sites
+        n = self.num_ancestors
+        r = 1 - np.exp(-rho / n)
+        pr = r / n
+        qr = 1 - r + r / n
+        # pm = mutation; qm no mutation
+        pm = 0.5 * theta / (n + theta)
+        qm = n / (n + theta) + 0.5 * theta / (n + theta)
+
+        # Skip any leading unset values
+        start_site = 0
+        while h[start_site] == -1:
+            start_site += 1
+
+        L = [Segment(0, n, 1)]
+        T_head = [None for l in range(m)]
+        T_tail = [None for l in range(m)]
+        best_haplotype = 0
+
+        for site in range(start_site, m):
+            if h[site] == -1:
+                break
+            end_site = site
+
+            L_next = []
+            S = self.sites[site]
+
+            # print()
+            # print("site = ", site)
+            # print("L = ", L)
+            # print("S = ", S)
+            # print("h = ", h[site])
+            # print("b = ", best_haplotype)
+            l = 0
+            s = 0
+            start = 0
+            while start != n:
+                L_end = n if l == len(L) else L[l].end
+                S_end = n if s == len(S) else S[s].end
+                L_start = start if l == len(L) else L[l].start
+                S_start = start if s == len(S) else S[s].start
+                end = min(filter(lambda x: x > start, [S_start, S_end, L_start, L_end]))
+                # print("\tLOOP HEAD: start = ", start, "end = ", end)
+                # print("\ts = ", s)
+                # print("\tl = ", l)
+                assert start < end
+                # The likelihood of this interval is always 0 if it does not intersect
+                # with S
+                if s < len(S) and not (S[s].start >= end or S[s].end <= start):
+                    state = S[s].value
+                    # If this interval does not intersect with L, the likelihood is 0
+                    likelihood = 0
+                    if l < len(L) and not (L[l].start >= end or L[l].end <= start):
+                        likelihood = L[l].value
+                    # else:
+                    #     print("LGAP")
+
+                    x = likelihood * qr
+                    y = pr  # v for maximum is 1 by normalisation
+                    if x >= y:
+                        z = x
+                    else:
+                        z = y
+                        # Update the traceback to reflect a recombination
+                        if T_head[site] is None:
+                            T_head[site] = LinkedSegment(start, end, best_haplotype)
+                            T_tail[site] = T_head[site]
+                        else:
+                            if T_tail[site].end == start and T_tail[site].value == best_haplotype:
+                                T_tail[site].end = end
+                            else:
+                                tail = LinkedSegment(start, end, best_haplotype)
+                                T_tail[site].next = tail
+                                T_tail[site] = tail
+                    # Determine the likelihood for this segment.
+                    if state == h[site]:
+                        likelihood_next = z * qm
+                    else:
+                        likelihood_next = z * pm
+
+                    # Update the L_next array
+                    if len(L_next) == 0:
+                        L_next = [Segment(start, end, likelihood_next)]
+                    else:
+                        if L_next[-1].end == start and L_next[-1].value == likelihood_next:
+                            L_next[-1].end = end
+                        else:
+                            L_next.append(Segment(start, end, likelihood_next))
+                # else:
+                #     print("SGAP")
+
+                start = end
+                if l < len(L) and L[l].end <= start:
+                    l += 1
+                if s < len(S) and S[s].end <= start:
+                    s += 1
+
+            L = L_next
+
+            max_value = -1
+            best_haplotype = -1
+            for seg in L:
+                assert seg.start < seg.end
+                if seg.value >= max_value:
+                    max_value = seg.value
+                    best_haplotype = seg.end - 1
+            # Renormalise L
+            for seg in L:
+                seg.value /= max_value
+
+        return self.run_traceback(T_head, h, start_site, end_site, best_haplotype, P, M)
+
+
+
+    def best_path_old(self, h, P, M, rho, theta):
         """
         Returns the best path through the list of ancestors for the specified
         haplotype.
@@ -668,18 +790,18 @@ class AncestorMatcher(object):
             V_next = []
             R = self.sites[l]
 
-            # print()
-            # print("l = ", l)
-            # print("R = ", R)
-            # print("V = ", V)
-            # print("h = ", h[l])
-            # print("b = ", best_haplotype)
+            print()
+            print("l = ", l)
+            print("R = ", R)
+            print("V = ", V)
+            print("h = ", h[l])
+            print("b = ", best_haplotype)
 
             r_index = 0
             v_index = 0
             last_R_end = 0
             while r_index < len(R):
-                # print("R LOOP HEAD:", r_index, R[r_index])
+                print("R LOOP HEAD:", r_index, R[r_index])
                 if R[r_index].start != last_R_end:
                     # print("R GAP!!", last_R_end, R[r_index].start)
                     # print("V = ", V)
@@ -703,7 +825,7 @@ class AncestorMatcher(object):
                     # Consume all segments in V
                     assert V[v_index].start == R[r_index].start
                     while v_index < len(V) and V[v_index].start < R[r_index].end:
-                        # print("V LOOP HEAD:", v_index, V[v_index])
+                        print("V LOOP HEAD:", v_index, V[v_index])
                         start = V[v_index].start
                         end = min(V[v_index].end, R[r_index].end)
                         value = V[v_index].value
@@ -734,6 +856,7 @@ class AncestorMatcher(object):
                             value = z * qm
                         else:
                             value = z * pm
+
                         if len(V_next) == 0:
                             V_next = [Segment(start, end, value)]
                         else:
