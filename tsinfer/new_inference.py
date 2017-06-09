@@ -488,10 +488,11 @@ class AncestorBuilder(object):
             # print("DONE")
             # print(B)
 
-    def build(self, site_index, A):
+    def build_old(self, site_index, A):
         # TODO check that these are called sequentially. We currently have
         # state in the site_mask variable which requires that there are generated
         # in order.
+
         S = self.sample_matrix
         site = self.site_order[site_index]
         self.site_mask[site] = 1
@@ -657,7 +658,6 @@ class AncestorMatcher(object):
 
             L_next = []
             S = self.sites[site]
-
             # print()
             # print("site = ", site)
             # print("L = ", L)
@@ -668,11 +668,17 @@ class AncestorMatcher(object):
             s = 0
             start = 0
             while start != n:
-                L_end = n if l == len(L) else L[l].end
-                S_end = n if s == len(S) else S[s].end
-                L_start = start if l == len(L) else L[l].start
-                S_start = start if s == len(S) else S[s].start
-                end = min(filter(lambda x: x > start, [S_start, S_end, L_start, L_end]))
+                end = n
+                if l < len(L):
+                    if L[l].start > start:
+                        end = min(end, L[l].start)
+                    else:
+                        end = min(end, L[l].end)
+                if s < len(S):
+                    if S[s].start > start:
+                        end = min(end, S[s].start)
+                    else:
+                        end = min(end, S[s].end)
                 # print("\tLOOP HEAD: start = ", start, "end = ", end)
                 # print("\ts = ", s)
                 # print("\tl = ", l)
@@ -721,7 +727,6 @@ class AncestorMatcher(object):
                             L_next.append(Segment(start, end, likelihood_next))
                 # else:
                 #     print("SGAP")
-
                 start = end
                 if l < len(L) and L[l].end <= start:
                     l += 1

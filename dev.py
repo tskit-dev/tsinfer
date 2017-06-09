@@ -1478,8 +1478,8 @@ def new_segments(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
+    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
+    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1518,8 +1518,9 @@ def export_ancestors(n, L, seed):
     # matcher = tsinfer.AncestorMatcher(ts.num_sites)
     A = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
     P = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
-    for j in range(builder.num_ancestors):
-        builder.build(j, A[j,:])
+    for j, a in enumerate(builder.build_all_ancestors()):
+        # builder.build(j, A[j,:])
+        A[j, :] = a
         if j % 100 == 0:
             print("done", j)
         # p = matcher.best_path(a, 0.01, 1e-200)
@@ -1556,9 +1557,7 @@ def compare_timings(n, L, seed):
     A = np.zeros(num_sites, dtype=np.int8)
     P = np.zeros(num_sites, dtype=np.int32)
     M = np.zeros(num_sites, dtype=np.uint32)
-    for j in range(builder.num_ancestors):
-        focal_site = builder.site_order[j]
-        builder.build(j, A)
+    for j, A in enumerate(builder.build_all_ancestors()):
         before = time.clock()
         num_mutations = matcher.best_path(A, P, M, 0.01, 1e-200)
         total_matching_time_new += time.clock() - before
@@ -1566,7 +1565,7 @@ def compare_timings(n, L, seed):
         # print(P)
         # print("num_mutations = ", num_mutations, M[:num_mutations])
         assert num_mutations == 1
-        assert M[0] == focal_site
+        # assert M[0] == focal_site
         matcher.add(A)
         tree_sequence_builder.add_path(j + 1, P, A, M[:num_mutations])
     # tree_sequence_builder.print_state()
@@ -1669,13 +1668,13 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(10, 20, j)
-    # new_segments(5, 17, 11)
-    # new_segments(10, 20, 304)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(10, 100, j)
+    # new_segments(10, 100, 1)
+    # new_segments(4, 4, 304)
+    export_ancestors(100, 1000, 304)
 
-    # export_ancestors(20, 20, 3)
     # n = 10
     # for L in np.linspace(100, 1000, 10):
     #     compare_timings(n, L, 1)

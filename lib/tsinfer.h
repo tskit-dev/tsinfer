@@ -16,11 +16,20 @@ typedef struct _segment_t {
 } segment_t;
 
 typedef struct {
+    ancestor_id_t *start;
+    ancestor_id_t *end;
+    allele_t *state;
+    size_t num_segments;
+    size_t max_num_segments;
+    /* TODO: position, etc ? */
+} site_t;
+
+typedef struct {
     size_t num_sites;
     size_t num_ancestors;
-    segment_t **sites_head;
-    segment_t **sites_tail;
     object_heap_t segment_heap;
+    size_t segment_block_size;
+    site_t *sites;
 } ancestor_matcher_t;
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self, size_t num_sites,

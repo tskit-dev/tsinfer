@@ -114,9 +114,6 @@ main(int argc, char **argv)
     }
     printf("total ancestors = %d\n", (int) num_ancestors);
     for (j = 0; j < num_ancestors; j++) {
-        if (j % 100 == 0) {
-            printf("Completed %d\n", (int) j);
-        }
         h = ancestors + j * num_sites;
         ret = ancestor_matcher_best_path(&am, h, 0.01, 1e-200, path,
                 &num_mutations, mutation_sites);
@@ -141,7 +138,7 @@ main(int argc, char **argv)
         /* printf("\n"); */
         /* ancestor_matcher_print_state(&am, stdout); */
     }
-    /* ancestor_matcher_print_state(&am, stdout); */
+    ancestor_matcher_print_state(&am, stdout);
 
     ancestor_matcher_free(&am);
     free(ancestors);
