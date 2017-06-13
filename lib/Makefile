@@ -10,8 +10,8 @@ CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
 
 all: main
 
-main: main.c tsinfer.h ancestor_matcher.o object_heap.o
-	gcc ${CFLAGS} -o main main.c ancestor_matcher.o object_heap.o -lm
+main: main.c tsinfer.h ancestor_matcher.o object_heap.o ancestor_builder.o
+	gcc ${CFLAGS} -o main main.c ancestor_matcher.o ancestor_builder.o object_heap.o -lm
 
 ctags:
 	ctags *.c *.h

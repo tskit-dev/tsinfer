@@ -32,6 +32,13 @@ typedef struct {
     site_t *sites;
 } ancestor_matcher_t;
 
+typedef struct {
+    size_t num_sites;
+    size_t num_samples;
+    size_t num_ancestors;
+    allele_t *haplotypes;
+} ancestor_builder_t;
+
 int ancestor_matcher_alloc(ancestor_matcher_t *self, size_t num_sites,
         size_t segment_block_size);
 int ancestor_matcher_free(ancestor_matcher_t *self);
@@ -41,6 +48,10 @@ int ancestor_matcher_best_path(ancestor_matcher_t *self,
         double mutation_rate, ancestor_id_t *path,
         size_t *num_mutations, site_id_t *mutation_sites);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
+
+int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
+        size_t num_sites, allele_t *haplotypes);
+int ancestor_builder_free(ancestor_builder_t *self);
 
 void __tsi_safe_free(void **ptr);
 
