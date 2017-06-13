@@ -164,30 +164,39 @@ old_main(int argc, char **argv)
 static void
 run_generate(const char *infile, const char *outfile, int verbose)
 {
-    size_t num_samples, num_sites;
+    size_t num_samples, num_sites, j, num_ancestors;
     allele_t *haplotypes = NULL;
+    allele_t *ancestors = NULL;
     double *positions = NULL;
     ancestor_builder_t builder;
     int ret;
 
-    printf("Generate: %s %s\n", infile, outfile);
-
     read_sites(infile, &num_samples, &num_sites, &haplotypes, &positions);
-    ret = ancestor_builder_alloc(&builder, num_samples, num_sites, haplotypes);
+    ret = ancestor_builder_alloc(&builder, num_samples, num_sites, positions, haplotypes);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
     ancestor_builder_print_state(&builder, stdout);
+    for (j = 0; j < builder.num_frequency_classes; j++) {
+        num_ancestors = builder.frequency_classes[j].num_sites;
+        printf("Generating for frequency class %d: num_ancestors = %d\n",
+                (int) j, (int) num_ancestors);
+        ancestors = malloc(num_ancestors * num_sites * sizeof(allele_t));
+        if (ancestors == NULL) {
+            fatal_error("Alloc ancestors");
+        }
+        ret = ancestor_builder_make_ancestors(&builder, j, ancestors);
+        if (ret != 0) {
+            fatal_error("Error building ancestors");
+        }
 
-
+        tsi_safe_free(ancestors);
+    }
     ancestor_builder_free(&builder);
 
-    if (haplotypes != NULL) {
-        free(haplotypes);
-    }
-    if (positions != NULL) {
-        free(positions);
-    }
+    tsi_safe_free(haplotypes);
+    tsi_safe_free(positions);
+    tsi_safe_free(ancestors);
 }
 
 static void

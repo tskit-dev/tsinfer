@@ -76,7 +76,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self, size_t num_sites,
     self->num_sites = num_sites;
     self->num_ancestors = 1;
     self->segment_block_size = segment_block_size;
-    self->sites = calloc(self->num_sites, sizeof(site_t));
+    self->sites = calloc(self->num_sites, sizeof(site_state_t));
     if (self->sites == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -136,7 +136,7 @@ ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype)
 {
     int ret = 0;
     site_id_t l;
-    site_t *site;
+    site_state_t *site;
     size_t k;
     ancestor_id_t n = (ancestor_id_t) self->num_ancestors;
 
@@ -173,7 +173,7 @@ ancestor_matcher_get_state(ancestor_matcher_t *self, site_id_t site_id,
         ancestor_id_t ancestor, allele_t *state)
 {
     int ret = 0;
-    site_t *site = &self->sites[site_id];
+    site_state_t *site = &self->sites[site_id];
     size_t j = 0;
 
     while (j < site->num_segments && site->end[j] <= ancestor) {
@@ -498,7 +498,7 @@ int
 ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
     site_id_t l;
-    site_t *site;
+    site_state_t *site;
     size_t j;
 
     fprintf(out, "Ancestor matcher state\n");
