@@ -1533,6 +1533,17 @@ def export_ancestors(n, L, seed):
     np.savetxt("tmp__NOBACKUP__/ancestors.txt", A, fmt="%d", delimiter="\t")
     # np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
 
+def export_samples(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    print("num_sites = ", ts.num_sites)
+    with open("tmp__NOBACKUP__/samples.txt", "w") as out:
+        for variant in ts.variants():
+            print(variant.position, "".join(map(str, variant.genotypes)), sep="\t", file=out)
+
+
+
 
 def compare_timings(n, L, seed):
     ts = msprime.simulate(
@@ -1673,7 +1684,8 @@ if __name__ == "__main__":
     #     new_segments(10, 100, j)
     # new_segments(10, 100, 1)
     # new_segments(4, 4, 304)
-    export_ancestors(10, 500, 304)
+    # export_ancestors(10, 500, 304)
+    export_samples(10, 10, 1)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):

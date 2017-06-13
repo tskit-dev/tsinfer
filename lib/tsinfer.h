@@ -52,6 +52,7 @@ int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, allele_t *haplotypes);
 int ancestor_builder_free(ancestor_builder_t *self);
+int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 
 void __tsi_safe_free(void **ptr);
 

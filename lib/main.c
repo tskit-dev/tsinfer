@@ -14,33 +14,32 @@
 
 #include "tsinfer.h"
 
-/* static void */
-/* fatal_error(const char *msg, ...) */
-/* { */
-/*     va_list argp; */
-/*     fprintf(stderr, "infer:"); */
-/*     va_start(argp, msg); */
-/*     vfprintf(stderr, msg, argp); */
-/*     va_end(argp); */
-/*     fprintf(stderr, "\n"); */
-/*     exit(EXIT_FAILURE); */
-/* } */
-
-#if 0
 static void
-read_ancestors(const char *input_file, size_t *r_num_ancestors, size_t *r_num_sites,
-        int8_t **r_ancestors)
+fatal_error(const char *msg, ...)
 {
-    /* int ret; */
+    va_list argp;
+    fprintf(stderr, "infer:");
+    va_start(argp, msg);
+    vfprintf(stderr, msg, argp);
+    va_end(argp);
+    fprintf(stderr, "\n");
+    exit(EXIT_FAILURE);
+}
+
+static void
+read_sites(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
+        allele_t **r_haplotypes, double **r_positions)
+{
     char * line = NULL;
     size_t len = 0;
     size_t j, k;
-    size_t num_line_tokens;
-    size_t num_ancestors  = 0;
-    size_t num_sites = (size_t) -1;
+    size_t num_line_samples;
+    size_t num_samples = (size_t) -1;
+    size_t num_sites = 0;
     const char delimiters[] = " \t";
     char *token;
-    int8_t *ancestors = NULL;
+    allele_t *haplotypes = NULL;
+    double *position = NULL;
     FILE *f = fopen(input_file, "r");
 
     if (f == NULL) {
@@ -49,46 +48,56 @@ read_ancestors(const char *input_file, size_t *r_num_ancestors, size_t *r_num_si
     while (getline(&line, &len, f) != -1) {
         /* read the number of tokens */
         token = strtok(line, delimiters);
-        num_line_tokens = 0;
-        while (token != NULL) {
-            num_line_tokens++;
-            token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
         }
-
-        if (num_sites == (size_t) -1) {
-            num_sites = num_line_tokens;
-        } else if (num_sites != num_line_tokens) {
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        num_line_samples = strlen(token) - 1;
+        if (num_samples == (size_t) -1) {
+            num_samples = num_line_samples;
+        } else if (num_samples != num_line_samples) {
             fatal_error("Bad input: line lengths not equal");
         }
-        num_ancestors++;
+        num_sites++;
     }
     if (fseek(f, 0, 0) != 0) {
         fatal_error("Cannot seek in file");
     }
 
-    ancestors = malloc(num_ancestors * num_sites * sizeof(int8_t));
-    if (ancestors == NULL) {
+    haplotypes = malloc(num_samples * num_sites * sizeof(allele_t));
+    position = malloc(num_sites * sizeof(double));
+    if (haplotypes == NULL || position == NULL) {
         fatal_error("No memory");
     }
-    j = 0;
+    k = 0;
     while (getline(&line, &len, f) != -1) {
-        k = 0;
         token = strtok(line, delimiters);
-        while (token != NULL) {
-            ancestors[j * num_sites + k] = (int8_t) atoi(token);
-            token = strtok(NULL, delimiters);
-            k++;
+        if (token == NULL) {
+            fatal_error("File format error");
         }
-        j++;
+        position[k] = atof(token);
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        for (j = 0; j < num_samples; j++) {
+            haplotypes[j * num_sites + k] = (allele_t) ((int) token[j] - '0');
+        }
+        k++;
     }
     free(line);
     fclose(f);
 
-    *r_num_ancestors = num_ancestors;
+    *r_num_samples = num_samples;
     *r_num_sites = num_sites;
-    *r_ancestors = ancestors;
+    *r_haplotypes = haplotypes;
+    *r_positions = position;
 }
 
+#if 0
 int
 old_main(int argc, char **argv)
 {
@@ -155,8 +164,30 @@ old_main(int argc, char **argv)
 static void
 run_generate(const char *infile, const char *outfile, int verbose)
 {
+    size_t num_samples, num_sites;
+    allele_t *haplotypes = NULL;
+    double *positions = NULL;
+    ancestor_builder_t builder;
+    int ret;
+
     printf("Generate: %s %s\n", infile, outfile);
 
+    read_sites(infile, &num_samples, &num_sites, &haplotypes, &positions);
+    ret = ancestor_builder_alloc(&builder, num_samples, num_sites, haplotypes);
+    if (ret != 0) {
+        fatal_error("Builder alloc error.");
+    }
+    ancestor_builder_print_state(&builder, stdout);
+
+
+    ancestor_builder_free(&builder);
+
+    if (haplotypes != NULL) {
+        free(haplotypes);
+    }
+    if (positions != NULL) {
+        free(positions);
+    }
 }
 
 static void
