@@ -9,20 +9,24 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include <regex.h>
+#include "argtable3.h"
+
 #include "tsinfer.h"
 
-static void
-fatal_error(const char *msg, ...)
-{
-    va_list argp;
-    fprintf(stderr, "infer:");
-    va_start(argp, msg);
-    vfprintf(stderr, msg, argp);
-    va_end(argp);
-    fprintf(stderr, "\n");
-    exit(EXIT_FAILURE);
-}
+/* static void */
+/* fatal_error(const char *msg, ...) */
+/* { */
+/*     va_list argp; */
+/*     fprintf(stderr, "infer:"); */
+/*     va_start(argp, msg); */
+/*     vfprintf(stderr, msg, argp); */
+/*     va_end(argp); */
+/*     fprintf(stderr, "\n"); */
+/*     exit(EXIT_FAILURE); */
+/* } */
 
+#if 0
 static void
 read_ancestors(const char *input_file, size_t *r_num_ancestors, size_t *r_num_sites,
         int8_t **r_ancestors)
@@ -86,7 +90,7 @@ read_ancestors(const char *input_file, size_t *r_num_ancestors, size_t *r_num_si
 }
 
 int
-main(int argc, char **argv)
+old_main(int argc, char **argv)
 {
     int8_t *ancestors = NULL;
     int8_t *h;
@@ -145,4 +149,73 @@ main(int argc, char **argv)
     free(mutation_sites);
     free(path);
     return EXIT_SUCCESS;
+}
+#endif
+
+static void
+run_generate(const char *infile, const char *outfile, int verbose)
+{
+    printf("Generate: %s %s\n", infile, outfile);
+
+}
+
+static void
+run_match(const char *infile, int verbose)
+{
+    printf("Match\n");
+
+}
+
+int
+main(int argc, char** argv)
+{
+    /* SYNTAX 1: generate [-v] <input-file> <output-file> */
+    struct arg_rex *cmd1 = arg_rex1(NULL, NULL, "generate", NULL, REG_ICASE, NULL);
+    struct arg_lit *verbose1 = arg_lit0("v", "verbose", NULL);
+    struct arg_file *infiles1 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_file *outfiles1 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_end *end1 = arg_end(20);
+    void* argtable1[] = {cmd1, verbose1, infiles1, outfiles1, end1};
+    int nerrors1;
+
+    /* SYNTAX 2: match [-v] <input-file> */
+    struct arg_rex *cmd2 = arg_rex1(NULL, NULL, "match", NULL, REG_ICASE, NULL);
+    struct arg_lit *verbose2 = arg_lit0("v", "verbose", NULL);
+    struct arg_file *infiles2 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_end *end2 = arg_end(20);
+    void* argtable2[] = {cmd2, verbose2, infiles2, end2};
+    int nerrors2;
+
+    int exitcode = EXIT_SUCCESS;
+    const char *progname = "main";
+
+    nerrors1 = arg_parse(argc, argv, argtable1);
+    nerrors2 = arg_parse(argc, argv, argtable2);
+
+    if (nerrors1 == 0) {
+        run_generate(infiles1->filename[0], outfiles1->filename[0], verbose1->count);
+    } else if (nerrors2 == 0) {
+        run_match(infiles2->filename[0], verbose2->count);
+    } else {
+        /* We get here if the command line matched none of the possible syntaxes */
+        if (cmd1->count > 0) {
+            arg_print_errors(stdout, end1, progname);
+            printf("usage: %s ", progname);
+            arg_print_syntax(stdout, argtable1, "\n");
+        } else if (cmd2->count > 0) {
+            arg_print_errors(stdout, end2, progname);
+            printf("usage: %s ", progname);
+            arg_print_syntax(stdout, argtable2, "\n");
+        } else {
+            /* no correct cmd literals were given, so we cant presume which syntax was intended */
+            printf("%s: missing command.\n",progname);
+            printf("usage 1: %s ", progname);  arg_print_syntax(stdout, argtable1, "\n");
+            printf("usage 2: %s ", progname);  arg_print_syntax(stdout, argtable2, "\n");
+        }
+    }
+
+    arg_freetable(argtable1, sizeof(argtable1) / sizeof(argtable1[0]));
+    arg_freetable(argtable2, sizeof(argtable2) / sizeof(argtable2[0]));
+
+    return exitcode;
 }
