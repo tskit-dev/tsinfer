@@ -1673,7 +1673,7 @@ if __name__ == "__main__":
     #     new_segments(10, 100, j)
     # new_segments(10, 100, 1)
     # new_segments(4, 4, 304)
-    export_ancestors(100, 1000, 304)
+    export_ancestors(10, 500, 304)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):

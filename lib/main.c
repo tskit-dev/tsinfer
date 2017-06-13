@@ -96,7 +96,7 @@ main(int argc, char **argv)
     size_t j, l;
     ancestor_matcher_t am;
     int ret;
-    bool show_matches = true;
+    bool show_matches = false;
 
     if (argc != 2) {
         fatal_error("usage: main <ancestors-file>");
@@ -138,7 +138,7 @@ main(int argc, char **argv)
         /* printf("\n"); */
         /* ancestor_matcher_print_state(&am, stdout); */
     }
-    ancestor_matcher_print_state(&am, stdout);
+    /* ancestor_matcher_print_state(&am, stdout); */
 
     ancestor_matcher_free(&am);
     free(ancestors);

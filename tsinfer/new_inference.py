@@ -488,63 +488,6 @@ class AncestorBuilder(object):
             # print("DONE")
             # print(B)
 
-    def build_old(self, site_index, A):
-        # TODO check that these are called sequentially. We currently have
-        # state in the site_mask variable which requires that there are generated
-        # in order.
-
-        S = self.sample_matrix
-        site = self.site_order[site_index]
-        self.site_mask[site] = 1
-        # Find all samples that have a 1 at this site
-        R = S[S[:,site] == 1]
-        # Mask out mutations that haven't happened yet.
-        M = np.logical_and(R, self.site_mask).astype(int)
-        A[:] = -1
-        A[site] = 1
-        l = site - 1
-        consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-        while l >= 0 and len(consistent_samples) > 0:
-            # print("l = ", l, consistent_samples)
-            # Get the consensus among the consistent samples for this locus.
-            # Only mutations older than this site are considered.
-            s = 0
-            for k in consistent_samples.keys():
-                s += M[k, l]
-            A[l] = int(s >= len(consistent_samples) / 2)
-            # Now we have computed the ancestor, go through the samples and
-            # update their four-gametes patterns with the ancestor. Any
-            # samples inconsistent with the ancestor are dropped.
-            dropped = []
-            for k, patterns in consistent_samples.items():
-                patterns.add((A[l], S[k, l]))
-                if len(patterns) == 4:
-                    dropped.append(k)
-            for k in dropped:
-                del consistent_samples[k]
-            l -= 1
-        l = site + 1
-        consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
-        while l < self.num_sites and len(consistent_samples) > 0:
-            # print("l = ", l, consistent_samples)
-            # Get the consensus among the consistent samples for this locus.
-            s = 0
-            for k in consistent_samples.keys():
-                s += M[k, l]
-            # print("s = ", s)
-            A[l] = int(s >= len(consistent_samples) / 2)
-            # Now we have computed the ancestor, go through the samples and
-            # update their four-gametes patterns with the ancestor. Any
-            # samples inconsistent with the ancestor are dropped.
-            dropped = []
-            for k, patterns in consistent_samples.items():
-                patterns.add((A[l], S[k, l]))
-                if len(patterns) == 4:
-                    dropped.append(k)
-            for k in dropped:
-                del consistent_samples[k]
-            l += 1
-
 class AncestorMatcher(object):
     """
     Stores (possibly incomplete) haplotypes representing ancestors using a site-wise
