@@ -30,7 +30,7 @@ static void
 read_sites(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
         allele_t **r_haplotypes, double **r_positions)
 {
-    char * line = NULL;
+    char *line = NULL;
     size_t len = 0;
     size_t j, k;
     size_t num_line_samples;
@@ -97,69 +97,79 @@ read_sites(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
     *r_positions = position;
 }
 
-#if 0
-int
-old_main(int argc, char **argv)
+static void
+read_ancestors(ancestor_store_t *store, const char *infile)
 {
-    int8_t *ancestors = NULL;
-    int8_t *h;
-    ancestor_id_t *path = NULL;
-    site_id_t *mutation_sites = NULL;
-    size_t num_ancestors, num_sites, num_mutations;
-    size_t j, l;
-    ancestor_matcher_t am;
+    char *line = NULL;
+    size_t len = 0;
+    size_t j;
+    size_t num_segments = 0;
+    const char delimiters[] = " \t";
+    char *token;
+    site_id_t *seg_site = NULL;
+    ancestor_id_t *seg_start = NULL;
+    ancestor_id_t *seg_end = NULL;
+    allele_t *seg_state = NULL;
+    FILE *f = fopen(infile, "r");
     int ret;
-    bool show_matches = false;
 
-    if (argc != 2) {
-        fatal_error("usage: main <ancestors-file>");
+    if (f == NULL) {
+        fatal_error("Cannot open %s: %s", infile, strerror(errno));
     }
-    read_ancestors(argv[1], &num_ancestors, &num_sites, &ancestors);
+    while (getline(&line, &len, f) != -1) {
+        num_segments++;
+    }
+    if (fseek(f, 0, 0) != 0) {
+        fatal_error("Cannot seek in file");
+    }
+    seg_site = malloc(num_segments * sizeof(site_id_t));
+    seg_start = malloc(num_segments * sizeof(ancestor_id_t));
+    seg_end = malloc(num_segments * sizeof(ancestor_id_t));
+    seg_state = malloc(num_segments * sizeof(allele_t));
+    if (seg_site == NULL || seg_start == NULL || seg_end == NULL || seg_state == NULL) {
+        fatal_error("Malloc error");
+    }
+    j = 0;
+    while (getline(&line, &len, f) != -1) {
+        token = strtok(line, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        seg_site[j] = atoi(token);
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        seg_start[j] = atoi(token);
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        seg_end[j] = atoi(token);
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        seg_state[j] = atoi(token);
+        j++;
+    }
 
-    ret = ancestor_matcher_alloc(&am, num_sites, 1024 * 1024);
+    ret = ancestor_store_alloc(store, seg_site[num_segments - 1] + 1);
     if (ret != 0) {
-        fatal_error("alloc error");
+        fatal_error("store alloc error");
     }
-    path = calloc(num_sites, sizeof(ancestor_id_t));
-    mutation_sites = malloc(num_sites * sizeof(site_id_t));
-    if (path == NULL || mutation_sites == NULL) {
-        fatal_error("alloc error");
+    ret = ancestor_store_load(store, num_segments, seg_site, seg_start, seg_end, seg_state);
+    if (ret != 0) {
+        fatal_error("store load error");
     }
-    printf("total ancestors = %d\n", (int) num_ancestors);
-    for (j = 0; j < num_ancestors; j++) {
-        h = ancestors + j * num_sites;
-        ret = ancestor_matcher_best_path(&am, h, 0.01, 1e-200, path,
-                &num_mutations, mutation_sites);
-        if (ret != 0) {
-            fatal_error("match error");
-        }
-        /* printf("Best match = \n"); */
-        if (show_matches) {
-            printf("%d:\t", (int) num_mutations);
-            for (l = 0; l < num_sites; l++) {
-                printf("%d", path[l]);
-                if (l < num_sites - 1) {
-                    printf("\t");
-                }
-            }
-            printf("\n");
-        }
-        ret = ancestor_matcher_add(&am, h);
-        if (ret != 0) {
-            fatal_error("add error");
-        }
-        /* printf("\n"); */
-        /* ancestor_matcher_print_state(&am, stdout); */
-    }
-    /* ancestor_matcher_print_state(&am, stdout); */
 
-    ancestor_matcher_free(&am);
-    free(ancestors);
-    free(mutation_sites);
-    free(path);
-    return EXIT_SUCCESS;
+    free(line);
+    free(seg_site);
+    free(seg_start);
+    free(seg_end);
+    free(seg_state);
+    fclose(f);
 }
-#endif
 
 static void
 write_ancestors(ancestor_store_t *store, const char *outfile)
@@ -268,12 +278,10 @@ run_generate(const char *infile, const char *outfile, int verbose)
     if (verbose > 0) {
         ancestor_store_print_state(&store, stdout);
     }
-
     write_ancestors(&store, outfile);
 
     ancestor_builder_free(&builder);
     ancestor_store_free(&store);
-
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(ancestors);
@@ -282,8 +290,68 @@ run_generate(const char *infile, const char *outfile, int verbose)
 static void
 run_match(const char *infile, int verbose)
 {
-    printf("Match\n");
+    int ret;
+    ancestor_store_t store;
+    ancestor_matcher_t matcher;
+    ancestor_id_t *path = NULL;
+    site_id_t *mutation_sites = NULL;
+    allele_t *ancestor = NULL;
+    size_t j, l, num_mutations;
 
+    read_ancestors(&store, infile);
+    ret = ancestor_matcher_alloc(&matcher, &store, 0.01, 1e-200);
+    if (ret != 0) {
+        fatal_error("alloc error");
+    }
+    if (verbose > 0) {
+        ancestor_matcher_print_state(&matcher, stdout);
+    }
+
+    path = calloc(store.num_sites, sizeof(ancestor_id_t));
+    mutation_sites = malloc(store.num_sites * sizeof(site_id_t));
+    ancestor = malloc(store.num_sites * sizeof(allele_t));
+    if (path == NULL || mutation_sites == NULL || ancestor == NULL) {
+        fatal_error("alloc error");
+    }
+    for (j = 1; j < store.num_ancestors; j++) {
+        ret = ancestor_store_get_ancestor(&store, j, ancestor);
+        if (ret != 0) {
+            fatal_error("get_ancestor error");
+        }
+        if (verbose > 0) {
+            printf("ancestor %d = \t", (int) j);
+            for (l = 0; l < store.num_sites; l++) {
+                if (ancestor[l] == -1) {
+                    printf("*");
+                } else {
+                    printf("%d", ancestor[l]);
+                }
+            }
+            printf("\n");
+        }
+        ret = ancestor_matcher_best_path(&matcher, j, ancestor, path,
+                &num_mutations, mutation_sites);
+        if (ret != 0) {
+            fatal_error("match error");
+        }
+        /* printf("Best match = \n"); */
+        if (verbose > 0) {
+            printf("%d:\t", (int) num_mutations);
+            for (l = 0; l < store.num_sites; l++) {
+                printf("%d", path[l]);
+                if (l < store.num_sites - 1) {
+                    printf("\t");
+                }
+            }
+            printf("\n");
+        }
+    }
+
+    ancestor_matcher_free(&matcher);
+    ancestor_store_free(&store);
+    free(path);
+    free(mutation_sites);
+    free(ancestor);
 }
 
 int

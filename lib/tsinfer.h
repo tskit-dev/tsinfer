@@ -45,11 +45,12 @@ typedef struct {
 } ancestor_store_t;
 
 typedef struct {
-    size_t num_sites;
-    size_t num_ancestors;
+    double recombination_rate;
+    double mutation_rate;
+    ancestor_store_t *store;
+    /* Remove */
     object_heap_t segment_heap;
     size_t segment_block_size;
-    site_state_t *sites;
 } ancestor_matcher_t;
 
 typedef struct {
@@ -63,15 +64,17 @@ typedef struct {
     frequency_class_t *frequency_classes;
 } ancestor_builder_t;
 
-int ancestor_matcher_alloc(ancestor_matcher_t *self, size_t num_sites,
-        size_t segment_block_size);
+int ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
+        double recombination_rate, double mutation_rate);
 int ancestor_matcher_free(ancestor_matcher_t *self);
-int ancestor_matcher_add(ancestor_matcher_t *self, allele_t *haplotype);
-int ancestor_matcher_best_path(ancestor_matcher_t *self,
-        allele_t *haplotype, double recombination_rate,
-        double mutation_rate, ancestor_id_t *path,
-        size_t *num_mutations, site_id_t *mutation_sites);
+int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
+        allele_t *haplotype, ancestor_id_t *path, size_t *num_mutations,
+        site_id_t *mutation_sites);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
+int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
+        ancestor_id_t ancestor_id, allele_t *state);
+int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
+        allele_t *ancestor);
 
 int ancestor_store_alloc(ancestor_store_t *self, size_t num_sites);
 int ancestor_store_free(ancestor_store_t *self);
@@ -83,7 +86,6 @@ int ancestor_store_load(ancestor_store_t *self, size_t num_segments,
 int ancestor_store_dump(ancestor_store_t *self,
         site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
 size_t ancestor_store_get_num_segments(ancestor_store_t *self);
-
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);

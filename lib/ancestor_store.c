@@ -108,6 +108,7 @@ ancestor_store_expand_site_segments(ancestor_store_t *self, site_id_t site_id)
 {
     int ret = 0;
     /* TODO implement this */
+    assert(self->segment_block_size > 0);
     ret = TSI_ERR_NO_MEMORY;
     return ret;
 }
@@ -152,7 +153,46 @@ ancestor_store_load(ancestor_store_t *self, size_t num_segments, site_id_t *site
         ancestor_id_t *start, ancestor_id_t *end, allele_t *state)
 {
     int ret = 0;
+    site_id_t j, l, site_start, site_end;
+    size_t k, num_site_segments;
 
+    site_start = 0;
+    site_end = 0;
+    for (l = 0; l < self->num_sites; l++) {
+        assert(site[site_start] == l);
+        assert(site[site_end] == l);
+        while (site_end < num_segments && site[site_end] == l) {
+            site_end++;
+        }
+        assert(site_end == num_segments || site[site_end] == l + 1);
+        num_site_segments = site_end - site_start;
+        assert(num_site_segments > 0);
+        self->sites[l].max_num_segments = num_site_segments;
+        self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
+        self->sites[l].end = malloc(num_site_segments * sizeof(ancestor_id_t));
+        self->sites[l].state = malloc(num_site_segments * sizeof(allele_t));
+        if (self->sites[l].start == NULL || self->sites[l].end == NULL
+                || self->sites[l].state == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        k = 0;
+        for (j = site_start; j < site_end; j++) {
+            assert(site[j] == l);
+            self->sites[l].start[k] = start[j];
+            self->sites[l].end[k] = end[j];
+            self->sites[l].state[k] = state[j];
+            self->sites[l].num_segments++;
+            self->total_segments++;
+            if (end[j] > (ancestor_id_t) self->num_ancestors) {
+                self->num_ancestors = end[j];
+            }
+            k++;
+        }
+        site_start = site_end;
+    }
+    assert(self->total_segments == num_segments);
+out:
     return ret;
 }
 
@@ -184,4 +224,45 @@ size_t
 ancestor_store_get_num_segments(ancestor_store_t *self)
 {
     return self->total_segments;
+}
+
+/*
+ Returns the state of the specified ancestor at the specified site.
+*/
+int
+ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
+        ancestor_id_t ancestor_id, allele_t *state)
+{
+    int ret = 0;
+    site_state_t *site = &self->sites[site_id];
+    size_t j = 0;
+
+
+    /* TODO use bsearch here to find the closest segment */
+    while (j < site->num_segments && site->end[j] <= ancestor_id) {
+        j++;
+    }
+    *state = -1;
+    if (j < site->num_segments &&
+        site->start[j] <= ancestor_id && ancestor_id < site->end[j]) {
+        *state = site->state[j];
+    }
+    return ret;
+}
+
+int
+ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
+        allele_t *ancestor)
+{
+    int ret = 0;
+    site_id_t l;
+
+    for (l = 0; l < self->num_sites; l++) {
+        ret = ancestor_store_get_state(self, l, ancestor_id, ancestor + l);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
 }
