@@ -338,6 +338,7 @@ class AncestorBuilder(object):
         B = np.zeros((sites.shape[0], self.num_sites), dtype=np.int8)
         # print(frequency_class, sites)
         for index, site in enumerate(sites):
+            # print("site = ", site)
             A = B[index, :]
             # Find all samples that have a 1 at this site
             R = S[S[:,site] == 1]
@@ -347,6 +348,8 @@ class AncestorBuilder(object):
             A[site] = 1
             l = site - 1
             consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
+            # print("R = ")
+            # print(R)
             while l >= 0 and len(consistent_samples) > 0:
                 # print("l = ", l, consistent_samples)
                 # Get the consensus among the consistent samples for this locus.
@@ -360,11 +363,13 @@ class AncestorBuilder(object):
                 # samples inconsistent with the ancestor are dropped.
                 dropped = []
                 for k, patterns in consistent_samples.items():
-                    patterns.add((A[l], S[k, l]))
+                    patterns.add((A[l], M[k, l]))
                     if len(patterns) == 4:
                         dropped.append(k)
                 for k in dropped:
                     del consistent_samples[k]
+                if len(consistent_samples) == 0:
+                    print("BREAK on", site)
                 l -= 1
             l = site + 1
             consistent_samples = {k: {(1, 1)} for k in range(R.shape[0])}
@@ -374,18 +379,19 @@ class AncestorBuilder(object):
                 s = 0
                 for k in consistent_samples.keys():
                     s += M[k, l]
-                # print("s = ", s)
                 A[l] = int(s >= len(consistent_samples) / 2)
                 # Now we have computed the ancestor, go through the samples and
                 # update their four-gametes patterns with the ancestor. Any
                 # samples inconsistent with the ancestor are dropped.
                 dropped = []
                 for k, patterns in consistent_samples.items():
-                    patterns.add((A[l], S[k, l]))
+                    patterns.add((A[l], M[k, l]))
                     if len(patterns) == 4:
                         dropped.append(k)
                 for k in dropped:
                     del consistent_samples[k]
+                if len(consistent_samples) == 0:
+                    print("BREAK on", site)
                 l += 1
         return B
 
@@ -481,7 +487,7 @@ class AncestorBuilder(object):
             # print("pre-sort")
             # print(B)
             # self.__sort_slice(B, 0, B.shape[0], 0, order)
-            self.__sort_ancestor_slice(B, 0, B.shape[0], order)
+            # self.__sort_ancestor_slice(B, 0, B.shape[0], order)
             for A in B:
                 yield A
             order = (order + 1) % 2

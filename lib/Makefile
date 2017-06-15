@@ -6,7 +6,8 @@ CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
   -Wconversion -Wshadow -Wpointer-arith \
   -Wcast-align -Wcast-qual \
   -Wwrite-strings -Wnested-externs \
-  -fshort-enums -fno-common -Dinline= 
+  -fshort-enums -fno-common -Dinline= \
+  -Wno-conversion # UTHash does not pass strict type conversion checks.
 LDFLAGS=-lm
 
 COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o

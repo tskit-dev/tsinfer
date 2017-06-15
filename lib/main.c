@@ -164,11 +164,13 @@ old_main(int argc, char **argv)
 static void
 run_generate(const char *infile, const char *outfile, int verbose)
 {
-    size_t num_samples, num_sites, j, num_ancestors;
+    size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *ancestors = NULL;
     double *positions = NULL;
+    site_t *focal_site;
     ancestor_builder_t builder;
+    allele_t *a;
     int ret;
 
     read_sites(infile, &num_samples, &num_sites, &haplotypes, &positions);
@@ -185,9 +187,22 @@ run_generate(const char *infile, const char *outfile, int verbose)
         if (ancestors == NULL) {
             fatal_error("Alloc ancestors");
         }
-        ret = ancestor_builder_make_ancestors(&builder, j, ancestors);
-        if (ret != 0) {
-            fatal_error("Error building ancestors");
+        for (k = 0; k < num_ancestors; k++) {
+            focal_site = builder.frequency_classes[j].sites[k];
+            a = ancestors + k * num_sites;
+            /* printf("\tfocal site = %d\n", focal_site->id); */
+            ret = ancestor_builder_make_ancestor(&builder, focal_site->id, a);
+            if (ret != 0) {
+                fatal_error("Error in make ancestor");
+            }
+            for (l = 0; l < num_sites; l++) {
+                if (a[l] == -1) {
+                    printf("*");
+                } else {
+                    printf("%d", a[l]);
+                }
+            }
+            printf("\n");
         }
 
         tsi_safe_free(ancestors);

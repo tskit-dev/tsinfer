@@ -24,7 +24,7 @@ typedef struct {
 typedef struct {
     size_t frequency;
     size_t num_sites;
-    site_t *sites;
+    site_t **sites;
 } frequency_class_t;
 
 typedef struct {
@@ -51,6 +51,7 @@ typedef struct {
     size_t num_frequency_classes;
     allele_t *haplotypes;
     site_t *sites;
+    site_t **sorted_sites;
     frequency_class_t *frequency_classes;
 } ancestor_builder_t;
 
@@ -68,8 +69,8 @@ int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
-int ancestor_builder_make_ancestors(ancestor_builder_t *self,
-        size_t frequency_class, allele_t *ancestors);
+int ancestor_builder_make_ancestor(ancestor_builder_t *self,
+        site_id_t focal_site_id, allele_t *ancestor);
 
 
 void __tsi_safe_free(void **ptr);
