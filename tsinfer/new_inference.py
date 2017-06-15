@@ -363,8 +363,8 @@ class AncestorBuilder(object):
         for site in self.sorted_sites:
             if site.frequency > 1:
                 self.frequency_classes[site.frequency].append(site)
-        for k, v in self.frequency_classes.items():
-            print(k, "->", v)
+        # for k, v in self.frequency_classes.items():
+        #     print(k, "->", v)
 
     def __build_ancestor_sites(self, focal_site, sites, a):
         S = self.haplotypes

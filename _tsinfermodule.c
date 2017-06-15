@@ -23,7 +23,13 @@ static PyObject *TsinfLibraryError;
 
 typedef struct {
     PyObject_HEAD
-    ancestor_matcher_t *ancestor_matcher;
+    ancestor_store_t *store;
+} AncestorStore;
+
+typedef struct {
+    PyObject_HEAD
+    ancestor_matcher_t *matcher;
+    AncestorStore *store;
 } AncestorMatcher;
 
 /* Deprecated */
@@ -49,6 +55,217 @@ handle_library_error(int err)
 }
 
 /*===================================================================
+ * AncestorStore
+ *===================================================================
+ */
+
+static int
+AncestorStore_check_state(AncestorStore *self)
+{
+    int ret = 0;
+    if (self->store == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorStore not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+AncestorStore_dealloc(AncestorStore* self)
+{
+    if (self->store != NULL) {
+        ancestor_store_free(self->store);
+        PyMem_Free(self->store);
+        self->store = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"num_sites", NULL};
+    unsigned long num_sites;
+
+    self->store = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k", kwlist, &num_sites)) {
+        goto out;
+    }
+    if (num_sites < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
+        goto out;
+    }
+    self->store = PyMem_Malloc(sizeof(ancestor_store_t));
+    if (self->store == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = ancestor_store_alloc(self->store, num_sites);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_init_build(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"segment_block_size", NULL};
+    unsigned long segment_block_size = 100;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|k", kwlist, &segment_block_size)) {
+        goto out;
+    }
+    err = ancestor_store_init_build(self->store, segment_block_size);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_add(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"ancestor", NULL};
+    PyObject *ancestor = NULL;
+    PyArrayObject *ancestor_array = NULL;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &ancestor)) {
+        goto fail;
+    }
+    ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (ancestor_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(ancestor_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(ancestor_array);
+    if (shape[0] != self->store->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
+        goto fail;
+    }
+    err = ancestor_store_add(self->store, (int8_t *) PyArray_DATA(ancestor_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(ancestor_array);
+    Py_INCREF(Py_None);
+    return Py_None;
+fail:
+    Py_XDECREF(ancestor_array);
+    return NULL;
+}
+
+static PyObject *
+AncestorStore_get_num_sites(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->num_sites);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_get_num_ancestors(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->num_ancestors);
+out:
+    return ret;
+}
+
+static PyMemberDef AncestorStore_members[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef AncestorStore_getsetters[] = {
+    {"num_sites", (getter) AncestorStore_get_num_sites, NULL, "The number of sites."},
+    {"num_ancestors", (getter) AncestorStore_get_num_ancestors, NULL, "The number of ancestors."},
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef AncestorStore_methods[] = {
+    {"init_build", (PyCFunction) AncestorStore_init_build,
+        METH_VARARGS|METH_KEYWORDS,
+        "Initialises the build process and adds the ultimate ancestor."},
+    {"add", (PyCFunction) AncestorStore_add,
+        METH_VARARGS|METH_KEYWORDS,
+        "Adds the specified ancestor."},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject AncestorStoreType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.AncestorStore",             /* tp_name */
+    sizeof(AncestorStore),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)AncestorStore_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "AncestorStore objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    AncestorStore_methods,             /* tp_methods */
+    AncestorStore_members,             /* tp_members */
+    AncestorStore_getsetters,          /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)AncestorStore_init,      /* tp_init */
+};
+
+
+
+/*===================================================================
  * AncestorMatcher
  *===================================================================
  */
@@ -57,7 +274,7 @@ static int
 AncestorMatcher_check_state(AncestorMatcher *self)
 {
     int ret = 0;
-    if (self->ancestor_matcher == NULL) {
+    if (self->matcher == NULL) {
         PyErr_SetString(PyExc_SystemError, "AncestorMatcher not initialised");
         ret = -1;
     }
@@ -67,11 +284,12 @@ AncestorMatcher_check_state(AncestorMatcher *self)
 static void
 AncestorMatcher_dealloc(AncestorMatcher* self)
 {
-    if (self->ancestor_matcher != NULL) {
-        ancestor_matcher_free(self->ancestor_matcher);
-        PyMem_Free(self->ancestor_matcher);
-        self->ancestor_matcher = NULL;
+    if (self->matcher != NULL) {
+        ancestor_matcher_free(self->matcher);
+        PyMem_Free(self->matcher);
+        self->matcher = NULL;
     }
+    Py_XDECREF(self->store);
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -80,25 +298,29 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_sites", "segment_block_size", NULL};
-    unsigned long num_sites;
-    unsigned long segment_block_size = 1024;
+    static char *kwlist[] = {"store", "recombination_rate", "mutation_rate", NULL};
+    AncestorStore *store = NULL;
+    double recombination_rate;
+    double mutation_rate;
 
-    self->ancestor_matcher = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k|k", kwlist,
-                &num_sites, &segment_block_size)) {
+    self->matcher = NULL;
+    self->store = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!dd", kwlist,
+                &AncestorStoreType, &store, &recombination_rate, &mutation_rate)) {
         goto out;
     }
-    if (num_sites < 1) {
-        PyErr_SetString(PyExc_ValueError, "num have > 0 sites");
+    self->store = store;
+    Py_INCREF(self->store);
+    if (AncestorStore_check_state(self->store) != 0) {
         goto out;
     }
-    self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
-    if (self->ancestor_matcher == NULL) {
+    self->matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
+    if (self->matcher == NULL) {
         PyErr_NoMemory();
         goto out;
     }
-    err = ancestor_matcher_alloc(self->ancestor_matcher, num_sites, segment_block_size);
+    err = ancestor_matcher_alloc(self->matcher, self->store->store, recombination_rate,
+            mutation_rate);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -112,27 +334,26 @@ static PyObject *
 AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"haplotype", "path", "mutation_sites", "recombination_rate",
-        "mutation_rate", NULL};
+    static char *kwlist[] = {"num_ancestors", "haplotype", "path", "mutation_sites", NULL};
     PyObject *haplotype = NULL;
     PyObject *path = NULL;
     PyObject *mutation_sites = NULL;
     PyArrayObject *path_array = NULL;
     PyArrayObject *haplotype_array = NULL;
     PyArrayObject *mutation_sites_array = NULL;
-    double recombination_rate;
-    double mutation_rate;
-    size_t num_mutations;
+    unsigned long num_ancestors;
+    size_t num_mutations, num_sites;
     npy_intp *shape;
 
     if (AncestorMatcher_check_state(self) != 0) {
         goto fail;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!O!dd", kwlist,
-            &haplotype, &PyArray_Type, &path, &PyArray_Type, &mutation_sites,
-            &recombination_rate, &mutation_rate)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOO!O!", kwlist,
+            &num_ancestors, &haplotype, &PyArray_Type, &path, &PyArray_Type,
+            &mutation_sites)) {
         goto fail;
     }
+    num_sites = self->matcher->store->num_sites;
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
             NPY_ARRAY_IN_ARRAY);
     if (haplotype_array == NULL) {
@@ -143,7 +364,7 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
     shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
+    if (shape[0] != num_sites) {
         PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
         goto fail;
     }
@@ -157,7 +378,7 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
     shape = PyArray_DIMS(path_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
+    if (shape[0] != num_sites) {
         PyErr_SetString(PyExc_ValueError, "input path wrong size");
         goto fail;
     }
@@ -171,16 +392,14 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
     shape = PyArray_DIMS(mutation_sites_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
+    if (shape[0] != num_sites) {
         PyErr_SetString(PyExc_ValueError, "input mutation_sites wrong size");
         goto fail;
     }
-    err = ancestor_matcher_best_path(self->ancestor_matcher,
+    err = ancestor_matcher_best_path(self->matcher, num_ancestors,
         (int8_t *) PyArray_DATA(haplotype_array),
-        recombination_rate, mutation_rate,
         (int32_t *) PyArray_DATA(path_array),
         &num_mutations, (uint32_t *) PyArray_DATA(mutation_sites_array));
-
     if (err != 0) {
         handle_library_error(err);
         goto fail;
@@ -196,48 +415,6 @@ fail:
     return NULL;
 }
 
-static PyObject *
-AncestorMatcher_add(AncestorMatcher *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    static char *kwlist[] = {"haplotype", NULL};
-    PyObject *haplotype = NULL;
-    PyArrayObject *haplotype_array = NULL;
-    npy_intp *shape;
-
-    if (AncestorMatcher_check_state(self) != 0) {
-        goto fail;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &haplotype)) {
-        goto fail;
-    }
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (haplotype_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(haplotype_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
-        goto fail;
-    }
-    err = ancestor_matcher_add(self->ancestor_matcher, (int8_t *) PyArray_DATA(haplotype_array));
-    if (err != 0) {
-        handle_library_error(err);
-        goto fail;
-    }
-    Py_DECREF(haplotype_array);
-    Py_INCREF(Py_None);
-    return Py_None;
-fail:
-    Py_XDECREF(haplotype_array);
-    return NULL;
-}
-
 static PyMemberDef AncestorMatcher_members[] = {
     {NULL}  /* Sentinel */
 };
@@ -246,9 +423,6 @@ static PyMethodDef AncestorMatcher_methods[] = {
     {"best_path", (PyCFunction) AncestorMatcher_best_path,
         METH_VARARGS|METH_KEYWORDS,
         "Fills the specified numpy array with the best path through the ancestors."},
-    {"add", (PyCFunction) AncestorMatcher_add,
-        METH_VARARGS|METH_KEYWORDS,
-        "Adds the specified ancestor."},
     {NULL}  /* Sentinel */
 };
 
@@ -773,6 +947,13 @@ init_tsinfer(void)
     /* Initialise numpy */
     import_array();
 
+    /* AncestorStore type */
+    AncestorStoreType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&AncestorStoreType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&AncestorStoreType);
+    PyModule_AddObject(module, "AncestorStore", (PyObject *) &AncestorStoreType);
     /* AncestorMatcher type */
     AncestorMatcherType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&AncestorMatcherType) < 0) {

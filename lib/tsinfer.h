@@ -92,7 +92,7 @@ int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
-        site_id_t focal_site_id, allele_t *ancestor);
+        site_id_t focal_site_id, allele_t *haplotype);
 
 
 void __tsi_safe_free(void **ptr);

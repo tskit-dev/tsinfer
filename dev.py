@@ -45,8 +45,10 @@ def build_ancestors(n, L, seed):
     num_sites = ts.num_sites
 
     # H2 = np.zeros((builder.num_ancestors, builder.num_sites), dtype=int)
-    store = tsinfer.AncestorStore(num_sites)
+    # store = tsinfer.AncestorStore(num_sites)
     # a = np.zeros(num_sites, dtype=np.int8)
+    store = _tsinfer.AncestorStore(num_sites)
+    store.init_build(100)
 
     builder = tsinfer.AncestorBuilder(S)
     # for j, A in enumerate(builder.build_ancestors()):
@@ -54,7 +56,17 @@ def build_ancestors(n, L, seed):
     for A in builder.build_ancestors():
         store.add(A)
 
-    site, start, end, state = store.export()
+    matcher = _tsinfer.AncestorMatcher(store, 0.01, 1e-200)
+    print(store.num_sites)
+    print(store.num_ancestors)
+    P = np.zeros(store.num_sites, dtype=np.int32)
+    M = np.zeros(store.num_sites, dtype=np.uint32)
+    for h in S:
+        print(h)
+        num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
+        print("num_mutation = ", num_mutations)
+        print(P)
+
     # np.savetxt(sys.stdout, (site, start, end, state), fmt='%i %i %i %i')
     # x = y = z = np.arange(0.0,5.0,1.0)
     # np.savetxt('test.out', (x,y,z))
@@ -66,9 +78,6 @@ def build_ancestors(n, L, seed):
     # print(np.all(H1 == H2))
     # print(np.where(H1 != H2))
     # print(H1 == H2)
-
-
-
 
 
 def new_segments(n, L, seed):
