@@ -162,6 +162,46 @@ old_main(int argc, char **argv)
 #endif
 
 static void
+write_ancestors(ancestor_store_t *store, const char *outfile)
+{
+    int ret;
+    size_t j, num_segments;
+    site_id_t *seg_site = NULL;
+    ancestor_id_t *seg_start = NULL;
+    ancestor_id_t *seg_end = NULL;
+    allele_t *seg_state = NULL;
+    FILE *out = fopen(outfile, "w");
+
+    num_segments = ancestor_store_get_num_segments(store);
+    seg_site = malloc(num_segments * sizeof(site_id_t));
+    seg_start = malloc(num_segments * sizeof(ancestor_id_t));
+    seg_end = malloc(num_segments * sizeof(ancestor_id_t));
+    seg_state = malloc(num_segments * sizeof(allele_t));
+    if (seg_site == NULL || seg_start == NULL || seg_end == NULL || seg_state == NULL) {
+        fatal_error("Malloc error");
+    }
+    ret = ancestor_store_dump(store, seg_site, seg_start, seg_end, seg_state);
+    if (ret != 0) {
+        fatal_error("Dump error");
+    }
+    if (out == NULL) {
+        fatal_error("Error opening file");
+    }
+    for (j = 0; j < num_segments; j++) {
+        fprintf(out, "%d\t%d\t%d\t%d\n", seg_site[j], seg_start[j], seg_end[j], seg_state[j]);
+    }
+    if (fclose(out) != 0) {
+        fatal_error("Close error");
+
+    }
+
+    tsi_safe_free(seg_site);
+    tsi_safe_free(seg_start);
+    tsi_safe_free(seg_end);
+    tsi_safe_free(seg_state);
+}
+
+static void
 run_generate(const char *infile, const char *outfile, int verbose)
 {
     size_t num_samples, num_sites, j, k, l, num_ancestors;
@@ -170,6 +210,7 @@ run_generate(const char *infile, const char *outfile, int verbose)
     double *positions = NULL;
     site_t *focal_site;
     ancestor_builder_t builder;
+    ancestor_store_t store;
     allele_t *a;
     int ret;
 
@@ -178,11 +219,23 @@ run_generate(const char *infile, const char *outfile, int verbose)
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
-    ancestor_builder_print_state(&builder, stdout);
+    ret = ancestor_store_alloc(&store, num_sites);
+    if (ret != 0) {
+        fatal_error("store alloc error.");
+    }
+    ret = ancestor_store_init_build(&store, 100);
+    if (ret != 0) {
+        fatal_error("store init error.");
+    }
+    if (verbose > 0) {
+        ancestor_builder_print_state(&builder, stdout);
+    }
     for (j = 0; j < builder.num_frequency_classes; j++) {
         num_ancestors = builder.frequency_classes[j].num_sites;
-        printf("Generating for frequency class %d: num_ancestors = %d\n",
-                (int) j, (int) num_ancestors);
+        if (verbose > 0) {
+            printf("Generating for frequency class %d: num_ancestors = %d\n",
+                    (int) j, (int) num_ancestors);
+        }
         ancestors = malloc(num_ancestors * num_sites * sizeof(allele_t));
         if (ancestors == NULL) {
             fatal_error("Alloc ancestors");
@@ -195,19 +248,31 @@ run_generate(const char *infile, const char *outfile, int verbose)
             if (ret != 0) {
                 fatal_error("Error in make ancestor");
             }
-            for (l = 0; l < num_sites; l++) {
-                if (a[l] == -1) {
-                    printf("*");
-                } else {
-                    printf("%d", a[l]);
-                }
+            ret = ancestor_store_add(&store, a);
+            if (ret != 0) {
+                fatal_error("Error in add ancestor");
             }
-            printf("\n");
+            if (verbose > 0) {
+                for (l = 0; l < num_sites; l++) {
+                    if (a[l] == -1) {
+                        printf("*");
+                    } else {
+                        printf("%d", a[l]);
+                    }
+                }
+                printf("\n");
+            }
         }
-
         tsi_safe_free(ancestors);
     }
+    if (verbose > 0) {
+        ancestor_store_print_state(&store, stdout);
+    }
+
+    write_ancestors(&store, outfile);
+
     ancestor_builder_free(&builder);
+    ancestor_store_free(&store);
 
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);

@@ -8,6 +8,7 @@ import multiprocessing
 import pandas as pd
 import random
 import statistics
+import sys
 import attr
 import collections
 import time
@@ -17,79 +18,6 @@ import tsinfer
 import _tsinfer
 import msprime
 
-
-@attr.s
-class Site(object):
-    id = attr.ib(default=None)
-    frequency = attr.ib(default=None)
-
-
-class AncestorBuilder(object):
-    """
-    Builds inferred ancestors.
-    """
-    def __init__(self, S):
-        self.haplotypes = S
-        self.num_samples = S.shape[0]
-        self.num_sites = S.shape[1]
-        self.sites = [None for j in range(self.num_sites)]
-        self.sorted_sites = [None for j in range(self.num_sites)]
-        for j in range(self.num_sites):
-            self.sites[j] = Site(j, np.sum(S[:, j]))
-            self.sorted_sites[j] = Site(j, np.sum(S[:, j]))
-        self.sorted_sites.sort(key=lambda x: (-x.frequency, x.id))
-        self.frequency_classes = collections.defaultdict(list)
-        for site in self.sorted_sites:
-            if site.frequency > 1:
-                self.frequency_classes[site.frequency].append(site)
-        for k, v in self.frequency_classes.items():
-            print(k, "->", v)
-
-    def __build_ancestor_sites(self, focal_site, sites, a):
-        S = self.haplotypes
-        samples = set()
-        for j in range(self.num_samples):
-            if S[j, focal_site.id] == 1:
-                samples.add(j)
-        for l in sites:
-            a[l] = 0
-            if self.sites[l].frequency > focal_site.frequency:
-                # print("\texamining:", self.sites[l])
-                # print("\tsamples = ", samples)
-                num_ones = 0
-                num_zeros = 0
-                for j in samples:
-                    if S[j, l] == 1:
-                        num_ones += 1
-                    else:
-                        num_zeros += 1
-                # TODO choose a branch uniformly if we have equality.
-                if num_ones >= num_zeros:
-                    a[l] = 1
-                    samples = set(j for j in samples if S[j, l] == 1)
-                else:
-                    samples = set(j for j in samples if S[j, l] == 0)
-            if len(samples) == 1:
-                # print("BREAK")
-                break
-
-    def __build_ancestor(self, focal_site):
-        # print("Building ancestor for ", focal_site)
-        a = np.zeros(self.num_sites, dtype=np.int8) - 1
-        a[focal_site.id] = 1
-        sites = range(focal_site.id + 1, self.num_sites)
-        self.__build_ancestor_sites(focal_site, sites, a)
-        sites = range(focal_site.id - 1, -1, -1)
-        self.__build_ancestor_sites(focal_site, sites, a)
-        # b = "".join(str(x) if x != -1 else '*' for x in a)
-        # print(b)
-        return a
-
-    def build_ancestors(self):
-        for site in self.sorted_sites:
-            if site.frequency == 1:
-                break
-            yield self.__build_ancestor(site)
 
 
 def build_ancestors(n, L, seed):
@@ -106,7 +34,6 @@ def build_ancestors(n, L, seed):
     print()
 
     # # print("OLD version")
-    builder = tsinfer.AncestorBuilder(S)
     # H1 = np.zeros((builder.num_ancestors, builder.num_sites), dtype=int)
     # for j, A in enumerate(builder.build_all_ancestors()):
     #     H1[j, :] = A
@@ -115,13 +42,25 @@ def build_ancestors(n, L, seed):
     # # print()
     # # print(H1)
 
+    num_sites = ts.num_sites
+
     # H2 = np.zeros((builder.num_ancestors, builder.num_sites), dtype=int)
-    builder = AncestorBuilder(S)
+    store = tsinfer.AncestorStore(num_sites)
+    # a = np.zeros(num_sites, dtype=np.int8)
+
+    builder = tsinfer.AncestorBuilder(S)
     # for j, A in enumerate(builder.build_ancestors()):
     #     H2[j, :] = A
     for A in builder.build_ancestors():
-        a = "".join(str(x) if x != -1 else '*' for x in A)
-        print(a)
+        store.add(A)
+
+    site, start, end, state = store.export()
+    # np.savetxt(sys.stdout, (site, start, end, state), fmt='%i %i %i %i')
+    # x = y = z = np.arange(0.0,5.0,1.0)
+    # np.savetxt('test.out', (x,y,z))
+
+        # a = "".join(str(x) if x != -1 else '*' for x in A)
+        # print(a)
 
     # print(H2)
     # print(np.all(H1 == H2))
@@ -370,4 +309,4 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
 
-    build_ancestors(50, 100, 2)
+    build_ancestors(5, 10, 2)

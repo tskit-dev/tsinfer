@@ -283,9 +283,137 @@ class TreeSequenceBuilder(object):
         return ts
 
 
+class AncestorStore(object):
+    """
+    Stores ancestors in a per site run length encoding. The store is always
+    initialised with a single ancestor consisting of all zeros.
+    """
+    def __init__(self, num_sites):
+        self.num_sites = num_sites
+        self.num_ancestors = 1
+        self.sites = [[Segment(0, 1, 0)] for j in range(self.num_sites)]
+
+    def add(self, a):
+        """
+        Adds the specified ancestor to this store.
+        """
+        assert a.shape == (self.num_sites,)
+        x = self.num_ancestors
+        for j in range(self.num_sites):
+            if a[j] != -1:
+                tail = self.sites[j][-1]
+                if tail.end == x and tail.value == a[j]:
+                    tail.end += 1
+                else:
+                    self.sites[j].append(Segment(x, x + 1, a[j]))
+        self.num_ancestors += 1
+
+    def get_state(self, site, ancestor):
+        """
+        Returns the state of the specified ancestor at the specified site.
+        """
+        for seg in self.sites[site]:
+            if seg.start <= ancestor < seg.end:
+                break
+        if seg.start <= ancestor < seg.end:
+            return seg.value
+        else:
+            return -1
+
+    def export(self):
+        num_segments = sum(len(self.sites[j]) for j in range(self.num_sites))
+        site = np.zeros(num_segments, dtype=np.int32)
+        start = np.zeros(num_segments, dtype=np.int32)
+        end = np.zeros(num_segments, dtype=np.int32)
+        state = np.zeros(num_segments, dtype=np.int8)
+        j = 0
+        for l in range(self.num_sites):
+            for seg in self.sites[l]:
+                site[j] = l
+                start[j] = seg.start
+                end[j] = seg.end
+                state[j] = seg.value
+                j += 1
+        return site, start, end, state
+
+
+
+
+@attr.s
+class Site(object):
+    id = attr.ib(default=None)
+    frequency = attr.ib(default=None)
 
 
 class AncestorBuilder(object):
+    """
+    Builds inferred ancestors.
+    """
+    def __init__(self, S):
+        self.haplotypes = S
+        self.num_samples = S.shape[0]
+        self.num_sites = S.shape[1]
+        self.sites = [None for j in range(self.num_sites)]
+        self.sorted_sites = [None for j in range(self.num_sites)]
+        for j in range(self.num_sites):
+            self.sites[j] = Site(j, np.sum(S[:, j]))
+            self.sorted_sites[j] = Site(j, np.sum(S[:, j]))
+        self.sorted_sites.sort(key=lambda x: (-x.frequency, x.id))
+        self.frequency_classes = collections.defaultdict(list)
+        for site in self.sorted_sites:
+            if site.frequency > 1:
+                self.frequency_classes[site.frequency].append(site)
+        for k, v in self.frequency_classes.items():
+            print(k, "->", v)
+
+    def __build_ancestor_sites(self, focal_site, sites, a):
+        S = self.haplotypes
+        samples = set()
+        for j in range(self.num_samples):
+            if S[j, focal_site.id] == 1:
+                samples.add(j)
+        for l in sites:
+            a[l] = 0
+            if self.sites[l].frequency > focal_site.frequency:
+                # print("\texamining:", self.sites[l])
+                # print("\tsamples = ", samples)
+                num_ones = 0
+                num_zeros = 0
+                for j in samples:
+                    if S[j, l] == 1:
+                        num_ones += 1
+                    else:
+                        num_zeros += 1
+                # TODO choose a branch uniformly if we have equality.
+                if num_ones >= num_zeros:
+                    a[l] = 1
+                    samples = set(j for j in samples if S[j, l] == 1)
+                else:
+                    samples = set(j for j in samples if S[j, l] == 0)
+            if len(samples) == 1:
+                # print("BREAK")
+                break
+
+    def __build_ancestor(self, focal_site):
+        # print("Building ancestor for ", focal_site)
+        a = np.zeros(self.num_sites, dtype=np.int8) - 1
+        a[focal_site.id] = 1
+        sites = range(focal_site.id + 1, self.num_sites)
+        self.__build_ancestor_sites(focal_site, sites, a)
+        sites = range(focal_site.id - 1, -1, -1)
+        self.__build_ancestor_sites(focal_site, sites, a)
+        return a
+
+    def build_ancestors(self):
+        for site in self.sorted_sites:
+            if site.frequency == 1:
+                break
+            yield self.__build_ancestor(site)
+
+
+
+
+class OldAncestorBuilder(object):
     """
     Sequentially build ancestors for non-singleton sites in a supplied
     sample-haplotype matrix.

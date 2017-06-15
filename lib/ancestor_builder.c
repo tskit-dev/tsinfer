@@ -26,6 +26,9 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     int ret = 0;
     size_t j, k, l, frequency;
     // TODO error checking
+    //
+    assert(num_samples > 1);
+    assert(num_sites > 0);
 
     memset(self, 0, sizeof(ancestor_builder_t));
     self->num_samples = num_samples;
