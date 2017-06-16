@@ -546,6 +546,60 @@ out:
     return ret;
 }
 
+static PyObject *
+AncestorStore_get_total_segments(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->total_segments);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_get_max_num_site_segments(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->max_num_site_segments);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_get_num_site_segment_expands(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->num_site_segment_expands);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStore_get_total_memory(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->total_memory);
+out:
+    return ret;
+}
+
+
+
 static PyMemberDef AncestorStore_members[] = {
     {NULL}  /* Sentinel */
 };
@@ -553,6 +607,14 @@ static PyMemberDef AncestorStore_members[] = {
 static PyGetSetDef AncestorStore_getsetters[] = {
     {"num_sites", (getter) AncestorStore_get_num_sites, NULL, "The number of sites."},
     {"num_ancestors", (getter) AncestorStore_get_num_ancestors, NULL, "The number of ancestors."},
+    {"total_segments", (getter) AncestorStore_get_total_segments, NULL,
+        "The total number of segments across all sites."},
+    {"max_num_site_segments", (getter) AncestorStore_get_max_num_site_segments, NULL,
+        "The maximum number of segments for a site."},
+    {"num_site_segment_expands", (getter) AncestorStore_get_num_site_segment_expands, NULL,
+        "The number of times a site was realloced."},
+    {"total_memory", (getter) AncestorStore_get_total_memory, NULL,
+        "The total amount of memory used by this store."},
     {NULL}  /* Sentinel */
 };
 

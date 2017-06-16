@@ -37,6 +37,7 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
     fprintf(out, "max_num_site_segments = %d\n", (int) self->max_num_site_segments);
     fprintf(out, "segment_block_size = %d\n", (int) self->segment_block_size);
     fprintf(out, "num_site_segment_expands = %d\n", (int) self->num_site_segment_expands);
+    fprintf(out, "total_memory = %d\n", (int) self->total_memory);
     for (l = 0; l < self->num_sites; l++) {
         site = &self->sites[l];
         printf("%d\t[%d]:: ", (int) l, (int) site->num_segments);
@@ -59,6 +60,7 @@ ancestor_store_alloc(ancestor_store_t *self, size_t num_sites)
 
     self->num_ancestors = 1;
     self->segment_block_size = 0;
+    self->total_memory = self->num_sites * sizeof(site_state_t);
     self->sites = calloc(self->num_sites, sizeof(site_state_t));
     if (self->sites == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -92,6 +94,8 @@ ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size)
     self->segment_block_size = segment_block_size;
     self->total_segments = self->num_sites;
     self->max_num_site_segments = 1;
+    self->total_memory += self->num_sites * self->segment_block_size *
+        (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
     for (l = 0; l < self->num_sites; l++) {
         self->sites[l].start = malloc(self->segment_block_size * sizeof(ancestor_id_t));
         self->sites[l].end = malloc(self->segment_block_size * sizeof(ancestor_id_t));
@@ -124,6 +128,8 @@ ancestor_store_expand_site_segments(ancestor_store_t *self, site_id_t site_id)
     assert(self->segment_block_size > 0);
     site->max_num_segments += self->segment_block_size;
     self->num_site_segment_expands++;
+    self->total_memory += self->segment_block_size *
+        (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
 
     start = realloc(site->start, site->max_num_segments * sizeof(ancestor_id_t));
     if (start == NULL) {
@@ -208,6 +214,7 @@ ancestor_store_load(ancestor_store_t *self, size_t num_segments, site_id_t *site
         if (num_site_segments > self->max_num_site_segments) {
             self->max_num_site_segments = num_site_segments;
         }
+        self->total_memory += num_site_segments * (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
         self->sites[l].max_num_segments = num_site_segments;
         self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
         self->sites[l].end = malloc(num_site_segments * sizeof(ancestor_id_t));
