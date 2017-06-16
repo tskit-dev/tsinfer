@@ -25,12 +25,14 @@ def build_ancestors(n, L, seed):
     ts = msprime.simulate(
         n, length=L, recombination_rate=5.5, mutation_rate=1, random_seed=seed)
     # print("num_sites = ", ts.num_sites)
+    print("simulation done, num_sites = ", ts.num_sites)
 
     position = [site.position for site in ts.sites()]
 
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
+    print("Samples using ", S.nbytes / (1024 * 1024), "megabytes")
     # for h in ts.haplotypes():
     #     print(h)
     # print()
@@ -51,7 +53,7 @@ def build_ancestors(n, L, seed):
 
     builder = _tsinfer.AncestorBuilder(S, position)
     store = _tsinfer.AncestorStore(builder.num_sites)
-    store.init_build(100)
+    store.init_build(8192)
 
     for frequency, focal_sites in builder.get_frequency_classes():
         num_ancestors = len(focal_sites)
@@ -62,6 +64,7 @@ def build_ancestors(n, L, seed):
             # print(focal_site, ":", A[j])
             store.add(A[j, :])
         # print(A)
+    print("Built ancestors:", store.num_ancestors)
 
     # builder = tsinfer.AncestorBuilder(S)
     # for A in builder.build_ancestors():
@@ -78,6 +81,7 @@ def build_ancestors(n, L, seed):
         num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
         assert num_mutations == 0
         # print(P)
+    print("Matched ancestors")
     for h in S:
         # print(h)
         num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
@@ -308,9 +312,9 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(10, 100, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(10, 100, j)
     # new_segments(10, 100, 1)
     # new_segments(4, 4, 304)
     # export_ancestors(10, 500, 304)
@@ -331,7 +335,7 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # build_ancestors(10, 10, 1)
+    build_ancestors(1000, 1000, 1)
     # for j in range(1, 100000):
     #     build_ancestors(10, 10, j)
     #     if j % 1000 == 0:

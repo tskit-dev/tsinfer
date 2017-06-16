@@ -42,6 +42,7 @@ typedef struct {
     size_t total_segments;
     size_t segment_block_size;
     size_t num_site_segment_expands;
+    size_t max_num_site_segments;
     site_state_t *sites;
 } ancestor_store_t;
 

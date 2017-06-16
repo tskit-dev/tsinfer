@@ -161,7 +161,6 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         site_id_t *mutation_sites)
 {
     int ret = 0;
-    size_t max_segments = 8192;
     double rho = self->recombination_rate;
     double theta = self->mutation_rate;
     double n = (double) self->store->num_ancestors;
@@ -189,6 +188,8 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     ancestor_id_t *S_start, *S_end;
     allele_t *S_state;
     size_t l, s, L_size, S_size, L_next_size;
+    /* TODO Is it really safe to have an upper bound here? */
+    size_t max_segments = self->store->max_num_site_segments * 8;
 
     L_start = malloc(max_segments * sizeof(ancestor_id_t));
     L_end = malloc(max_segments * sizeof(ancestor_id_t));

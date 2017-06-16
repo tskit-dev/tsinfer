@@ -11,11 +11,16 @@ ancestor_store_check_state(ancestor_store_t *self)
 {
     site_id_t l;
     size_t total_segments = 0;
+    size_t max_site_segments = 0;
 
     for (l = 0; l < self->num_sites; l++) {
         total_segments += self->sites[l].num_segments;
+        if (self->sites[l].num_segments > max_site_segments) {
+            max_site_segments = self->sites[l].num_segments;
+        }
     }
     assert(total_segments == self->total_segments);
+    assert(max_site_segments == self->max_num_site_segments);
 }
 
 int
@@ -29,6 +34,7 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "total_segments  = %d\n", (int) self->total_segments);
+    fprintf(out, "max_num_site_segments = %d\n", (int) self->max_num_site_segments);
     fprintf(out, "segment_block_size = %d\n", (int) self->segment_block_size);
     fprintf(out, "num_site_segment_expands = %d\n", (int) self->num_site_segment_expands);
     for (l = 0; l < self->num_sites; l++) {
@@ -85,6 +91,7 @@ ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size)
     self->num_ancestors = 1;
     self->segment_block_size = segment_block_size;
     self->total_segments = self->num_sites;
+    self->max_num_site_segments = 1;
     for (l = 0; l < self->num_sites; l++) {
         self->sites[l].start = malloc(self->segment_block_size * sizeof(ancestor_id_t));
         self->sites[l].end = malloc(self->segment_block_size * sizeof(ancestor_id_t));
@@ -167,6 +174,9 @@ ancestor_store_add(ancestor_store_t *self, allele_t *ancestor)
                 site->state[k] = ancestor[l];
                 site->num_segments = k + 1;
                 self->total_segments++;
+                if (site->num_segments > self->max_num_site_segments) {
+                    self->max_num_site_segments = site->num_segments;
+                }
             }
         }
     }
@@ -185,6 +195,7 @@ ancestor_store_load(ancestor_store_t *self, size_t num_segments, site_id_t *site
 
     site_start = 0;
     site_end = 0;
+    self->max_num_site_segments = 0;
     for (l = 0; l < self->num_sites; l++) {
         assert(site[site_start] == l);
         assert(site[site_end] == l);
@@ -194,6 +205,9 @@ ancestor_store_load(ancestor_store_t *self, size_t num_segments, site_id_t *site
         assert(site_end == num_segments || site[site_end] == l + 1);
         num_site_segments = site_end - site_start;
         assert(num_site_segments > 0);
+        if (num_site_segments > self->max_num_site_segments) {
+            self->max_num_site_segments = num_site_segments;
+        }
         self->sites[l].max_num_segments = num_site_segments;
         self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
         self->sites[l].end = malloc(num_site_segments * sizeof(ancestor_id_t));
