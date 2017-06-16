@@ -23,6 +23,11 @@ static PyObject *TsinfLibraryError;
 
 typedef struct {
     PyObject_HEAD
+    ancestor_builder_t *builder;
+} AncestorBuilder;
+
+typedef struct {
+    PyObject_HEAD
     ancestor_store_t *store;
 } AncestorStore;
 
@@ -53,6 +58,297 @@ handle_library_error(int err)
 {
     PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
 }
+
+static PyObject *
+convert_site_id_list(site_t **sites, size_t num_sites)
+{
+    PyObject *ret = NULL;
+    PyObject *t;
+    PyObject *py_int;
+    size_t j;
+
+    t = PyTuple_New(num_sites);
+    if (t == NULL) {
+        goto out;
+    }
+    for (j = 0; j < num_sites; j++) {
+        py_int = Py_BuildValue("k", (unsigned long) sites[j]->id);
+        if (py_int == NULL) {
+            Py_DECREF(sites);
+            goto out;
+        }
+        PyTuple_SET_ITEM(t, j, py_int);
+    }
+    ret = t;
+out:
+    return ret;
+}
+
+/*===================================================================
+ * AncestorBuilder
+ *===================================================================
+ */
+
+static int
+AncestorBuilder_check_state(AncestorBuilder *self)
+{
+    int ret = 0;
+    if (self->builder == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorBuilder not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+AncestorBuilder_dealloc(AncestorBuilder* self)
+{
+    if (self->builder != NULL) {
+        ancestor_builder_free(self->builder);
+        PyMem_Free(self->builder);
+        self->builder = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"samples", "position", NULL};
+    size_t num_samples, num_sites;
+    PyObject *samples = NULL;
+    PyArrayObject *samples_array = NULL;
+    PyObject *position = NULL;
+    PyArrayObject *position_array = NULL;
+    npy_intp *shape;
+
+    self->builder = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO", kwlist, &samples, &position)) {
+        goto fail;
+    }
+    samples_array = (PyArrayObject *) PyArray_FROM_OTF(samples, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (samples_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(samples_array) != 2) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 2");
+        goto fail;
+    }
+    shape = PyArray_DIMS(samples_array);
+    num_samples = shape[0];
+    num_sites = shape[1];
+    if (num_samples < 2) {
+        PyErr_SetString(PyExc_ValueError, "Need > 2 samples");
+        goto fail;
+    }
+    if (num_sites < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
+        goto fail;
+    }
+    position_array = (PyArrayObject *) PyArray_FROM_OTF(position, NPY_FLOAT64,
+            NPY_ARRAY_IN_ARRAY);
+    if (position_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(position_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(position_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "position num sites mismatch");
+        goto fail;
+    }
+
+    self->builder = PyMem_Malloc(sizeof(ancestor_builder_t));
+    if (self->builder == NULL) {
+        PyErr_NoMemory();
+        goto fail;
+    }
+    err = ancestor_builder_alloc(self->builder, num_samples, num_sites,
+            (double *) PyArray_DATA(position_array),
+            (int8_t *) PyArray_DATA(samples_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(samples_array);
+    return 0;
+fail:
+    PyArray_XDECREF_ERR(samples_array);
+    return -1;
+}
+
+static PyObject *
+AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"focal_site", "ancestor", NULL};
+    PyObject *ancestor = NULL;
+    PyArrayObject *ancestor_array = NULL;
+    unsigned long focal_site;
+    size_t num_sites;
+    npy_intp *shape;
+
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kO!", kwlist,
+            &focal_site, &PyArray_Type, &ancestor)) {
+        goto fail;
+    }
+    num_sites = self->builder->num_sites;
+    ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (ancestor_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(ancestor_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(ancestor_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
+        goto fail;
+    }
+    err = ancestor_builder_make_ancestor(self->builder, focal_site,
+        (int8_t *) PyArray_DATA(ancestor_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(ancestor_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(ancestor_array);
+    return NULL;
+}
+
+static PyObject *
+AncestorBuilder_get_frequency_classes(AncestorBuilder *self)
+{
+    PyObject *ret = NULL;
+    PyObject *py_classes = NULL;
+    PyObject *py_class = NULL;
+    PyObject *py_sites = NULL;
+    frequency_class_t *class;
+    size_t j;
+
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto out;
+    }
+
+    py_classes = PyTuple_New(self->builder->num_frequency_classes);
+    if (py_classes == NULL) {
+        goto out;
+    }
+    for (j = 0; j < self->builder->num_frequency_classes; j++) {
+        class = self->builder->frequency_classes + j;
+        py_sites = convert_site_id_list(class->sites, class->num_sites);
+        if (py_sites == NULL) {
+            Py_DECREF(py_classes);
+            goto out;
+        }
+        py_class = Py_BuildValue("kO", (unsigned long) class->frequency, py_sites);
+        if (py_class == NULL) {
+            Py_DECREF(py_sites);
+            Py_DECREF(py_classes);
+            goto out;
+        }
+        PyTuple_SET_ITEM(py_classes, j, py_class);
+    }
+    ret = py_classes;
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorBuilder_get_num_sites(AncestorBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->builder->num_sites);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorBuilder_get_num_ancestors(AncestorBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->builder->num_ancestors);
+out:
+    return ret;
+}
+
+static PyMemberDef AncestorBuilder_members[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef AncestorBuilder_getsetters[] = {
+    {"num_sites", (getter) AncestorBuilder_get_num_sites, NULL, "The number of sites."},
+    {"num_ancestors", (getter) AncestorBuilder_get_num_ancestors, NULL, "The number of ancestors."},
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef AncestorBuilder_methods[] = {
+    {"make_ancestor", (PyCFunction) AncestorBuilder_make_ancestor,
+        METH_VARARGS|METH_KEYWORDS,
+        "Makes the specified ancestor."},
+    {"get_frequency_classes", (PyCFunction) AncestorBuilder_get_frequency_classes,
+        METH_NOARGS,
+        "Returns a list of (frequency, sites) tuples"},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject AncestorBuilderType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.AncestorBuilder",             /* tp_name */
+    sizeof(AncestorBuilder),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)AncestorBuilder_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "AncestorBuilder objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    AncestorBuilder_methods,             /* tp_methods */
+    AncestorBuilder_members,             /* tp_members */
+    AncestorBuilder_getsetters,          /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)AncestorBuilder_init,      /* tp_init */
+};
 
 /*===================================================================
  * AncestorStore
@@ -179,6 +475,52 @@ fail:
 }
 
 static PyObject *
+AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"id", "haplotype", NULL};
+    PyObject *haplotype = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    unsigned long ancestor_id;
+    size_t num_sites;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kO!", kwlist,
+            &ancestor_id, &PyArray_Type, &haplotype)) {
+        goto fail;
+    }
+    num_sites = self->store->num_sites;
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (haplotype_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
+        goto fail;
+    }
+    err = ancestor_store_get_ancestor(self->store, ancestor_id,
+        (int8_t *) PyArray_DATA(haplotype_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(haplotype_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(haplotype_array);
+    return NULL;
+}
+
+static PyObject *
 AncestorStore_get_num_sites(AncestorStore *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -221,6 +563,9 @@ static PyMethodDef AncestorStore_methods[] = {
     {"add", (PyCFunction) AncestorStore_add,
         METH_VARARGS|METH_KEYWORDS,
         "Adds the specified ancestor."},
+    {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
+        METH_VARARGS|METH_KEYWORDS,
+        "Decodes the specified ancestor into the numpy array."},
     {NULL}  /* Sentinel */
 };
 
@@ -947,6 +1292,13 @@ init_tsinfer(void)
     /* Initialise numpy */
     import_array();
 
+    /* AncestorBuilder type */
+    AncestorBuilderType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&AncestorBuilderType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&AncestorBuilderType);
+    PyModule_AddObject(module, "AncestorBuilder", (PyObject *) &AncestorBuilderType);
     /* AncestorStore type */
     AncestorStoreType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&AncestorStoreType) < 0) {

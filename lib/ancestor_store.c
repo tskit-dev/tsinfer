@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+
 static void
 ancestor_store_check_state(ancestor_store_t *self)
 {
@@ -29,6 +30,7 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "total_segments  = %d\n", (int) self->total_segments);
     fprintf(out, "segment_block_size = %d\n", (int) self->segment_block_size);
+    fprintf(out, "num_site_segment_expands = %d\n", (int) self->num_site_segment_expands);
     for (l = 0; l < self->num_sites; l++) {
         site = &self->sites[l];
         printf("%d\t[%d]:: ", (int) l, (int) site->num_segments);
@@ -107,9 +109,34 @@ static int
 ancestor_store_expand_site_segments(ancestor_store_t *self, site_id_t site_id)
 {
     int ret = 0;
-    /* TODO implement this */
+    ancestor_id_t *start;
+    ancestor_id_t *end;
+    allele_t *state;
+    site_state_t *site = self->sites + site_id;
+
     assert(self->segment_block_size > 0);
-    ret = TSI_ERR_NO_MEMORY;
+    site->max_num_segments += self->segment_block_size;
+    self->num_site_segment_expands++;
+
+    start = realloc(site->start, site->max_num_segments * sizeof(ancestor_id_t));
+    if (start == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    site->start = start;
+    end = realloc(site->end, site->max_num_segments * sizeof(ancestor_id_t));
+    if (end == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    site->end = end;
+    state = realloc(site->state, site->max_num_segments * sizeof(allele_t));
+    if (state == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    site->state = state;
+out:
     return ret;
 }
 

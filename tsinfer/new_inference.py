@@ -20,43 +20,43 @@ def split_parent_array(P):
         yield start, num_sites, P[-1]
 
 
-def infer(samples, recombination_rate, mutation_rate, matcher_algorithm="C"):
+def infer(samples, positions, recombination_rate, mutation_rate, matcher_algorithm="C"):
     num_samples, num_sites = samples.shape
-    builder = AncestorBuilder(samples)
-    if matcher_algorithm == "C":
-        matcher = _tsinfer.AncestorMatcher(num_sites)
-    else:
-        matcher = AncestorMatcher(num_sites)
-    num_ancestors = builder.num_ancestors
-    # tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
-    tree_sequence_builder = TreeSequenceBuilder(num_samples, num_ancestors, num_sites)
+    builder = _tsinfer.AncestorBuilder(samples, positions)
+    store = _tsinfer.AncestorStore(builder.num_sites)
+    matcher = _tsinfer.AncestorMatcher(store, recombination_rate, mutation_rate)
+    store.init_build(1024)
 
-    A = np.zeros(num_sites, dtype=np.int8)
+    for frequency, focal_sites in builder.get_frequency_classes():
+        num_ancestors = len(focal_sites)
+        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+        for j, focal_site in enumerate(focal_sites):
+            builder.make_ancestor(focal_site, A[j, :])
+            # print(focal_site, ":", A[j])
+
+        for j in range(num_ancestors):
+            store.add(A[j, :])
+        # print(A)
+
+    tree_sequence_builder = TreeSequenceBuilder(num_samples, store.num_ancestors, num_sites)
+    a = np.zeros(num_sites, dtype=np.int8)
     P = np.zeros(num_sites, dtype=np.int32)
     M = np.zeros(num_sites, dtype=np.uint32)
-    # for j in range(builder.num_ancestors):
-        # focal_site = builder.site_order[j]
-        # builder.build(j, A)
-    for j, A in enumerate(builder.build_all_ancestors()):
-        num_mutations = matcher.best_path(A, P, M, recombination_rate, mutation_rate)
-        # print(A)
-        # print(P)
+    for j in range(1, store.num_ancestors):
+        store.get_ancestor(j, a)
+        num_mutations = matcher.best_path(j, a, P, M)
+        # print("a = ", a)
+        # print("P = ", P)
         # print("num_mutations = ", num_mutations, M[:num_mutations])
         assert num_mutations == 1
-        # assert M[0] == focal_site
-        matcher.add(A)
-        tree_sequence_builder.add_path(j + 1, P, A, M[:num_mutations])
-    # tree_sequence_builder.print_state()
-    # print("HERE")
-    # matcher.print_state()
-    # builder.print_all_ancestors()
-    # H = matcher.decode_ancestors()
-    # print(H)
+        tree_sequence_builder.add_path(j, P, a, M[:num_mutations])
+        # tree_sequence_builder.print_state()
 
     for j in range(num_samples):
-        num_mutations = matcher.best_path(samples[j], P, M, recombination_rate, mutation_rate)
-        u = num_ancestors + j + 1
+        num_mutations = matcher.best_path(store.num_ancestors, samples[j], P, M)
+        u = store.num_ancestors + j + 1
         tree_sequence_builder.add_path(u, P, samples[j], M[:num_mutations])
+
     # tree_sequence_builder.print_state()
     ts = tree_sequence_builder.finalise()
 

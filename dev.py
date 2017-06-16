@@ -24,14 +24,16 @@ def build_ancestors(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=5.5, mutation_rate=1, random_seed=seed)
-    print("num_sites = ", ts.num_sites)
+    # print("num_sites = ", ts.num_sites)
+
+    position = [site.position for site in ts.sites()]
 
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    for h in ts.haplotypes():
-        print(h)
-    print()
+    # for h in ts.haplotypes():
+    #     print(h)
+    # print()
 
     # # print("OLD version")
     # H1 = np.zeros((builder.num_ancestors, builder.num_sites), dtype=int)
@@ -42,34 +44,45 @@ def build_ancestors(n, L, seed):
     # # print()
     # # print(H1)
 
-    num_sites = ts.num_sites
 
     # H2 = np.zeros((builder.num_ancestors, builder.num_sites), dtype=int)
     # store = tsinfer.AncestorStore(num_sites)
     # a = np.zeros(num_sites, dtype=np.int8)
-    store = _tsinfer.AncestorStore(num_sites)
+
+    builder = _tsinfer.AncestorBuilder(S, position)
+    store = _tsinfer.AncestorStore(builder.num_sites)
     store.init_build(100)
 
-    builder = tsinfer.AncestorBuilder(S)
-    # for j, A in enumerate(builder.build_ancestors()):
-    #     H2[j, :] = A
-    for A in builder.build_ancestors():
-        store.add(A)
+    for frequency, focal_sites in builder.get_frequency_classes():
+        num_ancestors = len(focal_sites)
+        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+        # print("frequency:", frequency, "sites = ", focal_sites)
+        for j, focal_site in enumerate(focal_sites):
+            builder.make_ancestor(focal_site, A[j, :])
+            # print(focal_site, ":", A[j])
+            store.add(A[j, :])
+        # print(A)
 
+    # builder = tsinfer.AncestorBuilder(S)
+    # for A in builder.build_ancestors():
+    #     store.add(A)
+    h = np.zeros(store.num_sites, dtype=np.int8)
     matcher = _tsinfer.AncestorMatcher(store, 0.01, 1e-200)
-    print(store.num_sites)
-    print(store.num_ancestors)
+    # print(store.num_sites, store.num_ancestors)
     P = np.zeros(store.num_sites, dtype=np.int32)
     M = np.zeros(store.num_sites, dtype=np.uint32)
-    for h in S:
-        print(h)
+    for j in range(store.num_ancestors):
+        store.get_ancestor(j, h)
+        # a = "".join(str(x) if x != -1 else '*' for x in h)
+        # print(j, "\t", a)
         num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
-        print("num_mutation = ", num_mutations)
-        print(P)
-
-    # np.savetxt(sys.stdout, (site, start, end, state), fmt='%i %i %i %i')
-    # x = y = z = np.arange(0.0,5.0,1.0)
-    # np.savetxt('test.out', (x,y,z))
+        assert num_mutations == 0
+        # print(P)
+    for h in S:
+        # print(h)
+        num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
+        # print("num_mutation = ", num_mutations)
+        # print(P)
 
         # a = "".join(str(x) if x != -1 else '*' for x in A)
         # print(a)
@@ -90,11 +103,12 @@ def new_segments(n, L, seed):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
+    positions = [site.position for site in ts.sites()]
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
     # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="C")
+    tsp = tsinfer.infer(S, positions, 0.01, 1e-200, matcher_algorithm="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -294,9 +308,9 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(10, 100, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(10, 100, j)
     # new_segments(10, 100, 1)
     # new_segments(4, 4, 304)
     # export_ancestors(10, 500, 304)
@@ -317,5 +331,8 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-
-    build_ancestors(5, 10, 2)
+    # build_ancestors(10, 10, 1)
+    # for j in range(1, 100000):
+    #     build_ancestors(10, 10, j)
+    #     if j % 1000 == 0:
+    #         print(j)

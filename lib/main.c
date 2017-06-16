@@ -233,7 +233,7 @@ run_generate(const char *infile, const char *outfile, int verbose)
     if (ret != 0) {
         fatal_error("store alloc error.");
     }
-    ret = ancestor_store_init_build(&store, 100);
+    ret = ancestor_store_init_build(&store, 16);
     if (ret != 0) {
         fatal_error("store init error.");
     }
