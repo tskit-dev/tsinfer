@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include <uthash.h>
+#include "uthash.h"
 
 static int
 cmp_site_by_frequency(const void *a, const void *b) {
