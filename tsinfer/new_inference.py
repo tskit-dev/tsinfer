@@ -1,5 +1,6 @@
 
 import collections
+import concurrent
 
 import numpy as np
 import attr
@@ -20,23 +21,44 @@ def split_parent_array(P):
         yield start, num_sites, P[-1]
 
 
-def infer(samples, positions, recombination_rate, mutation_rate, matcher_algorithm="C"):
+def infer(samples, positions, recombination_rate, mutation_rate, matcher_algorithm="C",
+        num_threads=1):
     num_samples, num_sites = samples.shape
     builder = _tsinfer.AncestorBuilder(samples, positions)
     store = _tsinfer.AncestorStore(builder.num_sites)
-    matcher = _tsinfer.AncestorMatcher(store, recombination_rate, mutation_rate)
-    store.init_build(1024)
+    store.init_build(8192)
 
-    for frequency, focal_sites in builder.get_frequency_classes():
+    def build_frequency_class(work):
+        frequency, focal_sites = work
         num_ancestors = len(focal_sites)
         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+        p = np.zeros(num_ancestors, dtype=np.uint32)
+        # print("frequency:", frequency, "sites = ", focal_sites)
         for j, focal_site in enumerate(focal_sites):
             builder.make_ancestor(focal_site, A[j, :])
-            # print(focal_site, ":", A[j])
+        _tsinfer.sort_ancestors(A, p)
+        # p = np.arange(num_ancestors, dtype=np.uint32)
+        return frequency, A, p
 
-        for j in range(num_ancestors):
-            store.add(A[j, :])
-        # print(A)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
+            frequency, A, p = result
+            for index in p:
+                store.add(A[index, :])
+
+
+#     for frequency, focal_sites in builder.get_frequency_classes():
+#         num_ancestors = len(focal_sites)
+#         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+#         for j, focal_site in enumerate(focal_sites):
+#             builder.make_ancestor(focal_site, A[j, :])
+#             # print(focal_site, ":", A[j])
+
+#         for j in range(num_ancestors):
+#             store.add(A[j, :])
+#         # print(A)
+
+    matcher = _tsinfer.AncestorMatcher(store, recombination_rate, mutation_rate)
 
     tree_sequence_builder = TreeSequenceBuilder(num_samples, store.num_ancestors, num_sites)
     a = np.zeros(num_sites, dtype=np.int8)

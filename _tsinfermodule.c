@@ -525,6 +525,216 @@ fail:
 }
 
 static PyObject *
+AncestorStore_dump_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"site", "start", "end", "state", NULL};
+    PyObject *site = NULL;
+    PyArrayObject *site_array = NULL;
+    PyObject *start = NULL;
+    PyArrayObject *start_array = NULL;
+    PyObject *end = NULL;
+    PyArrayObject *end_array = NULL;
+    PyObject *state = NULL;
+    PyArrayObject *state_array = NULL;
+    size_t total_segments;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!O!", kwlist,
+            &PyArray_Type, &site, &PyArray_Type, &start, &PyArray_Type, &end,
+            &PyArray_Type, &state)) {
+        goto fail;
+    }
+    total_segments = self->store->total_segments;
+
+    /* site */
+    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (site_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(site_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(site_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input site wrong size");
+        goto fail;
+    }
+    /* start */
+    start_array = (PyArrayObject *) PyArray_FROM_OTF(start, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (start_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(start_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(start_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input start wrong size");
+        goto fail;
+    }
+    /* end */
+    end_array = (PyArrayObject *) PyArray_FROM_OTF(end, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (end_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(end_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(end_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input end wrong size");
+        goto fail;
+    }
+    /* state */
+    state_array = (PyArrayObject *) PyArray_FROM_OTF(state, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (state_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(state_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(state_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input state wrong size");
+        goto fail;
+    }
+
+    err = ancestor_store_dump(self->store,
+        (uint32_t *) PyArray_DATA(site_array),
+        (int32_t *) PyArray_DATA(start_array),
+        (int32_t *) PyArray_DATA(end_array),
+        (int8_t *) PyArray_DATA(state_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(site_array);
+    Py_DECREF(start_array);
+    Py_DECREF(end_array);
+    Py_DECREF(state_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(site_array);
+    PyArray_XDECREF_ERR(start_array);
+    PyArray_XDECREF_ERR(end_array);
+    PyArray_XDECREF_ERR(state_array);
+    return NULL;
+}
+
+static PyObject *
+AncestorStore_load_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"site", "start", "end", "state", NULL};
+    PyObject *site = NULL;
+    PyArrayObject *site_array = NULL;
+    PyObject *start = NULL;
+    PyArrayObject *start_array = NULL;
+    PyObject *end = NULL;
+    PyArrayObject *end_array = NULL;
+    PyObject *state = NULL;
+    PyArrayObject *state_array = NULL;
+    size_t total_segments;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOO", kwlist,
+            &site, &start, &end, &state)) {
+        goto out;
+    }
+
+    /* site */
+    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (site_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(site_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(site_array);
+    total_segments = shape[0];
+    /* start */
+    start_array = (PyArrayObject *) PyArray_FROM_OTF(start, NPY_INT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (start_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(start_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(start_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input start wrong size");
+        goto out;
+    }
+    /* end */
+    end_array = (PyArrayObject *) PyArray_FROM_OTF(end, NPY_INT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (end_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(end_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(end_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input end wrong size");
+        goto out;
+    }
+    /* state */
+    state_array = (PyArrayObject *) PyArray_FROM_OTF(state, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (state_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(state_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(state_array);
+    if (shape[0] != total_segments) {
+        PyErr_SetString(PyExc_ValueError, "input state wrong size");
+        goto out;
+    }
+
+    err = ancestor_store_load(self->store, total_segments,
+        (uint32_t *) PyArray_DATA(site_array),
+        (int32_t *) PyArray_DATA(start_array),
+        (int32_t *) PyArray_DATA(end_array),
+        (int8_t *) PyArray_DATA(state_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    Py_XDECREF(site_array);
+    Py_XDECREF(start_array);
+    Py_XDECREF(end_array);
+    Py_XDECREF(state_array);
+    return ret;
+}
+
+static PyObject *
 AncestorStore_get_num_sites(AncestorStore *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -632,6 +842,12 @@ static PyMethodDef AncestorStore_methods[] = {
     {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Decodes the specified ancestor into the numpy array."},
+    {"dump_segments", (PyCFunction) AncestorStore_dump_segments,
+        METH_VARARGS|METH_KEYWORDS,
+        "Dumps all segments into the specified numpy arrays."},
+    {"load_segments", (PyCFunction) AncestorStore_load_segments,
+        METH_VARARGS|METH_KEYWORDS,
+        "Loads segments from the specified numpy arrays."},
     {NULL}  /* Sentinel */
 };
 

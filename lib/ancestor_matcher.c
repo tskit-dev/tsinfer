@@ -189,7 +189,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     allele_t *S_state;
     size_t l, s, L_size, S_size, L_next_size;
     /* TODO Is it really safe to have an upper bound here? */
-    size_t max_segments = self->store->max_num_site_segments * 8;
+    size_t max_segments = self->store->max_num_site_segments * 32;
 
     L_start = malloc(max_segments * sizeof(ancestor_id_t));
     L_end = malloc(max_segments * sizeof(ancestor_id_t));
