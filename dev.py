@@ -11,6 +11,7 @@ import statistics
 import sys
 import attr
 import collections
+import concurrent.futures
 import time
 # import profilehooks
 
@@ -137,21 +138,25 @@ def build_ancestors(n, L, seed):
     builder = _tsinfer.AncestorBuilder(S, position)
     store = _tsinfer.AncestorStore(builder.num_sites)
     store.init_build(1024)
+    num_threads = 20
 
-    sort_order = 0
-    for frequency, focal_sites in builder.get_frequency_classes():
+    def build_frequency_class(work):
+        frequency, focal_sites = work
         num_ancestors = len(focal_sites)
         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
-        p = np.zeros(num_ancestors, dtype=np.int32)
+        p = np.zeros(num_ancestors, dtype=np.uint32)
         # print("frequency:", frequency, "sites = ", focal_sites)
         for j, focal_site in enumerate(focal_sites):
             builder.make_ancestor(focal_site, A[j, :])
-            # print(focal_site, ":", A[j])
-        sort_ancestors(A, p, sort_order)
-        # sort_order = (sort_order + 1) % 2
-        # print("p = ", p)
-        for j in range(num_ancestors):
-            store.add(A[p[j], :])
+        _tsinfer.sort_ancestors(A, p)
+        # p = np.arange(num_ancestors, dtype=np.uint32)
+        return frequency, A, p
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
+            frequency, A, p = result
+            for index in p:
+                store.add(A[index, :])
 
     print("num sites        :", store.num_sites)
     print("num ancestors    :", store.num_ancestors)
@@ -159,7 +164,7 @@ def build_ancestors(n, L, seed):
     print("mean_segments    :", store.total_segments / store.num_sites)
     print("expands          :", store.num_site_segment_expands)
     print("Memory           :", humanize.naturalsize(store.total_memory))
-    print("Uncompressed     :", humanize.naturalsize(num_ancestors * store.num_sites))
+    print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
     print("Sample memory    :", humanize.naturalsize(S.nbytes))
 
     # matcher = _tsinfer.AncestorMatcher(store, 0.01, 1e-200)
@@ -418,7 +423,7 @@ if __name__ == "__main__":
     # # new_segments(40, 10, 1)
     # new_segments(4, 4, 304)
     # export_ancestors(10, 500, 304)
-    export_samples(20, 60, 1)
+    # export_samples(20, 60, 1)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):
@@ -435,13 +440,13 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # n = 10
-    # # for j in np.arange(1, 100, 10):
+    n = 1000
+    for j in np.arange(1, 100, 10):
     # for j in np.arange(1, 10, 1):
-    #     print("n                :", n)
-    #     print("L                :", j, "Mb")
-    #     build_ancestors(n, j * 10**6, 1)
-    #     print()
+        print("n                :", n)
+        print("L                :", j, "Mb")
+        build_ancestors(n, j * 10**6, 1)
+        print()
 
     # build_ancestors(10, 0.2 * 10**6, 1)
 

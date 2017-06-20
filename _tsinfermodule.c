@@ -167,9 +167,11 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto fail;
     }
+    Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_alloc(self->builder, num_samples, num_sites,
             (double *) PyArray_DATA(position_array),
             (int8_t *) PyArray_DATA(samples_array));
+    Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
@@ -214,8 +216,10 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
         goto fail;
     }
+    Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_make_ancestor(self->builder, focal_site,
         (int8_t *) PyArray_DATA(ancestor_array));
+    Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
@@ -1310,7 +1314,91 @@ static PyTypeObject ThreaderType = {
  *===================================================================
  */
 
+static PyObject *
+sort_ancestors(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"ancestors", "permutation", NULL};
+    PyObject *ancestors = NULL;
+    PyObject *permutation = NULL;
+    PyArrayObject *permutation_array = NULL;
+    PyArrayObject *ancestors_array = NULL;
+    size_t num_ancestors, num_sites;
+    npy_intp *shape;
+    ancestor_sorter_t sorter;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!", kwlist,
+            &ancestors, &PyArray_Type, &permutation)) {
+        goto fail;
+    }
+    ancestors_array = (PyArrayObject *) PyArray_FROM_OTF(ancestors, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (ancestors_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(ancestors_array) != 2) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 2");
+        goto fail;
+    }
+    shape = PyArray_DIMS(ancestors_array);
+    num_ancestors = shape[0];
+    num_sites = shape[1];
+    if (num_ancestors < 1) {
+        PyErr_SetString(PyExc_ValueError, "num_ancestors < 1");
+        goto fail;
+    }
+    if (num_sites < 1) {
+        PyErr_SetString(PyExc_ValueError, "num_sites < 1");
+        goto fail;
+    }
+    permutation_array = (PyArrayObject *) PyArray_FROM_OTF(permutation, NPY_UINT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (permutation_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(permutation_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(permutation_array);
+    if (shape[0] != num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "input permutation wrong size");
+        goto fail;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_sorter_alloc(&sorter, num_ancestors, num_sites,
+        (int8_t *) PyArray_DATA(ancestors_array),
+        (uint32_t *) PyArray_DATA(permutation_array));
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        ancestor_sorter_free(&sorter);
+        goto fail;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_sorter_sort(&sorter);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        ancestor_sorter_free(&sorter);
+        goto fail;
+    }
+    ancestor_sorter_free(&sorter);
+    Py_DECREF(ancestors_array);
+    Py_DECREF(permutation_array);
+    return Py_BuildValue("");
+fail:
+    Py_XDECREF(ancestors_array);
+    PyArray_XDECREF_ERR(permutation_array);
+    return NULL;
+
+}
+
 static PyMethodDef tsinfer_methods[] = {
+    {"sort_ancestors", (PyCFunction) sort_ancestors,
+        METH_VARARGS|METH_KEYWORDS,
+        "Sorts the ancestors in the array to minimise block breaks and "
+        "return the resulting permutation" },
     {NULL}        /* Sentinel */
 };
 

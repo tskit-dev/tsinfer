@@ -23,7 +23,7 @@ ancestor_sorter_check_state(ancestor_sorter_t *self)
 {
     size_t l;
     int *q = calloc(self->num_sites, sizeof(int));
-    size_t *p = self->permutation;
+    site_id_t *p = self->permutation;
     assert(q != NULL);
 
     for (l = 0; l < self->num_sites; l++) {
@@ -66,10 +66,9 @@ ancestor_sorter_print_state(ancestor_sorter_t *self, FILE *out)
     return 0;
 }
 
-
 int
 ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors, size_t num_sites,
-        allele_t *ancestors, size_t *permutation)
+        allele_t *ancestors, site_id_t *permutation)
 {
     int ret = 0;
     size_t l;
@@ -86,7 +85,7 @@ ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors, size_t num_
     }
 
     /* initialise the identity permutation */
-    for (l = 0; l < num_sites; l++) {
+    for (l = 0; l < num_ancestors; l++) {
         permutation[l] = l;
     }
 out:
@@ -106,7 +105,7 @@ ancestor_sorter_sort_slice(ancestor_sorter_t *self, size_t start, size_t end)
     int ret = 0;
     size_t segment_breaks, max_segment_breaks, sort_site, l, j, k;
     const size_t m = self->num_sites;
-    size_t *p = self->permutation;
+    site_id_t *p = self->permutation;
     allele_t *A = self->ancestors;
 
     assert(end > start);

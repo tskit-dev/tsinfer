@@ -232,7 +232,7 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
     size_t num_samples, num_sites, j, k, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *ancestors = NULL;
-    size_t *permutation = NULL;
+    site_id_t *permutation = NULL;
     double *positions = NULL;
     site_t *focal_site;
     ancestor_builder_t builder;
@@ -257,7 +257,7 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
     if (verbose > 0) {
         ancestor_builder_print_state(&builder, stdout);
     }
-    permutation = malloc(num_sites * sizeof(size_t));
+    permutation = malloc(num_sites * sizeof(site_id_t));
     if (permutation == NULL) {
         fatal_error("permutation alloc error");
     }

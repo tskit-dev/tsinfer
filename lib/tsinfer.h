@@ -68,8 +68,8 @@ typedef struct {
 } ancestor_builder_t;
 
 typedef struct {
-    size_t index;
-    size_t current_position;
+    site_id_t index;
+    site_id_t current_position;
     allele_t state;
 } permutation_sort_t;
 
@@ -77,7 +77,7 @@ typedef struct {
     size_t num_sites;
     size_t num_ancestors;
     allele_t *ancestors;
-    size_t *permutation;
+    site_id_t *permutation;
     permutation_sort_t *sort_buffer;
 } ancestor_sorter_t;
 
@@ -112,7 +112,7 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
         site_id_t focal_site_id, allele_t *haplotype);
 
 int ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors,
-        size_t num_sites, allele_t *ancestors, size_t *permutation);
+        size_t num_sites, allele_t *ancestors, site_id_t *permutation);
 int ancestor_sorter_free(ancestor_sorter_t *self);
 int ancestor_sorter_print_state(ancestor_sorter_t *self, FILE *out);
 int ancestor_sorter_sort(ancestor_sorter_t *self);
