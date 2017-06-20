@@ -67,6 +67,20 @@ typedef struct {
     frequency_class_t *frequency_classes;
 } ancestor_builder_t;
 
+typedef struct {
+    size_t index;
+    size_t current_position;
+    allele_t state;
+} permutation_sort_t;
+
+typedef struct {
+    size_t num_sites;
+    size_t num_ancestors;
+    allele_t *ancestors;
+    size_t *permutation;
+    permutation_sort_t *sort_buffer;
+} ancestor_sorter_t;
+
 int ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
         double recombination_rate, double mutation_rate);
 int ancestor_matcher_free(ancestor_matcher_t *self);
@@ -97,6 +111,11 @@ int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
         site_id_t focal_site_id, allele_t *haplotype);
 
+int ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors,
+        size_t num_sites, allele_t *ancestors, size_t *permutation);
+int ancestor_sorter_free(ancestor_sorter_t *self);
+int ancestor_sorter_print_state(ancestor_sorter_t *self, FILE *out);
+int ancestor_sorter_sort(ancestor_sorter_t *self);
 
 void __tsi_safe_free(void **ptr);
 

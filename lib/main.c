@@ -27,6 +27,21 @@ fatal_error(const char *msg, ...)
 }
 
 static void
+print_ancestor(allele_t *a, size_t num_sites)
+{
+    size_t l;
+
+    for (l = 0; l < num_sites; l++) {
+        if (a[l] == -1) {
+            printf("*");
+        } else {
+            printf("%d", a[l]);
+        }
+    }
+    printf("\n");
+}
+
+static void
 read_sites(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
         allele_t **r_haplotypes, double **r_positions)
 {
@@ -212,14 +227,16 @@ write_ancestors(ancestor_store_t *store, const char *outfile)
 }
 
 static void
-run_generate(const char *infile, const char *outfile, int verbose)
+run_generate(const char *infile, const char *outfile, int sort, int verbose)
 {
-    size_t num_samples, num_sites, j, k, l, num_ancestors;
+    size_t num_samples, num_sites, j, k, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *ancestors = NULL;
+    size_t *permutation = NULL;
     double *positions = NULL;
     site_t *focal_site;
     ancestor_builder_t builder;
+    ancestor_sorter_t sorter;
     ancestor_store_t store;
     allele_t *a;
     int ret;
@@ -240,6 +257,11 @@ run_generate(const char *infile, const char *outfile, int verbose)
     if (verbose > 0) {
         ancestor_builder_print_state(&builder, stdout);
     }
+    permutation = malloc(num_sites * sizeof(size_t));
+    if (permutation == NULL) {
+        fatal_error("permutation alloc error");
+    }
+
     for (j = 0; j < builder.num_frequency_classes; j++) {
         num_ancestors = builder.frequency_classes[j].num_sites;
         if (verbose > 0) {
@@ -250,6 +272,11 @@ run_generate(const char *infile, const char *outfile, int verbose)
         if (ancestors == NULL) {
             fatal_error("Alloc ancestors");
         }
+        ret = ancestor_sorter_alloc(&sorter, num_ancestors, num_sites, ancestors,
+                permutation);
+        if (ret != 0) {
+            fatal_error("Ancestor sorter alloc error");
+        }
         for (k = 0; k < num_ancestors; k++) {
             focal_site = builder.frequency_classes[j].sites[k];
             a = ancestors + k * num_sites;
@@ -258,22 +285,25 @@ run_generate(const char *infile, const char *outfile, int verbose)
             if (ret != 0) {
                 fatal_error("Error in make ancestor");
             }
+        }
+        if (sort > 0) {
+            ret = ancestor_sorter_sort(&sorter);
+            if (ret != 0) {
+                fatal_error("Error sorting");
+            }
+        }
+        for (k = 0; k < num_ancestors; k++) {
+            a = ancestors + permutation[k] * num_sites;
             ret = ancestor_store_add(&store, a);
             if (ret != 0) {
                 fatal_error("Error in add ancestor");
             }
             if (verbose > 0) {
-                for (l = 0; l < num_sites; l++) {
-                    if (a[l] == -1) {
-                        printf("*");
-                    } else {
-                        printf("%d", a[l]);
-                    }
-                }
-                printf("\n");
+                print_ancestor(a, num_sites);
             }
         }
         tsi_safe_free(ancestors);
+        ancestor_sorter_free(&sorter);
     }
     if (verbose > 0) {
         ancestor_store_print_state(&store, stdout);
@@ -285,6 +315,7 @@ run_generate(const char *infile, const char *outfile, int verbose)
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(ancestors);
+    tsi_safe_free(permutation);
 }
 
 static void
@@ -360,10 +391,11 @@ main(int argc, char** argv)
     /* SYNTAX 1: generate [-v] <input-file> <output-file> */
     struct arg_rex *cmd1 = arg_rex1(NULL, NULL, "generate", NULL, REG_ICASE, NULL);
     struct arg_lit *verbose1 = arg_lit0("v", "verbose", NULL);
+    struct arg_lit *sort1 = arg_lit0("s", "sort", NULL);
     struct arg_file *infiles1 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_file *outfiles1 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_end *end1 = arg_end(20);
-    void* argtable1[] = {cmd1, verbose1, infiles1, outfiles1, end1};
+    void* argtable1[] = {cmd1, verbose1, sort1, infiles1, outfiles1, end1};
     int nerrors1;
 
     /* SYNTAX 2: match [-v] <input-file> */
@@ -381,7 +413,8 @@ main(int argc, char** argv)
     nerrors2 = arg_parse(argc, argv, argtable2);
 
     if (nerrors1 == 0) {
-        run_generate(infiles1->filename[0], outfiles1->filename[0], verbose1->count);
+        run_generate(infiles1->filename[0], outfiles1->filename[0], sort1->count,
+                verbose1->count);
     } else if (nerrors2 == 0) {
         run_match(infiles2->filename[0], verbose2->count);
     } else {

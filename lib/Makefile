@@ -10,7 +10,8 @@ CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
   -Wno-conversion # UTHash does not pass strict type conversion checks.
 LDFLAGS=-lm
 
-COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o ancestor_store.o
+COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o ancestor_store.o\
+	 ancestor_sorter.o
 HEADERS=tsinfer.h err.h
 
 all: main 

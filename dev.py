@@ -59,29 +59,66 @@ def generate_samples(ts, error_p):
 
 
 def sort_ancestor_slice(A, p, start, end, sort_order, depth=0):
-    if end - start > 1:
-        print("  " * depth, "Sort Ancestor slice:", start, ":", end, sep="")
+    n = end - start
+    if n > 1:
+        # print("  " * depth, "Sort Ancestor slice:", start, ":", end, sep="")
+        # print("  " * depth, "p = ", p, sep="")
         m = A.shape[1]
+        max_segment_breaks = 0
+        sort_site = -1
         for l in range(m):
-            col = A[p,l]
-            # TODO finish
-            # if col[
-            print(A[:,l])
-            print(A[p,l])
-            print()
+            col = A[p[start:end], l]
+            segment_breaks = 0
+            for j in range(n):
+                if j < n - 1:
+                    if sort_order == 0:
+                        if col[j] > col[j + 1]:
+                            segment_breaks += 1
+                    else:
+                        if col[j] <= col[j + 1]:
+                            segment_breaks += 1
+            # if segment_breaks > 1:
+            #     print("col = ", col, "segment_breaks = ", segment_breaks)
+            if segment_breaks > max_segment_breaks:
+                max_segment_breaks = segment_breaks
+                sort_site = l
+        if max_segment_breaks > 1:
+            # print("sort_site = ", sort_site)
+            # # print("A = ", A[p[start: end], sort_site])
+            sorting = np.argsort(A[p[start: end], sort_site])
+            if sort_order == 1:
+                sorting = sorting[::-1]
+            # print("sorting = ", sorting, sorting.dtype)
+            # print(p)
+            # print(p[sorting])
+            p[start: end] = p[start + sorting]
+            # print("after", p)
+            assert np.all(np.unique(p) == np.arange(p.shape[0]))
+            # recursively sort within these partitions.
+            for j in range(start, end - 1):
+                # print(depth * "  ", "testing:", j, A[p[j], sort_site],  A[p[j + 1], sort_site])
+                if A[p[j], sort_site] != A[p[j + 1], sort_site]:
+                    sort_ancestor_slice(A, p, start, j + 1, sort_order, depth + 1)
+                    start = j + 1
+                    # print(depth * " ", "start = ", start)
 
 
-def sort_ancestors(A, p):
+def sort_ancestors(A, p, sort_order):
     """
     Sorts the specified array of ancestors to maximise the effectiveness
     of the run length encoding.
     """
     n, m = A.shape
-    p[:] = np.arange(n)
-    for j in range(n):
-        a = "".join(str(x) if x != -1 else '*' for x in A[j])
-        print(j, "\t", a)
-    sort_ancestor_slice(A, p, 0, n, 0, 0)
+    p[:] = np.arange(n, dtype=int)
+    # print("BEFORE")
+    # for j in range(n):
+    #     a = "".join(str(x) if x != -1 else '*' for x in A[p[j],:])
+    #     print(j, "\t", a)
+    sort_ancestor_slice(A, p, 0, n, sort_order, 0)
+    # print("AFTER")
+    # for j in range(n):
+    #     a = "".join(str(x) if x != -1 else '*' for x in A[p[j], :])
+    #     print(j, "\t", a)
 
 def build_ancestors(n, L, seed):
 
@@ -101,6 +138,7 @@ def build_ancestors(n, L, seed):
     store = _tsinfer.AncestorStore(builder.num_sites)
     store.init_build(1024)
 
+    sort_order = 0
     for frequency, focal_sites in builder.get_frequency_classes():
         num_ancestors = len(focal_sites)
         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
@@ -109,11 +147,11 @@ def build_ancestors(n, L, seed):
         for j, focal_site in enumerate(focal_sites):
             builder.make_ancestor(focal_site, A[j, :])
             # print(focal_site, ":", A[j])
-        # sort_ancestors(A, p)
-        # for j in range(num_ancestors):
-        #     store.add(A[p[j], :])
+        sort_ancestors(A, p, sort_order)
+        # sort_order = (sort_order + 1) % 2
+        # print("p = ", p)
         for j in range(num_ancestors):
-            store.add(A[j,:])
+            store.add(A[p[j], :])
 
     print("num sites        :", store.num_sites)
     print("num ancestors    :", store.num_ancestors)
@@ -380,7 +418,7 @@ if __name__ == "__main__":
     # # new_segments(40, 10, 1)
     # new_segments(4, 4, 304)
     # export_ancestors(10, 500, 304)
-    # export_samples(10, 10, 1)
+    export_samples(20, 60, 1)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):
@@ -397,12 +435,15 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    n = 10000
-    for j in np.arange(1, 100, 10):
-        print("n                :", n)
-        print("L                :", j, "Mb")
-        build_ancestors(n, j * 10**6, 1)
-        print()
+    # n = 10
+    # # for j in np.arange(1, 100, 10):
+    # for j in np.arange(1, 10, 1):
+    #     print("n                :", n)
+    #     print("L                :", j, "Mb")
+    #     build_ancestors(n, j * 10**6, 1)
+    #     print()
+
+    # build_ancestors(10, 0.2 * 10**6, 1)
 
     # for j in range(1, 100000):
     #     build_ancestors(10, 10, j)
