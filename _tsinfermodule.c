@@ -79,7 +79,7 @@ convert_site_id_list(site_t **sites, size_t num_sites)
     for (j = 0; j < num_sites; j++) {
         py_int = Py_BuildValue("k", (unsigned long) sites[j]->id);
         if (py_int == NULL) {
-            Py_DECREF(sites);
+            Py_DECREF(t);
             goto out;
         }
         PyTuple_SET_ITEM(t, j, py_int);
@@ -88,6 +88,34 @@ convert_site_id_list(site_t **sites, size_t num_sites)
 out:
     return ret;
 }
+
+static PyObject *
+convert_site(site_state_t *site)
+{
+    PyObject *ret = NULL;
+    PyObject *t;
+    PyObject *item;
+    size_t j;
+
+    t = PyTuple_New(site->num_segments);
+    if (t == NULL) {
+        goto out;
+    }
+    for (j = 0; j < site->num_segments; j++) {
+        item = Py_BuildValue("kki", (unsigned long) site->start[j],
+                (unsigned long) site->end[j], (int) site->state[j]);
+        if (item == NULL) {
+            Py_DECREF(t);
+            goto out;
+        }
+        PyTuple_SET_ITEM(t, j, item);
+    }
+    ret = t;
+out:
+    return ret;
+}
+
+
 
 /*===================================================================
  * AncestorBuilder
@@ -817,6 +845,7 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     unsigned long ancestor_id;
+    site_id_t start, end;
     size_t num_sites;
     npy_intp *shape;
 
@@ -843,16 +872,77 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
     err = ancestor_store_get_ancestor(self->store, ancestor_id,
-        (int8_t *) PyArray_DATA(haplotype_array));
+        (int8_t *) PyArray_DATA(haplotype_array), &start, &end);
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
     Py_DECREF(haplotype_array);
-    return Py_BuildValue("");
+    return Py_BuildValue("ii", (int) start, (int) end);
 fail:
     PyArray_XDECREF_ERR(haplotype_array);
     return NULL;
+}
+
+static PyObject *
+AncestorStore_get_state(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"site_id", "ancestor_id", NULL};
+    unsigned long ancestor_id;
+    unsigned long site_id;
+    allele_t state;
+    int err;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kk", kwlist, &site_id, &ancestor_id)) {
+        goto out;
+    }
+    if (ancestor_id >= self->store->num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "ancestor id out of bounds.");
+        goto out;
+    }
+    if (site_id >= self->store->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "site id out of bounds.");
+        goto out;
+    }
+    err = ancestor_store_get_state(self->store, site_id, ancestor_id, &state);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("i", (int) state);
+out:
+    return ret;
+}
+
+
+static PyObject *
+AncestorStore_get_site(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"id", NULL};
+    unsigned long site_id;
+    site_state_t *site;
+    size_t num_sites;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k", kwlist, &site_id)) {
+        goto out;
+    }
+    num_sites = self->store->num_sites;
+    if (site_id >= num_sites) {
+        PyErr_SetString(PyExc_ValueError, "site id out of bounds.");
+        goto out;
+    }
+    site = self->store->sites + site_id;
+    ret = convert_site(site);
+out:
+    return ret;
 }
 
 static PyObject *
@@ -940,6 +1030,12 @@ static PyMethodDef AncestorStore_methods[] = {
     {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Decodes the specified ancestor into the numpy array."},
+    {"get_state", (PyCFunction) AncestorStore_get_state,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns state of the specified ancestor and the specified locus."},
+    {"get_site", (PyCFunction) AncestorStore_get_site,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns the encoded states for the specified site."},
     {NULL}  /* Sentinel */
 };
 

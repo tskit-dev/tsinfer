@@ -317,6 +317,7 @@ run_match(const char *infile, int verbose)
     ancestor_matcher_t matcher;
     ancestor_id_t *path = NULL;
     site_id_t *mutation_sites = NULL;
+    site_id_t start, end;
     allele_t *ancestor = NULL;
     size_t j, l, num_mutations;
 
@@ -336,7 +337,7 @@ run_match(const char *infile, int verbose)
         fatal_error("alloc error");
     }
     for (j = 1; j < store.num_ancestors; j++) {
-        ret = ancestor_store_get_ancestor(&store, j, ancestor);
+        ret = ancestor_store_get_ancestor(&store, j, ancestor, &start, &end);
         if (ret != 0) {
             fatal_error("get_ancestor error");
         }

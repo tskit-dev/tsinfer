@@ -19,5 +19,6 @@ from .inference import Illustrator
 from .new_inference import AncestorBuilder
 from .new_inference import AncestorStore
 from .new_inference import AncestorMatcher
+from .new_inference import Traceback
 from .new_inference import TreeSequenceBuilder
 from .new_inference import infer

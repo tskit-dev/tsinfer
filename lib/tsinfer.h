@@ -112,7 +112,7 @@ int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size)
 int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
         ancestor_id_t ancestor_id, allele_t *state);
 int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
-        allele_t *ancestor);
+        allele_t *ancestor, site_id_t *start_site, site_id_t *end_site);
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);

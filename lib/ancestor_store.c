@@ -9,9 +9,13 @@
 static void
 ancestor_store_check_state(ancestor_store_t *self)
 {
-    site_id_t l;
+    int ret;
+    site_id_t l, start, end;
+    size_t j;
     size_t total_segments = 0;
     size_t max_site_segments = 0;
+    allele_t *a = malloc(self->num_sites * sizeof(allele_t));
+    assert(a != NULL);
 
     for (l = 0; l < self->num_sites; l++) {
         total_segments += self->sites[l].num_segments;
@@ -21,6 +25,19 @@ ancestor_store_check_state(ancestor_store_t *self)
     }
     assert(total_segments == self->total_segments);
     assert(max_site_segments == self->max_num_site_segments);
+    for (j = 0; j < self->num_ancestors; j++) {
+        ret = ancestor_store_get_ancestor(self, j, a, &start, &end);
+        assert(ret == 0);
+        assert(end <= self->num_sites);
+        assert(start < end);
+        for (l = 0; l < self->num_sites; l++) {
+            if (l < start || l >= end) {
+                assert(a[l] == -1);
+            } else {
+                assert(a[l] != -1);
+            }
+        }
+    }
 }
 
 int
@@ -147,17 +164,29 @@ ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
 
 int
 ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
-        allele_t *ancestor)
+        allele_t *ancestor, site_id_t *start_site, site_id_t *end_site)
 {
     int ret = 0;
-    site_id_t l;
+    site_id_t l, start;
+    bool started = false;
 
+    memset(ancestor, 0xff, self->num_sites * sizeof(allele_t));
+    start = 0;
     for (l = 0; l < self->num_sites; l++) {
         ret = ancestor_store_get_state(self, l, ancestor_id, ancestor + l);
         if (ret != 0) {
             goto out;
         }
+        if (ancestor[l] != -1 && ! started) {
+            start = l;
+            started = true;
+        }
+        if (ancestor[l] == -1 && started) {
+            break;
+        }
     }
+    *start_site = start;
+    *end_site = l;
 out:
     return ret;
 }

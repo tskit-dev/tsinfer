@@ -138,7 +138,8 @@ def build_ancestors(n, L, seed, filename):
         S[:, variant.index] = variant.genotypes
 
     builder = _tsinfer.AncestorBuilder(S, position)
-    store_builder = _tsinfer.AncestorStoreBuilder(builder.num_sites, 2**10)
+    store_builder = _tsinfer.AncestorStoreBuilder(
+        builder.num_sites, builder.num_sites * 8192)
     num_threads = 20
 
     def build_frequency_class(work):
@@ -192,12 +193,6 @@ def build_ancestors(n, L, seed, filename):
 def load_ancestors(filename):
 
     with h5py.File(filename, "r") as f:
-        # g.create_dataset("site", data=site)
-        # g.create_dataset("start", data=start)
-        # g.create_dataset("end", data=end)
-        # g.create_dataset("state", data=state)
-        # g = f.create_group("sites")
-        # g.create_dataset("position", data=position)
         sites = f["sites"]
         segments = f["segments"]
         store = _tsinfer.AncestorStore(
@@ -216,26 +211,39 @@ def load_ancestors(filename):
     print("Memory           :", humanize.naturalsize(store.total_memory))
     print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
 
-    matcher = _tsinfer.AncestorMatcher(store, 0.01, 1e-200)
+    # matcher = _tsinfer.AncestorMatcher(store, 0.01, 1e-200)
+    matcher = tsinfer.AncestorMatcher(store, 0.01)
+    traceback = tsinfer.Traceback(store)
     # print(store.num_sites, store.num_ancestors)
     h = np.zeros(store.num_sites, dtype=np.int8)
     P = np.zeros(store.num_sites, dtype=np.int32)
     M = np.zeros(store.num_sites, dtype=np.uint32)
 
     before = time.clock()
-    for j in range(store.num_ancestors):
-        store.get_ancestor(j, h)
+    for j in range(1, store.num_ancestors):
+        start_site, end_site = store.get_ancestor(j, h)
+        # print(start_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(j, "\t", a)
-        num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
-        assert num_mutations == 0
+        best_match = matcher.best_path(
+                j, h, start_site, end_site, 1e-200, traceback)
+        num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
+        traceback.reset()
         # print(P)
+        # print(M)
+        # assert num_mutations == 1
+        # if num_mutations != 1:
+        #     print("ERR!!!", j, store.num_ancestors)
+        #     print(M)
+        #     print(P)
     for h in S:
         # print(h)
-        num_mutations = matcher.best_path(store.num_ancestors, h, P, M)
+        best_match = matcher.best_path(
+            store.num_ancestors, h, 0, store.num_sites, 1e-200, traceback)
+        num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
+        traceback.reset()
         # print("num_mutation = ", num_mutations)
         # print(P)
-
         # a = "".join(str(x) if x != -1 else '*' for x in A)
         # print(a)
     duration = time.clock() - before
@@ -467,18 +475,20 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    n = 10
-    for j in np.arange(1, 100, 10):
-        print("n                :", n)
-        print("L                :", j, "Mb")
-        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-        # build_ancestors(n, j * 10**6, 1, filename)
-        if not os.path.exists(filename):
-            break
-        load_ancestors(filename)
-        print()
+    # n = 10
+    # for j in np.arange(1, 100, 10):
+    #     print("n                :", n)
+    #     print("L                :", j, "Mb")
+    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+    #     build_ancestors(n, j * 10**6, 1, filename)
+    #     if not os.path.exists(filename):
+    #         break
+    #     # load_ancestors(filename)
+    #     print()
 
     # build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
+    # load_ancestors("tmp.hdf5")
+    load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")
 
     # for j in range(1, 100000):
     #     build_ancestors(10, 10, j)
