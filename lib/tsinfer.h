@@ -55,12 +55,16 @@ typedef struct {
 } ancestor_store_builder_t;
 
 typedef struct {
-    double recombination_rate;
-    double mutation_rate;
     ancestor_store_t *store;
-    /* Remove */
+    segment_t **sites_head;
+    segment_t **sites_tail;
     object_heap_t segment_heap;
     size_t segment_block_size;
+} traceback_t;
+
+typedef struct {
+    double recombination_rate;
+    ancestor_store_t *store;
 } ancestor_matcher_t;
 
 typedef struct {
@@ -87,14 +91,6 @@ typedef struct {
     site_id_t *permutation;
     permutation_sort_t *sort_buffer;
 } ancestor_sorter_t;
-
-int ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
-        double recombination_rate, double mutation_rate);
-int ancestor_matcher_free(ancestor_matcher_t *self);
-int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
-        allele_t *haplotype, ancestor_id_t *path, size_t *num_mutations,
-        site_id_t *mutation_sites);
-int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 
 int ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
         size_t segment_block_size);
@@ -126,6 +122,25 @@ int ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors,
 int ancestor_sorter_free(ancestor_sorter_t *self);
 int ancestor_sorter_print_state(ancestor_sorter_t *self, FILE *out);
 int ancestor_sorter_sort(ancestor_sorter_t *self);
+
+int ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
+        double recombination_rate);
+int ancestor_matcher_free(ancestor_matcher_t *self);
+int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
+        allele_t *haplotype, site_id_t start_site, site_id_t end_site,
+        double mutation_rate, traceback_t *traceback, ancestor_id_t *end_site_value);
+int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
+
+int traceback_alloc(traceback_t *self, ancestor_store_t *store, size_t segment_block_size);
+int traceback_free(traceback_t *self);
+int traceback_reset(traceback_t *self);
+int traceback_add_recombination(traceback_t *self, site_id_t site,
+        ancestor_id_t start, ancestor_id_t end, ancestor_id_t ancestor);
+int traceback_run(traceback_t *self, allele_t *haplotype,
+        site_id_t start_site, site_id_t end_site, ancestor_id_t end_site_value,
+        ancestor_id_t *path, size_t *num_mutations, site_id_t *mutation_sites);
+int traceback_print_state(traceback_t *self, FILE *out);
+
 
 void __tsi_safe_free(void **ptr);
 

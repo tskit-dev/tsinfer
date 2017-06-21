@@ -315,19 +315,23 @@ run_match(const char *infile, int verbose)
     int ret;
     ancestor_store_t store;
     ancestor_matcher_t matcher;
+    traceback_t traceback;
     ancestor_id_t *path = NULL;
+    ancestor_id_t end_site_value;
     site_id_t *mutation_sites = NULL;
     site_id_t start, end;
     allele_t *ancestor = NULL;
     size_t j, l, num_mutations;
+    double mutation_rate = 1e-200;
 
     read_ancestors(&store, infile);
-    ret = ancestor_matcher_alloc(&matcher, &store, 0.01, 1e-200);
+    ret = ancestor_matcher_alloc(&matcher, &store, 0.01);
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    if (verbose > 0) {
-        ancestor_matcher_print_state(&matcher, stdout);
+    ret = traceback_alloc(&traceback, &store, 8192);
+    if (ret != 0) {
+        fatal_error("alloc error");
     }
 
     path = calloc(store.num_sites, sizeof(ancestor_id_t));
@@ -352,26 +356,35 @@ run_match(const char *infile, int verbose)
             }
             printf("\n");
         }
-        ret = ancestor_matcher_best_path(&matcher, j, ancestor, path,
-                &num_mutations, mutation_sites);
+        ret = ancestor_matcher_best_path(&matcher, j, ancestor, start,
+                end, mutation_rate, &traceback, &end_site_value);
         if (ret != 0) {
             fatal_error("match error");
         }
-        /* printf("Best match = \n"); */
+        ret = traceback_run(&traceback, ancestor, start, end,
+                end_site_value, path, &num_mutations, mutation_sites);
+        if (ret != 0) {
+            fatal_error("traceback error");
+        }
         if (verbose > 0) {
-            /* printf("%d:\t", (int) num_mutations); */
-            /* for (l = 0; l < store.num_sites; l++) { */
-            /*     printf("%d", path[l]); */
-            /*     if (l < store.num_sites - 1) { */
-            /*         printf("\t"); */
-            /*     } */
-            /* } */
-            /* printf("\n"); */
+            printf("%d:\t", (int) num_mutations);
+            for (l = 0; l < store.num_sites; l++) {
+                printf("%d", path[l]);
+                if (l < store.num_sites - 1) {
+                    printf("\t");
+                }
+            }
+            printf("\n");
+        }
+        ret = traceback_reset(&traceback);
+        if (ret != 0) {
+            fatal_error("traceback reset error");
         }
     }
 
     ancestor_matcher_free(&matcher);
     ancestor_store_free(&store);
+    traceback_free(&traceback);
     free(path);
     free(mutation_sites);
     free(ancestor);

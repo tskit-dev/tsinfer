@@ -21,148 +21,48 @@ __tsi_safe_free(void **ptr) {
     }
 }
 
-/* static void */
-/* print_segment_chain(segment_t *head, bool as_int, FILE *out) */
-/* { */
-/*     segment_t *u = head; */
 
-/*     while (u != NULL) { */
-/*         if (as_int) { */
-/*             fprintf(out, "(%d-%d:%d)", u->start, u->end, (int) u->value); */
-/*         } else { */
-/*             fprintf(out, "(%d-%d:%f)", u->start, u->end, u->value); */
-/*         } */
-/*         u = u->next; */
-/*         if (u != NULL) { */
-/*             fprintf(out, "=>"); */
-/*         } */
-/*     } */
-/* } */
-
-static inline segment_t * WARN_UNUSED
-ancestor_matcher_alloc_segment(ancestor_matcher_t *self, ancestor_id_t start,
-        ancestor_id_t end, double value)
+static void
+ancestor_matcher_check_state(ancestor_matcher_t *self)
 {
-    segment_t *ret = NULL;
-
-    if (object_heap_empty(&self->segment_heap)) {
-        if (object_heap_expand(&self->segment_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (segment_t *) object_heap_alloc_object(&self->segment_heap);
-    ret->start = start;
-    ret->end = end;
-    ret->value = value;
-    ret->next = NULL;
-out:
-    return ret;
 }
 
-static inline void
-ancestor_matcher_free_segment(ancestor_matcher_t *self, segment_t *seg)
+int
+ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
-    object_heap_free_object(&self->segment_heap, seg);
+
+    fprintf(out, "Ancestor matcher state\n");
+    ancestor_store_print_state(self->store, out);
+    ancestor_matcher_check_state(self);
+    return 0;
 }
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
-        double recombination_rate, double mutation_rate)
+        double recombination_rate)
 {
     int ret = 0;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->store = store;
     self->recombination_rate = recombination_rate;
-    self->mutation_rate = mutation_rate;
-
-    self->segment_block_size = 1024;
-    ret = object_heap_init(&self->segment_heap, sizeof(segment_t),
-           self->segment_block_size, NULL);
-    if (ret != 0) {
-        goto out;
-    }
-out:
     return ret;
 }
 
 int
 ancestor_matcher_free(ancestor_matcher_t *self)
 {
-    object_heap_free(&self->segment_heap);
     return 0;
-}
-
-
-static int
-ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype,
-        segment_t **T_head, site_id_t start_site, site_id_t end_site,
-        ancestor_id_t best_match, ancestor_id_t *path, size_t *num_mutations,
-        site_id_t *mutation_sites)
-{
-    int ret = 0;
-    site_id_t l;
-    ancestor_id_t p;
-    segment_t *u;
-    allele_t state;
-    size_t local_num_mutations = 0;
-
-    /* printf("traceback for %d-%d, best=%d\n", start_site, end_site, best_match); */
-    /* Set everything to -1 */
-    memset(path, 0xff, self->store->num_sites * sizeof(ancestor_id_t));
-    path[end_site] = best_match;
-    for (l = end_site; l > start_site; l--) {
-        /* printf("Tracing back at site %d\n", l); */
-        /* print_segment_chain(T_head[l], 1, stdout); */
-        /* printf("\n"); */
-        ret = ancestor_store_get_state(self->store, l, path[l], &state);
-        if (ret != 0) {
-            goto out;
-        }
-        if (state != haplotype[l]) {
-            mutation_sites[local_num_mutations] = l;
-            local_num_mutations++;
-        }
-
-        p = (ancestor_id_t) -1;
-        u = T_head[l];
-        while (u != NULL) {
-            if (u->start <= path[l] && path[l] < u->end) {
-                p = (ancestor_id_t) u->value;
-                break;
-            }
-            if (u->start > path[l]) {
-                break;
-            }
-            u = u->next;
-        }
-        if (p == (ancestor_id_t) -1) {
-            p = path[l];
-        }
-        path[l - 1] = p;
-    }
-    l = start_site;
-    ret = ancestor_store_get_state(self->store, l, path[l], &state);
-    if (ret != 0) {
-        goto out;
-    }
-    if (state != haplotype[l]) {
-        mutation_sites[local_num_mutations] = l;
-        local_num_mutations++;
-    }
-    *num_mutations = local_num_mutations;
-out:
-    return ret;
 }
 
 int
 ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
-        allele_t *haplotype, ancestor_id_t *path, size_t *num_mutations,
-        site_id_t *mutation_sites)
+        allele_t *haplotype, site_id_t start_site, site_id_t end_site,
+        double mutation_rate, traceback_t *traceback, ancestor_id_t *end_site_value)
 {
     int ret = 0;
     double rho = self->recombination_rate;
-    double theta = self->mutation_rate;
+    double theta = mutation_rate;
     double n = (double) self->store->num_ancestors;
     double r = 1 - exp(-rho / n);
     double pr = r / n;
@@ -171,13 +71,10 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     double pm = 0.5 * theta / (n + theta);
     double qm = n / (n + theta) + 0.5 * theta / (n + theta);
     ancestor_id_t N = (ancestor_id_t) num_ancestors;
-    site_id_t start_site, end_site, site_id;
+    site_id_t site_id;
     ancestor_id_t start, end;
-    segment_t *tmp, *v;
     double likelihood, next_likelihood, max_likelihood, x, y, z, *double_tmp;
     ancestor_id_t best_match;
-    segment_t **T_head = NULL;
-    segment_t **T_tail = NULL;
     ancestor_id_t *L_start = NULL;
     ancestor_id_t *L_end = NULL;
     double *L_likelihood = NULL;
@@ -203,30 +100,14 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         goto out;
 
     }
-    T_head = calloc(self->store->num_sites, sizeof(segment_t *));
-    T_tail = calloc(self->store->num_sites, sizeof(segment_t *));
-    if (T_head == NULL || T_tail == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
     /* Initialise L to carry one segment covering entire interval. */
     L_start[0] = 0;
     L_end[0] = N;
     L_likelihood[0] = 1;
     L_size = 1;
 
-    /* skip any leading unset values in the input haplotype */
-    start_site = 0;
-    end_site = (site_id_t) self->store->num_sites - 1;
-    while (haplotype[start_site] == -1) {
-        start_site++;
-        // TODO error check this properly
-        assert(start_site < self->store->num_sites);
-    }
-
     best_match = 0;
-    site_id = start_site;
-    while (site_id < self->store->num_sites && haplotype[site_id] != -1) {
+    for (site_id = start_site; site_id < end_site; site_id++) {
         L_next_size = 0;
         /* Make a get_site function in the store here? */
         S_start = self->store->sites[site_id].start;
@@ -281,18 +162,9 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
                     z = x;
                 } else {
                     z = y;
-                    if (T_head[site_id] == NULL) {
-                        T_head[site_id] = ancestor_matcher_alloc_segment(self, start, end, best_match);
-                        T_tail[site_id] = T_head[site_id];
-                    } else {
-                        if (T_tail[site_id]->end == start
-                                && T_tail[site_id]->value == (double) best_match) {
-                            T_tail[site_id]->end = end;
-                        } else {
-                            tmp = ancestor_matcher_alloc_segment(self, start, end, best_match);
-                            T_tail[site_id]->next = tmp;
-                            T_tail[site_id] = tmp;
-                        }
+                    ret = traceback_add_recombination(traceback, site_id, start, end, best_match);
+                    if (ret != 0) {
+                        goto out;
                     }
                 }
                 if (S_state[s] == haplotype[site_id]) {
@@ -353,22 +225,11 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         for (l = 0; l < L_size; l++) {
             L_likelihood[l] /= max_likelihood;
         }
-
-        end_site = site_id;
-        site_id++;
     }
+    *end_site_value = best_match;
 
-    ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site,
-            best_match, path, num_mutations, mutation_sites);
-    /* free the segments in T */
-    for (l = 0; l < self->store->num_sites; l++) {
-        v = T_head[l];
-        while (v != NULL) {
-            tmp = v;
-            v = v->next;
-            ancestor_matcher_free_segment(self, tmp);
-        }
-    }
+    /* ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site, */
+    /*         best_match, path, num_mutations, mutation_sites); */
 out:
     tsi_safe_free(L_start);
     tsi_safe_free(L_end);
@@ -376,45 +237,5 @@ out:
     tsi_safe_free(L_next_start);
     tsi_safe_free(L_next_end);
     tsi_safe_free(L_next_likelihood);
-    tsi_safe_free(T_head);
-    tsi_safe_free(T_tail);
     return ret;
-}
-
-
-static void
-ancestor_matcher_check_state(ancestor_matcher_t *self)
-{
-    /* site_id_t l; */
-    /* segment_t *u; */
-    /* size_t total_segments = 0; */
-
-    /* for (l = 0; l < self->num_sites; l++) { */
-    /*     u = self->sites_head[l]; */
-    /*     assert(u != NULL); */
-    /*     assert(u->start == 0); */
-    /*     while (u->next != NULL) { */
-    /*         assert(u->next->start == u->end); */
-    /*         u = u->next; */
-    /*         total_segments++; */
-    /*     } */
-    /*     total_segments++; */
-    /*     assert(self->sites_tail[l] == u); */
-    /*     assert(u->end == (ancestor_id_t) self->num_ancestors); */
-    /* } */
-    /* assert(total_segments == object_heap_get_num_allocated(&self->segment_heap)); */
-}
-
-int
-ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
-{
-
-    fprintf(out, "Ancestor matcher state\n");
-    ancestor_store_print_state(self->store, out);
-    fprintf(out, "segment_block_size = %d\n", (int) self->segment_block_size);
-    fprintf(out, "Segment heap:\n");
-    object_heap_print_state(&self->segment_heap, out);
-
-    ancestor_matcher_check_state(self);
-    return 0;
 }
