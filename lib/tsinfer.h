@@ -32,7 +32,6 @@ typedef struct {
     ancestor_id_t *end;
     allele_t *state;
     size_t num_segments;
-    size_t max_num_segments;
     /* TODO: position, etc ? */
 } site_state_t;
 
@@ -40,12 +39,20 @@ typedef struct {
     size_t num_sites;
     size_t num_ancestors;
     size_t total_segments;
-    size_t segment_block_size;
-    size_t num_site_segment_expands;
     size_t max_num_site_segments;
     size_t total_memory;
     site_state_t *sites;
 } ancestor_store_t;
+
+typedef struct {
+    size_t num_sites;
+    size_t num_ancestors;
+    size_t total_segments;
+    size_t segment_block_size;
+    segment_t **sites_head;
+    segment_t **sites_tail;
+    object_heap_t segment_heap;
+} ancestor_store_builder_t;
 
 typedef struct {
     double recombination_rate;
@@ -88,21 +95,24 @@ int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, ancestor_id_t *path, size_t *num_mutations,
         site_id_t *mutation_sites);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
+
+int ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
+        size_t segment_block_size);
+int ancestor_store_builder_free(ancestor_store_builder_t *self);
+int ancestor_store_builder_print_state(ancestor_store_builder_t *self, FILE *out);
+int ancestor_store_builder_add(ancestor_store_builder_t *self, allele_t *ancestor);
+int ancestor_store_builder_dump(ancestor_store_builder_t *self,
+        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
+
+int ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, size_t num_segments,
+        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
+int ancestor_store_free(ancestor_store_t *self);
+int ancestor_store_print_state(ancestor_store_t *self, FILE *out);
+int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size);
 int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
         ancestor_id_t ancestor_id, allele_t *state);
 int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
         allele_t *ancestor);
-
-int ancestor_store_alloc(ancestor_store_t *self, size_t num_sites);
-int ancestor_store_free(ancestor_store_t *self);
-int ancestor_store_print_state(ancestor_store_t *self, FILE *out);
-int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size);
-int ancestor_store_add(ancestor_store_t *self, allele_t *ancestor);
-int ancestor_store_load(ancestor_store_t *self, size_t num_segments,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
-int ancestor_store_dump(ancestor_store_t *self,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
-size_t ancestor_store_get_num_segments(ancestor_store_t *self);
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);

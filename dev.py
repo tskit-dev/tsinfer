@@ -138,8 +138,7 @@ def build_ancestors(n, L, seed, filename):
         S[:, variant.index] = variant.genotypes
 
     builder = _tsinfer.AncestorBuilder(S, position)
-    store = _tsinfer.AncestorStore(builder.num_sites)
-    store.init_build(8192)
+    store_builder = _tsinfer.AncestorStoreBuilder(builder.num_sites, 2**10)
     num_threads = 20
 
     def build_frequency_class(work):
@@ -158,23 +157,15 @@ def build_ancestors(n, L, seed, filename):
         for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
             frequency, A, p = result
             for index in p:
-                store.add(A[index, :])
+                store_builder.add(A[index, :])
 
-    print("num sites        :", store.num_sites)
-    print("num ancestors    :", store.num_ancestors)
-    print("max_segments     :", store.max_num_site_segments)
-    print("mean_segments    :", store.total_segments / store.num_sites)
-    print("expands          :", store.num_site_segment_expands)
-    print("Memory           :", humanize.naturalsize(store.total_memory))
-    print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
-    print("Sample memory    :", humanize.naturalsize(S.nbytes))
 
-    N = store.total_segments
+    N = store_builder.total_segments
     site = np.zeros(N, dtype=np.uint32)
     start = np.zeros(N, dtype=np.int32)
     end = np.zeros(N, dtype=np.int32)
     state = np.zeros(N, dtype=np.int8)
-    store.dump_segments(site, start, end, state)
+    store_builder.dump_segments(site, start, end, state)
     with h5py.File(filename, "w") as f:
         g = f.create_group("segments")
         g.create_dataset("site", data=site)
@@ -186,6 +177,16 @@ def build_ancestors(n, L, seed, filename):
         g = f.create_group("samples")
         g.create_dataset("haplotypes", data=S)
 
+    store = _tsinfer.AncestorStore(
+        num_sites=builder.num_sites, site=site, start=start, end=end, state=state)
+
+    print("num sites        :", store.num_sites)
+    print("num ancestors    :", store.num_ancestors)
+    print("max_segments     :", store.max_num_site_segments)
+    print("mean_segments    :", store.total_segments / store.num_sites)
+    print("Memory           :", humanize.naturalsize(store.total_memory))
+    print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
+    print("Sample memory    :", humanize.naturalsize(S.nbytes))
 
 
 def load_ancestors(filename):
@@ -198,9 +199,9 @@ def load_ancestors(filename):
         # g = f.create_group("sites")
         # g.create_dataset("position", data=position)
         sites = f["sites"]
-        store = _tsinfer.AncestorStore(sites["position"].shape[0])
         segments = f["segments"]
-        store.load_segments(
+        store = _tsinfer.AncestorStore(
+            num_sites=sites["position"].shape[0],
             site=segments["site"],
             start=segments["start"],
             end=segments["end"],
@@ -212,7 +213,6 @@ def load_ancestors(filename):
     print("num ancestors    :", store.num_ancestors)
     print("max_segments     :", store.max_num_site_segments)
     print("mean_segments    :", store.total_segments / store.num_sites)
-    print("expands          :", store.num_site_segment_expands)
     print("Memory           :", humanize.naturalsize(store.total_memory))
     print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
 
@@ -295,33 +295,6 @@ def new_segments(n, L, seed):
 
 
 
-def export_ancestors(n, L, seed):
-
-    ts = msprime.simulate(
-        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
-    print("num_sites = ", ts.num_sites)
-    S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
-    for variant in ts.variants():
-        S[:, variant.index] = variant.genotypes
-    builder = tsinfer.AncestorBuilder(S)
-    print("total ancestors = ", builder.num_ancestors)
-    # matcher = tsinfer.AncestorMatcher(ts.num_sites)
-    A = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
-    P = np.zeros((builder.num_ancestors, ts.num_sites), dtype=int)
-    for j, a in enumerate(builder.build_all_ancestors()):
-        # builder.build(j, A[j,:])
-        A[j, :] = a
-        if j % 100 == 0:
-            print("done", j)
-        # p = matcher.best_path(a, 0.01, 1e-200)
-        # P[j,:] = p
-        # matcher.add(a)
-    # print("A = ")
-    # print(A)
-    # print("P = ")
-    # print(P)
-    np.savetxt("tmp__NOBACKUP__/ancestors.txt", A, fmt="%d", delimiter="\t")
-    # np.savetxt("tmp__NOBACKUP__/path.txt", P, fmt="%d", delimiter="\t")
 
 def export_samples(n, L, seed):
 
@@ -471,13 +444,13 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(10, 100, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(10, 100, j)
     # new_segments(40, 10, 1)
     # new_segments(4, 4, 304)
-    # export_ancestors(10, 500, 304)
-    # export_samples(20, 60, 1)
+
+    # export_samples(10, 10, 304)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):
@@ -494,19 +467,18 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # n = 10
-    # for j in np.arange(1, 100, 10):
-    #     print("n                :", n)
-    #     print("L                :", j, "Mb")
-    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-    #     # build_ancestors(n, j * 10**6, 1, filename)
-    #     if not os.path.exists(filename):
-    #         break
-    #     load_ancestors(filename)
-    #     print()
+    n = 10
+    for j in np.arange(1, 100, 10):
+        print("n                :", n)
+        print("L                :", j, "Mb")
+        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+        # build_ancestors(n, j * 10**6, 1, filename)
+        if not os.path.exists(filename):
+            break
+        load_ancestors(filename)
+        print()
 
-    # store = build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
-
+    # build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
 
     # for j in range(1, 100000):
     #     build_ancestors(10, 10, j)

@@ -33,6 +33,11 @@ typedef struct {
 
 typedef struct {
     PyObject_HEAD
+    ancestor_store_builder_t *store_builder;
+} AncestorStoreBuilder;
+
+typedef struct {
+    PyObject_HEAD
     ancestor_matcher_t *matcher;
     AncestorStore *store;
 } AncestorMatcher;
@@ -355,54 +360,60 @@ static PyTypeObject AncestorBuilderType = {
 };
 
 /*===================================================================
- * AncestorStore
+ * AncestorStoreBuilder
  *===================================================================
  */
 
 static int
-AncestorStore_check_state(AncestorStore *self)
+AncestorStoreBuilder_check_state(AncestorStoreBuilder *self)
 {
     int ret = 0;
-    if (self->store == NULL) {
-        PyErr_SetString(PyExc_SystemError, "AncestorStore not initialised");
+    if (self->store_builder == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorStoreBuilder not initialised");
         ret = -1;
     }
     return ret;
 }
 
 static void
-AncestorStore_dealloc(AncestorStore* self)
+AncestorStoreBuilder_dealloc(AncestorStoreBuilder* self)
 {
-    if (self->store != NULL) {
-        ancestor_store_free(self->store);
-        PyMem_Free(self->store);
-        self->store = NULL;
+    if (self->store_builder != NULL) {
+        ancestor_store_builder_free(self->store_builder);
+        PyMem_Free(self->store_builder);
+        self->store_builder = NULL;
     }
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
 static int
-AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
+AncestorStoreBuilder_init(AncestorStoreBuilder *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_sites", NULL};
+    static char *kwlist[] = {"num_sites", "segment_block_size", NULL};
     unsigned long num_sites;
+    unsigned long segment_block_size = 1024 * 1024;
 
-    self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k", kwlist, &num_sites)) {
+    self->store_builder = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k|k", kwlist, &num_sites,
+                &segment_block_size)) {
         goto out;
     }
     if (num_sites < 1) {
         PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
         goto out;
     }
-    self->store = PyMem_Malloc(sizeof(ancestor_store_t));
-    if (self->store == NULL) {
+    if (segment_block_size < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 block size");
+        goto out;
+    }
+    self->store_builder = PyMem_Malloc(sizeof(ancestor_store_builder_t));
+    if (self->store_builder == NULL) {
         PyErr_NoMemory();
         goto out;
     }
-    err = ancestor_store_alloc(self->store, num_sites);
+    err = ancestor_store_builder_alloc(self->store_builder, num_sites, segment_block_size);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -413,31 +424,7 @@ out:
 }
 
 static PyObject *
-AncestorStore_init_build(AncestorStore *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    PyObject *ret = NULL;
-    static char *kwlist[] = {"segment_block_size", NULL};
-    unsigned long segment_block_size = 100;
-
-    if (AncestorStore_check_state(self) != 0) {
-        goto out;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|k", kwlist, &segment_block_size)) {
-        goto out;
-    }
-    err = ancestor_store_init_build(self->store, segment_block_size);
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("");
-out:
-    return ret;
-}
-
-static PyObject *
-AncestorStore_add(AncestorStore *self, PyObject *args, PyObject *kwds)
+AncestorStoreBuilder_add(AncestorStoreBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
     static char *kwlist[] = {"ancestor", NULL};
@@ -445,7 +432,7 @@ AncestorStore_add(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *ancestor_array = NULL;
     npy_intp *shape;
 
-    if (AncestorStore_check_state(self) != 0) {
+    if (AncestorStoreBuilder_check_state(self) != 0) {
         goto fail;
     }
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &ancestor)) {
@@ -461,11 +448,11 @@ AncestorStore_add(AncestorStore *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
     shape = PyArray_DIMS(ancestor_array);
-    if (shape[0] != self->store->num_sites) {
+    if (shape[0] != self->store_builder->num_sites) {
         PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
         goto fail;
     }
-    err = ancestor_store_add(self->store, (int8_t *) PyArray_DATA(ancestor_array));
+    err = ancestor_store_builder_add(self->store_builder, (int8_t *) PyArray_DATA(ancestor_array));
     if (err != 0) {
         handle_library_error(err);
         goto fail;
@@ -479,53 +466,7 @@ fail:
 }
 
 static PyObject *
-AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    static char *kwlist[] = {"id", "haplotype", NULL};
-    PyObject *haplotype = NULL;
-    PyArrayObject *haplotype_array = NULL;
-    unsigned long ancestor_id;
-    size_t num_sites;
-    npy_intp *shape;
-
-    if (AncestorStore_check_state(self) != 0) {
-        goto fail;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kO!", kwlist,
-            &ancestor_id, &PyArray_Type, &haplotype)) {
-        goto fail;
-    }
-    num_sites = self->store->num_sites;
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_INOUT_ARRAY);
-    if (haplotype_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(haplotype_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
-        goto fail;
-    }
-    err = ancestor_store_get_ancestor(self->store, ancestor_id,
-        (int8_t *) PyArray_DATA(haplotype_array));
-    if (err != 0) {
-        handle_library_error(err);
-        goto fail;
-    }
-    Py_DECREF(haplotype_array);
-    return Py_BuildValue("");
-fail:
-    PyArray_XDECREF_ERR(haplotype_array);
-    return NULL;
-}
-
-static PyObject *
-AncestorStore_dump_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
+AncestorStoreBuilder_dump_segments(AncestorStoreBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
     static char *kwlist[] = {"site", "start", "end", "state", NULL};
@@ -540,7 +481,7 @@ AncestorStore_dump_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
     size_t total_segments;
     npy_intp *shape;
 
-    if (AncestorStore_check_state(self) != 0) {
+    if (AncestorStoreBuilder_check_state(self) != 0) {
         goto fail;
     }
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!O!", kwlist,
@@ -548,7 +489,7 @@ AncestorStore_dump_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
             &PyArray_Type, &state)) {
         goto fail;
     }
-    total_segments = self->store->total_segments;
+    total_segments = self->store_builder->total_segments;
 
     /* site */
     site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32,
@@ -611,7 +552,7 @@ AncestorStore_dump_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
 
-    err = ancestor_store_dump(self->store,
+    err = ancestor_store_builder_dump(self->store_builder,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
         (int32_t *) PyArray_DATA(end_array),
@@ -634,11 +575,138 @@ fail:
 }
 
 static PyObject *
-AncestorStore_load_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
+AncestorStoreBuilder_get_num_sites(AncestorStoreBuilder *self, void *closure)
 {
-    int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"site", "start", "end", "state", NULL};
+
+    if (AncestorStoreBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store_builder->num_sites);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStoreBuilder_get_num_ancestors(AncestorStoreBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStoreBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store_builder->num_ancestors);
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorStoreBuilder_get_total_segments(AncestorStoreBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStoreBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store_builder->total_segments);
+out:
+    return ret;
+}
+
+static PyMemberDef AncestorStoreBuilder_members[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef AncestorStoreBuilder_getsetters[] = {
+    {"num_sites", (getter) AncestorStoreBuilder_get_num_sites, NULL, "The number of sites."},
+    {"num_ancestors", (getter) AncestorStoreBuilder_get_num_ancestors, NULL, "The number of ancestors."},
+    {"total_segments", (getter) AncestorStoreBuilder_get_total_segments, NULL,
+        "The total number of segments across all sites."},
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef AncestorStoreBuilder_methods[] = {
+    {"add", (PyCFunction) AncestorStoreBuilder_add,
+        METH_VARARGS|METH_KEYWORDS,
+        "Adds the specified ancestor."},
+    {"dump_segments", (PyCFunction) AncestorStoreBuilder_dump_segments,
+        METH_VARARGS|METH_KEYWORDS,
+        "Dumps all segments into the specified numpy arrays."},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject AncestorStoreBuilderType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.AncestorStoreBuilder",             /* tp_name */
+    sizeof(AncestorStoreBuilder),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)AncestorStoreBuilder_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "AncestorStoreBuilder objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    AncestorStoreBuilder_methods,             /* tp_methods */
+    AncestorStoreBuilder_members,             /* tp_members */
+    AncestorStoreBuilder_getsetters,          /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)AncestorStoreBuilder_init,      /* tp_init */
+};
+
+/*===================================================================
+ * AncestorStore
+ *===================================================================
+ */
+
+static int
+AncestorStore_check_state(AncestorStore *self)
+{
+    int ret = 0;
+    if (self->store == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorStore not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+AncestorStore_dealloc(AncestorStore* self)
+{
+    if (self->store != NULL) {
+        ancestor_store_free(self->store);
+        PyMem_Free(self->store);
+        self->store = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"num_sites", "site", "start", "end", "state", NULL};
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
@@ -648,16 +716,18 @@ AncestorStore_load_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyObject *state = NULL;
     PyArrayObject *state_array = NULL;
     size_t total_segments;
+    unsigned long num_sites;
     npy_intp *shape;
 
-    if (AncestorStore_check_state(self) != 0) {
+    self->store = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOOO", kwlist,
+            &num_sites, &site, &start, &end, &state)) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOO", kwlist,
-            &site, &start, &end, &state)) {
+    if (num_sites < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
         goto out;
     }
-
     /* site */
     site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32,
             NPY_ARRAY_IN_ARRAY);
@@ -716,7 +786,12 @@ AncestorStore_load_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    err = ancestor_store_load(self->store, total_segments,
+    self->store = PyMem_Malloc(sizeof(ancestor_store_t));
+    if (self->store == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = ancestor_store_alloc(self->store, num_sites, total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
         (int32_t *) PyArray_DATA(end_array),
@@ -725,13 +800,59 @@ AncestorStore_load_segments(AncestorStore *self, PyObject *args, PyObject *kwds)
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("");
+    ret = 0;
 out:
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);
     Py_XDECREF(state_array);
     return ret;
+}
+
+static PyObject *
+AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"id", "haplotype", NULL};
+    PyObject *haplotype = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    unsigned long ancestor_id;
+    size_t num_sites;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kO!", kwlist,
+            &ancestor_id, &PyArray_Type, &haplotype)) {
+        goto fail;
+    }
+    num_sites = self->store->num_sites;
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (haplotype_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
+        goto fail;
+    }
+    err = ancestor_store_get_ancestor(self->store, ancestor_id,
+        (int8_t *) PyArray_DATA(haplotype_array));
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(haplotype_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(haplotype_array);
+    return NULL;
 }
 
 static PyObject *
@@ -787,19 +908,6 @@ out:
 }
 
 static PyObject *
-AncestorStore_get_num_site_segment_expands(AncestorStore *self, void *closure)
-{
-    PyObject *ret = NULL;
-
-    if (AncestorStore_check_state(self) != 0) {
-        goto out;
-    }
-    ret = Py_BuildValue("k", (unsigned long) self->store->num_site_segment_expands);
-out:
-    return ret;
-}
-
-static PyObject *
 AncestorStore_get_total_memory(AncestorStore *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -812,8 +920,6 @@ out:
     return ret;
 }
 
-
-
 static PyMemberDef AncestorStore_members[] = {
     {NULL}  /* Sentinel */
 };
@@ -825,29 +931,15 @@ static PyGetSetDef AncestorStore_getsetters[] = {
         "The total number of segments across all sites."},
     {"max_num_site_segments", (getter) AncestorStore_get_max_num_site_segments, NULL,
         "The maximum number of segments for a site."},
-    {"num_site_segment_expands", (getter) AncestorStore_get_num_site_segment_expands, NULL,
-        "The number of times a site was realloced."},
     {"total_memory", (getter) AncestorStore_get_total_memory, NULL,
         "The total amount of memory used by this store."},
     {NULL}  /* Sentinel */
 };
 
 static PyMethodDef AncestorStore_methods[] = {
-    {"init_build", (PyCFunction) AncestorStore_init_build,
-        METH_VARARGS|METH_KEYWORDS,
-        "Initialises the build process and adds the ultimate ancestor."},
-    {"add", (PyCFunction) AncestorStore_add,
-        METH_VARARGS|METH_KEYWORDS,
-        "Adds the specified ancestor."},
     {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Decodes the specified ancestor into the numpy array."},
-    {"dump_segments", (PyCFunction) AncestorStore_dump_segments,
-        METH_VARARGS|METH_KEYWORDS,
-        "Dumps all segments into the specified numpy arrays."},
-    {"load_segments", (PyCFunction) AncestorStore_load_segments,
-        METH_VARARGS|METH_KEYWORDS,
-        "Loads segments from the specified numpy arrays."},
     {NULL}  /* Sentinel */
 };
 
@@ -1665,6 +1757,13 @@ init_tsinfer(void)
     }
     Py_INCREF(&AncestorBuilderType);
     PyModule_AddObject(module, "AncestorBuilder", (PyObject *) &AncestorBuilderType);
+    /* AncestorStoreBuilder type */
+    AncestorStoreBuilderType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&AncestorStoreBuilderType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&AncestorStoreBuilderType);
+    PyModule_AddObject(module, "AncestorStoreBuilder", (PyObject *) &AncestorStoreBuilderType);
     /* AncestorStore type */
     AncestorStoreType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&AncestorStoreType) < 0) {

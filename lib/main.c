@@ -169,11 +169,8 @@ read_ancestors(ancestor_store_t *store, const char *infile)
         j++;
     }
 
-    ret = ancestor_store_alloc(store, seg_site[num_segments - 1] + 1);
-    if (ret != 0) {
-        fatal_error("store alloc error");
-    }
-    ret = ancestor_store_load(store, num_segments, seg_site, seg_start, seg_end, seg_state);
+    ret = ancestor_store_alloc(store, seg_site[num_segments - 1] + 1,
+            num_segments, seg_site, seg_start, seg_end, seg_state);
     if (ret != 0) {
         fatal_error("store load error");
     }
@@ -187,7 +184,7 @@ read_ancestors(ancestor_store_t *store, const char *infile)
 }
 
 static void
-write_ancestors(ancestor_store_t *store, const char *outfile)
+write_ancestors(ancestor_store_builder_t *store_builder, const char *outfile)
 {
     int ret;
     size_t j, num_segments;
@@ -197,7 +194,7 @@ write_ancestors(ancestor_store_t *store, const char *outfile)
     allele_t *seg_state = NULL;
     FILE *out = fopen(outfile, "w");
 
-    num_segments = ancestor_store_get_num_segments(store);
+    num_segments = store_builder->total_segments;
     seg_site = malloc(num_segments * sizeof(site_id_t));
     seg_start = malloc(num_segments * sizeof(ancestor_id_t));
     seg_end = malloc(num_segments * sizeof(ancestor_id_t));
@@ -205,7 +202,7 @@ write_ancestors(ancestor_store_t *store, const char *outfile)
     if (seg_site == NULL || seg_start == NULL || seg_end == NULL || seg_state == NULL) {
         fatal_error("Malloc error");
     }
-    ret = ancestor_store_dump(store, seg_site, seg_start, seg_end, seg_state);
+    ret = ancestor_store_builder_dump(store_builder, seg_site, seg_start, seg_end, seg_state);
     if (ret != 0) {
         fatal_error("Dump error");
     }
@@ -237,25 +234,19 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
     site_t *focal_site;
     ancestor_builder_t builder;
     ancestor_sorter_t sorter;
-    ancestor_store_t store;
+    ancestor_store_builder_t store_builder;
     allele_t *a;
     int ret;
 
+    /* TODO Make sort the default here */
     read_sites(infile, &num_samples, &num_sites, &haplotypes, &positions);
     ret = ancestor_builder_alloc(&builder, num_samples, num_sites, positions, haplotypes);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
-    ret = ancestor_store_alloc(&store, num_sites);
+    ret = ancestor_store_builder_alloc(&store_builder, num_sites, 1024);
     if (ret != 0) {
         fatal_error("store alloc error.");
-    }
-    ret = ancestor_store_init_build(&store, 16);
-    if (ret != 0) {
-        fatal_error("store init error.");
-    }
-    if (verbose > 0) {
-        ancestor_builder_print_state(&builder, stdout);
     }
     permutation = malloc(num_sites * sizeof(site_id_t));
     if (permutation == NULL) {
@@ -294,7 +285,7 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
         }
         for (k = 0; k < num_ancestors; k++) {
             a = ancestors + permutation[k] * num_sites;
-            ret = ancestor_store_add(&store, a);
+            ret = ancestor_store_builder_add(&store_builder, a);
             if (ret != 0) {
                 fatal_error("Error in add ancestor");
             }
@@ -306,12 +297,12 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
         ancestor_sorter_free(&sorter);
     }
     if (verbose > 0) {
-        ancestor_store_print_state(&store, stdout);
+        ancestor_store_builder_print_state(&store_builder, stdout);
     }
-    write_ancestors(&store, outfile);
+    write_ancestors(&store_builder, outfile);
 
     ancestor_builder_free(&builder);
-    ancestor_store_free(&store);
+    ancestor_store_builder_free(&store_builder);
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(ancestors);
@@ -367,14 +358,14 @@ run_match(const char *infile, int verbose)
         }
         /* printf("Best match = \n"); */
         if (verbose > 0) {
-            printf("%d:\t", (int) num_mutations);
-            for (l = 0; l < store.num_sites; l++) {
-                printf("%d", path[l]);
-                if (l < store.num_sites - 1) {
-                    printf("\t");
-                }
-            }
-            printf("\n");
+            /* printf("%d:\t", (int) num_mutations); */
+            /* for (l = 0; l < store.num_sites; l++) { */
+            /*     printf("%d", path[l]); */
+            /*     if (l < store.num_sites - 1) { */
+            /*         printf("\t"); */
+            /*     } */
+            /* } */
+            /* printf("\n"); */
         }
     }
 

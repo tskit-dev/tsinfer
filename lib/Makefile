@@ -11,7 +11,7 @@ CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
 LDFLAGS=-lm
 
 COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o ancestor_store.o\
-	 ancestor_sorter.o
+	 ancestor_sorter.o ancestor_store_builder.o
 HEADERS=tsinfer.h err.h
 
 all: main 
