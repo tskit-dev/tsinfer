@@ -62,97 +62,77 @@ def build_ancestors(samples, positions, num_threads=1):
     return store
 
 def match_ancestors(
-        store, recombination_rate, mutation_rate, tree_sequence_builder,
-        num_threads=1, method="C"):
+        store, recombination_rate, tree_sequence_builder, num_threads=1, method="C"):
     ancestor_ids = list(range(1, store.num_ancestors))
-    # Shuffle the ancestors so that we (hopefully) even out the work between
-    # all threads.
-    random.shuffle(ancestor_ids)
-    if method == "C":
-        matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-    else:
-        matcher = AncestorMatcher(store, recombination_rate)
-    builder_lock = threading.Lock()
-
-    # TODO change this so that it uses futures.map rather then shuffling the
-    # threads. The current approach will lead to non-deterministic output.
-    # Also, this is almost identical to match_samples which is bad.
-
-    def ancestor_match_worker(thread_index):
-        chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
-        start = thread_index * chunk_size
+    def ancestor_match_worker(ancestor_id):
         if method == "C":
+            matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
             traceback = _tsinfer.Traceback(store, 2**10)
         else:
+            matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
         P = np.zeros(store.num_sites, dtype=np.int32)
         M = np.zeros(store.num_sites, dtype=np.uint32)
+        start_site, end_site = store.get_ancestor(ancestor_id, h)
+        # print(start_site, end_site)
+        # a = "".join(str(x) if x != -1 else '*' for x in h)
+        # print(ancestor_id, "\t", a)
+        best_match = matcher.best_path(
+                ancestor_id, h, start_site, end_site, 1e-200, traceback)
+        num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
+        traceback.reset()
+        assert num_mutations == 1
+        return ancestor_id, h, P, M[:num_mutations]
 
-        for ancestor_id in ancestor_ids[start: start + chunk_size]:
-            start_site, end_site = store.get_ancestor(ancestor_id, h)
-            # print(start_site, end_site)
-            # a = "".join(str(x) if x != -1 else '*' for x in h)
-            # print(thread_index, ancestor_id, "\t", a)
-            best_match = matcher.best_path(
-                    ancestor_id, h, start_site, end_site, mutation_rate, traceback)
-            num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
-            traceback.reset()
-            assert num_mutations == 1
-            with builder_lock:
-                tree_sequence_builder.add_path(ancestor_id, P, h, M[:num_mutations])
-    threads = [
-        threading.Thread(target=ancestor_match_worker, args=(j,))
-        for j in range(num_threads)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    if num_threads > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            for result in executor.map(ancestor_match_worker, ancestor_ids):
+                ancestor_id, h, P, M = result
+                tree_sequence_builder.add_path(ancestor_id, P, h, M)
+    else:
+        for result in map(ancestor_match_worker, ancestor_ids):
+            ancestor_id, h, P, M = result
+            print("consumed:", ancestor_id)
+            tree_sequence_builder.add_path(ancestor_id, P, h, M)
 
 def match_samples(
-        store, samples, recombination_rate, mutation_rate, tree_sequence_builder,
+        store, samples, recombination_rate, error_rate, tree_sequence_builder,
         num_threads=1, method="C"):
     sample_ids = list(range(samples.shape[0]))
-    # Shuffle the samples so that we (hopefully) even out the work between
-    # all threads.
-    random.shuffle(sample_ids)
-    if method == "C":
-        matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-    else:
-        matcher = AncestorMatcher(store, recombination_rate)
-    builder_lock = threading.Lock()
 
-    def sample_match_worker(thread_index):
-        chunk_size = int(math.ceil(len(sample_ids) / num_threads))
-        start = thread_index * chunk_size
+    def sample_match_worker(sample_id):
+
         if method == "C":
             traceback = _tsinfer.Traceback(store, 2**10)
+            matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
         else:
             traceback = Traceback(store)
+            matcher = AncestorMatcher(store, recombination_rate)
         h = np.zeros(store.num_sites, dtype=np.int8)
         P = np.zeros(store.num_sites, dtype=np.int32)
         M = np.zeros(store.num_sites, dtype=np.uint32)
+        h = samples[sample_id, :]
+        best_match = matcher.best_path(
+                store.num_ancestors, h, 0, store.num_sites, error_rate, traceback)
+        num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
+        return sample_id, h, P, M[:num_mutations]
 
-        for sample_id in sample_ids[start: start + chunk_size]:
-            h = samples[sample_id, :]
-            best_match = matcher.best_path(
-                    store.num_ancestors, h, 0, store.num_sites, mutation_rate, traceback)
-            num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
-            traceback.reset()
-            with builder_lock:
+    if num_threads > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            for result in executor.map(sample_match_worker, sample_ids):
+                sample_id, h, P, M = result
                 tree_sequence_builder.add_path(
-                    store.num_ancestors + sample_id + 1, P, h, M[:num_mutations])
-    threads = [
-        threading.Thread(target=sample_match_worker, args=(j,))
-        for j in range(num_threads)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+                    store.num_ancestors + sample_id + 1, P, h, M)
+    else:
+        for result in map(sample_match_worker, sample_ids):
+            sample_id, h, P, M = result
+            sample_id, h, P, M = result
+            tree_sequence_builder.add_path(
+                store.num_ancestors + sample_id + 1, P, h, M)
 
 
-
-def infer(samples, positions, recombination_rate, mutation_rate, method="C",
+def infer(samples, positions, recombination_rate, error_rate, method="C",
         num_threads=1):
     store = build_ancestors(samples, positions, num_threads=num_threads)
     num_samples, num_sites = samples.shape
@@ -160,13 +140,13 @@ def infer(samples, positions, recombination_rate, mutation_rate, method="C",
 
     tree_sequence_builder = TreeSequenceBuilder(num_samples, store.num_ancestors, num_sites)
     match_ancestors(
-        store, recombination_rate, mutation_rate, tree_sequence_builder, method=method,
+        store, recombination_rate, tree_sequence_builder, method=method,
         num_threads=num_threads)
     match_samples(
-        store, samples, recombination_rate, mutation_rate, tree_sequence_builder,
+        store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads)
 
-    # tree_sequence_builder.print_state()
+    tree_sequence_builder.print_state()
     ts = tree_sequence_builder.finalise()
 
     # for e in ts.edgesets():
@@ -357,8 +337,6 @@ class AncestorStore(object):
         return site, start, end, state
 
 
-
-
 @attr.s
 class Site(object):
     id = attr.ib(default=None)
@@ -499,34 +477,45 @@ class AncestorMatcher(object):
         self.store = store
         self.recombination_rate = recombination_rate
 
-    def best_path(self, num_ancestors, h, start_site, end_site, theta, traceback):
+    def best_path(
+            self, num_ancestors, h, start_site, end_site, error_rate, traceback):
         """
         Returns the best path through the list of ancestors for the specified
         haplotype.
         """
         assert h.shape == (self.store.num_sites,)
         m = self.store.num_sites
+        print("store = ", self.store)
         n = num_ancestors
         rho = self.recombination_rate
-        r = 1 - np.exp(-rho / n)
-        pr = r / n
-        qr = 1 - r + r / n
-        # pm = mutation; qm no mutation
-        pm = 0.5 * theta / (n + theta)
-        qm = n / (n + theta) + 0.5 * theta / (n + theta)
-
         L = [Segment(0, n, 1)]
         best_haplotype = 0
+        # Initialise this to n to ensure that we do not calculate a recombination
+        # as the most likely event in the first site.
+        possible_recombinants = n
+
+        print("BEST PATH", num_ancestors, h, start_site, end_site)
 
         for site in range(start_site, end_site):
             L_next = []
             S = [Segment(*s) for s in self.store.get_site(site)]
+            # Compute the recombination rate.
+            # TODO also need to get the position here so we can get the length of the
+            # region.
+            r = 1 - np.exp(-rho / possible_recombinants)
+            pr = r / possible_recombinants
+            qr = 1 - r + r / possible_recombinants
             # print()
             # print("site = ", site)
+            # print("n = ", n)
+            # print("re= ", possible_recombinants)
+            # print("pr= ", pr)
+            # print("qr= ", qr)
             # print("L = ", L)
             # print("S = ", S)
             # print("h = ", h[site])
             # print("b = ", best_haplotype)
+
             l = 0
             s = 0
             start = 0
@@ -554,11 +543,10 @@ class AncestorMatcher(object):
                     likelihood = 0
                     if l < len(L) and not (L[l].start >= end or L[l].end <= start):
                         likelihood = L[l].value
-                    # else:
-                    #     print("LGAP")
 
                     x = likelihood * qr
                     y = pr  # v for maximum is 1 by normalisation
+                    # print("\t", start, end, x, y)
                     if x >= y:
                         z = x
                     else:
@@ -566,9 +554,9 @@ class AncestorMatcher(object):
                         traceback.add_recombination(site, start, end, best_haplotype)
                     # Determine the likelihood for this segment.
                     if state == h[site]:
-                        likelihood_next = z * qm
+                        likelihood_next = z * (1 - error_rate)
                     else:
-                        likelihood_next = z * pm
+                        likelihood_next = z * error_rate
 
                     # Update the L_next array
                     if len(L_next) == 0:
@@ -578,8 +566,6 @@ class AncestorMatcher(object):
                             L_next[-1].end = end
                         else:
                             L_next.append(Segment(start, end, likelihood_next))
-                # else:
-                #     print("SGAP")
                 start = end
                 if l < len(L) and L[l].end <= start:
                     l += 1
@@ -587,7 +573,6 @@ class AncestorMatcher(object):
                     s += 1
 
             L = L_next
-
             max_value = -1
             best_haplotype = -1
             for seg in L:
@@ -595,9 +580,17 @@ class AncestorMatcher(object):
                 if seg.value >= max_value:
                     max_value = seg.value
                     best_haplotype = seg.end - 1
+            assert max_value > 0
             # Renormalise L
             for seg in L:
                 seg.value /= max_value
+            # Compute the possible recombination destinations for the next iteration.
+            s = 0
+            possible_recombinants = 0
+            while s < len(S) and S[s].start < n:
+                possible_recombinants += min(n, S[s].end) - S[s].start
+                s += 1
+
         return best_haplotype
 
 

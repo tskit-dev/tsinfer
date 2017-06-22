@@ -156,12 +156,15 @@ def build_ancestors(n, L, seed, filename):
             builder.make_ancestor(focal_site, A[j, :])
         _tsinfer.sort_ancestors(A, p)
         # p = np.arange(num_ancestors, dtype=np.uint32)
-        return frequency, A, p
+        return frequency, focal_sites, A, p
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
-            frequency, A, p = result
+            frequency, focal_sites, A, p = result
             for index in p:
+                # print("adding:", A[index, :], frequency, focal_sites[index])
+                # TODO add in the focal site informatino for matching on
+                # ancestors.
                 store_builder.add(A[index, :])
 
 
@@ -172,11 +175,12 @@ def build_ancestors(n, L, seed, filename):
     state = np.zeros(N, dtype=np.int8)
     store_builder.dump_segments(site, start, end, state)
     with h5py.File(filename, "w") as f:
-        g = f.create_group("segments")
+        g = f.create_group("ancestors/segments")
         g.create_dataset("site", data=site)
         g.create_dataset("start", data=start)
         g.create_dataset("end", data=end)
         g.create_dataset("state", data=state)
+
         g = f.create_group("sites")
         g.create_dataset("position", data=position)
         g = f.create_group("samples")
@@ -286,6 +290,7 @@ def new_segments(n, L, seed):
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
     np.random.seed(seed)
+    random.seed(seed)
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
@@ -293,14 +298,15 @@ def new_segments(n, L, seed):
         print("zero sites; skipping")
         return
     positions = [site.position for site in ts.sites()]
-    S = generate_samples(ts, 0.01)
+    # S = generate_samples(ts, 0.01)
+    S = generate_samples(ts, 0)
     S2 = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for variant in ts.variants():
         S2[:,variant.index] = variant.genotypes
 
     # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    tsp = tsinfer.infer(S, positions, 0.01, 1e-200, num_threads=10, method="C")
-    # tsp = tsinfer.infer(S, positions, 0.01, 1e-200, num_threads=10, method="P")
+    # tsp = tsinfer.infer(S, positions, 0.01, 1e-200, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, 0.01, 0.00001, num_threads=1, method="P")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -479,13 +485,13 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    for j in range(1, 100000):
-        print(j)
-        new_segments(20, 200, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(8, 10, j)
     # new_segments(40, 10, 1)
-    # new_segments(4, 4, 304)
+    # new_segments(4, 8, 304)
 
-    # export_samples(10, 10, 304)
+    # export_samples(10, 100, 304)
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):
@@ -513,7 +519,7 @@ if __name__ == "__main__":
     #     # load_ancestors(filename)
     #     print()
 
-    # build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
+    build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
     # load_ancestors("tmp.hdf5", False, 1)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")
     # load_ancestors("tmp__NOBACKUP__/n=10_L=81.hdf5")
