@@ -28,6 +28,210 @@ import msprime
 
 
 
+@attr.s
+class LinkedSegment(object):
+    """
+    A mapping of a half-open interval to a specific value in a linked list.
+    Lists of segments must not contain overlapping intervals.
+    """
+    start = attr.ib(default=None)
+    end = attr.ib(default=None)
+    value = attr.ib(default=None)
+    next = attr.ib(default=None)
+
+class OnlineTreeSequenceBuilder(object):
+    """
+    Builds a tree sequence online using the traceback
+    """
+    def __init__(self, num_sites, num_samples, num_internal_nodes):
+        self.num_sites = num_sites
+        self.num_samples = num_samples
+        self.num_internal_nodes = num_internal_nodes
+        self.children = [
+            LinkedSegment(0, num_sites, []) for _ in range(num_internal_nodes)]
+        self.mutations = [[] for _ in range(self.num_sites)]
+
+    def add_mutation(self, node, site, derived_state):
+        self.mutations[site].append((node, derived_state))
+
+    def add_gap(self, start, end, child):
+        # print("Add GAP", start, end, child)
+        self.add_mapping(start, end, 0, child)
+
+
+    def add_mapping(self, start, end, parent, child):
+        # print("Adding mapping for ", start ,end, "parent=", parent, "child = ", child)
+        assert start < end
+        # print("BEFORE")
+        # self.print_row(parent)
+        # Skip leading segments
+        u = self.children[parent]
+        while u.end <= start:
+            # print("\tSKIP", u.start, u.end)
+            u = u.next
+        if u.start < start:
+            # print("\tTRIM LEAD", u.start, u.end)
+            v =LinkedSegment(start, u.end, list(u.value), u.next)
+            u.end = start
+            u.next = v
+            u = v
+        while u is not None and u.end <= end:
+            # print("\tAPPEND", u.start, u.end)
+            u.value.append(child)
+            u = u.next
+        if u is not None and end > u.start:
+            # print("\tTRIM TAIL", u.start, u.end)
+            v = LinkedSegment(end, u.end, list(u.value), u.next)
+            u.end = end
+            u.next = v
+            u.value.append(child)
+        # print("AFTER")
+        # self.print_row(parent)
+        # Check integrity
+        u = self.children[parent]
+        while u is not None:
+            if u.start >= start and u.end <= end:
+                assert child in u.value
+            # else:
+            #     assert child not in u.value
+            u = u.next
+
+    def print_state(self):
+        print("Builder state")
+        for parent in range(len(self.children)):
+            self.print_row(parent)
+
+    def print_row(self, parent):
+        print(parent, ":", end="")
+        u = self.children[parent]
+        assert u.start == 0
+        while u is not None:
+            print("({},{}->{})".format(u.start, u.end, u.value), end="")
+            assert len(u.value) == len(set(u.value))
+            assert u.start < u.end
+            if u.next is not None:
+                assert u.end == u.next.start
+            prev = u
+            u = u.next
+        assert prev.end == self.num_sites
+        print()
+
+    def finalise(self):
+        # Allocate the nodes.
+        nodes = msprime.NodeTable(self.num_internal_nodes + self.num_samples)
+        for j in range(self.num_internal_nodes):
+            nodes.add_row(time=self.num_internal_nodes - j)
+        for j in range(self.num_samples):
+            nodes.add_row(time=0, flags=msprime.NODE_IS_SAMPLE)
+
+        edgesets = msprime.EdgesetTable()
+        for parent in range(self.num_internal_nodes - 1, -1, -1):
+            u = self.children[parent]
+            assert u.start == 0
+            while u is not None:
+                if len(u.value) > 0:
+                    edgesets.add_row(
+                        left=u.start, right=u.end, parent=parent,
+                        children=tuple(sorted(u.value)))
+                u = u.next
+        sites = msprime.SiteTable()
+        mutations = msprime.MutationTable()
+        for j in range(self.num_sites):
+            sites.add_row(j, "0")
+            for node, derived_state in self.mutations[j]:
+                mutations.add_row(j, node, str(derived_state))
+
+        # self.print_state()
+        # print(nodes)
+        # print(edgesets)
+        # print(sites)
+        # print(mutations)
+        # right = set(edgesets.right)
+        # left = set(edgesets.left)
+        # print("Diff:", right - left)
+        ts = msprime.load_tables(
+            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+        return ts
+
+def load_ancestors_dev(filename):
+
+    with h5py.File(filename, "r") as f:
+        sites = f["sites"]
+        segments = f["segments"]
+        store = _tsinfer.AncestorStore(
+            num_sites=sites["position"].shape[0],
+            site=segments["site"],
+            start=segments["start"],
+            end=segments["end"],
+            state=segments["state"])
+        samples = f["samples"]
+        S = samples["haplotypes"][()]
+
+    mutation_rate = 1e-200
+    # print(store.num_sites, store.num_ancestors)
+    ancestor_ids = list(range(1, store.num_ancestors))
+    # matcher = _tsinfer.AncestorMatcher(store, 0.01)
+    matcher = tsinfer.AncestorMatcher(store, 0.01)
+    ts_builder = OnlineTreeSequenceBuilder(
+            store.num_sites, S.shape[0], store.num_ancestors)
+
+    # traceback = _tsinfer.Traceback(store, 2**10)
+    traceback = tsinfer.Traceback(store)
+    h = np.zeros(store.num_sites, dtype=np.int8)
+    P = np.zeros(store.num_sites, dtype=np.int32)
+    M = np.zeros(store.num_sites, dtype=np.uint32)
+
+    for ancestor_id in ancestor_ids:
+        start_site, end_site = store.get_ancestor(ancestor_id, h)
+        # print(start_site, end_site)
+        # a = "".join(str(x) if x != -1 else '*' for x in h)
+        # print(ancestor_id, "\t", a)
+        best_match = matcher.best_path(
+            ancestor_id, h, start_site, end_site, mutation_rate, traceback)
+        # print("best_match = ", best_match)
+        num_mutations = traceback.run_build_ts(
+            h, start_site, end_site, best_match, ts_builder, ancestor_id)
+        # print("traceback", traceback)
+        traceback.reset()
+        # print()
+        # assert num_mutations == 1
+
+    # print("MATCHING SAMPLES")
+
+    for j, h in enumerate(S):
+        sample_id = j + store.num_ancestors
+        # a = "".join(str(x) if x != -1 else '*' for x in h)
+        # print(sample_id, "\t", a)
+        best_match = matcher.best_path(
+            store.num_ancestors, h, 0, store.num_sites, mutation_rate, traceback)
+        # print("best_match = ", best_match)
+        num_mutations = traceback.run_build_ts(
+            h, 0, store.num_sites, best_match, ts_builder, sample_id)
+        # print("traceback", traceback)
+        traceback.reset()
+        # print()
+        # assert num_mutations == 1
+
+    # ts_builder.print_state()
+    tsp = ts_builder.finalise()
+
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
+    # print("S = ")
+    # print(S)
+    # print("~Sp = ")
+    # print(Sp)
+    tsp = tsp.simplify()
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
+
+
+
+
 def make_errors(v, p):
     """
     For each sample an error occurs with probability p. Errors are generated by
@@ -175,11 +379,12 @@ def build_ancestors(n, L, seed, filename):
     state = np.zeros(N, dtype=np.int8)
     store_builder.dump_segments(site, start, end, state)
     with h5py.File(filename, "w") as f:
-        g = f.create_group("ancestors/segments")
+        g = f.create_group("segments")
         g.create_dataset("site", data=site)
         g.create_dataset("start", data=start)
         g.create_dataset("end", data=end)
         g.create_dataset("state", data=state)
+
 
         g = f.create_group("sites")
         g.create_dataset("position", data=position)
@@ -196,8 +401,6 @@ def build_ancestors(n, L, seed, filename):
     print("Memory           :", humanize.naturalsize(store.total_memory))
     print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
     print("Sample memory    :", humanize.naturalsize(S.nbytes))
-
-
 
 def load_ancestors(filename, show_progress=True, num_threads=40):
 
@@ -231,14 +434,14 @@ def load_ancestors(filename, show_progress=True, num_threads=40):
     # Shuffle the ancestors so that we (hopefully) even out the work between
     # all threads.
     random.shuffle(ancestor_ids)
-    # matcher = _tsinfer.AncestorMatcher(store, 0.01)
-    matcher = tsinfer.AncestorMatcher(store, 0.01)
+    matcher = _tsinfer.AncestorMatcher(store, 0.01)
+    # matcher = tsinfer.AncestorMatcher(store, 0.01)
 
     def ancestor_match_worker(thread_index):
         chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
         start = thread_index * chunk_size
-        # traceback = _tsinfer.Traceback(store, 2**10)
-        traceback = tsinfer.Traceback(store)
+        traceback = _tsinfer.Traceback(store, 2**10)
+        # traceback = tsinfer.Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
         P = np.zeros(store.num_sites, dtype=np.int32)
         M = np.zeros(store.num_sites, dtype=np.uint32)
@@ -252,6 +455,7 @@ def load_ancestors(filename, show_progress=True, num_threads=40):
                     ancestor_id, h, start_site, end_site, mutation_rate, traceback)
             # print("best_match = ", best_match)
             num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
+            # print("traceback", traceback)
             traceback.reset()
             assert num_mutations == 1
             if show_progress:
@@ -519,10 +723,14 @@ if __name__ == "__main__":
     #     # load_ancestors(filename)
     #     print()
 
-    build_ancestors(10, 0.2 * 10**6, 1, "tmp.hdf5")
+    for j in range(1, 10000):
+        print(j, file=sys.stderr)
+        build_ancestors(20, 0.5 * 10**6, j, "tmp__NOBACKUP__/tmp.hdf5")
+        load_ancestors_dev("tmp__NOBACKUP__/tmp.hdf5")
+
     # load_ancestors("tmp.hdf5", False, 1)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")
-    # load_ancestors("tmp__NOBACKUP__/n=10_L=81.hdf5")
+    # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
     # for j in range(1, 100000):
     #     build_ancestors(10, 10, j)

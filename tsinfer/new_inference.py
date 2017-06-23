@@ -146,7 +146,7 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads)
 
-    tree_sequence_builder.print_state()
+    # tree_sequence_builder.print_state()
     ts = tree_sequence_builder.finalise()
 
     # for e in ts.edgesets():
@@ -281,6 +281,7 @@ class TreeSequenceBuilder(object):
         ts = msprime.load_tables(
             nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
         return ts
+
 
 
 class AncestorStore(object):
@@ -430,13 +431,41 @@ class Traceback(object):
         self.site_head = [None for _ in range(self.store.num_sites)]
         self.site_tail = [None for _ in range(self.store.num_sites)]
 
+    def decode_traceback(self):
+        """
+        Decode the specified encoded traceback matrix into the standard integer
+        matrix.
+        """
+        E = self.site_head
+        assert len(E) == self.store.num_sites
+        T = np.zeros((self.store.num_ancestors, self.store.num_sites), dtype=int)
+        for l in range(1, self.store.num_sites):
+            T[:,l] = np.arange(self.store.num_ancestors)
+            u = E[l]
+            while u is not None:
+                T[u.start:u.end, l] = u.value
+                u = u.next
+        return T
+
+    def print_state(self):
+        for l, head in enumerate(self.site_head):
+            if head is not None:
+                print(l, ":", end="")
+                u = head
+                while u != None:
+                    print("({},{}->{})".format(u.start, u.end, u.value), end="")
+                    u = u.next
+                print()
+
+
     def run(self, h, start_site, end_site, end_site_value, P, M):
         """
         Returns the array of haplotype indexes that the specified encoded traceback
         defines for the given startin point at the last site.
         """
         # print("Running traceback on ", start_site, end_site, end_site_value)
-        # print(self.decode_traceback(T))
+        # print(self.decode_traceback())
+        self.print_state()
         l = end_site - 1
         P[:] = -1
         P[l] = end_site_value
@@ -444,8 +473,7 @@ class Traceback(object):
         num_mutations = 0
         while l > start_site:
             state = self.store.get_state(l, int(P[l]))
-            if state == -1:
-                break
+            assert state != -1
             if state != h[l]:
                 M[num_mutations] = l
                 num_mutations += 1
@@ -469,6 +497,49 @@ class Traceback(object):
             num_mutations += 1
         return num_mutations
 
+    def run_build_ts(self, h, start_site, end_site, end_site_value, ts_builder, child):
+        """
+        Returns the array of haplotype indexes that the specified encoded traceback
+        defines for the given startin point at the last site.
+        """
+        # print("Running traceback on ", start_site, end_site, end_site_value)
+        # self.print_state()
+        end = end_site
+        parent = end_site_value
+        T = self.site_head
+        for l in range(end_site - 1, start_site, -1):
+            state = self.store.get_state(l, parent)
+            # print("l = ", l, "state = ", state, "parent = ", parent)
+            assert state != -1
+            if state != h[l]:
+                ts_builder.add_mutation(child, l, h[l])
+            value = None
+            u = T[l]
+            while u is not None:
+                if u.start <= parent < u.end:
+                    value = u.value
+                    break
+                if u.start > parent:
+                    break
+                u = u.next
+            if value is not None:
+                # Complete a segment at this site
+                assert l < end
+                ts_builder.add_mapping(l, end, parent, child)
+                end = l
+                parent = value
+        assert start_site < end
+        ts_builder.add_mapping(start_site, end, parent, child)
+        l = start_site
+        state = self.store.get_state(l, parent)
+        if state != h[l]:
+            ts_builder.add_mutation(child, l, h[l])
+        if start_site != 0:
+            ts_builder.add_gap(0, start_site, child)
+        if end_site != self.store.num_sites:
+            ts_builder.add_gap(end_site, self.store.num_sites, child)
+
+
 
 class AncestorMatcher(object):
     """
@@ -485,7 +556,7 @@ class AncestorMatcher(object):
         """
         assert h.shape == (self.store.num_sites,)
         m = self.store.num_sites
-        print("store = ", self.store)
+        # print("store = ", self.store)
         n = num_ancestors
         rho = self.recombination_rate
         L = [Segment(0, n, 1)]
@@ -494,7 +565,7 @@ class AncestorMatcher(object):
         # as the most likely event in the first site.
         possible_recombinants = n
 
-        print("BEST PATH", num_ancestors, h, start_site, end_site)
+        # print("BEST PATH", num_ancestors, h, start_site, end_site)
 
         for site in range(start_site, end_site):
             L_next = []
@@ -580,6 +651,7 @@ class AncestorMatcher(object):
                 if seg.value >= max_value:
                     max_value = seg.value
                     best_haplotype = seg.end - 1
+                    # print("CHOOSING", best_haplotype, (seg.start, seg.end), "for site", site)
             assert max_value > 0
             # Renormalise L
             for seg in L:
@@ -600,17 +672,3 @@ class AncestorMatcher(object):
         print("num_sites = ", self.num_sites)
 
 
-    def decode_traceback(self, E):
-        """
-        Decode the specified encoded traceback matrix into the standard integer
-        matrix.
-        """
-        assert len(E) == self.num_sites
-        T = np.zeros((self.num_ancestors, self.num_sites), dtype=int)
-        for l in range(1, self.num_sites):
-            T[:,l] = np.arange(self.num_ancestors)
-            u = E[l]
-            while u is not None:
-                T[u.start:u.end, l] = u.value
-                u = u.next
-        return T
