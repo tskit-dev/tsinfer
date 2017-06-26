@@ -229,6 +229,32 @@ def load_ancestors_dev(filename):
         Sp[:, variant.index] = variant.genotypes
     assert np.all(Sp == S)
 
+def compress_ancestors(filename):
+
+    with h5py.File(filename, "r") as f:
+        sites = f["sites"]
+        segments = f["segments"]
+        store = _tsinfer.AncestorStore(
+            num_sites=sites["position"].shape[0],
+            site=segments["site"],
+            start=segments["start"],
+            end=segments["end"],
+            state=segments["state"])
+        samples = f["samples"]
+        S = samples["haplotypes"][()]
+
+    # print(store.num_sites, store.num_ancestors)
+    print(store)
+    for l in range(store.num_sites):
+        print(l, ":", store.get_site(l))
+
+    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8) - 1
+    for l in range(store.num_sites):
+        for start, end, value in store.get_site(l):
+            A[start:end, l] = value
+    for a in A:
+        a = "".join(str(x) if x != -1 else '*' for x in a)
+        print(a)
 
 
 
@@ -723,10 +749,15 @@ if __name__ == "__main__":
     #     # load_ancestors(filename)
     #     print()
 
-    for j in range(1, 10000):
-        print(j, file=sys.stderr)
-        build_ancestors(20, 0.5 * 10**6, j, "tmp__NOBACKUP__/tmp.hdf5")
-        load_ancestors_dev("tmp__NOBACKUP__/tmp.hdf5")
+    # for j in range(1, 10000):
+    #     print(j, file=sys.stderr)
+    #     filename = "tmp__NOBACKUP__/tmp-4.hdf5"
+    #     build_ancestors(4, 0.1 * 10**6, j, filename)
+    #     load_ancestors_dev(filename)
+
+    filename = "tmp__NOBACKUP__/tmp2.hdf5"
+    build_ancestors(40, 1 * 10**6, 3, filename)
+    compress_ancestors(filename)
 
     # load_ancestors("tmp.hdf5", False, 1)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")

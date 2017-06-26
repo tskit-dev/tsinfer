@@ -651,7 +651,8 @@ class AncestorMatcher(object):
                 if seg.value >= max_value:
                     max_value = seg.value
                     best_haplotype = seg.end - 1
-                    # print("CHOOSING", best_haplotype, (seg.start, seg.end), "for site", site)
+                    # best_haplotype = random.randint(seg.start, seg.end - 1)
+                    assert seg.start <= best_haplotype < seg.end
             assert max_value > 0
             # Renormalise L
             for seg in L:
