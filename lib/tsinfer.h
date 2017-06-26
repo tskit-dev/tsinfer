@@ -32,7 +32,7 @@ typedef struct {
     ancestor_id_t *end;
     allele_t *state;
     size_t num_segments;
-    /* TODO: position, etc ? */
+    double position;
 } site_state_t;
 
 typedef struct {
@@ -100,8 +100,10 @@ int ancestor_store_builder_add(ancestor_store_builder_t *self, allele_t *ancesto
 int ancestor_store_builder_dump(ancestor_store_builder_t *self,
         site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
 
-int ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, size_t num_segments,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
+int ancestor_store_alloc(ancestor_store_t *self,
+        size_t num_sites, double *position,
+        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
+        allele_t *state);
 int ancestor_store_free(ancestor_store_t *self);
 int ancestor_store_print_state(ancestor_store_t *self, FILE *out);
 int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size);

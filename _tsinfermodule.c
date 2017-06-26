@@ -740,7 +740,9 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_sites", "site", "start", "end", "state", NULL};
+    static char *kwlist[] = {"position", "site", "start", "end", "state", NULL};
+    PyObject *position = NULL;
+    PyArrayObject *position_array = NULL;
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
@@ -749,15 +751,26 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *end_array = NULL;
     PyObject *state = NULL;
     PyArrayObject *state_array = NULL;
-    size_t total_segments;
-    unsigned long num_sites;
+    size_t num_sites, total_segments;
     npy_intp *shape;
 
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOOO", kwlist,
-            &num_sites, &site, &start, &end, &state)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOO", kwlist,
+            &position, &site, &start, &end, &state)) {
         goto out;
     }
+    /* position */
+    position_array = (PyArrayObject *) PyArray_FROM_OTF(position, NPY_FLOAT64,
+            NPY_ARRAY_IN_ARRAY);
+    if (position_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(position_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(position_array);
+    num_sites = shape[0];
     if (num_sites < 1) {
         PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
         goto out;
@@ -825,7 +838,9 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = ancestor_store_alloc(self->store, num_sites, total_segments,
+    err = ancestor_store_alloc(self->store, num_sites,
+        (double *) PyArray_DATA(position_array),
+        total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
         (int32_t *) PyArray_DATA(end_array),
@@ -836,6 +851,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     ret = 0;
 out:
+    Py_XDECREF(position_array);
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);

@@ -55,7 +55,7 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
     fprintf(out, "total_memory = %d\n", (int) self->total_memory);
     for (l = 0; l < self->num_sites; l++) {
         site = &self->sites[l];
-        printf("%d\t[%d]:: ", (int) l, (int) site->num_segments);
+        printf("%d\t%.3f\t[%d]:: ", (int) l, site->position, (int) site->num_segments);
         for (j = 0; j < site->num_segments; j++) {
             printf("(%d, %d: %d)", site->start[j], site->end[j], site->state[j]);
         }
@@ -66,8 +66,9 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
 }
 
 int
-ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, size_t num_segments,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state)
+ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, double *position,
+        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
+        allele_t *state)
 {
     int ret = 0;
     site_id_t j, l, site_start, site_end;
@@ -84,6 +85,11 @@ ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, size_t num_segmen
     site_end = 0;
     self->max_num_site_segments = 0;
     for (l = 0; l < self->num_sites; l++) {
+        if (l > 0) {
+            // TODO raise an error here.
+            assert(position[l] > position[l - 1]);
+        }
+        self->sites[l].position = position[l];
         assert(site[site_start] == l);
         assert(site[site_end] == l);
         while (site_end < num_segments && site[site_end] == l) {

@@ -113,7 +113,8 @@ read_sites(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
 }
 
 static void
-read_ancestors(ancestor_store_t *store, const char *infile)
+read_ancestors(ancestor_store_t *store, size_t num_sites, double *position,
+        const char *infile)
 {
     char *line = NULL;
     size_t len = 0;
@@ -168,8 +169,8 @@ read_ancestors(ancestor_store_t *store, const char *infile)
         seg_state[j] = atoi(token);
         j++;
     }
-
-    ret = ancestor_store_alloc(store, seg_site[num_segments - 1] + 1,
+    assert(num_sites == seg_site[num_segments - 1] + 1);
+    ret = ancestor_store_alloc(store, num_sites, position,
             num_segments, seg_site, seg_start, seg_end, seg_state);
     if (ret != 0) {
         fatal_error("store load error");
@@ -310,7 +311,7 @@ run_generate(const char *infile, const char *outfile, int sort, int verbose)
 }
 
 static void
-run_match(const char *infile, int verbose)
+run_match(const char *sample_file, const char *ancestor_file, int verbose)
 {
     int ret;
     ancestor_store_t store;
@@ -323,8 +324,13 @@ run_match(const char *infile, int verbose)
     allele_t *ancestor = NULL;
     size_t j, l, num_mutations;
     double mutation_rate = 1e-200;
+    allele_t *samples = NULL;
+    double *positions;
+    size_t num_samples, num_sites;
 
-    read_ancestors(&store, infile);
+    /* TODO Make sort the default here */
+    read_sites(sample_file, &num_samples, &num_sites, &samples, &positions);
+    read_ancestors(&store, num_sites, positions, ancestor_file);
     ret = ancestor_matcher_alloc(&matcher, &store, 0.01);
     if (ret != 0) {
         fatal_error("alloc error");
@@ -339,6 +345,9 @@ run_match(const char *infile, int verbose)
     ancestor = malloc(store.num_sites * sizeof(allele_t));
     if (path == NULL || mutation_sites == NULL || ancestor == NULL) {
         fatal_error("alloc error");
+    }
+    if (verbose > 0) {
+        ancestor_store_print_state(&store, stdout);
     }
     for (j = 1; j < store.num_ancestors; j++) {
         ret = ancestor_store_get_ancestor(&store, j, ancestor, &start, &end);
@@ -388,6 +397,8 @@ run_match(const char *infile, int verbose)
     free(path);
     free(mutation_sites);
     free(ancestor);
+    free(positions);
+    free(samples);
 }
 
 int
@@ -397,18 +408,19 @@ main(int argc, char** argv)
     struct arg_rex *cmd1 = arg_rex1(NULL, NULL, "generate", NULL, REG_ICASE, NULL);
     struct arg_lit *verbose1 = arg_lit0("v", "verbose", NULL);
     struct arg_lit *sort1 = arg_lit0("s", "sort", NULL);
-    struct arg_file *infiles1 = arg_file1(NULL, NULL, NULL, NULL);
-    struct arg_file *outfiles1 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_file *sample_file1 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_file *ancestor_file1 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_end *end1 = arg_end(20);
-    void* argtable1[] = {cmd1, verbose1, sort1, infiles1, outfiles1, end1};
+    void* argtable1[] = {cmd1, verbose1, sort1, sample_file1, ancestor_file1, end1};
     int nerrors1;
 
     /* SYNTAX 2: match [-v] <input-file> */
     struct arg_rex *cmd2 = arg_rex1(NULL, NULL, "match", NULL, REG_ICASE, NULL);
     struct arg_lit *verbose2 = arg_lit0("v", "verbose", NULL);
-    struct arg_file *infiles2 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_file *sample_file2 = arg_file1(NULL, NULL, NULL, NULL);
+    struct arg_file *ancestor_file2 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_end *end2 = arg_end(20);
-    void* argtable2[] = {cmd2, verbose2, infiles2, end2};
+    void* argtable2[] = {cmd2, verbose2, sample_file2, ancestor_file2, end2};
     int nerrors2;
 
     int exitcode = EXIT_SUCCESS;
@@ -418,10 +430,10 @@ main(int argc, char** argv)
     nerrors2 = arg_parse(argc, argv, argtable2);
 
     if (nerrors1 == 0) {
-        run_generate(infiles1->filename[0], outfiles1->filename[0], sort1->count,
+        run_generate(sample_file1->filename[0], ancestor_file1->filename[0], sort1->count,
                 verbose1->count);
     } else if (nerrors2 == 0) {
-        run_match(infiles2->filename[0], verbose2->count);
+        run_match(sample_file2->filename[0], ancestor_file2->filename[0], verbose2->count);
     } else {
         /* We get here if the command line matched none of the possible syntaxes */
         if (cmd1->count > 0) {

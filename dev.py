@@ -39,140 +39,28 @@ class LinkedSegment(object):
     value = attr.ib(default=None)
     next = attr.ib(default=None)
 
-class OnlineTreeSequenceBuilder(object):
-    """
-    Builds a tree sequence online using the traceback
-    """
-    def __init__(self, num_sites, num_samples, num_internal_nodes):
-        self.num_sites = num_sites
-        self.num_samples = num_samples
-        self.num_internal_nodes = num_internal_nodes
-        self.children = [
-            LinkedSegment(0, num_sites, []) for _ in range(num_internal_nodes)]
-        self.mutations = [[] for _ in range(self.num_sites)]
-
-    def add_mutation(self, node, site, derived_state):
-        self.mutations[site].append((node, derived_state))
-
-    def add_gap(self, start, end, child):
-        # print("Add GAP", start, end, child)
-        self.add_mapping(start, end, 0, child)
-
-
-    def add_mapping(self, start, end, parent, child):
-        # print("Adding mapping for ", start ,end, "parent=", parent, "child = ", child)
-        assert start < end
-        # print("BEFORE")
-        # self.print_row(parent)
-        # Skip leading segments
-        u = self.children[parent]
-        while u.end <= start:
-            # print("\tSKIP", u.start, u.end)
-            u = u.next
-        if u.start < start:
-            # print("\tTRIM LEAD", u.start, u.end)
-            v =LinkedSegment(start, u.end, list(u.value), u.next)
-            u.end = start
-            u.next = v
-            u = v
-        while u is not None and u.end <= end:
-            # print("\tAPPEND", u.start, u.end)
-            u.value.append(child)
-            u = u.next
-        if u is not None and end > u.start:
-            # print("\tTRIM TAIL", u.start, u.end)
-            v = LinkedSegment(end, u.end, list(u.value), u.next)
-            u.end = end
-            u.next = v
-            u.value.append(child)
-        # print("AFTER")
-        # self.print_row(parent)
-        # Check integrity
-        u = self.children[parent]
-        while u is not None:
-            if u.start >= start and u.end <= end:
-                assert child in u.value
-            # else:
-            #     assert child not in u.value
-            u = u.next
-
-    def print_state(self):
-        print("Builder state")
-        for parent in range(len(self.children)):
-            self.print_row(parent)
-
-    def print_row(self, parent):
-        print(parent, ":", end="")
-        u = self.children[parent]
-        assert u.start == 0
-        while u is not None:
-            print("({},{}->{})".format(u.start, u.end, u.value), end="")
-            assert len(u.value) == len(set(u.value))
-            assert u.start < u.end
-            if u.next is not None:
-                assert u.end == u.next.start
-            prev = u
-            u = u.next
-        assert prev.end == self.num_sites
-        print()
-
-    def finalise(self):
-        # Allocate the nodes.
-        nodes = msprime.NodeTable(self.num_internal_nodes + self.num_samples)
-        for j in range(self.num_internal_nodes):
-            nodes.add_row(time=self.num_internal_nodes - j)
-        for j in range(self.num_samples):
-            nodes.add_row(time=0, flags=msprime.NODE_IS_SAMPLE)
-
-        edgesets = msprime.EdgesetTable()
-        for parent in range(self.num_internal_nodes - 1, -1, -1):
-            u = self.children[parent]
-            assert u.start == 0
-            while u is not None:
-                if len(u.value) > 0:
-                    edgesets.add_row(
-                        left=u.start, right=u.end, parent=parent,
-                        children=tuple(sorted(u.value)))
-                u = u.next
-        sites = msprime.SiteTable()
-        mutations = msprime.MutationTable()
-        for j in range(self.num_sites):
-            sites.add_row(j, "0")
-            for node, derived_state in self.mutations[j]:
-                mutations.add_row(j, node, str(derived_state))
-
-        # self.print_state()
-        # print(nodes)
-        # print(edgesets)
-        # print(sites)
-        # print(mutations)
-        # right = set(edgesets.right)
-        # left = set(edgesets.left)
-        # print("Diff:", right - left)
-        ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-        return ts
-
 def load_ancestors_dev(filename):
 
     with h5py.File(filename, "r") as f:
         sites = f["sites"]
         segments = f["segments"]
-        store = _tsinfer.AncestorStore(
-            num_sites=sites["position"].shape[0],
+        ancestors = f["ancestors"]
+        store = tsinfer.AncestorStore(
+            position=sites["position"],
             site=segments["site"],
             start=segments["start"],
             end=segments["end"],
-            state=segments["state"])
+            state=segments["state"],
+            focal_site=ancestors["focal_site"][:])
         samples = f["samples"]
         S = samples["haplotypes"][()]
 
-    mutation_rate = 1e-200
+    mutation_rate = 0.01
     # print(store.num_sites, store.num_ancestors)
     ancestor_ids = list(range(1, store.num_ancestors))
     # matcher = _tsinfer.AncestorMatcher(store, 0.01)
-    matcher = tsinfer.AncestorMatcher(store, 0.01)
-    ts_builder = OnlineTreeSequenceBuilder(
+    matcher = tsinfer.AncestorMatcher(store, 1e-8)
+    ts_builder = tsinfer.TreeSequenceBuilder(
             store.num_sites, S.shape[0], store.num_ancestors)
 
     # traceback = _tsinfer.Traceback(store, 2**10)
@@ -181,15 +69,17 @@ def load_ancestors_dev(filename):
     P = np.zeros(store.num_sites, dtype=np.int32)
     M = np.zeros(store.num_sites, dtype=np.uint32)
 
+    # store.print_state()
+
     for ancestor_id in ancestor_ids:
-        start_site, end_site = store.get_ancestor(ancestor_id, h)
-        # print(start_site, end_site)
+        start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+        # print(start_site, focal_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(ancestor_id, "\t", a)
         best_match = matcher.best_path(
-            ancestor_id, h, start_site, end_site, mutation_rate, traceback)
+            ancestor_id, h, start_site, end_site, focal_site, 0, traceback)
         # print("best_match = ", best_match)
-        num_mutations = traceback.run_build_ts(
+        traceback.run_build_ts(
             h, start_site, end_site, best_match, ts_builder, ancestor_id)
         # print("traceback", traceback)
         traceback.reset()
@@ -203,7 +93,7 @@ def load_ancestors_dev(filename):
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(sample_id, "\t", a)
         best_match = matcher.best_path(
-            store.num_ancestors, h, 0, store.num_sites, mutation_rate, traceback)
+            store.num_ancestors, h, 0, store.num_sites, -1, mutation_rate, traceback)
         # print("best_match = ", best_match)
         num_mutations = traceback.run_build_ts(
             h, 0, store.num_sites, best_match, ts_builder, sample_id)
@@ -214,7 +104,16 @@ def load_ancestors_dev(filename):
 
     # ts_builder.print_state()
     tsp = ts_builder.finalise()
-
+    recurrent_mutations = 0
+    back_mutations = 0
+    for site in tsp.sites():
+        # print(site)
+        assert site.ancestral_state == '0'
+        recurrent_mutations += (len(site.mutations) > 1)
+        for mut in site.mutations:
+            back_mutations += mut.derived_state == '0'
+    print("recurrent muts    :", recurrent_mutations)
+    print("back      muts    :", back_mutations)
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
@@ -223,11 +122,20 @@ def load_ancestors_dev(filename):
     # print(S)
     # print("~Sp = ")
     # print(Sp)
+    # print(Sp == S)
     tsp = tsp.simplify()
-    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-    for variant in tsp.variants():
-        Sp[:, variant.index] = variant.genotypes
-    assert np.all(Sp == S)
+    # Need to compare on the haplotypes here because we might have a
+    # ancestral state of 1 after simplify.
+    H = list(tsp.haplotypes())
+    for j in range(S.shape[0]):
+        assert "".join(map(str, S[j])) == H[j]
+
+    # for variant in tsp.variants():
+    #     Sp[:, variant.index] = variant.genotypes
+    # assert np.all(Sp == S)
+    # tsp.dump("back-mutations-error.hdf5")
+
+
 
 def compress_ancestors(filename):
 
@@ -367,9 +275,11 @@ def build_ancestors(n, L, seed, filename):
 
     position = [site.position for site in ts.sites()]
 
-    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
-    for variant in ts.variants():
-        S[:, variant.index] = variant.genotypes
+    # S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    # for variant in ts.variants():
+    #     S[:, variant.index] = variant.genotypes
+    np.random.seed(seed)
+    S = generate_samples(ts, 0.01)
 
     builder = _tsinfer.AncestorBuilder(S, position)
     store_builder = _tsinfer.AncestorStoreBuilder(
@@ -388,6 +298,9 @@ def build_ancestors(n, L, seed, filename):
         # p = np.arange(num_ancestors, dtype=np.uint32)
         return frequency, focal_sites, A, p
 
+    # TODO make these numpy arrays
+    ancestor_focal_site = [-1]
+    ancestor_frequency = [0]
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
             frequency, focal_sites, A, p = result
@@ -396,7 +309,8 @@ def build_ancestors(n, L, seed, filename):
                 # TODO add in the focal site informatino for matching on
                 # ancestors.
                 store_builder.add(A[index, :])
-
+                ancestor_focal_site.append(focal_sites[index])
+                ancestor_frequency.append(frequency)
 
     N = store_builder.total_segments
     site = np.zeros(N, dtype=np.uint32)
@@ -410,15 +324,16 @@ def build_ancestors(n, L, seed, filename):
         g.create_dataset("start", data=start)
         g.create_dataset("end", data=end)
         g.create_dataset("state", data=state)
-
-
         g = f.create_group("sites")
         g.create_dataset("position", data=position)
         g = f.create_group("samples")
         g.create_dataset("haplotypes", data=S)
+        g = f.create_group("ancestors")
+        g.create_dataset("frequency", data=ancestor_frequency, dtype=np.int32)
+        g.create_dataset("focal_site", data=ancestor_focal_site, dtype=np.uint32)
 
     store = _tsinfer.AncestorStore(
-        num_sites=builder.num_sites, site=site, start=start, end=end, state=state)
+        position=position, site=site, start=start, end=end, state=state)
 
     print("num sites        :", store.num_sites)
     print("num ancestors    :", store.num_ancestors)
@@ -434,7 +349,7 @@ def load_ancestors(filename, show_progress=True, num_threads=40):
         sites = f["sites"]
         segments = f["segments"]
         store = _tsinfer.AncestorStore(
-            num_sites=sites["position"].shape[0],
+            position=sites["position"],
             site=segments["site"],
             start=segments["start"],
             end=segments["end"],
@@ -527,16 +442,14 @@ def new_segments(n, L, seed):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
-    positions = [site.position for site in ts.sites()]
-    # S = generate_samples(ts, 0.01)
-    S = generate_samples(ts, 0)
+    positions = np.array([site.position for site in ts.sites()])
+    S = generate_samples(ts, 0.01)
+    # S = generate_samples(ts, 0)
     S2 = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for variant in ts.variants():
         S2[:,variant.index] = variant.genotypes
 
-    # tsp = tsinfer.infer(S, 0.01, 1e-200, matcher_algorithm="python")
-    # tsp = tsinfer.infer(S, positions, 0.01, 1e-200, num_threads=10, method="C")
-    tsp = tsinfer.infer(S, positions, 0.01, 0.00001, num_threads=1, method="P")
+    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=1, method="P")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -749,17 +662,18 @@ if __name__ == "__main__":
     #     # load_ancestors(filename)
     #     print()
 
-    # for j in range(1, 10000):
-    #     print(j, file=sys.stderr)
-    #     filename = "tmp__NOBACKUP__/tmp-4.hdf5"
-    #     build_ancestors(4, 0.1 * 10**6, j, filename)
-    #     load_ancestors_dev(filename)
+    for j in range(1, 10000):
+    # for j in [4]:
+        print(j, file=sys.stderr)
+        filename = "tmp__NOBACKUP__/tmp-3.hdf5"
+        build_ancestors(20, 0.2 * 10**6, j, filename)
+        load_ancestors_dev(filename)
 
-    filename = "tmp__NOBACKUP__/tmp2.hdf5"
-    build_ancestors(40, 1 * 10**6, 3, filename)
-    compress_ancestors(filename)
+#     filename = "tmp__NOBACKUP__/tmp2.hdf5"
+#     build_ancestors(10, 0.1 * 10**6, 3, filename)
+#     # compress_ancestors(filename)
+#     load_ancestors_dev(filename)
 
-    # load_ancestors("tmp.hdf5", False, 1)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
