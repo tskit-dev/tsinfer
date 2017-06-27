@@ -98,6 +98,9 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id,
     segment_t **head = self->sites_head;
     segment_t **tail = self->sites_tail;
     segment_t *tmp;
+    assert(head != NULL);
+    assert(tail != NULL);
+    assert(site_id < self->num_sites);
 
     if (head[site_id] == NULL) {
         head[site_id] = traceback_alloc_segment(self, start, end, best_match);
@@ -107,8 +110,8 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id,
         }
         tail[site_id] = head[site_id];
     } else {
-        if (tail[site_id]->end == start
-                && tail[site_id]->value == (double) best_match) {
+        assert(tail[site_id] != NULL);
+        if (tail[site_id]->end == start && tail[site_id]->value == (double) best_match) {
             tail[site_id]->end = end;
         } else {
             tmp = traceback_alloc_segment(self, start, end, best_match);

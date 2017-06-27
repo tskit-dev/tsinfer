@@ -442,14 +442,16 @@ def new_segments(n, L, seed):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
+    print("num_sites = ", ts.num_sites)
     positions = np.array([site.position for site in ts.sites()])
     S = generate_samples(ts, 0.01)
+
     # S = generate_samples(ts, 0)
     S2 = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for variant in ts.variants():
         S2[:,variant.index] = variant.genotypes
 
-    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=1, method="C")
+    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=20, method="C")
     # TODO turn back on checks!
 
     # Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
@@ -631,12 +633,10 @@ if __name__ == "__main__":
     # segment_stats()
     for j in range(1, 100000):
         print(j)
-        new_segments(100, 10, j)
+        new_segments(20, 1000, j)
     # new_segments(40, 10, 1)
     # new_segments(40, 20, 304)
 
-    # SEGFAAULTS
-    new_segments(8, 100, 2)
 
     # export_samples(10, 100, 304)
 

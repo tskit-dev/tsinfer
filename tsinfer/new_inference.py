@@ -96,8 +96,7 @@ def match_ancestors(
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             for result in executor.map(ancestor_match_worker, ancestor_ids):
-                ancestor_id, h, P, M = result
-                tree_sequence_builder.add_path(ancestor_id, P, h, M)
+                tree_sequence_builder.update(*result)
     else:
         for result in map(ancestor_match_worker, ancestor_ids):
             tree_sequence_builder.update(*result)
@@ -111,15 +110,12 @@ def match_samples(
     def sample_match_worker(sample_id):
 
         if method == "C":
-            traceback = _tsinfer.Traceback(2**10)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
         else:
             traceback = Traceback(store)
             matcher = AncestorMatcher(store, recombination_rate)
         h = samples[sample_id, :]
-        # best_match = matcher.best_path(
-        #         store.num_ancestors, h, 0, store.num_sites, 0, error_rate, traceback)
-        # num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
         end_site_parent = matcher.best_path(
                 store.num_ancestors, h, 0, store.num_sites, -1, error_rate, traceback)
         return sample_id, h, end_site_parent, traceback
@@ -127,9 +123,12 @@ def match_samples(
     if num_threads > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             for result in executor.map(sample_match_worker, sample_ids):
-                sample_id, h, P, M = result
-                tree_sequence_builder.add_path(
-                    store.num_ancestors + sample_id + 1, P, h, M)
+                sample_id, h, end_site_parent, traceback = result
+                tree_sequence_builder.update(
+                    child=store.num_ancestors + sample_id,
+                    haplotype=h, start_site=0, end_site=store.num_sites,
+                    end_site_parent=end_site_parent, traceback=traceback)
+
     else:
         for result in map(sample_match_worker, sample_ids):
             sample_id, h, end_site_parent, traceback = result
@@ -169,7 +168,6 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
 
     sites = msprime.SiteTable()
     mutations= msprime.MutationTable()
-
     # print(nodes)
     # print(edgesets)
 
@@ -189,7 +187,6 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads)
-
     ts = finalise_tree_sequence(num_samples, store, tree_sequence_builder)
 
     # tree_sequence_builder.print_state()
