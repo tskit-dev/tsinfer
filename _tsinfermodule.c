@@ -45,8 +45,14 @@ typedef struct {
 typedef struct {
     PyObject_HEAD
     traceback_t *traceback;
-    AncestorStore *store;
 } Traceback;
+
+typedef struct {
+    PyObject_HEAD
+    tree_sequence_builder_t *tree_sequence_builder;
+    AncestorStore *store;
+} TreeSequenceBuilder;
+
 
 /* Deprecated */
 typedef struct {
@@ -740,9 +746,12 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"position", "site", "start", "end", "state", NULL};
+    static char *kwlist[] = {"position", "focal_site", "site", "start", "end",
+        "state", NULL};
     PyObject *position = NULL;
     PyArrayObject *position_array = NULL;
+    PyObject *focal_site = NULL;
+    PyArrayObject *focal_site_array = NULL;
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
@@ -751,12 +760,12 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *end_array = NULL;
     PyObject *state = NULL;
     PyArrayObject *state_array = NULL;
-    size_t num_sites, total_segments;
+    size_t num_sites, num_ancestors, total_segments;
     npy_intp *shape;
 
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOO", kwlist,
-            &position, &site, &start, &end, &state)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOO", kwlist,
+            &position, &focal_site, &site, &start, &end, &state)) {
         goto out;
     }
     /* position */
@@ -773,6 +782,22 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     num_sites = shape[0];
     if (num_sites < 1) {
         PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
+        goto out;
+    }
+    /* focal_site */
+    focal_site_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site, NPY_UINT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (focal_site_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(focal_site_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(focal_site_array);
+    num_ancestors = shape[0];
+    if (num_ancestors < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 ancestors");
         goto out;
     }
     /* site */
@@ -838,8 +863,9 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = ancestor_store_alloc(self->store, num_sites,
-        (double *) PyArray_DATA(position_array),
+    err = ancestor_store_alloc(self->store,
+        num_sites, (double *) PyArray_DATA(position_array),
+        num_ancestors, (uint32_t *) PyArray_DATA(focal_site_array),
         total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
@@ -852,6 +878,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     ret = 0;
 out:
     Py_XDECREF(position_array);
+    Py_XDECREF(focal_site_array);
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);
@@ -867,7 +894,7 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     unsigned long ancestor_id;
-    site_id_t start, end;
+    site_id_t start, focal, end;
     size_t num_sites;
     npy_intp *shape;
 
@@ -895,14 +922,14 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_store_get_ancestor(self->store, ancestor_id,
-        (int8_t *) PyArray_DATA(haplotype_array), &start, &end);
+        (int8_t *) PyArray_DATA(haplotype_array), &start, &focal, &end);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
     Py_DECREF(haplotype_array);
-    return Py_BuildValue("ii", (int) start, (int) end);
+    return Py_BuildValue("iii", (int) start, (int) focal, (int) end);
 fail:
     PyArray_XDECREF_ERR(haplotype_array);
     return NULL;
@@ -1127,7 +1154,6 @@ Traceback_dealloc(Traceback* self)
         PyMem_Free(self->traceback);
         self->traceback = NULL;
     }
-    Py_XDECREF(self->store);
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -1136,19 +1162,13 @@ Traceback_init(Traceback *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"store", "segment_block_size", NULL};
-    AncestorStore *store = NULL;
+    static char *kwlist[] = {"num_sites", "segment_block_size", NULL};
     unsigned long segment_block_size = 1024 * 1024;
+    unsigned long num_sites;
 
     self->traceback = NULL;
-    self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!k", kwlist,
-                &AncestorStoreType, &store, &segment_block_size)) {
-        goto out;
-    }
-    self->store = store;
-    Py_INCREF(self->store);
-    if (AncestorStore_check_state(self->store) != 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k|k", kwlist,
+                &num_sites, &segment_block_size)) {
         goto out;
     }
     self->traceback = PyMem_Malloc(sizeof(traceback_t));
@@ -1156,7 +1176,7 @@ Traceback_init(Traceback *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = traceback_alloc(self->traceback, self->store->store, segment_block_size);
+    err = traceback_alloc(self->traceback, num_sites, segment_block_size);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1164,95 +1184,6 @@ Traceback_init(Traceback *self, PyObject *args, PyObject *kwds)
     ret = 0;
 out:
     return ret;
-}
-
-static PyObject *
-Traceback_run(Traceback *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    static char *kwlist[] = {"start_site", "end_site", "end_site_value",
-        "haplotype", "path", "mutation_sites", NULL};
-    PyObject *haplotype = NULL;
-    PyObject *path = NULL;
-    PyObject *mutation_sites = NULL;
-    PyArrayObject *path_array = NULL;
-    PyArrayObject *haplotype_array = NULL;
-    PyArrayObject *mutation_sites_array = NULL;
-    unsigned long start_site, end_site, end_site_value;
-    size_t num_mutations, num_sites;
-    npy_intp *shape;
-
-    if (Traceback_check_state(self) != 0) {
-        goto fail;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OkkkO!O!", kwlist,
-            &haplotype, &start_site, &end_site, &end_site_value,
-            &PyArray_Type, &path, &PyArray_Type, &mutation_sites)) {
-        goto fail;
-    }
-    num_sites = self->traceback->store->num_sites;
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (haplotype_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(haplotype_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
-        goto fail;
-    }
-    path_array = (PyArrayObject *) PyArray_FROM_OTF(path, NPY_INT32,
-            NPY_ARRAY_INOUT_ARRAY);
-    if (path_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(path_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(path_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input path wrong size");
-        goto fail;
-    }
-    mutation_sites_array = (PyArrayObject *) PyArray_FROM_OTF(mutation_sites, NPY_UINT32,
-            NPY_ARRAY_INOUT_ARRAY);
-    if (mutation_sites_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(mutation_sites_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(mutation_sites_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input mutation_sites wrong size");
-        goto fail;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = traceback_run(self->traceback,
-        (int8_t *) PyArray_DATA(haplotype_array),
-        start_site, end_site, end_site_value,
-        (int32_t *) PyArray_DATA(path_array),
-        &num_mutations, (uint32_t *) PyArray_DATA(mutation_sites_array));
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto fail;
-    }
-    Py_DECREF(haplotype_array);
-    Py_DECREF(path_array);
-    Py_DECREF(mutation_sites_array);
-    return Py_BuildValue("k", (unsigned long) num_mutations);
-fail:
-    Py_XDECREF(haplotype_array);
-    PyArray_XDECREF_ERR(path_array);
-    PyArray_XDECREF_ERR(mutation_sites_array);
-    return NULL;
 }
 
 static PyObject *
@@ -1285,8 +1216,6 @@ static PyMemberDef Traceback_members[] = {
 };
 
 static PyMethodDef Traceback_methods[] = {
-    {"run", (PyCFunction) Traceback_run, METH_VARARGS|METH_KEYWORDS,
-        "Runs the traceback and fills the numpy array with the best path."},
     {"reset", (PyCFunction) Traceback_reset, METH_VARARGS|METH_KEYWORDS,
         "Resets the traceback, making it ready for reuse.."},
     {NULL}  /* Sentinel */
@@ -1401,12 +1330,12 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int err;
     PyObject *ret = NULL;
     static char *kwlist[] = {"num_ancestors", "haplotype", "start_site", "end_site",
-        "mutation_rate", "traceback", NULL};
+        "focal_site", "error_rate", "traceback", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     Traceback *traceback = NULL;
-    double mutation_rate;
-    unsigned long num_ancestors, start_site, end_site;
+    double error_rate;
+    unsigned long num_ancestors, start_site, end_site, focal_site;
     ancestor_id_t end_site_value;
     size_t num_sites;
     npy_intp *shape;
@@ -1414,9 +1343,9 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkdO!", kwlist,
-            &num_ancestors, &haplotype, &start_site, &end_site, &mutation_rate,
-            &TracebackType, &traceback)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkkdO!", kwlist,
+            &num_ancestors, &haplotype, &start_site, &end_site, &focal_site,
+            &error_rate, &TracebackType, &traceback)) {
         goto out;
     }
     Py_INCREF(traceback);
@@ -1446,7 +1375,7 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_best_path(self->matcher, num_ancestors,
         (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
-        mutation_rate, traceback->traceback, &end_site_value);
+        focal_site, error_rate, traceback->traceback, &end_site_value);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -1508,6 +1437,363 @@ static PyTypeObject AncestorMatcherType = {
     0,                         /* tp_descr_set */
     0,                         /* tp_dictoffset */
     (initproc)AncestorMatcher_init,      /* tp_init */
+};
+
+/*===================================================================
+ * TreeSequenceBuilder
+ *===================================================================
+ */
+
+static int
+TreeSequenceBuilder_check_state(TreeSequenceBuilder *self)
+{
+    int ret = 0;
+    if (self->tree_sequence_builder == NULL) {
+        PyErr_SetString(PyExc_SystemError, "TreeSequenceBuilder not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+TreeSequenceBuilder_dealloc(TreeSequenceBuilder* self)
+{
+    if (self->tree_sequence_builder != NULL) {
+        tree_sequence_builder_free(self->tree_sequence_builder);
+        PyMem_Free(self->tree_sequence_builder);
+        self->tree_sequence_builder = NULL;
+    }
+    Py_XDECREF(self->store);
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"store", "num_samples", "segment_block_size",
+       "child_list_node_block_size", NULL};
+    AncestorStore *store = NULL;
+    unsigned long num_samples;
+    unsigned long segment_block_size = 1024 * 1024;
+    unsigned long child_list_node_block_size = 1024 * 1024;
+
+    self->tree_sequence_builder = NULL;
+    self->store = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!k|kk", kwlist,
+                &AncestorStoreType, &store, &num_samples,
+                &segment_block_size, &child_list_node_block_size)) {
+        goto out;
+    }
+    self->store = store;
+    Py_INCREF(self->store);
+    if (AncestorStore_check_state(self->store) != 0) {
+        goto out;
+    }
+    self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
+    if (self->tree_sequence_builder == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = tree_sequence_builder_alloc(self->tree_sequence_builder, self->store->store,
+            num_samples, segment_block_size, child_list_node_block_size);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"child", "haplotype", "start_site", "end_site",
+        "end_site_parent", "traceback", NULL};
+    PyObject *haplotype = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    Traceback *traceback = NULL;
+    unsigned long child_id, start_site, end_site, end_site_parent;
+    size_t num_sites;
+    npy_intp *shape;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkkO!", kwlist,
+            &child_id, &haplotype, &start_site, &end_site, &end_site_parent,
+            &TracebackType, &traceback)) {
+        goto out;
+    }
+    Py_INCREF(traceback);
+    num_sites = self->tree_sequence_builder->store->num_sites;
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (haplotype_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
+        goto out;
+    }
+    if (start_site >= end_site) {
+        PyErr_SetString(PyExc_ValueError, "start must be < end");
+        goto out;
+    }
+    if (end_site > num_sites) {
+        PyErr_SetString(PyExc_ValueError, "end must be <= num_sites");
+        goto out;
+    }
+    if (end_site_parent >= self->tree_sequence_builder->store->num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "parent must be valid node id.");
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_update(self->tree_sequence_builder, child_id,
+        (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
+        end_site_parent, traceback->traceback);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    Py_XDECREF(haplotype_array);
+    Py_XDECREF(traceback);
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_dump_edgesets(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"left", "right", "parent", "children",
+        "children_length", NULL};
+    PyObject *left = NULL;
+    PyArrayObject *left_array = NULL;
+    PyObject *right = NULL;
+    PyArrayObject *right_array = NULL;
+    PyObject *parent = NULL;
+    PyArrayObject *parent_array = NULL;
+    PyObject *children = NULL;
+    PyArrayObject *children_array = NULL;
+    PyObject *children_length = NULL;
+    PyArrayObject *children_length_array = NULL;
+    size_t num_edgesets, num_children;
+    npy_intp *shape;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!O!O!", kwlist,
+            &PyArray_Type, &left,
+            &PyArray_Type, &right,
+            &PyArray_Type, &parent,
+            &PyArray_Type, &children,
+            &PyArray_Type, &children_length)) {
+        goto fail;
+    }
+    num_edgesets = self->tree_sequence_builder->num_edgesets;
+    num_children = self->tree_sequence_builder->num_children;
+    /* left */
+    left_array = (PyArrayObject *) PyArray_FROM_OTF(left, NPY_FLOAT64,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (left_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(left_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(left_array);
+    if (shape[0] != num_edgesets) {
+        PyErr_SetString(PyExc_ValueError, "input left wrong size");
+        goto fail;
+    }
+    /* right */
+    right_array = (PyArrayObject *) PyArray_FROM_OTF(right, NPY_FLOAT64,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (right_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(right_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(right_array);
+    if (shape[0] != num_edgesets) {
+        PyErr_SetString(PyExc_ValueError, "input right wrong size");
+        goto fail;
+    }
+    /* parent */
+    parent_array = (PyArrayObject *) PyArray_FROM_OTF(parent, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (parent_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(parent_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(parent_array);
+    if (shape[0] != num_edgesets) {
+        PyErr_SetString(PyExc_ValueError, "input parent wrong size");
+        goto fail;
+    }
+    /* children_length */
+    children_length_array = (PyArrayObject *) PyArray_FROM_OTF(children_length, NPY_UINT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (children_length_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(children_length_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(children_length_array);
+    if (shape[0] != num_edgesets) {
+        PyErr_SetString(PyExc_ValueError, "input children_length wrong size");
+        goto fail;
+    }
+    /* children */
+    children_array = (PyArrayObject *) PyArray_FROM_OTF(children, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (children_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(children_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(children_array);
+    if (shape[0] != num_children) {
+        PyErr_SetString(PyExc_ValueError, "input children wrong size");
+        goto fail;
+    }
+
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_dump_edgesets(self->tree_sequence_builder,
+        (double *) PyArray_DATA(left_array),
+        (double *) PyArray_DATA(right_array),
+        (ancestor_id_t *) PyArray_DATA(parent_array),
+        (ancestor_id_t *) PyArray_DATA(children_array),
+        (uint32_t *) PyArray_DATA(children_length_array));
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(left_array);
+    Py_DECREF(right_array);
+    Py_DECREF(parent_array);
+    Py_DECREF(children_array);
+    Py_DECREF(children_length_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(left_array);
+    PyArray_XDECREF_ERR(right_array);
+    PyArray_XDECREF_ERR(parent_array);
+    PyArray_XDECREF_ERR(children_array);
+    PyArray_XDECREF_ERR(children_length_array);
+    return NULL;
+}
+
+static PyObject *
+TreeSequenceBuilder_get_num_edgesets(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_edgesets);
+out:
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_get_num_children(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_children);
+out:
+    return ret;
+}
+
+static PyMemberDef TreeSequenceBuilder_members[] = {
+    {NULL}  /* Sentinel */
+
+};
+
+static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
+    {"num_edgesets", (getter) TreeSequenceBuilder_get_num_edgesets, NULL,
+        "The number of edgesets."},
+    {"num_children", (getter) TreeSequenceBuilder_get_num_children, NULL,
+        "The total number of children."},
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef TreeSequenceBuilder_methods[] = {
+    {"update", (PyCFunction) TreeSequenceBuilder_update,
+        METH_VARARGS|METH_KEYWORDS,
+        "Updates the builder with the specified copy result."},
+    {"dump_edgesets", (PyCFunction) TreeSequenceBuilder_dump_edgesets,
+        METH_VARARGS|METH_KEYWORDS,
+        "Dumps edgeset data into numpy arrays."},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject TreeSequenceBuilderType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.TreeSequenceBuilder",             /* tp_name */
+    sizeof(TreeSequenceBuilder),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)TreeSequenceBuilder_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "TreeSequenceBuilder objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    TreeSequenceBuilder_methods,             /* tp_methods */
+    TreeSequenceBuilder_members,             /* tp_members */
+    TreeSequenceBuilder_getsetters,          /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)TreeSequenceBuilder_init,      /* tp_init */
 };
 
 
@@ -2111,6 +2397,13 @@ init_tsinfer(void)
     }
     Py_INCREF(&TracebackType);
     PyModule_AddObject(module, "Traceback", (PyObject *) &TracebackType);
+    /* TreeSequenceBuilder type */
+    TreeSequenceBuilderType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&TreeSequenceBuilderType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&TreeSequenceBuilderType);
+    PyModule_AddObject(module, "TreeSequenceBuilder", (PyObject *) &TreeSequenceBuilderType);
     /* ReferencePanel type */
     ReferencePanelType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&ReferencePanelType) < 0) {

@@ -14,20 +14,20 @@ traceback_print_state(traceback_t *self, FILE *out)
 }
 
 int
-traceback_alloc(traceback_t *self, ancestor_store_t *store, size_t segment_block_size)
+traceback_alloc(traceback_t *self, size_t num_sites, size_t segment_block_size)
 {
     int ret = 0;
 
     memset(self, 0, sizeof(traceback_t));
-    self->store = store;
+    self->num_sites = num_sites;
     self->segment_block_size = segment_block_size;
     ret = object_heap_init(&self->segment_heap, sizeof(segment_t),
            self->segment_block_size, NULL);
     if (ret != 0) {
         goto out;
     }
-    self->sites_head = calloc(store->num_sites, sizeof(segment_t *));
-    self->sites_tail = calloc(store->num_sites, sizeof(segment_t *));
+    self->sites_head = calloc(self->num_sites, sizeof(segment_t *));
+    self->sites_tail = calloc(self->num_sites, sizeof(segment_t *));
     if (self->sites_head == NULL || self->sites_tail == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -77,7 +77,7 @@ traceback_reset(traceback_t *self)
     size_t l;
     segment_t *v, *tmp;
 
-    for (l = 0; l < self->store->num_sites; l++) {
+    for (l = 0; l < self->num_sites; l++) {
         v = self->sites_head[l];
         while (v != NULL) {
             tmp = v;
@@ -124,6 +124,7 @@ out:
     return ret;
 }
 
+#if 0
 int
 traceback_run(traceback_t *self, allele_t *haplotype,
         site_id_t start_site, site_id_t end_site, ancestor_id_t end_site_value,
@@ -183,68 +184,4 @@ traceback_run(traceback_t *self, allele_t *haplotype,
 out:
     return ret;
 }
-
-#if 0
-static int
-ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype,
-        segment_t **T_head, site_id_t start_site, site_id_t end_site,
-        ancestor_id_t best_match, ancestor_id_t *path, size_t *num_mutations,
-        site_id_t *mutation_sites)
-{
-    int ret = 0;
-    site_id_t l;
-    ancestor_id_t p;
-    segment_t *u;
-    allele_t state;
-    size_t local_num_mutations = 0;
-
-    /* printf("traceback for %d-%d, best=%d\n", start_site, end_site, best_match); */
-    /* Set everything to -1 */
-    memset(path, 0xff, self->store->num_sites * sizeof(ancestor_id_t));
-    path[end_site] = best_match;
-    for (l = end_site; l > start_site; l--) {
-        /* printf("Tracing back at site %d\n", l); */
-        /* print_segment_chain(T_head[l], 1, stdout); */
-        /* printf("\n"); */
-        ret = ancestor_store_get_state(self->store, l, path[l], &state);
-        if (ret != 0) {
-            goto out;
-        }
-        if (state != haplotype[l]) {
-            mutation_sites[local_num_mutations] = l;
-            local_num_mutations++;
-        }
-
-        p = (ancestor_id_t) -1;
-        u = T_head[l];
-        while (u != NULL) {
-            if (u->start <= path[l] && path[l] < u->end) {
-                p = (ancestor_id_t) u->value;
-                break;
-            }
-            if (u->start > path[l]) {
-                break;
-            }
-            u = u->next;
-        }
-        if (p == (ancestor_id_t) -1) {
-            p = path[l];
-        }
-        path[l - 1] = p;
-    }
-    l = start_site;
-    ret = ancestor_store_get_state(self->store, l, path[l], &state);
-    if (ret != 0) {
-        goto out;
-    }
-    if (state != haplotype[l]) {
-        mutation_sites[local_num_mutations] = l;
-        local_num_mutations++;
-    }
-    *num_mutations = local_num_mutations;
-out:
-    return ret;
-}
 #endif
-
-

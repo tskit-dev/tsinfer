@@ -449,12 +449,13 @@ def new_segments(n, L, seed):
     for variant in ts.variants():
         S2[:,variant.index] = variant.genotypes
 
-    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=1, method="P")
+    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=1, method="C")
+    # TODO turn back on checks!
 
-    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-    for variant in tsp.variants():
-        Sp[:, variant.index] = variant.genotypes
-    assert np.all(Sp == S)
+    # Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    # for variant in tsp.variants():
+    #     Sp[:, variant.index] = variant.genotypes
+    # assert np.all(Sp == S)
     # print(S)
     # print()
     # print(Sp)
@@ -472,10 +473,10 @@ def new_segments(n, L, seed):
     #     print(e.left, e.right, e.parent, e.children, sep="\t")
     # print()
 
-    Sp = np.zeros((ts_simplified.sample_size, ts_simplified.num_sites), dtype="i1")
-    for variant in ts_simplified.variants():
-        Sp[:, variant.index] = variant.genotypes
-    assert np.all(Sp == S)
+    # Sp = np.zeros((ts_simplified.sample_size, ts_simplified.num_sites), dtype="i1")
+    # for variant in ts_simplified.variants():
+    #     Sp[:, variant.index] = variant.genotypes
+    # assert np.all(Sp == S)
 
 
 
@@ -628,11 +629,14 @@ if __name__ == "__main__":
     #     segment_algorithm(100, m)
         # print()
     # segment_stats()
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(8, 10, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(100, 10, j)
     # new_segments(40, 10, 1)
-    # new_segments(4, 8, 304)
+    # new_segments(40, 20, 304)
+
+    # SEGFAAULTS
+    new_segments(8, 100, 2)
 
     # export_samples(10, 100, 304)
 
@@ -662,12 +666,12 @@ if __name__ == "__main__":
     #     # load_ancestors(filename)
     #     print()
 
-    for j in range(1, 10000):
-    # for j in [4]:
-        print(j, file=sys.stderr)
-        filename = "tmp__NOBACKUP__/tmp-3.hdf5"
-        build_ancestors(20, 0.2 * 10**6, j, filename)
-        load_ancestors_dev(filename)
+    # for j in range(1, 10000):
+    # # for j in [4]:
+    #     print(j, file=sys.stderr)
+    #     filename = "tmp__NOBACKUP__/tmp-3.hdf5"
+    #     build_ancestors(20, 0.2 * 10**6, j, filename)
+    #     load_ancestors_dev(filename)
 
 #     filename = "tmp__NOBACKUP__/tmp2.hdf5"
 #     build_ancestors(10, 0.1 * 10**6, 3, filename)

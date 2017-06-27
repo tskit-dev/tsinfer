@@ -58,7 +58,8 @@ ancestor_matcher_free(ancestor_matcher_t *self)
 int
 ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        double mutation_rate, traceback_t *traceback, ancestor_id_t *end_site_value)
+        site_id_t focal_site, double mutation_rate, traceback_t *traceback,
+        ancestor_id_t *end_site_value)
 {
     int ret = 0;
     double rho = self->recombination_rate;

@@ -44,7 +44,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
 
     frequency_classes = builder.get_frequency_classes()
     num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
-    ancestor_focal_site = np.zeros(num_ancestors, dtype=np.int32)
+    ancestor_focal_site = np.zeros(num_ancestors, dtype=np.uint32)
     ancestor_focal_site[0] = -1
     k = 1
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -65,7 +65,8 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
 
     if method == "C":
         store = _tsinfer.AncestorStore(
-            num_sites=builder.num_sites, site=site, start=start, end=end, state=state)
+            position=positions, site=site, start=start, end=end, state=state,
+            focal_site=ancestor_focal_site)
     else:
         store = AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
@@ -78,35 +79,29 @@ def match_ancestors(
     def ancestor_match_worker(ancestor_id):
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store, 2**10)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
-        P = np.zeros(store.num_sites, dtype=np.int32)
-        M = np.zeros(store.num_sites, dtype=np.uint32)
         start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
         # print(start_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(ancestor_id, "\t", a)
-        best_match = matcher.best_path(
+        end_site_parent = matcher.best_path(
                 ancestor_id, h, start_site, end_site, focal_site, 0, traceback)
-        # num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
-        # traceback.run_build_ts(
-        #     h, start_site, end_site, best_match, tree_sequence_builder, ancestor_id)
-        # traceback.reset()
-        # assert num_mutations == 1
-        return ancestor_id, h, traceback
+        return ancestor_id, h, start_site, end_site, end_site_parent, traceback
 
     if num_threads > 1:
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             for result in executor.map(ancestor_match_worker, ancestor_ids):
                 ancestor_id, h, P, M = result
                 tree_sequence_builder.add_path(ancestor_id, P, h, M)
     else:
         for result in map(ancestor_match_worker, ancestor_ids):
-            ancestor_id, h, P, M = result
-            tree_sequence_builder.add_path(ancestor_id, P, h, M)
+            tree_sequence_builder.update(*result)
+
 
 def match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
@@ -116,19 +111,18 @@ def match_samples(
     def sample_match_worker(sample_id):
 
         if method == "C":
-            traceback = _tsinfer.Traceback(store, 2**10)
+            traceback = _tsinfer.Traceback(2**10)
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
         else:
             traceback = Traceback(store)
             matcher = AncestorMatcher(store, recombination_rate)
-        h = np.zeros(store.num_sites, dtype=np.int8)
-        P = np.zeros(store.num_sites, dtype=np.int32)
-        M = np.zeros(store.num_sites, dtype=np.uint32)
         h = samples[sample_id, :]
-        best_match = matcher.best_path(
-                store.num_ancestors, h, 0, store.num_sites, 0, error_rate, traceback)
-        num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
-        return sample_id, h, P, M[:num_mutations]
+        # best_match = matcher.best_path(
+        #         store.num_ancestors, h, 0, store.num_sites, 0, error_rate, traceback)
+        # num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
+        end_site_parent = matcher.best_path(
+                store.num_ancestors, h, 0, store.num_sites, -1, error_rate, traceback)
+        return sample_id, h, end_site_parent, traceback
 
     if num_threads > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -138,18 +132,57 @@ def match_samples(
                     store.num_ancestors + sample_id + 1, P, h, M)
     else:
         for result in map(sample_match_worker, sample_ids):
-            sample_id, h, P, M = result
-            sample_id, h, P, M = result
-            tree_sequence_builder.add_path(
-                store.num_ancestors + sample_id + 1, P, h, M)
+            sample_id, h, end_site_parent, traceback = result
+            tree_sequence_builder.update(
+                child=store.num_ancestors + sample_id,
+                haplotype=h, start_site=0, end_site=store.num_sites,
+                end_site_parent=end_site_parent, traceback=traceback)
+
+
+def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
+
+    # Allocate the nodes table.
+    num_nodes = store.num_ancestors + num_samples
+    num_ancestors = store.num_ancestors
+    flags = np.zeros(num_nodes, dtype=np.uint32)
+    flags[num_ancestors:] = msprime.NODE_IS_SAMPLE
+    time = np.zeros(num_nodes, dtype=np.float64)
+    time[:num_ancestors] = num_ancestors - np.arange(num_ancestors)
+    nodes = msprime.NodeTable()
+    nodes.set_columns(flags=flags, time=time)
+    del flags, time
+
+    num_edgesets = tree_sequence_builder.num_edgesets
+    num_children = tree_sequence_builder.num_children
+    left = np.empty(num_edgesets, dtype=np.float64)
+    right = np.empty(num_edgesets, dtype=np.float64)
+    parent = np.empty(num_edgesets, dtype=np.int32)
+    children = np.empty(num_children, dtype=np.int32)
+    children_length = np.empty(num_edgesets, dtype=np.uint32)
+    tree_sequence_builder.dump_edgesets(
+        left, right, parent, children, children_length)
+    edgesets = msprime.EdgesetTable()
+    edgesets.set_columns(
+        left=left, right=right, parent=parent, children=children,
+        children_length=children_length)
+    del left, right, parent, children, children_length
+
+    sites = msprime.SiteTable()
+    mutations= msprime.MutationTable()
+
+    # print(nodes)
+    # print(edgesets)
+
+    ts = msprime.load_tables(
+        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    return ts
 
 
 def infer(samples, positions, recombination_rate, error_rate, method="C",
         num_threads=1):
     num_samples, num_sites = samples.shape
     store = build_ancestors(samples, positions, num_threads=num_threads, method=method)
-    tree_sequence_builder = TreeSequenceBuilder(
-        num_samples, store.num_ancestors, num_sites)
+    tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
     match_ancestors(
         store, recombination_rate, tree_sequence_builder, method=method,
         num_threads=num_threads)
@@ -157,8 +190,10 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads)
 
+    ts = finalise_tree_sequence(num_samples, store, tree_sequence_builder)
+
     # tree_sequence_builder.print_state()
-    ts = tree_sequence_builder.finalise()
+    # ts = tree_sequence_builder.finalise()
 
     # for e in ts.edgesets():
     #     print(e)
