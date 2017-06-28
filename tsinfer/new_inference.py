@@ -30,6 +30,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     store_builder = _tsinfer.AncestorStoreBuilder(
             builder.num_sites, 8192 * builder.num_sites)
 
+    # TODO change this to use threads as futures leak result memory.
     def build_frequency_class(work):
         frequency, focal_sites = work
         num_ancestors = len(focal_sites)

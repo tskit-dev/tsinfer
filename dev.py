@@ -30,17 +30,6 @@ import msprime
 
 
 
-@attr.s
-class LinkedSegment(object):
-    """
-    A mapping of a half-open interval to a specific value in a linked list.
-    Lists of segments must not contain overlapping intervals.
-    """
-    start = attr.ib(default=None)
-    end = attr.ib(default=None)
-    value = attr.ib(default=None)
-    next = attr.ib(default=None)
-
 def load_ancestors_dev(filename):
 
     with h5py.File(filename, "r") as f:
@@ -571,20 +560,74 @@ def ancestor_gap_density(n, L, seed):
         "total_blank_fraction": total_blank_segments_distance / (num_sites * num_ancestors)
     }
 
+def site_set_stats(n, L, seed):
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    # print("n          = ", n)
+    # print("L          = ", L / 10**6, "Mb")
+    # print("sites      = ", ts.num_sites)
+
+    positions = [site.position for site in ts.sites()]
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+
+    num_samples, num_sites = S.shape
+    builder = _tsinfer.AncestorBuilder(S, positions)
+    store_builder = _tsinfer.AncestorStoreBuilder(
+            builder.num_sites, 8192 * builder.num_sites)
+    frequency_classes = builder.get_frequency_classes()
+    num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
+    # print("ancestors  = ", num_ancestors)
+
+    A = np.zeros((num_ancestors, num_sites), dtype=np.int8)
+    j = 1
+    for frequency, focal_sites in builder.get_frequency_classes():
+        for focal_site in focal_sites:
+            assert np.sum(S[:, focal_site]) == frequency
+
+            builder.make_ancestor(focal_site, A[j, :])
+            j += 1
+    sparsity = np.sum(A == -1) / (num_ancestors * num_sites)
+    # print("sparsity   = ", sparsity)
+    last_zeros = set()
+    last_ones = set()
+    last_zeros = set(np.where(A[:, 0] == 0)[0])
+    last_ones = set(np.where(A[:, 0] == 1)[0])
+    total_diffs = np.zeros(num_sites)
+    for l in range(1, num_sites):
+        zeros = set(np.where(A[:, l] == 0)[0])
+        ones = set(np.where(A[:, l] == 1)[0])
+        zeros_diff = zeros ^ last_zeros
+        ones_diff = ones ^ last_ones
+        total_diffs[l] += len(zeros_diff) + len(ones_diff)
+        last_zeros = zeros
+        last_ones = ones
+    # print("mean diffs = ", np.mean(total_diffs))
+    return {
+        "n": n,
+        "L": L,
+        "sites": ts.num_sites,
+        "ancestors": num_ancestors,
+        "sparsity": sparsity,
+        "mean_diffs": np.mean(total_diffs)
+    }
 
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(200, 100, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
 
     # export_samples(10, 100, 304)
+
 
     # n = 10
     # for L in np.linspace(100, 1000, 10):
@@ -628,7 +671,12 @@ if __name__ == "__main__":
     # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
-    # for j in range(1, 100000):
-    #     build_ancestors(10, 10, j)
-    #     if j % 1000 == 0:
-    #         print(j)
+    rows = []
+    for n in [10, 100, 1000, 10000]:
+        for l in range(1, 11):
+            d = site_set_stats(n, l * 10 * 10**6, 2)
+            rows.append(d)
+            df = pd.DataFrame(rows)
+            print(df)
+            df.to_csv("diff-analysis.csv")
+
