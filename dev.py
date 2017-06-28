@@ -577,9 +577,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(200, 100, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -601,16 +601,16 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    n = 10
-    for j in np.arange(101, 200, 10):
-        print("n                :", n)
-        print("L                :", j, "Mb")
-        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-        build_ancestors(n, j * 10**6, 1, filename)
-        # if not os.path.exists(filename):
-        #     break
-        # load_ancestors(filename, num_threads=40)
-        print()
+    # n = 10
+    # for j in np.arange(101, 200, 10):
+    #     print("n                :", n)
+    #     print("L                :", j, "Mb")
+    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+    #     build_ancestors(n, j * 10**6, 1, filename)
+    #     # if not os.path.exists(filename):
+    #     #     break
+    #     # load_ancestors(filename, num_threads=40)
+    #     print()
 
     # for j in range(1, 10000):
     # # for j in [4]:

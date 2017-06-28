@@ -128,6 +128,7 @@ object_heap_init(object_heap_t *self, size_t object_size, size_t block_size,
 {
     int ret = -1;
 
+    assert(block_size > 0);
     memset(self, 0, sizeof(object_heap_t));
     self->block_size = block_size;
     self->size = block_size;

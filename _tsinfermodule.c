@@ -1502,6 +1502,9 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
         /* We expect there to be almost exactly num_sites mutations, so we don't
          * want to use too much memory if we go slightly over. */
         mutation_list_node_block_size = self->store->store->num_sites / 4;
+        if (mutation_list_node_block_size < 1024) {
+            mutation_list_node_block_size = 1024;
+        }
     }
     err = tree_sequence_builder_alloc(self->tree_sequence_builder, self->store->store,
             num_samples, segment_block_size, child_list_node_block_size,
