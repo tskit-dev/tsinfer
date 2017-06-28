@@ -180,6 +180,7 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
         num_threads=1):
     num_samples, num_sites = samples.shape
     store = build_ancestors(samples, positions, num_threads=num_threads, method=method)
+
     tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
     match_ancestors(
         store, recombination_rate, tree_sequence_builder, method=method,
@@ -746,7 +747,7 @@ class AncestorMatcher(object):
             # Compute the recombination rate.
             # TODO also need to get the position here so we can get the length of the
             # region.
-            rho = self.recombination_rate * (self.store.sites[site].position * last_position)
+            rho = self.recombination_rate * (self.store.sites[site].position - last_position)
             r = 1 - np.exp(-rho / possible_recombinants)
             pr = r / possible_recombinants
             qr = 1 - r + r / possible_recombinants

@@ -58,19 +58,11 @@ ancestor_matcher_free(ancestor_matcher_t *self)
 int
 ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        site_id_t focal_site, double mutation_rate, traceback_t *traceback,
+        site_id_t focal_site, double error_rate, traceback_t *traceback,
         ancestor_id_t *end_site_value)
 {
     int ret = 0;
-    double rho = self->recombination_rate;
-    double theta = mutation_rate;
-    double n = (double) self->store->num_ancestors;
-    double r = 1 - exp(-rho / n);
-    double pr = r / n;
-    double qr = 1 - r + r / n;
-    // pm = mutation; qm no mutation
-    double pm = 0.5 * theta / (n + theta);
-    double qm = n / (n + theta) + 0.5 * theta / (n + theta);
+    double rho, r, pr, qr, possible_recombinants;
     ancestor_id_t N = (ancestor_id_t) num_ancestors;
     site_id_t site_id;
     ancestor_id_t start, end;
@@ -88,6 +80,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     size_t l, s, L_size, S_size, L_next_size;
     /* TODO Is it really safe to have an upper bound here? */
     size_t max_segments = self->store->max_num_site_segments * 32;
+    double last_position;
 
     L_start = malloc(max_segments * sizeof(ancestor_id_t));
     L_end = malloc(max_segments * sizeof(ancestor_id_t));
@@ -106,9 +99,20 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     L_end[0] = N;
     L_likelihood[0] = 1;
     L_size = 1;
+    /* ensure that that the initial recombination rate is 0 */
+    last_position = self->store->sites[start_site].position;
+    possible_recombinants = 1;
 
     best_match = 0;
     for (site_id = start_site; site_id < end_site; site_id++) {
+
+        /* Compute the recombination rate back to the last site */
+        rho = self->recombination_rate * (
+                self->store->sites[site_id].position - last_position);
+        r = 1 - exp(-rho / possible_recombinants);
+        pr = r / possible_recombinants;
+        qr = 1 - r + r / possible_recombinants;
+
         L_next_size = 0;
         /* Make a get_site function in the store here? */
         S_start = self->store->sites[site_id].start;
@@ -168,12 +172,24 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
                         goto out;
                     }
                 }
-                if (S_state[s] == haplotype[site_id]) {
-                    next_likelihood = z * qm;
+                if (error_rate == 0) {
+                    /* Ancestor matching */
+                    next_likelihood = z * (S_state[s] == haplotype[site_id]);
+                    if (site_id== focal_site) {
+                        assert(haplotype[site_id] == 1);
+                        assert(S_state[s] == 0);
+                        next_likelihood = z;
+                    }
                 } else {
-                    next_likelihood = z * pm;
+                    /* Sample matching */
+                    if (S_state[s] == haplotype[site_id]) {
+                        next_likelihood = z * (1 - error_rate);
+                    } else {
+                        next_likelihood = z * error_rate;
+                    }
                 }
                 /* printf("next_likelihood = %f\n", next_likelihood); */
+
                 /* Update L_next */
                 if (L_next_size == 0) {
                     L_next_size = 1;

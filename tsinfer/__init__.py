@@ -16,9 +16,5 @@ if sys.version_info[0] < 3:
 from .inference import ReferencePanel
 from .inference import Illustrator
 
-from .new_inference import AncestorBuilder
-from .new_inference import AncestorStore
-from .new_inference import AncestorMatcher
-from .new_inference import Traceback
-from .new_inference import TreeSequenceBuilder
-from .new_inference import infer
+# TODO make this more specific
+from .new_inference import *
