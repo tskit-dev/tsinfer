@@ -102,6 +102,12 @@ typedef struct child_list_node_t_t {
     struct child_list_node_t_t *next;
 } child_list_node_t;
 
+typedef struct mutation_list_node_t_t {
+    ancestor_id_t node;
+    allele_t derived_state;
+    struct mutation_list_node_t_t *next;
+} mutation_list_node_t;
+
 typedef struct list_segment_t_t {
     site_id_t start;
     site_id_t end;
@@ -116,12 +122,16 @@ typedef struct {
     size_t num_ancestors;
     size_t num_edgesets;
     size_t num_children;
+    size_t num_mutations;
     ancestor_store_t *store;
     size_t segment_block_size;
     size_t child_list_node_block_size;
+    size_t mutation_list_node_block_size;
     list_segment_t **children;
+    mutation_list_node_t **mutations;
     object_heap_t segment_heap;
     object_heap_t child_list_node_heap;
+    object_heap_t mutation_list_node_heap;
 } tree_sequence_builder_t;
 
 int ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
@@ -177,7 +187,8 @@ int traceback_print_state(traceback_t *self, FILE *out);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         ancestor_store_t *store, size_t num_samples,
-        size_t segment_block_size, size_t child_list_node_block_size);
+        size_t segment_block_size, size_t child_list_node_block_size,
+        size_t mutation_list_node_block_size);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
@@ -186,6 +197,8 @@ int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t ch
 int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
         double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children,
         uint32_t *children_length);
+int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
+        site_id_t *site, ancestor_id_t *node, allele_t *derived_state);
 
 void __tsi_safe_free(void **ptr);
 

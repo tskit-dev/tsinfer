@@ -366,20 +366,25 @@ run_generate(const char *sample_file, const char *ancestor_file,
 }
 
 static void
-output_edgesets(tree_sequence_builder_t *ts_builder)
+output_ts(tree_sequence_builder_t *ts_builder)
 {
     int ret = 0;
     size_t j, k, offset;
     size_t num_edgesets = ts_builder->num_edgesets;
     size_t num_children = ts_builder->num_children;
+    size_t num_mutations = ts_builder->num_mutations;
     double *left = malloc(num_edgesets * sizeof(double));
     double *right = malloc(num_edgesets * sizeof(double));
     ancestor_id_t *parent = malloc(num_edgesets * sizeof(ancestor_id_t));
     ancestor_id_t *children = malloc(num_children * sizeof(ancestor_id_t));
     uint32_t *children_length = malloc(num_edgesets * sizeof(uint32_t));
+    site_id_t *site = malloc(num_mutations * sizeof(site_id_t));
+    ancestor_id_t *node = malloc(num_mutations * sizeof(ancestor_id_t));
+    allele_t *derived_state = malloc(num_mutations * sizeof(allele_t));
 
     if (left == NULL || right == NULL || parent == NULL || children == NULL
-            || children_length == NULL) {
+            || children_length == NULL || site == NULL || node == NULL
+            || derived_state == NULL) {
         fatal_error("malloc error\n");
     }
     ret = tree_sequence_builder_dump_edgesets(ts_builder,
@@ -387,6 +392,7 @@ output_edgesets(tree_sequence_builder_t *ts_builder)
     if (ret != 0) {
         fatal_error("dump error");
     }
+    printf("EDGESETS\n");
     offset = 0;
     for (j = 0; j < num_edgesets; j++) {
         printf("%.3f\t%.3f\t%d\t", left[j], right[j], parent[j]);
@@ -399,11 +405,19 @@ output_edgesets(tree_sequence_builder_t *ts_builder)
         }
         printf("\n");
     }
+    ret = tree_sequence_builder_dump_mutations(ts_builder, site, node, derived_state);
+    printf("MUTATIONS\n");
+    for (j = 0; j < num_mutations; j++) {
+        printf("%d\t%d\t%d\n", site[j], node[j], derived_state[j]);
+    }
     free(left);
     free(right);
     free(parent);
     free(children);
     free(children_length);
+    free(site);
+    free(node);
+    free(derived_state);
 }
 
 static void
@@ -438,7 +452,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         fatal_error("alloc error");
     }
     ret = tree_sequence_builder_alloc(&ts_builder, &store, num_samples,
-            8192, 8192);
+            8192, 8192, num_sites / 4);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -506,7 +520,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         tree_sequence_builder_print_state(&ts_builder, stdout);
     }
 
-    output_edgesets(&ts_builder);
+    output_ts(&ts_builder);
 
     tree_sequence_builder_free(&ts_builder);
     ancestor_matcher_free(&matcher);

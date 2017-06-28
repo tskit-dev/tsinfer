@@ -463,44 +463,32 @@ def new_segments(n, L, seed):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
-    print("num_sites = ", ts.num_sites)
     positions = np.array([site.position for site in ts.sites()])
-    S = generate_samples(ts, 0.01)
-
-    # S = generate_samples(ts, 0)
-    S2 = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
-    for variant in ts.variants():
-        S2[:,variant.index] = variant.genotypes
+    # S = generate_samples(ts, 0.01)
+    S = generate_samples(ts, 0)
 
     tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=20, method="C")
-    # TODO turn back on checks!
 
-    # Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-    # for variant in tsp.variants():
-    #     Sp[:, variant.index] = variant.genotypes
-    # assert np.all(Sp == S)
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
     # print(S)
     # print()
     # print(Sp)
+    assert np.all(Sp == S)
 
     # for t in tsp.trees():
     #     print(t.interval, t)
-    for site in tsp.sites():
-        if len(site.mutations) > 1:
-            print("Recurrent mutation")
+    # for site in tsp.sites():
+    #     if len(site.mutations) > 1:
+    #         print("Recurrent mutation")
 
     ts_simplified = tsp.simplify()
-    # for h in ts_simplified.haplotypes():
-    #     print(h)
-    # for e in ts_simplified.edgesets():
-    #     print(e.left, e.right, e.parent, e.children, sep="\t")
-    # print()
-
-    # Sp = np.zeros((ts_simplified.sample_size, ts_simplified.num_sites), dtype="i1")
-    # for variant in ts_simplified.variants():
-    #     Sp[:, variant.index] = variant.genotypes
-    # assert np.all(Sp == S)
-
+    # Need to compare on the haplotypes here because we might have a
+    # ancestral state of 1 after simplify.
+    H = list(tsp.haplotypes())
+    for j in range(S.shape[0]):
+        assert "".join(map(str, S[j])) == H[j]
 
 
 
@@ -640,25 +628,13 @@ if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
-    # main()
-    # example()
-    # bug()
-    # for n in [100, 1000, 10000, 20000, 10**5]:
-    #     ts_ls(n)
-    # ts_ls(20)
-    # leaf_lists_dev()
 
-    # for m in [40]:
-    #     segment_algorithm(100, m)
-        # print()
-    # segment_stats()
+    for j in range(1, 100000):
+        print(j)
+        new_segments(200, 100, j)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(20, 100, j)
-    # # new_segments(40, 10, 1)
+    # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
-
 
     # export_samples(10, 100, 304)
 
@@ -677,16 +653,16 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    n = 10
-    for j in np.arange(1, 100, 10):
-        print("n                :", n)
-        print("L                :", j, "Mb")
-        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-        # build_ancestors(n, j * 10**6, 1, filename)
-        if not os.path.exists(filename):
-            break
-        load_ancestors(filename)
-        print()
+    # n = 10
+    # for j in np.arange(1, 100, 10):
+    #     print("n                :", n)
+    #     print("L                :", j, "Mb")
+    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+    #     # build_ancestors(n, j * 10**6, 1, filename)
+    #     if not os.path.exists(filename):
+    #         break
+    #     load_ancestors(filename)
+    #     print()
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -701,7 +677,7 @@ if __name__ == "__main__":
 #     # compress_ancestors(filename)
 #     load_ancestors_dev(filename)
 
-    # load_ancestors("tmp__NOBACKUP__/n=10_L=1.hdf5")
+    # load_ancestors("tmp__NOBACKUP__/n=10_L=21.hdf5")
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
     # for j in range(1, 100000):

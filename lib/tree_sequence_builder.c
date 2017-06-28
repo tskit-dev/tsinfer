@@ -47,6 +47,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     size_t l;
     list_segment_t *list_node;
     child_list_node_t *u;
+    mutation_list_node_t *v;
 
     fprintf(out, "Tree sequence builder state\n");
     fprintf(out, "num_samples = %d\n", (int) self->num_samples);
@@ -74,10 +75,41 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
+    fprintf(out, "mutations:\n");
+    for (l = 0; l < self->num_sites; l++) {
+        fprintf(out, "%d\t:", (int) l);
+        for (v = self->mutations[l]; v != NULL; v = v->next) {
+            fprintf(out, "(%d, %d)", v->node, v->derived_state);
+            if (v->next != NULL) {
+                fprintf(out, ",");
+            }
+        }
+        fprintf(out, "\n");
+    }
     tree_sequence_builder_check_state(self);
     return 0;
 }
 
+static inline mutation_list_node_t * WARN_UNUSED
+tree_sequence_builder_alloc_mutation_list_node(tree_sequence_builder_t *self,
+        ancestor_id_t node, allele_t derived_state)
+{
+    mutation_list_node_t *ret = NULL;
+
+    if (object_heap_empty(&self->mutation_list_node_heap)) {
+        if (object_heap_expand(&self->mutation_list_node_heap) != 0) {
+            goto out;
+        }
+    }
+    ret = (mutation_list_node_t *) object_heap_alloc_object(
+            &self->mutation_list_node_heap);
+    ret->node = node;
+    ret->derived_state = derived_state;
+    ret->next = NULL;
+    self->num_mutations++;
+out:
+    return ret;
+}
 
 static inline child_list_node_t * WARN_UNUSED
 tree_sequence_builder_alloc_child_list_node(tree_sequence_builder_t *self,
@@ -158,7 +190,8 @@ out:
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         ancestor_store_t *store, size_t num_samples,
-        size_t segment_block_size, size_t child_list_node_block_size)
+        size_t segment_block_size, size_t child_list_node_block_size,
+        size_t mutation_list_node_block_size)
 {
     int ret = 0;
     size_t j;
@@ -170,6 +203,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->num_samples = num_samples;
     self->segment_block_size = segment_block_size;
     self->child_list_node_block_size = child_list_node_block_size;
+    self->mutation_list_node_block_size = mutation_list_node_block_size;
     ret = object_heap_init(&self->segment_heap, sizeof(list_segment_t),
            self->segment_block_size, NULL);
     if (ret != 0) {
@@ -180,8 +214,14 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     if (ret != 0) {
         goto out;
     }
+    ret = object_heap_init(&self->mutation_list_node_heap, sizeof(mutation_list_node_t),
+           self->mutation_list_node_block_size, NULL);
+    if (ret != 0) {
+        goto out;
+    }
     self->children = calloc(self->num_ancestors, sizeof(list_segment_t *));
-    if (self->children == NULL) {
+    self->mutations = calloc(self->num_sites, sizeof(mutation_list_node_t *));
+    if (self->children == NULL || self->mutations == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -202,10 +242,11 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
 {
     object_heap_free(&self->segment_heap);
     object_heap_free(&self->child_list_node_heap);
+    object_heap_free(&self->mutation_list_node_heap);
     tsi_safe_free(self->children);
+    tsi_safe_free(self->mutations);
     return 0;
 }
-
 
 static inline int
 tree_sequence_builder_add_mapping(tree_sequence_builder_t *self, site_id_t start,
@@ -265,6 +306,33 @@ tree_sequence_builder_add_gap(tree_sequence_builder_t *self, site_id_t start,
     return tree_sequence_builder_add_mapping(self, start, end, 0, child);
 }
 
+static inline int
+tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site,
+        ancestor_id_t node, allele_t derived_state)
+{
+    int ret = 0;
+    mutation_list_node_t *u, *v;
+
+    v = tree_sequence_builder_alloc_mutation_list_node(self, node, derived_state);
+    if (v == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    if (self->mutations[site] == NULL) {
+        self->mutations[site] = v;
+    } else {
+        /* It's not worth keeping head and tail pointers for these lists because
+         * we should have small numbers of mutations at each site */
+        u = self->mutations[site];
+        while (u->next != NULL) {
+            u = u->next;
+        }
+        u->next = v;
+    }
+out:
+    return ret;
+}
+
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
@@ -287,8 +355,10 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
             goto out;
         }
         if (state != haplotype[l]) {
-            /* mutation_sites[local_num_mutations] = l; */
-            /* local_num_mutations++; */
+            ret = tree_sequence_builder_add_mutation(self, l, child, haplotype[l]);
+            if (ret != 0) {
+                goto out;
+            }
         }
         p = -1;
         u = traceback->sites_head[l];
@@ -323,8 +393,10 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
         goto out;
     }
     if (state != haplotype[l]) {
-        /* mutation_sites[local_num_mutations] = l; */
-        /* local_num_mutations++; */
+        ret = tree_sequence_builder_add_mutation(self, l, child, haplotype[l]);
+        if (ret != 0) {
+            goto out;
+        }
     }
     if (start_site != 0) {
         ret = tree_sequence_builder_add_gap(self, 0, start_site, child);
@@ -374,5 +446,27 @@ tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
     }
     assert(num_edgesets == self->num_edgesets);
     assert(num_children == self->num_children);
+    return ret;
+}
+
+int
+tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
+        site_id_t *site, ancestor_id_t *node, allele_t *derived_state)
+{
+    int ret = 0;
+    site_id_t l;
+    size_t offset = 0;
+    mutation_list_node_t *u;
+
+    for (l = 0; l < self->num_sites; l++) {
+        for (u = self->mutations[l]; u != NULL; u = u->next) {
+            assert(offset < self->num_mutations);
+            site[offset] = l;
+            node[offset] = u->node;
+            derived_state[offset] = u->derived_state;
+            offset++;
+        }
+    }
+    assert(offset == self->num_mutations);
     return ret;
 }

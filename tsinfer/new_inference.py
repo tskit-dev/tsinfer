@@ -167,9 +167,35 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
     del left, right, parent, children, children_length
 
     sites = msprime.SiteTable()
-    mutations= msprime.MutationTable()
+    ancestral_state = np.zeros(store.num_sites, dtype=np.int8) + ord('0')
+    ancestral_state_length = np.ones(store.num_sites, dtype=np.uint32)
+    # TODO use the real position. Need to translate edgeset coordinates to
+    # real positions also.
+    position = np.arange(store.num_sites, dtype=np.float64)
+    sites.set_columns(
+        position=position, ancestral_state=ancestral_state,
+        ancestral_state_length=ancestral_state_length)
+    del ancestral_state, ancestral_state_length
+
+    num_mutations = tree_sequence_builder.num_mutations
+    site = np.empty(num_mutations, dtype=np.int32)
+    node = np.empty(num_mutations, dtype=np.int32)
+    derived_state = np.empty(num_mutations, dtype=np.int8)
+    derived_state_length = np.ones(num_mutations, dtype=np.uint32)
+    tree_sequence_builder.dump_mutations(
+        site=site, node=node, derived_state=derived_state)
+    # Convert from 0/1 to '0'/'1' chars
+    derived_state += ord('0')
+    mutations = msprime.MutationTable()
+    mutations.set_columns(
+        site=site, node=node, derived_state=derived_state,
+        derived_state_length=derived_state_length)
+    del site, node, derived_state, derived_state_length
+
     # print(nodes)
     # print(edgesets)
+    # print(sites)
+    # print(mutations)
 
     ts = msprime.load_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
@@ -181,7 +207,10 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
     num_samples, num_sites = samples.shape
     store = build_ancestors(samples, positions, num_threads=num_threads, method=method)
 
-    tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
+    if method == "C":
+        tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
+    else:
+        tree_sequence_builder = TreeSequenceBuilder(store, num_samples);
     match_ancestors(
         store, recombination_rate, tree_sequence_builder, method=method,
         num_threads=num_threads)
@@ -247,48 +276,65 @@ class TreeSequenceBuilder(object):
     """
     Builds a tree sequence online using the traceback
     """
-    def __init__(self, num_sites, num_samples, num_internal_nodes):
-        self.num_sites = num_sites
+    def __init__(self, store, num_samples):
+        self.store = store
+        self.num_sites = store.num_sites
         self.num_samples = num_samples
-        self.num_internal_nodes = num_internal_nodes
+        self.num_internal_nodes = store.num_ancestors
+        self.num_mutations = 0
         self.children = [
-            LinkedSegment(0, num_sites, []) for _ in range(num_internal_nodes)]
+            LinkedSegment(0, self.num_sites, []) for _ in range(self.num_internal_nodes)]
         self.mutations = [[] for _ in range(self.num_sites)]
+
+    @property
+    def num_edgesets(self):
+        num_edgesets = 0
+        for head in self.children:
+            u = head
+            while u is not None:
+                if len(u.value) > 0:
+                    num_edgesets += 1
+                u = u.next
+        return num_edgesets
+
+    @property
+    def num_children(self):
+        num_children = 0
+        for head in self.children:
+            u = head
+            while u is not None:
+                num_children += len(u.value)
+                u = u.next
+        return num_children
 
     def add_mutation(self, node, site, derived_state):
         self.mutations[site].append((node, derived_state))
+        self.num_mutations += 1
 
     def add_gap(self, start, end, child):
         # print("Add GAP", start, end, child)
         self.add_mapping(start, end, 0, child)
 
-
     def add_mapping(self, start, end, parent, child):
-        # print("Adding mapping for ", start ,end, "parent=", parent, "child = ", child)
         assert start < end
-        # print("BEFORE")
-        # self.print_row(parent)
         # Skip leading segments
         u = self.children[parent]
         while u.end <= start:
-            # print("\tSKIP", u.start, u.end)
             u = u.next
         if u.start < start:
-            # print("\tTRIM LEAD", u.start, u.end)
             v =LinkedSegment(start, u.end, list(u.value), u.next)
             u.end = start
             u.next = v
             u = v
         while u is not None and u.end <= end:
-            # print("\tAPPEND", u.start, u.end)
             u.value.append(child)
             u = u.next
         if u is not None and end > u.start:
-            # print("\tTRIM TAIL", u.start, u.end)
             v = LinkedSegment(end, u.end, list(u.value), u.next)
             u.end = end
             u.next = v
             u.value.append(child)
+
         # print("AFTER")
         # self.print_row(parent)
         # Check integrity
@@ -299,6 +345,49 @@ class TreeSequenceBuilder(object):
             # else:
             #     assert child not in u.value
             u = u.next
+
+    def update(
+            self, child=None, haplotype=None, start_site=None, end_site=None,
+            end_site_parent=None, traceback=None):
+        """
+        """
+        # print("Running traceback on ", start_site, end_site, end_site_value)
+        # self.print_state()
+        end = end_site
+        parent = end_site_parent
+        T = traceback.site_head
+        for l in range(end_site - 1, start_site, -1):
+            state = self.store.get_state(l, parent)
+            # print("l = ", l, "state = ", state, "parent = ", parent)
+            assert state != -1
+            if state != haplotype[l]:
+                self.add_mutation(child, l, haplotype[l])
+            value = None
+            u = T[l]
+            while u is not None:
+                if u.start <= parent < u.end:
+                    value = u.value
+                    break
+                if u.start > parent:
+                    break
+                u = u.next
+            if value is not None:
+                # Complete a segment at this site
+                assert l < end
+                self.add_mapping(l, end, parent, child)
+                end = l
+                parent = value
+        assert start_site < end
+        self.add_mapping(start_site, end, parent, child)
+        l = start_site
+        state = self.store.get_state(l, parent)
+        if state != haplotype[l]:
+            self.add_mutation(child, l, haplotype[l])
+        if start_site != 0:
+            self.add_gap(0, start_site, child)
+        if end_site != self.store.num_sites:
+            self.add_gap(end_site, self.store.num_sites, child)
+
 
     def print_state(self):
         print("Builder state")
@@ -320,43 +409,33 @@ class TreeSequenceBuilder(object):
         assert prev.end == self.num_sites
         print()
 
-    def finalise(self):
-        # Allocate the nodes.
-        nodes = msprime.NodeTable(self.num_internal_nodes + self.num_samples)
-        for j in range(self.num_internal_nodes):
-            nodes.add_row(time=self.num_internal_nodes - j)
-        for j in range(self.num_samples):
-            nodes.add_row(time=0, flags=msprime.NODE_IS_SAMPLE)
-
-        edgesets = msprime.EdgesetTable()
-        for parent in range(self.num_internal_nodes - 1, -1, -1):
-            u = self.children[parent]
+    def dump_edgesets(self, left, right, parent, children, children_length):
+        num_edgesets = 0
+        num_children = 0
+        for p in range(self.num_internal_nodes - 1, -1, -1):
+            u = self.children[p]
             assert u.start == 0
             while u is not None:
                 if len(u.value) > 0:
-                    edgesets.add_row(
-                        left=u.start, right=u.end, parent=parent,
-                        children=tuple(sorted(u.value)))
+                    left[num_edgesets] = u.start
+                    right[num_edgesets] = u.end
+                    parent[num_edgesets] = p
+                    children_length[num_edgesets] = len(u.value)
+                    for c in sorted(u.value):
+                        children[num_children] = c
+                        num_children += 1
+                    num_edgesets += 1
                 u = u.next
-        sites = msprime.SiteTable()
-        mutations = msprime.MutationTable()
-        for j in range(self.num_sites):
-            sites.add_row(j, "0")
-            for node, derived_state in self.mutations[j]:
-                mutations.add_row(j, node, str(derived_state))
 
-        # self.print_state()
-        # print(nodes)
-        # print(edgesets)
-        # print(sites)
-        # print(mutations)
-
-        # right = set(edgesets.right)
-        # left = set(edgesets.left)
-        # print("Diff:", right - left)
-        ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-        return ts
+    def dump_mutations(self, site, node, derived_state):
+        num_mutations = 0
+        for l in range(self.num_sites):
+            for u, state in self.mutations[l]:
+                site[num_mutations] = l
+                node[num_mutations] = u
+                derived_state[num_mutations] = state
+                num_mutations += 1
+        assert num_mutations == self.num_mutations
 
 
 class OldTreeSequenceBuilder(object):
@@ -668,49 +747,6 @@ class Traceback(object):
             M[num_mutations] = l
             num_mutations += 1
         return num_mutations
-
-    def run_build_ts(self, h, start_site, end_site, end_site_value, ts_builder, child):
-        """
-        Returns the array of haplotype indexes that the specified encoded traceback
-        defines for the given startin point at the last site.
-        """
-        # print("Running traceback on ", start_site, end_site, end_site_value)
-        # self.print_state()
-        end = end_site
-        parent = end_site_value
-        T = self.site_head
-        for l in range(end_site - 1, start_site, -1):
-            state = self.store.get_state(l, parent)
-            # print("l = ", l, "state = ", state, "parent = ", parent)
-            assert state != -1
-            if state != h[l]:
-                ts_builder.add_mutation(child, l, h[l])
-            value = None
-            u = T[l]
-            while u is not None:
-                if u.start <= parent < u.end:
-                    value = u.value
-                    break
-                if u.start > parent:
-                    break
-                u = u.next
-            if value is not None:
-                # Complete a segment at this site
-                assert l < end
-                ts_builder.add_mapping(l, end, parent, child)
-                end = l
-                parent = value
-        assert start_site < end
-        ts_builder.add_mapping(start_site, end, parent, child)
-        l = start_site
-        state = self.store.get_state(l, parent)
-        if state != h[l]:
-            ts_builder.add_mutation(child, l, h[l])
-        if start_site != 0:
-            ts_builder.add_gap(0, start_site, child)
-        if end_site != self.store.num_sites:
-            ts_builder.add_gap(end_site, self.store.num_sites, child)
-
 
 
 class AncestorMatcher(object):

@@ -1473,17 +1473,19 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     int ret = -1;
     int err;
     static char *kwlist[] = {"store", "num_samples", "segment_block_size",
-       "child_list_node_block_size", NULL};
+       "child_list_node_block_size", "mutation_list_node_block_size", NULL};
     AncestorStore *store = NULL;
     unsigned long num_samples;
     unsigned long segment_block_size = 1024 * 1024;
     unsigned long child_list_node_block_size = 1024 * 1024;
+    unsigned long mutation_list_node_block_size = 0;
 
     self->tree_sequence_builder = NULL;
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!k|kk", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!k|kkk", kwlist,
                 &AncestorStoreType, &store, &num_samples,
-                &segment_block_size, &child_list_node_block_size)) {
+                &segment_block_size, &child_list_node_block_size,
+                &mutation_list_node_block_size)) {
         goto out;
     }
     self->store = store;
@@ -1496,8 +1498,14 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
         PyErr_NoMemory();
         goto out;
     }
+    if (mutation_list_node_block_size == 0) {
+        /* We expect there to be almost exactly num_sites mutations, so we don't
+         * want to use too much memory if we go slightly over. */
+        mutation_list_node_block_size = self->store->store->num_sites / 4;
+    }
     err = tree_sequence_builder_alloc(self->tree_sequence_builder, self->store->store,
-            num_samples, segment_block_size, child_list_node_block_size);
+            num_samples, segment_block_size, child_list_node_block_size,
+            mutation_list_node_block_size);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1709,6 +1717,97 @@ fail:
 }
 
 static PyObject *
+TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"site", "node", "derived_state", NULL};
+    PyObject *site = NULL;
+    PyArrayObject *site_array = NULL;
+    PyObject *node = NULL;
+    PyArrayObject *node_array = NULL;
+    PyObject *derived_state = NULL;
+    PyArrayObject *derived_state_array = NULL;
+    size_t num_mutations;
+    npy_intp *shape;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!", kwlist,
+            &PyArray_Type, &site,
+            &PyArray_Type, &node,
+            &PyArray_Type, &derived_state)) {
+        goto fail;
+    }
+    num_mutations = self->tree_sequence_builder->num_mutations;
+    /* site */
+    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (site_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(site_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(site_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "input site wrong size");
+        goto fail;
+    }
+    /* node */
+    node_array = (PyArrayObject *) PyArray_FROM_OTF(node, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (node_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(node_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(node_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "input node wrong size");
+        goto fail;
+    }
+    /* derived_state */
+    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (derived_state_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(derived_state_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(derived_state_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "input derived_state wrong size");
+        goto fail;
+    }
+
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_dump_mutations(self->tree_sequence_builder,
+        (site_id_t *) PyArray_DATA(site_array),
+        (ancestor_id_t *) PyArray_DATA(node_array),
+        (allele_t *) PyArray_DATA(derived_state_array));
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(site_array);
+    Py_DECREF(node_array);
+    Py_DECREF(derived_state_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(site_array);
+    PyArray_XDECREF_ERR(node_array);
+    PyArray_XDECREF_ERR(derived_state_array);
+    return NULL;
+}
+
+static PyObject *
 TreeSequenceBuilder_get_num_edgesets(TreeSequenceBuilder *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -1733,6 +1832,18 @@ TreeSequenceBuilder_get_num_children(TreeSequenceBuilder *self, void *closure)
 out:
     return ret;
 }
+static PyObject *
+TreeSequenceBuilder_get_num_mutations(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_mutations);
+out:
+    return ret;
+}
 
 static PyMemberDef TreeSequenceBuilder_members[] = {
     {NULL}  /* Sentinel */
@@ -1744,6 +1855,8 @@ static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
         "The number of edgesets."},
     {"num_children", (getter) TreeSequenceBuilder_get_num_children, NULL,
         "The total number of children."},
+    {"num_mutations", (getter) TreeSequenceBuilder_get_num_mutations, NULL,
+        "The total number of mutations."},
     {NULL}  /* Sentinel */
 };
 
@@ -1754,6 +1867,9 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
     {"dump_edgesets", (PyCFunction) TreeSequenceBuilder_dump_edgesets,
         METH_VARARGS|METH_KEYWORDS,
         "Dumps edgeset data into numpy arrays."},
+    {"dump_mutations", (PyCFunction) TreeSequenceBuilder_dump_mutations,
+        METH_VARARGS|METH_KEYWORDS,
+        "Dumps mutation data into numpy arrays."},
     {NULL}  /* Sentinel */
 };
 
