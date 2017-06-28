@@ -76,7 +76,15 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
 def match_ancestors(
         store, recombination_rate, tree_sequence_builder, num_threads=1, method="C"):
     ancestor_ids = list(range(1, store.num_ancestors))
-    def ancestor_match_worker(ancestor_id):
+
+    # Shuffle the ancestors so that we (hopefully) even out the work between
+    # all threads.
+    random.shuffle(ancestor_ids)
+    update_lock = threading.Lock()
+
+    def ancestor_match_worker(thread_index):
+        chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
+        start = thread_index * chunk_size
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
             traceback = _tsinfer.Traceback(store.num_sites, 2**10)
@@ -84,58 +92,69 @@ def match_ancestors(
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
-        start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
-        # print(start_site, end_site)
-        # a = "".join(str(x) if x != -1 else '*' for x in h)
-        # print(ancestor_id, "\t", a)
-        end_site_parent = matcher.best_path(
-                ancestor_id, h, start_site, end_site, focal_site, 0, traceback)
-        return ancestor_id, h, start_site, end_site, end_site_parent, traceback
+        for ancestor_id in ancestor_ids[start: start + chunk_size]:
+            start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+            # print(start_site, end_site)
+            # a = "".join(str(x) if x != -1 else '*' for x in h)
+            # print(ancestor_id, "\t", a)
+            end_site_parent = matcher.best_path(
+                    ancestor_id, h, start_site, end_site, focal_site, 0, traceback)
+            # return ancestor_id, h, start_site, end_site, end_site_parent, traceback
+            with update_lock:
+                tree_sequence_builder.update(
+                    child=ancestor_id, haplotype=h, start_site=start_site,
+                    end_site=end_site, end_site_parent=end_site_parent,
+                    traceback=traceback)
+            traceback.reset()
 
     if num_threads > 1:
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            for result in executor.map(ancestor_match_worker, ancestor_ids):
-                tree_sequence_builder.update(*result)
+        threads = [
+            threading.Thread(target=ancestor_match_worker, args=(j,))
+            for j in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
     else:
-        for result in map(ancestor_match_worker, ancestor_ids):
-            tree_sequence_builder.update(*result)
+        ancestor_match_worker(0)
 
 
 def match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         num_threads=1, method="C"):
     sample_ids = list(range(samples.shape[0]))
+    update_lock = threading.Lock()
 
-    def sample_match_worker(sample_id):
-
+    def sample_match_worker(thread_index):
+        chunk_size = int(math.ceil(len(sample_ids) / num_threads))
+        start = thread_index * chunk_size
         if method == "C":
-            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
         else:
-            traceback = Traceback(store)
             matcher = AncestorMatcher(store, recombination_rate)
-        h = samples[sample_id, :]
-        end_site_parent = matcher.best_path(
-                store.num_ancestors, h, 0, store.num_sites, -1, error_rate, traceback)
-        return sample_id, h, end_site_parent, traceback
-
-    if num_threads > 1:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            for result in executor.map(sample_match_worker, sample_ids):
-                sample_id, h, end_site_parent, traceback = result
+            traceback = Traceback(store)
+        for sample_id in sample_ids[start: start + chunk_size]:
+            h = samples[sample_id, :]
+            end_site_parent = matcher.best_path(
+                    store.num_ancestors, h, 0, store.num_sites, -1, error_rate, traceback)
+            with update_lock:
                 tree_sequence_builder.update(
                     child=store.num_ancestors + sample_id,
                     haplotype=h, start_site=0, end_site=store.num_sites,
                     end_site_parent=end_site_parent, traceback=traceback)
+            traceback.reset()
 
+    if num_threads > 1:
+        threads = [
+            threading.Thread(target=sample_match_worker, args=(j,))
+            for j in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
     else:
-        for result in map(sample_match_worker, sample_ids):
-            sample_id, h, end_site_parent, traceback = result
-            tree_sequence_builder.update(
-                child=store.num_ancestors + sample_id,
-                haplotype=h, start_site=0, end_site=store.num_sites,
-                end_site_parent=end_site_parent, traceback=traceback)
+        sample_match_worker(0)
 
 
 def finalise_tree_sequence(num_samples, store, tree_sequence_builder):

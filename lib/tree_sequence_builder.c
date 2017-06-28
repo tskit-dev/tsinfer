@@ -6,6 +6,13 @@
 #include <string.h>
 #include <stdbool.h>
 
+static int
+cmp_node_id(const void *a, const void *b) {
+    const ancestor_id_t ia = *(const ancestor_id_t *) a;
+    const ancestor_id_t ib = *(const ancestor_id_t *) b;
+    return (ia > ib) - (ia < ib);
+}
+
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
@@ -26,7 +33,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             for (u = list_node->head; u != NULL; u = u->next) {
                 num_children++;
                 if (u->next != NULL) {
-                    assert(u->node < u->next->node);
+                    assert(u->node != u->next->node);
                 }
             }
             if (last_list_node != NULL) {
@@ -38,7 +45,6 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
     }
     assert(self->num_children == num_children);
     assert(self->num_edgesets == num_edgesets);
-
 }
 
 int
@@ -423,6 +429,7 @@ tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
     ancestor_id_t j;
     size_t num_edgesets = 0;
     size_t num_children = 0;
+    size_t children_start;
     list_segment_t *list_node;
     child_list_node_t *u;
 
@@ -434,11 +441,15 @@ tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
                 right[num_edgesets] = list_node->end;
                 parent[num_edgesets] = j;
                 children_length[num_edgesets] = 0;
+                children_start = num_children;
                 for (u = list_node->head; u != NULL; u = u->next) {
                     children[num_children] = u->node;
                     children_length[num_edgesets]++;
                     num_children++;
                 }
+                /* Sort the children */
+                qsort(children + children_start, children_length[num_edgesets],
+                        sizeof(ancestor_id_t), cmp_node_id);
                 num_edgesets++;
                 assert(num_edgesets <= self->num_edgesets);
             }

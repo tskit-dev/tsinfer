@@ -464,7 +464,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         ancestor_store_print_state(&store, stdout);
     }
     /* Copy ancestors */
-    for (j = 1; j < store.num_ancestors; j++) {
+    for (j = store.num_ancestors - 1; j > 0; j--) {
         ret = ancestor_store_get_ancestor(&store, j, ancestor, &start, &focal, &end);
         if (ret != 0) {
             fatal_error("get_ancestor error");

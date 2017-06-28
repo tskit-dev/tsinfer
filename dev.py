@@ -16,11 +16,13 @@ import time
 import random
 import threading
 import math
+import resource
 # import profilehooks
 
 import humanize
 import h5py
 import tqdm
+import psutil
 
 import tsinfer
 import _tsinfer
@@ -346,7 +348,7 @@ def build_ancestors(n, L, seed, filename):
     print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
     print("Sample memory    :", humanize.naturalsize(S.nbytes))
 
-def load_ancestors(filename, show_progress=True, num_threads=40):
+def load_ancestors(filename, show_progress=True, num_threads=1):
 
     with h5py.File(filename, "r") as f:
         sites = f["sites"]
@@ -362,6 +364,7 @@ def load_ancestors(filename, show_progress=True, num_threads=40):
         samples = f["samples"]
         S = samples["haplotypes"][()]
 
+    print("pid              :", os.getpid())
     print("num sites        :", store.num_sites)
     print("num ancestors    :", store.num_ancestors)
     print("max_segments     :", store.max_num_site_segments)
@@ -385,71 +388,16 @@ def load_ancestors(filename, show_progress=True, num_threads=40):
     ts = ts.simplify()
     ts.dump(filename.split(".")[0] + ".inferred_ts.hdf5")
 
-    # mutation_rate = 1e-200
-    # before_cpu = time.clock()
-    # before_wall = time.time()
-    # if show_progress:
-    #     progress_bar = tqdm.tqdm(total=store.num_ancestors - 1)
+    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    print("RAM              :", humanize.naturalsize(memory))
 
-    # # print(store.num_sites, store.num_ancestors)
-    # ancestor_ids = list(range(1, store.num_ancestors))
-    # # Shuffle the ancestors so that we (hopefully) even out the work between
-    # # all threads.
-    # random.shuffle(ancestor_ids)
-    # matcher = _tsinfer.AncestorMatcher(store, 0.01)
-    # # matcher = tsinfer.AncestorMatcher(store, 0.01)
+    for j, h in enumerate(ts.haplotypes()):
+        assert "".join(map(str, S[j])) == h
 
-    # def ancestor_match_worker(thread_index):
-    #     chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
-    #     start = thread_index * chunk_size
-    #     traceback = _tsinfer.Traceback(store, 2**10)
-    #     # traceback = tsinfer.Traceback(store)
-    #     h = np.zeros(store.num_sites, dtype=np.int8)
-    #     P = np.zeros(store.num_sites, dtype=np.int32)
-    #     M = np.zeros(store.num_sites, dtype=np.uint32)
-
-    #     for ancestor_id in ancestor_ids[start: start + chunk_size]:
-    #         start_site, end_site = store.get_ancestor(ancestor_id, h)
-    #         # print(start_site, end_site)
-    #         # a = "".join(str(x) if x != -1 else '*' for x in h)
-    #         # print(thread_index, ancestor_id, "\t", a)
-    #         best_match = matcher.best_path(
-    #                 ancestor_id, h, start_site, end_site, mutation_rate, traceback)
-    #         # print("best_match = ", best_match)
-    #         num_mutations = traceback.run(h, start_site, end_site, best_match, P, M)
-    #         # print("traceback", traceback)
-    #         traceback.reset()
-    #         assert num_mutations == 1
-    #         if show_progress:
-    #             progress_bar.update()
-
-    # if num_threads > 1:
-    #     threads = [
-    #         threading.Thread(target=ancestor_match_worker, args=(j,))
-    #         for j in range(num_threads)]
-    #     for t in threads:
-    #         t.start()
-    #     for t in threads:
-    #         t.join()
-    # else:
-    #     ancestor_match_worker(0)
-    # if show_progress:
-    #     progress_bar.close()
     # duration_cpu = time.clock() - before_cpu
     # duration_wall = time.time() - before_wall
     # print("Copying CPU time :", humanize.naturaldelta(duration_cpu))
     # print("Copying wall time:", humanize.naturaldelta(duration_wall))
-
-    # for h in S:
-    #     # print(h)
-    #     best_match = matcher.best_path(
-    #         store.num_ancestors, h, 0, store.num_sites, mutation_rate, traceback)
-    #     num_mutations = traceback.run(h, 0, store.num_sites, best_match, P, M)
-    #     traceback.reset()
-    #     # print("num_mutation = ", num_mutations)
-    #     # print(P)
-    #     # a = "".join(str(x) if x != -1 else '*' for x in A)
-    #     # print(a)
 
 def new_segments(n, L, seed):
 
@@ -629,9 +577,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(200, 100, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -653,16 +601,16 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # n = 10
-    # for j in np.arange(1, 100, 10):
-    #     print("n                :", n)
-    #     print("L                :", j, "Mb")
-    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-    #     # build_ancestors(n, j * 10**6, 1, filename)
-    #     if not os.path.exists(filename):
-    #         break
-    #     load_ancestors(filename)
-    #     print()
+    n = 10
+    for j in np.arange(1, 100, 10):
+        print("n                :", n)
+        print("L                :", j, "Mb")
+        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+        # build_ancestors(n, j * 10**6, 1, filename)
+        if not os.path.exists(filename):
+            break
+        load_ancestors(filename, num_threads=40)
+        print()
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -677,7 +625,7 @@ if __name__ == "__main__":
 #     # compress_ancestors(filename)
 #     load_ancestors_dev(filename)
 
-    # load_ancestors("tmp__NOBACKUP__/n=10_L=21.hdf5")
+    # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
     # for j in range(1, 100000):
