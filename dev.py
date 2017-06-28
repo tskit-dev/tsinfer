@@ -602,14 +602,14 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     n = 10
-    for j in np.arange(1, 100, 10):
+    for j in np.arange(101, 200, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-        # build_ancestors(n, j * 10**6, 1, filename)
-        if not os.path.exists(filename):
-            break
-        load_ancestors(filename, num_threads=40)
+        build_ancestors(n, j * 10**6, 1, filename)
+        # if not os.path.exists(filename):
+        #     break
+        # load_ancestors(filename, num_threads=40)
         print()
 
     # for j in range(1, 10000):

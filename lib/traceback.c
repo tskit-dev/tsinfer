@@ -57,6 +57,9 @@ traceback_alloc_segment(traceback_t *self, ancestor_id_t start,
         }
     }
     ret = (segment_t *) object_heap_alloc_object(&self->segment_heap);
+    if (ret == NULL) {
+        goto out;
+    }
     ret->start = start;
     ret->end = end;
     ret->value = value;

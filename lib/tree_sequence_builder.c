@@ -109,6 +109,9 @@ tree_sequence_builder_alloc_mutation_list_node(tree_sequence_builder_t *self,
     }
     ret = (mutation_list_node_t *) object_heap_alloc_object(
             &self->mutation_list_node_heap);
+    if (ret == NULL) {
+        goto out;
+    }
     ret->node = node;
     ret->derived_state = derived_state;
     ret->next = NULL;
@@ -129,6 +132,9 @@ tree_sequence_builder_alloc_child_list_node(tree_sequence_builder_t *self,
         }
     }
     ret = (child_list_node_t *) object_heap_alloc_object(&self->child_list_node_heap);
+    if (ret == NULL) {
+        goto out;
+    }
     ret->node = child;
     ret->next = NULL;
     self->num_children++;
@@ -175,6 +181,9 @@ tree_sequence_builder_alloc_segment(tree_sequence_builder_t *self, site_id_t sta
         }
     }
     ret = (list_segment_t *) object_heap_alloc_object(&self->segment_heap);
+    if (ret == NULL) {
+        goto out;
+    }
     ret->start = start;
     ret->end = end;
     ret->head = NULL;

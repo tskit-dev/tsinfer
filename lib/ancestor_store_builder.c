@@ -91,6 +91,9 @@ ancestor_store_builder_alloc_segment(ancestor_store_builder_t *self, ancestor_id
         }
     }
     ret = (segment_t *) object_heap_alloc_object(&self->segment_heap);
+    if (ret == NULL) {
+        goto out;
+    }
     ret->start = start;
     ret->end = end;
     ret->value = value;
