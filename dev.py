@@ -24,6 +24,7 @@ import h5py
 import tqdm
 import psutil
 import svgwrite
+import colour
 
 import tsinfer
 import _tsinfer
@@ -651,6 +652,7 @@ class Visualiser(object):
         self.missing_boxes = self.drawing.add(
                 self.drawing.g(fill="white", stroke=stroke))
         self.current_row = 0
+        self.label_map = {}
 
     def add_site_coordinates(self):
         if self.font_size is not None:
@@ -663,6 +665,7 @@ class Visualiser(object):
 
     def add_row(self, a, row_label=None):
         j = self.current_row
+        self.label_map[row_label] = j
         if self.font_size is not None and row_label is not None:
             coord = (self.scale / 2, j * self.scale + self.scale / 2)
             self.labels.add(
@@ -677,14 +680,49 @@ class Visualiser(object):
                 self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
         self.current_row += 1
 
+    def add_intensity_row(self, d, row_label=None):
+        j = self.current_row
+        if self.font_size is not None and row_label is not None:
+            coord = (self.scale / 2, j * self.scale + self.scale / 2)
+            self.labels.add(
+                self.drawing.text(str(row_label), coord, dy=[self.text_offset]))
+        bottom = colour.Color("white")
+        colours = list(bottom.range_to(colour.Color("black"), 10))
+        bins = np.linspace(0, 1, 10)
+        a = np.digitize(d, bins) - 1
+        for k in range(self.num_sites):
+            corner = ((k + 1) * self.scale, j * self.scale)
+            self.drawing.add(self.drawing.rect(
+                corner, (self.scale, self.scale), stroke="lightgrey",
+                fill=colours[a[k]]))
+        self.current_row += 1
+
     def add_separator(self):
         self.current_row += 1
+
+    def show_path(self, label, path):
+
+        if label + 1 in self.label_map:
+            row = self.label_map[label + 1]
+            corner = self.scale, row * self.scale
+            height = (self.current_row - row) * self.scale
+            self.drawing.add(self.drawing.rect(
+                corner, ((self.scale * self.num_sites), height),
+                fill="white", opacity=0.8))
+
+        for k in range(self.num_sites):
+            j = self.label_map[path[k]]
+            corner = ((k + 1) * self.scale, j * self.scale)
+            self.drawing.add(self.drawing.rect(
+                corner, (self.scale, self.scale), stroke="lightgrey",
+                fill="black", opacity=0.6))
+
 
     def save(self, filename):
         self.drawing.saveas(filename)
 
 
-def visualise(n, L, seed):
+def visualise_ancestors(n, L, seed):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
@@ -700,34 +738,121 @@ def visualise(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    num_samples, num_sites = S.shape
+    frequency = np.sum(S, axis=0)
 
-    visualiser = Visualiser(1200, num_sites, font_size=16)
-
-    builder = _tsinfer.AncestorBuilder(S, positions)
-    store_builder = _tsinfer.AncestorStoreBuilder(
-            builder.num_sites, 8192 * builder.num_sites)
-    frequency_classes = builder.get_frequency_classes()
-    num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
-    a = np.zeros(num_sites, dtype=np.int8)
+    store = tsinfer.build_ancestors(S, positions, method="P")
+    visualiser = Visualiser(1200, store.num_sites, font_size=16)
     visualiser.add_site_coordinates()
     visualiser.add_row(a, 0)
-    visualiser.add_separator()
-    j = 1
-    for frequency, focal_sites in builder.get_frequency_classes():
-        for focal_site in focal_sites:
-            assert np.sum(S[:, focal_site]) == frequency
-            builder.make_ancestor(focal_site, a)
-            visualiser.add_row(a, j)
-            j += 1
-        visualiser.add_separator()
+    a = np.zeros(store.num_sites, dtype=np.int8)
+    last_frequency = 0
+    for j in range(1, store.num_ancestors):
+        start, focal, end = store.get_ancestor(j, a)
+        if frequency[focal] != last_frequency:
+            visualiser.add_separator()
+            last_frequency = frequency[focal]
+        visualiser.add_row(a, j)
 
+    visualiser.add_separator()
+    j = store.num_ancestors
     for a in S:
         visualiser.add_row(a, j)
         j += 1
 
     visualiser.save("tmp.svg")
 
+
+def draw_copying_density(ts, width, breaks):
+    """
+    Visualises the copying density of the specified tree sequence.
+    """
+    num_ancestors = ts.num_nodes - ts.sample_size
+    D = np.zeros((num_ancestors, ts.num_sites), dtype=int)
+    for e in ts.edgesets():
+        # FIXME!!! This will break when we start outputting positions correctly!
+        left = int(e.left)
+        right = int(e.right)
+        D[e.parent, left:right] = len(e.children)
+    # Rescale D into 0/1
+    D = D / np.max(D)
+
+    visualiser = Visualiser(width, ts.num_sites, font_size=16)
+    visualiser.add_site_coordinates()
+    for j in range(num_ancestors):
+        if j in breaks:
+            visualiser.add_separator()
+        visualiser.add_intensity_row(D[j], j)
+
+    visualiser.save("intensity.svg")
+
+
+
+def visualise_copying(n, L, seed):
+
+    np.set_printoptions(linewidth=2000)
+    np.set_printoptions(threshold=20000)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    if ts.num_sites == 0:
+        print("zero sites; skipping")
+        return
+    positions = np.array([site.position for site in ts.sites()])
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    frequency = np.sum(S, axis=0)
+
+    store = tsinfer.build_ancestors(S, positions, method="C")
+    ts = tsinfer.infer(S, positions, 1e-6, 1e-200)
+
+    last_frequency = 0
+    breaks = set()
+    a = np.zeros(store.num_sites, dtype=np.int8)
+    for j in range(1, store.num_ancestors):
+        start, focal, end = store.get_ancestor(j, a)
+        if frequency[focal] != last_frequency:
+            last_frequency = frequency[focal]
+            breaks.add(j)
+
+    visualiser = Visualiser(1200, store.num_sites, font_size=16)
+    visualiser.add_site_coordinates()
+    a = np.zeros(store.num_sites, dtype=np.int8)
+    visualiser.add_row(a, 0)
+    for j in range(1, store.num_ancestors):
+        if j in breaks:
+            visualiser.add_separator()
+        start, focal, end = store.get_ancestor(j, a)
+        visualiser.add_row(a, j)
+
+    N = store.num_ancestors + S.shape[0]
+    P = np.zeros((N, store.num_sites), dtype=int) - 1
+    for e in ts.edgesets():
+        for c in e.children:
+            # FIXME!!! This will break when we start outputting positions correctly!
+            left = int(e.left)
+            right = int(e.right)
+            assert left < right
+            P[c, left:right] = e.parent
+
+    visualiser.save("tmp.svg")
+
+    draw_copying_density(ts, 1400, breaks)
+
+    for k in range(1, store.num_ancestors):
+        visualiser = Visualiser(1400, store.num_sites, font_size=16)
+        visualiser.add_site_coordinates()
+        a = np.zeros(store.num_sites, dtype=np.int8)
+        visualiser.add_row(a, 0)
+        for j in range(1, store.num_ancestors):
+            if j in breaks:
+                visualiser.add_separator()
+            start, focal, end = store.get_ancestor(j, a)
+            visualiser.add_row(a, j)
+        visualiser.show_path(k, P[k])
+        visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
 
 
@@ -799,4 +924,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise(8, 6, 5)
+    visualise_copying(8, 12, 5)
