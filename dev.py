@@ -599,9 +599,20 @@ def site_set_stats(n, L, seed):
     for l in range(1, num_sites):
         zeros = set(np.where(A[:, l] == 0)[0])
         ones = set(np.where(A[:, l] == 1)[0])
+        print("l = ", l)
+        print("zeros = ", len(zeros), "::\t", zeros)
+        print("ones  = ", len(ones), "::\t", ones)
+        zero_zero_diff = zeros ^ last_zeros
+        zero_one_diff = ones ^ last_zeros
+        if len(zero_one_diff) < len(zero_zero_diff):
+            # print("Swapping", len(zero_one_diff), len(zero_zero_diff))
+            zeros = set(np.where(A[:, l] == 1)[0])
+            ones = set(np.where(A[:, l] == 0)[0])
         zeros_diff = zeros ^ last_zeros
         ones_diff = ones ^ last_ones
-        total_diffs[l] += len(zeros_diff) + len(ones_diff)
+
+        total_diffs[l] = len(zeros_diff) + len(ones_diff)
+        print("total diffs = ", total_diffs[l])
         last_zeros = zeros
         last_ones = ones
     # print("mean diffs = ", np.mean(total_diffs))
@@ -644,16 +655,16 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # n = 10
-    # for j in np.arange(101, 200, 10):
-    #     print("n                :", n)
-    #     print("L                :", j, "Mb")
-    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-    #     build_ancestors(n, j * 10**6, 1, filename)
-    #     # if not os.path.exists(filename):
-    #     #     break
-    #     # load_ancestors(filename, num_threads=40)
-    #     print()
+    n = 10
+    for j in np.arange(101, 200, 10):
+        print("n                :", n)
+        print("L                :", j, "Mb")
+        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+        # build_ancestors(n, j * 10**6, 1, filename)
+        if not os.path.exists(filename):
+            break
+        load_ancestors(filename, num_threads=40)
+        print()
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -671,12 +682,14 @@ if __name__ == "__main__":
     # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
 
-    rows = []
-    for n in [10, 100, 1000, 10000]:
-        for l in range(1, 11):
-            d = site_set_stats(n, l * 10 * 10**6, 2)
-            rows.append(d)
-            df = pd.DataFrame(rows)
-            print(df)
-            df.to_csv("diff-analysis.csv")
+
+    # d = site_set_stats(10, 50 * 10**6, 2)
+    # rows = []
+    # for n in [10, 100, 1000, 10000]:
+    #     for l in range(1, 11):
+    #         d = site_set_stats(n, l * 10 * 10**6, 2)
+    #         rows.append(d)
+    #         df = pd.DataFrame(rows)
+    #         print(df)
+    #         df.to_csv("diff-analysis.csv")
 
