@@ -23,6 +23,7 @@ import humanize
 import h5py
 import tqdm
 import psutil
+import svgwrite
 
 import tsinfer
 import _tsinfer
@@ -625,6 +626,111 @@ def site_set_stats(n, L, seed):
         "mean_diffs": np.mean(total_diffs)
     }
 
+
+class Visualiser(object):
+
+    def __init__(self, width, num_sites, font_size=12):
+        self.drawing = svgwrite.Drawing(width=width, debug=True)
+        self.num_sites = num_sites
+        self.scale = width / (num_sites + 1)
+        self.font_size = font_size
+        # We need this to make sure the coordinate system works properly.
+        # Must be a better way to do it!
+        self.drawing.add(self.drawing.rect(
+            (0, 0), (width, self.scale),
+            stroke="white", fill="white"))
+        if font_size is not None:
+            self.text_offset = self.font_size / 2 # TODO improve this!
+            self.labels = self.drawing.add(
+                self.drawing.g(font_size=font_size, text_anchor="middle"))
+        stroke = "lightgray"
+        self.one_boxes = self.drawing.add(
+                self.drawing.g(fill="red", stroke=stroke))
+        self.zero_boxes = self.drawing.add(
+                self.drawing.g(fill="blue", stroke=stroke))
+        self.missing_boxes = self.drawing.add(
+                self.drawing.g(fill="white", stroke=stroke))
+        self.current_row = 0
+
+    def add_site_coordinates(self):
+        if self.font_size is not None:
+            for k in range(self.num_sites):
+                coord = (
+                    (k + 1) * self.scale + self.scale / 2,
+                    self.current_row + self.scale / 2)
+                self.labels.add(self.drawing.text(str(k), coord, dy=[self.text_offset]))
+        self.current_row += 1
+
+    def add_row(self, a, row_label=None):
+        j = self.current_row
+        if self.font_size is not None and row_label is not None:
+            coord = (self.scale / 2, j * self.scale + self.scale / 2)
+            self.labels.add(
+                self.drawing.text(str(row_label), coord, dy=[self.text_offset]))
+        for k in range(self.num_sites):
+            corner = ((k + 1) * self.scale, j * self.scale)
+            if a[k] == 0:
+                self.zero_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+            elif a[k] == -1:
+                self.missing_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+            else:
+                self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+        self.current_row += 1
+
+    def add_separator(self):
+        self.current_row += 1
+
+    def save(self, filename):
+        self.drawing.saveas(filename)
+
+
+def visualise(n, L, seed):
+
+    np.set_printoptions(linewidth=2000)
+    np.set_printoptions(threshold=20000)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    if ts.num_sites == 0:
+        print("zero sites; skipping")
+        return
+    positions = np.array([site.position for site in ts.sites()])
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    num_samples, num_sites = S.shape
+
+    visualiser = Visualiser(1200, num_sites, font_size=16)
+
+    builder = _tsinfer.AncestorBuilder(S, positions)
+    store_builder = _tsinfer.AncestorStoreBuilder(
+            builder.num_sites, 8192 * builder.num_sites)
+    frequency_classes = builder.get_frequency_classes()
+    num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
+    a = np.zeros(num_sites, dtype=np.int8)
+    visualiser.add_site_coordinates()
+    visualiser.add_row(a, 0)
+    visualiser.add_separator()
+    j = 1
+    for frequency, focal_sites in builder.get_frequency_classes():
+        for focal_site in focal_sites:
+            assert np.sum(S[:, focal_site]) == frequency
+            builder.make_ancestor(focal_site, a)
+            visualiser.add_row(a, j)
+            j += 1
+        visualiser.add_separator()
+
+    for a in S:
+        visualiser.add_row(a, j)
+        j += 1
+
+    visualiser.save("tmp.svg")
+
+
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -655,16 +761,16 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    n = 10
-    for j in np.arange(101, 200, 10):
-        print("n                :", n)
-        print("L                :", j, "Mb")
-        filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-        # build_ancestors(n, j * 10**6, 1, filename)
-        if not os.path.exists(filename):
-            break
-        load_ancestors(filename, num_threads=40)
-        print()
+    # n = 10
+    # for j in np.arange(101, 200, 10):
+    #     print("n                :", n)
+    #     print("L                :", j, "Mb")
+    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
+    #     # build_ancestors(n, j * 10**6, 1, filename)
+    #     if not os.path.exists(filename):
+    #         break
+    #     load_ancestors(filename, num_threads=40)
+    #     print()
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -693,3 +799,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
+    visualise(8, 6, 5)
