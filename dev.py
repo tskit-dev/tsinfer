@@ -26,6 +26,10 @@ import psutil
 import svgwrite
 import colour
 
+script_path = __file__ if "__file__" in locals() else "./dummy.py"
+sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
+sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
+
 import tsinfer
 import _tsinfer
 import msprime
