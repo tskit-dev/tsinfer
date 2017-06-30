@@ -812,7 +812,7 @@ def visualise_copying(n, L, seed):
     breaks = set()
     a = np.zeros(store.num_sites, dtype=np.int8)
     for j in range(1, store.num_ancestors):
-        start, focal, end = store.get_ancestor(j, a)
+        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
         if frequency[focal] != last_frequency:
             last_frequency = frequency[focal]
             breaks.add(j)
@@ -824,7 +824,7 @@ def visualise_copying(n, L, seed):
     for j in range(1, store.num_ancestors):
         if j in breaks:
             visualiser.add_separator()
-        start, focal, end = store.get_ancestor(j, a)
+        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
         visualiser.add_row(a, j)
 
     N = store.num_ancestors + S.shape[0]
@@ -849,9 +849,10 @@ def visualise_copying(n, L, seed):
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
-            start, focal, end = store.get_ancestor(j, a)
+            start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
             visualiser.add_row(a, j)
         visualiser.show_path(k, P[k])
+        print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
 
@@ -861,9 +862,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(200, 100, j)
+#     for j in range(1, 100000):
+#         print(j)
+#         new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -924,4 +925,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 12, 5)
+    visualise_copying(8, 4, 5)
