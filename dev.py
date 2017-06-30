@@ -745,7 +745,7 @@ def visualise_ancestors(n, L, seed):
     frequency = np.sum(S, axis=0)
 
     store = tsinfer.build_ancestors(S, positions, method="P")
-    visualiser = Visualiser(1200, store.num_sites, font_size=16)
+    visualiser = Visualiser(800, store.num_sites, font_size=16)
     visualiser.add_site_coordinates()
     visualiser.add_row(a, 0)
     a = np.zeros(store.num_sites, dtype=np.int8)
@@ -791,7 +791,7 @@ def draw_copying_density(ts, width, breaks):
 
 
 
-def visualise_copying(n, L, seed):
+def visualise_copying(n, L, seed, squaresize):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
@@ -821,7 +821,7 @@ def visualise_copying(n, L, seed):
             last_frequency = frequency[focal]
             breaks.add(j)
 
-    visualiser = Visualiser(1200, store.num_sites, font_size=16)
+    visualiser = Visualiser(800, store.num_sites, font_size=16)
     visualiser.add_site_coordinates()
     a = np.zeros(store.num_sites, dtype=np.int8)
     visualiser.add_row(a, 0)
@@ -843,10 +843,11 @@ def visualise_copying(n, L, seed):
 
     visualiser.save("tmp.svg")
 
-    draw_copying_density(ts, 1400, breaks)
+    draw_copying_density(ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
-        visualiser = Visualiser(1400, store.num_sites, font_size=16)
+        #one file for each copy
+        visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
         a = np.zeros(store.num_sites, dtype=np.int8)
         visualiser.add_row(a, 0)
@@ -856,9 +857,13 @@ def visualise_copying(n, L, seed):
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
             visualiser.add_row(a, j)
         visualiser.show_path(k, P[k])
+        
+        #add samples
+        visualiser.add_separator()
+        for j in range(S.shape[0]):
+            visualiser.add_row(S[j],None)
         print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
-
 
 
 if __name__ == "__main__":
