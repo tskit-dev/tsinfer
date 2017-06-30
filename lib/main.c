@@ -113,7 +113,8 @@ read_samples(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
 }
 
 static void
-read_ancestors(const char *infile, size_t *r_num_ancestors, site_id_t **r_focal_sites)
+read_ancestors(const char *infile, size_t *r_num_ancestors,
+        site_id_t **r_focal_sites, size_t **r_focal_site_frequency)
 {
     char *line = NULL;
     size_t len = 0;
@@ -121,6 +122,7 @@ read_ancestors(const char *infile, size_t *r_num_ancestors, site_id_t **r_focal_
     const char delimiters[] = " \t";
     char *token;
     site_id_t *focal_sites = NULL;
+    size_t *focal_site_frequency = NULL;
     FILE *f = fopen(infile, "r");
 
     if (f == NULL) {
@@ -134,6 +136,7 @@ read_ancestors(const char *infile, size_t *r_num_ancestors, site_id_t **r_focal_
         fatal_error("Cannot seek in file");
     }
     focal_sites = malloc(num_ancestors * sizeof(site_id_t));
+    focal_site_frequency = malloc(num_ancestors * sizeof(size_t));
     if (focal_sites == NULL) {
         fatal_error("Malloc error");
     }
@@ -144,17 +147,23 @@ read_ancestors(const char *infile, size_t *r_num_ancestors, site_id_t **r_focal_
             fatal_error("File format error");
         }
         focal_sites[j] = atoi(token);
+        token = strtok(NULL, delimiters);
+        if (token == NULL) {
+            fatal_error("File format error");
+        }
+        focal_site_frequency[j] = atoi(token);
         j++;
     }
     free(line);
     fclose(f);
     *r_num_ancestors = num_ancestors;
     *r_focal_sites = focal_sites;
+    *r_focal_site_frequency = focal_site_frequency;
 }
 
 static void
 read_sites(const char *infile, ancestor_store_t *store, size_t num_sites, double *position,
-        size_t num_ancestors, site_id_t *focal_site)
+        size_t num_ancestors, site_id_t *focal_site, size_t *focal_site_frequency)
 {
     char *line = NULL;
     size_t len = 0;
@@ -211,7 +220,7 @@ read_sites(const char *infile, ancestor_store_t *store, size_t num_sites, double
     }
     assert(num_sites == seg_site[num_segments - 1] + 1);
     ret = ancestor_store_alloc(store, num_sites, position,
-            num_ancestors, focal_site,
+            num_ancestors, focal_site, focal_site_frequency,
             num_segments, seg_site, seg_start, seg_end, seg_state);
     if (ret != 0) {
         fatal_error("store load error");
@@ -431,9 +440,10 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     tree_sequence_builder_t ts_builder;
     ancestor_id_t end_site_value, sample_id;
     site_id_t *focal_sites = NULL;
+    size_t *focal_site_frequency = NULL;
     site_id_t start, focal, end;
     allele_t *ancestor = NULL;
-    size_t j, l, num_ancestors;
+    size_t j, l, num_ancestors, num_older_ancestors;
     double mutation_rate = 1e-200;
     allele_t *samples = NULL;
     allele_t *sample;
@@ -441,8 +451,9 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     size_t num_samples, num_sites;
 
     read_samples(sample_file, &num_samples, &num_sites, &samples, &positions);
-    read_ancestors(ancestor_file, &num_ancestors, &focal_sites);
-    read_sites(site_file, &store, num_sites, positions, num_ancestors, focal_sites);
+    read_ancestors(ancestor_file, &num_ancestors, &focal_sites, &focal_site_frequency);
+    read_sites(site_file, &store, num_sites, positions, num_ancestors,
+            focal_sites, focal_site_frequency);
     ret = ancestor_matcher_alloc(&matcher, &store, 0.01);
     if (ret != 0) {
         fatal_error("alloc error");
@@ -465,7 +476,8 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     }
     /* Copy ancestors */
     for (j = store.num_ancestors - 1; j > 0; j--) {
-        ret = ancestor_store_get_ancestor(&store, j, ancestor, &start, &focal, &end);
+        ret = ancestor_store_get_ancestor(
+                &store, j, ancestor, &start, &focal, &end, &num_older_ancestors);
         if (ret != 0) {
             fatal_error("get_ancestor error");
         }
@@ -480,7 +492,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
             }
             printf("\n");
         }
-        ret = ancestor_matcher_best_path(&matcher, j, ancestor, start,
+        ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor, start,
                 end, focal, mutation_rate, &traceback, &end_site_value);
         if (ret != 0) {
             fatal_error("match error");
@@ -527,6 +539,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     ancestor_store_free(&store);
     traceback_free(&traceback);
     free(focal_sites);
+    free(focal_site_frequency);
     free(ancestor);
     free(positions);
     free(samples);

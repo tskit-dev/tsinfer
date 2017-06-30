@@ -46,6 +46,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     frequency_classes = builder.get_frequency_classes()
     num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
     ancestor_focal_site = np.zeros(num_ancestors, dtype=np.uint32)
+    ancestor_focal_site_frequency = np.zeros(num_ancestors, dtype=np.uint64)
     ancestor_focal_site[0] = -1
     k = 1
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -54,6 +55,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
             for index in p:
                 store_builder.add(A[index, :])
                 ancestor_focal_site[k] = focal_sites[index]
+                ancestor_focal_site_frequency[k] = frequency
                 k += 1
     assert k == num_ancestors
 
@@ -67,6 +69,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     if method == "C":
         store = _tsinfer.AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
+            focal_site_frequency=ancestor_focal_site_frequency,
             focal_site=ancestor_focal_site)
     else:
         store = AncestorStore(
@@ -94,12 +97,12 @@ def match_ancestors(
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
         for ancestor_id in ancestor_ids[start: start + chunk_size]:
-            start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+            start_site, focal_site, end_site, num_older_ancestors = store.get_ancestor(ancestor_id, h)
             # print(start_site, end_site)
             # a = "".join(str(x) if x != -1 else '*' for x in h)
             # print(ancestor_id, "\t", a)
             end_site_parent = matcher.best_path(
-                    ancestor_id, h, start_site, end_site, focal_site, 0, traceback)
+                    num_older_ancestors, h, start_site, end_site, focal_site, 0, traceback)
             # return ancestor_id, h, start_site, end_site, end_site_parent, traceback
             with update_lock:
                 tree_sequence_builder.update(

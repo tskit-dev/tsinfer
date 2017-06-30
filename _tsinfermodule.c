@@ -746,12 +746,14 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"position", "focal_site", "site", "start", "end",
-        "state", NULL};
+    static char *kwlist[] = {"position", "focal_site", "focal_site_frequency",
+        "site", "start", "end", "state", NULL};
     PyObject *position = NULL;
     PyArrayObject *position_array = NULL;
     PyObject *focal_site = NULL;
     PyArrayObject *focal_site_array = NULL;
+    PyObject *focal_site_frequency = NULL;
+    PyArrayObject *focal_site_frequency_array = NULL;
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
@@ -764,8 +766,8 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     npy_intp *shape;
 
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOO", kwlist,
-            &position, &focal_site, &site, &start, &end, &state)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOO", kwlist,
+            &position, &focal_site, &focal_site_frequency, &site, &start, &end, &state)) {
         goto out;
     }
     /* position */
@@ -798,6 +800,21 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     num_ancestors = shape[0];
     if (num_ancestors < 1) {
         PyErr_SetString(PyExc_ValueError, "Must have > 0 ancestors");
+        goto out;
+    }
+    /* focal_site_frequency */
+    focal_site_frequency_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site_frequency,
+            NPY_UINT64, NPY_ARRAY_IN_ARRAY);
+    if (focal_site_frequency_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(focal_site_frequency_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(focal_site_frequency_array);
+    if (shape[0] != num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "Incorrect number of ancestors");
         goto out;
     }
     /* site */
@@ -866,6 +883,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     err = ancestor_store_alloc(self->store,
         num_sites, (double *) PyArray_DATA(position_array),
         num_ancestors, (uint32_t *) PyArray_DATA(focal_site_array),
+        (uint64_t *) PyArray_DATA(focal_site_frequency_array),
         total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
@@ -879,6 +897,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 out:
     Py_XDECREF(position_array);
     Py_XDECREF(focal_site_array);
+    Py_XDECREF(focal_site_frequency_array);
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);
@@ -895,7 +914,7 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *haplotype_array = NULL;
     unsigned long ancestor_id;
     site_id_t start, focal, end;
-    size_t num_sites;
+    size_t num_sites, num_older_ancestors;
     npy_intp *shape;
 
     if (AncestorStore_check_state(self) != 0) {
@@ -922,14 +941,16 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_store_get_ancestor(self->store, ancestor_id,
-        (int8_t *) PyArray_DATA(haplotype_array), &start, &focal, &end);
+        (int8_t *) PyArray_DATA(haplotype_array), &start, &focal, &end,
+        &num_older_ancestors);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
     Py_DECREF(haplotype_array);
-    return Py_BuildValue("iii", (int) start, (int) focal, (int) end);
+    return Py_BuildValue("iiik", (int) start, (int) focal, (int) end,
+            (unsigned long) num_older_ancestors);
 fail:
     PyArray_XDECREF_ERR(haplotype_array);
     return NULL;

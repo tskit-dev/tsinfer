@@ -406,7 +406,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=20, method="C")
+    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=10, method="C")
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -861,9 +861,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(200, 100, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -924,4 +924,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise_copying(8, 12, 5)
+    # visualise_copying(8, 12, 5)

@@ -14,6 +14,7 @@ ancestor_store_check_state(ancestor_store_t *self)
     size_t j;
     size_t total_segments = 0;
     size_t max_site_segments = 0;
+    size_t num_older_ancestors;
     allele_t *a = malloc(self->num_sites * sizeof(allele_t));
     assert(a != NULL);
 
@@ -26,7 +27,8 @@ ancestor_store_check_state(ancestor_store_t *self)
     assert(total_segments == self->total_segments);
     assert(max_site_segments == self->max_num_site_segments);
     for (j = 0; j < self->num_ancestors; j++) {
-        ret = ancestor_store_get_ancestor(self, j, a, &start, &focal, &end);
+        ret = ancestor_store_get_ancestor(self, j, a, &start, &focal, &end,
+                &num_older_ancestors);
         assert(ret == 0);
         if (j > 0) {
             assert(a[focal] == 1);
@@ -68,8 +70,11 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
         printf("\n");
     }
     fprintf(out, "ancestors = \n");
+    fprintf(out, "id\tfocal_site\tfrequency\tnum_older_ancestors\n");
     for (j = 0; j < self->num_ancestors; j++) {
-        fprintf(out, "%d\t%d\n", (int) j, self->ancestors.focal_site[j]);
+        fprintf(out, "%d\t%d\t%d\t%d\n", (int) j, self->ancestors.focal_site[j],
+                (int) self->ancestors.focal_site_frequency[j],
+                (int) self->ancestors.num_older_ancestors[j]);
     }
     ancestor_store_check_state(self);
     return 0;
@@ -77,13 +82,13 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
 
 int
 ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, double *position,
-        size_t num_ancestors, site_id_t *focal_site,
+        size_t num_ancestors, site_id_t *focal_site, size_t *focal_site_frequency,
         size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
         allele_t *state)
 {
     int ret = 0;
     site_id_t j, l, site_start, site_end;
-    size_t k, num_site_segments;
+    size_t k, num_site_segments, current_frequency, num_older_ancestors;
     ancestor_id_t seg_num_ancestors;
 
     memset(self, 0, sizeof(ancestor_store_t));
@@ -91,11 +96,17 @@ ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, double *position,
     self->num_ancestors = num_ancestors;
     self->sites = calloc(num_sites, sizeof(site_state_t));
     self->ancestors.focal_site = malloc(num_ancestors * sizeof(site_id_t));
-    if (self->sites == NULL || self->ancestors.focal_site == NULL) {
+    self->ancestors.focal_site_frequency = malloc(num_ancestors * sizeof(size_t));
+    self->ancestors.num_older_ancestors = calloc(num_ancestors, sizeof(size_t));
+    if (self->sites == NULL || self->ancestors.focal_site == NULL
+            || self->ancestors.focal_site_frequency == NULL
+            || self->ancestors.num_older_ancestors == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     memcpy(self->ancestors.focal_site, focal_site, num_ancestors * sizeof(site_id_t));
+    memcpy(self->ancestors.focal_site_frequency, focal_site_frequency,
+            num_ancestors * sizeof(size_t));
     site_start = 0;
     site_end = 0;
     self->max_num_site_segments = 0;
@@ -141,6 +152,17 @@ ancestor_store_alloc(ancestor_store_t *self, size_t num_sites, double *position,
         }
         site_start = site_end;
     }
+    /* Work out the number of older ancestors */
+    assert(self->num_ancestors > 1);
+    current_frequency = self->ancestors.focal_site_frequency[1] + 1;
+    num_older_ancestors = 0;
+    for (j = 1; j < self->num_ancestors; j++) {
+        if (self->ancestors.focal_site_frequency[j] < current_frequency) {
+            num_older_ancestors = j;
+            current_frequency = self->ancestors.focal_site_frequency[j];
+        }
+        self->ancestors.num_older_ancestors[j] = num_older_ancestors;
+    }
     // TODO error checking.
     assert(self->total_segments == num_segments);
     assert(seg_num_ancestors == (ancestor_id_t) num_ancestors);
@@ -160,6 +182,8 @@ ancestor_store_free(ancestor_store_t *self)
     }
     tsi_safe_free(self->sites);
     tsi_safe_free(self->ancestors.focal_site);
+    tsi_safe_free(self->ancestors.focal_site_frequency);
+    tsi_safe_free(self->ancestors.num_older_ancestors);
     return 0;
 }
 
@@ -190,7 +214,7 @@ ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
 int
 ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
         allele_t *ancestor, site_id_t *start_site, site_id_t *focal_site,
-        site_id_t *end_site)
+        site_id_t *end_site, size_t *num_older_ancestors)
 {
     int ret = 0;
     site_id_t l, start;
@@ -213,6 +237,7 @@ ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
     }
     *start_site = start;
     *focal_site = self->ancestors.focal_site[ancestor_id];
+    *num_older_ancestors = self->ancestors.num_older_ancestors[ancestor_id];
     *end_site = l;
 out:
     return ret;
