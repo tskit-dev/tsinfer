@@ -804,7 +804,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     /* focal_site_frequency */
     focal_site_frequency_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site_frequency,
-            NPY_UINT64, NPY_ARRAY_IN_ARRAY);
+            NPY_UINT32, NPY_ARRAY_IN_ARRAY);
     if (focal_site_frequency_array == NULL) {
         goto out;
     }
@@ -883,7 +883,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     err = ancestor_store_alloc(self->store,
         num_sites, (double *) PyArray_DATA(position_array),
         num_ancestors, (uint32_t *) PyArray_DATA(focal_site_array),
-        (uint64_t *) PyArray_DATA(focal_site_frequency_array),
+        (uint32_t *) PyArray_DATA(focal_site_frequency_array),
         total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),

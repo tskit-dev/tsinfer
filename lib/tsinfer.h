@@ -46,8 +46,8 @@ typedef struct {
     struct {
         /* TODO add start_site and end_site to improve get_ancestor performance. */
         site_id_t *focal_site;
-        size_t *focal_site_frequency;
-        size_t *num_older_ancestors;
+        uint32_t *focal_site_frequency;
+        uint32_t *num_older_ancestors;
     } ancestors;
 } ancestor_store_t;
 
@@ -146,7 +146,7 @@ int ancestor_store_builder_dump(ancestor_store_builder_t *self,
 
 int ancestor_store_alloc(ancestor_store_t *self,
         size_t num_sites, double *position,
-        size_t num_ancestors, site_id_t *focal_site, size_t *focal_site_frequency,
+        size_t num_ancestors, site_id_t *focal_site, uint32_t *focal_site_frequency,
         size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
         allele_t *state);
 int ancestor_store_free(ancestor_store_t *self);

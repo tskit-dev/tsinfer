@@ -46,7 +46,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     frequency_classes = builder.get_frequency_classes()
     num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
     ancestor_focal_site = np.zeros(num_ancestors, dtype=np.uint32)
-    ancestor_focal_site_frequency = np.zeros(num_ancestors, dtype=np.uint64)
+    ancestor_focal_site_frequency = np.zeros(num_ancestors, dtype=np.uint32)
     ancestor_focal_site[0] = -1
     k = 1
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:

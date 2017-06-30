@@ -114,7 +114,7 @@ read_samples(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
 
 static void
 read_ancestors(const char *infile, size_t *r_num_ancestors,
-        site_id_t **r_focal_sites, size_t **r_focal_site_frequency)
+        site_id_t **r_focal_sites, uint32_t **r_focal_site_frequency)
 {
     char *line = NULL;
     size_t len = 0;
@@ -122,7 +122,7 @@ read_ancestors(const char *infile, size_t *r_num_ancestors,
     const char delimiters[] = " \t";
     char *token;
     site_id_t *focal_sites = NULL;
-    size_t *focal_site_frequency = NULL;
+    uint32_t *focal_site_frequency = NULL;
     FILE *f = fopen(infile, "r");
 
     if (f == NULL) {
@@ -136,7 +136,7 @@ read_ancestors(const char *infile, size_t *r_num_ancestors,
         fatal_error("Cannot seek in file");
     }
     focal_sites = malloc(num_ancestors * sizeof(site_id_t));
-    focal_site_frequency = malloc(num_ancestors * sizeof(size_t));
+    focal_site_frequency = malloc(num_ancestors * sizeof(uint32_t));
     if (focal_sites == NULL) {
         fatal_error("Malloc error");
     }
@@ -163,7 +163,7 @@ read_ancestors(const char *infile, size_t *r_num_ancestors,
 
 static void
 read_sites(const char *infile, ancestor_store_t *store, size_t num_sites, double *position,
-        size_t num_ancestors, site_id_t *focal_site, size_t *focal_site_frequency)
+        size_t num_ancestors, site_id_t *focal_site, uint32_t *focal_site_frequency)
 {
     char *line = NULL;
     size_t len = 0;
@@ -440,7 +440,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     tree_sequence_builder_t ts_builder;
     ancestor_id_t end_site_value, sample_id;
     site_id_t *focal_sites = NULL;
-    size_t *focal_site_frequency = NULL;
+    uint32_t *focal_site_frequency = NULL;
     site_id_t start, focal, end;
     allele_t *ancestor = NULL;
     size_t j, l, num_ancestors, num_older_ancestors;
