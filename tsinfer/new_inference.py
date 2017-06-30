@@ -74,6 +74,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     else:
         store = AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
+            focal_site_frequency=ancestor_focal_site_frequency,
             focal_site=ancestor_focal_site)
     return store
 
@@ -556,17 +557,26 @@ class AncestorStore(object):
     """
     """
     def __init__(self, position=None, site=None, start=None, end=None, state=None,
-            focal_site=None):
+            focal_site_frequency=None, focal_site=None):
         self.num_sites = position.shape[0]
         self.num_ancestors = np.max(end)
         assert len(focal_site) == self.num_ancestors
         self.sites = [SiteState(pos, []) for pos in position]
         self.focal_site = focal_site
+        self.focal_site_frequency = focal_site_frequency
         j = 0
         for l in range(self.num_sites):
             while j < site.shape[0] and site[j] == l:
                 self.sites[l].segments.append(Segment(start[j], end[j], state[j]))
                 j += 1
+        self.num_older_ancestors = np.zeros(self.num_sites, dtype=np.uint32)
+        num_older_ancestors = 1
+        last_frequency = self.focal_site_frequency[1]
+        for j in range(1, self.num_ancestors):
+            if self.focal_site_frequency[j] < last_frequency:
+                last_frequency = self.focal_site_frequency[j]
+                num_older_ancestors = j
+            self.num_older_ancestors[j] = num_older_ancestors
 
     def print_state(self):
         print("Store:")
@@ -579,7 +589,6 @@ class AncestorStore(object):
             start, focal, end = self.get_ancestor(j, a)
             h = "".join(str(x) if x != -1 else '*' for x in a)
             print(start, focal, end, h, sep="\t")
-
 
 
     def get_state(self, site, ancestor):
@@ -606,10 +615,11 @@ class AncestorStore(object):
                 end_site = l
                 break
         focal_site = self.focal_site[ancestor_id]
+        num_older_ancestors = self.num_older_ancestors[ancestor_id]
         if ancestor_id > 0:
             assert a[focal_site] == 1
         assert start_site <= focal_site < end_site
-        return start_site, focal_site, end_site
+        return start_site, focal_site, end_site, num_older_ancestors
 
 
 @attr.s
