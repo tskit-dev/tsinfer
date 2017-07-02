@@ -857,13 +857,39 @@ def visualise_copying(n, L, seed, squaresize):
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
             visualiser.add_row(a, j)
         visualiser.show_path(k, P[k])
-        
+
         #add samples
         visualiser.add_separator()
         for j in range(S.shape[0]):
             visualiser.add_row(S[j],None)
         print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
+
+
+def run_large_infers():
+    seed = 100
+    n = 1000
+    # n = 10
+    for j in np.arange(20, 200, 10):
+        print("n                :", n)
+        print("L                :", j, "Mb")
+        filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
+        L = j * 10**6
+        ts = msprime.simulate(
+            n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+            Ne=10**4, random_seed=seed)
+        print("sites            :", ts.num_sites)
+        ts.dump(filename)
+        positions = np.array([site.position for site in ts.sites()])
+        S = generate_samples(ts, 0)
+        ts_inferred = tsinfer.infer(
+            S, positions, 1e-8, 1e-200, num_threads=20, method="C", show_progress=True)
+        filename = "tmp__NOBACKUP__/n={}_L={}_inferred.hdf5".format(n, j)
+        ts_inferred.dump(filename)
+        ts_simplified = ts_inferred.simplify()
+        filename = "tmp__NOBACKUP__/n={}_L={}_simplified.hdf5".format(n, j)
+        ts_simplified.dump(filename)
+        print()
 
 
 if __name__ == "__main__":
@@ -896,16 +922,7 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # n = 10
-    # for j in np.arange(101, 200, 10):
-    #     print("n                :", n)
-    #     print("L                :", j, "Mb")
-    #     filename = "tmp__NOBACKUP__/n={}_L={}.hdf5".format(n, j)
-    #     # build_ancestors(n, j * 10**6, 1, filename)
-    #     if not os.path.exists(filename):
-    #         break
-    #     load_ancestors(filename, num_threads=40)
-    #     print()
+    run_large_infers()
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -934,4 +951,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise_copying(8, 4, 5)
+    # visualise_copying(8, 4, 5)

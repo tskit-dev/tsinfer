@@ -7,6 +7,7 @@ import math
 
 import numpy as np
 import attr
+import tqdm
 
 import msprime
 
@@ -24,7 +25,7 @@ def split_parent_array(P):
         yield start, num_sites, P[-1]
 
 
-def build_ancestors(samples, positions, num_threads=1, method="C"):
+def build_ancestors(samples, positions, num_threads=1, method="C", show_progress=False):
     num_samples, num_sites = samples.shape
     builder = _tsinfer.AncestorBuilder(samples, positions)
     store_builder = _tsinfer.AncestorStoreBuilder(
@@ -49,6 +50,8 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     ancestor_focal_site_frequency = np.zeros(num_ancestors, dtype=np.uint32)
     ancestor_focal_site[0] = -1
     k = 1
+    if show_progress:
+        progress = tqdm.tqdm(total=num_ancestors - 1, desc="Build ancestors")
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         for result in executor.map(build_frequency_class, frequency_classes):
             frequency, A, p, focal_sites = result
@@ -57,6 +60,10 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
                 ancestor_focal_site[k] = focal_sites[index]
                 ancestor_focal_site_frequency[k] = frequency
                 k += 1
+                if show_progress:
+                    progress.update()
+    if show_progress:
+        progress.close()
     assert k == num_ancestors
 
     N = store_builder.total_segments
@@ -79,13 +86,17 @@ def build_ancestors(samples, positions, num_threads=1, method="C"):
     return store
 
 def match_ancestors(
-        store, recombination_rate, tree_sequence_builder, num_threads=1, method="C"):
+        store, recombination_rate, tree_sequence_builder, num_threads=1, method="C",
+        show_progress=False):
     ancestor_ids = list(range(1, store.num_ancestors))
 
     # Shuffle the ancestors so that we (hopefully) even out the work between
     # all threads.
     random.shuffle(ancestor_ids)
     update_lock = threading.Lock()
+
+    if show_progress:
+        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
 
     def ancestor_match_worker(thread_index):
         chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
@@ -110,6 +121,8 @@ def match_ancestors(
                     child=ancestor_id, haplotype=h, start_site=start_site,
                     end_site=end_site, end_site_parent=end_site_parent,
                     traceback=traceback)
+                if show_progress:
+                    progress.update()
             traceback.reset()
 
     if num_threads > 1:
@@ -122,13 +135,18 @@ def match_ancestors(
             t.join()
     else:
         ancestor_match_worker(0)
+    if show_progress:
+        progress.close()
 
 
 def match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
-        num_threads=1, method="C"):
+        num_threads=1, method="C", show_progress=False):
     sample_ids = list(range(samples.shape[0]))
     update_lock = threading.Lock()
+
+    if show_progress:
+        progress = tqdm.tqdm(total=samples.shape[0], desc="Match samples  ")
 
     def sample_match_worker(thread_index):
         chunk_size = int(math.ceil(len(sample_ids) / num_threads))
@@ -148,6 +166,8 @@ def match_samples(
                     child=store.num_ancestors + sample_id,
                     haplotype=h, start_site=0, end_site=store.num_sites,
                     end_site_parent=end_site_parent, traceback=traceback)
+                if show_progress:
+                    progress.update()
             traceback.reset()
 
     if num_threads > 1:
@@ -161,6 +181,8 @@ def match_samples(
     else:
         sample_match_worker(0)
 
+    if show_progress:
+        progress.close()
 
 def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
 
@@ -227,9 +249,10 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
 
 
 def infer(samples, positions, recombination_rate, error_rate, method="C",
-        num_threads=1):
+        num_threads=1, show_progress=False):
     num_samples, num_sites = samples.shape
-    store = build_ancestors(samples, positions, num_threads=num_threads, method=method)
+    store = build_ancestors(samples, positions, num_threads=num_threads, method=method,
+            show_progress=show_progress)
 
     if method == "C":
         tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
@@ -237,10 +260,10 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
         tree_sequence_builder = TreeSequenceBuilder(store, num_samples);
     match_ancestors(
         store, recombination_rate, tree_sequence_builder, method=method,
-        num_threads=num_threads)
+        num_threads=num_threads, show_progress=show_progress)
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
-        method=method, num_threads=num_threads)
+        method=method, num_threads=num_threads, show_progress=show_progress)
     ts = finalise_tree_sequence(num_samples, store, tree_sequence_builder)
 
     # tree_sequence_builder.print_state()
