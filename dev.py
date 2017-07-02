@@ -410,7 +410,10 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, 1e-6, 1e-6, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=10, method="C")
+    new_positions = np.array([site.position for site in tsp.sites()])
+    assert np.all(new_positions == positions)
+
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -791,7 +794,7 @@ def draw_copying_density(ts, width, breaks):
 
 
 
-def visualise_copying(n, L, seed, squaresize):
+def visualise_copying(n, L, seed):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
@@ -810,7 +813,7 @@ def visualise_copying(n, L, seed, squaresize):
     frequency = np.sum(S, axis=0)
 
     store = tsinfer.build_ancestors(S, positions, method="C")
-    ts = tsinfer.infer(S, positions, 1e-6, 1e-200)
+    ts = tsinfer.infer(S, positions, L, 1e-6, 1e-200)
 
     last_frequency = 0
     breaks = set()
@@ -833,17 +836,22 @@ def visualise_copying(n, L, seed, squaresize):
 
     N = store.num_ancestors + S.shape[0]
     P = np.zeros((N, store.num_sites), dtype=int) - 1
+    site_index = {}
+    for site in ts.sites():
+        site_index[site.position] = site.index
+    site_index[ts.sequence_length] = ts.num_sites
+    site_index[0] = 0
+
     for e in ts.edgesets():
         for c in e.children:
-            # FIXME!!! This will break when we start outputting positions correctly!
-            left = int(e.left)
-            right = int(e.right)
+            left = site_index[e.left]
+            right = site_index[e.right]
             assert left < right
             P[c, left:right] = e.parent
 
-    visualiser.save("tmp.svg")
+#     visualiser.save("tmp.svg")
 
-    draw_copying_density(ts, 800, breaks)
+#     draw_copying_density(ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
         #one file for each copy
@@ -883,7 +891,7 @@ def run_large_infers():
         positions = np.array([site.position for site in ts.sites()])
         S = generate_samples(ts, 0)
         ts_inferred = tsinfer.infer(
-            S, positions, 1e-8, 1e-200, num_threads=20, method="C", show_progress=True)
+            S, positions, L, 1e-8, 1e-200, num_threads=10, method="C", show_progress=True)
         filename = "tmp__NOBACKUP__/n={}_L={}_inferred.hdf5".format(n, j)
         ts_inferred.dump(filename)
         ts_simplified = ts_inferred.simplify()
@@ -891,15 +899,34 @@ def run_large_infers():
         ts_simplified.dump(filename)
         print()
 
+def analyse_file(filename):
+    ts = msprime.load(filename)
+
+    num_children = np.zeros(ts.num_edgesets, dtype=np.int)
+    for j, e in enumerate(ts.edgesets()):
+        # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
+        num_children[j] = len(e.children)
+
+    print("total edgesets = ", ts.num_edgesets)
+    print("non binary     = ", np.sum(num_children > 2))
+    print("max children   = ", np.max(num_children))
+    print("mean children  = ", np.mean(num_children))
+
+    for t in ts.trees():
+        t.draw("tree_{}.svg".format(t.index), 4000, 4000)
+        if t.index == 10:
+            break
+
+
 
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-#     for j in range(1, 100000):
-#         print(j)
-#         new_segments(200, 100, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(200, 100, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -922,7 +949,8 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    run_large_infers()
+    # run_large_infers()
+    # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -951,4 +979,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)

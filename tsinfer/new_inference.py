@@ -184,7 +184,13 @@ def match_samples(
     if show_progress:
         progress.close()
 
-def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
+def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_builder):
+
+    site_position = np.zeros(store.num_sites + 1, dtype=np.float64)
+    site_position[:store.num_sites] = position
+    site_position[store.num_sites] = length
+    # Make sure the first coordinate is 0
+    site_position[0] = 0
 
     # Allocate the nodes table.
     num_nodes = store.num_ancestors + num_samples
@@ -206,6 +212,11 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
     children_length = np.empty(num_edgesets, dtype=np.uint32)
     tree_sequence_builder.dump_edgesets(
         left, right, parent, children, children_length)
+    # Translate left and right into positions.
+    # TODO this should be done at the lower level where its safer.
+    left = site_position[left.astype(np.uint32)]
+    right = site_position[right.astype(np.uint32)]
+
     edgesets = msprime.EdgesetTable()
     edgesets.set_columns(
         left=left, right=right, parent=parent, children=children,
@@ -215,9 +226,6 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
     sites = msprime.SiteTable()
     ancestral_state = np.zeros(store.num_sites, dtype=np.int8) + ord('0')
     ancestral_state_length = np.ones(store.num_sites, dtype=np.uint32)
-    # TODO use the real position. Need to translate edgeset coordinates to
-    # real positions also.
-    position = np.arange(store.num_sites, dtype=np.float64)
     sites.set_columns(
         position=position, ancestral_state=ancestral_state,
         ancestral_state_length=ancestral_state_length)
@@ -248,7 +256,7 @@ def finalise_tree_sequence(num_samples, store, tree_sequence_builder):
     return ts
 
 
-def infer(samples, positions, recombination_rate, error_rate, method="C",
+def infer(samples, positions, length, recombination_rate, error_rate, method="C",
         num_threads=1, show_progress=False):
     num_samples, num_sites = samples.shape
     store = build_ancestors(samples, positions, num_threads=num_threads, method=method,
@@ -264,7 +272,7 @@ def infer(samples, positions, recombination_rate, error_rate, method="C",
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads, show_progress=show_progress)
-    ts = finalise_tree_sequence(num_samples, store, tree_sequence_builder)
+    ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
 
     # tree_sequence_builder.print_state()
     # ts = tree_sequence_builder.finalise()
