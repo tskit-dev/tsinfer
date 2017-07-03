@@ -1232,7 +1232,26 @@ out:
     return ret;
 }
 
+static PyObject *
+Traceback_get_num_segment_blocks(Traceback *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (Traceback_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->traceback->segment_heap.num_blocks);
+out:
+    return ret;
+}
+
 static PyMemberDef Traceback_members[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef Traceback_getsetters[] = {
+    {"num_segment_blocks", (getter) Traceback_get_num_segment_blocks, NULL,
+        "The total number of segment blocks."},
     {NULL}  /* Sentinel */
 };
 
@@ -1272,7 +1291,7 @@ static PyTypeObject TracebackType = {
     0,                     /* tp_iternext */
     Traceback_methods,             /* tp_methods */
     Traceback_members,             /* tp_members */
-    0,                         /* tp_getset */
+    Traceback_getsetters,          /* tp_getset */
     0,                         /* tp_base */
     0,                         /* tp_dict */
     0,                         /* tp_descr_get */

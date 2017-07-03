@@ -410,7 +410,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -436,14 +436,19 @@ def new_segments(n, L, seed):
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
+    # for e in ts_simplified.edgesets():
+    #     print("{:.2f}\t{:.2f}".format(e.left, e.right), e.parent, e.children, sep="\t")
+
 
 
 def export_samples(n, L, seed):
 
+    L = L * 10**6
     ts = msprime.simulate(
-        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
     print("num_sites = ", ts.num_sites)
-    with open("tmp__NOBACKUP__/samples.txt", "w") as out:
+    with open("tmp__NOBACKUP__/large-samples.txt", "w") as out:
         for variant in ts.variants():
             print(variant.position, "".join(map(str, variant.genotypes)), sep="\t", file=out)
 
@@ -878,7 +883,7 @@ def run_large_infers():
     seed = 100
     n = 1000
     # n = 10
-    for j in np.arange(20, 200, 10):
+    for j in np.arange(10, 200, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
@@ -913,8 +918,11 @@ def analyse_file(filename):
     print("mean children  = ", np.mean(num_children))
 
     for t in ts.trees():
-        t.draw("tree_{}.svg".format(t.index), 4000, 4000)
-        if t.index == 10:
+        t.draw("tmp__NOBACKUP__/tree_{}.svg".format(t.index), 8000, 4000,
+                show_internal_node_labels=False,
+                show_leaf_node_labels=False)
+        print("Wrote", t.index)
+        if t.index == 100:
             break
 
 
@@ -928,10 +936,10 @@ if __name__ == "__main__":
     #     print(j)
     #     new_segments(200, 100, j)
 
-    # new_segments(4, 2, 5)
+    new_segments(16, 8, 5)
     # # new_segments(40, 20, 304)
 
-    # export_samples(10, 100, 304)
+    # export_samples(1000, 10, 304)
 
 
     # n = 10
@@ -950,7 +958,7 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     # run_large_infers()
-    # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
+    # analyse_file("tmp__NOBACKUP__/n=1000_L=20_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -979,4 +987,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise_copying(8, 4, 5)
+    # visualise_copying(8, 4, 5)

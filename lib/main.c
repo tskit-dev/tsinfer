@@ -472,7 +472,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         fatal_error("alloc error");
     }
     if (verbose > 0) {
-        ancestor_store_print_state(&store, stdout);
+        /* ancestor_store_print_state(&store, stdout); */
     }
     /* Copy ancestors */
     for (j = store.num_ancestors - 1; j > 0; j--) {
@@ -482,7 +482,8 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
             fatal_error("get_ancestor error");
         }
         if (verbose > 0) {
-            printf("ancestor %d: %d= \t", (int) j, focal);
+            printf("ancestor %d: (%d, %d, %d) num_older = %d= \t", (int) j, start, focal,
+                    end, (int) num_older_ancestors);
             for (l = 0; l < store.num_sites; l++) {
                 if (ancestor[l] == -1) {
                     printf("*");
@@ -496,6 +497,9 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
                 end, focal, mutation_rate, &traceback, &end_site_value);
         if (ret != 0) {
             fatal_error("match error");
+        }
+        if (verbose > 0) {
+            traceback_print_state(&traceback, stdout);
         }
         ret = tree_sequence_builder_update(&ts_builder, j, ancestor, start, end,
                 end_site_value, &traceback);

@@ -103,7 +103,7 @@ def match_ancestors(
         start = thread_index * chunk_size
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
@@ -121,6 +121,7 @@ def match_ancestors(
                     child=ancestor_id, haplotype=h, start_site=start_site,
                     end_site=end_site, end_site_parent=end_site_parent,
                     traceback=traceback)
+                # print(thread_index, traceback.num_segment_blocks)
                 if show_progress:
                     progress.update()
             traceback.reset()
@@ -406,7 +407,8 @@ class TreeSequenceBuilder(object):
             end_site_parent=None, traceback=None):
         """
         """
-        # print("Running traceback on ", start_site, end_site, end_site_value)
+        # print("Running traceback on ", start_site, end_site, end_site_parent)
+        # traceback.print_state()
         # self.print_state()
         end = end_site
         parent = end_site_parent
@@ -718,13 +720,6 @@ class AncestorBuilder(object):
         self.__build_ancestor_sites(focal_site, sites, a)
         return a
 
-    def build_ancestors(self):
-        for site in self.sorted_sites:
-            if site.frequency == 1:
-                break
-            yield self.__build_ancestor(site)
-
-
 class Traceback(object):
     def __init__(self, store):
         self.store = store
@@ -763,6 +758,7 @@ class Traceback(object):
         return T
 
     def print_state(self):
+        print("traceback:")
         for l, head in enumerate(self.site_head):
             if head is not None:
                 print(l, ":", end="")
@@ -772,45 +768,6 @@ class Traceback(object):
                     u = u.next
                 print()
 
-
-    def run(self, h, start_site, end_site, end_site_value, P, M):
-        """
-        Returns the array of haplotype indexes that the specified encoded traceback
-        defines for the given startin point at the last site.
-        """
-        # print("Running traceback on ", start_site, end_site, end_site_value)
-        # print(self.decode_traceback())
-        self.print_state()
-        l = end_site - 1
-        P[:] = -1
-        P[l] = end_site_value
-        T = self.site_head
-        num_mutations = 0
-        while l > start_site:
-            state = self.store.get_state(l, int(P[l]))
-            assert state != -1
-            if state != h[l]:
-                M[num_mutations] = l
-                num_mutations += 1
-            value = None
-            u = T[l]
-            while u is not None:
-                if u.start <= P[l] < u.end:
-                    value = u.value
-                    break
-                if u.start > P[l]:
-                    break
-                u = u.next
-            if value is None:
-                value = P[l]
-            P[l - 1] = value
-            l -= 1
-        state = self.store.get_state(l, int(P[l]))
-        assert state != -1
-        if state != h[l]:
-            M[num_mutations] = l
-            num_mutations += 1
-        return num_mutations
 
 
 class AncestorMatcher(object):

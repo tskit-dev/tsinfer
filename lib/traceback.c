@@ -10,6 +10,24 @@
 int
 traceback_print_state(traceback_t *self, FILE *out)
 {
+    size_t l;
+    segment_t *v;
+
+    fprintf(out, "Traceback\n");
+    fprintf(out, "num_sites = %d\n", (int) self->num_sites);
+    object_heap_print_state(&self->segment_heap, out);
+    for (l = 0; l < self->num_sites; l++) {
+        v = self->sites_head[l];
+        if (v != NULL) {
+            fprintf(out, "%d\t", (int) l);
+            while (v != NULL) {
+                fprintf(out, "(%d,%d->%d)", (int) v->start, (int) v->end,
+                        (int) v->value);
+                v = v->next;
+            }
+            fprintf(out, "\n");
+        }
+    }
     return 0;
 }
 
@@ -129,65 +147,3 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id,
 out:
     return ret;
 }
-
-#if 0
-int
-traceback_run(traceback_t *self, allele_t *haplotype,
-        site_id_t start_site, site_id_t end_site, ancestor_id_t end_site_value,
-        ancestor_id_t *path, size_t *num_mutations, site_id_t *mutation_sites)
-{
-    int ret = 0;
-    site_id_t l;
-    ancestor_id_t p;
-    segment_t *u;
-    allele_t state;
-    size_t local_num_mutations = 0;
-
-    /* printf("traceback for %d-%d, best=%d\n", start_site, end_site, best_match); */
-    /* Set everything to -1 */
-    memset(path, 0xff, self->store->num_sites * sizeof(ancestor_id_t));
-    path[end_site - 1] = end_site_value;
-    for (l = end_site - 1; l > start_site; l--) {
-        /* printf("Tracing back at site %d\n", l); */
-        /* print_segment_chain(T_head[l], 1, stdout); */
-        /* printf("\n"); */
-        ret = ancestor_store_get_state(self->store, l, path[l], &state);
-        if (ret != 0) {
-            goto out;
-        }
-        if (state != haplotype[l]) {
-            mutation_sites[local_num_mutations] = l;
-            local_num_mutations++;
-        }
-
-        p = (ancestor_id_t) -1;
-        u = self->sites_head[l];
-        while (u != NULL) {
-            if (u->start <= path[l] && path[l] < u->end) {
-                p = (ancestor_id_t) u->value;
-                break;
-            }
-            if (u->start > path[l]) {
-                break;
-            }
-            u = u->next;
-        }
-        if (p == (ancestor_id_t) -1) {
-            p = path[l];
-        }
-        path[l - 1] = p;
-    }
-    l = start_site;
-    ret = ancestor_store_get_state(self->store, l, path[l], &state);
-    if (ret != 0) {
-        goto out;
-    }
-    if (state != haplotype[l]) {
-        mutation_sites[local_num_mutations] = l;
-        local_num_mutations++;
-    }
-    *num_mutations = local_num_mutations;
-out:
-    return ret;
-}
-#endif
