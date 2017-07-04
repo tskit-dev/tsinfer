@@ -2,11 +2,16 @@
 Visualisation of the copying process and ancestor generation using PIL
 """
 import os
+import sys
 
 import numpy as np
 import PIL.Image as Image
 import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
+
+script_path = __file__ if "__file__" in locals() else "./dummy.py"
+sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
+sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
 
 import tsinfer
 import msprime
