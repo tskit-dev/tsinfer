@@ -27,29 +27,36 @@ def split_parent_array(P):
 
 def build_ancestors(samples, positions, num_threads=1, method="C", show_progress=False):
     num_samples, num_sites = samples.shape
-    builder = _tsinfer.AncestorBuilder(samples, positions)
+    if method == "C":
+        builder = _tsinfer.AncestorBuilder(samples, positions)
+    else:
+        builder = AncestorBuilder(samples, positions)
     store_builder = _tsinfer.AncestorStoreBuilder(
             builder.num_sites, 8192 * builder.num_sites)
 
     # TODO change this to use threads as futures leak result memory.
     def build_frequency_class(work):
         frequency, focal_sites = work
-        num_ancestors = len(focal_sites)
+
+        # TODO this should be done in C or at least use a hashable numpy array
+        # as the key.
+        patterns = collections.defaultdict(list)
+        for focal_site in focal_sites:
+            site_pattern = tuple(samples[:,focal_site])
+            patterns[site_pattern].append(focal_site)
+        num_ancestors = len(patterns)
         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
         p = np.zeros(num_ancestors, dtype=np.uint32)
-        # print("frequency:", frequency, "sites = ", focal_sites)
-        for j, focal_site in enumerate(focal_sites):
-            builder.make_ancestor(focal_site, A[j, :])
+        ancestor_focal_sites = []
+        for j, sites in enumerate(patterns.values()):
+            ancestor_focal_sites.append(sites)
+            builder.make_ancestor(sites, A[j, :])
         _tsinfer.sort_ancestors(A, p)
-        # p = np.arange(num_ancestors, dtype=np.uint32)
-        return frequency, A, p, focal_sites
+        return frequency, A, p, ancestor_focal_sites
 
     frequency_classes = builder.get_frequency_classes()
-    num_ancestors = 1 + sum(len(sites) for _, sites in frequency_classes)
-    ancestor_focal_site = np.zeros(num_ancestors, dtype=np.uint32)
-    ancestor_focal_site_frequency = np.zeros(num_ancestors, dtype=np.uint32)
-    ancestor_focal_site[0] = -1
-    k = 1
+    ancestor_focal_site = [[]]
+    ancestor_focal_site_frequency = [0]
     if show_progress:
         progress = tqdm.tqdm(total=num_ancestors - 1, desc="Build ancestors")
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -57,14 +64,13 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
             frequency, A, p, focal_sites = result
             for index in p:
                 store_builder.add(A[index, :])
-                ancestor_focal_site[k] = focal_sites[index]
-                ancestor_focal_site_frequency[k] = frequency
-                k += 1
+                ancestor_focal_site.append(focal_sites[index])
+                ancestor_focal_site_frequency.append(frequency)
                 if show_progress:
                     progress.update()
     if show_progress:
         progress.close()
-    assert k == num_ancestors
+    # assert k == num_ancestors
 
     N = store_builder.total_segments
     site = np.zeros(N, dtype=np.uint32)
@@ -81,8 +87,9 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     else:
         store = AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
-            focal_site_frequency=ancestor_focal_site_frequency,
-            focal_site=ancestor_focal_site)
+            focal_sites_frequency=ancestor_focal_site_frequency,
+            focal_sites=ancestor_focal_site)
+    # store.print_state()
     return store
 
 def match_ancestors(
@@ -590,13 +597,13 @@ class AncestorStore(object):
     """
     """
     def __init__(self, position=None, site=None, start=None, end=None, state=None,
-            focal_site_frequency=None, focal_site=None):
+            focal_sites_frequency=None, focal_sites=None):
         self.num_sites = position.shape[0]
         self.num_ancestors = np.max(end)
-        assert len(focal_site) == self.num_ancestors
+        assert len(focal_sites) == self.num_ancestors
         self.sites = [SiteState(pos, []) for pos in position]
-        self.focal_site = focal_site
-        self.focal_site_frequency = focal_site_frequency
+        self.focal_sites = focal_sites
+        self.focal_sites_frequency = focal_sites_frequency
         j = 0
         for l in range(self.num_sites):
             while j < site.shape[0] and site[j] == l:
@@ -604,10 +611,10 @@ class AncestorStore(object):
                 j += 1
         self.num_older_ancestors = np.zeros(self.num_sites, dtype=np.uint32)
         num_older_ancestors = 1
-        last_frequency = self.focal_site_frequency[1]
+        last_frequency = self.focal_sites_frequency[1]
         for j in range(1, self.num_ancestors):
-            if self.focal_site_frequency[j] < last_frequency:
-                last_frequency = self.focal_site_frequency[j]
+            if self.focal_sites_frequency[j] < last_frequency:
+                last_frequency = self.focal_sites_frequency[j]
                 num_older_ancestors = j
             self.num_older_ancestors[j] = num_older_ancestors
 
@@ -619,9 +626,9 @@ class AncestorStore(object):
         print("Ancestors")
         a = np.zeros(self.num_sites, dtype=int)
         for j in range(self.num_ancestors):
-            start, focal, end = self.get_ancestor(j, a)
+            start, focal_sites, end, num_older_ancestors = self.get_ancestor(j, a)
             h = "".join(str(x) if x != -1 else '*' for x in a)
-            print(start, focal, end, h, sep="\t")
+            print(start, focal_sites, end, h, sep="\t")
 
 
     def get_state(self, site, ancestor):
@@ -647,12 +654,16 @@ class AncestorStore(object):
             if a[l] == -1 and start_site is not None:
                 end_site = l
                 break
-        focal_site = self.focal_site[ancestor_id]
+        focal_sites = self.focal_sites[ancestor_id]
         num_older_ancestors = self.num_older_ancestors[ancestor_id]
         if ancestor_id > 0:
-            assert a[focal_site] == 1
-        assert start_site <= focal_site < end_site
-        return start_site, focal_site, end_site, num_older_ancestors
+            for focal_site in focal_sites:
+                assert a[focal_site] == 1
+        assert sorted(focal_sites) == focal_sites
+        assert len(set(focal_sites)) == len(focal_sites)
+        if len(focal_sites) > 0:
+            assert start_site <= focal_sites[0] <= focal_sites[-1] < end_site
+        return start_site, focal_sites, end_site, num_older_ancestors
 
 
 @attr.s
@@ -665,7 +676,7 @@ class AncestorBuilder(object):
     """
     Builds inferred ancestors.
     """
-    def __init__(self, S):
+    def __init__(self, S, positions):
         self.haplotypes = S
         self.num_samples = S.shape[0]
         self.num_sites = S.shape[1]
@@ -679,8 +690,11 @@ class AncestorBuilder(object):
         for site in self.sorted_sites:
             if site.frequency > 1:
                 self.frequency_classes[site.frequency].append(site)
-        # for k, v in self.frequency_classes.items():
-        #     print(k, "->", v)
+
+    def get_frequency_classes(self):
+        for frequency in reversed(sorted(self.frequency_classes.keys())):
+            sites = [site.id for site in self.frequency_classes[frequency]]
+            yield frequency, sites
 
     def __build_ancestor_sites(self, focal_site, sites, a):
         S = self.haplotypes
@@ -710,14 +724,16 @@ class AncestorBuilder(object):
                 # print("BREAK")
                 break
 
-    def __build_ancestor(self, focal_site):
-        # print("Building ancestor for ", focal_site)
-        a = np.zeros(self.num_sites, dtype=np.int8) - 1
-        a[focal_site.id] = 1
+    def make_ancestor(self, focal_sites, a):
+        focal_site = self.sites[focal_sites[0]]
+        # It _should_ be OK just taking a single site, but this is probably not
+        # robust to error and we should take the full set into account.
         sites = range(focal_site.id + 1, self.num_sites)
         self.__build_ancestor_sites(focal_site, sites, a)
         sites = range(focal_site.id - 1, -1, -1)
         self.__build_ancestor_sites(focal_site, sites, a)
+        for focal_site in focal_sites:
+            a[focal_site] = 1
         return a
 
 class Traceback(object):
@@ -778,7 +794,7 @@ class AncestorMatcher(object):
         self.recombination_rate = recombination_rate
 
     def best_path(
-            self, num_ancestors, h, start_site, end_site, focal_site, error_rate,
+            self, num_ancestors, h, start_site, end_site, focal_sites, error_rate,
             traceback):
         """
         Returns the best path through the list of ancestors for the specified
@@ -863,7 +879,7 @@ class AncestorMatcher(object):
                     if error_rate == 0:
                         # Ancestor matching.
                         likelihood_next = z * int(state == h[site])
-                        if site == focal_site:
+                        if site in focal_sites:
                             assert h[site] == 1
                             assert state == 0
                             likelihood_next = z

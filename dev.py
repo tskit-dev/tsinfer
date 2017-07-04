@@ -37,6 +37,38 @@ import msprime
 import msprime_to_inference_matrices
 
 
+def build_ancestors_dev(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    print("num_sites = ", ts.num_sites)
+    position = [site.position for site in ts.sites()]
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+
+    # builder = _tsinfer.AncestorBuilder(S, position)
+    builder = tsinfer.AncestorBuilder(S, position)
+    store_builder = _tsinfer.AncestorStoreBuilder(
+        builder.num_sites, builder.num_sites * 8192)
+
+    for frequency_class, focal_sites in builder.get_frequency_classes():
+
+        print(frequency_class, focal_sites)
+        patterns = collections.defaultdict(list)
+        for focal_site in focal_sites:
+            site_pattern = tuple(S[:,focal_site])
+            patterns[site_pattern].append(focal_site)
+        num_ancestors = len(patterns)
+        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+        p = np.zeros(num_ancestors, dtype=np.uint32)
+        for j, sites in enumerate(patterns.values()):
+            builder.make_ancestor(sites, A[j, :])
+        _tsinfer.sort_ancestors(A, p)
+        for j in num_ancestors:
+            store_builder.add(A[index, :])
+
 
 def load_ancestors_dev(filename):
 
@@ -264,15 +296,15 @@ def sort_ancestors(A, p, sort_order):
     #     print(j, "\t", a)
 
 
-def build_ancestors(n, L, seed, filename):
+def build_ancestors(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
         Ne=10**4, random_seed=seed)
-    # print("num_sites = ", ts.num_sites)
+    print("num_sites = ", ts.num_sites)
     # print("simulation done, num_sites = ", ts.num_sites)
 
-    ts.dump(filename.split(".")[0] + ".ts.hdf5")
+    # ts.dump(filename.split(".")[0] + ".ts.hdf5")
 
     position = [site.position for site in ts.sites()]
 
@@ -412,7 +444,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="P")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -637,12 +669,12 @@ def site_set_stats(n, L, seed):
     }
 
 def rle(inarray):
-        """ run length encoding. Partial credit to R rle function. 
+        """ run length encoding. Partial credit to R rle function.
             Multi datatype arrays catered for including non Numpy
             returns: tuple (runlengths, startpositions, values) """
         ia = np.array(inarray)                  # force numpy
         n = len(ia)
-        if n == 0: 
+        if n == 0:
             return (None, None, None)
         else:
             y = np.array(ia[1:] != ia[:-1])     # pairwise unequal (string safe)
@@ -739,7 +771,7 @@ class Visualiser(object):
             self.drawing.add(self.drawing.rect(
                 corner, ((self.scale * self.num_sites), self.scale),
                 stroke="black", fill_opacity=0.2))
-            
+
         elif fade_recents and label + 1 in self.label_map:
             #  fade out the more recent stuff
             row = self.label_map[label + 1]
@@ -900,7 +932,7 @@ def visualise_copying(n, L, seed):
             visualiser.add_row(a, j)
         #highlight the path
         visualiser.show_path(k, P[k], False)
-        
+
         #fade the unused bits
         locations = np.array([s.position for s in inferred_ts.sites()])
         #to do - this is a hack to get a row number for a node
@@ -957,7 +989,7 @@ def visualise_copying(n, L, seed):
             visualiser.add_separator()
     while row < H.shape[0]:
         visualiser.add_row(H[row,], keep_nodes[row])
-        row += 1        
+        row += 1
     visualiser.save("tmp__NOBACKUP__/real.svg")
 
 
@@ -1011,9 +1043,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(200, 100, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(20, 10, j)
 
     # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
@@ -1043,7 +1075,6 @@ if __name__ == "__main__":
     # # for j in [4]:
     #     print(j, file=sys.stderr)
     #     filename = "tmp__NOBACKUP__/tmp-3.hdf5"
-    #     build_ancestors(20, 0.2 * 10**6, j, filename)
     #     load_ancestors(filename)
         # load_ancestors_dev(filename)
 
@@ -1066,4 +1097,5 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise_copying(8, 4, 5)
+    # visualise_copying(8, 4, 5)
+    # build_ancestors_dev(10, 10000, 3)

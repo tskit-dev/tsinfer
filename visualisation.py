@@ -24,10 +24,10 @@ class Visualiser(object):
         last_frequency = 0
         self.ancestors = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
         for j in range(1, store.num_ancestors):
-            start, focal, end, num_older_ancestors = store.get_ancestor(
+            start, focal_sites, end, num_older_ancestors = store.get_ancestor(
                     j, self.ancestors[j, :])
-            if frequency[focal] != last_frequency:
-                last_frequency = frequency[focal]
+            if frequency[focal_sites[0]] != last_frequency:
+                last_frequency = frequency[focal_sites[0]]
                 num_rows += 1
             self.row_map[j] = num_rows
             num_rows += 1
@@ -142,11 +142,11 @@ def run_viz(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    visualise(S, positions, L, 1e-6, 1e-200, method="C", box_size=8)
+    visualise(S, positions, L, 1e-6, 1e-200, method="P", box_size=8)
 
 
 def main():
-    run_viz(10, 10, 1)
+    run_viz(20, 20, 1)
 
 
 if __name__ == "__main__":
