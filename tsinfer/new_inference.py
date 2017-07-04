@@ -411,29 +411,34 @@ class TreeSequenceBuilder(object):
         # traceback.print_state()
         # self.print_state()
         end = end_site
-        parent = end_site_parent
+        V = traceback.site_best_segments
         T = traceback.site_head
+        # parent = random.randint(
+        #     V[end_site - 1][0].start, V[end_site - 1][0].end - 1)
+        parent = V[end_site - 1][0].start
         for l in range(end_site - 1, start_site, -1):
             state = self.store.get_state(l, parent)
             # print("l = ", l, "state = ", state, "parent = ", parent)
             assert state != -1
             if state != haplotype[l]:
                 self.add_mutation(child, l, haplotype[l])
-            value = None
+            switch = False
             u = T[l]
             while u is not None:
                 if u.start <= parent < u.end:
-                    value = u.value
+                    switch = True
                     break
                 if u.start > parent:
                     break
                 u = u.next
-            if value is not None:
+            if switch:
                 # Complete a segment at this site
                 assert l < end
                 self.add_mapping(l, end, parent, child)
                 end = l
-                parent = value
+                parent = V[l - 1][0].start
+                # parent = random.randint(V[l - 1][0].start, V[l - 1][0].end - 1)
+                print("SWITCH: options = ", V[l - 1])
         assert start_site < end
         self.add_mapping(start_site, end, parent, child)
         l = start_site
@@ -725,48 +730,42 @@ class Traceback(object):
         self.store = store
         self.reset()
 
-    def add_recombination(self, site, start, end, ancestor):
+    def add_best_segment(self, site, start, end):
+        """
+        Adds a maximum likelihood recombinant segment for the specified site.
+        """
+        self.site_best_segments[site].append(LinkedSegment(start, end))
+
+    def add_recombination(self, site, start, end):
         if self.site_head[site] is None:
-            self.site_head[site] = LinkedSegment(start, end, ancestor)
+            self.site_head[site] = LinkedSegment(start, end)
             self.site_tail[site] = self.site_head[site]
         else:
-            if self.site_tail[site].end == start and self.site_tail[site].value == ancestor:
+            if self.site_tail[site].end == start:
                 self.site_tail[site].end = end
             else:
-                tail = LinkedSegment(start, end, ancestor)
+                tail = LinkedSegment(start, end)
                 self.site_tail[site].next = tail
                 self.site_tail[site] = tail
 
     def reset(self):
         self.site_head = [None for _ in range(self.store.num_sites)]
         self.site_tail = [None for _ in range(self.store.num_sites)]
-
-    def decode_traceback(self):
-        """
-        Decode the specified encoded traceback matrix into the standard integer
-        matrix.
-        """
-        E = self.site_head
-        assert len(E) == self.store.num_sites
-        T = np.zeros((self.store.num_ancestors, self.store.num_sites), dtype=int)
-        for l in range(1, self.store.num_sites):
-            T[:,l] = np.arange(self.store.num_ancestors)
-            u = E[l]
-            while u is not None:
-                T[u.start:u.end, l] = u.value
-                u = u.next
-        return T
+        self.site_best_segments = [[] for _ in range(self.store.num_sites)]
 
     def print_state(self):
         print("traceback:")
         for l, head in enumerate(self.site_head):
-            if head is not None:
-                print(l, ":", end="")
-                u = head
-                while u != None:
-                    print("({},{}->{})".format(u.start, u.end, u.value), end="")
-                    u = u.next
-                print()
+            print(l, ":", end="")
+            s = ""
+            for seg in self.site_best_segments[l]:
+                s += "({},{})".format(seg.start, seg.end)
+            print(s, "=", end="")
+            u = head
+            while u != None:
+                print("({},{})".format(u.start, u.end, u.value), end="")
+                u = u.next
+            print()
 
 
 
@@ -794,7 +793,7 @@ class AncestorMatcher(object):
         last_position = self.store.sites[start_site].position
         possible_recombinants = n
 
-        # print("BEST PATH", num_ancestors, h, start_site, focal_site, end_site)
+        print("BEST PATH", num_ancestors, start_site, focal_site, end_site, h)
 
 
         for site in range(start_site, end_site):
@@ -857,7 +856,7 @@ class AncestorMatcher(object):
                         z = x
                     else:
                         z = y
-                        traceback.add_recombination(site, start, end, best_haplotype)
+                        traceback.add_recombination(site, start, end)
 
                     # Determine the likelihood for this segment.
                     if error_rate == 0:
@@ -890,14 +889,13 @@ class AncestorMatcher(object):
 
             L = L_next
             max_value = -1
-            best_haplotype = -1
             for seg in L:
                 assert seg.start < seg.end
                 if seg.value >= max_value:
                     max_value = seg.value
-                    best_haplotype = seg.end - 1
-                    # best_haplotype = random.randint(seg.start, seg.end - 1)
-                    assert seg.start <= best_haplotype < seg.end
+            for seg in L:
+                if seg.value == max_value:
+                    traceback.add_best_segment(site, seg.start, seg.end)
             if max_value > 0:
                 # Renormalise L
                 for seg in L:
@@ -910,7 +908,6 @@ class AncestorMatcher(object):
                 possible_recombinants += min(n, S[s].end) - S[s].start
                 s += 1
 
-        return best_haplotype
 
 
     def print_state(self):

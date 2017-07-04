@@ -410,7 +410,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="P")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -436,8 +436,11 @@ def new_segments(n, L, seed):
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
-    # for e in ts_simplified.edgesets():
-    #     print("{:.2f}\t{:.2f}".format(e.left, e.right), e.parent, e.children, sep="\t")
+    t = [int(node.time) for node in ts_simplified.nodes()]
+
+    for e in ts_simplified.edgesets():
+        print("{:.2f}\t{:.2f}".format(e.left, e.right), t[e.parent],
+                [t[c] for c in e.children], sep="\t")
 
 
 
@@ -908,22 +911,31 @@ def analyse_file(filename):
     ts = msprime.load(filename)
 
     num_children = np.zeros(ts.num_edgesets, dtype=np.int)
+    leaf_polytomies = 0
     for j, e in enumerate(ts.edgesets()):
-        # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
+        # print(e.left, e.right, e.parent, ts.time(e.parent),
+        #         len(e.children), "X", sum(ts.node(c).flags == 1 for c in e.children),
+        #         e.children,
+        #         sep="\t")
         num_children[j] = len(e.children)
+        if any(ts.node(c).flags == 1 for c in e.children) and num_children[j] > 2:
+            leaf_polytomies +=1
+
 
     print("total edgesets = ", ts.num_edgesets)
     print("non binary     = ", np.sum(num_children > 2))
+    print("leaf polytomies= ", leaf_polytomies)
     print("max children   = ", np.max(num_children))
     print("mean children  = ", np.mean(num_children))
 
-    for t in ts.trees():
-        t.draw("tmp__NOBACKUP__/tree_{}.svg".format(t.index), 8000, 4000,
-                show_internal_node_labels=False,
-                show_leaf_node_labels=False)
-        print("Wrote", t.index)
-        if t.index == 100:
-            break
+
+    # for t in ts.trees():
+    #     t.draw("tmp__NOBACKUP__/tree_{}.svg".format(t.index), 8000, 4000,
+    #             show_internal_node_labels=False,
+    #             show_leaf_node_labels=False)
+    #     print("Wrote", t.index)
+    #     if t.index == 100:
+    #         break
 
 
 
@@ -934,9 +946,9 @@ if __name__ == "__main__":
 
     # for j in range(1, 100000):
     #     print(j)
-    #     new_segments(200, 100, j)
+    #     new_segments(20, 10, j)
 
-    new_segments(16, 8, 5)
+    # new_segments(16, 30, 5)
     # # new_segments(40, 20, 304)
 
     # export_samples(1000, 10, 304)
@@ -958,7 +970,7 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     # run_large_infers()
-    # analyse_file("tmp__NOBACKUP__/n=1000_L=20_simplified.hdf5")
+    # analyse_file("tmp__NOBACKUP__/ones/n=1000_L=20_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -987,4 +999,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)
