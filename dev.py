@@ -907,7 +907,6 @@ def visualise_copying(n, L, seed):
         #it may not continue to work
         max_time = max([int(n.time) for n in inferred_ts.nodes()])
         rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
-        print(rows_for_nodes)
         prev_node = -1
         for es in inferred_ts.edgesets():
             if prev_node != es.parent:
@@ -935,9 +934,9 @@ def visualise_copying(n, L, seed):
         if freq not in freq_order:
             freq_order[freq] = []
         freq_order[freq] += [{'node':m.node,'site':v.site.index} for m in v.site.mutations]
-    for k,v in freq_order.items():
-        print(k,v)
-        print()
+    #for k,v in freq_order.items(): #print the list of ancestors output
+    #    print(k,v)
+    #    print()
     #exclude ancestors of singletons
     freq_ordered_mutation_nodes = np.array([n['node'] for k in reversed(sorted(freq_order.keys())) for n in freq_order[k] if k>1], dtype=np.int)
     #add the samples to the rows to keep
