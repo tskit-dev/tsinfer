@@ -412,7 +412,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=10, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -438,19 +438,14 @@ def new_segments(n, L, seed):
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
-    # for e in ts_simplified.edgesets():
-    #     print("{:.2f}\t{:.2f}".format(e.left, e.right), e.parent, e.children, sep="\t")
-
 
 
 def export_samples(n, L, seed):
 
-    L = L * 10**6
     ts = msprime.simulate(
-        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
-        Ne=10**4, random_seed=seed)
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
     print("num_sites = ", ts.num_sites)
-    with open("tmp__NOBACKUP__/large-samples.txt", "w") as out:
+    with open("tmp__NOBACKUP__/samples.txt", "w") as out:
         for variant in ts.variants():
             print(variant.position, "".join(map(str, variant.genotypes)), sep="\t", file=out)
 
@@ -641,6 +636,20 @@ def site_set_stats(n, L, seed):
         "mean_diffs": np.mean(total_diffs)
     }
 
+def rle(inarray):
+        """ run length encoding. Partial credit to R rle function. 
+            Multi datatype arrays catered for including non Numpy
+            returns: tuple (runlengths, startpositions, values) """
+        ia = np.array(inarray)                  # force numpy
+        n = len(ia)
+        if n == 0: 
+            return (None, None, None)
+        else:
+            y = np.array(ia[1:] != ia[:-1])     # pairwise unequal (string safe)
+            i = np.append(np.where(y), n - 1)   # must include last element posi
+            z = np.diff(np.append(-1, i))       # run lengths
+            p = np.cumsum(np.append(0, z))[:-1] # positions
+            return {'length':z, 'start':p, 'value':ia[i]}
 
 class Visualiser(object):
 
@@ -714,16 +723,8 @@ class Visualiser(object):
     def add_separator(self):
         self.current_row += 1
 
-    def show_path(self, label, path):
-
-        if label + 1 in self.label_map:
-            row = self.label_map[label + 1]
-            corner = self.scale, row * self.scale
-            height = (self.current_row - row) * self.scale
-            self.drawing.add(self.drawing.rect(
-                corner, ((self.scale * self.num_sites), height),
-                fill="white", opacity=0.8))
-
+    def show_path(self, label, path, fade_recents=True):
+        #highlight (darken) the cells we took this from
         for k in range(self.num_sites):
             j = self.label_map[path[k]]
             corner = ((k + 1) * self.scale, j * self.scale)
@@ -731,6 +732,32 @@ class Visualiser(object):
                 corner, (self.scale, self.scale), stroke="lightgrey",
                 fill="black", opacity=0.6))
 
+        if not fade_recents and label in self.label_map:
+            # (slightly) highlight the current line
+            row = self.label_map[label]
+            corner = self.scale, row * self.scale
+            self.drawing.add(self.drawing.rect(
+                corner, ((self.scale * self.num_sites), self.scale),
+                stroke="black", fill_opacity=0.2))
+            
+        elif fade_recents and label + 1 in self.label_map:
+            #  fade out the more recent stuff
+            row = self.label_map[label + 1]
+            corner = self.scale, row * self.scale
+            height = (self.current_row - row) * self.scale
+            self.drawing.add(self.drawing.rect(
+                corner, ((self.scale * self.num_sites), height),
+                fill="white", opacity=0.8))
+
+    def fade_row_false(self, bool_arr, label):
+        row = self.label_map[label]
+        runlengths = rle(bool_arr)
+        height = self.scale
+        for i in np.where(~runlengths['value'])[0]:
+            corner = self.scale * (runlengths['start'][i]+1), row * self.scale
+            self.drawing.add(self.drawing.rect(
+                corner, ((self.scale * runlengths['length'][i]), height),
+                fill="white", opacity=0.8))
 
     def save(self, filename):
         self.drawing.saveas(filename)
@@ -861,7 +888,6 @@ def visualise_copying(n, L, seed):
 #     draw_copying_density(inferred_ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
-        break
         #one file for each copy
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
@@ -872,7 +898,26 @@ def visualise_copying(n, L, seed):
                 visualiser.add_separator()
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
             visualiser.add_row(a, j)
-        visualiser.show_path(k, P[k])
+        #highlight the path
+        visualiser.show_path(k, P[k], False)
+        
+        #fade the unused bits
+        locations = np.array([s.position for s in inferred_ts.sites()])
+        #to do - this is a hack to get a row number for a node
+        #it may not continue to work
+        max_time = max([int(n.time) for n in inferred_ts.nodes()])
+        rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
+        print(rows_for_nodes)
+        prev_node = -1
+        for es in inferred_ts.edgesets():
+            if prev_node != es.parent:
+                if prev_node>=0:
+                    pass
+                    visualiser.fade_row_false(used, rows_for_nodes[prev_node])
+                used = np.zeros((len(locations),),dtype=np.bool)
+            used[np.logical_and(es.left<=locations, locations<es.right)]=True
+            prev_node = es.parent
+        #visualiser.fade_row_false(used, rows_for_nodes[prev_node])
 
         #add samples
         visualiser.add_separator()
@@ -921,7 +966,7 @@ def run_large_infers():
     seed = 100
     n = 1000
     # n = 10
-    for j in np.arange(10, 200, 10):
+    for j in np.arange(20, 200, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
@@ -956,11 +1001,8 @@ def analyse_file(filename):
     print("mean children  = ", np.mean(num_children))
 
     for t in ts.trees():
-        t.draw("tmp__NOBACKUP__/tree_{}.svg".format(t.index), 8000, 4000,
-                show_internal_node_labels=False,
-                show_leaf_node_labels=False)
-        print("Wrote", t.index)
-        if t.index == 100:
+        t.draw("tree_{}.svg".format(t.index), 4000, 4000)
+        if t.index == 10:
             break
 
 
@@ -974,10 +1016,10 @@ if __name__ == "__main__":
     #     print(j)
     #     new_segments(200, 100, j)
 
-    new_segments(16, 8, 5)
+    # new_segments(4, 2, 5)
     # # new_segments(40, 20, 304)
 
-    # export_samples(1000, 10, 304)
+    # export_samples(10, 100, 304)
 
 
     # n = 10
@@ -996,7 +1038,7 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     # run_large_infers()
-    # analyse_file("tmp__NOBACKUP__/n=1000_L=20_simplified.hdf5")
+    # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
@@ -1025,4 +1067,4 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)
