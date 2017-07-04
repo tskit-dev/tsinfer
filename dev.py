@@ -17,6 +17,7 @@ import random
 import threading
 import math
 import resource
+import operator
 # import profilehooks
 
 import humanize
@@ -888,7 +889,8 @@ def visualise_copying(n, L, seed):
 #     draw_copying_density(inferred_ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
-        #one file for each copy
+        #one file for each copied ancestor
+        focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
         a = np.zeros(store.num_sites, dtype=np.int8)
@@ -897,6 +899,7 @@ def visualise_copying(n, L, seed):
             if j in breaks:
                 visualiser.add_separator()
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
+            focal2row[focal]=j
             visualiser.add_row(a, j)
         #highlight the path
         visualiser.show_path(k, P[k], False)
@@ -933,12 +936,14 @@ def visualise_copying(n, L, seed):
         freq = np.sum(v.genotypes)
         if freq not in freq_order:
             freq_order[freq] = []
-        freq_order[freq] += [{'node':m.node,'site':v.site.index} for m in v.site.mutations]
+        freq_order[freq] += [{'node':m.node,'site':v.site.index, 'row':focal2row.get(v.site.index)} for m in v.site.mutations]
     #for k,v in freq_order.items(): #print the list of ancestors output
     #    print(k,v)
     #    print()
     #exclude ancestors of singletons
-    freq_ordered_mutation_nodes = np.array([n['node'] for k in reversed(sorted(freq_order.keys())) for n in freq_order[k] if k>1], dtype=np.int)
+    output_rows = [n for k in freq_order.keys() for n in freq_order[k] if k>1]
+    output_rows.sort(key=operator.itemgetter('row'))
+    freq_ordered_mutation_nodes = np.array([o['node'] for o in output_rows], dtype=np.int)
     #add the samples to the rows to keep
     keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
     H = h[keep_nodes,:]
@@ -959,7 +964,6 @@ def visualise_copying(n, L, seed):
         visualiser.add_row(H[row,], keep_nodes[row])
         row += 1        
     visualiser.save("tmp__NOBACKUP__/real.svg")
-
 
 def run_large_infers():
     seed = 100
@@ -1004,6 +1008,13 @@ def analyse_file(filename):
         if t.index == 10:
             break
 
+def draw_tree_for_position(pos, ts):
+    """
+    useful for debugging
+    """
+    for t in ts.trees():
+        if t.get_interval()[0]<list(ts.sites())[pos].position and t.get_interval()[1]>list(ts.sites())[pos].position:
+            t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(pos))
 
 
 if __name__ == "__main__":
@@ -1047,10 +1058,10 @@ if __name__ == "__main__":
     #     load_ancestors(filename)
         # load_ancestors_dev(filename)
 
-#     filename = "tmp__NOBACKUP__/tmp2.hdf5"
-#     build_ancestors(10, 0.1 * 10**6, 3, filename)
-#     # compress_ancestors(filename)
-#     load_ancestors_dev(filename)
+    #     filename = "tmp__NOBACKUP__/tmp2.hdf5"
+    #     build_ancestors(10, 0.1 * 10**6, 3, filename)
+    #     # compress_ancestors(filename)
+    #     load_ancestors_dev(filename)
 
     # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
