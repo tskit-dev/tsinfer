@@ -30,9 +30,11 @@ script_path = __file__ if "__file__" in locals() else "./dummy.py"
 sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
 sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
 
+
 import tsinfer
 import _tsinfer
 import msprime
+import msprime_to_inference_matrices
 
 
 
@@ -821,7 +823,7 @@ def visualise_copying(n, L, seed):
     frequency = np.sum(S, axis=0)
 
     store = tsinfer.build_ancestors(S, positions, method="C")
-    ts = tsinfer.infer(S, positions, L, 1e-6, 1e-200)
+    inferred_ts = tsinfer.infer(S, positions, L, 1e-6, 1e-200)
 
     last_frequency = 0
     breaks = set()
@@ -845,12 +847,12 @@ def visualise_copying(n, L, seed):
     N = store.num_ancestors + S.shape[0]
     P = np.zeros((N, store.num_sites), dtype=int) - 1
     site_index = {}
-    for site in ts.sites():
+    for site in inferred_ts.sites():
         site_index[site.position] = site.index
-    site_index[ts.sequence_length] = ts.num_sites
+    site_index[inferred_ts.sequence_length] = inferred_ts.num_sites
     site_index[0] = 0
 
-    for e in ts.edgesets():
+    for e in inferred_ts.edgesets():
         for c in e.children:
             left = site_index[e.left]
             right = site_index[e.right]
@@ -859,9 +861,10 @@ def visualise_copying(n, L, seed):
 
 #     visualiser.save("tmp.svg")
 
-#     draw_copying_density(ts, 800, breaks)
+#     draw_copying_density(inferred_ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
+        break
         #one file for each copy
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
@@ -880,6 +883,41 @@ def visualise_copying(n, L, seed):
             visualiser.add_row(S[j],None)
         print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
+
+    #visualize the true copying process, with real ancestral fragments
+    #in the same order (by frequency, then pos) as in the inferred seq
+    h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
+    freq_order = {}
+    for v in ts.variants():
+        freq = np.sum(v.genotypes)
+        if freq not in freq_order:
+            freq_order[freq] = []
+        freq_order[freq] += [{'node':m.node,'site':v.site.index} for m in v.site.mutations]
+    for k,v in freq_order.items():
+        print(k,v)
+        print()
+    #exclude ancestors of singletons
+    freq_ordered_mutation_nodes = np.array([n['node'] for k in reversed(sorted(freq_order.keys())) for n in freq_order[k] if k>1], dtype=np.int)
+    #add the samples to the rows to keep
+    keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
+    H = h[keep_nodes,:]
+    P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
+    visualiser = Visualiser(800, store.num_sites, font_size=9)
+    visualiser.add_site_coordinates()
+    a = np.zeros(store.num_sites, dtype=np.int8)
+    visualiser.add_row(a, 0)
+    visualiser.add_separator()
+    row = 0
+    for k in reversed(sorted(freq_order.keys())):
+        if k>1:
+            for j in freq_order[k]:
+                visualiser.add_row(H[row,], keep_nodes[row])
+                row += 1
+            visualiser.add_separator()
+    while row < H.shape[0]:
+        visualiser.add_row(H[row,], keep_nodes[row])
+        row += 1        
+    visualiser.save("tmp__NOBACKUP__/real.svg")
 
 
 def run_large_infers():
