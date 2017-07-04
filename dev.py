@@ -669,8 +669,10 @@ class Visualiser(object):
             self.labels = self.drawing.add(
                 self.drawing.g(font_size=font_size, text_anchor="middle"))
         stroke = "lightgray"
-        self.one_boxes = self.drawing.add(
+        self.focal_boxes = self.drawing.add(
                 self.drawing.g(fill="red", stroke=stroke))
+        self.one_boxes = self.drawing.add(
+                self.drawing.g(fill="salmon", stroke=stroke))
         self.zero_boxes = self.drawing.add(
                 self.drawing.g(fill="blue", stroke=stroke))
         self.missing_boxes = self.drawing.add(
@@ -687,7 +689,7 @@ class Visualiser(object):
                 self.labels.add(self.drawing.text(str(k), coord, dy=[self.text_offset]))
         self.current_row += 1
 
-    def add_row(self, a, row_label=None):
+    def add_row(self, a, row_label=None, focal=[]):
         j = self.current_row
         self.label_map[row_label] = j
         if self.font_size is not None and row_label is not None:
@@ -701,7 +703,10 @@ class Visualiser(object):
             elif a[k] == -1:
                 self.missing_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
             else:
-                self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+                if k in focal:
+                    self.focal_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))            
+                else:
+                    self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
         self.current_row += 1
 
     def add_intensity_row(self, d, row_label=None):
@@ -900,7 +905,7 @@ def visualise_copying(n, L, seed):
                 visualiser.add_separator()
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
             focal2row[focal]=j
-            visualiser.add_row(a, j)
+            visualiser.add_row(a, j, [focal])
         #highlight the path
         visualiser.show_path(k, P[k], False)
         
@@ -924,19 +929,20 @@ def visualise_copying(n, L, seed):
         #add samples
         visualiser.add_separator()
         for j in range(S.shape[0]):
-            visualiser.add_row(S[j],None)
+            visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
         print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
     #in the same order (by frequency, then pos) as in the inferred seq
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
-    freq_order = {}
+    freq_order, node_mutations = {}, {}
     for v in ts.variants():
         freq = np.sum(v.genotypes)
-        if freq not in freq_order:
-            freq_order[freq] = []
-        freq_order[freq] += [{'node':m.node,'site':v.site.index, 'row':focal2row.get(v.site.index)} for m in v.site.mutations]
+        for m in v.site.mutations:
+            freq_order.setdefault(freq,[]).append({'node':m.node,'site':m.site, 'row':focal2row.get(m.site)})
+            node_mutations.setdefault(m.node,[]).append(m.site)
+        
     #for k,v in freq_order.items(): #print the list of ancestors output
     #    print(k,v)
     #    print()
@@ -957,11 +963,11 @@ def visualise_copying(n, L, seed):
     for k in reversed(sorted(freq_order.keys())):
         if k>1:
             for j in freq_order[k]:
-                visualiser.add_row(H[row,], keep_nodes[row])
+                visualiser.add_row(H[row,], keep_nodes[row], node_mutations[keep_nodes[row]])
                 row += 1
             visualiser.add_separator()
     while row < H.shape[0]:
-        visualiser.add_row(H[row,], keep_nodes[row])
+        visualiser.add_row(H[row,], keep_nodes[row], np.where(np.sum(H[-ts.sample_size:,],0)==1)[0])
         row += 1        
     visualiser.save("tmp__NOBACKUP__/real.svg")
 
