@@ -17,6 +17,7 @@ import random
 import threading
 import math
 import resource
+import operator
 # import profilehooks
 
 import humanize
@@ -700,8 +701,10 @@ class Visualiser(object):
             self.labels = self.drawing.add(
                 self.drawing.g(font_size=font_size, text_anchor="middle"))
         stroke = "lightgray"
-        self.one_boxes = self.drawing.add(
+        self.focal_boxes = self.drawing.add(
                 self.drawing.g(fill="red", stroke=stroke))
+        self.one_boxes = self.drawing.add(
+                self.drawing.g(fill="salmon", stroke=stroke))
         self.zero_boxes = self.drawing.add(
                 self.drawing.g(fill="blue", stroke=stroke))
         self.missing_boxes = self.drawing.add(
@@ -718,7 +721,7 @@ class Visualiser(object):
                 self.labels.add(self.drawing.text(str(k), coord, dy=[self.text_offset]))
         self.current_row += 1
 
-    def add_row(self, a, row_label=None):
+    def add_row(self, a, row_label=None, focal=[]):
         j = self.current_row
         self.label_map[row_label] = j
         if self.font_size is not None and row_label is not None:
@@ -732,7 +735,10 @@ class Visualiser(object):
             elif a[k] == -1:
                 self.missing_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
             else:
-                self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+                if k in focal:
+                    self.focal_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+                else:
+                    self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
         self.current_row += 1
 
     def add_intensity_row(self, d, row_label=None):
@@ -920,7 +926,8 @@ def visualise_copying(n, L, seed):
 #     draw_copying_density(inferred_ts, 800, breaks)
 
     for k in range(1, store.num_ancestors):
-        #one file for each copy
+        #one file for each copied ancestor
+        focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
         a = np.zeros(store.num_sites, dtype=np.int8)
@@ -929,7 +936,8 @@ def visualise_copying(n, L, seed):
             if j in breaks:
                 visualiser.add_separator()
             start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
-            visualiser.add_row(a, j)
+            focal2row[focal]=j
+            visualiser.add_row(a, j, [focal])
         #highlight the path
         visualiser.show_path(k, P[k], False)
 
@@ -953,24 +961,27 @@ def visualise_copying(n, L, seed):
         #add samples
         visualiser.add_separator()
         for j in range(S.shape[0]):
-            visualiser.add_row(S[j],None)
+            visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
         print("Writing", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
     #in the same order (by frequency, then pos) as in the inferred seq
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
-    freq_order = {}
+    freq_order, node_mutations = {}, {}
     for v in ts.variants():
         freq = np.sum(v.genotypes)
-        if freq not in freq_order:
-            freq_order[freq] = []
-        freq_order[freq] += [{'node':m.node,'site':v.site.index} for m in v.site.mutations]
+        for m in v.site.mutations:
+            freq_order.setdefault(freq,[]).append({'node':m.node,'site':m.site, 'row':focal2row.get(m.site)})
+            node_mutations.setdefault(m.node,[]).append(m.site)
+
     #for k,v in freq_order.items(): #print the list of ancestors output
     #    print(k,v)
     #    print()
     #exclude ancestors of singletons
-    freq_ordered_mutation_nodes = np.array([n['node'] for k in reversed(sorted(freq_order.keys())) for n in freq_order[k] if k>1], dtype=np.int)
+    output_rows = [n for k in freq_order.keys() for n in freq_order[k] if k>1]
+    output_rows.sort(key=operator.itemgetter('row'))
+    freq_ordered_mutation_nodes = np.array([o['node'] for o in output_rows], dtype=np.int)
     #add the samples to the rows to keep
     keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
     H = h[keep_nodes,:]
@@ -984,14 +995,13 @@ def visualise_copying(n, L, seed):
     for k in reversed(sorted(freq_order.keys())):
         if k>1:
             for j in freq_order[k]:
-                visualiser.add_row(H[row,], keep_nodes[row])
+                visualiser.add_row(H[row,], keep_nodes[row], node_mutations[keep_nodes[row]])
                 row += 1
             visualiser.add_separator()
     while row < H.shape[0]:
-        visualiser.add_row(H[row,], keep_nodes[row])
+        visualiser.add_row(H[row,], keep_nodes[row], np.where(np.sum(H[-ts.sample_size:,],0)==1)[0])
         row += 1
     visualiser.save("tmp__NOBACKUP__/real.svg")
-
 
 def run_large_infers():
     seed = 100
@@ -1036,6 +1046,13 @@ def analyse_file(filename):
         if t.index == 10:
             break
 
+def draw_tree_for_position(pos, ts):
+    """
+    useful for debugging
+    """
+    for t in ts.trees():
+        if t.get_interval()[0]<list(ts.sites())[pos].position and t.get_interval()[1]>list(ts.sites())[pos].position:
+            t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(pos))
 
 
 if __name__ == "__main__":
@@ -1078,10 +1095,10 @@ if __name__ == "__main__":
     #     load_ancestors(filename)
         # load_ancestors_dev(filename)
 
-#     filename = "tmp__NOBACKUP__/tmp2.hdf5"
-#     build_ancestors(10, 0.1 * 10**6, 3, filename)
-#     # compress_ancestors(filename)
-#     load_ancestors_dev(filename)
+    #     filename = "tmp__NOBACKUP__/tmp2.hdf5"
+    #     build_ancestors(10, 0.1 * 10**6, 3, filename)
+    #     # compress_ancestors(filename)
+    #     load_ancestors_dev(filename)
 
     # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
