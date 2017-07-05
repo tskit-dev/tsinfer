@@ -58,8 +58,8 @@ ancestor_matcher_free(ancestor_matcher_t *self)
 int
 ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        site_id_t focal_site, double error_rate, traceback_t *traceback,
-        ancestor_id_t *end_site_value)
+        size_t num_focal_sites, site_id_t *focal_sites, double error_rate,
+        traceback_t *traceback, ancestor_id_t *end_site_value)
 {
     int ret = 0;
     double rho, r, pr, qr, possible_recombinants;
@@ -77,10 +77,17 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     double *L_next_likelihood = NULL;
     ancestor_id_t *S_start, *S_end;
     allele_t *S_state;
-    size_t l, s, L_size, S_size, L_next_size;
+    size_t l, s, L_size, S_size, L_next_size, focal_site_index;
     /* TODO Is it really safe to have an upper bound here? */
     size_t max_segments = self->store->max_num_site_segments * 32;
     double last_position;
+
+    /* Error rate and focal sites are mutually exclusive */
+    if (error_rate == 0) {
+        assert(num_focal_sites > 0);
+    } else {
+        assert(num_focal_sites == 0);
+    }
 
     L_start = malloc(max_segments * sizeof(ancestor_id_t));
     L_end = malloc(max_segments * sizeof(ancestor_id_t));
@@ -102,8 +109,9 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     /* ensure that that the initial recombination rate is 0 */
     last_position = self->store->sites[start_site].position;
     possible_recombinants = 1;
-
     best_match = 0;
+    focal_site_index = 0;
+
     for (site_id = start_site; site_id < end_site; site_id++) {
 
         /* Compute the recombination rate back to the last site */
@@ -175,10 +183,15 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
                 if (error_rate == 0) {
                     /* Ancestor matching */
                     next_likelihood = z * (S_state[s] == haplotype[site_id]);
-                    if (site_id== focal_site) {
-                        assert(haplotype[site_id] == 1);
-                        assert(S_state[s] == 0);
-                        next_likelihood = z;
+                    if (focal_site_index < num_focal_sites) {
+                        if (site_id == focal_sites[focal_site_index]) {
+                            assert(haplotype[site_id] == 1);
+                            assert(S_state[s] == 0);
+                            next_likelihood = z;
+                            focal_site_index++;
+                        } else {
+                            assert(site_id < focal_sites[focal_site_index]);
+                        }
                     }
                 } else {
                     /* Sample matching */

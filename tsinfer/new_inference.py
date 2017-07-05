@@ -34,43 +34,46 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     store_builder = _tsinfer.AncestorStoreBuilder(
             builder.num_sites, 8192 * builder.num_sites)
 
-    # TODO change this to use threads as futures leak result memory.
-    def build_frequency_class(work):
-        frequency, focal_sites = work
+    frequency_classes = builder.get_frequency_classes()
+    total_ancestors = 1
+    num_focal_sites = 0
+    for age, ancestor_focal_sites in frequency_classes:
+        assert len(ancestor_focal_sites) > 0
+        total_ancestors += len(ancestor_focal_sites)
+        for focal_sites in ancestor_focal_sites:
+            assert len(focal_sites) > 0
+            num_focal_sites += len(focal_sites)
+    ancestor_age = np.zeros(total_ancestors, dtype=np.uint32)
+    focal_site_ancestor = np.zeros(num_focal_sites, dtype=np.int32)
+    focal_site = np.zeros(num_focal_sites, dtype=np.uint32)
 
-        # TODO this should be done in C or at least use a hashable numpy array
-        # as the key.
-        patterns = collections.defaultdict(list)
-        for focal_site in focal_sites:
-            site_pattern = tuple(samples[:,focal_site])
-            patterns[site_pattern].append(focal_site)
-        num_ancestors = len(patterns)
+    if show_progress:
+        progress = tqdm.tqdm(total=total_ancestors, desc="Build ancestors")
+
+    row = 0
+    ancestor_id = 1
+    for age, ancestor_focal_sites in frequency_classes:
+        num_ancestors = len(ancestor_focal_sites)
         A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
         p = np.zeros(num_ancestors, dtype=np.uint32)
-        ancestor_focal_sites = []
-        for j, sites in enumerate(patterns.values()):
-            ancestor_focal_sites.append(sites)
-            builder.make_ancestor(sites, A[j, :])
+        for j, focal_sites in enumerate(ancestor_focal_sites):
+            builder.make_ancestor(focal_sites, A[j, :])
         _tsinfer.sort_ancestors(A, p)
-        return frequency, A, p, ancestor_focal_sites
+        for index in p:
+            store_builder.add(A[index, :])
+            for site in ancestor_focal_sites[index]:
+                focal_site_ancestor[row] = ancestor_id
+                focal_site[row] = site
+                row += 1
+            ancestor_age[ancestor_id] = age
+            ancestor_id += 1
+        if show_progress:
+            progress.update(count=num_ancestors)
+    assert row == num_focal_sites
+    assert ancestor_id == total_ancestors
 
-    frequency_classes = builder.get_frequency_classes()
-    ancestor_focal_site = [[]]
-    ancestor_focal_site_frequency = [0]
-    if show_progress:
-        progress = tqdm.tqdm(total=num_ancestors - 1, desc="Build ancestors")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        for result in executor.map(build_frequency_class, frequency_classes):
-            frequency, A, p, focal_sites = result
-            for index in p:
-                store_builder.add(A[index, :])
-                ancestor_focal_site.append(focal_sites[index])
-                ancestor_focal_site_frequency.append(frequency)
-                if show_progress:
-                    progress.update()
     if show_progress:
         progress.close()
-    # assert k == num_ancestors
 
     N = store_builder.total_segments
     site = np.zeros(N, dtype=np.uint32)
@@ -79,11 +82,14 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     state = np.zeros(N, dtype=np.int8)
     store_builder.dump_segments(site, start, end, state)
 
+    assert np.max(end) == total_ancestors
+    assert np.min(start) == 0
+
     if method == "C":
         store = _tsinfer.AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
-            focal_site_frequency=ancestor_focal_site_frequency,
-            focal_site=ancestor_focal_site)
+            ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
+            focal_site=focal_site)
     else:
         store = AncestorStore(
             position=positions, site=site, start=start, end=end, state=state,
@@ -116,13 +122,17 @@ def match_ancestors(
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
         for ancestor_id in ancestor_ids[start: start + chunk_size]:
-            start_site, focal_site, end_site, num_older_ancestors = store.get_ancestor(ancestor_id, h)
-            # print(start_site, end_site)
+            start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
+                    ancestor_id, h)
+            for site in focal_sites:
+                assert h[site] == 1
+            # print(start_site, end_site, focal_sites)
             # a = "".join(str(x) if x != -1 else '*' for x in h)
             # print(ancestor_id, "\t", a)
             end_site_parent = matcher.best_path(
-                    num_older_ancestors, h, start_site, end_site, focal_site, 0, traceback)
-            # return ancestor_id, h, start_site, end_site, end_site_parent, traceback
+                    num_ancestors=num_older_ancestors,
+                    haplotype=h, start_site=start_site, end_site=end_site,
+                    focal_sites=focal_sites, error_rate=0, traceback=traceback)
             with update_lock:
                 tree_sequence_builder.update(
                     child=ancestor_id, haplotype=h, start_site=start_site,
@@ -168,7 +178,9 @@ def match_samples(
         for sample_id in sample_ids[start: start + chunk_size]:
             h = samples[sample_id, :]
             end_site_parent = matcher.best_path(
-                    store.num_ancestors, h, 0, store.num_sites, -1, error_rate, traceback)
+                    num_ancestors=store.num_ancestors,
+                    haplotype=h, start_site=0, end_site=store.num_sites,
+                    focal_sites=[], error_rate=error_rate, traceback=traceback)
             with update_lock:
                 tree_sequence_builder.update(
                     child=store.num_ancestors + sample_id,
