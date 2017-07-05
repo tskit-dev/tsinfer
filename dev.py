@@ -448,13 +448,13 @@ def new_segments(n, L, seed):
     tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=5, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
-
+    
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
-    # print(S)
-    # print()
-    # print(Sp)
+    print(S,np.sum(S))
+    print()
+    print(Sp,np.sum(Sp))
     assert np.all(Sp == S)
 
     # for t in tsp.trees():
@@ -965,7 +965,7 @@ def visualise_copying(n, L, seed):
         visualiser.add_separator()
         for j in range(S.shape[0]):
             visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
-        print("Writing", k)
+        print("Writing inferred ancestor copy plot", k)
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
