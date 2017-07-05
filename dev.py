@@ -445,10 +445,9 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=5, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
-
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -470,7 +469,6 @@ def new_segments(n, L, seed):
     H = list(tsp.haplotypes())
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
-
 
 
 def export_samples(n, L, seed):
@@ -1007,7 +1005,7 @@ def run_large_infers():
     seed = 100
     n = 1000
     # n = 10
-    for j in np.arange(20, 200, 10):
+    for j in np.arange(10, 30, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
@@ -1041,10 +1039,10 @@ def analyse_file(filename):
     print("max children   = ", np.max(num_children))
     print("mean children  = ", np.mean(num_children))
 
-    for t in ts.trees():
-        t.draw("tree_{}.svg".format(t.index), 4000, 4000)
-        if t.index == 10:
-            break
+    # for t in ts.trees():
+    #     t.draw("tree_{}.svg".format(t.index), 4000, 4000)
+    #     if t.index == 10:
+    #         break
 
 def draw_tree_for_position(pos, ts):
     """
@@ -1064,7 +1062,7 @@ if __name__ == "__main__":
         print(j)
         new_segments(20, 200, j)
 
-    # new_segments(4, 2, 5)
+    # new_segments(8, 8, 5)
     # new_segments(10, 20, 304)
 
     # export_samples(10, 100, 304)

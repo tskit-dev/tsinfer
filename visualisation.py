@@ -151,7 +151,7 @@ def run_viz(n, L, seed):
 
 
 def main():
-    run_viz(20, 20, 1)
+    run_viz(15, 20, 1)
 
 
 if __name__ == "__main__":
