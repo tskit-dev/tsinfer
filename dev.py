@@ -759,14 +759,19 @@ class Visualiser(object):
     def add_separator(self):
         self.current_row += 1
 
-    def show_path(self, label, path, fade_recents=True):
-        #highlight (darken) the cells we took this from
+    def show_path(self, label, path, fade_recents=True, copy_groups=None):
+        """
+        param copy_groups is only useful if there is the same ancestor on multiple rows
+        """
+        #highlight (darken) the cells we copied from
         for k in range(self.num_sites):
-            j = self.label_map[path[k]]
-            corner = ((k + 1) * self.scale, j * self.scale)
-            self.drawing.add(self.drawing.rect(
-                corner, (self.scale, self.scale), stroke="lightgrey",
-                fill="black", opacity=0.6))
+            rows = [path[k]] if copy_groups is None else copy_groups[path[k]]
+            for r in rows:
+                j = self.label_map[r]
+                corner = ((k + 1) * self.scale, j * self.scale)
+                self.drawing.add(self.drawing.rect(
+                    corner, (self.scale, self.scale), stroke="lightgrey",
+                    fill="black", opacity=0.6))
 
         if not fade_recents and label in self.label_map:
             # (slightly) highlight the current line
@@ -984,6 +989,7 @@ def visualise_copying(n, L, seed):
     keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
     H = h[keep_nodes,:]
     P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
+    groups = [row_map[n] for n in keep_nodes] + [[0]]
     visualiser = Visualiser(800, store.num_sites, font_size=9)
     visualiser.add_site_coordinates()
     a = np.zeros(store.num_sites, dtype=np.int8)
