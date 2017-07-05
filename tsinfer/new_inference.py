@@ -67,8 +67,8 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
                 row += 1
             ancestor_age[ancestor_id] = age
             ancestor_id += 1
-        if show_progress:
-            progress.update(count=num_ancestors)
+            if show_progress:
+                progress.update()
     assert row == num_focal_sites
     assert ancestor_id == total_ancestors
 
@@ -126,6 +126,7 @@ def match_ancestors(
                     ancestor_id, h)
             for site in focal_sites:
                 assert h[site] == 1
+            assert len(focal_sites) > 0
             # print(start_site, end_site, focal_sites)
             # a = "".join(str(x) if x != -1 else '*' for x in h)
             # print(ancestor_id, "\t", a)
@@ -162,6 +163,10 @@ def match_samples(
         num_threads=1, method="C", show_progress=False):
     sample_ids = list(range(samples.shape[0]))
     update_lock = threading.Lock()
+
+    # FIXME hack --- we insist that error_rate is > 0 for low-level code.
+    if error_rate == 0:
+        error_rate = 1e-200
 
     if show_progress:
         progress = tqdm.tqdm(total=samples.shape[0], desc="Match samples  ")
