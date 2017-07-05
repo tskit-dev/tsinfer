@@ -96,15 +96,21 @@ def relabel_copy_matrix(copy_matrix, keep_rows):
         return index not in vec
         
     bad_parent_id = -2 #used for refs to rows we have removed (not -1 which is N/A)
-    #create an array to map current_row_number (index) -> new row number
+    #create an array to map current_row_number (index) -> new row numbers
+    node_reposition = {}
+    #also as a numpy array, picking the first new row number if there are duplicate rows
+    #and bad parents
     node_relabelling = np.full(copy_matrix.shape[0], bad_parent_id, dtype=np.int)
     if keep_rows.dtype == np.bool:
         test_func = bool_not_in
         node_relabelling[keep_rows]=np.arange(np.count_nonzero(keep_rows))
+        node_reposition = {[m] for m in node_relabelling  if m!=bad_parent_id}
     else:
         test_func = index_not_in
         for i in range(len(keep_rows)):
-            node_relabelling[keep_rows[i]]=i
+            node_reposition.setdefault(keep_rows[i],[]).append(i)
+        for k,v in node_reposition.items():
+            node_relabelling[k]=v[0]
     #remove unkept rows            
     reduced_matrix = copy_matrix[keep_rows,:]
     #there may be problems here, because we might have removed some rows that
@@ -125,5 +131,5 @@ def relabel_copy_matrix(copy_matrix, keep_rows):
     relabelled_matrix = node_relabelling[reduced_matrix]
     assert not np.any(relabelled_matrix == bad_parent_id)
     assert not np.any(relabelled_matrix >= relabelled_matrix.shape[0])
-    return relabelled_matrix, node_relabelling
+    return relabelled_matrix, node_reposition
  
