@@ -77,7 +77,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     double *L_next_likelihood = NULL;
     ancestor_id_t *S_start, *S_end;
     allele_t *S_state;
-    size_t l, s, L_size, S_size, L_next_size, focal_site_index;
+    size_t l, s, L_size, S_size, L_next_size;
     /* TODO Is it really safe to have an upper bound here? */
     size_t max_segments = self->store->max_num_site_segments * 32;
     double last_position;
@@ -110,7 +110,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     last_position = self->store->sites[start_site].position;
     possible_recombinants = 1;
     best_match = 0;
-    focal_site_index = 0;
+    /* focal_site_index = 0; */
 
     for (site_id = start_site; site_id < end_site; site_id++) {
 
@@ -183,16 +183,34 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
                 if (error_rate == 0) {
                     /* Ancestor matching */
                     next_likelihood = z * (S_state[s] == haplotype[site_id]);
-                    if (focal_site_index < num_focal_sites) {
-                        if (site_id == focal_sites[focal_site_index]) {
-                            assert(haplotype[site_id] == 1);
-                            assert(S_state[s] == 0);
-                            next_likelihood = z;
-                            focal_site_index++;
-                        } else {
-                            assert(site_id < focal_sites[focal_site_index]);
-                        }
+
+
+                    /* /1* Ancestor matching *1/ */
+                    /* next_likelihood = z * (S_state[s] == haplotype[site_id]); */
+                    /* if (site_id== focal_site) { */
+                    /*     assert(haplotype[site_id] == 1); */
+                    /*     assert(S_state[s] == 0); */
+                    /*     next_likelihood = z; */
+                    /* } */
+
+                    if (site_id == focal_sites[0]) {
+                        assert(haplotype[site_id] == 1);
+                        assert(S_state[s] == 0);
+                        next_likelihood = z;
                     }
+                    /* TODO this code _should_ work, but leads to really weird effects.
+                     * Need to rethink the ancestor matching process! */
+
+                    /* if (focal_site_index < num_focal_sites) { */
+                    /*     if (site_id == focal_sites[focal_site_index]) { */
+                    /*         assert(haplotype[site_id] == 1); */
+                    /*         assert(S_state[s] == 0); */
+                    /*         next_likelihood = z; */
+                    /*         focal_site_index++; */
+                    /*     } else { */
+                    /*         assert(site_id < focal_sites[focal_site_index]); */
+                    /*     } */
+                    /* } */
                 } else {
                     /* Sample matching */
                     if (S_state[s] == haplotype[site_id]) {
@@ -256,7 +274,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
             L_likelihood[l] /= max_likelihood;
         }
     }
-    assert(focal_site_index == num_focal_sites);
+    /* assert(focal_site_index == num_focal_sites); */
     *end_site_value = best_match;
 
     /* ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site, */

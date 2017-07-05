@@ -147,7 +147,7 @@ def run_viz(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    visualise(S, positions, L, 1e-100, 1e-200, method="C", box_size=16)
+    visualise(S, positions, L, 1e-9, 1e-200, method="C", box_size=16)
 
 
 def main():
