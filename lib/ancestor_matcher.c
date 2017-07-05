@@ -256,6 +256,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
             L_likelihood[l] /= max_likelihood;
         }
     }
+    assert(focal_site_index == num_focal_sites);
     *end_site_value = best_match;
 
     /* ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site, */

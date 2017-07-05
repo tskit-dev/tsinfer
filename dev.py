@@ -444,7 +444,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=10, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-50, 1e-50, num_threads=10, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -885,9 +885,9 @@ def visualise_copying(n, L, seed):
     breaks = set()
     a = np.zeros(store.num_sites, dtype=np.int8)
     for j in range(1, store.num_ancestors):
-        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
-        if frequency[focal] != last_frequency:
-            last_frequency = frequency[focal]
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
+        if frequency[focal_sites[0]] != last_frequency:
+            last_frequency = frequency[focal_sites[0]]
             breaks.add(j)
 
     visualiser = Visualiser(800, store.num_sites, font_size=16)
@@ -1043,9 +1043,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(200, 200, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(200, 200, j)
 
     # new_segments(4, 2, 5)
     # new_segments(10, 20, 304)
@@ -1097,5 +1097,5 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
