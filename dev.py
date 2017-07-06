@@ -1030,7 +1030,6 @@ def visualise_copying(n, L, seed):
     groups = [row_map[n] for n in keep_nodes] + [[0]]
     _, idx = np.unique(keep_nodes, return_index=True) #make unique but keep order
     for k, node in enumerate(keep_nodes[np.sort(idx)]):
-        print(k,node)
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
         a = np.zeros(store.num_sites, dtype=np.int8)
