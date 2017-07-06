@@ -927,39 +927,35 @@ def visualise_copying(n, L, seed):
 #     visualiser.save("tmp.svg")
 
 #     draw_copying_density(inferred_ts, 800, breaks)
-
+    #make a map of which are actually used in the inferred ts
+    locations = np.array([s.position for s in inferred_ts.sites()])
+    used = np.zeros((store.num_ancestors, len(locations)),dtype=np.bool)
+    #to do - this is a hack to get a row number for a node
+    #it may not continue to work
+    max_time = max([int(n.time) for n in inferred_ts.nodes()])
+    rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
+    for es in inferred_ts.edgesets():
+        used_variants = np.logical_and(es.left<=locations, locations<es.right)
+        used[rows_for_nodes[es.parent], used_variants]=True
+ 
     for k in range(1, store.num_ancestors):
         #one file for each copied ancestor
         focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         visualiser.add_site_coordinates()
         a = np.zeros(store.num_sites, dtype=np.int8)
+        
         visualiser.add_row(a, 0)
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
             start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
-            focal2row[focal]=j
-            visualiser.add_row(a, j, focal_sites)
+            for f in focal_sites:
+                focal2row[f]=j
+                visualiser.add_row(a, j, focal_sites)
+                visualiser.fade_row_false(used[j], j)
         #highlight the path
         visualiser.show_path(k, P[k], False)
-
-        #fade the unused bits
-        locations = np.array([s.position for s in inferred_ts.sites()])
-        #to do - this is a hack to get a row number for a node
-        #it may not continue to work
-        max_time = max([int(n.time) for n in inferred_ts.nodes()])
-        rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
-        prev_node = -1
-        for es in inferred_ts.edgesets():
-            if prev_node != es.parent:
-                if prev_node>=0:
-                    pass
-                    visualiser.fade_row_false(used, rows_for_nodes[prev_node])
-                used = np.zeros((len(locations),),dtype=np.bool)
-            used[np.logical_and(es.left<=locations, locations<es.right)]=True
-            prev_node = es.parent
-        #visualiser.fade_row_false(used, rows_for_nodes[prev_node])
 
         #add samples
         visualiser.add_separator()
@@ -969,7 +965,7 @@ def visualise_copying(n, L, seed):
         visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
-    #in the same order (by frequency, then pos) as in the inferred seq
+    #in the same order as in the inferred sequence.
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
     freq_order, node_mutations = {}, {}
     for v in ts.variants():
