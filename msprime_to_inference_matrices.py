@@ -7,6 +7,10 @@ def make_ancestral_matrices(ts):
     Take a simulation and reconstruct the ancestors from it
     returns a basic haplotype matrix and a copy matrix, which can
     be further refined by e.g. relabel_copy_matrix
+    
+    Note that the matrix returned has rows ordered by node number
+    in the msprime simulation, which is the inverse of the order
+    (by age) in tsinfer
     """
     #make the array - should be a row for each node
     column_mapping = np.zeros(ts.num_sites)
