@@ -117,8 +117,10 @@ class Visualiser(object):
             y = row * b + origin[1]
             for k in range(self.store.num_sites):
                 x = k * b + origin[0]
-                hsl = "hsl(240, {}%, 50%)".format(int(child_intensity[j, k] * 100))
-                fill = ImageColor.getrgb(hsl)
+                # hsl = "hsl(240, {}%, 50%)".format(int(child_intensity[j, k] * 100))
+                # fill = ImageColor.getrgb(hsl)
+                v = 255 - int(child_intensity[j, k] * 255)
+                fill = (v, v, v)
                 draw.rectangle(
                     [(x, y), (x + b, y + b)], fill=fill, outline="black")
 
@@ -180,8 +182,13 @@ def visualise(
     inferred_ts = tsinfer.infer(
         samples, positions, length, recombination_rate, error_rate, method=method)
     simplified_ts = inferred_ts.simplify()
+
+    positions = [0] + [site.position for site in inferred_ts.sites()] + [
+            inferred_ts.sequence_length]
+    site_map = {positions[j]: j for j in range(len(positions))}
     for e in simplified_ts.edgesets():
-        print("{:.2f}\t{:.2f}".format(e.left, e.right), e.parent, e.children, sep="\t")
+        print(site_map[e.left], site_map[e.right], e.parent,
+                simplified_ts.time(e.parent), e.children, sep="\t")
     visualiser = Visualiser(store, samples, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
@@ -199,11 +206,11 @@ def run_viz(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    visualise(S, positions, L, 1e-9, 1e-200, method="C", box_size=16)
+    visualise(S, positions, L, 1e-9, 1e-200, method="P", box_size=16)
 
 
 def main():
-    run_viz(10, 10, 1)
+    run_viz(10, 15, 1)
 
 
 if __name__ == "__main__":
