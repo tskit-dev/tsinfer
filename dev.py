@@ -977,8 +977,10 @@ def visualise_copying(n, L, seed):
         visualiser.save("tmp__NOBACKUP__/inferred_{}.svg".format(k))
         big_visualiser.save("tmp__NOBACKUP__/inferred_big_{}.svg".format(k))
 
-    #visualize the true copying process, with real ancestral fragments
+    #Visualize the true copying process, with real ancestral fragments
     #in the same order as in the inferred sequence.
+    # Ideally, we want to be able to merge all the nodes that have ancestors
+    # which 
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
     freq_order, node_mutations = {}, {}
     for v in ts.variants():
@@ -987,9 +989,6 @@ def visualise_copying(n, L, seed):
             freq_order.setdefault(freq,[]).append({'node':m.node,'site':m.site, 'row':focal2row.get(m.site)})
             node_mutations.setdefault(m.node,[]).append(m.site)
 
-    #for k,v in freq_order.items(): #print the list of ancestors output
-    #    print(k,v)
-    #    print()
     #exclude ancestors of singletons
     output_rows = [n for k in freq_order.keys() for n in freq_order[k] if k>1]
     output_rows.sort(key=operator.itemgetter('row'))
@@ -1002,7 +1001,7 @@ def visualise_copying(n, L, seed):
     visualiser = Visualiser(800, store.num_sites, font_size=9)
     visualiser.add_site_coordinates()
     a = np.zeros(store.num_sites, dtype=np.int8)
-    visualiser.add_row(a, 0)
+    visualiser.add_row(a, -1)
     visualiser.add_separator()
     row = 0
     for k in reversed(sorted(freq_order.keys())):
