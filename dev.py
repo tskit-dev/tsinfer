@@ -719,7 +719,7 @@ class Visualiser(object):
                 self.labels.add(self.drawing.text(str(k), coord, dy=[self.text_offset]))
         self.current_row += 1
 
-    def add_row(self, a, row_label=None, focal=[]):
+    def add_row(self, a, row_label=None, focal=None):
         j = self.current_row
         self.label_map[row_label] = j
         if self.font_size is not None and row_label is not None:
@@ -733,7 +733,7 @@ class Visualiser(object):
             elif a[k] == -1:
                 self.missing_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
             else:
-                if k in focal:
+                if focal is not None and k in focal:
                     self.focal_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
                 else:
                     self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
@@ -938,9 +938,9 @@ def visualise_copying(n, L, seed):
         used_variants = np.logical_and(es.left<=locations, locations<es.right)
         used[rows_for_nodes[es.parent], used_variants]=True
  
+    focal2row = {}
     for k in range(1, store.num_ancestors):
         #one file for each copied ancestor
-        focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
         big_visualiser = Visualiser(800, store.num_sites, font_size=9)
 
@@ -973,15 +973,45 @@ def visualise_copying(n, L, seed):
         for j in range(S.shape[0]):
             visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
             big_visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
-        print("Writing inferred ancestor copy plots", k)
+        print("Writing inferred ancestor large & small copy plot", k)
         visualiser.save("tmp__NOBACKUP__/inferred_{}.svg".format(k))
-        big_visualiser.save("tmp__NOBACKUP__/inferred_big_{}.svg".format(k))
+        big_visualiser.save("tmp__NOBACKUP__/full_inferred_{}.svg".format(k))
 
-    #Visualize the true copying process, with real ancestral fragments
-    #in the same order as in the inferred sequence.
-    # Ideally, we want to be able to merge all the nodes that have ancestors
-    # which 
+    #Visualize the true copying process, with real ancestral fragments.
+    # Show this in the real order and also in the same order as in the inferred history.
+    # Ideally, we want to be able to merge all the nodes that have mutations
+    # present in a single inferred ancestor 
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
+
+    #Order rows as in the treesequence, but reversed
+    use_nodes = np.zeros((h.shape[0],), np.bool)
+    mutations_on_node = {}
+    for s in ts.sites():
+        for m in s.mutations:
+            mutations_on_node.setdefault(m.node,[]).append(m.site)
+            use_nodes[m.node] = True #flag up nodes with mutations
+    use_nodes[0:ts.sample_size] = False #kill all samples (will be added later)
+    keep_nodes = np.where(use_nodes)[0][::-1] #reverse
+    keep_nodes = np.append(keep_nodes, range(ts.sample_size))
+    H = h[keep_nodes,:]
+    P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
+    for k, node in enumerate(keep_nodes):
+        #one file for each copied ancestor
+        visualiser = Visualiser(800, store.num_sites, font_size=9)
+        visualiser.add_site_coordinates()
+        a = np.zeros(store.num_sites, dtype=np.int8)
+        visualiser.add_row(a, -1)
+        visualiser.add_separator()
+        for j in range(len(keep_nodes)):
+            visualiser.add_row(H[j,:], keep_nodes[j], mutations_on_node.get(keep_nodes[j]))
+            if keep_nodes[j] >= ts.sample_size:
+                visualiser.add_separator()
+        #highlight the path
+        visualiser.show_path(node, [-1 if i<0 else keep_nodes[i] for i in P[k]], False)
+        print("Writing actual ancestor copy plot", k)
+        visualiser.save("tmp__NOBACKUP__/real_{}.svg".format(k))
+
+    #Order rows as in inferred, using focal2row as the order
     freq_order, node_mutations = {}, {}
     for v in ts.variants():
         freq = np.sum(v.genotypes)
@@ -998,22 +1028,27 @@ def visualise_copying(n, L, seed):
     H = h[keep_nodes,:]
     P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
     groups = [row_map[n] for n in keep_nodes] + [[0]]
-    visualiser = Visualiser(800, store.num_sites, font_size=9)
-    visualiser.add_site_coordinates()
-    a = np.zeros(store.num_sites, dtype=np.int8)
-    visualiser.add_row(a, -1)
-    visualiser.add_separator()
-    row = 0
-    for k in reversed(sorted(freq_order.keys())):
-        if k>1:
-            for j in freq_order[k]:
-                visualiser.add_row(H[row,], keep_nodes[row], node_mutations[keep_nodes[row]])
-                row += 1
-            visualiser.add_separator()
-    while row < H.shape[0]:
-        visualiser.add_row(H[row,], keep_nodes[row], np.where(np.sum(H[-ts.sample_size:,],0)==1)[0])
-        row += 1
-    visualiser.save("tmp__NOBACKUP__/real.svg")
+    _, idx = np.unique(keep_nodes, return_index=True) #make unique but keep order
+    for k, node in enumerate(keep_nodes[np.sort(idx)]):
+        print(k,node)
+        visualiser = Visualiser(800, store.num_sites, font_size=9)
+        visualiser.add_site_coordinates()
+        a = np.zeros(store.num_sites, dtype=np.int8)
+        visualiser.add_row(a, -1)
+        visualiser.add_separator()
+        row = 0
+        for i in reversed(sorted(freq_order.keys())):
+            if i>1:
+                for j in freq_order[i]:
+                    visualiser.add_row(H[row,], keep_nodes[row], node_mutations[keep_nodes[row]])
+                    row += 1
+                visualiser.add_separator()
+        while row < H.shape[0]:
+            visualiser.add_row(H[row,], keep_nodes[row], np.where(np.sum(H[-ts.sample_size:,],0)==1)[0])
+            row += 1
+        visualiser.show_path(node, [-1 if i<0 else keep_nodes[i] for i in P[k]], False)
+        print("Writing actual ancestor large copy plot", k)
+        visualiser.save("tmp__NOBACKUP__/full_real_{}.svg".format(k))
 
 def run_large_infers():
     seed = 100
