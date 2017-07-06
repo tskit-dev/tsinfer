@@ -104,7 +104,7 @@ def load_ancestors_dev(filename):
     # store.print_state()
 
     for ancestor_id in ancestor_ids:
-        start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+        start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
         # print(start_site, focal_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(ancestor_id, "\t", a)
@@ -448,13 +448,13 @@ def new_segments(n, L, seed):
     tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=5, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
-
+    
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
-    # print(S)
-    # print()
-    # print(Sp)
+    #print(S,np.sum(S))
+    #print()
+    #print(Sp,np.sum(Sp))
     assert np.all(Sp == S)
 
     # for t in tsp.trees():
@@ -759,14 +759,19 @@ class Visualiser(object):
     def add_separator(self):
         self.current_row += 1
 
-    def show_path(self, label, path, fade_recents=True):
-        #highlight (darken) the cells we took this from
+    def show_path(self, label, path, fade_recents=True, copy_groups=None):
+        """
+        param copy_groups is only useful if there is the same ancestor on multiple rows
+        """
+        #highlight (darken) the cells we copied from
         for k in range(self.num_sites):
-            j = self.label_map[path[k]]
-            corner = ((k + 1) * self.scale, j * self.scale)
-            self.drawing.add(self.drawing.rect(
-                corner, (self.scale, self.scale), stroke="lightgrey",
-                fill="black", opacity=0.6))
+            rows = [path[k]] if copy_groups is None else copy_groups[path[k]]
+            for r in rows:
+                j = self.label_map[r]
+                corner = ((k + 1) * self.scale, j * self.scale)
+                self.drawing.add(self.drawing.rect(
+                    corner, (self.scale, self.scale), stroke="lightgrey",
+                    fill="black", opacity=0.6))
 
         if not fade_recents and label in self.label_map:
             # (slightly) highlight the current line
@@ -824,8 +829,8 @@ def visualise_ancestors(n, L, seed):
     a = np.zeros(store.num_sites, dtype=np.int8)
     last_frequency = 0
     for j in range(1, store.num_ancestors):
-        start, focal, end = store.get_ancestor(j, a)
-        if frequency[focal] != last_frequency:
+        start, end, num_older_ancestors, focal_sites= store.get_ancestor(j, a)
+        if any(frequency[focal] != last_frequency for focal in focal_sites):
             visualiser.add_separator()
             last_frequency = frequency[focal]
         visualiser.add_row(a, j)
@@ -901,7 +906,7 @@ def visualise_copying(n, L, seed):
     for j in range(1, store.num_ancestors):
         if j in breaks:
             visualiser.add_separator()
-        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
         visualiser.add_row(a, j)
 
     N = store.num_ancestors + S.shape[0]
@@ -922,49 +927,58 @@ def visualise_copying(n, L, seed):
 #     visualiser.save("tmp.svg")
 
 #     draw_copying_density(inferred_ts, 800, breaks)
-
+    #make a map of which are actually used in the inferred ts
+    locations = np.array([s.position for s in inferred_ts.sites()])
+    used = np.zeros((store.num_ancestors, len(locations)),dtype=np.bool)
+    #to do - this is a hack to get a row number for a node
+    #it may not continue to work
+    max_time = max([int(n.time) for n in inferred_ts.nodes()])
+    rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
+    for es in inferred_ts.edgesets():
+        used_variants = np.logical_and(es.left<=locations, locations<es.right)
+        used[rows_for_nodes[es.parent], used_variants]=True
+ 
     for k in range(1, store.num_ancestors):
         #one file for each copied ancestor
         focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
+        big_visualiser = Visualiser(800, store.num_sites, font_size=9)
+
         visualiser.add_site_coordinates()
+        big_visualiser.add_site_coordinates()
+
         a = np.zeros(store.num_sites, dtype=np.int8)
+        
         visualiser.add_row(a, 0)
+        big_visualiser.add_row(a, 0)
+        
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
-            start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
-            focal2row[focal]=j
-            visualiser.add_row(a, j, [focal])
+                big_visualiser.add_separator()
+            start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
+            for f in focal_sites:
+                focal2row[f]=j
+                big_visualiser.add_row(a, j, focal_sites)
+                big_visualiser.fade_row_false(used[j], j)
+            visualiser.add_row(a, j, focal_sites)
+            visualiser.fade_row_false(used[j], j)
         #highlight the path
         visualiser.show_path(k, P[k], False)
-
-        #fade the unused bits
-        locations = np.array([s.position for s in inferred_ts.sites()])
-        #to do - this is a hack to get a row number for a node
-        #it may not continue to work
-        max_time = max([int(n.time) for n in inferred_ts.nodes()])
-        rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
-        prev_node = -1
-        for es in inferred_ts.edgesets():
-            if prev_node != es.parent:
-                if prev_node>=0:
-                    pass
-                    visualiser.fade_row_false(used, rows_for_nodes[prev_node])
-                used = np.zeros((len(locations),),dtype=np.bool)
-            used[np.logical_and(es.left<=locations, locations<es.right)]=True
-            prev_node = es.parent
-        #visualiser.fade_row_false(used, rows_for_nodes[prev_node])
+        big_visualiser.show_path(k, P[k], False)
 
         #add samples
         visualiser.add_separator()
+        big_visualiser.add_separator()
         for j in range(S.shape[0]):
             visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
-        print("Writing", k)
-        visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
+            big_visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
+        print("Writing inferred ancestor copy plots", k)
+        visualiser.save("tmp__NOBACKUP__/inferred_{}.svg".format(k))
+        big_visualiser.save("tmp__NOBACKUP__/inferred_big_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
-    #in the same order (by frequency, then pos) as in the inferred seq
+    #in the same order as in the inferred sequence.
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
     freq_order, node_mutations = {}, {}
     for v in ts.variants():
@@ -984,6 +998,7 @@ def visualise_copying(n, L, seed):
     keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
     H = h[keep_nodes,:]
     P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
+    groups = [row_map[n] for n in keep_nodes] + [[0]]
     visualiser = Visualiser(800, store.num_sites, font_size=9)
     visualiser.add_site_coordinates()
     a = np.zeros(store.num_sites, dtype=np.int8)
@@ -1058,9 +1073,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(20, 200, j)
+    #for j in range(1, 100000):
+    #    print(j)
+    #    new_segments(20, 200, j)
 
     # new_segments(8, 8, 5)
     # new_segments(10, 20, 304)
@@ -1112,5 +1127,5 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
