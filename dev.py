@@ -104,7 +104,7 @@ def load_ancestors_dev(filename):
     # store.print_state()
 
     for ancestor_id in ancestor_ids:
-        start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+        start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
         # print(start_site, focal_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(ancestor_id, "\t", a)
@@ -452,9 +452,9 @@ def new_segments(n, L, seed):
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
-    print(S,np.sum(S))
-    print()
-    print(Sp,np.sum(Sp))
+    #print(S,np.sum(S))
+    #print()
+    #print(Sp,np.sum(Sp))
     assert np.all(Sp == S)
 
     # for t in tsp.trees():
@@ -829,8 +829,8 @@ def visualise_ancestors(n, L, seed):
     a = np.zeros(store.num_sites, dtype=np.int8)
     last_frequency = 0
     for j in range(1, store.num_ancestors):
-        start, focal, end = store.get_ancestor(j, a)
-        if frequency[focal] != last_frequency:
+        start, end, num_older_ancestors, focal_sites= store.get_ancestor(j, a)
+        if any(frequency[focal] != last_frequency for focal in focal_sites):
             visualiser.add_separator()
             last_frequency = frequency[focal]
         visualiser.add_row(a, j)
@@ -906,7 +906,7 @@ def visualise_copying(n, L, seed):
     for j in range(1, store.num_ancestors):
         if j in breaks:
             visualiser.add_separator()
-        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
         visualiser.add_row(a, j)
 
     N = store.num_ancestors + S.shape[0]
@@ -938,9 +938,9 @@ def visualise_copying(n, L, seed):
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
-            start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
+            start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
             focal2row[focal]=j
-            visualiser.add_row(a, j, [focal])
+            visualiser.add_row(a, j, focal_sites)
         #highlight the path
         visualiser.show_path(k, P[k], False)
 
@@ -1064,9 +1064,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(20, 200, j)
+    #for j in range(1, 100000):
+    #    print(j)
+    #    new_segments(20, 200, j)
 
     # new_segments(8, 8, 5)
     # new_segments(10, 20, 304)
@@ -1118,5 +1118,5 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    # visualise_copying(8, 4, 5)
+    visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
