@@ -942,27 +942,40 @@ def visualise_copying(n, L, seed):
         #one file for each copied ancestor
         focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
+        big_visualiser = Visualiser(800, store.num_sites, font_size=9)
+
         visualiser.add_site_coordinates()
+        big_visualiser.add_site_coordinates()
+
         a = np.zeros(store.num_sites, dtype=np.int8)
         
         visualiser.add_row(a, 0)
+        big_visualiser.add_row(a, 0)
+        
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
+                big_visualiser.add_separator()
             start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
             for f in focal_sites:
                 focal2row[f]=j
-                visualiser.add_row(a, j, focal_sites)
-                visualiser.fade_row_false(used[j], j)
+                big_visualiser.add_row(a, j, focal_sites)
+                big_visualiser.fade_row_false(used[j], j)
+            visualiser.add_row(a, j, focal_sites)
+            visualiser.fade_row_false(used[j], j)
         #highlight the path
         visualiser.show_path(k, P[k], False)
+        big_visualiser.show_path(k, P[k], False)
 
         #add samples
         visualiser.add_separator()
+        big_visualiser.add_separator()
         for j in range(S.shape[0]):
             visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
-        print("Writing inferred ancestor copy plot", k)
-        visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
+            big_visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
+        print("Writing inferred ancestor copy plots", k)
+        visualiser.save("tmp__NOBACKUP__/inferred_{}.svg".format(k))
+        big_visualiser.save("tmp__NOBACKUP__/inferred_big_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
     #in the same order as in the inferred sequence.
