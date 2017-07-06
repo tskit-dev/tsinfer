@@ -26,6 +26,10 @@ typedef struct {
     size_t frequency;
     size_t num_sites;
     site_t **sites;
+    size_t num_ancestors;
+    site_id_t **ancestor_focal_sites;
+    size_t *num_ancestor_focal_sites;
+    site_id_t *ancestor_focal_site_mem;
 } frequency_class_t;
 
 typedef struct {
@@ -45,9 +49,11 @@ typedef struct {
     site_state_t *sites;
     struct {
         /* TODO add start_site and end_site to improve get_ancestor performance. */
-        site_id_t *focal_site;
-        uint32_t *focal_site_frequency;
+        site_id_t **focal_sites;
+        uint32_t *num_focal_sites;
+        uint32_t *age;
         uint32_t *num_older_ancestors;
+        site_id_t *focal_sites_mem;
     } ancestors;
 } ancestor_store_t;
 
@@ -143,10 +149,10 @@ int ancestor_store_builder_print_state(ancestor_store_builder_t *self, FILE *out
 int ancestor_store_builder_add(ancestor_store_builder_t *self, allele_t *ancestor);
 int ancestor_store_builder_dump(ancestor_store_builder_t *self,
         site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
-
 int ancestor_store_alloc(ancestor_store_t *self,
         size_t num_sites, double *position,
-        size_t num_ancestors, site_id_t *focal_site, uint32_t *focal_site_frequency,
+        size_t num_ancestors, uint32_t *ancestor_age,
+        size_t num_focal_sites, ancestor_id_t *focal_site_ancestor, site_id_t *focal_site,
         size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
         allele_t *state);
 int ancestor_store_free(ancestor_store_t *self);
@@ -155,15 +161,15 @@ int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size)
 int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
         ancestor_id_t ancestor_id, allele_t *state);
 int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
-        allele_t *ancestor, site_id_t *start_site, site_id_t *focal_site,
-        site_id_t *end_site, size_t *num_older_ancestors);
+        allele_t *ancestor, site_id_t *start_site, site_id_t *end_site,
+        size_t *num_older_ancestors, size_t *num_focal_sites, site_id_t **focal_sites);
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
-        site_id_t focal_site_id, allele_t *haplotype);
+        size_t num_focal_sites, site_id_t *focal_sites, allele_t *haplotype);
 
 int ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors,
         size_t num_sites, allele_t *ancestors, site_id_t *permutation);
@@ -176,7 +182,7 @@ int ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        site_id_t focal_site, double error_rate,
+        size_t num_focal_sites, site_id_t *focal_sites, double error_rate,
         traceback_t *traceback, ancestor_id_t *end_site_value);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 

@@ -76,8 +76,9 @@ handle_library_error(int err)
     PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
 }
 
+/* TODO change this to return a numpy array. */
 static PyObject *
-convert_site_id_list(site_t **sites, size_t num_sites)
+convert_site_id_list(site_id_t *sites, size_t num_sites)
 {
     PyObject *ret = NULL;
     PyObject *t;
@@ -89,7 +90,7 @@ convert_site_id_list(site_t **sites, size_t num_sites)
         goto out;
     }
     for (j = 0; j < num_sites; j++) {
-        py_int = Py_BuildValue("k", (unsigned long) sites[j]->id);
+        py_int = Py_BuildValue("k", (unsigned long) sites[j]);
         if (py_int == NULL) {
             Py_DECREF(t);
             goto out;
@@ -232,21 +233,38 @@ static PyObject *
 AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"focal_site", "ancestor", NULL};
+    static char *kwlist[] = {"focal_sites", "ancestor", NULL};
     PyObject *ancestor = NULL;
     PyArrayObject *ancestor_array = NULL;
-    unsigned long focal_site;
+    PyObject *focal_sites = NULL;
+    PyArrayObject *focal_sites_array = NULL;
+    size_t num_focal_sites;
     size_t num_sites;
     npy_intp *shape;
 
     if (AncestorBuilder_check_state(self) != 0) {
         goto fail;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kO!", kwlist,
-            &focal_site, &PyArray_Type, &ancestor)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!", kwlist,
+            &focal_sites, &PyArray_Type, &ancestor)) {
         goto fail;
     }
     num_sites = self->builder->num_sites;
+    focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_UINT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (focal_sites_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(focal_sites_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(focal_sites_array);
+    num_focal_sites = shape[0];
+    if (num_focal_sites == 0 || num_focal_sites > num_sites) {
+        PyErr_SetString(PyExc_ValueError, "num_focal_sites must > 0 and <= num_sites");
+        goto fail;
+    }
     ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_INT8,
             NPY_ARRAY_INOUT_ARRAY);
     if (ancestor_array == NULL) {
@@ -262,18 +280,47 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         goto fail;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_make_ancestor(self->builder, focal_site,
+    err = ancestor_builder_make_ancestor(self->builder, num_focal_sites,
+        (uint32_t *) PyArray_DATA(focal_sites_array),
         (int8_t *) PyArray_DATA(ancestor_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
+    Py_DECREF(focal_sites_array);
     Py_DECREF(ancestor_array);
     return Py_BuildValue("");
 fail:
+    Py_XDECREF(focal_sites_array);
     PyArray_XDECREF_ERR(ancestor_array);
     return NULL;
+}
+
+static PyObject *
+convert_ancestor_focal_sites(frequency_class_t *class)
+{
+    PyObject *ret = NULL;
+    PyObject *py_ancestor_list = NULL;
+    PyObject *py_ancestor = NULL;
+    size_t j;
+
+    py_ancestor_list = PyTuple_New(class->num_ancestors);
+    if (py_ancestor_list == NULL) {
+        goto out;
+    }
+    for (j = 0; j < class->num_ancestors; j++) {
+        py_ancestor = convert_site_id_list(
+                class->ancestor_focal_sites[j], class->num_ancestor_focal_sites[j]);
+        if (py_ancestor == NULL) {
+            Py_DECREF(py_ancestor_list);
+            goto out;
+        }
+        PyTuple_SET_ITEM(py_ancestor_list, j, py_ancestor);
+    }
+    ret = py_ancestor_list;
+out:
+    return ret;
 }
 
 static PyObject *
@@ -282,7 +329,7 @@ AncestorBuilder_get_frequency_classes(AncestorBuilder *self)
     PyObject *ret = NULL;
     PyObject *py_classes = NULL;
     PyObject *py_class = NULL;
-    PyObject *py_sites = NULL;
+    PyObject *py_sites_lists = NULL;
     frequency_class_t *class;
     size_t j;
 
@@ -296,14 +343,14 @@ AncestorBuilder_get_frequency_classes(AncestorBuilder *self)
     }
     for (j = 0; j < self->builder->num_frequency_classes; j++) {
         class = self->builder->frequency_classes + j;
-        py_sites = convert_site_id_list(class->sites, class->num_sites);
-        if (py_sites == NULL) {
+        py_sites_lists = convert_ancestor_focal_sites(class);
+        if (py_sites_lists == NULL) {
             Py_DECREF(py_classes);
             goto out;
         }
-        py_class = Py_BuildValue("kO", (unsigned long) class->frequency, py_sites);
+        py_class = Py_BuildValue("kO", (unsigned long) class->frequency, py_sites_lists);
         if (py_class == NULL) {
-            Py_DECREF(py_sites);
+            Py_DECREF(py_sites_lists);
             Py_DECREF(py_classes);
             goto out;
         }
@@ -746,14 +793,17 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"position", "focal_site", "focal_site_frequency",
+    static char *kwlist[] = {"position", "ancestor_age",
+        "focal_site_ancestor", "focal_site",
         "site", "start", "end", "state", NULL};
     PyObject *position = NULL;
     PyArrayObject *position_array = NULL;
+    PyObject *ancestor_age = NULL;
+    PyArrayObject *ancestor_age_array = NULL;
     PyObject *focal_site = NULL;
     PyArrayObject *focal_site_array = NULL;
-    PyObject *focal_site_frequency = NULL;
-    PyArrayObject *focal_site_frequency_array = NULL;
+    PyObject *focal_site_ancestor = NULL;
+    PyArrayObject *focal_site_ancestor_array = NULL;
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
@@ -762,12 +812,14 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *end_array = NULL;
     PyObject *state = NULL;
     PyArrayObject *state_array = NULL;
-    size_t num_sites, num_ancestors, total_segments;
+    size_t num_sites, num_ancestors, num_focal_sites, total_segments;
     npy_intp *shape;
 
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOO", kwlist,
-            &position, &focal_site, &focal_site_frequency, &site, &start, &end, &state)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOOO", kwlist,
+            &position, &ancestor_age,
+            &focal_site_ancestor, &focal_site,
+            &site, &start, &end, &state)) {
         goto out;
     }
     /* position */
@@ -786,6 +838,22 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
         goto out;
     }
+    /* ancestor_age */
+    ancestor_age_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor_age,
+            NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    if (ancestor_age_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(ancestor_age_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(ancestor_age_array);
+    num_ancestors = shape[0];
+    if (num_ancestors < 1) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 ancestors");
+        goto out;
+    }
     /* focal_site */
     focal_site_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site, NPY_UINT32,
             NPY_ARRAY_IN_ARRAY);
@@ -797,24 +865,20 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(focal_site_array);
-    num_ancestors = shape[0];
-    if (num_ancestors < 1) {
-        PyErr_SetString(PyExc_ValueError, "Must have > 0 ancestors");
+    num_focal_sites = shape[0];
+    /* focal_site_ancestor */
+    focal_site_ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site_ancestor,
+            NPY_INT32, NPY_ARRAY_IN_ARRAY);
+    if (focal_site_ancestor_array == NULL) {
         goto out;
     }
-    /* focal_site_frequency */
-    focal_site_frequency_array = (PyArrayObject *) PyArray_FROM_OTF(focal_site_frequency,
-            NPY_UINT32, NPY_ARRAY_IN_ARRAY);
-    if (focal_site_frequency_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(focal_site_frequency_array) != 1) {
+    if (PyArray_NDIM(focal_site_ancestor_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "Dim != 1");
         goto out;
     }
-    shape = PyArray_DIMS(focal_site_frequency_array);
-    if (shape[0] != num_ancestors) {
-        PyErr_SetString(PyExc_ValueError, "Incorrect number of ancestors");
+    shape = PyArray_DIMS(focal_site_ancestor_array);
+    if (shape[0] != num_focal_sites) {
+        PyErr_SetString(PyExc_ValueError, "Incorrect number of focal sites.");
         goto out;
     }
     /* site */
@@ -882,8 +946,11 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     err = ancestor_store_alloc(self->store,
         num_sites, (double *) PyArray_DATA(position_array),
-        num_ancestors, (uint32_t *) PyArray_DATA(focal_site_array),
-        (uint32_t *) PyArray_DATA(focal_site_frequency_array),
+        num_ancestors,
+        (uint32_t *) PyArray_DATA(ancestor_age_array),
+        num_focal_sites,
+        (int32_t *) PyArray_DATA(focal_site_ancestor_array),
+        (uint32_t *) PyArray_DATA(focal_site_array),
         total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
@@ -897,7 +964,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
 out:
     Py_XDECREF(position_array);
     Py_XDECREF(focal_site_array);
-    Py_XDECREF(focal_site_frequency_array);
+    Py_XDECREF(ancestor_age_array);
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);
@@ -910,11 +977,12 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     int err;
     static char *kwlist[] = {"id", "haplotype", NULL};
+    PyObject *py_focal_sites = NULL;
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     unsigned long ancestor_id;
-    site_id_t start, focal, end;
-    size_t num_sites, num_older_ancestors;
+    site_id_t start, end, *focal_sites;
+    size_t num_sites, num_older_ancestors, num_focal_sites;
     npy_intp *shape;
 
     if (AncestorStore_check_state(self) != 0) {
@@ -941,16 +1009,20 @@ AncestorStore_get_ancestor(AncestorStore *self, PyObject *args, PyObject *kwds)
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_store_get_ancestor(self->store, ancestor_id,
-        (int8_t *) PyArray_DATA(haplotype_array), &start, &focal, &end,
-        &num_older_ancestors);
+        (int8_t *) PyArray_DATA(haplotype_array), &start, &end,
+        &num_older_ancestors, &num_focal_sites, &focal_sites);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto fail;
     }
+    py_focal_sites = convert_site_id_list(focal_sites, num_focal_sites);
+    if (py_focal_sites == NULL) {
+        goto fail;
+    }
     Py_DECREF(haplotype_array);
-    return Py_BuildValue("iiik", (int) start, (int) focal, (int) end,
-            (unsigned long) num_older_ancestors);
+    return Py_BuildValue("iikO", (int) start, (int) end,
+            (unsigned long) num_older_ancestors, py_focal_sites);
 fail:
     PyArray_XDECREF_ERR(haplotype_array);
     return NULL;
@@ -1370,26 +1442,29 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int err;
     PyObject *ret = NULL;
     static char *kwlist[] = {"num_ancestors", "haplotype", "start_site", "end_site",
-        "focal_site", "error_rate", "traceback", NULL};
+        "focal_sites", "error_rate", "traceback", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
+    PyObject *focal_sites = NULL;
+    PyArrayObject *focal_sites_array = NULL;
     Traceback *traceback = NULL;
     double error_rate;
-    unsigned long num_ancestors, start_site, end_site, focal_site;
+    unsigned long num_ancestors, start_site, end_site;
     ancestor_id_t end_site_value;
-    size_t num_sites;
+    size_t num_sites, num_focal_sites;
     npy_intp *shape;
 
     if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkkdO!", kwlist,
-            &num_ancestors, &haplotype, &start_site, &end_site, &focal_site,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkOdO!", kwlist,
+            &num_ancestors, &haplotype, &start_site, &end_site, &focal_sites,
             &error_rate, &TracebackType, &traceback)) {
         goto out;
     }
     Py_INCREF(traceback);
     num_sites = self->matcher->store->num_sites;
+    /* haplotype */
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
             NPY_ARRAY_IN_ARRAY);
     if (haplotype_array == NULL) {
@@ -1404,6 +1479,23 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
         goto out;
     }
+    /* focal_sites */
+    focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_UINT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (focal_sites_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(focal_sites_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(focal_sites_array);
+    num_focal_sites = shape[0];
+    if (num_focal_sites > num_sites) {
+        PyErr_SetString(PyExc_ValueError, "len(num_focal_sites) must be <= num_sites");
+        goto out;
+    }
+    /* start and end */
     if (start_site >= end_site) {
         PyErr_SetString(PyExc_ValueError, "start must be < end");
         goto out;
@@ -1415,7 +1507,8 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_best_path(self->matcher, num_ancestors,
         (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
-        focal_site, error_rate, traceback->traceback, &end_site_value);
+        num_focal_sites, (uint32_t *) PyArray_DATA(focal_sites_array),
+        error_rate, traceback->traceback, &end_site_value);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -1424,6 +1517,7 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     ret = Py_BuildValue("k", (unsigned long) end_site_value);
 out:
     Py_XDECREF(haplotype_array);
+    Py_XDECREF(focal_sites_array);
     Py_XDECREF(traceback);
     return ret;
 }

@@ -17,6 +17,7 @@ import random
 import threading
 import math
 import resource
+import operator
 # import profilehooks
 
 import humanize
@@ -36,6 +37,38 @@ import _tsinfer
 import msprime
 import msprime_to_inference_matrices
 
+
+def build_ancestors_dev(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    print("num_sites = ", ts.num_sites)
+    position = [site.position for site in ts.sites()]
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+
+    # builder = _tsinfer.AncestorBuilder(S, position)
+    builder = tsinfer.AncestorBuilder(S, position)
+    store_builder = _tsinfer.AncestorStoreBuilder(
+        builder.num_sites, builder.num_sites * 8192)
+
+    for frequency_class, focal_sites in builder.get_frequency_classes():
+
+        print(frequency_class, focal_sites)
+        patterns = collections.defaultdict(list)
+        for focal_site in focal_sites:
+            site_pattern = tuple(S[:,focal_site])
+            patterns[site_pattern].append(focal_site)
+        num_ancestors = len(patterns)
+        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+        p = np.zeros(num_ancestors, dtype=np.uint32)
+        for j, sites in enumerate(patterns.values()):
+            builder.make_ancestor(sites, A[j, :])
+        _tsinfer.sort_ancestors(A, p)
+        for j in num_ancestors:
+            store_builder.add(A[index, :])
 
 
 def load_ancestors_dev(filename):
@@ -71,7 +104,7 @@ def load_ancestors_dev(filename):
     # store.print_state()
 
     for ancestor_id in ancestor_ids:
-        start_site, focal_site, end_site = store.get_ancestor(ancestor_id, h)
+        start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
         # print(start_site, focal_site, end_site)
         # a = "".join(str(x) if x != -1 else '*' for x in h)
         # print(ancestor_id, "\t", a)
@@ -264,15 +297,15 @@ def sort_ancestors(A, p, sort_order):
     #     print(j, "\t", a)
 
 
-def build_ancestors(n, L, seed, filename):
+def build_ancestors(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
         Ne=10**4, random_seed=seed)
-    # print("num_sites = ", ts.num_sites)
+    print("num_sites = ", ts.num_sites)
     # print("simulation done, num_sites = ", ts.num_sites)
 
-    ts.dump(filename.split(".")[0] + ".ts.hdf5")
+    # ts.dump(filename.split(".")[0] + ".ts.hdf5")
 
     position = [site.position for site in ts.sites()]
 
@@ -412,17 +445,16 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-6, 1e-6, num_threads=1, method="P")
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=5, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
-
-
+    
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
-    # print(S)
-    # print()
-    # print(Sp)
+    #print(S,np.sum(S))
+    #print()
+    #print(Sp,np.sum(Sp))
     assert np.all(Sp == S)
 
     # for t in tsp.trees():
@@ -438,22 +470,13 @@ def new_segments(n, L, seed):
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
-    t = [int(node.time) for node in ts_simplified.nodes()]
-
-    for e in ts_simplified.edgesets():
-        print("{:.2f}\t{:.2f}".format(e.left, e.right), t[e.parent],
-                [t[c] for c in e.children], sep="\t")
-
-
 
 def export_samples(n, L, seed):
 
-    L = L * 10**6
     ts = msprime.simulate(
-        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
-        Ne=10**4, random_seed=seed)
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
     print("num_sites = ", ts.num_sites)
-    with open("tmp__NOBACKUP__/large-samples.txt", "w") as out:
+    with open("tmp__NOBACKUP__/samples.txt", "w") as out:
         for variant in ts.variants():
             print(variant.position, "".join(map(str, variant.genotypes)), sep="\t", file=out)
 
@@ -644,6 +667,20 @@ def site_set_stats(n, L, seed):
         "mean_diffs": np.mean(total_diffs)
     }
 
+def rle(inarray):
+        """ run length encoding. Partial credit to R rle function.
+            Multi datatype arrays catered for including non Numpy
+            returns: tuple (runlengths, startpositions, values) """
+        ia = np.array(inarray)                  # force numpy
+        n = len(ia)
+        if n == 0:
+            return (None, None, None)
+        else:
+            y = np.array(ia[1:] != ia[:-1])     # pairwise unequal (string safe)
+            i = np.append(np.where(y), n - 1)   # must include last element posi
+            z = np.diff(np.append(-1, i))       # run lengths
+            p = np.cumsum(np.append(0, z))[:-1] # positions
+            return {'length':z, 'start':p, 'value':ia[i]}
 
 class Visualiser(object):
 
@@ -662,8 +699,10 @@ class Visualiser(object):
             self.labels = self.drawing.add(
                 self.drawing.g(font_size=font_size, text_anchor="middle"))
         stroke = "lightgray"
-        self.one_boxes = self.drawing.add(
+        self.focal_boxes = self.drawing.add(
                 self.drawing.g(fill="red", stroke=stroke))
+        self.one_boxes = self.drawing.add(
+                self.drawing.g(fill="salmon", stroke=stroke))
         self.zero_boxes = self.drawing.add(
                 self.drawing.g(fill="blue", stroke=stroke))
         self.missing_boxes = self.drawing.add(
@@ -680,7 +719,7 @@ class Visualiser(object):
                 self.labels.add(self.drawing.text(str(k), coord, dy=[self.text_offset]))
         self.current_row += 1
 
-    def add_row(self, a, row_label=None):
+    def add_row(self, a, row_label=None, focal=[]):
         j = self.current_row
         self.label_map[row_label] = j
         if self.font_size is not None and row_label is not None:
@@ -694,7 +733,10 @@ class Visualiser(object):
             elif a[k] == -1:
                 self.missing_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
             else:
-                self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+                if k in focal:
+                    self.focal_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
+                else:
+                    self.one_boxes.add(self.drawing.rect(corner, (self.scale, self.scale)))
         self.current_row += 1
 
     def add_intensity_row(self, d, row_label=None):
@@ -717,9 +759,30 @@ class Visualiser(object):
     def add_separator(self):
         self.current_row += 1
 
-    def show_path(self, label, path):
+    def show_path(self, label, path, fade_recents=True, copy_groups=None):
+        """
+        param copy_groups is only useful if there is the same ancestor on multiple rows
+        """
+        #highlight (darken) the cells we copied from
+        for k in range(self.num_sites):
+            rows = [path[k]] if copy_groups is None else copy_groups[path[k]]
+            for r in rows:
+                j = self.label_map[r]
+                corner = ((k + 1) * self.scale, j * self.scale)
+                self.drawing.add(self.drawing.rect(
+                    corner, (self.scale, self.scale), stroke="lightgrey",
+                    fill="black", opacity=0.6))
 
-        if label + 1 in self.label_map:
+        if not fade_recents and label in self.label_map:
+            # (slightly) highlight the current line
+            row = self.label_map[label]
+            corner = self.scale, row * self.scale
+            self.drawing.add(self.drawing.rect(
+                corner, ((self.scale * self.num_sites), self.scale),
+                stroke="black", fill_opacity=0.2))
+
+        elif fade_recents and label + 1 in self.label_map:
+            #  fade out the more recent stuff
             row = self.label_map[label + 1]
             corner = self.scale, row * self.scale
             height = (self.current_row - row) * self.scale
@@ -727,13 +790,15 @@ class Visualiser(object):
                 corner, ((self.scale * self.num_sites), height),
                 fill="white", opacity=0.8))
 
-        for k in range(self.num_sites):
-            j = self.label_map[path[k]]
-            corner = ((k + 1) * self.scale, j * self.scale)
+    def fade_row_false(self, bool_arr, label):
+        row = self.label_map[label]
+        runlengths = rle(bool_arr)
+        height = self.scale
+        for i in np.where(~runlengths['value'])[0]:
+            corner = self.scale * (runlengths['start'][i]+1), row * self.scale
             self.drawing.add(self.drawing.rect(
-                corner, (self.scale, self.scale), stroke="lightgrey",
-                fill="black", opacity=0.6))
-
+                corner, ((self.scale * runlengths['length'][i]), height),
+                fill="white", opacity=0.8))
 
     def save(self, filename):
         self.drawing.saveas(filename)
@@ -764,8 +829,8 @@ def visualise_ancestors(n, L, seed):
     a = np.zeros(store.num_sites, dtype=np.int8)
     last_frequency = 0
     for j in range(1, store.num_ancestors):
-        start, focal, end = store.get_ancestor(j, a)
-        if frequency[focal] != last_frequency:
+        start, end, num_older_ancestors, focal_sites= store.get_ancestor(j, a)
+        if any(frequency[focal] != last_frequency for focal in focal_sites):
             visualiser.add_separator()
             last_frequency = frequency[focal]
         visualiser.add_row(a, j)
@@ -829,9 +894,9 @@ def visualise_copying(n, L, seed):
     breaks = set()
     a = np.zeros(store.num_sites, dtype=np.int8)
     for j in range(1, store.num_ancestors):
-        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
-        if frequency[focal] != last_frequency:
-            last_frequency = frequency[focal]
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
+        if frequency[focal_sites[0]] != last_frequency:
+            last_frequency = frequency[focal_sites[0]]
             breaks.add(j)
 
     visualiser = Visualiser(800, store.num_sites, font_size=16)
@@ -841,7 +906,7 @@ def visualise_copying(n, L, seed):
     for j in range(1, store.num_ancestors):
         if j in breaks:
             visualiser.add_separator()
-        start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
         visualiser.add_row(a, j)
 
     N = store.num_ancestors + S.shape[0]
@@ -862,46 +927,78 @@ def visualise_copying(n, L, seed):
 #     visualiser.save("tmp.svg")
 
 #     draw_copying_density(inferred_ts, 800, breaks)
-
+    #make a map of which are actually used in the inferred ts
+    locations = np.array([s.position for s in inferred_ts.sites()])
+    used = np.zeros((store.num_ancestors, len(locations)),dtype=np.bool)
+    #to do - this is a hack to get a row number for a node
+    #it may not continue to work
+    max_time = max([int(n.time) for n in inferred_ts.nodes()])
+    rows_for_nodes = [max_time-int(n.time) for n in inferred_ts.nodes()]
+    for es in inferred_ts.edgesets():
+        used_variants = np.logical_and(es.left<=locations, locations<es.right)
+        used[rows_for_nodes[es.parent], used_variants]=True
+ 
     for k in range(1, store.num_ancestors):
-        break
-        #one file for each copy
+        #one file for each copied ancestor
+        focal2row = {}
         visualiser = Visualiser(800, store.num_sites, font_size=9)
+        big_visualiser = Visualiser(800, store.num_sites, font_size=9)
+
         visualiser.add_site_coordinates()
+        big_visualiser.add_site_coordinates()
+
         a = np.zeros(store.num_sites, dtype=np.int8)
+        
         visualiser.add_row(a, 0)
+        big_visualiser.add_row(a, 0)
+        
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
-            start, focal, end, num_older_ancestors = store.get_ancestor(j, a)
-            visualiser.add_row(a, j)
-        visualiser.show_path(k, P[k])
+                big_visualiser.add_separator()
+            start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, a)
+            for f in focal_sites:
+                focal2row[f]=j
+                big_visualiser.add_row(a, j, focal_sites)
+                big_visualiser.fade_row_false(used[j], j)
+            visualiser.add_row(a, j, focal_sites)
+            visualiser.fade_row_false(used[j], j)
+        #highlight the path
+        visualiser.show_path(k, P[k], False)
+        big_visualiser.show_path(k, P[k], False)
 
         #add samples
         visualiser.add_separator()
+        big_visualiser.add_separator()
         for j in range(S.shape[0]):
-            visualiser.add_row(S[j],None)
-        print("Writing", k)
-        visualiser.save("tmp__NOBACKUP__/copy_{}.svg".format(k))
+            visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
+            big_visualiser.add_row(S[j],None,np.where(np.sum(S,0)==1)[0])
+        print("Writing inferred ancestor copy plots", k)
+        visualiser.save("tmp__NOBACKUP__/inferred_{}.svg".format(k))
+        big_visualiser.save("tmp__NOBACKUP__/inferred_big_{}.svg".format(k))
 
     #visualize the true copying process, with real ancestral fragments
-    #in the same order (by frequency, then pos) as in the inferred seq
+    #in the same order as in the inferred sequence.
     h, p = msprime_to_inference_matrices.make_ancestral_matrices(ts)
-    freq_order = {}
+    freq_order, node_mutations = {}, {}
     for v in ts.variants():
         freq = np.sum(v.genotypes)
-        if freq not in freq_order:
-            freq_order[freq] = []
-        freq_order[freq] += [{'node':m.node,'site':v.site.index} for m in v.site.mutations]
-    for k,v in freq_order.items():
-        print(k,v)
-        print()
+        for m in v.site.mutations:
+            freq_order.setdefault(freq,[]).append({'node':m.node,'site':m.site, 'row':focal2row.get(m.site)})
+            node_mutations.setdefault(m.node,[]).append(m.site)
+
+    #for k,v in freq_order.items(): #print the list of ancestors output
+    #    print(k,v)
+    #    print()
     #exclude ancestors of singletons
-    freq_ordered_mutation_nodes = np.array([n['node'] for k in reversed(sorted(freq_order.keys())) for n in freq_order[k] if k>1], dtype=np.int)
+    output_rows = [n for k in freq_order.keys() for n in freq_order[k] if k>1]
+    output_rows.sort(key=operator.itemgetter('row'))
+    freq_ordered_mutation_nodes = np.array([o['node'] for o in output_rows], dtype=np.int)
     #add the samples to the rows to keep
     keep_nodes = np.append(freq_ordered_mutation_nodes, range(ts.sample_size))
     H = h[keep_nodes,:]
     P, row_map = msprime_to_inference_matrices.relabel_copy_matrix(p, keep_nodes)
+    groups = [row_map[n] for n in keep_nodes] + [[0]]
     visualiser = Visualiser(800, store.num_sites, font_size=9)
     visualiser.add_site_coordinates()
     a = np.zeros(store.num_sites, dtype=np.int8)
@@ -911,20 +1008,19 @@ def visualise_copying(n, L, seed):
     for k in reversed(sorted(freq_order.keys())):
         if k>1:
             for j in freq_order[k]:
-                visualiser.add_row(H[row,], keep_nodes[row])
+                visualiser.add_row(H[row,], keep_nodes[row], node_mutations[keep_nodes[row]])
                 row += 1
             visualiser.add_separator()
     while row < H.shape[0]:
-        visualiser.add_row(H[row,], keep_nodes[row])
-        row += 1        
+        visualiser.add_row(H[row,], keep_nodes[row], np.where(np.sum(H[-ts.sample_size:,],0)==1)[0])
+        row += 1
     visualiser.save("tmp__NOBACKUP__/real.svg")
-
 
 def run_large_infers():
     seed = 100
     n = 1000
     # n = 10
-    for j in np.arange(10, 200, 10):
+    for j in np.arange(10, 30, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
@@ -949,32 +1045,27 @@ def analyse_file(filename):
     ts = msprime.load(filename)
 
     num_children = np.zeros(ts.num_edgesets, dtype=np.int)
-    leaf_polytomies = 0
     for j, e in enumerate(ts.edgesets()):
-        # print(e.left, e.right, e.parent, ts.time(e.parent),
-        #         len(e.children), "X", sum(ts.node(c).flags == 1 for c in e.children),
-        #         e.children,
-        #         sep="\t")
+        # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
         num_children[j] = len(e.children)
-        if any(ts.node(c).flags == 1 for c in e.children) and num_children[j] > 2:
-            leaf_polytomies +=1
-
 
     print("total edgesets = ", ts.num_edgesets)
     print("non binary     = ", np.sum(num_children > 2))
-    print("leaf polytomies= ", leaf_polytomies)
     print("max children   = ", np.max(num_children))
     print("mean children  = ", np.mean(num_children))
 
-
     # for t in ts.trees():
-    #     t.draw("tmp__NOBACKUP__/tree_{}.svg".format(t.index), 8000, 4000,
-    #             show_internal_node_labels=False,
-    #             show_leaf_node_labels=False)
-    #     print("Wrote", t.index)
-    #     if t.index == 100:
+    #     t.draw("tree_{}.svg".format(t.index), 4000, 4000)
+    #     if t.index == 10:
     #         break
 
+def draw_tree_for_position(pos, ts):
+    """
+    useful for debugging
+    """
+    for t in ts.trees():
+        if t.get_interval()[0]<list(ts.sites())[pos].position and t.get_interval()[1]>list(ts.sites())[pos].position:
+            t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(pos))
 
 
 if __name__ == "__main__":
@@ -982,14 +1073,14 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(20, 10, j)
+    #for j in range(1, 100000):
+    #    print(j)
+    #    new_segments(20, 200, j)
 
-    # new_segments(16, 30, 5)
-    # # new_segments(40, 20, 304)
+    # new_segments(8, 8, 5)
+    # new_segments(10, 20, 304)
 
-    # export_samples(1000, 10, 304)
+    # export_samples(10, 100, 304)
 
 
     # n = 10
@@ -1008,20 +1099,19 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     # run_large_infers()
-    # analyse_file("tmp__NOBACKUP__/ones/n=1000_L=20_simplified.hdf5")
+    # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
     #     print(j, file=sys.stderr)
     #     filename = "tmp__NOBACKUP__/tmp-3.hdf5"
-    #     build_ancestors(20, 0.2 * 10**6, j, filename)
     #     load_ancestors(filename)
         # load_ancestors_dev(filename)
 
-#     filename = "tmp__NOBACKUP__/tmp2.hdf5"
-#     build_ancestors(10, 0.1 * 10**6, 3, filename)
-#     # compress_ancestors(filename)
-#     load_ancestors_dev(filename)
+    #     filename = "tmp__NOBACKUP__/tmp2.hdf5"
+    #     build_ancestors(10, 0.1 * 10**6, 3, filename)
+    #     # compress_ancestors(filename)
+    #     load_ancestors_dev(filename)
 
     # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
     # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
@@ -1038,3 +1128,4 @@ if __name__ == "__main__":
     #         df.to_csv("diff-analysis.csv")
 
     visualise_copying(8, 4, 5)
+    # build_ancestors_dev(10, 10000, 3)
