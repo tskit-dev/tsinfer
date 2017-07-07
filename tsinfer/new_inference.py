@@ -101,59 +101,63 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
 def match_ancestors(
         store, recombination_rate, tree_sequence_builder, num_threads=1, method="C",
         show_progress=False):
-    ancestor_ids = list(range(1, store.num_ancestors))
+    all_ancestors = list(range(1, store.num_ancestors))
+    ancestor_age = map(store.get_age, all_ancestors)
+    same_age_ancestors = collections.defaultdict(list)
+    for ancestor_id, age in zip(all_ancestors, ancestor_age):
+        same_age_ancestors[age].append(ancestor_id)
 
-    # Shuffle the ancestors so that we (hopefully) even out the work between
-    # all threads.
-    random.shuffle(ancestor_ids)
-    update_lock = threading.Lock()
-
-    if show_progress:
-        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
-
-    def ancestor_match_worker(thread_index):
-        chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
-        start = thread_index * chunk_size
+    def match_worker(work):
+        start, end, focal_sites, num_older_ancestors, ancestor_id, h = work
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
-        h = np.zeros(store.num_sites, dtype=np.int8)
-        for ancestor_id in ancestor_ids[start: start + chunk_size]:
+        end_site_parent = matcher.best_path(
+                num_ancestors=num_older_ancestors,
+                haplotype=h, start_site=start, end_site=end,
+                focal_sites=focal_sites, error_rate=0, traceback=traceback)
+        return ancestor_id, h, start, end, end_site_parent, traceback
+
+    if show_progress:
+        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
+    for age in sorted(same_age_ancestors.keys()):
+        ancestor_ids = same_age_ancestors[age]
+        # print(age, ancestor_ids)
+
+        work = []
+        for ancestor_id in ancestor_ids:
+            # print("matching ancestor_id", ancestor_id)
+            h = np.zeros(store.num_sites, dtype=np.int8)
+            segs = tree_sequence_builder.get_used_segments(ancestor_id)
             start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
                     ancestor_id, h)
             for site in focal_sites:
                 assert h[site] == 1
             assert len(focal_sites) > 0
-            # print(start_site, end_site, focal_sites)
-            # a = "".join(str(x) if x != -1 else '*' for x in h)
-            # print(ancestor_id, "\t", a)
-            end_site_parent = matcher.best_path(
-                    num_ancestors=num_older_ancestors,
-                    haplotype=h, start_site=start_site, end_site=end_site,
-                    focal_sites=focal_sites, error_rate=0, traceback=traceback)
-            with update_lock:
-                tree_sequence_builder.update(
-                    child=ancestor_id, haplotype=h, start_site=start_site,
-                    end_site=end_site, end_site_parent=end_site_parent,
-                    traceback=traceback)
-                # print(thread_index, traceback.num_segment_blocks)
-                if show_progress:
-                    progress.update()
-            traceback.reset()
+            # work.extend([
+            #     (start, end, focal_sites, num_older_ancestors, ancestor_id, h)
+            #     for start, end in segs])
+        # if num_threads == 1:
+            # results = map(match_worker, work)
+        # else:
+            # with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            #     results = executor.map(match_worker, work)
+        # for result in results:
+            # ancestor_id, h, start, end, end_site_parent, traceback = result
 
-    if num_threads > 1:
-        threads = [
-            threading.Thread(target=ancestor_match_worker, args=(j,))
-            for j in range(num_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-    else:
-        ancestor_match_worker(0)
+            for start, end in segs:
+                res = match_worker((start, end, focal_sites, num_older_ancestors, ancestor_id, h))
+                end_site_parent = res[-2]
+                traceback = res[-1]
+                tree_sequence_builder.update(
+                    child=ancestor_id, haplotype=h, start_site=start,
+                    end_site=end, end_site_parent=end_site_parent,
+                    traceback=traceback)
+            if show_progress:
+                progress.update()
     if show_progress:
         progress.close()
 
@@ -291,12 +295,12 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
         tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
     else:
         tree_sequence_builder = TreeSequenceBuilder(store, num_samples);
-    match_ancestors(
-        store, recombination_rate, tree_sequence_builder, method=method,
-        num_threads=num_threads, show_progress=show_progress)
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads, show_progress=show_progress)
+    match_ancestors(
+        store, recombination_rate, tree_sequence_builder, method=method,
+        num_threads=num_threads, show_progress=show_progress)
     ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
 
     # tree_sequence_builder.print_state()
@@ -426,6 +430,62 @@ class TreeSequenceBuilder(object):
             #     assert child not in u.value
             u = u.next
 
+    def get_used_segments(self, parent):
+        """
+        Returns a list of the contiguous segments on the specified parent.
+        """
+        u = self.children[parent]
+        all_used = []
+        while u is not None:
+            if len(u.value) > 0:
+                all_used.append([u.start, u.end])
+            u = u.next
+        used = [list(all_used[0])]
+        for start, end in all_used[1:]:
+            # print("\t", start, end, used)
+            if start == used[-1][1]:
+                used[-1][1] = end
+            else:
+                used.append([start, end])
+        # print("ALL", all_used)
+        # print("FIL", used)
+        return used
+
+
+
+    def get_num_children(self, parent, site):
+        """
+        Returns the number of children for the specified parent at the specified
+        site.
+        """
+        u = self.children[parent]
+        num_children = 0
+        while u is not None:
+            if u.start <= site < u.end:
+                num_children = len(u.value)
+                break
+            u = u.next
+        return num_children
+
+    def select_parent(self, site, options):
+        """
+        Selects the parent for the specified site
+        """
+        min_num_children = self.get_num_children(options[0], site)
+        best_parent = options[0]
+        for parent in options[1:]:
+            num_children = self.get_num_children(parent, site)
+            if num_children <= min_num_children:
+                best_parent = parent
+                min_num_children = num_children
+
+        num_children = [self.get_num_children(parent, site) for parent in options]
+        # print("SELECT PARENT")
+        # print("OPTIONs = ", options)
+        # print("NUMCHIL = ", num_children)
+        # print("CHOIE   = ", best_parent)
+        return best_parent
+
     def update(
             self, child=None, haplotype=None, start_site=None, end_site=None,
             end_site_parent=None, traceback=None):
@@ -439,7 +499,11 @@ class TreeSequenceBuilder(object):
         T = traceback.site_head
         # parent = random.randint(
         #     V[end_site - 1][0].start, V[end_site - 1][0].end - 1)
-        parent = V[end_site - 1][0].start
+        options = []
+        for v in V[end_site - 1]:
+            options.extend(range(v.start, v.end))
+        assert len(options) > 0
+        parent = self.select_parent(end_site - 1, options)
         for l in range(end_site - 1, start_site, -1):
             state = self.store.get_state(l, parent)
             # print("l = ", l, "state = ", state, "parent = ", parent)
@@ -460,19 +524,27 @@ class TreeSequenceBuilder(object):
                 assert l < end
                 self.add_mapping(l, end, parent, child)
                 end = l
-                parent = V[l - 1][0].start
-                # parent = random.randint(V[l - 1][0].start, V[l - 1][0].end - 1)
-                print("SWITCH: options = ", V[l - 1])
+                options = []
+                for v in V[l - 1]:
+                    options.extend(range(v.start, v.end))
+                assert len(options) > 0
+                # print("all options:", options)
+                # parent = options[0]
+                # parent = random.choice(options)
+                # parent = options[-1]
+                parent = self.select_parent(end_site - 1, options)
+                # print("SWITCH: options = ", parent)
         assert start_site < end
+
         self.add_mapping(start_site, end, parent, child)
         l = start_site
         state = self.store.get_state(l, parent)
         if state != haplotype[l]:
             self.add_mutation(child, l, haplotype[l])
-        if start_site != 0:
-            self.add_gap(0, start_site, child)
-        if end_site != self.store.num_sites:
-            self.add_gap(end_site, self.store.num_sites, child)
+        # if start_site != 0:
+        #     self.add_gap(0, start_site, child)
+        # if end_site != self.store.num_sites:
+        #     self.add_gap(end_site, self.store.num_sites, child)
 
 
     def print_state(self):
@@ -848,6 +920,8 @@ class AncestorMatcher(object):
         last_position = self.store.sites[start_site].position
         possible_recombinants = n
         focal_site_index = 0
+        while focal_site_index < len(focal_sites) and focal_sites[focal_site_index] < start_site:
+            focal_site_index += 1
 
         # print("BEST PATH", num_ancestors, h, start_site, end_site, focal_sites)
 

@@ -103,6 +103,35 @@ out:
 }
 
 static PyObject *
+convert_segment_list(segment_list_t *list)
+{
+    PyObject *ret = NULL;
+    PyObject *t;
+    PyObject *py_int;
+    size_t j;
+    segment_list_node_t *u;
+
+    t = PyTuple_New(list->length);
+    if (t == NULL) {
+        goto out;
+    }
+    j = 0;
+    for (u = list->head; u != NULL; u = u->next) {
+        py_int = Py_BuildValue("(k,k)", (unsigned long) u->start,
+                (unsigned long) u->end);
+        if (py_int == NULL) {
+            Py_DECREF(t);
+            goto out;
+        }
+        PyTuple_SET_ITEM(t, j, py_int);
+        j++;
+    }
+    ret = t;
+out:
+    return ret;
+}
+
+static PyObject *
 convert_site(site_state_t *site)
 {
     PyObject *ret = NULL;
@@ -1029,6 +1058,28 @@ fail:
 }
 
 static PyObject *
+AncestorStore_get_age(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"ancestor_id", NULL};
+    unsigned long ancestor_id;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k", kwlist, &ancestor_id)) {
+        goto out;
+    }
+    if (ancestor_id >= self->store->num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "ancestor id out of bounds.");
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->ancestors.age[ancestor_id]);
+out:
+    return ret;
+}
+
+static PyObject *
 AncestorStore_get_state(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     PyObject *ret = NULL;
@@ -1174,6 +1225,9 @@ static PyMethodDef AncestorStore_methods[] = {
     {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Decodes the specified ancestor into the numpy array."},
+    {"get_age", (PyCFunction) AncestorStore_get_age,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns the age of the specified ancestor."},
     {"get_state", (PyCFunction) AncestorStore_get_state,
         METH_VARARGS|METH_KEYWORDS,
         "Returns state of the specified ancestor and the specified locus."},
@@ -1719,6 +1773,53 @@ out:
 }
 
 static PyObject *
+TreeSequenceBuilder_get_used_segments(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"parent", NULL};
+    segment_list_t *list = NULL;
+    unsigned long parent_id;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k", kwlist, &parent_id)) {
+        goto out;
+    }
+    if (parent_id >= self->tree_sequence_builder->num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "parent_id out of bounds");
+        goto out;
+    }
+    list = PyMem_Malloc(sizeof(segment_list_t));
+    if (list == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = segment_list_alloc(list, 1024);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_get_used_segments(self->tree_sequence_builder,
+        (ancestor_id_t) parent_id, list);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = convert_segment_list(list);
+out:
+    if (list != NULL) {
+        segment_list_free(list);
+        PyMem_Free(list);
+    }
+    return ret;
+}
+
+
+static PyObject *
 TreeSequenceBuilder_dump_edgesets(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
@@ -2001,6 +2102,9 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
     {"update", (PyCFunction) TreeSequenceBuilder_update,
         METH_VARARGS|METH_KEYWORDS,
         "Updates the builder with the specified copy result."},
+    {"get_used_segments", (PyCFunction) TreeSequenceBuilder_get_used_segments,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns the segments used on the specified ancestor."},
     {"dump_edgesets", (PyCFunction) TreeSequenceBuilder_dump_edgesets,
         METH_VARARGS|METH_KEYWORDS,
         "Dumps edgeset data into numpy arrays."},

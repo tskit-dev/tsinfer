@@ -445,10 +445,10 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=5, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=2, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
-    
+
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
@@ -937,7 +937,7 @@ def visualise_copying(n, L, seed):
     for es in inferred_ts.edgesets():
         used_variants = np.logical_and(es.left<=locations, locations<es.right)
         used[rows_for_nodes[es.parent], used_variants]=True
- 
+
     for k in range(1, store.num_ancestors):
         #one file for each copied ancestor
         focal2row = {}
@@ -948,10 +948,10 @@ def visualise_copying(n, L, seed):
         big_visualiser.add_site_coordinates()
 
         a = np.zeros(store.num_sites, dtype=np.int8)
-        
+
         visualiser.add_row(a, 0)
         big_visualiser.add_row(a, 0)
-        
+
         for j in range(1, store.num_ancestors):
             if j in breaks:
                 visualiser.add_separator()
@@ -1073,11 +1073,11 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    #for j in range(1, 100000):
-    #    print(j)
-    #    new_segments(20, 200, j)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(20, 200, j)
 
-    # new_segments(8, 8, 5)
+    # new_segments(40, 50, 5)
     # new_segments(10, 20, 304)
 
     # export_samples(10, 100, 304)
@@ -1127,5 +1127,5 @@ if __name__ == "__main__":
     #         print(df)
     #         df.to_csv("diff-analysis.csv")
 
-    visualise_copying(8, 4, 5)
+    # visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
