@@ -445,7 +445,7 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=2, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=8, method="C")
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 

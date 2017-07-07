@@ -4,6 +4,7 @@ import concurrent
 import random
 import threading
 import math
+import queue
 
 import numpy as np
 import attr
@@ -106,58 +107,71 @@ def match_ancestors(
     same_age_ancestors = collections.defaultdict(list)
     for ancestor_id, age in zip(all_ancestors, ancestor_age):
         same_age_ancestors[age].append(ancestor_id)
+    work_queue = queue.Queue()
+    tree_sequence_builder_lock = threading.Lock()
 
-    def match_worker(work):
-        start, end, focal_sites, num_older_ancestors, ancestor_id, h = work
+    def ancestor_match_worker(thread_index):
+        # print("Thread ", thread_index, "started")
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
-        end_site_parent = matcher.best_path(
-                num_ancestors=num_older_ancestors,
-                haplotype=h, start_site=start, end_site=end,
-                focal_sites=focal_sites, error_rate=0, traceback=traceback)
-        return ancestor_id, h, start, end, end_site_parent, traceback
-
-    if show_progress:
-        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
-    for age in sorted(same_age_ancestors.keys()):
-        ancestor_ids = same_age_ancestors[age]
-        # print(age, ancestor_ids)
-
-        work = []
-        for ancestor_id in ancestor_ids:
-            # print("matching ancestor_id", ancestor_id)
-            h = np.zeros(store.num_sites, dtype=np.int8)
-            segs = tree_sequence_builder.get_used_segments(ancestor_id)
+        h = np.zeros(store.num_sites, dtype=np.int8)
+        while True:
+            ancestor_id = work_queue.get()
+            # print("Thread", thread_index, "got work", ancestor_id)
+            if ancestor_id is None:
+                break
+            with tree_sequence_builder_lock:
+                segs = tree_sequence_builder.get_used_segments(ancestor_id)
             start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
                     ancestor_id, h)
+            # print(start_site, end_site, num_older_ancestors)
             for site in focal_sites:
                 assert h[site] == 1
             assert len(focal_sites) > 0
-            # work.extend([
-            #     (start, end, focal_sites, num_older_ancestors, ancestor_id, h)
-            #     for start, end in segs])
-        # if num_threads == 1:
-            # results = map(match_worker, work)
-        # else:
-            # with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            #     results = executor.map(match_worker, work)
-        # for result in results:
-            # ancestor_id, h, start, end, end_site_parent, traceback = result
-
             for start, end in segs:
-                res = match_worker((start, end, focal_sites, num_older_ancestors, ancestor_id, h))
-                end_site_parent = res[-2]
-                traceback = res[-1]
-                tree_sequence_builder.update(
-                    child=ancestor_id, haplotype=h, start_site=start,
-                    end_site=end, end_site_parent=end_site_parent,
-                    traceback=traceback)
+                # print("\t", start, end)
+                assert start_site <= start
+                assert end_site >= end
+                end_site_parent = matcher.best_path(
+                        num_ancestors=num_older_ancestors,
+                        haplotype=h, start_site=start, end_site=end,
+                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
+                with tree_sequence_builder_lock:
+                    tree_sequence_builder.update(
+                        child=ancestor_id, haplotype=h, start_site=start,
+                        end_site=end, end_site_parent=end_site_parent,
+                        traceback=traceback)
             if show_progress:
                 progress.update()
+            traceback.reset()
+            work_queue.task_done()
+        work_queue.task_done()
+        # print("Thread", thread_index, ", exiting")
+
+
+    threads = [
+        threading.Thread(target=ancestor_match_worker, args=(j,))
+        for j in range(num_threads)]
+    for t in threads:
+        t.daemon = True
+        t.start()
+    if show_progress:
+        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
+    for age in sorted(same_age_ancestors.keys()):
+        # print("STARTING AGE", age, same_age_ancestors[age])
+        for ancestor_id in same_age_ancestors[age]:
+            work_queue.put(ancestor_id)
+        work_queue.join()
+        # print("DONE", age)
+    # Signal the threads to exit
+    for _ in range(num_threads):
+        work_queue.put(None)
+    for t in threads:
+        t.join()
     if show_progress:
         progress.close()
 
