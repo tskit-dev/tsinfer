@@ -466,6 +466,8 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     ancestor_store_t store;
     ancestor_matcher_t matcher;
     traceback_t traceback;
+    segment_list_t segment_list;
+    segment_list_node_t *seg;
     tree_sequence_builder_t ts_builder;
     ancestor_id_t end_site_value, sample_id;
     site_id_t *focal_site = NULL;
@@ -494,6 +496,10 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     if (ret != 0) {
         fatal_error("alloc error");
     }
+    ret = segment_list_alloc(&segment_list, 8192);
+    if (ret != 0) {
+        fatal_error("alloc error");
+    }
     ret = tree_sequence_builder_alloc(&ts_builder, &store, num_samples,
             8192, 8192, num_sites / 4);
     if (ret != 0) {
@@ -505,45 +511,6 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     }
     if (verbose > 0) {
         ancestor_store_print_state(&store, stdout);
-    }
-    /* Copy ancestors */
-    for (j = store.num_ancestors - 1; j > 0; j--) {
-        ret = ancestor_store_get_ancestor(
-                &store, j, ancestor, &start, &end, &num_older_ancestors,
-                &num_focal_sites, &focal);
-        if (ret != 0) {
-            fatal_error("get_ancestor error");
-        }
-        if (verbose > 0) {
-            printf("ancestor %d: (%d, %d) num_focal=%d num_older = %d= \t",
-                    (int) j, start, end, (int) num_focal_sites,
-                    (int) num_older_ancestors);
-            for (l = 0; l < store.num_sites; l++) {
-                if (ancestor[l] == -1) {
-                    printf("*");
-                } else {
-                    printf("%d", ancestor[l]);
-                }
-            }
-            printf("\n");
-        }
-        ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor, start,
-                end, num_focal_sites, focal, 0, &traceback, &end_site_value);
-        if (ret != 0) {
-            fatal_error("match error");
-        }
-        if (verbose > 0) {
-            traceback_print_state(&traceback, stdout);
-        }
-        ret = tree_sequence_builder_update(&ts_builder, j, ancestor, start, end,
-                end_site_value, &traceback);
-        if (ret != 0) {
-            fatal_error("update error");
-        }
-        ret = traceback_reset(&traceback);
-        if (ret != 0) {
-            fatal_error("traceback reset error");
-        }
     }
 
     /* Copy samples */
@@ -564,6 +531,65 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         if (ret != 0) {
             fatal_error("traceback reset error");
         }
+        /* printf("COPIED SAMPLE %d->%d\n", (int) j, (int) sample_id); */
+        /* tree_sequence_builder_print_state(&ts_builder, stdout); */
+    }
+
+    /* Copy ancestors */
+    for (j = store.num_ancestors - 1; j > 0; j--) {
+        ret = ancestor_store_get_ancestor(
+                &store, j, ancestor, &start, &end, &num_older_ancestors,
+                &num_focal_sites, &focal);
+        if (ret != 0) {
+            fatal_error("get_ancestor error");
+        }
+        ret = tree_sequence_builder_get_used_segments(&ts_builder, j, &segment_list);
+        if (ret != 0) {
+            fatal_error("get_used_segments error");
+        }
+        if (verbose > 0) {
+            printf("ancestor %d:\t", (int) j);
+            for (l = 0; l < store.num_sites; l++) {
+                if (ancestor[l] == -1) {
+                    printf("*");
+                } else {
+                    printf("%d", ancestor[l]);
+                }
+            }
+            printf("\n");
+            printf("\t(%d, %d) num_focal=%d num_older=%d\n",
+                    start, end, (int) num_focal_sites, (int) num_older_ancestors);
+        }
+        for (seg = segment_list.head; seg != NULL; seg = seg->next) {
+            if (verbose > 0) {
+                printf("\tMatching on subsegment (%d, %d)\n", seg->start, seg->end);
+            }
+            assert(seg->start >= start);
+            assert(seg->end <= end);
+            ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor,
+                    seg->start, seg->end, num_focal_sites, focal,
+                    0, &traceback, &end_site_value);
+            if (ret != 0) {
+                fatal_error("match error");
+            }
+            if (verbose > 0) {
+                /* traceback_print_state(&traceback, stdout); */
+            }
+            ret = tree_sequence_builder_update(&ts_builder, j, ancestor, seg->start, seg->end,
+                    end_site_value, &traceback);
+            if (ret != 0) {
+                fatal_error("update error");
+            }
+            ret = traceback_reset(&traceback);
+            if (ret != 0) {
+                fatal_error("traceback reset error");
+            }
+            /* tree_sequence_builder_print_state(&ts_builder, stdout); */
+        }
+        ret = segment_list_clear(&segment_list);
+        if (ret != 0) {
+            fatal_error("segment_list reset error");
+        }
     }
 
     if (verbose > 0) {
@@ -575,6 +601,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     tree_sequence_builder_free(&ts_builder);
     ancestor_matcher_free(&matcher);
     ancestor_store_free(&store);
+    segment_list_free(&segment_list);
     traceback_free(&traceback);
     free(focal_site);
     free(focal_site_ancestor);

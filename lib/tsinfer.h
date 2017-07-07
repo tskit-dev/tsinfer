@@ -105,24 +105,38 @@ typedef struct {
     permutation_sort_t *sort_buffer;
 } ancestor_sorter_t;
 
-typedef struct child_list_node_t_t {
+typedef struct _child_list_node_t {
     ancestor_id_t node;
-    struct child_list_node_t_t *next;
+    struct _child_list_node_t *next;
 } child_list_node_t;
 
-typedef struct mutation_list_node_t_t {
+typedef struct _mutation_list_node_t {
     ancestor_id_t node;
     allele_t derived_state;
-    struct mutation_list_node_t_t *next;
+    struct _mutation_list_node_t *next;
 } mutation_list_node_t;
 
-typedef struct list_segment_t_t {
+typedef struct _list_segment_t {
     site_id_t start;
     site_id_t end;
     child_list_node_t *head;
     child_list_node_t *tail;
-    struct list_segment_t_t *next;
+    struct _list_segment_t *next;
 } list_segment_t;
+
+typedef struct _segment_list_node_t {
+    site_id_t start;
+    site_id_t end;
+    struct _segment_list_node_t *next;
+} segment_list_node_t;
+
+typedef struct {
+    segment_list_node_t *head;
+    segment_list_node_t *tail;
+    size_t length;
+    size_t block_size;
+    object_heap_t heap;
+} segment_list_t;
 
 typedef struct {
     size_t num_sites;
@@ -199,6 +213,8 @@ int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         size_t mutation_list_node_block_size);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
+int tree_sequence_builder_get_used_segments(tree_sequence_builder_t *self,
+        ancestor_id_t parent, segment_list_t *list);
 int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
         ancestor_id_t end_site_parent, traceback_t *traceback);
@@ -207,6 +223,12 @@ int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
         uint32_t *children_length);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         site_id_t *site, ancestor_id_t *node, allele_t *derived_state);
+
+int segment_list_alloc(segment_list_t *self, size_t block_size);
+int segment_list_free(segment_list_t *self);
+int segment_list_append(segment_list_t *self, site_id_t start, site_id_t end);
+int segment_list_clear(segment_list_t *self);
+int segment_list_print_state(segment_list_t *self, FILE *out);
 
 void __tsi_safe_free(void **ptr);
 

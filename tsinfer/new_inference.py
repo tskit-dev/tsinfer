@@ -4,6 +4,7 @@ import concurrent
 import random
 import threading
 import math
+import queue
 
 import numpy as np
 import attr
@@ -101,19 +102,16 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
 def match_ancestors(
         store, recombination_rate, tree_sequence_builder, num_threads=1, method="C",
         show_progress=False):
-    ancestor_ids = list(range(1, store.num_ancestors))
-
-    # Shuffle the ancestors so that we (hopefully) even out the work between
-    # all threads.
-    random.shuffle(ancestor_ids)
-    update_lock = threading.Lock()
-
-    if show_progress:
-        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
+    all_ancestors = list(range(1, store.num_ancestors))
+    ancestor_age = map(store.get_age, all_ancestors)
+    same_age_ancestors = collections.defaultdict(list)
+    for ancestor_id, age in zip(all_ancestors, ancestor_age):
+        same_age_ancestors[age].append(ancestor_id)
+    work_queue = queue.Queue()
+    tree_sequence_builder_lock = threading.Lock()
 
     def ancestor_match_worker(thread_index):
-        chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
-        start = thread_index * chunk_size
+        # print("Thread ", thread_index, "started")
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
             traceback = _tsinfer.Traceback(store.num_sites, 2**20)
@@ -121,39 +119,59 @@ def match_ancestors(
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
         h = np.zeros(store.num_sites, dtype=np.int8)
-        for ancestor_id in ancestor_ids[start: start + chunk_size]:
+        while True:
+            ancestor_id = work_queue.get()
+            # print("Thread", thread_index, "got work", ancestor_id)
+            if ancestor_id is None:
+                break
+            with tree_sequence_builder_lock:
+                segs = tree_sequence_builder.get_used_segments(ancestor_id)
             start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
                     ancestor_id, h)
+            # print(start_site, end_site, num_older_ancestors)
             for site in focal_sites:
                 assert h[site] == 1
             assert len(focal_sites) > 0
-            # print(start_site, end_site, focal_sites)
-            # a = "".join(str(x) if x != -1 else '*' for x in h)
-            # print(ancestor_id, "\t", a)
-            end_site_parent = matcher.best_path(
-                    num_ancestors=num_older_ancestors,
-                    haplotype=h, start_site=start_site, end_site=end_site,
-                    focal_sites=focal_sites, error_rate=0, traceback=traceback)
-            with update_lock:
-                tree_sequence_builder.update(
-                    child=ancestor_id, haplotype=h, start_site=start_site,
-                    end_site=end_site, end_site_parent=end_site_parent,
-                    traceback=traceback)
-                # print(thread_index, traceback.num_segment_blocks)
-                if show_progress:
-                    progress.update()
+            for start, end in segs:
+                # print("\t", start, end)
+                assert start_site <= start
+                assert end_site >= end
+                end_site_parent = matcher.best_path(
+                        num_ancestors=num_older_ancestors,
+                        haplotype=h, start_site=start, end_site=end,
+                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
+                with tree_sequence_builder_lock:
+                    tree_sequence_builder.update(
+                        child=ancestor_id, haplotype=h, start_site=start,
+                        end_site=end, end_site_parent=end_site_parent,
+                        traceback=traceback)
+            if show_progress:
+                progress.update()
             traceback.reset()
+            work_queue.task_done()
+        work_queue.task_done()
+        # print("Thread", thread_index, ", exiting")
 
-    if num_threads > 1:
-        threads = [
-            threading.Thread(target=ancestor_match_worker, args=(j,))
-            for j in range(num_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-    else:
-        ancestor_match_worker(0)
+
+    threads = [
+        threading.Thread(target=ancestor_match_worker, args=(j,))
+        for j in range(num_threads)]
+    for t in threads:
+        t.daemon = True
+        t.start()
+    if show_progress:
+        progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
+    for age in sorted(same_age_ancestors.keys()):
+        # print("STARTING AGE", age, same_age_ancestors[age])
+        for ancestor_id in same_age_ancestors[age]:
+            work_queue.put(ancestor_id)
+        work_queue.join()
+        # print("DONE", age)
+    # Signal the threads to exit
+    for _ in range(num_threads):
+        work_queue.put(None)
+    for t in threads:
+        t.join()
     if show_progress:
         progress.close()
 
@@ -291,12 +309,12 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
         tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
     else:
         tree_sequence_builder = TreeSequenceBuilder(store, num_samples);
-    match_ancestors(
-        store, recombination_rate, tree_sequence_builder, method=method,
-        num_threads=num_threads, show_progress=show_progress)
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads, show_progress=show_progress)
+    match_ancestors(
+        store, recombination_rate, tree_sequence_builder, method=method,
+        num_threads=num_threads, show_progress=show_progress)
     ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
 
     # tree_sequence_builder.print_state()
@@ -426,6 +444,62 @@ class TreeSequenceBuilder(object):
             #     assert child not in u.value
             u = u.next
 
+    def get_used_segments(self, parent):
+        """
+        Returns a list of the contiguous segments on the specified parent.
+        """
+        u = self.children[parent]
+        all_used = []
+        while u is not None:
+            if len(u.value) > 0:
+                all_used.append([u.start, u.end])
+            u = u.next
+        used = [list(all_used[0])]
+        for start, end in all_used[1:]:
+            # print("\t", start, end, used)
+            if start == used[-1][1]:
+                used[-1][1] = end
+            else:
+                used.append([start, end])
+        # print("ALL", all_used)
+        # print("FIL", used)
+        return used
+
+
+
+    def get_num_children(self, parent, site):
+        """
+        Returns the number of children for the specified parent at the specified
+        site.
+        """
+        u = self.children[parent]
+        num_children = 0
+        while u is not None:
+            if u.start <= site < u.end:
+                num_children = len(u.value)
+                break
+            u = u.next
+        return num_children
+
+    def select_parent(self, site, options):
+        """
+        Selects the parent for the specified site
+        """
+        min_num_children = self.get_num_children(options[0], site)
+        best_parent = options[0]
+        for parent in options[1:]:
+            num_children = self.get_num_children(parent, site)
+            if num_children <= min_num_children:
+                best_parent = parent
+                min_num_children = num_children
+
+        num_children = [self.get_num_children(parent, site) for parent in options]
+        # print("SELECT PARENT")
+        # print("OPTIONs = ", options)
+        # print("NUMCHIL = ", num_children)
+        # print("CHOIE   = ", best_parent)
+        return best_parent
+
     def update(
             self, child=None, haplotype=None, start_site=None, end_site=None,
             end_site_parent=None, traceback=None):
@@ -435,39 +509,56 @@ class TreeSequenceBuilder(object):
         # traceback.print_state()
         # self.print_state()
         end = end_site
-        parent = end_site_parent
+        V = traceback.site_best_segments
         T = traceback.site_head
+        # parent = random.randint(
+        #     V[end_site - 1][0].start, V[end_site - 1][0].end - 1)
+        options = []
+        for v in V[end_site - 1]:
+            options.extend(range(v.start, v.end))
+        assert len(options) > 0
+        parent = self.select_parent(end_site - 1, options)
         for l in range(end_site - 1, start_site, -1):
             state = self.store.get_state(l, parent)
             # print("l = ", l, "state = ", state, "parent = ", parent)
             assert state != -1
             if state != haplotype[l]:
                 self.add_mutation(child, l, haplotype[l])
-            value = None
+            switch = False
             u = T[l]
             while u is not None:
                 if u.start <= parent < u.end:
-                    value = u.value
+                    switch = True
                     break
                 if u.start > parent:
                     break
                 u = u.next
-            if value is not None:
+            if switch:
                 # Complete a segment at this site
                 assert l < end
                 self.add_mapping(l, end, parent, child)
                 end = l
-                parent = value
+                options = []
+                for v in V[l - 1]:
+                    options.extend(range(v.start, v.end))
+                assert len(options) > 0
+                # print("all options:", options)
+                # parent = options[0]
+                # parent = random.choice(options)
+                # parent = options[-1]
+                parent = self.select_parent(end_site - 1, options)
+                # print("SWITCH: options = ", parent)
         assert start_site < end
+
         self.add_mapping(start_site, end, parent, child)
         l = start_site
         state = self.store.get_state(l, parent)
         if state != haplotype[l]:
             self.add_mutation(child, l, haplotype[l])
-        if start_site != 0:
-            self.add_gap(0, start_site, child)
-        if end_site != self.store.num_sites:
-            self.add_gap(end_site, self.store.num_sites, child)
+        # if start_site != 0:
+        #     self.add_gap(0, start_site, child)
+        # if end_site != self.store.num_sites:
+        #     self.add_gap(end_site, self.store.num_sites, child)
 
 
     def print_state(self):
@@ -780,48 +871,42 @@ class Traceback(object):
         self.store = store
         self.reset()
 
-    def add_recombination(self, site, start, end, ancestor):
+    def add_best_segment(self, site, start, end):
+        """
+        Adds a maximum likelihood recombinant segment for the specified site.
+        """
+        self.site_best_segments[site].append(LinkedSegment(start, end))
+
+    def add_recombination(self, site, start, end):
         if self.site_head[site] is None:
-            self.site_head[site] = LinkedSegment(start, end, ancestor)
+            self.site_head[site] = LinkedSegment(start, end)
             self.site_tail[site] = self.site_head[site]
         else:
-            if self.site_tail[site].end == start and self.site_tail[site].value == ancestor:
+            if self.site_tail[site].end == start:
                 self.site_tail[site].end = end
             else:
-                tail = LinkedSegment(start, end, ancestor)
+                tail = LinkedSegment(start, end)
                 self.site_tail[site].next = tail
                 self.site_tail[site] = tail
 
     def reset(self):
         self.site_head = [None for _ in range(self.store.num_sites)]
         self.site_tail = [None for _ in range(self.store.num_sites)]
-
-    def decode_traceback(self):
-        """
-        Decode the specified encoded traceback matrix into the standard integer
-        matrix.
-        """
-        E = self.site_head
-        assert len(E) == self.store.num_sites
-        T = np.zeros((self.store.num_ancestors, self.store.num_sites), dtype=int)
-        for l in range(1, self.store.num_sites):
-            T[:,l] = np.arange(self.store.num_ancestors)
-            u = E[l]
-            while u is not None:
-                T[u.start:u.end, l] = u.value
-                u = u.next
-        return T
+        self.site_best_segments = [[] for _ in range(self.store.num_sites)]
 
     def print_state(self):
         print("traceback:")
         for l, head in enumerate(self.site_head):
-            if head is not None:
-                print(l, ":", end="")
-                u = head
-                while u != None:
-                    print("({},{}->{})".format(u.start, u.end, u.value), end="")
-                    u = u.next
-                print()
+            print(l, ":", end="")
+            s = ""
+            for seg in self.site_best_segments[l]:
+                s += "({},{})".format(seg.start, seg.end)
+            print(s, "=", end="")
+            u = head
+            while u != None:
+                print("({},{})".format(u.start, u.end, u.value), end="")
+                u = u.next
+            print()
 
 
 
@@ -849,6 +934,8 @@ class AncestorMatcher(object):
         last_position = self.store.sites[start_site].position
         possible_recombinants = n
         focal_site_index = 0
+        while focal_site_index < len(focal_sites) and focal_sites[focal_site_index] < start_site:
+            focal_site_index += 1
 
         # print("BEST PATH", num_ancestors, h, start_site, end_site, focal_sites)
 
@@ -917,7 +1004,7 @@ class AncestorMatcher(object):
                         z = x
                     else:
                         z = y
-                        traceback.add_recombination(site, start, end, best_haplotype)
+                        traceback.add_recombination(site, start, end)
 
                     # Determine the likelihood for this segment.
                     if error_rate == 0:
@@ -959,14 +1046,13 @@ class AncestorMatcher(object):
 
             L = L_next
             max_value = -1
-            best_haplotype = -1
             for seg in L:
                 assert seg.start < seg.end
                 if seg.value >= max_value:
                     max_value = seg.value
-                    best_haplotype = seg.end - 1
-                    # best_haplotype = random.randint(seg.start, seg.end - 1)
-                    assert seg.start <= best_haplotype < seg.end
+            for seg in L:
+                if seg.value == max_value:
+                    traceback.add_best_segment(site, seg.start, seg.end)
             if max_value > 0:
                 # Renormalise L
                 for seg in L:
@@ -982,7 +1068,6 @@ class AncestorMatcher(object):
         # print("focal_site_index = ", focal_site_index, len(focal_sites))
         # assert focal_site_index == len(focal_sites)
 
-        return best_haplotype
 
 
     def print_state(self):

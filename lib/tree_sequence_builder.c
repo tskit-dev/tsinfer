@@ -315,13 +315,6 @@ out:
 }
 
 static inline int
-tree_sequence_builder_add_gap(tree_sequence_builder_t *self, site_id_t start,
-        site_id_t end, ancestor_id_t child)
-{
-    return tree_sequence_builder_add_mapping(self, start, end, 0, child);
-}
-
-static inline int
 tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site,
         ancestor_id_t node, allele_t derived_state)
 {
@@ -413,16 +406,23 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
             goto out;
         }
     }
-    if (start_site != 0) {
-        ret = tree_sequence_builder_add_gap(self, 0, start_site, child);
-        if (ret != 0) {
-            goto out;
-        }
-    }
-    if (end_site != self->num_sites) {
-        ret = tree_sequence_builder_add_gap(self, end_site, self->num_sites, child);
-        if (ret != 0) {
-            goto out;
+out:
+    return ret;
+}
+
+int
+tree_sequence_builder_get_used_segments(tree_sequence_builder_t *self,
+        ancestor_id_t parent, segment_list_t *list)
+{
+    int ret = 0;
+    list_segment_t *u;
+
+    for (u = self->children[parent]; u != NULL; u = u->next) {
+        if (u->head != NULL) {
+            ret = segment_list_append(list, u->start, u->end);
+            if (ret != 0) {
+                goto out;
+            }
         }
     }
 out:

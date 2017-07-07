@@ -135,11 +135,12 @@ class Visualiser(object):
         x = origin[0]
         draw.rectangle([(x, y), (x + m * b, y + b)], outline=self.copying_outline_colour)
         for k in range(m):
-            row = self.row_map[parents[k]]
-            y = row * b + origin[1]
-            x = k * b + origin[0]
-            a = self.ancestors[parents[k], k]
-            draw.rectangle([(x, y), (x + b, y + b)], fill=self.copy_colours[a])
+            if parents[k] != -1:
+                row = self.row_map[parents[k]]
+                y = row * b + origin[1]
+                x = k * b + origin[0]
+                a = self.ancestors[parents[k], k]
+                draw.rectangle([(x, y), (x + b, y + b)], fill=self.copy_colours[a])
         print("Saving", filename)
         self.__draw_ts_intensity(draw, child_intensity)
         image.save(filename)
@@ -164,15 +165,17 @@ class Visualiser(object):
                 assert left < right
                 P[c, left:right] = e.parent
         index = np.arange(self.store.num_sites, dtype=int)
-        for j in range(1, self.store.num_ancestors):
-            C[P[j],index] += 1
-            I = C / max_num_children
-            self.draw_copying_path(pattern.format(j), j, P[j], I)
-        for j in range(self.samples.shape[0]):
+        n = self.samples.shape[0]
+        for j in range(n):
             k = self.store.num_ancestors + j
             C[P[k], index] += 1
             I = C / max_num_children
-            self.draw_copying_path(pattern.format(k), k, P[k], I)
+            self.draw_copying_path(pattern.format(j), k, P[k], I)
+        for j in reversed(range(1, self.store.num_ancestors)):
+            picture_index = self.store.num_ancestors - j + n - 1
+            C[P[j],index] += 1
+            I = C / max_num_children
+            self.draw_copying_path(pattern.format(picture_index), j, P[j], I)
 
 
 def visualise(
@@ -191,7 +194,7 @@ def visualise(
                 simplified_ts.time(e.parent), e.children, sep="\t")
     visualiser = Visualiser(store, samples, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
-    visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
+    # visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
 
@@ -210,7 +213,7 @@ def run_viz(n, L, seed):
 
 
 def main():
-    run_viz(10, 15, 1)
+    run_viz(15, 15, 1)
 
 
 if __name__ == "__main__":

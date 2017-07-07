@@ -110,8 +110,13 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     last_position = self->store->sites[start_site].position;
     possible_recombinants = 1;
     best_match = 0;
-    focal_site_index = 0;
 
+    /* Skip any focal sites that are not within this segment. */
+    focal_site_index = 0;
+    while (focal_site_index < num_focal_sites
+            && focal_sites[focal_site_index] < start_site) {
+        focal_site_index++;
+    }
     for (site_id = start_site; site_id < end_site; site_id++) {
         if (focal_site_index < num_focal_sites && site_id > focal_sites[focal_site_index]) {
             focal_site_index++;
