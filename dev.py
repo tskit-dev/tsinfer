@@ -1018,9 +1018,9 @@ def visualise_copying(n, L, seed):
 
 def run_large_infers():
     seed = 100
-    n = 1000
+    n = 2000
     # n = 10
-    for j in np.arange(10, 30, 10):
+    for j in np.arange(10, 200, 10):
         print("n                :", n)
         print("L                :", j, "Mb")
         filename = "tmp__NOBACKUP__/n={}_L={}_original.hdf5".format(n, j)
@@ -1032,13 +1032,21 @@ def run_large_infers():
         ts.dump(filename)
         positions = np.array([site.position for site in ts.sites()])
         S = generate_samples(ts, 0)
+        before_cpu = time.clock()
+        before_wall = time.time()
         ts_inferred = tsinfer.infer(
-            S, positions, L, 1e-8, 1e-200, num_threads=10, method="C", show_progress=True)
+            S, positions, L, 1e-8, 1e-200, num_threads=20, method="C", show_progress=True)
+        duration_cpu = time.clock() - before_cpu
+        duration_wall = time.time() - before_wall
         filename = "tmp__NOBACKUP__/n={}_L={}_inferred.hdf5".format(n, j)
         ts_inferred.dump(filename)
         ts_simplified = ts_inferred.simplify()
         filename = "tmp__NOBACKUP__/n={}_L={}_simplified.hdf5".format(n, j)
         ts_simplified.dump(filename)
+        memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        print("CPU time       :", humanize.naturaldelta(duration_cpu))
+        print("wall time:     :", humanize.naturaldelta(duration_wall))
+        print("RAM            :", humanize.naturalsize(memory))
         print()
 
 def analyse_file(filename):
@@ -1073,9 +1081,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(20, 200, j)
+#     for j in range(1, 100000):
+#         print(j)
+#         new_segments(20, 200, j)
 
     # new_segments(40, 50, 5)
     # new_segments(10, 20, 304)
@@ -1098,7 +1106,7 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    # run_large_infers()
+    run_large_infers()
     # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
