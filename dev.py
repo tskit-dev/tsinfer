@@ -429,7 +429,7 @@ def load_ancestors(filename, show_progress=True, num_threads=1):
     # print("Copying CPU time :", humanize.naturaldelta(duration_cpu))
     # print("Copying wall time:", humanize.naturaldelta(duration_wall))
 
-def new_segments(n, L, seed):
+def new_segments(n, L, seed, num_threads=10, method="C"):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
@@ -445,7 +445,8 @@ def new_segments(n, L, seed):
     # S = generate_samples(ts, 0.01)
     S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50, num_threads=8, method="C")
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50,
+            num_threads=num_threads, method=method)
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -1081,12 +1082,13 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-#     for j in range(1, 100000):
-#         print(j)
-#         new_segments(20, 200, j)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     # new_segments(20, 200, j)
+    #     new_segments(20, 20, j, num_threads=1, method="P")
 
     # new_segments(40, 50, 5)
-    # new_segments(10, 20, 304)
+    new_segments(10, 10, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
@@ -1106,7 +1108,7 @@ if __name__ == "__main__":
     #     print(df)
     #     df.to_csv("gap-analysis.csv")
 
-    run_large_infers()
+    # run_large_infers()
     # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
