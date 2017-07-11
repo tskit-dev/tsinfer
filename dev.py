@@ -18,6 +18,8 @@ import threading
 import math
 import resource
 import operator
+import heapq
+import sortedcontainers
 # import profilehooks
 
 import humanize
@@ -36,6 +38,180 @@ import tsinfer
 import _tsinfer
 import msprime
 import msprime_to_inference_matrices
+
+
+def draw_segments(segments, L):
+    print("   ", "-" * L)
+    for seg in segments:
+        s = "{:<4d}".format(seg.value)
+        s += " " * (seg.start - 0)
+        s += "=" * (seg.end - seg.start)
+        print(s)
+    print("   ", "-" * L)
+
+
+def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1):
+    random.seed(seed)
+    # Generate some random segments.
+    segments = []
+    j = 0
+    for start, end in chunk_bounds:
+        for _ in range(num_chunk_segments):
+            x = random.randint(start, end)
+            y = random.randint(start, end)
+            while x == y:
+                y = random.randint(start, end)
+            segments.append(tsinfer.Segment(*sorted([x, y]), value=j))
+            j += 1
+        # print(segments)
+    L = max(end for start, end in chunk_bounds)
+
+    # while True:
+    #     segments = trim_segments(segments, L)
+    #     print("==================LOOP=========================")
+
+    # draw_segments(segments, L)
+    o1 = pairwise_find_max_overlap(segments, L)
+    o2 = find_max_overlap(segments, L)
+    assert o1 == o2
+
+def pairwise_find_max_overlap(segments, L):
+
+#     for seg in segments:
+#         print(seg.value, seg.start, seg.end, sep="\t")
+#     draw_segments(segments, L)
+
+    n = len(segments)
+    max_overlap = 0
+    max_overlap_segs = None
+    for j in range(n):
+        seg_j = segments[j]
+        for k in range(j + 1, n):
+            seg_k = segments[k]
+            overlap = min(seg_j.end, seg_k.end) - max(seg_j.start, seg_k.start)
+            # print("compare seg ", seg_j, seg_k, ":", overlap)
+            if overlap > max_overlap:
+                max_overlap = overlap
+                max_overlap_segs = seg_j, seg_k
+    # print("max overlap = ", max_overlap)
+    # print("max overlap segs = ", max_overlap_segs)
+    return max_overlap
+
+
+def find_max_overlap(segments, L):
+    segments.sort(key=lambda x: (x.start, -x.end))
+
+    # for seg in segments:
+    #     print(seg.value, seg.start, seg.end, sep="\t")
+    # draw_segments(segments, L)
+
+    S = segments
+    n = len(segments)
+    j = 0
+    k = 1
+    max_intersection = 0
+    while True:
+        # print("seg", j, S[j])
+        while k < n and S[k].end <= S[j].end:
+            intersection = S[k].end - S[k].start
+            if intersection > max_intersection:
+                max_intersection = intersection
+            k += 1
+        if k == n:
+            break
+        intersection = S[j].end - S[k].start
+        if intersection > max_intersection:
+            max_intersection = intersection
+        j = k
+        k += 1
+    # print("max_intersection = ", max_intersection)
+    return max_intersection
+
+#     out_queue = [(L + 1, None)]
+#     max_end = -1
+
+#     for in_seg in segments:
+#         while out_queue[0][0] <= in_seg.start:
+#             _, out_seg = heapq.heappop(out_queue)
+#             print("out_seg = ", out_seg)
+#         print("in_seg  = ", in_seg)
+#         max_end = max(max_end, in_seg.end)
+#         if len(out_queue) > 1:
+#             end = out_queue[0][0]
+#             # print("max overlap:", in_seg.start, end)
+#         heapq.heappush(out_queue, (in_seg.end, in_seg))
+#     while len(out_queue) > 1:
+#         _, out_seg = heapq.heappop(out_queue)
+#         print("out_seg = ", out_seg)
+
+
+def trim_segments(segments, L):
+    # partial implementation of trimming leading and trailing segments from
+    # the set.
+
+    segments.sort(key=lambda x: x.start)
+
+    for seg in segments:
+        print(seg.value, seg.start, seg.end, sep="\t")
+    draw_segments(segments, L)
+
+    out_queue = [(L + 1, None)]
+    processed_segments = []
+
+    prev_in_seg = None
+    for in_seg in segments:
+        while out_queue[0][0] <= in_seg.start:
+            _, out_seg = heapq.heappop(out_queue)
+            print("out_seg = ", out_seg)
+            print("prev_in_seg = ", prev_in_seg)
+            if len(out_queue) == 1 and out_seg.end <= prev_in_seg.end:
+                print("SEG DONE")
+            else:
+                processed_segments.append(out_seg)
+        if len(out_queue) == 2:
+            print("LEADING TRIM:", prev_in_seg)
+        print("in_seg  = ", in_seg)
+        heapq.heappush(out_queue, (in_seg.end, in_seg))
+        prev_in_seg = in_seg
+    while len(out_queue) > 1:
+        _, out_seg = heapq.heappop(out_queue)
+        print("out_seg = ", out_seg)
+        processed_segments.append(out_seg)
+    return processed_segments
+
+    # n = len(segments)
+    # I = sorted(range(n), key=lambda j: segments[j].start)
+    # O = sorted(range(n), key=lambda j: segments[j].end)
+    # completed = []
+
+    # print("I = ", I)
+    # print("O = ", O)
+    # k = 0
+    # c = 0
+    # for j in range(n):
+    #     while k < n and segments[O[k]].end <= segments[I[j]].start:
+    #         print("c = ", c, "pop ", segments[O[k]])
+    #         # if c == 1:
+    #         #     print("COMPLETED", segments[O[k]])
+    #         k += 1
+    #         c -= 1
+    #     if c == 1 and segments[I[j - 1]].start != segments[I[j]].start:
+    #         print("TRIM FRONT:", segments[I[j - 1]], segments[I[j]].start)
+    #         segments[I[j - 1]].start = segments[I[j]].start
+    #     print("c = ", c, "push", segments[I[j]])
+    #     c += 1
+    # while k < n:
+    #     print("c = ", c, "pop ", segments[O[k]])
+    #     k += 1
+    #     c -= 1
+
+    # print("Completed:")
+    # for seg in completed:
+    #     print(seg.value, seg.start, seg.end, sep="\t")
+    # draw_segments(completed, L)
+
+    return segments
+
 
 
 def build_ancestors_dev(n, L, seed):
@@ -1077,6 +1253,8 @@ def draw_tree_for_position(pos, ts):
             t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(pos))
 
 
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -1088,7 +1266,7 @@ if __name__ == "__main__":
     #     new_segments(20, 20, j, num_threads=1, method="P")
 
     # new_segments(40, 50, 5)
-    new_segments(10, 10, 304, num_threads=1, method="P")
+    # new_segments(10, 10, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
@@ -1139,3 +1317,5 @@ if __name__ == "__main__":
 
     # visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
+    for j in range(100):
+        overlap_algorithm_dev(1, [(0, 50), (50, 100)], j)
