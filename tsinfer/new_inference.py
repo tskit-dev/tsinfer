@@ -125,7 +125,7 @@ def match_ancestors(
             if ancestor_id is None:
                 break
             with tree_sequence_builder_lock:
-                segs = tree_sequence_builder.get_used_segments(ancestor_id)
+                segs = tree_sequence_builder.get_live_segments(ancestor_id)
             start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
                     ancestor_id, h)
             # print(start_site, end_site, num_older_ancestors)
@@ -163,6 +163,7 @@ def match_ancestors(
         progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
     for age in sorted(same_age_ancestors.keys()):
         # print("STARTING AGE", age, same_age_ancestors[age])
+        tree_sequence_builder.resolve(same_age_ancestors[age])
         for ancestor_id in same_age_ancestors[age]:
             work_queue.put(ancestor_id)
         work_queue.join()
@@ -224,7 +225,6 @@ def match_samples(
     else:
         sample_match_worker(0)
 
-    tree_sequence_builder.resolve()
 
     if show_progress:
         progress.close()
@@ -238,12 +238,10 @@ def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_b
     site_position[0] = 0
 
     # Allocate the nodes table.
-    num_nodes = store.num_ancestors + num_samples
-    num_ancestors = store.num_ancestors
+    num_nodes = tree_sequence_builder.num_nodes
     flags = np.zeros(num_nodes, dtype=np.uint32)
-    flags[num_ancestors:] = msprime.NODE_IS_SAMPLE
     time = np.zeros(num_nodes, dtype=np.float64)
-    time[:num_ancestors] = num_ancestors - np.arange(num_ancestors)
+    tree_sequence_builder.dump_nodes(time, flags)
     nodes = msprime.NodeTable()
     nodes.set_columns(flags=flags, time=time)
     del flags, time
@@ -291,18 +289,18 @@ def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_b
         derived_state_length=derived_state_length)
     del site, node, derived_state, derived_state_length
 
-    print(nodes)
-    print(edgesets)
-    print(sites)
-    print(mutations)
+    # print(nodes)
+    # print(edgesets)
+    # print(sites)
+    # print(mutations)
 
     ts = msprime.load_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    simplified = ts.simplify()
-    simplified.dump_tables(nodes=nodes, edgesets=edgesets)
-    print("Simplified")
-    print(nodes)
-    print(edgesets)
+    # simplified = ts.simplify()
+    # simplified.dump_tables(nodes=nodes, edgesets=edgesets)
+    # print("Simplified")
+    # print(nodes)
+    # print(edgesets)
     return ts
 
 
@@ -319,13 +317,51 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads, show_progress=show_progress)
-    match_ancestors(
-        store, recombination_rate, tree_sequence_builder, method=method,
-        num_threads=num_threads, show_progress=show_progress)
-    ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
+    # match_ancestors(
+    #     store, recombination_rate, tree_sequence_builder, method=method,
+    #     num_threads=num_threads, show_progress=show_progress)
 
-    # tree_sequence_builder.print_state()
-    # ts = tree_sequence_builder.finalise()
+
+    # TMP While developing algorithm.
+    all_ancestors = list(range(1, store.num_ancestors))
+    ancestor_age = map(store.get_age, all_ancestors)
+    same_age_ancestors = collections.defaultdict(list)
+    for ancestor_id, age in zip(all_ancestors, ancestor_age):
+        same_age_ancestors[age].append(ancestor_id)
+    matcher = AncestorMatcher(store, recombination_rate)
+    traceback = Traceback(store)
+    h = np.zeros(store.num_sites, dtype=np.int8)
+
+    for age in sorted(same_age_ancestors.keys()):
+        # print("STARTING AGE", age, same_age_ancestors[age])
+        tree_sequence_builder.resolve(same_age_ancestors[age], age)
+        # tree_sequence_builder.print_state()
+        for ancestor_id in same_age_ancestors[age]:
+            segs = tree_sequence_builder.get_live_segments(ancestor_id)
+            # print("live segments = ", segs)
+            start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
+                    ancestor_id, h)
+            # print(start_site, end_site, num_older_ancestors)
+            for site in focal_sites:
+                assert h[site] == 1
+            assert len(focal_sites) > 0
+            for segment in segs:
+                start, end = segment.start, segment.end
+                # print("\t", start, end)
+                assert start_site <= segment.start
+                assert end_site >= segment.end
+                end_site_parent = matcher.best_path(
+                        num_ancestors=num_older_ancestors,
+                        haplotype=h, start_site=start, end_site=end,
+                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
+                tree_sequence_builder.update(
+                    child=ancestor_id, haplotype=h, start_site=start,
+                    end_site=end, end_site_parent=end_site_parent,
+                    traceback=traceback)
+            traceback.reset()
+
+    tree_sequence_builder.resolve([0], age + 1)
+    ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
 
     # for e in ts.edgesets():
     #     print(e)
@@ -385,106 +421,259 @@ class TreeSequenceBuilder(object):
         self.store = store
         self.num_sites = store.num_sites
         self.num_samples = num_samples
-        self.num_internal_nodes = store.num_ancestors
-        self.num_nodes = self.num_internal_nodes + self.num_samples
         self.num_mutations = 0
-        self.children = [
-            LinkedSegment(0, self.num_sites, []) for _ in range(self.num_internal_nodes)]
         self.mutations = [[] for _ in range(self.num_sites)]
-        self.parent = [[] for _ in range(self.num_nodes)]
+        self.parent = collections.defaultdict(list)
+        self.next_node = store.num_ancestors + self.num_samples
+        self.edgesets = []
+        self.node_time = {}
+        self.next_time_slice_segments = []
+
+    def draw_segments(self, segments):
+        print("   ", "-" * self.num_sites)
+        for segment in segments:
+            print("{:<4d}".format(segment.value), end="")
+            s = " " * (segment.start - 0)
+            s += "=" * (segment.end - segment.start)
+            print(s)
+        print("   ", "-" * self.num_sites)
+
+    @property
+    def num_nodes(self):
+        return self.next_node
 
     @property
     def num_edgesets(self):
-        num_edgesets = 0
-        for head in self.children:
-            u = head
-            while u is not None:
-                if len(u.value) > 0:
-                    num_edgesets += 1
-                u = u.next
-        return num_edgesets
+        return len(self.edgesets)
 
     @property
     def num_children(self):
-        num_children = 0
-        for head in self.children:
-            u = head
-            while u is not None:
-                num_children += len(u.value)
-                u = u.next
-        return num_children
+        return sum(len(e.value[1]) for e in self.edgesets)
 
     def add_mutation(self, node, site, derived_state):
         self.mutations[site].append((node, derived_state))
         self.num_mutations += 1
 
     def add_child_mapping(self, start, end, parent, child):
-        print("ADD CHILD MAPPING", start, end, parent, child)
-        self.parent[child].append((start, end, parent))
+        # print("ADD CHILD MAPPING", start, end, parent, child)
+        self.parent[child].append(Segment(start, end, parent))
+
+    # def add_parent_mapping(self, start, end, parent, child):
+    #     assert start < end
+    #     # Skip leading segments
+    #     u = self.children[parent]
+    #     while u.end <= start:
+    #         u = u.next
+    #     if u.start < start:
+    #         v =LinkedSegment(start, u.end, list(u.value), u.next)
+    #         u.end = start
+    #         u.next = v
+    #         u = v
+    #     while u is not None and u.end <= end:
+    #         u.value.append(child)
+    #         u = u.next
+    #     if u is not None and end > u.start:
+    #         v = LinkedSegment(end, u.end, list(u.value), u.next)
+    #         u.end = end
+    #         u.next = v
+    #         u.value.append(child)
+
+    #     # print("AFTER")
+    #     # self.print_row(parent)
+    #     # Check integrity
+    #     u = self.children[parent]
+    #     while u is not None:
+    #         if u.start >= start and u.end <= end:
+    #             assert child in u.value
+    #         # else:
+    #         #     assert child not in u.value
+    #         u = u.next
+
+    def record_coalescence(self, start, end, parent, children):
+        """
+        Coalescences the specified set of segments into the specified parent.
+        All segments must be have identical coordinates.
+        """
+        assert len(children) > 1
+        assert start < end
+        record = Segment(start, end, (parent, sorted(children)))
+        # print("COALESCENCE:", record)
+        self.edgesets.append(record)
+
+    def record_nonoverlapping_segment(self, segment, parent):
+        # print("NONOVERLAPPING", segment, parent)
+        # child_mapping = Segment(segment.start, segment.end, parent)
+        # self.parent[parent].append(segment)
+        self.next_time_slice_segments[parent].append(segment)
+        record = Segment(segment.start, segment.end, (parent, [segment.value]))
+        self.edgesets.append(record)
+
+    def resolve_identical_segments(self, segments):
+        segments.sort(key=lambda x: (x.start, -x.end))
+        S = segments
+        n = len(segments)
+        j = 0
+        k = 1
+        result = []
+        while j < n:
+            equal = [S[j]]
+            while k < n and S[j].start == S[k].start and S[j].end == S[k].end:
+                equal.append(S[k])
+                k += 1
+            if len(equal) > 1:
+                parent = self.next_node
+                self.time_slice_nodes.append(parent)
+                self.next_node += 1
+                children = [seg.value for seg in equal]
+                self.record_coalescence(equal[0].start, equal[0].end, parent, children)
+                equal[0].value = parent
+            result.append(equal[0])
+            j = k
+            k += 1
+        return result
 
 
-    def resolve_segments(self, segments):
-        start_map = collections.defaultdict(list)
-        for start, end, child in segments:
-            start_map[start].append([start, end, child])
-        print("start_map")
-        for start in sorted(start_map.keys()):
-            print(start, ":", start_map[start])
+    def resolve_largest_overlap(self, segments):
+        segments.sort(key=lambda x: (x.start, -x.end))
+
+        S = segments
+        n = len(segments)
+        j = 0
+        k = 1
+        max_intersection = 0
+        max_intersection_segs = None
+        while True:
+            # print("seg", j, S[j])
+            while k < n and S[k].end <= S[j].end:
+                intersection = S[k].end - S[k].start
+                if intersection > max_intersection:
+                    max_intersection = intersection
+                    max_intersection_segs = j, k
+                k += 1
+            if k == n:
+                break
+            intersection = S[j].end - S[k].start
+            if intersection > max_intersection:
+                max_intersection = intersection
+                max_intersection_segs = j, k
+            j = k
+            k += 1
+        # print("max_intersection = ", max_intersection)
+        # print("max_intersection_segs = ", max_intersection_segs)
+        # for j, k in max_intersection_segs
+        #     print("\t", S[j], S[k])
+        if max_intersection_segs is None:
+            ret = segments
+        else:
+            j, k = max_intersection_segs
+            ret = S[:j]
+            # print("INTERSECT:", j, k)
+            if S[j].start != S[k].start:
+                # Trim off a new segment for the leading overhang.
+                ret.append(Segment(S[j].start, S[k].start, S[j].value))
+                S[j].start = S[k].start
+            # Create a new segment for the coalesced region.
+            parent = self.next_node
+            self.time_slice_nodes.append(parent)
+            self.next_node += 1
+            seg = Segment(S[j].start, min(S[j].end, S[k].end), parent)
+            self.record_coalescence(seg.start, seg.end, parent, [S[j].value, S[k].value])
+            ret.append(seg)
+            if S[j].end > S[k].end:
+                S[j].start = S[k].end
+                ret.append(S[j])
+            elif S[k].end > S[j].end:
+                S[k].start = S[j].end
+                ret.append(S[k])
+            if j + 1 != k:
+                ret.extend(S[j + 1: k])
+            ret.extend(S[k + 1:])
+        return ret
+
+    def resolve_non_overlapping(self, segments, parent):
+        segments.sort(key=lambda x: (x.start, -x.end))
+        S = segments
+        n = len(S)
+        j = 0
+        k = 1
+        max_end = 0
+        remaining = []
+        while j < n:
+            next_start = S[j + 1].start if j < n - 1 else self.num_sites
+            if max_end <= S[j].start and S[j].end <= next_start:
+                self.record_nonoverlapping_segment(S[j], parent)
+            else:
+                remaining.append(S[j])
+            max_end = max(max_end, S[j].end)
+            while k < n and S[k].end <= S[j].end:
+                # print("SKIPPING", S[k])
+                remaining.append(S[k])
+                k += 1
+            j = k
+            k += 1
+        return remaining
 
 
-    def resolve(self):
-        print("RESOLVING TS")
-        parents = collections.defaultdict(list)
-        for child in range(self.num_nodes):
-            segments = list(reversed(self.parent[child]))
-            if len(segments) > 0:
-                print(child, "->", segments)
-            for left, right, parent in segments:
-                parents[parent].append((left, right, child))
-        print("Parent mappings:")
-        for k in sorted(parents.keys()):
-            v = parents[k]
-            v.sort()
-            print(k, ":")
-            for left, right, child in v:
-                print("\t", child, "\t", end="")
-                s = " " * (left - 0)
-                s += "=" * (right - left)
-                print(s)
-            self.resolve_segments(v)
-            print("-" * self.num_sites)
+    def resolve_segments(self, parent, segments):
+        # print("RESOLVE:")
+        # print("Before:")
+        # self.draw_segments(segments)
+        while len(segments) > 0:
+            segments = self.resolve_identical_segments(segments)
+            # print("AFTER IDENTICAL")
+            # self.draw_segments(segments)
+            segments = self.resolve_largest_overlap(segments)
+            # print("AFTER OVERLAP")
+            # self.draw_segments(segments)
+            segments = self.resolve_non_overlapping(segments, parent)
+            # print("AFTER NON OVERLAP")
+            # self.draw_segments(segments)
+
+#         for seg in segments:
+#             self.add_parent_mapping(seg.start, seg.end, parent, seg.value)
+            # print("seg:", seg)
+
+
+    def resolve(self, parents, age):
+        # print("RESOLVING TS", parents)
+        # self.print_state()
+        self.time_slice_nodes = []
+        self.next_time_slice_segments = collections.defaultdict(list)
+        for parent in parents:
+            self.node_time[parent] = age
+        parent_map = {parent:list() for parent in parents}
+        for child in self.parent.keys():
+            unused = []
+            for segment in self.parent[child]:
+                if segment.value in parent_map:
+                    parent_map[segment.value].append(Segment(segment.start, segment.end, child))
+                else:
+                    unused.append(segment)
+            # print("Setting unused ", child, "->", unused)
+            self.parent[child] = unused
+
+        # print("Parent mappings:")
+        for parent, segments in parent_map.items():
+            # print(parent, "->", segments)
+            self.resolve_segments(parent, segments)
+            # print("-" * self.num_sites)
+
+        # print("nodes used in this time slice")
+        # print(self.time_slice_nodes)
+        for j, u in enumerate(self.time_slice_nodes):
+            self.node_time[u] = age - 1 + (j + 1) / (len(self.time_slice_nodes) + 1)
+        # print("AFTER:")
+        # self.print_state()
+
 
     def add_mapping(self, start, end, parent, child):
         self.add_child_mapping(start, end, parent, child)
-        assert start < end
-        # Skip leading segments
-        u = self.children[parent]
-        while u.end <= start:
-            u = u.next
-        if u.start < start:
-            v =LinkedSegment(start, u.end, list(u.value), u.next)
-            u.end = start
-            u.next = v
-            u = v
-        while u is not None and u.end <= end:
-            u.value.append(child)
-            u = u.next
-        if u is not None and end > u.start:
-            v = LinkedSegment(end, u.end, list(u.value), u.next)
-            u.end = end
-            u.next = v
-            u.value.append(child)
 
-        # print("AFTER")
-        # self.print_row(parent)
-        # Check integrity
-        u = self.children[parent]
-        while u is not None:
-            if u.start >= start and u.end <= end:
-                assert child in u.value
-            # else:
-            #     assert child not in u.value
-            u = u.next
+    def get_live_segments(self, parent):
+        next_time_slice_segments = self.next_time_slice_segments[parent]
+        # print("Getting live segments for ", parent, self.parent[parent], next_time_slice_segments)
+        return next_time_slice_segments
+
 
     def get_used_segments(self, parent):
         """
@@ -508,38 +697,23 @@ class TreeSequenceBuilder(object):
         return used
 
 
-
-    def get_num_children(self, parent, site):
-        """
-        Returns the number of children for the specified parent at the specified
-        site.
-        """
-        u = self.children[parent]
-        num_children = 0
-        while u is not None:
-            if u.start <= site < u.end:
-                num_children = len(u.value)
-                break
-            u = u.next
-        return num_children
-
     def select_parent(self, site, options):
         """
         Selects the parent for the specified site
         """
-        min_num_children = self.get_num_children(options[0], site)
-        best_parent = options[0]
-        for parent in options[1:]:
-            num_children = self.get_num_children(parent, site)
-            if num_children <= min_num_children:
-                best_parent = parent
-                min_num_children = num_children
-
-        num_children = [self.get_num_children(parent, site) for parent in options]
+        # min_num_children = self.get_num_children(options[0], site)
+        # best_parent = options[0]
+        # for parent in options[1:]:
+        #     num_children = self.get_num_children(parent, site)
+        #     if num_children <= min_num_children:
+        #         best_parent = parent
+        #         min_num_children = num_children
+        # num_children = [self.get_num_children(parent, site) for parent in options]
         # print("SELECT PARENT")
         # print("OPTIONs = ", options)
         # print("NUMCHIL = ", num_children)
         # print("CHOIE   = ", best_parent)
+        best_parent = options[0]
         return best_parent
 
     def update(
@@ -604,41 +778,57 @@ class TreeSequenceBuilder(object):
 
     def print_state(self):
         print("Builder state")
-        for parent in range(len(self.children)):
-            self.print_row(parent)
+        print("Parent mappings")
+        for k in sorted(self.parent.keys()):
+            print("\t", k, ":", self.parent[k])
+        print("Edgesets:")
+        for seg in self.edgesets:
+            print("\t", seg)
 
-    def print_row(self, parent):
-        print(parent, ":", end="")
-        u = self.children[parent]
-        assert u.start == 0
-        while u is not None:
-            print("({},{}->{})".format(u.start, u.end, u.value), end="")
-            assert len(u.value) == len(set(u.value))
-            assert u.start < u.end
-            if u.next is not None:
-                assert u.end == u.next.start
-            prev = u
-            u = u.next
-        assert prev.end == self.num_sites
-        print()
+    def dump_nodes(self, time, flags):
+        time[:] = 0
+        max_t = 0
+        for u, t in self.node_time.items():
+            time[u] = t
+            max_t = max(t, max_t)
+        time[0] = max_t + 1
+        N = self.store.num_ancestors
+        n = self.num_samples
+        flags[N:N + n] = msprime.NODE_IS_SAMPLE
+
 
     def dump_edgesets(self, left, right, parent, children, children_length):
         num_edgesets = 0
         num_children = 0
-        for p in range(self.num_internal_nodes - 1, -1, -1):
-            u = self.children[p]
-            assert u.start == 0
-            while u is not None:
-                if len(u.value) > 0:
-                    left[num_edgesets] = u.start
-                    right[num_edgesets] = u.end
-                    parent[num_edgesets] = p
-                    children_length[num_edgesets] = len(u.value)
-                    for c in sorted(u.value):
-                        children[num_children] = c
-                        num_children += 1
-                    num_edgesets += 1
-                u = u.next
+        # TODO sort the edgesets
+        self.edgesets.sort(key=lambda e: self.node_time[e.value[0]])
+
+        for e in self.edgesets:
+            left[num_edgesets] = e.start
+            right[num_edgesets] = e.end
+            p, c = e.value
+            parent[num_edgesets] = p
+            children_length[num_edgesets] = len(c)
+            for child in sorted(c):
+                children[num_children] = child
+                num_children += 1
+            num_edgesets += 1
+
+
+        # for p in range(self.num_internal_nodes - 1, -1, -1):
+        #     u = self.children[p]
+        #     assert u.start == 0
+        #     while u is not None:
+        #         if len(u.value) > 0:
+        #             left[num_edgesets] = u.start
+        #             right[num_edgesets] = u.end
+        #             parent[num_edgesets] = p
+        #             children_length[num_edgesets] = len(u.value)
+        #             for c in sorted(u.value):
+        #                 children[num_children] = c
+        #                 num_children += 1
+        #             num_edgesets += 1
+        #         u = u.next
 
     def dump_mutations(self, site, node, derived_state):
         num_mutations = 0

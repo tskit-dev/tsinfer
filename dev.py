@@ -731,6 +731,10 @@ def new_segments(n, L, seed, num_threads=10, method="C"):
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
+    num_edges = sum(len(e.children) for e in ts_simplified.edgesets())
+    print(ts.num_edgesets, ts_simplified.num_edgesets, num_edges, num_edges / ts_simplified.num_edgesets)
+
+
 
 def export_samples(n, L, seed):
 
@@ -1344,13 +1348,13 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     # new_segments(20, 200, j)
-    #     new_segments(20, 20, j, num_threads=1, method="P")
+    for j in range(1, 100000):
+        print(j)
+        # new_segments(20, 200, j)
+        new_segments(20, 30, j, num_threads=1, method="P")
 
     # new_segments(40, 50, 5)
-    # new_segments(10, 10, 304, num_threads=1, method="P")
+    # new_segments(20, 30, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
@@ -1401,10 +1405,10 @@ if __name__ == "__main__":
 
     # visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
-    for j in range(555550):
-    # j = 1
-        try:
-            overlap_algorithm_dev(1, [(5 * k, 4 * k + 30) for k in range(30)], j, duplicate_proba=0)
-        except Exception as e:
-            print("FAIL:", j)
-            raise e
+    # for j in range(555550):
+    # # j = 1
+    #     try:
+    #         overlap_algorithm_dev(1, [(5 * k, 4 * k + 30) for k in range(30)], j, duplicate_proba=0)
+    #     except Exception as e:
+    #         print("FAIL:", j)
+    #         raise e
