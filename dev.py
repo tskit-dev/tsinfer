@@ -50,7 +50,7 @@ def draw_segments(segments, L):
     print("   ", "-" * L)
 
 
-def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1):
+def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1, duplicate_proba=0.5):
     random.seed(seed)
     # Generate some random segments.
     segments = []
@@ -62,6 +62,10 @@ def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1):
             while x == y:
                 y = random.randint(start, end)
             segments.append(tsinfer.Segment(*sorted([x, y]), value=j))
+            while random.random() < duplicate_proba:
+                # With probability duplicate_proba create a copy.
+                segments.append(tsinfer.Segment(*sorted([x, y]), value=j))
+
             j += 1
         # print(segments)
     L = max(end for start, end in chunk_bounds)
@@ -71,9 +75,79 @@ def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1):
     #     print("==================LOOP=========================")
 
     # draw_segments(segments, L)
-    o1 = pairwise_find_max_overlap(segments, L)
-    o2 = find_max_overlap(segments, L)
+    # filtered_equal = find_identical_overlaps(segments, L)
+    # draw_segments(filtered_equal, L)
+    # o1 = pairwise_find_max_overlap(segments, L)
+    # o2 = find_max_overlap(segments, L)
+    # assert o1 == o2
+    o1 = find_nonoverlapping(segments, L)
+    o2 = pairwise_find_nonoverlapping(segments, L)
+    # print(o1)
+    # print(o2)
     assert o1 == o2
+
+
+def pairwise_find_nonoverlapping(S, L):
+    S.sort(key=lambda x: (x.start, -x.end))
+    n = len(S)
+    ret = []
+    for j in range(n):
+        overlaps = 0
+        for k in range(n):
+            if j != k:
+                overlap = min(S[j].end, S[k].end) - max(S[j].start, S[k].start)
+                if overlap > 0:
+                    overlaps += 1
+        if overlaps == 0:
+            ret.append(S[j])
+    return ret
+
+
+def find_nonoverlapping(segments, L):
+    segments.sort(key=lambda x: (x.start, -x.end))
+    # draw_segments(segments, L)
+
+    S = segments
+    n = len(S)
+    j = 0
+    k = 1
+    max_end = 0
+    result = []
+    while j < n:
+        # print("LOOP MID SEG:", S[j], "\tmax_end = ", max_end)
+        next_start = S[j + 1].start if j < n - 1 else L
+        if max_end <= S[j].start and S[j].end <= next_start:
+            # print("NON OVERLAP", S[j])
+            result.append(S[j])
+        max_end = max(max_end, S[j].end)
+        while k < n and S[k].end <= S[j].end:
+            # print("SKIPPING", S[k])
+            k += 1
+        j = k
+        k += 1
+    return result
+
+
+def find_identical_overlaps(segments, L):
+    segments.sort(key=lambda x: (x.start, -x.end))
+    draw_segments(segments, L)
+
+    S = segments
+    n = len(segments)
+    j = 0
+    k = 1
+    result = []
+    while j < n:
+        equal = [S[j]]
+        while k < n and S[j].start == S[k].start and S[j].end == S[k].end:
+            equal.append(S[k])
+            k += 1
+        if len(equal) > 1:
+            print("EQUAL:", equal)
+        result.append(equal[0])
+        j = k
+        k += 1
+    return result
 
 def pairwise_find_max_overlap(segments, L):
 
@@ -101,30 +175,40 @@ def pairwise_find_max_overlap(segments, L):
 def find_max_overlap(segments, L):
     segments.sort(key=lambda x: (x.start, -x.end))
 
-    # for seg in segments:
-    #     print(seg.value, seg.start, seg.end, sep="\t")
-    # draw_segments(segments, L)
+    for seg in segments:
+        print(seg.value, seg.start, seg.end, sep="\t")
+    draw_segments(segments, L)
 
     S = segments
     n = len(segments)
     j = 0
     k = 1
-    max_intersection = 0
+    max_intersection = -1
+    max_intersection_segs = []
     while True:
         # print("seg", j, S[j])
         while k < n and S[k].end <= S[j].end:
             intersection = S[k].end - S[k].start
             if intersection > max_intersection:
                 max_intersection = intersection
+                max_intersection_segs = [[j, k]]
+            elif intersection == max_intersection:
+                max_intersection_segs.append((j, k))
             k += 1
         if k == n:
             break
         intersection = S[j].end - S[k].start
         if intersection > max_intersection:
             max_intersection = intersection
+            max_intersection_segs = [(j, k)]
+        elif intersection == max_intersection:
+            max_intersection_segs.append((j, k))
         j = k
         k += 1
-    # print("max_intersection = ", max_intersection)
+    print("max_intersection = ", max_intersection)
+    print("max_intersection_segs = ")
+    for j, k in max_intersection_segs:
+        print("\t", S[j], S[k])
     return max_intersection
 
 #     out_queue = [(L + 1, None)]
@@ -1317,5 +1401,10 @@ if __name__ == "__main__":
 
     # visualise_copying(8, 4, 5)
     # build_ancestors_dev(10, 10000, 3)
-    for j in range(100):
-        overlap_algorithm_dev(1, [(0, 50), (50, 100)], j)
+    for j in range(555550):
+    # j = 1
+        try:
+            overlap_algorithm_dev(1, [(5 * k, 4 * k + 30) for k in range(30)], j, duplicate_proba=0)
+        except Exception as e:
+            print("FAIL:", j)
+            raise e
