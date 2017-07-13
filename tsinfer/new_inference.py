@@ -519,18 +519,18 @@ class TreeSequenceBuilder(object):
         k = 1
         result = []
         while j < n:
-            equal = [S[j]]
+            num_equal = 0
             while k < n and S[j].start == S[k].start and S[j].end == S[k].end:
-                equal.append(S[k])
+                num_equal += 1
                 k += 1
-            if len(equal) > 1:
+            if num_equal > 0:
                 parent = self.next_minor_node
                 self.time_slice_minor_nodes.append(parent)
                 self.next_minor_node += 1
-                children = [seg.value for seg in equal]
-                self.record_coalescence(equal[0].start, equal[0].end, parent, children)
-                equal[0].value = parent
-            result.append(equal[0])
+                children = [seg.value for seg in S[j: j + num_equal + 1]]
+                self.record_coalescence(S[j].start, S[j].end, parent, children)
+                S[j].value = parent
+            result.append(S[j])
             j = k
             k += 1
         assert sorted(result, key=lambda x: (x.start, -x.end)) == result
