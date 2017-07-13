@@ -1351,10 +1351,10 @@ if __name__ == "__main__":
     for j in range(1, 100000):
         print(j)
         # new_segments(20, 200, j)
-        new_segments(20, 30, j, num_threads=1, method="P")
+        new_segments(10, 30, j, num_threads=1, method="P")
 
     # new_segments(40, 50, 5)
-    # new_segments(20, 30, 304, num_threads=1, method="P")
+    # new_segments(10, 10, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 

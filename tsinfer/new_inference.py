@@ -9,6 +9,7 @@ import queue
 import numpy as np
 import attr
 import tqdm
+import bintrees
 
 import msprime
 
@@ -110,47 +111,48 @@ def match_ancestors(
     work_queue = queue.Queue()
     tree_sequence_builder_lock = threading.Lock()
 
-    def ancestor_match_worker(thread_index):
-        # print("Thread ", thread_index, "started")
-        if method == "C":
-            matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
-        else:
-            matcher = AncestorMatcher(store, recombination_rate)
-            traceback = Traceback(store)
-        h = np.zeros(store.num_sites, dtype=np.int8)
-        while True:
-            ancestor_id = work_queue.get()
-            # print("Thread", thread_index, "got work", ancestor_id)
-            if ancestor_id is None:
-                break
-            with tree_sequence_builder_lock:
-                segs = tree_sequence_builder.get_live_segments(ancestor_id)
-            start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
-                    ancestor_id, h)
-            # print(start_site, end_site, num_older_ancestors)
-            for site in focal_sites:
-                assert h[site] == 1
-            assert len(focal_sites) > 0
-            for start, end in segs:
-                # print("\t", start, end)
-                assert start_site <= start
-                assert end_site >= end
-                end_site_parent = matcher.best_path(
-                        num_ancestors=num_older_ancestors,
-                        haplotype=h, start_site=start, end_site=end,
-                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
-                with tree_sequence_builder_lock:
-                    tree_sequence_builder.update(
-                        child=ancestor_id, haplotype=h, start_site=start,
-                        end_site=end, end_site_parent=end_site_parent,
-                        traceback=traceback)
-            if show_progress:
-                progress.update()
-            traceback.reset()
-            work_queue.task_done()
-        work_queue.task_done()
-        # print("Thread", thread_index, ", exiting")
+    # COMMENTING OUT to avoid confusion during development.
+    # def ancestor_match_worker(thread_index):
+    #     # print("Thread ", thread_index, "started")
+    #     if method == "C":
+    #         matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
+    #         traceback = _tsinfer.Traceback(store.num_sites, 2**20)
+    #     else:
+    #         matcher = AncestorMatcher(store, recombination_rate)
+    #         traceback = Traceback(store)
+    #     h = np.zeros(store.num_sites, dtype=np.int8)
+    #     while True:
+    #         ancestor_id = work_queue.get()
+    #         # print("Thread", thread_index, "got work", ancestor_id)
+    #         if ancestor_id is None:
+    #             break
+    #         with tree_sequence_builder_lock:
+    #             segs = tree_sequence_builder.get_live_segments(ancestor_id)
+    #         start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
+    #                 ancestor_id, h)
+    #         # print(start_site, end_site, num_older_ancestors)
+    #         for site in focal_sites:
+    #             assert h[site] == 1
+    #         assert len(focal_sites) > 0
+    #         for start, end in segs:
+    #             # print("\t", start, end)
+    #             assert start_site <= start
+    #             assert end_site >= end
+    #             end_site_parent = matcher.best_path(
+    #                     num_ancestors=num_older_ancestors,
+    #                     haplotype=h, start_site=start, end_site=end,
+    #                     focal_sites=focal_sites, error_rate=0, traceback=traceback)
+    #             with tree_sequence_builder_lock:
+    #                 tree_sequence_builder.update(
+    #                     child=ancestor_id, haplotype=h, start_site=start,
+    #                     end_site=end, end_site_parent=end_site_parent,
+    #                     traceback=traceback)
+    #         if show_progress:
+    #             progress.update()
+    #         traceback.reset()
+    #         work_queue.task_done()
+    #     work_queue.task_done()
+    #     # print("Thread", thread_index, ", exiting")
 
 
     threads = [
@@ -345,11 +347,10 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
             for site in focal_sites:
                 assert h[site] == 1
             assert len(focal_sites) > 0
-            for segment in segs:
-                start, end = segment.start, segment.end
+            for start, end in segs:
                 # print("\t", start, end)
-                assert start_site <= segment.start
-                assert end_site >= segment.end
+                assert start_site <= start
+                assert end_site >= end
                 end_site_parent = matcher.best_path(
                         num_ancestors=num_older_ancestors,
                         haplotype=h, start_site=start, end_site=end,
@@ -421,17 +422,19 @@ class TreeSequenceBuilder(object):
         self.store = store
         self.num_sites = store.num_sites
         self.num_samples = num_samples
+        self.num_major_nodes = store.num_ancestors + self.num_samples
         self.num_mutations = 0
         self.mutations = [[] for _ in range(self.num_sites)]
-        self.parent = collections.defaultdict(list)
-        self.next_node = store.num_ancestors + self.num_samples
+        self.parent = [[] for _ in range(self.num_major_nodes)]
+        self.next_minor_node = self.num_major_nodes
         self.edgesets = []
         self.node_time = {}
-        self.next_time_slice_segments = []
+        self.next_time_slice_segments = [[] for _ in range(self.num_major_nodes)]
+        self.time_slice_minor_nodes = []
 
-    def draw_segments(self, segments):
+    def draw_segments(self, S):
         print("   ", "-" * self.num_sites)
-        for segment in segments:
+        for segment in S:
             print("{:<4d}".format(segment.value), end="")
             s = " " * (segment.start - 0)
             s += "=" * (segment.end - segment.start)
@@ -440,7 +443,7 @@ class TreeSequenceBuilder(object):
 
     @property
     def num_nodes(self):
-        return self.next_node
+        return self.next_minor_node
 
     @property
     def num_edgesets(self):
@@ -504,7 +507,7 @@ class TreeSequenceBuilder(object):
         # print("NONOVERLAPPING", segment, parent)
         # child_mapping = Segment(segment.start, segment.end, parent)
         # self.parent[parent].append(segment)
-        self.next_time_slice_segments[parent].append(segment)
+        self.next_time_slice_segments[parent].append((segment.start, segment.end))
         record = Segment(segment.start, segment.end, (parent, [segment.value]))
         self.edgesets.append(record)
 
@@ -521,21 +524,20 @@ class TreeSequenceBuilder(object):
                 equal.append(S[k])
                 k += 1
             if len(equal) > 1:
-                parent = self.next_node
-                self.time_slice_nodes.append(parent)
-                self.next_node += 1
+                parent = self.next_minor_node
+                self.time_slice_minor_nodes.append(parent)
+                self.next_minor_node += 1
                 children = [seg.value for seg in equal]
                 self.record_coalescence(equal[0].start, equal[0].end, parent, children)
                 equal[0].value = parent
             result.append(equal[0])
             j = k
             k += 1
+        assert sorted(result, key=lambda x: (x.start, -x.end)) == result
         return result
 
 
     def resolve_largest_overlap(self, segments):
-        segments.sort(key=lambda x: (x.start, -x.end))
-
         S = segments
         n = len(segments)
         j = 0
@@ -558,10 +560,6 @@ class TreeSequenceBuilder(object):
                 max_intersection_segs = j, k
             j = k
             k += 1
-        # print("max_intersection = ", max_intersection)
-        # print("max_intersection_segs = ", max_intersection_segs)
-        # for j, k in max_intersection_segs
-        #     print("\t", S[j], S[k])
         if max_intersection_segs is None:
             ret = segments
         else:
@@ -573,9 +571,9 @@ class TreeSequenceBuilder(object):
                 ret.append(Segment(S[j].start, S[k].start, S[j].value))
                 S[j].start = S[k].start
             # Create a new segment for the coalesced region.
-            parent = self.next_node
-            self.time_slice_nodes.append(parent)
-            self.next_node += 1
+            parent = self.next_minor_node
+            self.time_slice_minor_nodes.append(parent)
+            self.next_minor_node += 1
             seg = Segment(S[j].start, min(S[j].end, S[k].end), parent)
             self.record_coalescence(seg.start, seg.end, parent, [S[j].value, S[k].value])
             ret.append(seg)
@@ -588,6 +586,13 @@ class TreeSequenceBuilder(object):
             if j + 1 != k:
                 ret.extend(S[j + 1: k])
             ret.extend(S[k + 1:])
+        # if sorted(ret, key=lambda x: (x.start, -x.end)) != ret:
+        #     print("ERROR")
+        #     self.draw_segments(ret)
+        # TODO It's wasteful to sort this here every time. We can reorder the way that
+        # we add segments into the returned list above such that we maintain the
+        # sortedness property. This will save the cost of a sort on every iteration.
+        ret.sort(key=lambda x: (x.start, -x.end))
         return ret
 
     def resolve_non_overlapping(self, segments, parent):
@@ -611,12 +616,14 @@ class TreeSequenceBuilder(object):
                 k += 1
             j = k
             k += 1
+        assert sorted(remaining, key=lambda x: (x.start, -x.end)) == remaining
         return remaining
 
 
     def resolve_segments(self, parent, segments):
         # print("RESOLVE:")
         # print("Before:")
+        segments.sort(key=lambda x: (x.start, -x.end))
         # self.draw_segments(segments)
         while len(segments) > 0:
             segments = self.resolve_identical_segments(segments)
@@ -629,20 +636,13 @@ class TreeSequenceBuilder(object):
             # print("AFTER NON OVERLAP")
             # self.draw_segments(segments)
 
-#         for seg in segments:
-#             self.add_parent_mapping(seg.start, seg.end, parent, seg.value)
-            # print("seg:", seg)
-
 
     def resolve(self, parents, age):
-        # print("RESOLVING TS", parents)
+        # print("RESOLVING TS @:", age, parents)
         # self.print_state()
-        self.time_slice_nodes = []
-        self.next_time_slice_segments = collections.defaultdict(list)
-        for parent in parents:
-            self.node_time[parent] = age
+        self.time_slice_minor_nodes = []
         parent_map = {parent:list() for parent in parents}
-        for child in self.parent.keys():
+        for child in range(self.num_major_nodes):
             unused = []
             for segment in self.parent[child]:
                 if segment.value in parent_map:
@@ -659,9 +659,11 @@ class TreeSequenceBuilder(object):
             # print("-" * self.num_sites)
 
         # print("nodes used in this time slice")
-        # print(self.time_slice_nodes)
-        for j, u in enumerate(self.time_slice_nodes):
-            self.node_time[u] = age - 1 + (j + 1) / (len(self.time_slice_nodes) + 1)
+        # print(self.time_slice_minor_nodes)
+        for parent in parents:
+            self.node_time[parent] = age
+        for j, u in enumerate(self.time_slice_minor_nodes):
+            self.node_time[u] = age - 1 + (j + 1) / (len(self.time_slice_minor_nodes) + 1)
         # print("AFTER:")
         # self.print_state()
 
@@ -672,6 +674,7 @@ class TreeSequenceBuilder(object):
     def get_live_segments(self, parent):
         next_time_slice_segments = self.next_time_slice_segments[parent]
         # print("Getting live segments for ", parent, self.parent[parent], next_time_slice_segments)
+        # self.next_time_slice_segments[parent] = None
         return next_time_slice_segments
 
 
@@ -779,11 +782,14 @@ class TreeSequenceBuilder(object):
     def print_state(self):
         print("Builder state")
         print("Parent mappings")
-        for k in sorted(self.parent.keys()):
+        for k in range(self.num_major_nodes):
             print("\t", k, ":", self.parent[k])
         print("Edgesets:")
         for seg in self.edgesets:
             print("\t", seg)
+        print("Live segments")
+        for k in range(self.num_major_nodes):
+            print("\t", k, ":", self.next_time_slice_segments[k])
 
     def dump_nodes(self, time, flags):
         time[:] = 0
