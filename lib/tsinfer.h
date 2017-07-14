@@ -55,6 +55,11 @@ typedef struct {
         uint32_t *num_older_ancestors;
         site_id_t *focal_sites_mem;
     } ancestors;
+    size_t num_epochs;
+    struct {
+        ancestor_id_t *first_ancestor;
+        size_t *num_ancestors;
+    } epochs;
 } ancestor_store_t;
 
 typedef struct {
@@ -105,24 +110,27 @@ typedef struct {
     permutation_sort_t *sort_buffer;
 } ancestor_sorter_t;
 
-typedef struct _child_list_node_t {
-    ancestor_id_t node;
-    struct _child_list_node_t *next;
-} child_list_node_t;
-
 typedef struct _mutation_list_node_t {
     ancestor_id_t node;
     allele_t derived_state;
     struct _mutation_list_node_t *next;
 } mutation_list_node_t;
 
-typedef struct _list_segment_t {
-    site_id_t start;
-    site_id_t end;
-    child_list_node_t *head;
-    child_list_node_t *tail;
-    struct _list_segment_t *next;
-} list_segment_t;
+typedef struct {
+    site_id_t left;
+    site_id_t right;
+    ancestor_id_t parent;
+    uint32_t num_children;
+    ancestor_id_t *children;
+    double time; /* Used for sorting */
+} edgeset_t;
+
+typedef struct _node_mapping_t {
+    site_id_t left;
+    site_id_t right;
+    ancestor_id_t node;
+    struct _node_mapping_t *next;
+} node_mapping_t;
 
 typedef struct _segment_list_node_t {
     site_id_t start;
@@ -142,17 +150,24 @@ typedef struct {
     size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
+    size_t num_nodes;
     size_t num_edgesets;
+    size_t max_num_edgesets;
+    size_t max_num_nodes;
     size_t num_children;
     size_t num_mutations;
     ancestor_store_t *store;
-    size_t segment_block_size;
-    size_t child_list_node_block_size;
+    size_t node_mapping_block_size;
     size_t mutation_list_node_block_size;
-    list_segment_t **children;
+    size_t edgeset_block_size;
+    uint32_t *num_child_mappings;
+    double *node_time;
+    node_mapping_t **child_mappings;
+    node_mapping_t **live_segments_head;
+    node_mapping_t **live_segments_tail;
+    edgeset_t *edgesets;
     mutation_list_node_t **mutations;
-    object_heap_t segment_heap;
-    object_heap_t child_list_node_heap;
+    object_heap_t node_mapping_heap;
     object_heap_t mutation_list_node_heap;
 } tree_sequence_builder_t;
 
@@ -177,6 +192,8 @@ int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
 int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
         allele_t *ancestor, site_id_t *start_site, site_id_t *end_site,
         size_t *num_older_ancestors, size_t *num_focal_sites, site_id_t **focal_sites);
+int ancestor_store_get_epoch_ancestors(ancestor_store_t *self, int epoch,
+        ancestor_id_t *epoch_ancestors, size_t *num_epoch_ancestors);
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);
@@ -209,11 +226,11 @@ int traceback_print_state(traceback_t *self, FILE *out);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         ancestor_store_t *store, size_t num_samples,
-        size_t segment_block_size, size_t child_list_node_block_size,
+        size_t parent_mapping_block_size, size_t edgeset_block_size,
         size_t mutation_list_node_block_size);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
-int tree_sequence_builder_get_used_segments(tree_sequence_builder_t *self,
+int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self,
         ancestor_id_t parent, segment_list_t *list);
 int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
@@ -223,6 +240,8 @@ int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
         uint32_t *children_length);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         site_id_t *site, ancestor_id_t *node, allele_t *derived_state);
+int tree_sequence_builder_resolve(tree_sequence_builder_t *self,
+        int epoch, ancestor_id_t *ancestors, size_t num_ancestors);
 
 int segment_list_alloc(segment_list_t *self, size_t block_size);
 int segment_list_free(segment_list_t *self);

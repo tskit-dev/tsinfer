@@ -472,15 +472,16 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     ancestor_id_t end_site_value, sample_id;
     site_id_t *focal_site = NULL;
     ancestor_id_t *focal_site_ancestor = NULL;
+    ancestor_id_t *epoch_ancestors = NULL;
     uint32_t *ancestor_age = NULL;
     site_id_t start, *focal, end;
     allele_t *ancestor = NULL;
-    size_t j, l, num_focal_sites, num_ancestors, num_older_ancestors;
+    size_t j, k, l, num_focal_sites, num_ancestors, num_older_ancestors;
     double mutation_rate = 1e-200;
     allele_t *samples = NULL;
     allele_t *sample;
     double *positions;
-    size_t num_samples, num_sites;
+    size_t num_samples, num_sites, num_epoch_ancestors;
 
     read_samples(sample_file, &num_samples, &num_sites, &samples, &positions);
     read_ancestors(ancestor_file, num_sites, &num_ancestors, &ancestor_age,
@@ -501,12 +502,14 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         fatal_error("alloc error");
     }
     ret = tree_sequence_builder_alloc(&ts_builder, &store, num_samples,
-            8192, 8192, num_sites / 4);
+            1, 1, 1);
+            /* 8192, 8192, num_sites / 4); */
     if (ret != 0) {
         fatal_error("alloc error");
     }
     ancestor = malloc(store.num_sites * sizeof(allele_t));
-    if (ancestor == NULL) {
+    epoch_ancestors = malloc(store.num_ancestors * sizeof(ancestor_id_t *));
+    if (ancestor == NULL || epoch_ancestors == NULL) {
         fatal_error("alloc error");
     }
     if (verbose > 0) {
@@ -535,61 +538,79 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
 
-    /* Copy ancestors */
-    for (j = store.num_ancestors - 1; j > 0; j--) {
-        ret = ancestor_store_get_ancestor(
-                &store, j, ancestor, &start, &end, &num_older_ancestors,
-                &num_focal_sites, &focal);
+    for (j = 1; j < store.num_epochs - 1; j++) {
+        /* printf("STARTING EPOCH %d\n", (int) j); */
+        ret = ancestor_store_get_epoch_ancestors(&store, j, epoch_ancestors,
+                &num_epoch_ancestors);
         if (ret != 0) {
-            fatal_error("get_ancestor error");
+            fatal_error("error getting epoch ancestors");
         }
-        ret = tree_sequence_builder_get_used_segments(&ts_builder, j, &segment_list);
+        ret = tree_sequence_builder_resolve(&ts_builder, j, epoch_ancestors, num_epoch_ancestors);
         if (ret != 0) {
-            fatal_error("get_used_segments error");
+            fatal_error("error resolve");
         }
-        if (verbose > 0) {
-            printf("ancestor %d:\t", (int) j);
-            for (l = 0; l < store.num_sites; l++) {
-                if (ancestor[l] == -1) {
-                    printf("*");
-                } else {
-                    printf("%d", ancestor[l]);
+        for (k = 0; k < num_epoch_ancestors; k++) {
+            ret = ancestor_store_get_ancestor(
+                    &store, epoch_ancestors[k], ancestor, &start, &end,
+                    &num_older_ancestors, &num_focal_sites, &focal);
+            if (ret != 0) {
+                fatal_error("get_ancestor error");
+            }
+            ret = tree_sequence_builder_get_live_segments(&ts_builder, epoch_ancestors[k],
+                    &segment_list);
+            if (ret != 0) {
+                fatal_error("get_used_segments error");
+            }
+            if (verbose > 0) {
+                printf("ancestor %d:\t", (int) epoch_ancestors[k]);
+                for (l = 0; l < store.num_sites; l++) {
+                    if (ancestor[l] == -1) {
+                        printf("*");
+                    } else {
+                        printf("%d", ancestor[l]);
+                    }
                 }
+                printf("\n");
+                printf("\t(%d, %d) num_focal=%d num_older=%d\n",
+                        start, end, (int) num_focal_sites, (int) num_older_ancestors);
             }
-            printf("\n");
-            printf("\t(%d, %d) num_focal=%d num_older=%d\n",
-                    start, end, (int) num_focal_sites, (int) num_older_ancestors);
-        }
-        for (seg = segment_list.head; seg != NULL; seg = seg->next) {
-            if (verbose > 0) {
-                printf("\tMatching on subsegment (%d, %d)\n", seg->start, seg->end);
+            for (seg = segment_list.head; seg != NULL; seg = seg->next) {
+                if (verbose > 0) {
+                    printf("\tMatching on subsegment (%d, %d)\n", seg->start, seg->end);
+                }
+                assert(seg->start >= start);
+                assert(seg->end <= end);
+                ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor,
+                        seg->start, seg->end, num_focal_sites, focal,
+                        0, &traceback, &end_site_value);
+                if (ret != 0) {
+                    fatal_error("match error");
+                }
+                if (verbose > 0) {
+                    /* traceback_print_state(&traceback, stdout); */
+                }
+                ret = tree_sequence_builder_update(&ts_builder, epoch_ancestors[k],
+                        ancestor, seg->start, seg->end, end_site_value, &traceback);
+                if (ret != 0) {
+                    fatal_error("update error");
+                }
+                ret = traceback_reset(&traceback);
+                if (ret != 0) {
+                    fatal_error("traceback reset error");
+                }
+                /* tree_sequence_builder_print_state(&ts_builder, stdout); */
             }
-            assert(seg->start >= start);
-            assert(seg->end <= end);
-            ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor,
-                    seg->start, seg->end, num_focal_sites, focal,
-                    0, &traceback, &end_site_value);
+            ret = segment_list_clear(&segment_list);
             if (ret != 0) {
-                fatal_error("match error");
+                fatal_error("segment_list reset error");
             }
-            if (verbose > 0) {
-                /* traceback_print_state(&traceback, stdout); */
-            }
-            ret = tree_sequence_builder_update(&ts_builder, j, ancestor, seg->start, seg->end,
-                    end_site_value, &traceback);
-            if (ret != 0) {
-                fatal_error("update error");
-            }
-            ret = traceback_reset(&traceback);
-            if (ret != 0) {
-                fatal_error("traceback reset error");
-            }
-            /* tree_sequence_builder_print_state(&ts_builder, stdout); */
         }
-        ret = segment_list_clear(&segment_list);
-        if (ret != 0) {
-            fatal_error("segment_list reset error");
-        }
+    }
+
+    epoch_ancestors[0] = 0;
+    ret = tree_sequence_builder_resolve(&ts_builder, store.num_epochs - 1, epoch_ancestors, 1);
+    if (ret != 0) {
+        fatal_error("error resolve");
     }
 
     if (verbose > 0) {
@@ -607,6 +628,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     free(focal_site_ancestor);
     free(ancestor_age);
     free(ancestor);
+    free(epoch_ancestors);
     free(positions);
     free(samples);
 }

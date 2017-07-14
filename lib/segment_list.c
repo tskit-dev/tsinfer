@@ -104,7 +104,7 @@ segment_list_append(segment_list_t *self, site_id_t start, site_id_t end)
         }
         self->tail = self->head;
     } else {
-        assert(self->tail->end <= start);
+        /* assert(self->tail->end <= start); */
         if (self->tail->end == start) {
             self->tail->end = end;
         } else {

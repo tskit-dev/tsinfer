@@ -11,13 +11,14 @@ ancestor_store_check_state(ancestor_store_t *self)
 {
     int ret;
     site_id_t l, start, end, *focal_sites;
-    size_t j;
+    size_t j, k;
     size_t total_segments = 0;
     size_t max_site_segments = 0;
-    size_t num_older_ancestors;
-    size_t num_focal_sites;
+    size_t num_older_ancestors, num_focal_sites, num_epoch_ancestors;
+    ancestor_id_t *epoch_ancestors = malloc(self->num_ancestors * sizeof(ancestor_id_t));
     allele_t *a = malloc(self->num_sites * sizeof(allele_t));
     assert(a != NULL);
+    assert(epoch_ancestors != NULL);
 
     for (l = 0; l < self->num_sites; l++) {
         total_segments += self->sites[l].num_segments;
@@ -47,6 +48,18 @@ ancestor_store_check_state(ancestor_store_t *self)
             }
         }
     }
+    for (j = 1; j < self->num_epochs; j++) {
+        ret = ancestor_store_get_epoch_ancestors(self, j,
+                epoch_ancestors, &num_epoch_ancestors);
+        assert(ret == 0);
+        assert(num_epoch_ancestors > 0);
+        for (k = 0; k < num_epoch_ancestors; k++) {
+            assert(self->ancestors.age[epoch_ancestors[0]] ==
+                    self->ancestors.age[epoch_ancestors[k]]);
+        }
+    }
+
+    free(epoch_ancestors);
     free(a);
 }
 
@@ -86,6 +99,12 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
+    fprintf(out, "epochs = \n");
+    fprintf(out, "id\tfirst_ancestor\tnum_ancestors\n");
+    for (j = 0; j < self->num_epochs; j++) {
+        fprintf(out, "%d\t%d\t%d\n", (int) j, (int) self->epochs.first_ancestor[j],
+                (int) self->epochs.num_ancestors[j]);
+    }
     ancestor_store_check_state(self);
     return 0;
 }
@@ -102,6 +121,7 @@ ancestor_store_alloc(ancestor_store_t *self,
     site_id_t j, l, site_start, site_end;
     size_t k, num_site_segments;
     uint32_t current_age, num_older_ancestors;
+    size_t current_epoch;
     ancestor_id_t seg_num_ancestors, ancestor_id;
 
     /* TODO error checking */
@@ -191,16 +211,37 @@ ancestor_store_alloc(ancestor_store_t *self,
         }
         site_start = site_end;
     }
-    /* Work out the number of older ancestors */
+    /* Work out the number of epochs */
+    self->num_epochs = 1;
+    current_age = 0;
+    for (j = 0; j < self->num_ancestors; j++) {
+        if (self->ancestors.age[j] != current_age) {
+            self->num_epochs++;
+            current_age = self->ancestors.age[j];
+        }
+    }
+    self->epochs.first_ancestor = calloc(self->num_epochs, sizeof(ancestor_id_t));
+    self->epochs.num_ancestors = calloc(self->num_epochs, sizeof(size_t));
+    if (self->epochs.first_ancestor == NULL || self->epochs.num_ancestors == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    /* Work out the number of older ancestors and assign to epochs */
     assert(self->num_ancestors > 1);
+    current_epoch = self->num_epochs - 1;
     current_age = self->ancestors.age[1] + 1;
+    self->epochs.first_ancestor[current_epoch] = 0;
+    self->epochs.num_ancestors[current_epoch] = 1;
     num_older_ancestors = 0;
     for (j = 1; j < self->num_ancestors; j++) {
         if (self->ancestors.age[j] < current_age) {
             num_older_ancestors = j;
             current_age = self->ancestors.age[j];
+            current_epoch--;
+            self->epochs.first_ancestor[current_epoch] = j;
         }
         self->ancestors.num_older_ancestors[j] = num_older_ancestors;
+        self->epochs.num_ancestors[current_epoch]++;
     }
     // TODO error checking.
     assert(self->total_segments == num_segments);
@@ -225,6 +266,8 @@ ancestor_store_free(ancestor_store_t *self)
     tsi_safe_free(self->ancestors.num_focal_sites);
     tsi_safe_free(self->ancestors.age);
     tsi_safe_free(self->ancestors.focal_sites_mem);
+    tsi_safe_free(self->epochs.first_ancestor);
+    tsi_safe_free(self->epochs.num_ancestors);
     return 0;
 }
 
@@ -284,5 +327,22 @@ ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
     *num_older_ancestors = self->ancestors.num_older_ancestors[ancestor_id];
     *end_site = l;
 out:
+    return ret;
+}
+
+
+int
+ancestor_store_get_epoch_ancestors(ancestor_store_t *self, int epoch,
+        ancestor_id_t *epoch_ancestors, size_t *num_epoch_ancestors)
+{
+    int ret = 0;
+    size_t j;
+
+    assert(epoch > 0);
+    assert(epoch < (int) self->num_epochs);
+    for (j = 0; j < self->epochs.num_ancestors[epoch]; j++) {
+        epoch_ancestors[j] = self->epochs.first_ancestor[epoch] + (ancestor_id_t) j;
+    }
+    *num_epoch_ancestors = self->epochs.num_ancestors[epoch];
     return ret;
 }

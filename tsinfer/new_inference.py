@@ -512,7 +512,7 @@ class TreeSequenceBuilder(object):
         self.edgesets.append(record)
 
     def resolve_identical_segments(self, segments):
-        segments.sort(key=lambda x: (x.start, -x.end))
+        # segments.sort(key=lambda x: (x.start, -x.end))
         S = segments
         n = len(segments)
         j = 0
@@ -596,7 +596,7 @@ class TreeSequenceBuilder(object):
         return ret
 
     def resolve_non_overlapping(self, segments, parent):
-        segments.sort(key=lambda x: (x.start, -x.end))
+        # segments.sort(key=lambda x: (x.start, -x.end))
         S = segments
         n = len(S)
         j = 0
