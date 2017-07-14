@@ -408,9 +408,12 @@ output_ts(tree_sequence_builder_t *ts_builder)
 {
     int ret = 0;
     size_t j, k, offset;
+    size_t num_nodes = ts_builder->num_nodes;
     size_t num_edgesets = ts_builder->num_edgesets;
     size_t num_children = ts_builder->num_children;
     size_t num_mutations = ts_builder->num_mutations;
+    double *time = malloc(num_nodes * sizeof(double));
+    uint32_t *flags = malloc(num_nodes * sizeof(uint32_t));
     double *left = malloc(num_edgesets * sizeof(double));
     double *right = malloc(num_edgesets * sizeof(double));
     ancestor_id_t *parent = malloc(num_edgesets * sizeof(ancestor_id_t));
@@ -420,10 +423,19 @@ output_ts(tree_sequence_builder_t *ts_builder)
     ancestor_id_t *node = malloc(num_mutations * sizeof(ancestor_id_t));
     allele_t *derived_state = malloc(num_mutations * sizeof(allele_t));
 
-    if (left == NULL || right == NULL || parent == NULL || children == NULL
-            || children_length == NULL || site == NULL || node == NULL
-            || derived_state == NULL) {
+    if (time == NULL || flags == NULL
+            || left == NULL || right == NULL || parent == NULL || children == NULL
+            || children_length == NULL
+            || site == NULL || node == NULL || derived_state == NULL) {
         fatal_error("malloc error\n");
+    }
+    ret = tree_sequence_builder_dump_nodes(ts_builder, flags, time);
+    if (ret != 0) {
+        fatal_error("dump error");
+    }
+    printf("NODES\n");
+    for (j = 0; j < num_nodes; j++) {
+        printf("%d\t%d\t%f\n", (int) j, flags[j], time[j]);
     }
     ret = tree_sequence_builder_dump_edgesets(ts_builder,
             left, right, parent, children, children_length);
@@ -448,6 +460,8 @@ output_ts(tree_sequence_builder_t *ts_builder)
     for (j = 0; j < num_mutations; j++) {
         printf("%d\t%d\t%d\n", site[j], node[j], derived_state[j]);
     }
+    free(time);
+    free(flags);
     free(left);
     free(right);
     free(parent);

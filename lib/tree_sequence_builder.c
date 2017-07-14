@@ -489,6 +489,22 @@ out:
     return ret;
 }
 
+
+int
+tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
+        double *time)
+{
+    int ret = 0;
+    size_t j;
+
+    memset(flags, 0, self->num_nodes * sizeof(uint32_t));
+    memcpy(time, self->node_time, self->num_nodes * sizeof(double));
+    for (j = 0; j < self->num_samples; j++) {
+        flags[self->num_ancestors + j] = 1;
+    }
+    return ret;
+}
+
 int
 tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
         double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children,
@@ -757,6 +773,10 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
     site_id_t right;
     const size_t max_returned_segments = num_segments + 2;
 
+    /* Keep the compiler happy */
+    intersection_j = 0;
+    intersection_k = 0;
+
     max_intersection = 0;
     j = 0;
     k = 1;
@@ -981,7 +1001,11 @@ tree_sequence_builder_resolve(tree_sequence_builder_t *self, int epoch,
         max_num_segments = GSL_MAX(max_num_segments, self->num_child_mappings[ancestors[j]]);
     }
     /* We can have some extra segments during coalescence, so allow for them */
-    max_num_segments += 2;
+    /* TODO There is some subtle issue here where the asserts in coalesce aren't
+     * catching this. Need to look into this more deeply.
+     */
+    /* DOUBLE TODO this is a quick hack, definitely not catching problems here */
+    max_num_segments += 16;
     segments = malloc(max_num_segments * sizeof(node_mapping_t));
     segments_buffer = malloc(max_num_segments * sizeof(node_mapping_t));
     if (segments == NULL || segments_buffer == NULL) {

@@ -111,49 +111,47 @@ def match_ancestors(
     work_queue = queue.Queue()
     tree_sequence_builder_lock = threading.Lock()
 
-    # COMMENTING OUT to avoid confusion during development.
-    # def ancestor_match_worker(thread_index):
-    #     # print("Thread ", thread_index, "started")
-    #     if method == "C":
-    #         matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-    #         traceback = _tsinfer.Traceback(store.num_sites, 2**20)
-    #     else:
-    #         matcher = AncestorMatcher(store, recombination_rate)
-    #         traceback = Traceback(store)
-    #     h = np.zeros(store.num_sites, dtype=np.int8)
-    #     while True:
-    #         ancestor_id = work_queue.get()
-    #         # print("Thread", thread_index, "got work", ancestor_id)
-    #         if ancestor_id is None:
-    #             break
-    #         with tree_sequence_builder_lock:
-    #             segs = tree_sequence_builder.get_live_segments(ancestor_id)
-    #         start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
-    #                 ancestor_id, h)
-    #         # print(start_site, end_site, num_older_ancestors)
-    #         for site in focal_sites:
-    #             assert h[site] == 1
-    #         assert len(focal_sites) > 0
-    #         for start, end in segs:
-    #             # print("\t", start, end)
-    #             assert start_site <= start
-    #             assert end_site >= end
-    #             end_site_parent = matcher.best_path(
-    #                     num_ancestors=num_older_ancestors,
-    #                     haplotype=h, start_site=start, end_site=end,
-    #                     focal_sites=focal_sites, error_rate=0, traceback=traceback)
-    #             with tree_sequence_builder_lock:
-    #                 tree_sequence_builder.update(
-    #                     child=ancestor_id, haplotype=h, start_site=start,
-    #                     end_site=end, end_site_parent=end_site_parent,
-    #                     traceback=traceback)
-    #         if show_progress:
-    #             progress.update()
-    #         traceback.reset()
-    #         work_queue.task_done()
-    #     work_queue.task_done()
-    #     # print("Thread", thread_index, ", exiting")
-
+    def ancestor_match_worker(thread_index):
+        # print("Thread ", thread_index, "started")
+        if method == "C":
+            matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
+            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
+        else:
+            matcher = AncestorMatcher(store, recombination_rate)
+            traceback = Traceback(store)
+        h = np.zeros(store.num_sites, dtype=np.int8)
+        while True:
+            ancestor_id = work_queue.get()
+            # print("Thread", thread_index, "got work", ancestor_id)
+            if ancestor_id is None:
+                break
+            with tree_sequence_builder_lock:
+                segs = tree_sequence_builder.get_live_segments(ancestor_id)
+            start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
+                    ancestor_id, h)
+            # print(start_site, end_site, num_older_ancestors)
+            for site in focal_sites:
+                assert h[site] == 1
+            assert len(focal_sites) > 0
+            for start, end in segs:
+                # print("\t", start, end)
+                assert start_site <= start
+                assert end_site >= end
+                end_site_parent = matcher.best_path(
+                        num_ancestors=num_older_ancestors,
+                        haplotype=h, start_site=start, end_site=end,
+                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
+                with tree_sequence_builder_lock:
+                    tree_sequence_builder.update(
+                        child=ancestor_id, haplotype=h, start_site=start,
+                        end_site=end, end_site_parent=end_site_parent,
+                        traceback=traceback)
+            if show_progress:
+                progress.update()
+            traceback.reset()
+            work_queue.task_done()
+        work_queue.task_done()
+        # print("Thread", thread_index, ", exiting")
 
     threads = [
         threading.Thread(target=ancestor_match_worker, args=(j,))
@@ -163,16 +161,25 @@ def match_ancestors(
         t.start()
     if show_progress:
         progress = tqdm.tqdm(total=store.num_ancestors - 1, desc="Match ancestors")
-    for age in sorted(same_age_ancestors.keys()):
-        # print("STARTING AGE", age, same_age_ancestors[age])
-        tree_sequence_builder.resolve(same_age_ancestors[age])
-        for ancestor_id in same_age_ancestors[age]:
+    epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
+    for epoch in range(1, store.num_epochs - 1):
+        num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
+        # print("STARTING EPOCH", epoch, num_epoch_ancestors)
+        tree_sequence_builder.resolve(epoch, epoch_ancestors[:num_epoch_ancestors])
+        for ancestor_id in map(int, epoch_ancestors[:num_epoch_ancestors]):
             work_queue.put(ancestor_id)
         work_queue.join()
-        # print("DONE", age)
+        # print("DONE", epoch)
+
     # Signal the threads to exit
     for _ in range(num_threads):
         work_queue.put(None)
+    # Resolve the final epoch
+    epoch = store.num_epochs - 1
+    num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
+    assert num_epoch_ancestors == 1
+    # print("FINAL EPOCH", epoch, num_epoch_ancestors)
+    tree_sequence_builder.resolve(epoch, epoch_ancestors[:num_epoch_ancestors])
     for t in threads:
         t.join()
     if show_progress:
@@ -243,7 +250,7 @@ def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_b
     num_nodes = tree_sequence_builder.num_nodes
     flags = np.zeros(num_nodes, dtype=np.uint32)
     time = np.zeros(num_nodes, dtype=np.float64)
-    tree_sequence_builder.dump_nodes(time, flags)
+    tree_sequence_builder.dump_nodes(flags, time)
     nodes = msprime.NodeTable()
     nodes.set_columns(flags=flags, time=time)
     del flags, time
@@ -319,49 +326,11 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
     match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         method=method, num_threads=num_threads, show_progress=show_progress)
-    # match_ancestors(
-    #     store, recombination_rate, tree_sequence_builder, method=method,
-    #     num_threads=num_threads, show_progress=show_progress)
+    match_ancestors(
+        store, recombination_rate, tree_sequence_builder, method=method,
+        num_threads=num_threads, show_progress=show_progress)
 
 
-    # TMP While developing algorithm.
-    all_ancestors = list(range(1, store.num_ancestors))
-    ancestor_age = map(store.get_age, all_ancestors)
-    same_age_ancestors = collections.defaultdict(list)
-    for ancestor_id, age in zip(all_ancestors, ancestor_age):
-        same_age_ancestors[age].append(ancestor_id)
-    matcher = AncestorMatcher(store, recombination_rate)
-    traceback = Traceback(store)
-    h = np.zeros(store.num_sites, dtype=np.int8)
-
-    for age in sorted(same_age_ancestors.keys()):
-        # print("STARTING AGE", age, same_age_ancestors[age])
-        tree_sequence_builder.resolve(same_age_ancestors[age], age)
-        # tree_sequence_builder.print_state()
-        for ancestor_id in same_age_ancestors[age]:
-            segs = tree_sequence_builder.get_live_segments(ancestor_id)
-            # print("live segments = ", segs)
-            start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
-                    ancestor_id, h)
-            # print(start_site, end_site, num_older_ancestors)
-            for site in focal_sites:
-                assert h[site] == 1
-            assert len(focal_sites) > 0
-            for start, end in segs:
-                # print("\t", start, end)
-                assert start_site <= start
-                assert end_site >= end
-                end_site_parent = matcher.best_path(
-                        num_ancestors=num_older_ancestors,
-                        haplotype=h, start_site=start, end_site=end,
-                        focal_sites=focal_sites, error_rate=0, traceback=traceback)
-                tree_sequence_builder.update(
-                    child=ancestor_id, haplotype=h, start_site=start,
-                    end_site=end, end_site_parent=end_site_parent,
-                    traceback=traceback)
-            traceback.reset()
-
-    tree_sequence_builder.resolve([0], age + 1)
     ts = finalise_tree_sequence(num_samples, store, positions, length, tree_sequence_builder)
 
     # for e in ts.edgesets():

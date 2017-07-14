@@ -1058,6 +1058,58 @@ fail:
 }
 
 static PyObject *
+AncestorStore_get_epoch_ancestors(AncestorStore *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"epoch", "ancestors", NULL};
+    PyObject *ancestors = NULL;
+    PyArrayObject *ancestors_array = NULL;
+    int epoch;
+    size_t num_ancestors;
+    npy_intp *shape;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iO!", kwlist,
+            &epoch, &PyArray_Type, &ancestors)) {
+        goto fail;
+    }
+    ancestors_array = (PyArrayObject *) PyArray_FROM_OTF(ancestors, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (ancestors_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(ancestors_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(ancestors_array);
+    if (shape[0] < self->store->num_ancestors) {
+        PyErr_SetString(PyExc_ValueError, "input ancestors potentially too small");
+        goto fail;
+    }
+    if (epoch < 0 || epoch > self->store->num_epochs) {
+        PyErr_SetString(PyExc_ValueError, "epoch out of bounds");
+        goto fail;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_store_get_epoch_ancestors(self->store, epoch,
+        (ancestor_id_t *) PyArray_DATA(ancestors_array), &num_ancestors);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(ancestors_array);
+    return Py_BuildValue("k", (unsigned long) num_ancestors);
+fail:
+    PyArray_XDECREF_ERR(ancestors_array);
+    return NULL;
+}
+
+
+static PyObject *
 AncestorStore_get_age(AncestorStore *self, PyObject *args, PyObject *kwds)
 {
     PyObject *ret = NULL;
@@ -1167,6 +1219,19 @@ out:
 }
 
 static PyObject *
+AncestorStore_get_num_epochs(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->store->num_epochs);
+out:
+    return ret;
+}
+
+static PyObject *
 AncestorStore_get_total_segments(AncestorStore *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -1212,6 +1277,7 @@ static PyMemberDef AncestorStore_members[] = {
 static PyGetSetDef AncestorStore_getsetters[] = {
     {"num_sites", (getter) AncestorStore_get_num_sites, NULL, "The number of sites."},
     {"num_ancestors", (getter) AncestorStore_get_num_ancestors, NULL, "The number of ancestors."},
+    {"num_epochs", (getter) AncestorStore_get_num_epochs, NULL, "The number of epochs."},
     {"total_segments", (getter) AncestorStore_get_total_segments, NULL,
         "The total number of segments across all sites."},
     {"max_num_site_segments", (getter) AncestorStore_get_max_num_site_segments, NULL,
@@ -1225,6 +1291,10 @@ static PyMethodDef AncestorStore_methods[] = {
     {"get_ancestor", (PyCFunction) AncestorStore_get_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Decodes the specified ancestor into the numpy array."},
+    {"get_epoch_ancestors", (PyCFunction) AncestorStore_get_epoch_ancestors,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns the number of ancestors in the specified epoch and fills the "
+        "specified array with the ancestors in question."},
     {"get_age", (PyCFunction) AncestorStore_get_age,
         METH_VARARGS|METH_KEYWORDS,
         "Returns the age of the specified ancestor."},
@@ -1773,7 +1843,59 @@ out:
 }
 
 static PyObject *
-TreeSequenceBuilder_get_used_segments(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+TreeSequenceBuilder_resolve(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"epoch", "ancestors", NULL};
+    PyObject *ancestors = NULL;
+    PyArrayObject *ancestors_array = NULL;
+    int epoch;
+    size_t num_ancestors;
+    npy_intp *shape;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iO", kwlist, &epoch, &ancestors)) {
+        goto out;
+    }
+    ancestors_array = (PyArrayObject *) PyArray_FROM_OTF(ancestors, NPY_INT32,
+            NPY_ARRAY_IN_ARRAY);
+    if (ancestors_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(ancestors_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(ancestors_array);
+    num_ancestors = shape[0];
+    if (num_ancestors == 0) {
+        PyErr_SetString(PyExc_ValueError, "Must have > 0 ancestors per epoch");
+        goto out;
+    }
+    /* TODO test the epoch upper bound. */
+    if (epoch < 1) {
+        PyErr_SetString(PyExc_ValueError, "epoch must be >= 1");
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_resolve(self->tree_sequence_builder, epoch,
+        (ancestor_id_t *) PyArray_DATA(ancestors_array), num_ancestors);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    Py_XDECREF(ancestors_array);
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_get_live_segments(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
     PyObject *ret = NULL;
@@ -1802,7 +1924,7 @@ TreeSequenceBuilder_get_used_segments(TreeSequenceBuilder *self, PyObject *args,
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_get_used_segments(self->tree_sequence_builder,
+    err = tree_sequence_builder_get_live_segments(self->tree_sequence_builder,
         (ancestor_id_t) parent_id, list);
     Py_END_ALLOW_THREADS
     if (err != 0) {
@@ -1818,6 +1940,74 @@ out:
     return ret;
 }
 
+static PyObject *
+TreeSequenceBuilder_dump_nodes(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"flags", "time", NULL};
+    PyObject *time = NULL;
+    PyArrayObject *time_array = NULL;
+    PyObject *flags = NULL;
+    PyArrayObject *flags_array = NULL;
+    size_t num_nodes;
+    npy_intp *shape;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto fail;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!", kwlist,
+            &PyArray_Type, &flags, &PyArray_Type, &time)) {
+        goto fail;
+    }
+    num_nodes = self->tree_sequence_builder->num_nodes;
+    /* time */
+    time_array = (PyArrayObject *) PyArray_FROM_OTF(time, NPY_FLOAT64,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (time_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(time_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(time_array);
+    if (shape[0] != num_nodes) {
+        PyErr_SetString(PyExc_ValueError, "input time wrong size");
+        goto fail;
+    }
+    /* flags */
+    flags_array = (PyArrayObject *) PyArray_FROM_OTF(flags, NPY_UINT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (flags_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(flags_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(flags_array);
+    if (shape[0] != num_nodes) {
+        PyErr_SetString(PyExc_ValueError, "input flags wrong size");
+        goto fail;
+    }
+
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_dump_nodes(self->tree_sequence_builder,
+        (uint32_t *) PyArray_DATA(flags_array),
+        (double *) PyArray_DATA(time_array));
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto fail;
+    }
+    Py_DECREF(time_array);
+    Py_DECREF(flags_array);
+    return Py_BuildValue("");
+fail:
+    PyArray_XDECREF_ERR(time_array);
+    PyArray_XDECREF_ERR(flags_array);
+    return NULL;
+}
 
 static PyObject *
 TreeSequenceBuilder_dump_edgesets(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
@@ -2059,6 +2249,19 @@ out:
 }
 
 static PyObject *
+TreeSequenceBuilder_get_num_nodes(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_nodes);
+out:
+    return ret;
+}
+
+static PyObject *
 TreeSequenceBuilder_get_num_children(TreeSequenceBuilder *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -2089,6 +2292,8 @@ static PyMemberDef TreeSequenceBuilder_members[] = {
 };
 
 static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
+    {"num_nodes", (getter) TreeSequenceBuilder_get_num_nodes, NULL,
+        "The number of edgesets."},
     {"num_edgesets", (getter) TreeSequenceBuilder_get_num_edgesets, NULL,
         "The number of edgesets."},
     {"num_children", (getter) TreeSequenceBuilder_get_num_children, NULL,
@@ -2102,9 +2307,15 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
     {"update", (PyCFunction) TreeSequenceBuilder_update,
         METH_VARARGS|METH_KEYWORDS,
         "Updates the builder with the specified copy result."},
-    {"get_used_segments", (PyCFunction) TreeSequenceBuilder_get_used_segments,
+    {"resolve", (PyCFunction) TreeSequenceBuilder_resolve,
+        METH_VARARGS|METH_KEYWORDS,
+        "Resolves the tree sequence for the specified epoch."},
+    {"get_live_segments", (PyCFunction) TreeSequenceBuilder_get_live_segments,
         METH_VARARGS|METH_KEYWORDS,
         "Returns the segments used on the specified ancestor."},
+    {"dump_nodes", (PyCFunction) TreeSequenceBuilder_dump_nodes,
+        METH_VARARGS|METH_KEYWORDS,
+        "Dumps node data into numpy arrays."},
     {"dump_edgesets", (PyCFunction) TreeSequenceBuilder_dump_edgesets,
         METH_VARARGS|METH_KEYWORDS,
         "Dumps edgeset data into numpy arrays."},

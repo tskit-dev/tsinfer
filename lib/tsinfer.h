@@ -235,6 +235,8 @@ int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self,
 int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
         ancestor_id_t end_site_parent, traceback_t *traceback);
+int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
+        uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
         double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children,
         uint32_t *children_length);
