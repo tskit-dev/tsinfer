@@ -1005,7 +1005,7 @@ tree_sequence_builder_resolve(tree_sequence_builder_t *self, int epoch,
      * catching this. Need to look into this more deeply.
      */
     /* DOUBLE TODO this is a quick hack, definitely not catching problems here */
-    max_num_segments += 16;
+    max_num_segments *= 4;
     segments = malloc(max_num_segments * sizeof(node_mapping_t));
     segments_buffer = malloc(max_num_segments * sizeof(node_mapping_t));
     if (segments == NULL || segments_buffer == NULL) {

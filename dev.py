@@ -1375,7 +1375,8 @@ if __name__ == "__main__":
     #     df.to_csv("gap-analysis.csv")
 
     # run_large_infers()
-    # analyse_file("tmp__NOBACKUP__/n=1000_L=10_simplified.hdf5")
+    # analyse_file("tmp__NOBACKUP__/n=2000_L=10_original.hdf5")
+    # analyse_file("tmp__NOBACKUP__/n=2000_L=10_simplified.hdf5")
 
     # for j in range(1, 10000):
     # # for j in [4]:
