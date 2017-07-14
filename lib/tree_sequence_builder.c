@@ -376,6 +376,11 @@ tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site
     int ret = 0;
     mutation_list_node_t *u, *v;
 
+    /* We can't handle zero derived states here yet as we're not handling the
+     * logic of traversing upwards correctly.
+     */
+    assert(derived_state == 1);
+
     v = tree_sequence_builder_alloc_mutation_list_node(self, node, derived_state);
     if (v == NULL) {
         ret = TSI_ERR_NO_MEMORY;

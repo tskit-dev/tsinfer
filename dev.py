@@ -702,8 +702,8 @@ def new_segments(n, L, seed, num_threads=10, method="C"):
         print("zero sites; skipping")
         return
     positions = np.array([site.position for site in ts.sites()])
-    # S = generate_samples(ts, 0.01)
-    S = generate_samples(ts, 0)
+    S = generate_samples(ts, 0.1)
+    # S = generate_samples(ts, 0)
 
     tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50,
             num_threads=num_threads, method=method)
@@ -1350,11 +1350,11 @@ if __name__ == "__main__":
 
     for j in range(1, 100000):
         print(j)
-        new_segments(50, 400, j)
+        new_segments(20, 300, j)
         # new_segments(10, 30, j, num_threads=1, method="P")
 
     # new_segments(20, 200, 13)
-    # new_segments(10, 10, 304, num_threads=1, method="P")
+    # new_segments(5, 5, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 

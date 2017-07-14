@@ -276,7 +276,10 @@ def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_b
     del left, right, parent, children, children_length
 
     sites = msprime.SiteTable()
-    ancestral_state = np.zeros(store.num_sites, dtype=np.int8) + ord('0')
+    # ancestral_state = np.empty(store.num_sites, dtype=np.int8)
+    # tree_sequence_builder.dump_sites(ancestral_state)
+    ancestral_state = np.zeros(store.num_sites, dtype=np.int8)
+    ancestral_state += ord('0')
     ancestral_state_length = np.ones(store.num_sites, dtype=np.uint32)
     sites.set_columns(
         position=position, ancestral_state=ancestral_state,
@@ -393,6 +396,7 @@ class TreeSequenceBuilder(object):
         self.num_samples = num_samples
         self.num_major_nodes = store.num_ancestors + self.num_samples
         self.num_mutations = 0
+        self.ancestral_state = np.zeros(self.num_sites, dtype=np.uint8)
         self.mutations = [[] for _ in range(self.num_sites)]
         self.parent = [[] for _ in range(self.num_major_nodes)]
         self.next_minor_node = self.num_major_nodes
@@ -423,6 +427,9 @@ class TreeSequenceBuilder(object):
         return sum(len(e.value[1]) for e in self.edgesets)
 
     def add_mutation(self, node, site, derived_state):
+        # We can't handle derived state as non-zero at the moment because of the
+        # way we are now travelling upwards from the root.
+        assert derived_state == 1
         self.mutations[site].append((node, derived_state))
         self.num_mutations += 1
 
@@ -606,7 +613,7 @@ class TreeSequenceBuilder(object):
             # self.draw_segments(segments)
 
 
-    def resolve(self, parents, age):
+    def resolve(self, age, parents):
         # print("RESOLVING TS @:", age, parents)
         # self.print_state()
         self.time_slice_minor_nodes = []
@@ -645,28 +652,6 @@ class TreeSequenceBuilder(object):
         # print("Getting live segments for ", parent, self.parent[parent], next_time_slice_segments)
         # self.next_time_slice_segments[parent] = None
         return next_time_slice_segments
-
-
-    def get_used_segments(self, parent):
-        """
-        Returns a list of the contiguous segments on the specified parent.
-        """
-        u = self.children[parent]
-        all_used = []
-        while u is not None:
-            if len(u.value) > 0:
-                all_used.append([u.start, u.end])
-            u = u.next
-        used = [list(all_used[0])]
-        for start, end in all_used[1:]:
-            # print("\t", start, end, used)
-            if start == used[-1][1]:
-                used[-1][1] = end
-            else:
-                used.append([start, end])
-        # print("ALL", all_used)
-        # print("FIL", used)
-        return used
 
 
     def select_parent(self, site, options):
@@ -760,7 +745,11 @@ class TreeSequenceBuilder(object):
         for k in range(self.num_major_nodes):
             print("\t", k, ":", self.next_time_slice_segments[k])
 
-    def dump_nodes(self, time, flags):
+    def dump_sites(self, ancestral_state):
+        # print("ancestral state = ", self.ancestral_state)
+        ancestral_state[:] = self.ancestral_state
+
+    def dump_nodes(self, flags, time):
         time[:] = 0
         max_t = 0
         for u, t in self.node_time.items():
@@ -854,6 +843,24 @@ class AncestorStore(object):
                 last_frequency = ancestor_age[j]
                 num_older_ancestors = j
             self.num_older_ancestors[j] = num_older_ancestors
+        self.num_epochs = np.unique(ancestor_age).shape[0] + 1
+        self.epoch_ancestors = [[] for _ in range(self.num_epochs)]
+        epoch = self.num_epochs - 2
+        last_frequency = ancestor_age[1]
+        for j in range(1, self.num_ancestors):
+            if ancestor_age[j] < last_frequency:
+                last_frequency = ancestor_age[j]
+                num_older_ancestors = j
+                epoch -= 1
+            self.epoch_ancestors[epoch].append(j)
+        self.epoch_ancestors[self.num_epochs - 1].append(0)
+
+    def get_epoch_ancestors(self, epoch, ancestors):
+        num_ancestors = len(self.epoch_ancestors[epoch])
+        for j in range(num_ancestors):
+            ancestors[j] = self.epoch_ancestors[epoch][j]
+        return num_ancestors
+
 
     def get_age(self, ancestor_id):
         return self.ancestor_age[ancestor_id]
