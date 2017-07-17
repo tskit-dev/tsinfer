@@ -145,6 +145,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     return 0;
 }
 
+/* #define RESOLVE_DEBUG */
 #ifdef RESOLVE_DEBUG
 static void
 tree_sequence_builder_draw_segments(tree_sequence_builder_t *self,
@@ -204,53 +205,6 @@ tree_sequence_builder_alloc_mutation_list_node(tree_sequence_builder_t *self,
 out:
     return ret;
 }
-
-/* static inline child_list_node_t * WARN_UNUSED */
-/* tree_sequence_builder_alloc_child_list_node(tree_sequence_builder_t *self, */
-/*         ancestor_id_t child) */
-/* { */
-/*     child_list_node_t *ret = NULL; */
-
-/*     if (object_heap_empty(&self->child_list_node_heap)) { */
-/*         if (object_heap_expand(&self->child_list_node_heap) != 0) { */
-/*             goto out; */
-/*         } */
-/*     } */
-/*     ret = (child_list_node_t *) object_heap_alloc_object(&self->child_list_node_heap); */
-/*     if (ret == NULL) { */
-/*         goto out; */
-/*     } */
-/*     ret->node = child; */
-/*     ret->next = NULL; */
-/*     self->num_children++; */
-/* out: */
-/*     return ret; */
-/* } */
-
-/* static inline int */
-/* tree_sequence_builder_add_child(tree_sequence_builder_t *self, list_segment_t *seg, */
-/*         ancestor_id_t child) */
-/* { */
-/*     int ret = 0; */
-/*     child_list_node_t *u = tree_sequence_builder_alloc_child_list_node(self, child); */
-
-/*     if (u == NULL) { */
-/*         ret = TSI_ERR_NO_MEMORY; */
-/*         goto out; */
-/*     } */
-/*     if (seg->head == NULL) { */
-/*         assert(seg->tail == NULL); */
-/*         seg->head = u; */
-/*         seg->tail = u; */
-/*         self->num_edgesets++; */
-/*     } else { */
-/*         assert(seg->tail != NULL); */
-/*         seg->tail->next = u; */
-/*         seg->tail = u; */
-/*     } */
-/* out: */
-/*     return ret; */
-/* } */
 
 static inline node_mapping_t * WARN_UNUSED
 tree_sequence_builder_alloc_node_mapping(tree_sequence_builder_t *self,
@@ -759,6 +713,7 @@ tree_sequence_builder_resolve_identical(tree_sequence_builder_t *self,
         j = k;
         k++;
     }
+    assert(num_returned <= num_segments);
     *num_result_segments = num_returned;
 out:
     return ret;
@@ -766,7 +721,7 @@ out:
 
 static int
 tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
-        size_t num_segments, node_mapping_t *segments,
+        size_t num_segments, size_t max_num_segments, node_mapping_t *segments,
         size_t *num_result_segments, node_mapping_t *result_segments)
 {
     int ret = 0;
@@ -776,7 +731,6 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
     size_t j, k, num_returned, intersection_j, intersection_k;
     int intersection, max_intersection;
     site_id_t right;
-    const size_t max_returned_segments = num_segments + 2;
 
     /* Keep the compiler happy */
     intersection_j = 0;
@@ -819,7 +773,7 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
         /*         (int) intersection_j, (int) intersection_k); */
         num_returned = 0;
         for (j = 0; j < intersection_j; j++) {
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
             num_returned++;
         }
@@ -827,7 +781,7 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
         k = intersection_k;
         if (S[j].left != S[k].left) {
             /* Trim off a new segment for the leading overhang. */
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[j].left, S[k].left, S[j].node);
             num_returned++;
             S[j].left = S[k].left;
@@ -844,28 +798,28 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
         if (ret != 0) {
             goto out;
         }
-        assert(num_returned < max_returned_segments);
+        assert(num_returned < max_num_segments);
         update_segment(R + num_returned, S[j].left, right, parent);
         num_returned++;
         /* Create segments for any overhang on the right hand side */
         if (S[j].right > S[k].right) {
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[k].right, S[j].right, S[j].node);
             num_returned++;
         } else if (S[k].right > S[j].right) {
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[j].right, S[k].right, S[k].node);
             num_returned++;
         }
         /* Fill in any missing segments between j and k */
         for (j = intersection_j + 1; j < intersection_k; j++) {
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
             num_returned++;
         }
         /* Fill out the remaining segments after k */
         for (j = intersection_k + 1; j < num_segments; j++) {
-            assert(num_returned < max_returned_segments);
+            assert(num_returned < max_num_segments);
             update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
             num_returned++;
         }
@@ -874,6 +828,7 @@ tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
          */
         qsort(R, num_returned, sizeof(node_mapping_t), cmp_node_mapping);
     }
+    assert(num_returned <= max_num_segments);
     *num_result_segments = num_returned;
 out:
     return ret;
@@ -920,6 +875,7 @@ tree_sequence_builder_resolve_non_overlapping(tree_sequence_builder_t *self,
         j = k;
         k++;
     }
+    assert(num_returned <= num_segments);
     *num_result_segments = num_returned;
 out:
     return ret;
@@ -927,8 +883,8 @@ out:
 
 static int
 tree_sequence_builder_resolve_ancestor(tree_sequence_builder_t *self,
-        ancestor_id_t ancestor, size_t num_segments, node_mapping_t *segments,
-        node_mapping_t *results_buffer)
+        ancestor_id_t ancestor, size_t num_segments, size_t max_num_segments,
+        node_mapping_t *segments, node_mapping_t *results_buffer)
 {
     int ret = 0;
     node_mapping_t *S[2];
@@ -966,7 +922,8 @@ tree_sequence_builder_resolve_ancestor(tree_sequence_builder_t *self,
         output_buffer = (output_buffer + 1) % 2;
 
         ret = tree_sequence_builder_resolve_largest_overlap(self,
-                N[input_buffer], S[input_buffer], &N[output_buffer], S[output_buffer]);
+                N[input_buffer], max_num_segments,
+                S[input_buffer], &N[output_buffer], S[output_buffer]);
         if (ret != 0) {
             goto out;
         }
@@ -1006,11 +963,9 @@ tree_sequence_builder_resolve(tree_sequence_builder_t *self, int epoch,
         max_num_segments = GSL_MAX(max_num_segments, self->num_child_mappings[ancestors[j]]);
     }
     /* We can have some extra segments during coalescence, so allow for them */
-    /* TODO There is some subtle issue here where the asserts in coalesce aren't
-     * catching this. Need to look into this more deeply.
-     */
-    /* DOUBLE TODO this is a quick hack, definitely not catching problems here */
-    max_num_segments *= 4;
+    /* TODO this number is actually unbounded in pathological cases, so this is
+     * approach is definitely bad. CHANGE!!*/
+    max_num_segments *= 8;
     segments = malloc(max_num_segments * sizeof(node_mapping_t));
     segments_buffer = malloc(max_num_segments * sizeof(node_mapping_t));
     if (segments == NULL || segments_buffer == NULL) {
@@ -1045,7 +1000,7 @@ tree_sequence_builder_resolve(tree_sequence_builder_t *self, int epoch,
         self->num_child_mappings[ancestors[j]] = 0;
         num_nodes_before = self->num_nodes;
         ret = tree_sequence_builder_resolve_ancestor(self, ancestors[j], num_segments,
-                segments, segments_buffer);
+                max_num_segments, segments, segments_buffer);
         if (ret != 0) {
             goto out;
         }

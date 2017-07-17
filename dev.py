@@ -29,9 +29,9 @@ import psutil
 import svgwrite
 import colour
 
-script_path = __file__ if "__file__" in locals() else "./dummy.py"
-sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
-sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
+# script_path = __file__ if "__file__" in locals() else "./dummy.py"
+# sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
+# sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
 
 
 import tsinfer
@@ -1327,10 +1327,16 @@ def analyse_file(filename):
     print("max children   = ", np.max(num_children))
     print("mean children  = ", np.mean(num_children))
 
+    for l, r_out, r_in in ts.diffs():
+        print(l, len(r_out), len(r_in), sep="\t")
+
     # for t in ts.trees():
-    #     t.draw("tree_{}.svg".format(t.index), 4000, 4000)
+    #     t.draw(
+    #         "tree_{}.svg".format(t.index), 4000, 4000, show_internal_node_labels=False,
+    #         show_leaf_node_labels=False)
     #     if t.index == 10:
     #         break
+
 
 def draw_tree_for_position(pos, ts):
     """
@@ -1348,12 +1354,12 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=200000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(20, 300, j)
-        # new_segments(10, 30, j, num_threads=1, method="P")
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(20, 300, j)
+    #     # new_segments(10, 30, j, num_threads=1, method="P")
 
-    # new_segments(20, 200, 13)
+    new_segments(20, 200, 13)
     # new_segments(5, 5, 304, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
