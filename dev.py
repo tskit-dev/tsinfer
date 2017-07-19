@@ -565,6 +565,87 @@ def new_segments(n, L, seed, num_threads=10, method="C"):
 
 
 
+def test_ancestor_store(n, L, seed, num_threads=10, method="C"):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+    if ts.num_sites == 0:
+        print("zero sites; skipping")
+        return
+    positions = np.array([site.position for site in ts.sites()])
+    samples = generate_samples(ts, 0)
+
+    num_samples, num_sites = samples.shape
+    if method == "C":
+        builder = _tsinfer.AncestorBuilder(samples, positions)
+        store_builder = _tsinfer.AncestorStoreBuilder(
+                builder.num_sites, 8192 * builder.num_sites)
+    else:
+        builder = tsinfer.AncestorBuilder(samples, positions)
+        store_builder = tsinfer.AncestorStoreBuilder(builder.num_sites)
+
+    frequency_classes = builder.get_frequency_classes()
+    total_ancestors = 1
+    num_focal_sites = 0
+    for age, ancestor_focal_sites in frequency_classes:
+        assert len(ancestor_focal_sites) > 0
+        total_ancestors += len(ancestor_focal_sites)
+        for focal_sites in ancestor_focal_sites:
+            assert len(focal_sites) > 0
+            num_focal_sites += len(focal_sites)
+    print("num_sites = ", ts.num_sites, "total ancestors = ", total_ancestors)
+
+    ancestor_age = np.zeros(total_ancestors, dtype=np.uint32)
+    focal_site_ancestor = np.zeros(num_focal_sites, dtype=np.int32)
+    focal_site = np.zeros(num_focal_sites, dtype=np.uint32)
+
+    row = 0
+    ancestor_id = 1
+    A = np.zeros((total_ancestors, num_sites), dtype=np.int8)
+    for age, ancestor_focal_sites in frequency_classes:
+        num_ancestors = len(ancestor_focal_sites)
+        for focal_sites in ancestor_focal_sites:
+            builder.make_ancestor(focal_sites, A[ancestor_id, :])
+            store_builder.add(A[ancestor_id, :])
+            for site in focal_sites:
+                focal_site_ancestor[row] = ancestor_id
+                focal_site[row] = site
+                row += 1
+            ancestor_age[ancestor_id] = age
+            ancestor_id += 1
+    assert row == num_focal_sites
+    assert ancestor_id == total_ancestors
+
+
+    N = store_builder.total_segments
+    site = np.zeros(N, dtype=np.uint32)
+    start = np.zeros(N, dtype=np.int32)
+    end = np.zeros(N, dtype=np.int32)
+    store_builder.dump_segments(site, start, end)
+    # assert np.max(end) == total_ancestors
+    # assert np.min(start) == 0
+
+    if method == "C":
+        store = _tsinfer.AncestorStore(
+            position=positions, site=site, start=start, end=end,
+            ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
+            focal_site=focal_site)
+    else:
+        store = tsinfer.AncestorStore(
+            position=positions, site=site, start=start, end=end,
+            ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
+            focal_site=focal_site)
+
+    # Now check if we recover the ancestors correctly.
+    B = np.zeros((total_ancestors, num_sites), dtype=np.int8)
+    for j in range(total_ancestors):
+        store.get_ancestor(j, B[j, :])
+    # print(A)
+    # print(B)
+    assert np.all(A == B)
+
+
+
 def export_samples(n, L, seed):
 
     ts = msprime.simulate(
@@ -1185,10 +1266,14 @@ if __name__ == "__main__":
 
     for j in range(1, 100000):
         print(j)
-        new_segments(20, 300, j)
+        # new_segments(20, 300, j)
         # new_segments(10, 30, j, num_threads=1, method="P")
+        # test_ancestor_store(20, 30, j, method="P")
+        test_ancestor_store(200, 500, j, method="C")
 
-    # new_segments(20, 300, 10)
+    # test_ancestor_store(20, 300, 861)
+
+    # new_segments(20, 300, 861)
 
     # new_segments(4, 4, 1, num_threads=1, method="P")
 
