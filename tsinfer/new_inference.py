@@ -31,10 +31,11 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     num_samples, num_sites = samples.shape
     if method == "C":
         builder = _tsinfer.AncestorBuilder(samples, positions)
+        store_builder = _tsinfer.AncestorStoreBuilder(
+                builder.num_sites, 8192 * builder.num_sites)
     else:
         builder = AncestorBuilder(samples, positions)
-    store_builder = _tsinfer.AncestorStoreBuilder(
-            builder.num_sites, 8192 * builder.num_sites)
+        store_builder = AncestorStoreBuilder(builder.num_sites)
 
     frequency_classes = builder.get_frequency_classes()
     total_ancestors = 1
@@ -60,7 +61,9 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
         p = np.zeros(num_ancestors, dtype=np.uint32)
         for j, focal_sites in enumerate(ancestor_focal_sites):
             builder.make_ancestor(focal_sites, A[j, :])
-        _tsinfer.sort_ancestors(A, p)
+        # FIXME: just commented out here for quick profiling.
+        # _tsinfer.sort_ancestors(A, p)
+        p[:] = np.arange(num_ancestors)
         for index in p:
             store_builder.add(A[index, :])
             for site in ancestor_focal_sites[index]:
@@ -81,11 +84,10 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     site = np.zeros(N, dtype=np.uint32)
     start = np.zeros(N, dtype=np.int32)
     end = np.zeros(N, dtype=np.int32)
-    state = np.zeros(N, dtype=np.int8)
-    store_builder.dump_segments(site, start, end, state)
+    store_builder.dump_segments(site, start, end)
 
-    assert np.max(end) == total_ancestors
-    assert np.min(start) == 0
+    # assert np.max(end) == total_ancestors
+    # assert np.min(start) == 0
 
     if method == "C":
         store = _tsinfer.AncestorStore(
@@ -94,7 +96,7 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
             focal_site=focal_site)
     else:
         store = AncestorStore(
-            position=positions, site=site, start=start, end=end, state=state,
+            position=positions, site=site, start=start, end=end,
             ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
             focal_site=focal_site)
     # store.print_state()
@@ -691,6 +693,7 @@ class TreeSequenceBuilder(object):
             options.extend(range(v.start, v.end))
         assert len(options) > 0
         parent = self.select_parent(end_site - 1, options)
+        # print("H = ", haplotype)
         # print("INITIAL parent = ", parent, "options = ", options)
         for l in range(end_site - 1, start_site, -1):
             state = self.store.get_state(l, parent)
@@ -814,7 +817,7 @@ class AncestorStore(object):
     """
     """
     def __init__(self, position=None,
-            site=None, start=None, end=None, state=None,
+            site=None, start=None, end=None,
             ancestor_age=None, focal_site_ancestor=None, focal_site=None):
         self.num_sites = position.shape[0]
         self.num_ancestors = np.max(end)
@@ -833,7 +836,7 @@ class AncestorStore(object):
         j = 0
         for l in range(self.num_sites):
             while j < site.shape[0] and site[j] == l:
-                self.sites[l].segments.append(Segment(start[j], end[j], state[j]))
+                self.sites[l].segments.append(Segment(start[j], end[j]))
                 j += 1
         self.num_older_ancestors = np.zeros(self.num_sites, dtype=np.uint32)
         num_older_ancestors = 1
@@ -876,20 +879,21 @@ class AncestorStore(object):
             start, end, num_older_ancestors, focal_sites = self.get_ancestor(j, a)
             age = self.ancestor_age[j]
             h = "".join(str(x) if x != -1 else '*' for x in a)
-            print(age, start, end, num_older_ancestors, focal_sites, h, sep="\t")
+            print(j, age, start, end, num_older_ancestors, h, focal_sites, sep="\t")
 
 
     def get_state(self, site, ancestor):
         """
         Returns the state of the specified ancestor at the specified site.
         """
-        for seg in self.sites[site].segments:
+        ret = 0
+        if len(self.sites[site].segments) > 0:
+            for seg in self.sites[site].segments:
+                if seg.start <= ancestor < seg.end:
+                    break
             if seg.start <= ancestor < seg.end:
-                break
-        if seg.start <= ancestor < seg.end:
-            return seg.value
-        else:
-            return -1
+                ret = 1
+        return ret
 
     def get_ancestor(self, ancestor_id, a):
         a[:] = -1
@@ -912,6 +916,66 @@ class AncestorStore(object):
         if len(focal_sites) > 0:
             assert start_site <= focal_sites[0] <= focal_sites[-1] < end_site
         return start_site, end_site, num_older_ancestors, focal_sites
+
+
+
+
+class AncestorStoreBuilder(object):
+    def __init__(self, num_sites):
+        self.num_sites = num_sites
+        self.sites_head = [None for _ in range(self.num_sites)]
+        self.sites_tail = [None for _ in range(self.num_sites)]
+        self.num_ancestors = 1
+
+    @property
+    def total_segments(self):
+        ret = 0
+        for l in range(self.num_sites):
+            u = self.sites_head[l]
+            while u is not None:
+                ret += 1
+                u = u.next
+        return ret
+
+    def dump_segments(self, site, start, end):
+        j = 0
+        for l in range(self.num_sites):
+            u = self.sites_head[l]
+            while u is not None:
+                site[j] = l
+                start[j] = u.start
+                end[j] = u.end
+                u = u.next
+                j += 1
+
+    def add(self, ancestor):
+        n = self.num_ancestors
+        self.num_ancestors += 1
+        for l in range(self.num_sites):
+            state = ancestor[l]
+            if self.sites_head[l] is None:
+                if state == 1:
+                    self.sites_head[l] = LinkedSegment(n, n + 1)
+                    self.sites_tail[l] = self.sites_head[l]
+            else:
+                if state == 1:
+                    if self.sites_tail[l].end == n:
+                        self.sites_tail[l].end += 1
+                    else:
+                        seg = LinkedSegment(n, n + 1)
+                        self.sites_tail[l].next = seg
+                        self.sites_tail[l] = seg
+
+    def print_state(self):
+        print("Store builder state")
+        for l in range(self.num_sites):
+            print(l, "\t", end="")
+            u = self.sites_head[l]
+            while u is not None:
+                print("({}, {})".format(u.start, u.end), end="")
+                u = u.next
+            print()
+
 
 
 @attr.s
@@ -982,7 +1046,9 @@ class AncestorBuilder(object):
                 break
 
     def make_ancestor(self, focal_sites, a):
-        a[:] = -1
+        # a[:] = -1
+        # Setting to 0 for now to see if we can take advantage of other RLE.
+        a[:] = 0
         focal_site = self.sites[focal_sites[0]]
         sites = range(focal_sites[-1] + 1, self.num_sites)
         self.__build_ancestor_sites(focal_site, sites, a)
@@ -1059,7 +1125,6 @@ class AncestorMatcher(object):
         # print("store = ", self.store)
         n = num_ancestors
         L = [Segment(0, n, 1)]
-        best_haplotype = 0
         # Ensure that the initial recombination rate is zero
         last_position = self.store.sites[start_site].position
         possible_recombinants = n
@@ -1073,7 +1138,6 @@ class AncestorMatcher(object):
         for site in range(start_site, end_site):
             if focal_site_index < len(focal_sites) and site > focal_sites[focal_site_index]:
                 focal_site_index += 1
-            # print("site = ", site, focal_site_index, focal_sites)
 
             L_next = []
             # S = [Segment(*s) for s in self.store.get_site(site)]
@@ -1095,9 +1159,9 @@ class AncestorMatcher(object):
             # print("pr= ", pr)
             # print("qr= ", qr)
             # print("L = ", L)
+            # print("B = ", sorted(L, key=lambda x: -x.value))
             # print("S = ", S)
             # print("h = ", h[site])
-            # print("b = ", best_haplotype)
 
             l = 0
             s = 0
@@ -1109,65 +1173,64 @@ class AncestorMatcher(object):
                         end = min(end, L[l].start)
                     else:
                         end = min(end, L[l].end)
+                state = 0
                 if s < len(S):
                     if S[s].start > start:
                         end = min(end, S[s].start)
                     else:
                         end = min(end, S[s].end)
-                # print("\tLOOP HEAD: start = ", start, "end = ", end)
+                    if S[s].start <= start and end <= S[s].end:
+                        state = 1
+
+                # print("\tLOOP HEAD:")
                 # print("\ts = ", s)
                 # print("\tl = ", l)
+                # print("\tstart = ", start)
+                # print("\tend   = ", end)
+                # print("\tstate = ", state)
+
                 assert start < end
-                # The likelihood of this interval is always 0 if it does not intersect
-                # with S
-                if s < len(S) and not (S[s].start >= end or S[s].end <= start):
-                    state = S[s].value
-                    # If this interval does not intersect with L, the likelihood is 0
-                    likelihood = 0
-                    if l < len(L) and not (L[l].start >= end or L[l].end <= start):
-                        likelihood = L[l].value
+                # If this interval does not intersect with L, the likelihood is 0
+                likelihood = 0
+                if l < len(L) and not (L[l].start >= end or L[l].end <= start):
+                    likelihood = L[l].value
 
-                    x = likelihood * qr
-                    y = pr  # v for maximum is 1 by normalisation
-                    # print("\t", start, end, x, y)
-                    if x >= y:
-                        z = x
-                    else:
-                        z = y
-                        traceback.add_recombination(site, start, end)
+                x = likelihood * qr
+                y = pr  # v for maximum is 1 by normalisation
+                # print("\t", start, end, x, y)
+                if x >= y:
+                    z = x
+                else:
+                    z = y
+                    traceback.add_recombination(site, start, end)
 
-                    # Determine the likelihood for this segment.
-                    if error_rate == 0:
-                        # Ancestor matching.
-                        likelihood_next = z * int(state == h[site])
-                        # if site in focal_sites:
-                        #     assert h[site] == 1
-                        #     assert state == 0
-                        #     likelihood_next = z
-                        #     focal_site_index += 1
-
-                        if focal_site_index < len(focal_sites):
-                            if site == focal_sites[focal_site_index]:
-                                assert h[site] == 1
-                                assert state == 0
-                                likelihood_next = z
-                            else:
-                                assert site < focal_sites[focal_site_index]
-                    else:
-                        # Sample matching.
-                        if state == h[site]:
-                            likelihood_next = z * (1 - error_rate)
+                # Determine the likelihood for this segment.
+                if error_rate == 0:
+                    # Ancestor matching.
+                    likelihood_next = z * int(state == h[site])
+                    if focal_site_index < len(focal_sites):
+                        if site == focal_sites[focal_site_index]:
+                            assert h[site] == 1
+                            assert state == 0
+                            likelihood_next = z
                         else:
-                            likelihood_next = z * error_rate
-
-                    # Update the L_next array
-                    if len(L_next) == 0:
-                        L_next = [Segment(start, end, likelihood_next)]
+                            assert site < focal_sites[focal_site_index]
+                else:
+                    # Sample matching.
+                    if state == h[site]:
+                        likelihood_next = z * (1 - error_rate)
                     else:
-                        if L_next[-1].end == start and L_next[-1].value == likelihood_next:
-                            L_next[-1].end = end
-                        else:
-                            L_next.append(Segment(start, end, likelihood_next))
+                        likelihood_next = z * error_rate
+
+                # Update the L_next array
+                if len(L_next) == 0:
+                    L_next = [Segment(start, end, likelihood_next)]
+                else:
+                    if L_next[-1].end == start and L_next[-1].value == likelihood_next:
+                        L_next[-1].end = end
+                    else:
+                        L_next.append(Segment(start, end, likelihood_next))
+
                 start = end
                 if l < len(L) and L[l].end <= start:
                     l += 1
@@ -1188,12 +1251,6 @@ class AncestorMatcher(object):
                 for seg in L:
                     seg.value /= max_value
             last_position = self.store.sites[site].position
-            # Compute the possible recombination destinations for the next iteration.
-            s = 0
-            possible_recombinants = 0
-            while s < len(S) and S[s].start < n:
-                possible_recombinants += min(n, S[s].end) - S[s].start
-                s += 1
 
         # print("focal_site_index = ", focal_site_index, len(focal_sites))
         # assert focal_site_index == len(focal_sites)

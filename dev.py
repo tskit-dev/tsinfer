@@ -303,33 +303,58 @@ def build_ancestors_dev(n, L, seed):
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
         Ne=10**4, random_seed=seed)
-    print("num_sites = ", ts.num_sites)
-    position = [site.position for site in ts.sites()]
+    position = np.array([site.position for site in ts.sites()])
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
 
     # builder = _tsinfer.AncestorBuilder(S, position)
-    builder = tsinfer.AncestorBuilder(S, position)
-    store_builder = _tsinfer.AncestorStoreBuilder(
-        builder.num_sites, builder.num_sites * 8192)
+    store = tsinfer.build_ancestors(S, position, method="C")
+    print(store)
+    # store.print_state()
+    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8) - 1
+    for j in range(store.num_ancestors):
+        store.get_ancestor(j, A[j,:])
+    print(A)
+    # np.save("tmp__NOBACKUP__/10k-ancestors.npy", A)
 
-    for frequency_class, focal_sites in builder.get_frequency_classes():
+    # n0 = 0
+    # n1 = 0
+    # for l in range(store.num_sites):
+    #     # print(l, store.get_site(l))
+    #     for start, end, state in store.get_site(l):
+    #         if state == 0:
+    #             n0 += (end - start)
+    #         elif state == 1:
+    #             n1 += (end - start)
 
-        print(frequency_class, focal_sites)
-        patterns = collections.defaultdict(list)
-        for focal_site in focal_sites:
-            site_pattern = tuple(S[:,focal_site])
-            patterns[site_pattern].append(focal_site)
-        num_ancestors = len(patterns)
-        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
-        p = np.zeros(num_ancestors, dtype=np.uint32)
-        for j, sites in enumerate(patterns.values()):
-            builder.make_ancestor(sites, A[j, :])
-        _tsinfer.sort_ancestors(A, p)
-        for j in num_ancestors:
-            store_builder.add(A[index, :])
+    # total = store.num_ancestors * store.num_sites
+    # nm1 = total - n0 - n1
 
+    print("n      ", n)
+    print("sites  ", ts.num_sites)
+    # print("zero   ", n0 / total)
+    # print("one    ", n1 / total)
+    # print("null   ", nm1 / total)
+
+
+    # p = np.zeros(store.num_ancestors, dtype=np.uint32)
+    # _tsinfer.sort_ancestors(A, p)
+
+    # print("p = ", p)
+    # for j in range(store.num_ancestors):
+    #     a = A[p[j]]
+    #     s = "".join(str(x) if x != -1 else '*' for x in a)
+    #     print(s)
+
+
+def examine_ancestors():
+    A = np.load("tmp__NOBACKUP__/10k-ancestors.npy")
+    print(A.shape)
+    for j in range(A.shape[0]):
+        a = A[j,-500:]
+        s = "".join(str(x) if x != -1 else '*' for x in a)
+        print(s)
 
 def load_ancestors_dev(filename):
 
@@ -492,202 +517,6 @@ def generate_samples(ts, error_p):
             s = np.sum(S[:, variant.index])
             done = 0 < s < ts.sample_size
     return S
-
-
-def sort_ancestor_slice(A, p, start, end, sort_order, depth=0):
-    n = end - start
-    if n > 1:
-        # print("  " * depth, "Sort Ancestor slice:", start, ":", end, sep="")
-        # print("  " * depth, "p = ", p, sep="")
-        m = A.shape[1]
-        max_segment_breaks = 0
-        sort_site = -1
-        for l in range(m):
-            col = A[p[start:end], l]
-            segment_breaks = 0
-            for j in range(n):
-                if j < n - 1:
-                    if sort_order == 0:
-                        if col[j] > col[j + 1]:
-                            segment_breaks += 1
-                    else:
-                        if col[j] <= col[j + 1]:
-                            segment_breaks += 1
-            # if segment_breaks > 1:
-            #     print("col = ", col, "segment_breaks = ", segment_breaks)
-            if segment_breaks > max_segment_breaks:
-                max_segment_breaks = segment_breaks
-                sort_site = l
-        if max_segment_breaks > 1:
-            # print("sort_site = ", sort_site)
-            # # print("A = ", A[p[start: end], sort_site])
-            sorting = np.argsort(A[p[start: end], sort_site])
-            if sort_order == 1:
-                sorting = sorting[::-1]
-            # print("sorting = ", sorting, sorting.dtype)
-            # print(p)
-            # print(p[sorting])
-            p[start: end] = p[start + sorting]
-            # print("after", p)
-            assert np.all(np.unique(p) == np.arange(p.shape[0]))
-            # recursively sort within these partitions.
-            for j in range(start, end - 1):
-                # print(depth * "  ", "testing:", j, A[p[j], sort_site],  A[p[j + 1], sort_site])
-                if A[p[j], sort_site] != A[p[j + 1], sort_site]:
-                    sort_ancestor_slice(A, p, start, j + 1, sort_order, depth + 1)
-                    start = j + 1
-                    # print(depth * " ", "start = ", start)
-
-
-def sort_ancestors(A, p, sort_order):
-    """
-    Sorts the specified array of ancestors to maximise the effectiveness
-    of the run length encoding.
-    """
-    n, m = A.shape
-    p[:] = np.arange(n, dtype=int)
-    # print("BEFORE")
-    # for j in range(n):
-    #     a = "".join(str(x) if x != -1 else '*' for x in A[p[j],:])
-    #     print(j, "\t", a)
-    sort_ancestor_slice(A, p, 0, n, sort_order, 0)
-    # print("AFTER")
-    # for j in range(n):
-    #     a = "".join(str(x) if x != -1 else '*' for x in A[p[j], :])
-    #     print(j, "\t", a)
-
-
-def build_ancestors(n, L, seed):
-
-    ts = msprime.simulate(
-        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
-        Ne=10**4, random_seed=seed)
-    print("num_sites = ", ts.num_sites)
-    # print("simulation done, num_sites = ", ts.num_sites)
-
-    # ts.dump(filename.split(".")[0] + ".ts.hdf5")
-
-    position = [site.position for site in ts.sites()]
-
-    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
-    for variant in ts.variants():
-        S[:, variant.index] = variant.genotypes
-    np.random.seed(seed)
-    # S = generate_samples(ts, 0.01)
-
-    builder = _tsinfer.AncestorBuilder(S, position)
-    store_builder = _tsinfer.AncestorStoreBuilder(
-        builder.num_sites, builder.num_sites * 8192)
-    num_threads = 20
-
-    def build_frequency_class(work):
-        frequency, focal_sites = work
-        num_ancestors = len(focal_sites)
-        A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
-        p = np.zeros(num_ancestors, dtype=np.uint32)
-        # print("frequency:", frequency, "sites = ", focal_sites)
-        for j, focal_site in enumerate(focal_sites):
-            builder.make_ancestor(focal_site, A[j, :])
-        _tsinfer.sort_ancestors(A, p)
-        # p = np.arange(num_ancestors, dtype=np.uint32)
-        return frequency, focal_sites, A, p
-
-    # TODO make these numpy arrays
-    ancestor_focal_site = [-1]
-    ancestor_frequency = [0]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        for result in executor.map(build_frequency_class, builder.get_frequency_classes()):
-            frequency, focal_sites, A, p = result
-            for index in p:
-                # print("adding:", A[index, :], frequency, focal_sites[index])
-                # TODO add in the focal site informatino for matching on
-                # ancestors.
-                store_builder.add(A[index, :])
-                ancestor_focal_site.append(focal_sites[index])
-                ancestor_frequency.append(frequency)
-
-    N = store_builder.total_segments
-    site = np.zeros(N, dtype=np.uint32)
-    start = np.zeros(N, dtype=np.int32)
-    end = np.zeros(N, dtype=np.int32)
-    state = np.zeros(N, dtype=np.int8)
-    store_builder.dump_segments(site, start, end, state)
-    with h5py.File(filename, "w") as f:
-        g = f.create_group("segments")
-        g.create_dataset("site", data=site)
-        g.create_dataset("start", data=start)
-        g.create_dataset("end", data=end)
-        g.create_dataset("state", data=state)
-        g = f.create_group("sites")
-        g.create_dataset("position", data=position)
-        g = f.create_group("samples")
-        g.create_dataset("haplotypes", data=S)
-        g = f.create_group("ancestors")
-        g.create_dataset("frequency", data=ancestor_frequency, dtype=np.int32)
-        g.create_dataset("focal_site", data=ancestor_focal_site, dtype=np.uint32)
-
-    store = _tsinfer.AncestorStore(
-        position=position, focal_site=ancestor_focal_site,
-        site=site, start=start, end=end, state=state)
-
-    print("num sites        :", store.num_sites)
-    print("num ancestors    :", store.num_ancestors)
-    print("max_segments     :", store.max_num_site_segments)
-    print("mean_segments    :", store.total_segments / store.num_sites)
-    print("Memory           :", humanize.naturalsize(store.total_memory))
-    print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
-    print("Sample memory    :", humanize.naturalsize(S.nbytes))
-
-def load_ancestors(filename, show_progress=True, num_threads=1):
-
-    with h5py.File(filename, "r") as f:
-        sites = f["sites"]
-        segments = f["segments"]
-        ancestors = f["ancestors"]
-        store = _tsinfer.AncestorStore(
-            position=sites["position"],
-            focal_site=ancestors["focal_site"],
-            site=segments["site"],
-            start=segments["start"],
-            end=segments["end"],
-            state=segments["state"])
-        samples = f["samples"]
-        S = samples["haplotypes"][()]
-
-    print("pid              :", os.getpid())
-    print("num sites        :", store.num_sites)
-    print("num ancestors    :", store.num_ancestors)
-    print("max_segments     :", store.max_num_site_segments)
-    print("mean_segments    :", store.total_segments / store.num_sites)
-    print("Memory           :", humanize.naturalsize(store.total_memory))
-    print("Uncompressed     :", humanize.naturalsize(store.num_ancestors * store.num_sites))
-
-    num_samples = S.shape[0]
-    tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
-    recombination_rate = 1e-8
-    error_rate = 1e-20
-    method = "C"
-    tsinfer.match_ancestors(
-        store, recombination_rate, tree_sequence_builder, method=method,
-        num_threads=num_threads)
-    tsinfer.match_samples(
-        store, S, recombination_rate, error_rate, tree_sequence_builder,
-        method=method, num_threads=num_threads)
-    ts = tsinfer.finalise_tree_sequence(num_samples, store, tree_sequence_builder)
-
-    ts = ts.simplify()
-    ts.dump(filename.split(".")[0] + ".inferred_ts.hdf5")
-
-    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
-    print("RAM              :", humanize.naturalsize(memory))
-
-    for j, h in enumerate(ts.haplotypes()):
-        assert "".join(map(str, S[j])) == h
-
-    # duration_cpu = time.clock() - before_cpu
-    # duration_wall = time.time() - before_wall
-    # print("Copying CPU time :", humanize.naturaldelta(duration_cpu))
-    # print("Copying wall time:", humanize.naturaldelta(duration_wall))
 
 def new_segments(n, L, seed, num_threads=10, method="C"):
 
@@ -1352,15 +1181,16 @@ def draw_tree_for_position(pos, ts):
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
-    np.set_printoptions(threshold=200000)
+    np.set_printoptions(threshold=20000000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(20, 300, j)
-    #     # new_segments(10, 30, j, num_threads=1, method="P")
+    for j in range(1, 100000):
+        print(j)
+        # new_segments(20, 300, j)
+        new_segments(10, 30, j, num_threads=1, method="P")
 
-    new_segments(20, 200, 13)
-    # new_segments(5, 5, 304, num_threads=1, method="P")
+    # new_segments(20, 200, 13)
+
+    # new_segments(4, 4, 1, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
@@ -1411,7 +1241,12 @@ if __name__ == "__main__":
     #         df.to_csv("diff-analysis.csv")
 
     # visualise_copying(8, 4, 5)
-    # build_ancestors_dev(10, 10000, 3)
+    # build_ancestors_dev(10000, 5 * 10**6, 3)
+    # build_ancestors_dev(10, 10**5, 3)
+    # examine_ancestors()
+    # for j in range(50, 100, 10):
+    #     build_ancestors_dev(10000, j * 10**6, 3)
+    #     print()
     # for j in range(555550):
     # # j = 1
     #     try:
