@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "block_allocator.h"
 #include "object_heap.h"
 
 /* TODO change this to node_id_t */
@@ -75,7 +76,7 @@ typedef struct {
     size_t segment_block_size;
     node_segment_list_node_t **sites_head;
     node_segment_list_node_t **sites_tail;
-    object_heap_t segment_heap;
+    block_allocator_t allocator;
 } ancestor_store_builder_t;
 
 typedef struct {

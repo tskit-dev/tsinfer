@@ -12,9 +12,9 @@ LDFLAGS=-lm
 
 COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o ancestor_store.o\
 	 ancestor_sorter.o ancestor_store_builder.o traceback.o \
-	 tree_sequence_builder.c segment_list.c
+	 tree_sequence_builder.c segment_list.c block_allocator.o
 
-HEADERS=tsinfer.h err.h
+HEADERS=tsinfer.h err.h block_allocator.h object_heap.h
 
 all: main 
 

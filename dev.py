@@ -578,8 +578,8 @@ def test_ancestor_store(n, L, seed, num_threads=10, method="C"):
     num_samples, num_sites = samples.shape
     if method == "C":
         builder = _tsinfer.AncestorBuilder(samples, positions)
-        store_builder = _tsinfer.AncestorStoreBuilder(
-                builder.num_sites, 8192 * builder.num_sites)
+        gigabyte = 2**30
+        store_builder = _tsinfer.AncestorStoreBuilder(builder.num_sites, gigabyte)
     else:
         builder = tsinfer.AncestorBuilder(samples, positions)
         store_builder = tsinfer.AncestorStoreBuilder(builder.num_sites)
@@ -1269,9 +1269,15 @@ if __name__ == "__main__":
         # new_segments(20, 300, j)
         # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
-        test_ancestor_store(200, 500, j, method="C")
+        test_ancestor_store(200, 1000, j, method="C")
 
     # test_ancestor_store(20, 300, 861)
+
+    # new_segments(20, 300, 861)
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(20, 300, j)
+    #     # new_segments(10, 30, j, num_threads=1, method="P")
 
     # new_segments(20, 300, 861)
 

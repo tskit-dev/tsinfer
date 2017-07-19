@@ -41,7 +41,6 @@ ancestor_store_builder_check_state(ancestor_store_builder_t *self)
         }
         assert(self->sites_tail[l] == last_u);
     }
-    assert(total_segments == object_heap_get_num_allocated(&self->segment_heap));
     assert(total_segments == self->total_segments);
 }
 
@@ -56,8 +55,8 @@ ancestor_store_builder_print_state(ancestor_store_builder_t *self, FILE *out)
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "total_segments = %d\n", (int) self->total_segments);
-    fprintf(out, "Segment heap:\n");
-    object_heap_print_state(&self->segment_heap, out);
+    fprintf(out, "Allocator:\n");
+    block_allocator_print_state(&self->allocator, out);
     fprintf(out, "Sites:\n");
     for (l = 0; l < self->num_sites; l++) {
         num_segments = 0;
@@ -81,15 +80,11 @@ ancestor_store_builder_alloc_segment(ancestor_store_builder_t *self, ancestor_id
 {
     node_segment_list_node_t *ret = NULL;
 
-    if (object_heap_empty(&self->segment_heap)) {
-        if (object_heap_expand(&self->segment_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (node_segment_list_node_t *) object_heap_alloc_object(&self->segment_heap);
+    ret = block_allocator_get(&self->allocator, sizeof(*ret));
     if (ret == NULL) {
         goto out;
     }
+
     ret->start = start;
     ret->end = end;
     ret->next = NULL;
@@ -114,8 +109,7 @@ ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
         goto out;
 
     }
-    ret = object_heap_init(&self->segment_heap, sizeof(node_segment_list_node_t),
-           segment_block_size, NULL);
+    ret = block_allocator_alloc(&self->allocator, segment_block_size);
     if (ret != 0) {
         goto out;
     }
@@ -129,8 +123,7 @@ ancestor_store_builder_free(ancestor_store_builder_t *self)
 {
     tsi_safe_free(self->sites_head);
     tsi_safe_free(self->sites_tail);
-    object_heap_free(&self->segment_heap);
-
+    block_allocator_free(&self->allocator);
     return 0;
 }
 

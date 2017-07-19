@@ -311,7 +311,7 @@ run_generate(const char *sample_file, const char *ancestor_file,
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
-    ret = ancestor_store_builder_alloc(&store_builder, num_sites, 1024);
+    ret = ancestor_store_builder_alloc(&store_builder, num_sites, 8192);
     if (ret != 0) {
         fatal_error("store alloc error.");
     }
