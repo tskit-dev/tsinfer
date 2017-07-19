@@ -80,7 +80,7 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
         site = &self->sites[l];
         printf("%d\t%.3f\t[%d]:: ", (int) l, site->position, (int) site->num_segments);
         for (j = 0; j < site->num_segments; j++) {
-            printf("(%d, %d: %d)", site->start[j], site->end[j], site->state[j]);
+            printf("(%d, %d)", site->start[j], site->end[j]);
         }
         printf("\n");
     }
@@ -114,8 +114,7 @@ ancestor_store_alloc(ancestor_store_t *self,
         size_t num_sites, double *position,
         size_t num_ancestors, uint32_t *ancestor_age,
         size_t num_focal_sites, ancestor_id_t *focal_site_ancestor, site_id_t *focal_site,
-        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
-        allele_t *state)
+        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end)
 {
     int ret = 0;
     site_id_t j, l, site_start, site_end;
@@ -166,6 +165,7 @@ ancestor_store_alloc(ancestor_store_t *self,
         }
         self->ancestors.num_focal_sites[ancestor_id]++;
     }
+
     site_start = 0;
     site_end = 0;
     self->max_num_site_segments = 0;
@@ -176,41 +176,39 @@ ancestor_store_alloc(ancestor_store_t *self,
             assert(position[l] > position[l - 1]);
         }
         self->sites[l].position = position[l];
-        assert(site[site_start] == l);
-        assert(site[site_end] == l);
-        while (site_end < num_segments && site[site_end] == l) {
-            site_end++;
-        }
-        assert(site_end == num_segments || site[site_end] == l + 1);
-        num_site_segments = site_end - site_start;
-        assert(num_site_segments > 0);
-        if (num_site_segments > self->max_num_site_segments) {
-            self->max_num_site_segments = num_site_segments;
-        }
-        self->total_memory += num_site_segments * (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
-        self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
-        self->sites[l].end = malloc(num_site_segments * sizeof(ancestor_id_t));
-        self->sites[l].state = malloc(num_site_segments * sizeof(allele_t));
-        if (self->sites[l].start == NULL || self->sites[l].end == NULL
-                || self->sites[l].state == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
-        k = 0;
-        for (j = site_start; j < site_end; j++) {
-            assert(site[j] == l);
-            self->sites[l].start[k] = start[j];
-            self->sites[l].end[k] = end[j];
-            self->sites[l].state[k] = state[j];
-            self->sites[l].num_segments++;
-            self->total_segments++;
-            if (end[j] > seg_num_ancestors) {
-                seg_num_ancestors = end[j];
+        if (site_end < num_segments) {
+            assert(site[site_start] >= l);
+            assert(site[site_end] >= l);
+            while (site_end < num_segments && site[site_end] == l) {
+                site_end++;
             }
-            k++;
+            num_site_segments = site_end - site_start;
+            if (num_site_segments > self->max_num_site_segments) {
+                self->max_num_site_segments = num_site_segments;
+            }
+            self->total_memory += num_site_segments * (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
+            self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
+            self->sites[l].end = malloc(num_site_segments * sizeof(ancestor_id_t));
+            if (self->sites[l].start == NULL || self->sites[l].end == NULL) {
+                ret = TSI_ERR_NO_MEMORY;
+                goto out;
+            }
+            k = 0;
+            for (j = site_start; j < site_end; j++) {
+                assert(site[j] == l);
+                self->sites[l].start[k] = start[j];
+                self->sites[l].end[k] = end[j];
+                self->sites[l].num_segments++;
+                self->total_segments++;
+                if (end[j] > seg_num_ancestors) {
+                    seg_num_ancestors = end[j];
+                }
+                k++;
+            }
+            site_start = site_end;
         }
-        site_start = site_end;
     }
+
     /* Work out the number of epochs */
     self->num_epochs = 1;
     current_age = 0;
@@ -258,7 +256,6 @@ ancestor_store_free(ancestor_store_t *self)
     for (l = 0; l < self->num_sites; l++) {
         tsi_safe_free(self->sites[l].start);
         tsi_safe_free(self->sites[l].end);
-        tsi_safe_free(self->sites[l].state);
     }
     tsi_safe_free(self->sites);
     tsi_safe_free(self->ancestors.num_older_ancestors);
@@ -282,15 +279,14 @@ ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
     site_state_t *site = &self->sites[site_id];
     size_t j = 0;
 
-
-    /* TODO use bsearch here to find the closest segment */
+    j = 0;
     while (j < site->num_segments && site->end[j] <= ancestor_id) {
         j++;
     }
-    *state = -1;
+    *state = 0;
     if (j < site->num_segments &&
         site->start[j] <= ancestor_id && ancestor_id < site->end[j]) {
-        *state = site->state[j];
+        *state = 1;
     }
     return ret;
 }

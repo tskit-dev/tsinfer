@@ -9,6 +9,13 @@ typedef int32_t ancestor_id_t;
 typedef int8_t allele_t;
 typedef uint32_t site_id_t;
 
+typedef struct _node_segment_list_node_t {
+    ancestor_id_t start;
+    ancestor_id_t end;
+    struct _node_segment_list_node_t *next;
+} node_segment_list_node_t;
+
+/* TODO rename this struct and see where we're actually using it.*/
 typedef struct _segment_t {
     ancestor_id_t start;
     ancestor_id_t end;
@@ -35,7 +42,6 @@ typedef struct {
 typedef struct {
     ancestor_id_t *start;
     ancestor_id_t *end;
-    allele_t *state;
     size_t num_segments;
     double position;
 } site_state_t;
@@ -67,8 +73,8 @@ typedef struct {
     size_t num_ancestors;
     size_t total_segments;
     size_t segment_block_size;
-    segment_t **sites_head;
-    segment_t **sites_tail;
+    node_segment_list_node_t **sites_head;
+    node_segment_list_node_t **sites_tail;
     object_heap_t segment_heap;
 } ancestor_store_builder_t;
 
@@ -177,13 +183,12 @@ int ancestor_store_builder_free(ancestor_store_builder_t *self);
 int ancestor_store_builder_print_state(ancestor_store_builder_t *self, FILE *out);
 int ancestor_store_builder_add(ancestor_store_builder_t *self, allele_t *ancestor);
 int ancestor_store_builder_dump(ancestor_store_builder_t *self,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end, allele_t *state);
+        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end);
 int ancestor_store_alloc(ancestor_store_t *self,
         size_t num_sites, double *position,
         size_t num_ancestors, uint32_t *ancestor_age,
         size_t num_focal_sites, ancestor_id_t *focal_site_ancestor, site_id_t *focal_site,
-        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end,
-        allele_t *state);
+        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end);
 int ancestor_store_free(ancestor_store_t *self);
 int ancestor_store_print_state(ancestor_store_t *self, FILE *out);
 int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size);

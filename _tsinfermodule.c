@@ -144,8 +144,8 @@ convert_site(site_state_t *site)
         goto out;
     }
     for (j = 0; j < site->num_segments; j++) {
-        item = Py_BuildValue("kki", (unsigned long) site->start[j],
-                (unsigned long) site->end[j], (int) site->state[j]);
+        item = Py_BuildValue("kk", (unsigned long) site->start[j],
+                (unsigned long) site->end[j]);
         if (item == NULL) {
             Py_DECREF(t);
             goto out;
@@ -585,24 +585,21 @@ static PyObject *
 AncestorStoreBuilder_dump_segments(AncestorStoreBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"site", "start", "end", "state", NULL};
+    static char *kwlist[] = {"site", "start", "end", NULL};
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *start = NULL;
     PyArrayObject *start_array = NULL;
     PyObject *end = NULL;
     PyArrayObject *end_array = NULL;
-    PyObject *state = NULL;
-    PyArrayObject *state_array = NULL;
     size_t total_segments;
     npy_intp *shape;
 
     if (AncestorStoreBuilder_check_state(self) != 0) {
         goto fail;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!O!", kwlist,
-            &PyArray_Type, &site, &PyArray_Type, &start, &PyArray_Type, &end,
-            &PyArray_Type, &state)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!", kwlist,
+            &PyArray_Type, &site, &PyArray_Type, &start, &PyArray_Type, &end)) {
         goto fail;
     }
     total_segments = self->store_builder->total_segments;
@@ -652,27 +649,11 @@ AncestorStoreBuilder_dump_segments(AncestorStoreBuilder *self, PyObject *args, P
         PyErr_SetString(PyExc_ValueError, "input end wrong size");
         goto fail;
     }
-    /* state */
-    state_array = (PyArrayObject *) PyArray_FROM_OTF(state, NPY_INT8,
-            NPY_ARRAY_INOUT_ARRAY);
-    if (state_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(state_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(state_array);
-    if (shape[0] != total_segments) {
-        PyErr_SetString(PyExc_ValueError, "input state wrong size");
-        goto fail;
-    }
 
     err = ancestor_store_builder_dump(self->store_builder,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
-        (int32_t *) PyArray_DATA(end_array),
-        (int8_t *) PyArray_DATA(state_array));
+        (int32_t *) PyArray_DATA(end_array));
     if (err != 0) {
         handle_library_error(err);
         goto fail;
@@ -680,13 +661,11 @@ AncestorStoreBuilder_dump_segments(AncestorStoreBuilder *self, PyObject *args, P
     Py_DECREF(site_array);
     Py_DECREF(start_array);
     Py_DECREF(end_array);
-    Py_DECREF(state_array);
     return Py_BuildValue("");
 fail:
     PyArray_XDECREF_ERR(site_array);
     PyArray_XDECREF_ERR(start_array);
     PyArray_XDECREF_ERR(end_array);
-    PyArray_XDECREF_ERR(state_array);
     return NULL;
 }
 
@@ -824,7 +803,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     int err;
     static char *kwlist[] = {"position", "ancestor_age",
         "focal_site_ancestor", "focal_site",
-        "site", "start", "end", "state", NULL};
+        "site", "start", "end", NULL};
     PyObject *position = NULL;
     PyArrayObject *position_array = NULL;
     PyObject *ancestor_age = NULL;
@@ -839,16 +818,14 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
     PyArrayObject *start_array = NULL;
     PyObject *end = NULL;
     PyArrayObject *end_array = NULL;
-    PyObject *state = NULL;
-    PyArrayObject *state_array = NULL;
     size_t num_sites, num_ancestors, num_focal_sites, total_segments;
     npy_intp *shape;
 
     self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOOO", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOO", kwlist,
             &position, &ancestor_age,
             &focal_site_ancestor, &focal_site,
-            &site, &start, &end, &state)) {
+            &site, &start, &end)) {
         goto out;
     }
     /* position */
@@ -952,21 +929,6 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "input end wrong size");
         goto out;
     }
-    /* state */
-    state_array = (PyArrayObject *) PyArray_FROM_OTF(state, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (state_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(state_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(state_array);
-    if (shape[0] != total_segments) {
-        PyErr_SetString(PyExc_ValueError, "input state wrong size");
-        goto out;
-    }
 
     self->store = PyMem_Malloc(sizeof(ancestor_store_t));
     if (self->store == NULL) {
@@ -983,8 +945,7 @@ AncestorStore_init(AncestorStore *self, PyObject *args, PyObject *kwds)
         total_segments,
         (uint32_t *) PyArray_DATA(site_array),
         (int32_t *) PyArray_DATA(start_array),
-        (int32_t *) PyArray_DATA(end_array),
-        (int8_t *) PyArray_DATA(state_array));
+        (int32_t *) PyArray_DATA(end_array));
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -997,7 +958,6 @@ out:
     Py_XDECREF(site_array);
     Py_XDECREF(start_array);
     Py_XDECREF(end_array);
-    Py_XDECREF(state_array);
     return ret;
 }
 

@@ -193,7 +193,6 @@ read_sites(const char *infile, ancestor_store_t *store,
     site_id_t *seg_site = NULL;
     ancestor_id_t *seg_start = NULL;
     ancestor_id_t *seg_end = NULL;
-    allele_t *seg_state = NULL;
     FILE *f = fopen(infile, "r");
     int ret;
 
@@ -209,8 +208,7 @@ read_sites(const char *infile, ancestor_store_t *store,
     seg_site = malloc(num_segments * sizeof(site_id_t));
     seg_start = malloc(num_segments * sizeof(ancestor_id_t));
     seg_end = malloc(num_segments * sizeof(ancestor_id_t));
-    seg_state = malloc(num_segments * sizeof(allele_t));
-    if (seg_site == NULL || seg_start == NULL || seg_end == NULL || seg_state == NULL) {
+    if (seg_site == NULL || seg_start == NULL || seg_end == NULL) {
         fatal_error("Malloc error");
     }
     j = 0;
@@ -230,11 +228,6 @@ read_sites(const char *infile, ancestor_store_t *store,
             fatal_error("File format error");
         }
         seg_end[j] = atoi(token);
-        token = strtok(NULL, delimiters);
-        if (token == NULL) {
-            fatal_error("File format error");
-        }
-        seg_state[j] = atoi(token);
         j++;
     }
     assert(num_sites == seg_site[num_segments - 1] + 1);
@@ -242,7 +235,7 @@ read_sites(const char *infile, ancestor_store_t *store,
             num_sites, position,
             num_ancestors, ancestor_age,
             num_focal_sites, focal_site_ancestor, focal_site,
-            num_segments, seg_site, seg_start, seg_end, seg_state);
+            num_segments, seg_site, seg_start, seg_end);
     if (ret != 0) {
         fatal_error("store load error");
     }
@@ -251,7 +244,6 @@ read_sites(const char *infile, ancestor_store_t *store,
     free(seg_site);
     free(seg_start);
     free(seg_end);
-    free(seg_state);
     fclose(f);
 }
 
@@ -263,18 +255,16 @@ write_sites(ancestor_store_builder_t *store_builder, const char *outfile)
     site_id_t *seg_site = NULL;
     ancestor_id_t *seg_start = NULL;
     ancestor_id_t *seg_end = NULL;
-    allele_t *seg_state = NULL;
     FILE *out = fopen(outfile, "w");
 
     num_segments = store_builder->total_segments;
     seg_site = malloc(num_segments * sizeof(site_id_t));
     seg_start = malloc(num_segments * sizeof(ancestor_id_t));
     seg_end = malloc(num_segments * sizeof(ancestor_id_t));
-    seg_state = malloc(num_segments * sizeof(allele_t));
-    if (seg_site == NULL || seg_start == NULL || seg_end == NULL || seg_state == NULL) {
+    if (seg_site == NULL || seg_start == NULL || seg_end == NULL) {
         fatal_error("Malloc error");
     }
-    ret = ancestor_store_builder_dump(store_builder, seg_site, seg_start, seg_end, seg_state);
+    ret = ancestor_store_builder_dump(store_builder, seg_site, seg_start, seg_end);
     if (ret != 0) {
         fatal_error("Dump error");
     }
@@ -282,16 +272,14 @@ write_sites(ancestor_store_builder_t *store_builder, const char *outfile)
         fatal_error("Error opening file");
     }
     for (j = 0; j < num_segments; j++) {
-        fprintf(out, "%d\t%d\t%d\t%d\n", seg_site[j], seg_start[j], seg_end[j], seg_state[j]);
+        fprintf(out, "%d\t%d\t%d\n", seg_site[j], seg_start[j], seg_end[j]);
     }
     if (fclose(out) != 0) {
         fatal_error("Close error");
-
     }
     tsi_safe_free(seg_site);
     tsi_safe_free(seg_start);
     tsi_safe_free(seg_end);
-    tsi_safe_free(seg_state);
 }
 
 

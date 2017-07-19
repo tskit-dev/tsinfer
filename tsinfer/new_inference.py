@@ -85,13 +85,18 @@ def build_ancestors(samples, positions, num_threads=1, method="C", show_progress
     start = np.zeros(N, dtype=np.int32)
     end = np.zeros(N, dtype=np.int32)
     store_builder.dump_segments(site, start, end)
+    # for t in zip(site, start, end):
+    #     print(t)
+    # print(site)
+    # print(start)
+    # print(end)
 
     # assert np.max(end) == total_ancestors
     # assert np.min(start) == 0
 
     if method == "C":
         store = _tsinfer.AncestorStore(
-            position=positions, site=site, start=start, end=end, state=state,
+            position=positions, site=site, start=start, end=end,
             ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
             focal_site=focal_site)
     else:
