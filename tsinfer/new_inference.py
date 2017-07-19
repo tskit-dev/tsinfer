@@ -893,10 +893,28 @@ class AncestorStore(object):
         """
         ret = 0
         if len(self.sites[site].segments) > 0:
-            for seg in self.sites[site].segments:
-                if seg.start <= ancestor < seg.end:
+            # Binary search to find the nearest start value.
+            # print("Search for ", ancestor)
+            segments = self.sites[site].segments
+            # for seg in segments:
+            #     print(seg)
+            l = 0
+            r = len(segments) - 1
+            while l <= r:
+                m = (l + r) // 2
+                if segments[m].start < ancestor:
+                    l = m + 1
+                elif segments[m].start > ancestor:
+                    r = m - 1
+                else:
+                    # successful search
                     break
-            if seg.start <= ancestor < seg.end:
+
+            if segments[m].start > ancestor and m > 0:
+                m -= 1
+            elif segments[m].end <= ancestor and m < len(segments) - 1:
+                m += 1
+            if segments[m].start <= ancestor < segments[m].end:
                 ret = 1
         return ret
 

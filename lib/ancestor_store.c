@@ -276,17 +276,36 @@ ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
         ancestor_id_t ancestor_id, allele_t *state)
 {
     int ret = 0;
-    site_state_t *site = &self->sites[site_id];
-    size_t j = 0;
+    ancestor_id_t *start = self->sites[site_id].start;
+    ancestor_id_t *end = self->sites[site_id].end;
+    int32_t n = self->sites[site_id].num_segments;
+    int32_t l, r, m;
 
-    j = 0;
-    while (j < site->num_segments && site->end[j] <= ancestor_id) {
-        j++;
-    }
+    assert(self->sites[site_id].num_segments < INT32_MAX);
     *state = 0;
-    if (j < site->num_segments &&
-        site->start[j] <= ancestor_id && ancestor_id < site->end[j]) {
-        *state = 1;
+    if (n > 0) {
+        /* Binary search for the closest start value */
+        l = 0;
+        r = n - 1;
+        while (l <= r) {
+            m = (l + r) / 2;
+            if (start[m] < ancestor_id) {
+                l = m + 1;
+            } else if (start[m] > ancestor_id) {
+                r = m - 1;
+            } else {
+                /* successful search */
+                break;
+            }
+        }
+        if (start[m] > ancestor_id && m > 0) {
+            m--;
+        } else if (end[m] <= ancestor_id && m < n - 1) {
+            m++;
+        }
+        if (start[m] <= ancestor_id && ancestor_id < end[m]) {
+            *state = 1;
+        }
     }
     return ret;
 }

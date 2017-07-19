@@ -636,10 +636,26 @@ def test_ancestor_store(n, L, seed, num_threads=10, method="C"):
             ancestor_age=ancestor_age, focal_site_ancestor=focal_site_ancestor,
             focal_site=focal_site)
 
-    # Now check if we recover the ancestors correctly.
+    # Now decode these ancestors into a local array.
     B = np.zeros((total_ancestors, num_sites), dtype=np.int8)
-    for j in range(total_ancestors):
-        store.get_ancestor(j, B[j, :])
+    ancestor_ids = list(range(total_ancestors))
+
+    def store_decoder_worker(thread_index):
+        chunk_size = int(math.ceil(len(ancestor_ids) / num_threads))
+        start = thread_index * chunk_size
+        for j in ancestor_ids[start: start + chunk_size]:
+            store.get_ancestor(j, B[j, :])
+
+    if num_threads > 1:
+        threads = [
+            threading.Thread(target=store_decoder_worker, args=(j,))
+            for j in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    else:
+        store_decoder_worker(0)
     # print(A)
     # print(B)
     assert np.all(A == B)
@@ -1269,9 +1285,9 @@ if __name__ == "__main__":
         # new_segments(20, 300, j)
         # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
-        test_ancestor_store(200, 1000, j, method="C")
+        test_ancestor_store(1000, 5000, j, method="C")
 
-    # test_ancestor_store(20, 300, 861)
+    # test_ancestor_store(20, 30, 861, method="P")
 
     # new_segments(20, 300, 861)
     # for j in range(1, 100000):
