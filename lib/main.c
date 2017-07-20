@@ -471,7 +471,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     segment_list_t segment_list;
     segment_list_node_t *seg;
     tree_sequence_builder_t ts_builder;
-    ancestor_id_t end_site_value, sample_id;
+    ancestor_id_t sample_id;
     site_id_t *focal_site = NULL;
     ancestor_id_t *focal_site_ancestor = NULL;
     ancestor_id_t *epoch_ancestors = NULL;
@@ -503,6 +503,8 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     if (ret != 0) {
         fatal_error("alloc error");
     }
+    /* printf("num sites = %d, num_ancestors = %d num_samples = %d\n", */
+    /*         (int) num_sites, (int) num_ancestors, (int) num_samples); */
     ret = tree_sequence_builder_alloc(&ts_builder, &store, num_samples,
             1, 1, 1);
             /* 8192, 8192, num_sites / 4); */
@@ -522,13 +524,13 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     for (j = 0; j < num_samples; j++) {
         sample = samples + j * num_sites;
         sample_id = num_ancestors + j;
-        ret = ancestor_matcher_best_path(&matcher, sample_id, sample,
-                0, num_sites, 0, NULL, mutation_rate, &traceback, &end_site_value);
+        ret = ancestor_matcher_best_path(&matcher, num_ancestors, sample,
+                0, num_sites, 0, NULL, mutation_rate, &traceback);
         if (ret != 0) {
             fatal_error("match error");
         }
         ret = tree_sequence_builder_update(&ts_builder, sample_id, sample,
-                0, num_sites, end_site_value, &traceback);
+                0, num_sites, &traceback);
         if (ret != 0) {
             fatal_error("update error");
         }
@@ -584,7 +586,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
                 assert(seg->end <= end);
                 ret = ancestor_matcher_best_path(&matcher, num_older_ancestors, ancestor,
                         seg->start, seg->end, num_focal_sites, focal,
-                        0, &traceback, &end_site_value);
+                        0, &traceback);
                 if (ret != 0) {
                     fatal_error("match error");
                 }
@@ -592,7 +594,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
                     /* traceback_print_state(&traceback, stdout); */
                 }
                 ret = tree_sequence_builder_update(&ts_builder, epoch_ancestors[k],
-                        ancestor, seg->start, seg->end, end_site_value, &traceback);
+                        ancestor, seg->start, seg->end, &traceback);
                 if (ret != 0) {
                     fatal_error("update error");
                 }

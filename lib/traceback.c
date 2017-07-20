@@ -19,10 +19,9 @@ traceback_print_state(traceback_t *self, FILE *out)
     for (l = 0; l < self->num_sites; l++) {
         v = self->sites_head[l];
         if (v != NULL) {
-            fprintf(out, "%d\t", (int) l);
+            fprintf(out, "%d\t%d\t", (int) l, self->best_match[l]);
             while (v != NULL) {
-                fprintf(out, "(%d,%d->%d)", (int) v->start, (int) v->end,
-                        (int) v->value);
+                fprintf(out, "(%d,%d)", (int) v->start, (int) v->end);
                 v = v->next;
             }
             fprintf(out, "\n");
@@ -44,9 +43,11 @@ traceback_alloc(traceback_t *self, size_t num_sites, size_t segment_block_size)
     if (ret != 0) {
         goto out;
     }
+    self->best_match = malloc(self->num_sites * sizeof(ancestor_id_t));
     self->sites_head = calloc(self->num_sites, sizeof(segment_t *));
     self->sites_tail = calloc(self->num_sites, sizeof(segment_t *));
-    if (self->sites_head == NULL || self->sites_tail == NULL) {
+    if (self->best_match == NULL
+            || self->sites_head == NULL || self->sites_tail == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -58,14 +59,14 @@ int
 traceback_free(traceback_t *self)
 {
     object_heap_free(&self->segment_heap);
+    tsi_safe_free(self->best_match);
     tsi_safe_free(self->sites_head);
     tsi_safe_free(self->sites_tail);
     return 0;
 }
 
 static inline segment_t * WARN_UNUSED
-traceback_alloc_segment(traceback_t *self, ancestor_id_t start,
-        ancestor_id_t end, double value)
+traceback_alloc_segment(traceback_t *self, ancestor_id_t start, ancestor_id_t end)
 {
     segment_t *ret = NULL;
 
@@ -80,7 +81,6 @@ traceback_alloc_segment(traceback_t *self, ancestor_id_t start,
     }
     ret->start = start;
     ret->end = end;
-    ret->value = value;
     ret->next = NULL;
 out:
     return ret;
@@ -112,8 +112,15 @@ traceback_reset(traceback_t *self)
 }
 
 int
-traceback_add_recombination(traceback_t *self, site_id_t site_id,
-        ancestor_id_t start, ancestor_id_t end, ancestor_id_t best_match)
+traceback_set_best_match(traceback_t *self, site_id_t site_id, ancestor_id_t best_match)
+{
+    self->best_match[site_id] = best_match;
+    return 0;
+}
+
+int
+traceback_add_recombination(traceback_t *self, site_id_t site_id, ancestor_id_t start,
+        ancestor_id_t end)
 {
     int ret = 0;
     segment_t **head = self->sites_head;
@@ -124,7 +131,7 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id,
     assert(site_id < self->num_sites);
 
     if (head[site_id] == NULL) {
-        head[site_id] = traceback_alloc_segment(self, start, end, best_match);
+        head[site_id] = traceback_alloc_segment(self, start, end);
         if (head[site_id] == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
@@ -132,10 +139,10 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id,
         tail[site_id] = head[site_id];
     } else {
         assert(tail[site_id] != NULL);
-        if (tail[site_id]->end == start && tail[site_id]->value == (double) best_match) {
+        if (tail[site_id]->end == start) {
             tail[site_id]->end = end;
         } else {
-            tmp = traceback_alloc_segment(self, start, end, best_match);
+            tmp = traceback_alloc_segment(self, start, end);
             if (tmp == NULL) {
                 ret = TSI_ERR_NO_MEMORY;
                 goto out;

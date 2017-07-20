@@ -144,15 +144,14 @@ def match_ancestors(
                 # print("\t", start, end)
                 assert start_site <= start
                 assert end_site >= end
-                end_site_parent = matcher.best_path(
+                matcher.best_path(
                         num_ancestors=num_older_ancestors,
                         haplotype=h, start_site=start, end_site=end,
                         focal_sites=focal_sites, error_rate=0, traceback=traceback)
                 with tree_sequence_builder_lock:
                     tree_sequence_builder.update(
                         child=ancestor_id, haplotype=h, start_site=start,
-                        end_site=end, end_site_parent=end_site_parent,
-                        traceback=traceback)
+                        end_site=end, traceback=traceback)
             if show_progress:
                 progress.update()
             traceback.reset()
@@ -217,7 +216,7 @@ def match_samples(
             traceback = Traceback(store)
         for sample_id in sample_ids[start: start + chunk_size]:
             h = samples[sample_id, :]
-            end_site_parent = matcher.best_path(
+            matcher.best_path(
                     num_ancestors=store.num_ancestors,
                     haplotype=h, start_site=0, end_site=store.num_sites,
                     focal_sites=[], error_rate=error_rate, traceback=traceback)
@@ -225,7 +224,7 @@ def match_samples(
                 tree_sequence_builder.update(
                     child=store.num_ancestors + sample_id,
                     haplotype=h, start_site=0, end_site=store.num_sites,
-                    end_site_parent=end_site_parent, traceback=traceback)
+                    traceback=traceback)
                 if show_progress:
                     progress.update()
             traceback.reset()
@@ -661,43 +660,21 @@ class TreeSequenceBuilder(object):
         return next_time_slice_segments
 
 
-    def select_parent(self, site, options):
-        """
-        Selects the parent for the specified site
-        """
-        # min_num_children = self.get_num_children(options[0], site)
-        # best_parent = options[0]
-        # for parent in options[1:]:
-        #     num_children = self.get_num_children(parent, site)
-        #     if num_children <= min_num_children:
-        #         best_parent = parent
-        #         min_num_children = num_children
-        # num_children = [self.get_num_children(parent, site) for parent in options]
-        # print("SELECT PARENT")
-        # print("OPTIONs = ", options)
-        # print("NUMCHIL = ", num_children)
-        # print("CHOIE   = ", best_parent)
-        best_parent = options[0]
-        return best_parent
-
     def update(
             self, child=None, haplotype=None, start_site=None, end_site=None,
-            end_site_parent=None, traceback=None):
+            traceback=None):
         """
         """
         # print("==================")
         # print("Running traceback for child", child, "from:", start_site, end_site)
         # traceback.print_state()
         end = end_site
-        V = traceback.site_best_segments
+        V = traceback.best_segment
         T = traceback.site_head
-        # parent = random.randint(
-        #     V[end_site - 1][0].start, V[end_site - 1][0].end - 1)
-        options = []
-        for v in V[end_site - 1]:
-            options.extend(range(v.start, v.end))
-        assert len(options) > 0
-        parent = self.select_parent(end_site - 1, options)
+        # Choose the oldest value in the best_segment
+        print(V)
+        parent = V[end - 1].start
+
         # print("H = ", haplotype)
         # print("INITIAL parent = ", parent, "options = ", options)
         for l in range(end_site - 1, start_site, -1):
@@ -720,15 +697,7 @@ class TreeSequenceBuilder(object):
                 assert l < end
                 self.add_mapping(l, end, parent, child)
                 end = l
-                options = []
-                for v in V[l - 1]:
-                    options.extend(range(v.start, v.end))
-                assert len(options) > 0
-                # print("all options:", options)
-                # parent = options[0]
-                # parent = random.choice(options)
-                # parent = options[-1]
-                parent = self.select_parent(l - 1, options)
+                parent = V[l - 1].start
                 # print("SWITCH @", l, "parent = ", parent, "options = ", options)
         assert start_site < end
 
@@ -1090,11 +1059,11 @@ class Traceback(object):
         self.store = store
         self.reset()
 
-    def add_best_segment(self, site, start, end):
+    def set_best_segment(self, site, start, end):
         """
-        Adds a maximum likelihood recombinant segment for the specified site.
+        Sets maximum likelihood recombinant segment for the specified site.
         """
-        self.site_best_segments[site].append(LinkedSegment(start, end))
+        self.best_segment[site] = LinkedSegment(start, end)
 
     def add_recombination(self, site, start, end):
         if self.site_head[site] is None:
@@ -1111,15 +1080,14 @@ class Traceback(object):
     def reset(self):
         self.site_head = [None for _ in range(self.store.num_sites)]
         self.site_tail = [None for _ in range(self.store.num_sites)]
-        self.site_best_segments = [[] for _ in range(self.store.num_sites)]
+        self.best_segment = [None for _ in range(self.store.num_sites)]
 
     def print_state(self):
         print("traceback:")
         for l, head in enumerate(self.site_head):
             print(l, ":", end="")
-            s = ""
-            for seg in self.site_best_segments[l]:
-                s += "({},{})".format(seg.start, seg.end)
+            seg = self.best_segment[l]
+            s = "({},{})".format(seg.start, seg.end)
             print(s, "=", end="")
             u = head
             while u != None:
@@ -1173,18 +1141,17 @@ class AncestorMatcher(object):
             pr = r / possible_recombinants
             qr = 1 - r + r / possible_recombinants
 
-            # print()
-            # print("site = ", site)
-            # print("rho = ", rho, "r = ", r)
-            # print("pos = ", self.store.sites[site].position)
-            # print("n = ", n)
-            # print("re= ", possible_recombinants)
-            # print("pr= ", pr)
-            # print("qr= ", qr)
-            # print("L = ", L)
-            # print("B = ", sorted(L, key=lambda x: -x.value))
-            # print("S = ", S)
-            # print("h = ", h[site])
+            print()
+            print("site = ", site)
+            print("rho = ", rho, "r = ", r)
+            print("pos = ", self.store.sites[site].position)
+            print("n = ", n)
+            print("re= ", possible_recombinants)
+            print("pr= ", pr)
+            print("qr= ", qr)
+            print("L = ", L)
+            print("S = ", S)
+            print("h = ", h[site])
 
             l = 0
             s = 0
@@ -1225,6 +1192,7 @@ class AncestorMatcher(object):
                     z = x
                 else:
                     z = y
+                    print("ADD RECOMB", site, start, end)
                     traceback.add_recombination(site, start, end)
 
                 # Determine the likelihood for this segment.
@@ -1266,9 +1234,15 @@ class AncestorMatcher(object):
                 assert seg.start < seg.end
                 if seg.value >= max_value:
                     max_value = seg.value
+            # Set the maximum likelihood segment for this site to the oldest matching.
             for seg in L:
                 if seg.value == max_value:
-                    traceback.add_best_segment(site, seg.start, seg.end)
+                    traceback.set_best_segment(site, seg.start, seg.end)
+                    break
+            for seg in L:
+                if seg.value == max_value:
+                    print("max liklihood segment", seg.start, seg.end)
+
             if max_value > 0:
                 # Renormalise L
                 for seg in L:

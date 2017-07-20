@@ -59,7 +59,7 @@ int
 ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
         size_t num_focal_sites, site_id_t *focal_sites, double error_rate,
-        traceback_t *traceback, ancestor_id_t *end_site_value)
+        traceback_t *traceback)
 {
     int ret = 0;
     double rho, r, pr, qr, possible_recombinants;
@@ -67,7 +67,6 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     site_id_t site_id;
     ancestor_id_t start, end;
     double likelihood, next_likelihood, max_likelihood, x, y, z, *double_tmp;
-    ancestor_id_t best_match;
     ancestor_id_t *L_start = NULL;
     ancestor_id_t *L_end = NULL;
     double *L_likelihood = NULL;
@@ -109,7 +108,6 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     /* ensure that that the initial recombination rate is 0 */
     last_position = self->store->sites[start_site].position;
     possible_recombinants = N;
-    best_match = 0;
 
     /* Skip any focal sites that are not within this segment. */
     focal_site_index = 0;
@@ -187,7 +185,8 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
                 z = x;
             } else {
                 z = y;
-                ret = traceback_add_recombination(traceback, site_id, start, end, best_match);
+                /* printf("%d add_recombination %d %d\n", site_id, start, end); */
+                ret = traceback_add_recombination(traceback, site_id, start, end);
                 if (ret != 0) {
                     goto out;
                 }
@@ -256,24 +255,30 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         double_tmp = L_likelihood;
         L_likelihood = L_next_likelihood;
         L_next_likelihood = double_tmp;
-        /* Normalise L and get the best haplotype */
+        /* Normalise L and get set the best matching ancestor for this site. */
         max_likelihood = -1;
-        best_match = -1;
         for (l = 0; l < L_size; l++) {
             if (L_likelihood[l] > max_likelihood) {
                 max_likelihood = L_likelihood[l];
-                best_match = L_end[l] - 1;
             }
         }
+        assert(max_likelihood > 0);
         for (l = 0; l < L_size; l++) {
+            if (L_likelihood[l] == max_likelihood) {
+                /* Set the best match to the oldest ancestor with the maximum
+                 * likelihood */
+                assert(L_start[l] < N);
+                ret = traceback_set_best_match(traceback, site_id, L_start[l]);
+                if (ret != 0) {
+                    goto out;
+                }
+            }
             L_likelihood[l] /= max_likelihood;
+            /* printf("\t%d,%d -> %f\n", L_start[l], L_end[l], L_likelihood[l]); */
         }
     }
     /* assert(focal_site_index == num_focal_sites); */
-    *end_site_value = best_match;
 
-    /* ret = ancestor_matcher_run_traceback(self, haplotype, T_head, start_site, end_site, */
-    /*         best_match, path, num_mutations, mutation_sites); */
 out:
     tsi_safe_free(L_start);
     tsi_safe_free(L_end);

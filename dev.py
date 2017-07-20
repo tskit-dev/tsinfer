@@ -530,11 +530,12 @@ def new_segments(n, L, seed, num_threads=10, method="C"):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
+    print("num_sites = ", ts.num_sites)
     positions = np.array([site.position for site in ts.sites()])
-    S = generate_samples(ts, 0.1)
-    # S = generate_samples(ts, 0)
+    # S = generate_samples(ts, 0.1)
+    S = generate_samples(ts, 0)
 
-    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-50,
+    tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-200,
             num_threads=num_threads, method=method)
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
@@ -1280,24 +1281,17 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    for j in range(1, 100000):
-        print(j)
-        # new_segments(20, 300, j)
-        # new_segments(10, 30, j, num_threads=1, method="P")
-        # test_ancestor_store(20, 30, j, method="P")
-        test_ancestor_store(1000, 5000, j, method="C")
-
-    # test_ancestor_store(20, 30, 861, method="P")
-
-    # new_segments(20, 300, 861)
     # for j in range(1, 100000):
     #     print(j)
     #     new_segments(20, 300, j)
     #     # new_segments(10, 30, j, num_threads=1, method="P")
+    #     # test_ancestor_store(20, 30, j, method="P")
+    #     # test_ancestor_store(1000, 5000, j, method="C")
 
-    # new_segments(20, 300, 861)
+    # test_ancestor_store(20, 30, 861, method="P")
 
-    # new_segments(4, 4, 1, num_threads=1, method="P")
+    # new_segments(20, 10, 1, num_threads=1, method="C")
+    new_segments(8, 10, 1, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 

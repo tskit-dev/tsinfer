@@ -308,7 +308,8 @@ tree_sequence_builder_add_mapping(tree_sequence_builder_t *self, site_id_t left,
     int ret = 0;
     node_mapping_t *u;
 
-    assert(parent < (ancestor_id_t) (self->num_ancestors + self->num_samples));
+    /* printf("add mapping %d -> %d\n", child, parent); */
+    assert(parent < (ancestor_id_t) (self->num_ancestors));
     assert(child < (ancestor_id_t) (self->num_ancestors + self->num_samples));
     /* Map the ancestor ID into a node index */
     u = tree_sequence_builder_alloc_node_mapping(self, left, right, child);
@@ -358,18 +359,20 @@ out:
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        ancestor_id_t end_site_parent, traceback_t *traceback)
+        traceback_t *traceback)
 {
     int ret = 0;
     site_id_t l;
     site_id_t end = end_site;
-    ancestor_id_t p;
-    ancestor_id_t parent = end_site_parent;
+    ancestor_id_t parent;
+    bool switch_parent;
     allele_t state;
     segment_t *u;
 
+    /* traceback_print_state(traceback, stdout); */
+    parent = traceback->best_match[end - 1];
     for (l = end_site - 1; l > start_site; l--) {
-        /* printf("Tracing back at site %d\n", l); */
+        /* printf("Tracing back at site %d: parent = %d\n", l, parent); */
         /* print_segment_chain(T_head[l], 1, stdout); */
         /* printf("\n"); */
         ret = ancestor_store_get_state(self->store, l, parent, &state);
@@ -382,11 +385,11 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
                 goto out;
             }
         }
-        p = -1;
         u = traceback->sites_head[l];
+        switch_parent = false;
         while (u != NULL) {
             if (u->start <= parent && parent < u->end) {
-                p = (ancestor_id_t) u->value;
+                switch_parent = true;
                 break;
             }
             if (u->start > parent) {
@@ -394,14 +397,15 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
             }
             u = u->next;
         }
-        if (p != (ancestor_id_t) -1) {
+        if (switch_parent) {
+            /* Complete a segment at this site */
             assert(l < end);
             ret = tree_sequence_builder_add_mapping(self, l, end, parent, child);
             if (ret != 0) {
                 goto out;
             }
             end = l;
-            parent = p;
+            parent = traceback->best_match[l - 1];
         }
     }
     assert(start_site < end);

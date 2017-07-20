@@ -81,6 +81,7 @@ typedef struct {
 
 typedef struct {
     size_t num_sites;
+    ancestor_id_t *best_match;
     segment_t **sites_head;
     segment_t **sites_tail;
     object_heap_t segment_heap;
@@ -220,14 +221,15 @@ int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
         size_t num_focal_sites, site_id_t *focal_sites, double error_rate,
-        traceback_t *traceback, ancestor_id_t *end_site_value);
+        traceback_t *traceback);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 
 int traceback_alloc(traceback_t *self, size_t num_sites, size_t segment_block_size);
 int traceback_free(traceback_t *self);
 int traceback_reset(traceback_t *self);
 int traceback_add_recombination(traceback_t *self, site_id_t site,
-        ancestor_id_t start, ancestor_id_t end, ancestor_id_t ancestor);
+        ancestor_id_t start, ancestor_id_t end);
+int traceback_set_best_match(traceback_t *self, site_id_t site, ancestor_id_t best_match);
 int traceback_print_state(traceback_t *self, FILE *out);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
@@ -240,7 +242,7 @@ int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self,
         ancestor_id_t parent, segment_list_t *list);
 int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
         allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        ancestor_id_t end_site_parent, traceback_t *traceback);
+        traceback_t *traceback);
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,

@@ -1534,7 +1534,6 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     Traceback *traceback = NULL;
     double error_rate;
     unsigned long num_ancestors, start_site, end_site;
-    ancestor_id_t end_site_value;
     size_t num_sites, num_focal_sites;
     npy_intp *shape;
 
@@ -1592,13 +1591,13 @@ AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     err = ancestor_matcher_best_path(self->matcher, num_ancestors,
         (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
         num_focal_sites, (uint32_t *) PyArray_DATA(focal_sites_array),
-        error_rate, traceback->traceback, &end_site_value);
+        error_rate, traceback->traceback);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) end_site_value);
+    ret = Py_BuildValue("");
 out:
     Py_XDECREF(haplotype_array);
     Py_XDECREF(focal_sites_array);
@@ -1742,19 +1741,19 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
     int err;
     PyObject *ret = NULL;
     static char *kwlist[] = {"child", "haplotype", "start_site", "end_site",
-        "end_site_parent", "traceback", NULL};
+        "traceback", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     Traceback *traceback = NULL;
-    unsigned long child_id, start_site, end_site, end_site_parent;
+    unsigned long child_id, start_site, end_site;
     size_t num_sites;
     npy_intp *shape;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkkO!", kwlist,
-            &child_id, &haplotype, &start_site, &end_site, &end_site_parent,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkO!", kwlist,
+            &child_id, &haplotype, &start_site, &end_site,
             &TracebackType, &traceback)) {
         goto out;
     }
@@ -1782,14 +1781,10 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
         PyErr_SetString(PyExc_ValueError, "end must be <= num_sites");
         goto out;
     }
-    if (end_site_parent >= self->tree_sequence_builder->store->num_ancestors) {
-        PyErr_SetString(PyExc_ValueError, "parent must be valid node id.");
-        goto out;
-    }
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_update(self->tree_sequence_builder, child_id,
         (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
-        end_site_parent, traceback->traceback);
+        traceback->traceback);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
