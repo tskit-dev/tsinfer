@@ -29,6 +29,10 @@ import psutil
 import svgwrite
 import colour
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as pyplot
+
 # script_path = __file__ if "__file__" in locals() else "./dummy.py"
 # sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
 # sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
@@ -50,253 +54,6 @@ def draw_segments(segments, L):
     print("   ", "-" * L)
 
 
-def overlap_algorithm_dev(num_chunk_segments, chunk_bounds, seed=1, duplicate_proba=0.5):
-    random.seed(seed)
-    # Generate some random segments.
-    segments = []
-    j = 0
-    for start, end in chunk_bounds:
-        for _ in range(num_chunk_segments):
-            x = random.randint(start, end)
-            y = random.randint(start, end)
-            while x == y:
-                y = random.randint(start, end)
-            segments.append(tsinfer.Segment(*sorted([x, y]), value=j))
-            while random.random() < duplicate_proba:
-                # With probability duplicate_proba create a copy.
-                segments.append(tsinfer.Segment(*sorted([x, y]), value=j))
-
-            j += 1
-        # print(segments)
-    L = max(end for start, end in chunk_bounds)
-
-    # while True:
-    #     segments = trim_segments(segments, L)
-    #     print("==================LOOP=========================")
-
-    # draw_segments(segments, L)
-    # filtered_equal = find_identical_overlaps(segments, L)
-    # draw_segments(filtered_equal, L)
-    # o1 = pairwise_find_max_overlap(segments, L)
-    # o2 = find_max_overlap(segments, L)
-    # assert o1 == o2
-    o1 = find_nonoverlapping(segments, L)
-    o2 = pairwise_find_nonoverlapping(segments, L)
-    # print(o1)
-    # print(o2)
-    assert o1 == o2
-
-
-def pairwise_find_nonoverlapping(S, L):
-    S.sort(key=lambda x: (x.start, -x.end))
-    n = len(S)
-    ret = []
-    for j in range(n):
-        overlaps = 0
-        for k in range(n):
-            if j != k:
-                overlap = min(S[j].end, S[k].end) - max(S[j].start, S[k].start)
-                if overlap > 0:
-                    overlaps += 1
-        if overlaps == 0:
-            ret.append(S[j])
-    return ret
-
-
-def find_nonoverlapping(segments, L):
-    segments.sort(key=lambda x: (x.start, -x.end))
-    # draw_segments(segments, L)
-
-    S = segments
-    n = len(S)
-    j = 0
-    k = 1
-    max_end = 0
-    result = []
-    while j < n:
-        # print("LOOP MID SEG:", S[j], "\tmax_end = ", max_end)
-        next_start = S[j + 1].start if j < n - 1 else L
-        if max_end <= S[j].start and S[j].end <= next_start:
-            # print("NON OVERLAP", S[j])
-            result.append(S[j])
-        max_end = max(max_end, S[j].end)
-        while k < n and S[k].end <= S[j].end:
-            # print("SKIPPING", S[k])
-            k += 1
-        j = k
-        k += 1
-    return result
-
-
-def find_identical_overlaps(segments, L):
-    segments.sort(key=lambda x: (x.start, -x.end))
-    draw_segments(segments, L)
-
-    S = segments
-    n = len(segments)
-    j = 0
-    k = 1
-    result = []
-    while j < n:
-        equal = [S[j]]
-        while k < n and S[j].start == S[k].start and S[j].end == S[k].end:
-            equal.append(S[k])
-            k += 1
-        if len(equal) > 1:
-            print("EQUAL:", equal)
-        result.append(equal[0])
-        j = k
-        k += 1
-    return result
-
-def pairwise_find_max_overlap(segments, L):
-
-#     for seg in segments:
-#         print(seg.value, seg.start, seg.end, sep="\t")
-#     draw_segments(segments, L)
-
-    n = len(segments)
-    max_overlap = 0
-    max_overlap_segs = None
-    for j in range(n):
-        seg_j = segments[j]
-        for k in range(j + 1, n):
-            seg_k = segments[k]
-            overlap = min(seg_j.end, seg_k.end) - max(seg_j.start, seg_k.start)
-            # print("compare seg ", seg_j, seg_k, ":", overlap)
-            if overlap > max_overlap:
-                max_overlap = overlap
-                max_overlap_segs = seg_j, seg_k
-    # print("max overlap = ", max_overlap)
-    # print("max overlap segs = ", max_overlap_segs)
-    return max_overlap
-
-
-def find_max_overlap(segments, L):
-    segments.sort(key=lambda x: (x.start, -x.end))
-
-    for seg in segments:
-        print(seg.value, seg.start, seg.end, sep="\t")
-    draw_segments(segments, L)
-
-    S = segments
-    n = len(segments)
-    j = 0
-    k = 1
-    max_intersection = -1
-    max_intersection_segs = []
-    while True:
-        # print("seg", j, S[j])
-        while k < n and S[k].end <= S[j].end:
-            intersection = S[k].end - S[k].start
-            if intersection > max_intersection:
-                max_intersection = intersection
-                max_intersection_segs = [[j, k]]
-            elif intersection == max_intersection:
-                max_intersection_segs.append((j, k))
-            k += 1
-        if k == n:
-            break
-        intersection = S[j].end - S[k].start
-        if intersection > max_intersection:
-            max_intersection = intersection
-            max_intersection_segs = [(j, k)]
-        elif intersection == max_intersection:
-            max_intersection_segs.append((j, k))
-        j = k
-        k += 1
-    print("max_intersection = ", max_intersection)
-    print("max_intersection_segs = ")
-    for j, k in max_intersection_segs:
-        print("\t", S[j], S[k])
-    return max_intersection
-
-#     out_queue = [(L + 1, None)]
-#     max_end = -1
-
-#     for in_seg in segments:
-#         while out_queue[0][0] <= in_seg.start:
-#             _, out_seg = heapq.heappop(out_queue)
-#             print("out_seg = ", out_seg)
-#         print("in_seg  = ", in_seg)
-#         max_end = max(max_end, in_seg.end)
-#         if len(out_queue) > 1:
-#             end = out_queue[0][0]
-#             # print("max overlap:", in_seg.start, end)
-#         heapq.heappush(out_queue, (in_seg.end, in_seg))
-#     while len(out_queue) > 1:
-#         _, out_seg = heapq.heappop(out_queue)
-#         print("out_seg = ", out_seg)
-
-
-def trim_segments(segments, L):
-    # partial implementation of trimming leading and trailing segments from
-    # the set.
-
-    segments.sort(key=lambda x: x.start)
-
-    for seg in segments:
-        print(seg.value, seg.start, seg.end, sep="\t")
-    draw_segments(segments, L)
-
-    out_queue = [(L + 1, None)]
-    processed_segments = []
-
-    prev_in_seg = None
-    for in_seg in segments:
-        while out_queue[0][0] <= in_seg.start:
-            _, out_seg = heapq.heappop(out_queue)
-            print("out_seg = ", out_seg)
-            print("prev_in_seg = ", prev_in_seg)
-            if len(out_queue) == 1 and out_seg.end <= prev_in_seg.end:
-                print("SEG DONE")
-            else:
-                processed_segments.append(out_seg)
-        if len(out_queue) == 2:
-            print("LEADING TRIM:", prev_in_seg)
-        print("in_seg  = ", in_seg)
-        heapq.heappush(out_queue, (in_seg.end, in_seg))
-        prev_in_seg = in_seg
-    while len(out_queue) > 1:
-        _, out_seg = heapq.heappop(out_queue)
-        print("out_seg = ", out_seg)
-        processed_segments.append(out_seg)
-    return processed_segments
-
-    # n = len(segments)
-    # I = sorted(range(n), key=lambda j: segments[j].start)
-    # O = sorted(range(n), key=lambda j: segments[j].end)
-    # completed = []
-
-    # print("I = ", I)
-    # print("O = ", O)
-    # k = 0
-    # c = 0
-    # for j in range(n):
-    #     while k < n and segments[O[k]].end <= segments[I[j]].start:
-    #         print("c = ", c, "pop ", segments[O[k]])
-    #         # if c == 1:
-    #         #     print("COMPLETED", segments[O[k]])
-    #         k += 1
-    #         c -= 1
-    #     if c == 1 and segments[I[j - 1]].start != segments[I[j]].start:
-    #         print("TRIM FRONT:", segments[I[j - 1]], segments[I[j]].start)
-    #         segments[I[j - 1]].start = segments[I[j]].start
-    #     print("c = ", c, "push", segments[I[j]])
-    #     c += 1
-    # while k < n:
-    #     print("c = ", c, "pop ", segments[O[k]])
-    #     k += 1
-    #     c -= 1
-
-    # print("Completed:")
-    # for seg in completed:
-    #     print(seg.value, seg.start, seg.end, sep="\t")
-    # draw_segments(completed, L)
-
-    return segments
-
-
 
 def build_ancestors_dev(n, L, seed):
 
@@ -310,32 +67,41 @@ def build_ancestors_dev(n, L, seed):
 
     # builder = _tsinfer.AncestorBuilder(S, position)
     store = tsinfer.build_ancestors(S, position, method="C")
-    print(store)
+    print("n = ", n, "num_sites = ", ts.num_sites)
+
     # store.print_state()
-    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8) - 1
-    for j in range(store.num_ancestors):
-        store.get_ancestor(j, A[j,:])
-    print(A)
+    # A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8) - 1
+    # for j in range(store.num_ancestors):
+    #     store.get_ancestor(j, A[j,:])
+    # print(A)
     # np.save("tmp__NOBACKUP__/10k-ancestors.npy", A)
 
     # n0 = 0
     # n1 = 0
-    # for l in range(store.num_sites):
-    #     # print(l, store.get_site(l))
+    num_segments = np.zeros(store.num_sites, dtype=int)
+    for l in range(store.num_sites):
+        segments = store.get_site(l)
+        num_segments[l] = len(segments)
+        # print(l, store.get_site(l))
     #     for start, end, state in store.get_site(l):
     #         if state == 0:
     #             n0 += (end - start)
     #         elif state == 1:
     #             n1 += (end - start)
+    # print(num_segments)
+    # pyplot.plot(num_segments)
+    pyplot.hist(num_segments, 50)
+    pyplot.savefig("tmp__NOBACKUP__/num_segments_n_{}s_{}.pdf".format(n, ts.num_sites))
+
 
     # total = store.num_ancestors * store.num_sites
     # nm1 = total - n0 - n1
 
-    print("n      ", n)
-    print("sites  ", ts.num_sites)
-    # print("zero   ", n0 / total)
-    # print("one    ", n1 / total)
-    # print("null   ", nm1 / total)
+    # print("n      ", n)
+    # print("sites  ", ts.num_sites)
+    # # print("zero   ", n0 / total)
+    # # print("one    ", n1 / total)
+    # # print("null   ", nm1 / total)
 
 
     # p = np.zeros(store.num_ancestors, dtype=np.uint32)
@@ -518,7 +284,7 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S
 
-def new_segments(n, L, seed, num_threads=10, method="C"):
+def new_segments(n, L, seed, num_threads=10, method="C", log_level="WARNING"):
 
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
@@ -530,13 +296,12 @@ def new_segments(n, L, seed, num_threads=10, method="C"):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
-    print("num_sites = ", ts.num_sites)
     positions = np.array([site.position for site in ts.sites()])
     # S = generate_samples(ts, 0.1)
     S = generate_samples(ts, 0)
 
     tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-200,
-            num_threads=num_threads, method=method)
+            num_threads=num_threads, method=method, log_level=log_level)
     new_positions = np.array([site.position for site in tsp.sites()])
     assert np.all(new_positions == positions)
 
@@ -1227,7 +992,8 @@ def run_large_infers():
         before_cpu = time.clock()
         before_wall = time.time()
         ts_inferred = tsinfer.infer(
-            S, positions, L, 1e-8, 1e-200, num_threads=20, method="C", show_progress=True)
+            S, positions, L, 1e-8, 1e-200, num_threads=40, method="C",
+            show_progress=True, log_level="INFO")
         duration_cpu = time.clock() - before_cpu
         duration_wall = time.time() - before_wall
         filename = "tmp__NOBACKUP__/n={}_L={}_inferred.hdf5".format(n, j)
@@ -1290,68 +1056,18 @@ if __name__ == "__main__":
 
     # test_ancestor_store(20, 30, 861, method="P")
 
-    # new_segments(20, 10, 1, num_threads=1, method="C")
-    new_segments(8, 10, 1, num_threads=1, method="P")
+    # new_segments(20, 10, 1, num_threads=1, method="C", log_level="INFO")
+    # new_segments(8, 10, 1, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
-
-    # n = 10
-    # for L in np.linspace(100, 1000, 10):
-    #     compare_timings(n, L, 1)
-
-    # d = ancestor_gap_density(20, 40, 1)
-
-    # rows = []
-    # n = 10
-    # for L in np.linspace(10, 5000, 20):
-    #     d = ancestor_gap_density(n, L, 2)
-    #     rows.append(d)
-    #     df = pd.DataFrame(rows)
-    #     print(df)
-    #     df.to_csv("gap-analysis.csv")
-
-    # run_large_infers()
+    run_large_infers()
     # analyse_file("tmp__NOBACKUP__/n=2000_L=10_original.hdf5")
     # analyse_file("tmp__NOBACKUP__/n=2000_L=10_simplified.hdf5")
 
-    # for j in range(1, 10000):
-    # # for j in [4]:
-    #     print(j, file=sys.stderr)
-    #     filename = "tmp__NOBACKUP__/tmp-3.hdf5"
-    #     load_ancestors(filename)
-        # load_ancestors_dev(filename)
-
-    #     filename = "tmp__NOBACKUP__/tmp2.hdf5"
-    #     build_ancestors(10, 0.1 * 10**6, 3, filename)
-    #     # compress_ancestors(filename)
-    #     load_ancestors_dev(filename)
-
-    # load_ancestors("tmp__NOBACKUP__/n=10_L=11.hdf5", num_threads=40)
-    # load_ancestors("tmp__NOBACKUP__/n=10_L=121.hdf5")
-
-
-    # d = site_set_stats(10, 50 * 10**6, 2)
-    # rows = []
-    # for n in [10, 100, 1000, 10000]:
-    #     for l in range(1, 11):
-    #         d = site_set_stats(n, l * 10 * 10**6, 2)
-    #         rows.append(d)
-    #         df = pd.DataFrame(rows)
-    #         print(df)
-    #         df.to_csv("diff-analysis.csv")
 
     # visualise_copying(8, 4, 5)
-    # build_ancestors_dev(10000, 5 * 10**6, 3)
+
+    # build_ancestors_dev(10000, 10 * 10**6, 3)
     # build_ancestors_dev(10, 10**5, 3)
     # examine_ancestors()
-    # for j in range(50, 100, 10):
-    #     build_ancestors_dev(10000, j * 10**6, 3)
-    #     print()
-    # for j in range(555550):
-    # # j = 1
-    #     try:
-    #         overlap_algorithm_dev(1, [(5 * k, 4 * k + 30) for k in range(30)], j, duplicate_proba=0)
-    #     except Exception as e:
-    #         print("FAIL:", j)
-    #         raise e

@@ -1388,15 +1388,16 @@ out:
     return ret;
 }
 
+
 static PyObject *
-Traceback_get_num_segment_blocks(Traceback *self, void *closure)
+Traceback_get_total_memory(Traceback *self, void *closure)
 {
     PyObject *ret = NULL;
 
     if (Traceback_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) self->traceback->segment_heap.num_blocks);
+    ret = Py_BuildValue("k", (unsigned long) self->traceback->allocator.total_size);
 out:
     return ret;
 }
@@ -1406,8 +1407,8 @@ static PyMemberDef Traceback_members[] = {
 };
 
 static PyGetSetDef Traceback_getsetters[] = {
-    {"num_segment_blocks", (getter) Traceback_get_num_segment_blocks, NULL,
-        "The total number of segment blocks."},
+    {"total_memory", (getter) Traceback_get_total_memory, NULL,
+        "The total amount of memory used by this traceback."},
     {NULL}  /* Sentinel */
 };
 

@@ -82,9 +82,9 @@ typedef struct {
 typedef struct {
     size_t num_sites;
     ancestor_id_t *best_match;
-    segment_t **sites_head;
-    segment_t **sites_tail;
-    object_heap_t segment_heap;
+    node_segment_list_node_t **sites_head;
+    node_segment_list_node_t **sites_tail;
+    block_allocator_t allocator;
     size_t segment_block_size;
 } traceback_t;
 

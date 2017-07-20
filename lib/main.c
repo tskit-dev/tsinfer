@@ -591,7 +591,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
                     fatal_error("match error");
                 }
                 if (verbose > 0) {
-                    /* traceback_print_state(&traceback, stdout); */
+                    traceback_print_state(&traceback, stdout);
                 }
                 ret = tree_sequence_builder_update(&ts_builder, epoch_ancestors[k],
                         ancestor, seg->start, seg->end, &traceback);

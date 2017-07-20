@@ -4,27 +4,20 @@ import concurrent
 import random
 import threading
 import math
+import logging
 import queue
 
 import numpy as np
 import attr
 import tqdm
 import bintrees
+import humanize
+import daiquiri
 
 import msprime
 
 import _tsinfer
 
-def split_parent_array(P):
-    num_sites = P.shape[0]
-    start = 0
-    for j in range(num_sites - 1):
-        if P[j + 1] != P[j]:
-            if P[j] != -1:
-                yield start, j + 1, P[j]
-            start = j + 1
-    if P[-1] != -1:
-        yield start, num_sites, P[-1]
 
 
 def build_ancestors(samples, positions, num_threads=1, method="C", show_progress=False):
@@ -117,12 +110,15 @@ def match_ancestors(
         same_age_ancestors[age].append(ancestor_id)
     work_queue = queue.Queue()
     tree_sequence_builder_lock = threading.Lock()
+    traceback_size = np.zeros(num_threads)
+    logger = daiquiri.getLogger()
 
     def ancestor_match_worker(thread_index):
         # print("Thread ", thread_index, "started")
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**20)
+            megabyte = 2**20
+            traceback = _tsinfer.Traceback(store.num_sites, 16 * megabyte)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
@@ -157,7 +153,7 @@ def match_ancestors(
             traceback.reset()
             work_queue.task_done()
         work_queue.task_done()
-        # print("Thread", thread_index, ", exiting")
+        traceback_size[thread_index] = traceback.total_memory
 
     threads = [
         threading.Thread(target=ancestor_match_worker, args=(j,))
@@ -191,12 +187,17 @@ def match_ancestors(
     if show_progress:
         progress.close()
 
+    logger.info("Ancestor traceback mean size:{}".format(humanize.naturalsize(
+        np.mean(traceback_size), binary=True)))
+
 
 def match_samples(
         store, samples, recombination_rate, error_rate, tree_sequence_builder,
         num_threads=1, method="C", show_progress=False):
     sample_ids = list(range(samples.shape[0]))
     update_lock = threading.Lock()
+    traceback_size = np.zeros(num_threads)
+    logger = daiquiri.getLogger()
 
     # FIXME hack --- we insist that error_rate is > 0 for low-level code.
     if error_rate == 0:
@@ -210,7 +211,8 @@ def match_samples(
         start = thread_index * chunk_size
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
-            traceback = _tsinfer.Traceback(store.num_sites, 2**10)
+            megabyte = 2**20
+            traceback = _tsinfer.Traceback(store.num_sites, 16 * megabyte)
         else:
             matcher = AncestorMatcher(store, recombination_rate)
             traceback = Traceback(store)
@@ -228,6 +230,7 @@ def match_samples(
                 if show_progress:
                     progress.update()
             traceback.reset()
+        traceback_size[thread_index] = traceback.total_memory
 
     if num_threads > 1:
         threads = [
@@ -240,9 +243,11 @@ def match_samples(
     else:
         sample_match_worker(0)
 
-
     if show_progress:
         progress.close()
+
+    logger.info("Sample traceback mean size:{}".format(humanize.naturalsize(
+        np.mean(traceback_size), binary=True)))
 
 def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_builder):
 
@@ -323,10 +328,17 @@ def finalise_tree_sequence(num_samples, store, position, length, tree_sequence_b
 
 
 def infer(samples, positions, length, recombination_rate, error_rate, method="C",
-        num_threads=1, show_progress=False):
+        num_threads=1, show_progress=False, log_level="WARNING"):
+
+    daiquiri.setup(level=log_level)
+    logger = daiquiri.getLogger()
     num_samples, num_sites = samples.shape
+    logger.info("Staring infer for {} samples and {} sites".format(num_samples, num_sites))
+
     store = build_ancestors(samples, positions, num_threads=num_threads, method=method,
             show_progress=show_progress)
+    logger.info("Ancestor store size = {}".format(
+        humanize.naturalsize(store.total_memory)))
 
     if method == "C":
         tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
@@ -442,37 +454,6 @@ class TreeSequenceBuilder(object):
     def add_child_mapping(self, start, end, parent, child):
         # print("ADD CHILD MAPPING", start, end, parent, child)
         self.parent[child].append(Segment(start, end, parent))
-
-    # def add_parent_mapping(self, start, end, parent, child):
-    #     assert start < end
-    #     # Skip leading segments
-    #     u = self.children[parent]
-    #     while u.end <= start:
-    #         u = u.next
-    #     if u.start < start:
-    #         v =LinkedSegment(start, u.end, list(u.value), u.next)
-    #         u.end = start
-    #         u.next = v
-    #         u = v
-    #     while u is not None and u.end <= end:
-    #         u.value.append(child)
-    #         u = u.next
-    #     if u is not None and end > u.start:
-    #         v = LinkedSegment(end, u.end, list(u.value), u.next)
-    #         u.end = end
-    #         u.next = v
-    #         u.value.append(child)
-
-    #     # print("AFTER")
-    #     # self.print_row(parent)
-    #     # Check integrity
-    #     u = self.children[parent]
-    #     while u is not None:
-    #         if u.start >= start and u.end <= end:
-    #             assert child in u.value
-    #         # else:
-    #         #     assert child not in u.value
-    #         u = u.next
 
     def record_coalescence(self, start, end, parent, children):
         """
@@ -672,7 +653,7 @@ class TreeSequenceBuilder(object):
         V = traceback.best_segment
         T = traceback.site_head
         # Choose the oldest value in the best_segment
-        print(V)
+        # print(V)
         parent = V[end - 1].start
 
         # print("H = ", haplotype)
@@ -831,6 +812,8 @@ class AncestorStore(object):
                 epoch -= 1
             self.epoch_ancestors[epoch].append(j)
         self.epoch_ancestors[self.num_epochs - 1].append(0)
+        # Defining here to be compatible with the low level object.
+        self.total_memory = 0
 
     def get_epoch_ancestors(self, epoch, ancestors):
         num_ancestors = len(self.epoch_ancestors[epoch])
@@ -1058,6 +1041,8 @@ class Traceback(object):
     def __init__(self, store):
         self.store = store
         self.reset()
+        # Just defining here to be compatible with the C object.
+        self.total_memory = 0
 
     def set_best_segment(self, site, start, end):
         """
@@ -1141,17 +1126,17 @@ class AncestorMatcher(object):
             pr = r / possible_recombinants
             qr = 1 - r + r / possible_recombinants
 
-            print()
-            print("site = ", site)
-            print("rho = ", rho, "r = ", r)
-            print("pos = ", self.store.sites[site].position)
-            print("n = ", n)
-            print("re= ", possible_recombinants)
-            print("pr= ", pr)
-            print("qr= ", qr)
-            print("L = ", L)
-            print("S = ", S)
-            print("h = ", h[site])
+            # print()
+            # print("site = ", site)
+            # print("rho = ", rho, "r = ", r)
+            # print("pos = ", self.store.sites[site].position)
+            # print("n = ", n)
+            # print("re= ", possible_recombinants)
+            # print("pr= ", pr)
+            # print("qr= ", qr)
+            # print("L = ", L)
+            # print("S = ", S)
+            # print("h = ", h[site])
 
             l = 0
             s = 0
@@ -1192,7 +1177,7 @@ class AncestorMatcher(object):
                     z = x
                 else:
                     z = y
-                    print("ADD RECOMB", site, start, end)
+                    # print("ADD RECOMB", site, start, end)
                     traceback.add_recombination(site, start, end)
 
                 # Determine the likelihood for this segment.
@@ -1239,9 +1224,9 @@ class AncestorMatcher(object):
                 if seg.value == max_value:
                     traceback.set_best_segment(site, seg.start, seg.end)
                     break
-            for seg in L:
-                if seg.value == max_value:
-                    print("max liklihood segment", seg.start, seg.end)
+            # for seg in L:
+            #     if seg.value == max_value:
+            #         print("max liklihood segment", seg.start, seg.end)
 
             if max_value > 0:
                 # Renormalise L

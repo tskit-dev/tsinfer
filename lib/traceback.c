@@ -11,11 +11,11 @@ int
 traceback_print_state(traceback_t *self, FILE *out)
 {
     size_t l;
-    segment_t *v;
+    node_segment_list_node_t *v;
 
     fprintf(out, "Traceback\n");
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
-    object_heap_print_state(&self->segment_heap, out);
+    block_allocator_print_state(&self->allocator, out);
     for (l = 0; l < self->num_sites; l++) {
         v = self->sites_head[l];
         if (v != NULL) {
@@ -38,14 +38,13 @@ traceback_alloc(traceback_t *self, size_t num_sites, size_t segment_block_size)
     memset(self, 0, sizeof(traceback_t));
     self->num_sites = num_sites;
     self->segment_block_size = segment_block_size;
-    ret = object_heap_init(&self->segment_heap, sizeof(segment_t),
-           self->segment_block_size, NULL);
+    ret = block_allocator_alloc(&self->allocator, self->segment_block_size);
     if (ret != 0) {
         goto out;
     }
     self->best_match = malloc(self->num_sites * sizeof(ancestor_id_t));
-    self->sites_head = calloc(self->num_sites, sizeof(segment_t *));
-    self->sites_tail = calloc(self->num_sites, sizeof(segment_t *));
+    self->sites_head = calloc(self->num_sites, sizeof(node_segment_list_node_t *));
+    self->sites_tail = calloc(self->num_sites, sizeof(node_segment_list_node_t *));
     if (self->best_match == NULL
             || self->sites_head == NULL || self->sites_tail == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -58,24 +57,19 @@ out:
 int
 traceback_free(traceback_t *self)
 {
-    object_heap_free(&self->segment_heap);
+    block_allocator_free(&self->allocator);
     tsi_safe_free(self->best_match);
     tsi_safe_free(self->sites_head);
     tsi_safe_free(self->sites_tail);
     return 0;
 }
 
-static inline segment_t * WARN_UNUSED
+static inline node_segment_list_node_t * WARN_UNUSED
 traceback_alloc_segment(traceback_t *self, ancestor_id_t start, ancestor_id_t end)
 {
-    segment_t *ret = NULL;
+    node_segment_list_node_t *ret = NULL;
 
-    if (object_heap_empty(&self->segment_heap)) {
-        if (object_heap_expand(&self->segment_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (segment_t *) object_heap_alloc_object(&self->segment_heap);
+    ret = block_allocator_get(&self->allocator, sizeof(* ret));
     if (ret == NULL) {
         goto out;
     }
@@ -86,28 +80,16 @@ out:
     return ret;
 }
 
-static inline void
-traceback_free_segment(traceback_t *self, segment_t *seg)
-{
-    object_heap_free_object(&self->segment_heap, seg);
-}
-
 int
 traceback_reset(traceback_t *self)
 {
     size_t l;
-    segment_t *v, *tmp;
 
     for (l = 0; l < self->num_sites; l++) {
-        v = self->sites_head[l];
-        while (v != NULL) {
-            tmp = v;
-            v = v->next;
-            traceback_free_segment(self, tmp);
-        }
         self->sites_head[l] = NULL;
         self->sites_tail[l] = NULL;
     }
+    block_allocator_reset(&self->allocator);
     return 0;
 }
 
@@ -123,9 +105,9 @@ traceback_add_recombination(traceback_t *self, site_id_t site_id, ancestor_id_t 
         ancestor_id_t end)
 {
     int ret = 0;
-    segment_t **head = self->sites_head;
-    segment_t **tail = self->sites_tail;
-    segment_t *tmp;
+    node_segment_list_node_t **head = self->sites_head;
+    node_segment_list_node_t **tail = self->sites_tail;
+    node_segment_list_node_t *tmp;
     assert(head != NULL);
     assert(tail != NULL);
     assert(site_id < self->num_sites);

@@ -367,7 +367,7 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
     ancestor_id_t parent;
     bool switch_parent;
     allele_t state;
-    segment_t *u;
+    node_segment_list_node_t *u;
 
     /* traceback_print_state(traceback, stdout); */
     parent = traceback->best_match[end - 1];
