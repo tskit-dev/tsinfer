@@ -65,23 +65,41 @@ def build_ancestors_dev(n, L, seed):
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
 
+    print(S)
+    num_sites = S.shape[1]
+    frequency = S.sum(axis=0)
+    print(frequency)
+    bins = collections.defaultdict(list)
+    for k in range(num_sites):
+        bins[frequency[k]].append(k)
+    print(bins)
+    del bins[1]
+    for freq in reversed(list(bins.keys())):
+        print(freq, "->", bins[freq])
+        # Group sites within a frequency class into identical sets.
+        classes = collections.defaultdict(list)
+        for site in bins[freq]:
+            classes[tuple(S[:, site])].append(site)
+        for k, v in classes.items():
+            print("\t", k, "->", v)
+
+
     # builder = _tsinfer.AncestorBuilder(S, position)
     store = tsinfer.build_ancestors(S, position, method="C")
     print("n = ", n, "num_sites = ", ts.num_sites)
 
-    # store.print_state()
-    # A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8) - 1
-    # for j in range(store.num_ancestors):
-    #     store.get_ancestor(j, A[j,:])
-    # print(A)
-    # np.save("tmp__NOBACKUP__/10k-ancestors.npy", A)
+    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
+    for j in range(store.num_ancestors):
+        start, end, num_older_ancestors, focal_sites = store.get_ancestor(j, A[j, :])
+        print(num_older_ancestors, "\t", A[j], "\t", focal_sites)
 
     # n0 = 0
     # n1 = 0
-    num_segments = np.zeros(store.num_sites, dtype=int)
-    for l in range(store.num_sites):
-        segments = store.get_site(l)
-        num_segments[l] = len(segments)
+    # num_segments = np.zeros(store.num_sites, dtype=int)
+    # for l in range(store.num_sites):
+    #     segments = store.get_site(l)
+    #     num_segments[l] = len(segments)
+
         # print(l, store.get_site(l))
     #     for start, end, state in store.get_site(l):
     #         if state == 0:
@@ -90,8 +108,9 @@ def build_ancestors_dev(n, L, seed):
     #             n1 += (end - start)
     # print(num_segments)
     # pyplot.plot(num_segments)
-    pyplot.hist(num_segments, 50)
-    pyplot.savefig("tmp__NOBACKUP__/num_segments_n_{}s_{}.pdf".format(n, ts.num_sites))
+
+    # pyplot.hist(num_segments, 50)
+    # pyplot.savefig("tmp__NOBACKUP__/num_segments_n_{}s_{}.pdf".format(n, ts.num_sites))
 
 
     # total = store.num_ancestors * store.num_sites
@@ -1061,7 +1080,7 @@ if __name__ == "__main__":
 
     # export_samples(10, 100, 304)
 
-    run_large_infers()
+    # run_large_infers()
     # analyse_file("tmp__NOBACKUP__/n=2000_L=10_original.hdf5")
     # analyse_file("tmp__NOBACKUP__/n=2000_L=10_simplified.hdf5")
 
@@ -1069,5 +1088,5 @@ if __name__ == "__main__":
     # visualise_copying(8, 4, 5)
 
     # build_ancestors_dev(10000, 10 * 10**6, 3)
-    # build_ancestors_dev(10, 10**5, 3)
+    build_ancestors_dev(10, 1 * 10**5, 3)
     # examine_ancestors()
