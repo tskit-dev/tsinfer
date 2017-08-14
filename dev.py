@@ -1062,6 +1062,264 @@ def draw_tree_for_position(site_index, ts):
 
 
 
+def sort_encode(A):
+    """
+    Encodes the specified ancestor matrix site based run-length encoding.
+    """
+    N, m = A.shape
+    initial_sorting = np.argsort(A[:,0], kind="mergesort")
+    last_sorting = initial_sorting
+    print(initial_sorting)
+
+    for j in range(m):
+        sorting = np.argsort(A[:, j], kind="mergesort")
+        diff = sorting - last_sorting
+        # print("j = ", j)
+        # print("sort = ", sorting)
+        # print("diff = ", diff)
+        print(diff)
+        last_sorting = sorting
+
+def ancestor_copy_ordering_dev(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    position = np.array([site.position for site in ts.sites()])
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    # print(S)
+
+    builder = tsinfer.AncestorBuilder(S, position)
+    store = AncestorStore(S.shape[1])
+    matcher = AncestorMatcher(store)
+
+    frequency_classes = builder.get_frequency_classes()
+    num_ancestors = 1
+    for age, ancestor_focal_sites in frequency_classes:
+        num_ancestors += len(ancestor_focal_sites)
+
+    A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
+    j = 1
+    for age, ancestor_focal_sites in frequency_classes:
+        assert len(ancestor_focal_sites) > 0
+        for focal_sites in ancestor_focal_sites:
+            builder.make_ancestor(focal_sites, A[j,:])
+            j += 1
+    print(A)
+
+    sort_encode(A)
+
+
+    # assert np.max(end) == total_ancestors
+    # assert np.min(start) == 0
+
+
+@attr.s
+class Site(object):
+    id = attr.ib(default=None)
+    frequency = attr.ib(default=None)
+
+@attr.s
+class SiteTreeNode(object):
+    sites = attr.ib(default=None)
+    pattern = attr.ib(default=None)
+    children = attr.ib(default=None)
+
+
+class AncestorBuilder(object):
+    """
+    Builds inferred ancestors.
+    """
+    def __init__(self, S, positions):
+        self.haplotypes = S
+        self.num_samples = S.shape[0]
+        self.num_sites = S.shape[1]
+        self.sites = [None for j in range(self.num_sites)]
+        self.sorted_sites = [None for j in range(self.num_sites)]
+        for j in range(self.num_sites):
+            self.sites[j] = Site(j, np.sum(S[:, j]))
+            self.sorted_sites[j] = Site(j, np.sum(S[:, j]))
+        self.sorted_sites.sort(key=lambda x: (-x.frequency, x.id))
+        frequency_sites = collections.defaultdict(list)
+        for site in self.sorted_sites:
+            if site.frequency > 1:
+                frequency_sites[site.frequency].append(site)
+        # Group together identical sites within a frequency class
+        self.frequency_classes = {}
+        for frequency, sites in frequency_sites.items():
+            patterns = collections.defaultdict(list)
+            for site in sites:
+                state = tuple(self.haplotypes[:, site.id])
+                patterns[state].append(site.id)
+            self.frequency_classes[frequency] = list(patterns.values())
+
+    def get_frequency_classes(self):
+        ret = []
+        for frequency in reversed(sorted(self.frequency_classes.keys())):
+            ret.append((frequency, self.frequency_classes[frequency]))
+        return ret
+
+    def build_site_tree(self):
+
+        def print_tree(node, depth=0):
+            print("    " * depth, node.pattern)
+            for child in node.children:
+                print_tree(child, depth + 1)
+
+
+        def is_descendent(u, v):
+            """
+            Return true if v is a descencent of u.
+            """
+            return np.all(v[np.where(u == 0)] == 0)
+
+        # print()
+        root = SiteTreeNode(
+            pattern=np.ones(self.num_samples, dtype=np.int8), children=list())
+
+        for freq, sites_list in self.get_frequency_classes():
+            for sites in sites_list:
+
+                # print("TREE")
+                # print_tree(root)
+
+                pattern = self.haplotypes[:, sites[0]]
+                # print("Placing", freq, pattern, sites)
+                # print_tree(root)
+                destination_node = None
+                node = root
+                while destination_node is None:
+                    child_found = False
+                    for child in node.children:
+                        # print("\tcompare", child.pattern, pattern, is_descendent(
+                        #     child.pattern, pattern))
+                        if is_descendent(child.pattern, pattern):
+                            node = child
+                            child_found = True
+                            break
+                    if not child_found:
+                        destination_node = node
+
+                # print("Inserting into", destination_node.pattern)
+                destination_node.children.append(
+                    SiteTreeNode(pattern=pattern, sites=sites, children=list()))
+
+        print("TREE")
+        print_tree(root)
+        # for j in range(self.num_sites):
+        #     print(j, "\t", self.haplotypes[:, j])
+        return root
+
+
+    def build_ancestors(self):
+        root = self.build_site_tree()
+        freq_classes = self.get_frequency_classes()
+        freq, sites = freq_classes[0]
+        sites = sites[0]
+
+        a = np.zeros(self.num_sites, dtype=np.int8)
+        stack = list(root.children)
+        while len(stack) > 0:
+            node = stack.pop()
+            for child in node.children:
+                stack.append(child)
+            focal_sites = node.sites
+            # print("VISIT", node.pattern)
+
+            # print("make ancestor", focal_sites)
+            a[:] = 0
+            focal_site = self.sites[focal_sites[0]]
+            sites = range(focal_sites[-1] + 1, self.num_sites)
+            d_right = self.__build_ancestor_sites(focal_site, sites, a)
+            focal_site = self.sites[focal_sites[-1]]
+            sites = range(focal_sites[0] - 1, -1, -1)
+            d_left = self.__build_ancestor_sites(focal_site, sites, a)
+            d_middle = set()
+            for j in range(focal_sites[0], focal_sites[-1] + 1):
+                if j in focal_sites:
+                    a[j] = 1
+                else:
+                    s = self.__build_ancestor_sites(focal_site, [j], a)
+                    d_middle.update(s)
+            print(a)
+
+            # print("Acnestor = ", a)
+            # descendent_sites = d_left | d_middle | d_right
+            # # print("descendes = ", descendent_sites)
+            # freq_map = collections.defaultdict(list)
+            # for l in descendent_sites:
+            #     freq_map[self.sites[l].frequency].append(l)
+            # # print(freq_map)
+            # if len(freq_map) > 0:
+            #     min_dist = self.num_sites
+            #     for site in freq_map[max(freq_map.keys())]:
+            #         dist = abs(focal_site.id - site)
+            #         if dist < min_dist:
+            #             best_site = site
+            #             min_dist = dist
+
+            #     # print("choose", best_site, min_dist)
+            #     site_queue.append([best_site])
+
+
+    def __build_ancestor_sites(self, focal_site, sites, a):
+        S = self.haplotypes
+        samples = set()
+        descendents = set()
+        for j in range(self.num_samples):
+            if S[j, focal_site.id] == 1:
+                samples.add(j)
+        for l in sites:
+            a[l] = 0
+            if self.sites[l].frequency > focal_site.frequency:
+                # print("\texamining:", self.sites[l])
+                # print("\tsamples = ", samples)
+                num_ones = 0
+                num_zeros = 0
+                for j in samples:
+                    if S[j, l] == 1:
+                        num_ones += 1
+                    else:
+                        num_zeros += 1
+                # TODO choose a branch uniformly if we have equality.
+                if num_ones >= num_zeros:
+                    a[l] = 1
+                    samples = set(j for j in samples if S[j, l] == 1)
+                else:
+                    samples = set(j for j in samples if S[j, l] == 0)
+            else:
+                u = S[:, focal_site.id]
+                v = S[:, l]
+                is_descendent = (
+                    self.sites[l].frequency < focal_site.frequency and
+                    np.all(v[np.where(u == 0)] == 0))
+                # print("Is ", l, "a descendent site of ", focal_site)
+                # print("\t", u)
+                # print("\t", v)
+                # print("\t", is_descendent)
+                if is_descendent:
+                    descendents.add(l)
+            if len(samples) == 1:
+                # print("BREAK")
+                break
+        return descendents
+
+def ancestor_tree_dev(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    position = np.array([site.position for site in ts.sites()])
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    # print(S)
+
+    b = AncestorBuilder(S, position)
+    b.build_ancestors()
+
 
 if __name__ == "__main__":
 
@@ -1092,3 +1350,6 @@ if __name__ == "__main__":
     # build_ancestors_dev(10000, 10 * 10**6, 3)
     # build_ancestors_dev(10, 1 * 10**5, 3)
     # examine_ancestors()
+
+    # ancestor_copy_ordering_dev(10, 5 * 10**5, 1)
+    ancestor_tree_dev(100, 5 * 10**5, 1)
