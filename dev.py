@@ -1050,13 +1050,15 @@ def analyse_file(filename):
     #         break
 
 
-def draw_tree_for_position(pos, ts):
+def draw_tree_for_position(site_index, ts):
     """
     useful for debugging
     """
+    position = ts.site(site_index).position
     for t in ts.trees():
-        if t.get_interval()[0]<list(ts.sites())[pos].position and t.get_interval()[1]>list(ts.sites())[pos].position:
-            t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(pos))
+        l, r = r.interval
+        if l <= position < r:
+            t.draw("tmp__NOBACKUP__/tree_at_pos{}.svg".format(site_index))
 
 
 
@@ -1088,5 +1090,5 @@ if __name__ == "__main__":
     # visualise_copying(8, 4, 5)
 
     # build_ancestors_dev(10000, 10 * 10**6, 3)
-    build_ancestors_dev(10, 1 * 10**5, 3)
+    # build_ancestors_dev(10, 1 * 10**5, 3)
     # examine_ancestors()
