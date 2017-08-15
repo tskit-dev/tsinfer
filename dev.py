@@ -1080,6 +1080,71 @@ def sort_encode(A):
         print(diff)
         last_sorting = sorting
 
+
+def run_traceback(traceback):
+    # print("==================")
+    # traceback.print_state()
+    V = traceback.best_segment
+    T = traceback.site_head
+    store = traceback.store
+    m = store.num_sites
+    # Choose the oldest value in the best_segment
+    # print(V)
+    parent = V[m - 1].start
+    p = np.zeros(m, dtype=np.int32)
+    # print("H = ", haplotype)
+    # print("INITIAL parent = ", parent, "options = ", options)
+    end = m
+    for l in range(m - 1, 0, -1):
+        switch = False
+        u = T[l]
+        while u is not None:
+            if u.start <= parent < u.end:
+                switch = True
+                break
+            if u.start > parent:
+                break
+            u = u.next
+        if switch:
+            # Complete a segment at this site
+            assert l < end
+            p[l:end] = parent
+            # self.add_mapping(l, end, parent, child)
+            end = l
+            parent = V[l - 1].start
+            # print("SWITCH @", l, "parent = ", parent, "options = ", options)
+    # assert start_site < end
+    # self.add_mapping(start_site, end, parent, child)
+    # print("mapping", 0, m, parent)
+    p[0:end] = parent
+    # state = self.store.get_state(l, parent)
+    # if state != haplotype[l]:
+    #     self.add_mutation(child, l, haplotype[l])
+    # print("AFTER")
+    # self.print_state()
+    return p
+
+class CompressedStore(object):
+    def __init__(self, num_sites):
+        self.num_sites = num_sites
+        self.num_ancestors = 1
+        self.ones = [[] for _ in range(num_sites)]
+
+    def add(self, h, p):
+        print("Adding\t", h)
+        print("path  \t", p)
+        for l in range(self.num_sites):
+            if h[l] == 1:
+                # print("\tInsert 1 into site", l, "p = ", p[l], "for ancestor ", self.num_ancestors)
+                self.ones[l].append((self.num_ancestors, p[l]))
+        self.num_ancestors += 1
+
+    def print_state(self):
+        for l in range(self.num_sites):
+            print(l, "\t", self.ones[l])
+
+
+
 def ancestor_copy_ordering_dev(n, L, seed):
 
     ts = msprime.simulate(
@@ -1089,31 +1154,32 @@ def ancestor_copy_ordering_dev(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    # print(S)
+    print(S)
 
-    builder = tsinfer.AncestorBuilder(S, position)
-    store = AncestorStore(S.shape[1])
-    matcher = AncestorMatcher(store)
+    store = tsinfer.build_ancestors(S, position, method="P")
+    matcher = tsinfer.AncestorMatcher(store, 1e-8)
+    traceback = tsinfer.Traceback(store)
+    h = np.zeros(store.num_sites, dtype=np.int8)
 
-    frequency_classes = builder.get_frequency_classes()
-    num_ancestors = 1
-    for age, ancestor_focal_sites in frequency_classes:
-        num_ancestors += len(ancestor_focal_sites)
+    cstore = CompressedStore(store.num_sites)
 
-    A = np.zeros((num_ancestors, builder.num_sites), dtype=np.int8)
-    j = 1
-    for age, ancestor_focal_sites in frequency_classes:
-        assert len(ancestor_focal_sites) > 0
-        for focal_sites in ancestor_focal_sites:
-            builder.make_ancestor(focal_sites, A[j,:])
-            j += 1
-    print(A)
-
-    sort_encode(A)
-
-
-    # assert np.max(end) == total_ancestors
-    # assert np.min(start) == 0
+    print("Ancestors = ")
+    for j in range(store.num_ancestors):
+        _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
+        print(j, h, sep="\t")
+    print()
+    for j in range(1, store.num_ancestors):
+        _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
+        # print(j, num_older_ancestors, focal_sites, h)
+        matcher.best_path(
+            num_ancestors=num_older_ancestors,
+            haplotype=h, start_site=0, end_site=store.num_sites,
+            focal_sites=focal_sites, error_rate=0, traceback=traceback)
+        p = run_traceback(traceback)
+        cstore.add(h, p)
+        traceback.reset()
+    print()
+    cstore.print_state()
 
 
 @attr.s
@@ -1351,5 +1417,5 @@ if __name__ == "__main__":
     # build_ancestors_dev(10, 1 * 10**5, 3)
     # examine_ancestors()
 
-    # ancestor_copy_ordering_dev(10, 5 * 10**5, 1)
-    ancestor_tree_dev(100, 5 * 10**5, 1)
+    ancestor_copy_ordering_dev(100, 5 * 10**4, 2)
+    # ancestor_tree_dev(100, 5 * 10**5, 1)
