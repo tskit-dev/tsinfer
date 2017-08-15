@@ -78,8 +78,9 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     allele_t state;
     size_t l, s, L_size, S_size, L_next_size, focal_site_index;
     /* TODO Is it really safe to have an upper bound here? */
-    size_t max_segments = self->store->max_num_site_segments * 32;
+    size_t max_segments = self->store->max_site_segments * 32;
     double last_position;
+    size_t total_likelihood_segments = 0;
 
     /* Error rate and focal sites are mutually exclusive */
     if (error_rate == 0) {
@@ -122,6 +123,7 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
         /* printf("site = %d next_focal_site = %d, focal_site_index = %d\n", */
         /*         (int) site_id, (int) focal_sites[focal_site_index], (int) focal_site_index); */
 
+        total_likelihood_segments += L_size;
         /* Compute the recombination rate back to the last site */
         rho = self->recombination_rate * (
                 self->store->sites[site_id].position - last_position);
@@ -279,6 +281,8 @@ ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
     }
     /* assert(focal_site_index == num_focal_sites); */
 
+    self->mean_likelihood_segments = total_likelihood_segments / (double)(
+            end_site - start_site);
 out:
     tsi_safe_free(L_start);
     tsi_safe_free(L_end);
@@ -288,3 +292,4 @@ out:
     tsi_safe_free(L_next_likelihood);
     return ret;
 }
+

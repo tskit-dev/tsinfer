@@ -111,9 +111,11 @@ def match_ancestors(
     work_queue = queue.Queue()
     tree_sequence_builder_lock = threading.Lock()
     traceback_size = np.zeros(num_threads)
+    mean_likelihood_segments = np.zeros(num_threads)
     logger = daiquiri.getLogger()
 
     def ancestor_match_worker(thread_index):
+        total_matches = 0
         # print("Thread ", thread_index, "started")
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
@@ -148,12 +150,15 @@ def match_ancestors(
                     tree_sequence_builder.update(
                         child=ancestor_id, haplotype=h, start_site=start,
                         end_site=end, traceback=traceback)
+                mean_likelihood_segments[thread_index] += matcher.mean_likelihood_segments
+                total_matches += 1
             if show_progress:
                 progress.update()
             traceback.reset()
             work_queue.task_done()
         work_queue.task_done()
         traceback_size[thread_index] = traceback.total_memory
+        mean_likelihood_segments[thread_index] /= total_matches
 
     threads = [
         threading.Thread(target=ancestor_match_worker, args=(j,))
@@ -187,7 +192,9 @@ def match_ancestors(
     if show_progress:
         progress.close()
 
-    logger.info("Ancestor traceback mean size:{}".format(humanize.naturalsize(
+    logger.info("Ancestor matching mean likelihood segments: {:.3f}".format(
+        np.mean(mean_likelihood_segments)))
+    logger.info("Ancestor traceback mean size: {}".format(humanize.naturalsize(
         np.mean(traceback_size), binary=True)))
 
 
@@ -197,6 +204,7 @@ def match_samples(
     sample_ids = list(range(samples.shape[0]))
     update_lock = threading.Lock()
     traceback_size = np.zeros(num_threads)
+    mean_likelihood_segments = np.zeros(num_threads)
     logger = daiquiri.getLogger()
 
     # FIXME hack --- we insist that error_rate is > 0 for low-level code.
@@ -209,6 +217,7 @@ def match_samples(
     def sample_match_worker(thread_index):
         chunk_size = int(math.ceil(len(sample_ids) / num_threads))
         start = thread_index * chunk_size
+        total_matches = 0
         if method == "C":
             matcher = _tsinfer.AncestorMatcher(store, recombination_rate)
             megabyte = 2**20
@@ -230,7 +239,10 @@ def match_samples(
                 if show_progress:
                     progress.update()
             traceback.reset()
+            mean_likelihood_segments[thread_index] += matcher.mean_likelihood_segments
+            total_matches += 1
         traceback_size[thread_index] = traceback.total_memory
+        mean_likelihood_segments[thread_index] /= total_matches
 
     if num_threads > 1:
         threads = [
@@ -246,6 +258,8 @@ def match_samples(
     if show_progress:
         progress.close()
 
+    logger.info("Sample matching mean likelihood segments: {:.3f}".format(
+        np.mean(mean_likelihood_segments)))
     logger.info("Sample traceback mean size:{}".format(humanize.naturalsize(
         np.mean(traceback_size), binary=True)))
 
@@ -339,6 +353,7 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
             show_progress=show_progress)
     logger.info("Ancestor store size = {}".format(
         humanize.naturalsize(store.total_memory)))
+    logger.info("Mean number of site segments = {:.3f}".format(store.mean_site_segments))
 
     if method == "C":
         tree_sequence_builder = _tsinfer.TreeSequenceBuilder(store, num_samples);
@@ -814,6 +829,7 @@ class AncestorStore(object):
         self.epoch_ancestors[self.num_epochs - 1].append(0)
         # Defining here to be compatible with the low level object.
         self.total_memory = 0
+        self.mean_site_segments = np.mean([len(site.segments) for site in self.sites])
 
     def get_epoch_ancestors(self, epoch, ancestors):
         num_ancestors = len(self.epoch_ancestors[epoch])
@@ -1088,6 +1104,7 @@ class AncestorMatcher(object):
     def __init__(self, store, recombination_rate):
         self.store = store
         self.recombination_rate = recombination_rate
+        self.mean_likelihood_segments = 0
 
     def best_path(self, num_ancestors=None, haplotype=None, start_site=None,
             end_site=None, focal_sites=None, error_rate=None, traceback=None):
@@ -1109,15 +1126,17 @@ class AncestorMatcher(object):
             focal_site_index += 1
 
         # print("BEST PATH", num_ancestors, h, start_site, end_site, focal_sites)
-
+        total_l_length = 0
 
         for site in range(start_site, end_site):
             if focal_site_index < len(focal_sites) and site > focal_sites[focal_site_index]:
                 focal_site_index += 1
 
+            # print("\t", len(L), [seg.value for seg in L])
+            S = self.store.sites[site].segments
+            total_l_length += len(L)
             L_next = []
             # S = [Segment(*s) for s in self.store.get_site(site)]
-            S = self.store.sites[site].segments
             # Compute the recombination rate.
             # TODO also need to get the position here so we can get the length of the
             # region.
@@ -1227,12 +1246,15 @@ class AncestorMatcher(object):
             # for seg in L:
             #     if seg.value == max_value:
             #         print("max liklihood segment", seg.start, seg.end)
-
             if max_value > 0:
                 # Renormalise L
                 for seg in L:
                     seg.value /= max_value
+
             last_position = self.store.sites[site].position
+
+        total_l_length /= (end_site - start_site)
+        self.mean_likelihood_segments = total_l_length
 
         # print("focal_site_index = ", focal_site_index, len(focal_sites))
         # assert focal_site_index == len(focal_sites)

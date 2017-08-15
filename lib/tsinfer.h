@@ -51,7 +51,8 @@ typedef struct {
     size_t num_sites;
     size_t num_ancestors;
     size_t total_segments;
-    size_t max_num_site_segments;
+    size_t max_site_segments;
+    double mean_site_segments;
     size_t total_memory;
     site_state_t *sites;
     struct {
@@ -91,6 +92,8 @@ typedef struct {
 typedef struct {
     double recombination_rate;
     ancestor_store_t *store;
+    /* The mean number of likelihood segments in the last performed match */
+    double mean_likelihood_segments;
 } ancestor_matcher_t;
 
 typedef struct {
