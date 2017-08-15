@@ -616,11 +616,9 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     if (ret != 0) {
         fatal_error("error resolve");
     }
-
     if (verbose > 0) {
         tree_sequence_builder_print_state(&ts_builder, stdout);
     }
-
     output_ts(&ts_builder);
 
     tree_sequence_builder_free(&ts_builder);

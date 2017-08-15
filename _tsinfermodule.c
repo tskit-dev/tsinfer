@@ -1205,17 +1205,32 @@ out:
 }
 
 static PyObject *
-AncestorStore_get_max_num_site_segments(AncestorStore *self, void *closure)
+AncestorStore_get_max_site_segments(AncestorStore *self, void *closure)
 {
     PyObject *ret = NULL;
 
     if (AncestorStore_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) self->store->max_num_site_segments);
+    ret = Py_BuildValue("k", (unsigned long) self->store->max_site_segments);
 out:
     return ret;
 }
+
+static PyObject *
+AncestorStore_get_mean_site_segments(AncestorStore *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorStore_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("d", self->store->mean_site_segments);
+out:
+    return ret;
+}
+
+
 
 static PyObject *
 AncestorStore_get_total_memory(AncestorStore *self, void *closure)
@@ -1240,8 +1255,10 @@ static PyGetSetDef AncestorStore_getsetters[] = {
     {"num_epochs", (getter) AncestorStore_get_num_epochs, NULL, "The number of epochs."},
     {"total_segments", (getter) AncestorStore_get_total_segments, NULL,
         "The total number of segments across all sites."},
-    {"max_num_site_segments", (getter) AncestorStore_get_max_num_site_segments, NULL,
+    {"max_site_segments", (getter) AncestorStore_get_max_site_segments, NULL,
         "The maximum number of segments for a site."},
+    {"mean_site_segments", (getter) AncestorStore_get_mean_site_segments, NULL,
+        "The mean number of segments per site."},
     {"total_memory", (getter) AncestorStore_get_total_memory, NULL,
         "The total amount of memory used by this store."},
     {NULL}  /* Sentinel */
@@ -1606,9 +1623,28 @@ out:
     return ret;
 }
 
+static PyObject *
+AncestorMatcher_get_mean_likelihood_segments(AncestorMatcher *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("d", self->matcher->mean_likelihood_segments);
+out:
+    return ret;
+}
+
 static PyMemberDef AncestorMatcher_members[] = {
     {NULL}  /* Sentinel */
 
+};
+
+static PyGetSetDef AncestorMatcher_getsetters[] = {
+    {"mean_likelihood_segments", (getter) AncestorMatcher_get_mean_likelihood_segments,
+        NULL, "The mean number of likelihood segments in the last match performed."},
+    {NULL}  /* Sentinel */
 };
 
 static PyMethodDef AncestorMatcher_methods[] = {
@@ -1648,7 +1684,7 @@ static PyTypeObject AncestorMatcherType = {
     0,                     /* tp_iternext */
     AncestorMatcher_methods,             /* tp_methods */
     AncestorMatcher_members,             /* tp_members */
-    0,                         /* tp_getset */
+    AncestorMatcher_getsetters,          /* tp_getset */
     0,                         /* tp_base */
     0,                         /* tp_dict */
     0,                         /* tp_descr_get */

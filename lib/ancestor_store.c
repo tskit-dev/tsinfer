@@ -27,7 +27,7 @@ ancestor_store_check_state(ancestor_store_t *self)
         }
     }
     assert(total_segments == self->total_segments);
-    assert(max_site_segments == self->max_num_site_segments);
+    assert(max_site_segments == self->max_site_segments);
     for (j = 0; j < self->num_ancestors; j++) {
         ret = ancestor_store_get_ancestor(self, j, a, &start, &end,
                 &num_older_ancestors, &num_focal_sites, &focal_sites);
@@ -74,7 +74,8 @@ ancestor_store_print_state(ancestor_store_t *self, FILE *out)
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "total_segments  = %d\n", (int) self->total_segments);
-    fprintf(out, "max_num_site_segments = %d\n", (int) self->max_num_site_segments);
+    fprintf(out, "max_site_segments = %d\n", (int) self->max_site_segments);
+    fprintf(out, "mean_site_segments = %.3f\n", self->mean_site_segments);
     fprintf(out, "total_memory = %d\n", (int) self->total_memory);
     for (l = 0; l < self->num_sites; l++) {
         site = &self->sites[l];
@@ -168,7 +169,8 @@ ancestor_store_alloc(ancestor_store_t *self,
 
     site_start = 0;
     site_end = 0;
-    self->max_num_site_segments = 0;
+    self->max_site_segments = 0;
+    self->mean_site_segments = 0;
     seg_num_ancestors = 0;
     for (l = 0; l < self->num_sites; l++) {
         if (l > 0) {
@@ -183,8 +185,9 @@ ancestor_store_alloc(ancestor_store_t *self,
                 site_end++;
             }
             num_site_segments = site_end - site_start;
-            if (num_site_segments > self->max_num_site_segments) {
-                self->max_num_site_segments = num_site_segments;
+            self->mean_site_segments += num_site_segments;
+            if (num_site_segments > self->max_site_segments) {
+                self->max_site_segments = num_site_segments;
             }
             self->total_memory += num_site_segments * (2 * sizeof(ancestor_id_t) + sizeof(allele_t));
             self->sites[l].start = malloc(num_site_segments * sizeof(ancestor_id_t));
@@ -208,6 +211,7 @@ ancestor_store_alloc(ancestor_store_t *self,
             site_start = site_end;
         }
     }
+    self->mean_site_segments /= self->num_sites;
 
     /* Work out the number of epochs */
     self->num_epochs = 1;
