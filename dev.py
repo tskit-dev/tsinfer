@@ -1130,6 +1130,7 @@ class CompressedStore(object):
         self.num_ancestors = 1
         self.ones = [[] for _ in range(num_sites)]
 
+
     def add(self, h, p):
         print("Adding\t", h)
         print("path  \t", p)
@@ -1154,32 +1155,51 @@ def ancestor_copy_ordering_dev(n, L, seed):
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
-    print(S)
+    # print(S)
+    print("Size= ", S.shape)
 
-    store = tsinfer.build_ancestors(S, position, method="P")
-    matcher = tsinfer.AncestorMatcher(store, 1e-8)
-    traceback = tsinfer.Traceback(store)
+    store = tsinfer.build_ancestors(S, position, method="C")
+    # matcher = tsinfer.AncestorMatcher(store, 1e-8)
+    # traceback = tsinfer.Traceback(store)
+    print("Ancestors built")
     h = np.zeros(store.num_sites, dtype=np.int8)
 
-    cstore = CompressedStore(store.num_sites)
+    # cstore = CompressedStore(store.num_sites)
 
-    print("Ancestors = ")
-    for j in range(store.num_ancestors):
-        _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
-        print(j, h, sep="\t")
-    print()
-    for j in range(1, store.num_ancestors):
-        _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
-        # print(j, num_older_ancestors, focal_sites, h)
-        matcher.best_path(
-            num_ancestors=num_older_ancestors,
-            haplotype=h, start_site=0, end_site=store.num_sites,
-            focal_sites=focal_sites, error_rate=0, traceback=traceback)
-        p = run_traceback(traceback)
-        cstore.add(h, p)
-        traceback.reset()
-    print()
-    cstore.print_state()
+    # print("Ancestors = ")
+    num_ones = 0
+    for l in range(store.num_sites):
+        for start, end in store.get_site(l):
+            num_ones += end - start
+    # print("num_ones = ", num_ones)
+    # num_ones = 0
+    # A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
+    # for j in range(store.num_ancestors):
+    #     _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
+    #     num_ones += np.sum(h == 1)
+    #     # print(j, h, sep="\t")
+    #     # A[j,:] = h
+    # AVL nodes need 56 bytes each.
+    print("num_ones = ", num_ones, "storage = ", humanize.naturalsize(num_ones * 56),
+            "full ancestor matrix = ", humanize.naturalsize(store.num_ancestors * store.num_sites))
+    # print(A)
+    # ones = [None for j in range(store.num_sites)]
+    # for j in range(store.num_sites):
+    #     ones[j] = np.where(A[:, j] == 1)[0]
+    #     print(j, ones[j])
+    # print()
+    # for j in range(1, store.num_ancestors):
+    #     _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
+    #     # print(j, num_older_ancestors, focal_sites, h)
+    #     matcher.best_path(
+    #         num_ancestors=num_older_ancestors,
+    #         haplotype=h, start_site=0, end_site=store.num_sites,
+    #         focal_sites=focal_sites, error_rate=0, traceback=traceback)
+    #     p = run_traceback(traceback)
+    #     cstore.add(h, p)
+    #     traceback.reset()
+    # # print()
+    # # cstore.print_state()
 
 
 @attr.s
@@ -1402,7 +1422,7 @@ if __name__ == "__main__":
     # test_ancestor_store(20, 30, 861, method="P")
 
     # new_segments(20, 100, 1, num_threads=1, method="C", log_level="INFO")
-    new_segments(20, 10, 1, num_threads=1, method="P")
+    # new_segments(20, 10, 1, num_threads=1, method="P")
 
     # export_samples(10, 100, 304)
 
@@ -1417,5 +1437,10 @@ if __name__ == "__main__":
     # build_ancestors_dev(10, 1 * 10**5, 3)
     # examine_ancestors()
 
-    ancestor_copy_ordering_dev(100, 5 * 10**4, 2)
+    # for n in [10, 100, 1000, 10**4, 10**5]:
+    # n = 1000
+    n = 1000
+    for j in range(1, 10):
+        ancestor_copy_ordering_dev(n, j * 10**7, 2)
+        print()
     # ancestor_tree_dev(100, 5 * 10**5, 1)
