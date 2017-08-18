@@ -1125,72 +1125,34 @@ def run_traceback(traceback):
     return p
 
 class CompressedStore(object):
-    def __init__(self, num_sites):
+    def __init__(self, num_sites, num_ancestors):
         self.num_sites = num_sites
+        self.P = np.zeros((num_ancestors, num_sites), dtype=int)
+        self.mutation_root = np.zeros(num_sites, dtype=int) - 1
         self.num_ancestors = 1
-        self.permutation = [np.zeros(1, dtype=int) for _ in range(num_sites)]
-        self.num_zeros = 1 + np.zeros(self.num_sites, dtype=int)
 
-    def add(self, h, p):
-        print("Adding\t", h)
-        for l in range(self.num_sites):
-            decoded = np.zeros(self.num_ancestors, dtype=int)
-            permutation = self.permutation[l]
-            # print("l = ", l)
-            # print("permutation = ", permutation)
-            # decoded[self.num_zeros[l]:] = 1
-            # print("raw = ", decoded)
-            # decoded = decoded[permutation]
-            # print("decoded = ", decoded)
-            # print("h = ", h[l])
-            if h[l] == 0:
-                permutation = np.hstack([
-                    permutation[:self.num_zeros[l]], self.num_ancestors,
-                    permutation[self.num_zeros[l]:]])
-                self.num_zeros[l] += 1
-            else:
-                permutation = np.hstack([permutation, self.num_ancestors])
-            # print("AFTER")
-            # print("num_zeros = ", self.num_zeros[l])
-            # print("permutation = ", permutation)
-            # print()
-            self.permutation[l] = permutation
-            assert permutation.shape[0] == self.num_ancestors + 1
+    def add(self, h, p, focal_sites):
+        # print("Adding\t", h, p, focal_sites)
+        self.P[self.num_ancestors] = p
+        for site in focal_sites:
+            self.mutation_root[site] = self.num_ancestors
         self.num_ancestors += 1
-        # Check that we decode the value correctly.
-        b = np.zeros(self.num_sites, dtype=np.int8)
-        self.get_ancestor(self.num_ancestors - 1, b)
-        assert np.array_equal(h, b)
-
 
     def get_ancestor(self, j, a):
+        a[:] = 0
         for l in range(self.num_sites):
-            decoded = np.zeros(self.num_ancestors, dtype=int)
-            permutation = self.permutation[l]
-            decoded[self.num_zeros[l]:] = 1
-            out = np.zeros(self.num_ancestors, dtype=int)
-            for k in range(self.num_ancestors):
-                out[permutation[k]] = decoded[k]
-            a[l] = out[j]
+            u = j
+            while u != 0 and u != self.mutation_root[l]:
+                u = self.P[u, l]
+            if u == self.mutation_root[l]:
+                a[l] = 1
 
     def print_state(self):
-        # print("Initial sort order:", self.initial_sort_order)
         print("Encoded state")
         for l in range(self.num_sites):
             print("site: ", l)
-            print("\tnum_zeros = ", self.num_zeros[l])
-            print("\tpermutaion = ", self.permutation[l])
-            decoded = np.zeros(self.num_ancestors, dtype=int)
-            permutation = self.permutation[l]
-            decoded[self.num_zeros[l]:] = 1
-            print("\traw = ", decoded)
-            out = np.zeros(self.num_ancestors, dtype=int)
-            for j in range(self.num_ancestors):
-                out[permutation[j]] = decoded[j]
-            print("\tout = ", out)
-            assert self.permutation[l].shape[0] == self.num_ancestors
-            # print("\torder_offset = ", self.order_offset[l])
-
+            print("\tP = ", self.P[:, l])
+            print("\tr = ", self.mutation_root[l])
 
 
 
@@ -1209,14 +1171,16 @@ def ancestor_copy_ordering_dev(n, L, seed):
     store = tsinfer.build_ancestors(S, position, method="P")
     matcher = tsinfer.AncestorMatcher(store, 1e-8)
     traceback = tsinfer.Traceback(store)
-    print("Ancestors built")
+    # print("Ancestors built")
     h = np.zeros(store.num_sites, dtype=np.int8)
-    for j in range(0, store.num_ancestors):
-        _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
-        print(j, ":\t", h)
-    print()
+    # for j in range(0, store.num_ancestors):
+    #     _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
+    #     print(j, ":\t", h)
+    # print()
+    print("num_ancestors = ", store.num_ancestors)
 
-    cstore = CompressedStore(store.num_sites)
+    # cstore = CompressedStore(store.num_sites, store.num_ancestors)
+    P = np.zeros((store.num_ancestors, store.num_sites), dtype=int)
     for j in range(1, store.num_ancestors):
         _, _, num_older_ancestors, focal_sites = store.get_ancestor(j, h)
         # print(j, num_older_ancestors, focal_sites, h)
@@ -1225,34 +1189,35 @@ def ancestor_copy_ordering_dev(n, L, seed):
             haplotype=h, start_site=0, end_site=store.num_sites,
             focal_sites=focal_sites, error_rate=0, traceback=traceback)
         p = run_traceback(traceback)
-        cstore.add(h, p)
-        # cstore.print_state()
-        traceback.reset()
-        # for k in range(j + 1):
-        #     a = np.zeros(store.num_sites, dtype=np.int8)
-        #     b = np.zeros(store.num_sites, dtype=np.int8)
-        #     cstore.get_ancestor(k, a)
-        #     store.get_ancestor(k, b)
-        #     if not np.array_equal(a, b):
-        #         print("ERROR", k)
-        #         print(a)
-        #         print(b)
-        #         cstore.print_state()
-        #     assert np.array_equal(a, b)
-
-    print("DONE")
-    a = np.zeros(store.num_sites, dtype=np.int8)
-    b = np.zeros(store.num_sites, dtype=np.int8)
-    for j in range(store.num_ancestors):
-        cstore.get_ancestor(j, a)
-        store.get_ancestor(j, b)
-        assert np.array_equal(a, b)
-    # print()
-    cstore.print_state()
-    last_permutation = cstore.permutation[0]
-    for l in range(store.num_sites):
-        print(cstore.permutation[l] - last_permutation)
-        last_permutation = cstore.permutation[l]
+        P[j,:] = p
+        # print(j, ":\t", p)
+        # cstore.add(h, p, focal_sites)
+    # cstore.print_state()
+    print()
+    # P = cstore.P
+    # print(P)
+    diff_size = np.zeros(store.num_sites)
+    for l in range(1, store.num_sites):
+        diff = P[:,l] - P[:,l - 1]
+        diff_size[l] = np.sum(diff != 0)
+    # print(diff_size)
+    print("Average diff size = ", np.mean(diff_size))
+    # print("DONE")
+    # a = np.zeros(store.num_sites, dtype=np.int8)
+    # b = np.zeros(store.num_sites, dtype=np.int8)
+    # for j in range(store.num_ancestors):
+    #     cstore.get_ancestor(j, a)
+    #     store.get_ancestor(j, b)
+    #     print(a)
+    #     print(b)
+    #     print()
+    #     # assert np.array_equal(a, b)
+    # # print()
+    # cstore.print_state()
+    # last_permutation = cstore.permutation[0]
+    # for l in range(store.num_sites):
+    #     print(cstore.permutation[l] - last_permutation)
+    #     last_permutation = cstore.permutation[l]
 
 
 @attr.s
@@ -1460,6 +1425,138 @@ def ancestor_tree_dev(n, L, seed):
     b.build_ancestors()
 
 
+def run_segment_traceback(traceback):
+    # print("==================")
+    # traceback.print_state()
+    V = traceback.best_segment
+    T = traceback.site_head
+    store = traceback.store
+    m = store.num_sites
+    # Choose the oldest value in the best_segment
+    # print(V)
+    parent = V[m - 1].start
+    ret = []
+    # print("H = ", haplotype)
+    # print("INITIAL parent = ", parent, "options = ", options)
+    end = m
+    for l in range(m - 1, 0, -1):
+        switch = False
+        u = T[l]
+        while u is not None:
+            if u.start <= parent < u.end:
+                switch = True
+                break
+            if u.start > parent:
+                break
+            u = u.next
+        if switch:
+            # Complete a segment at this site
+            assert l < end
+            ret.append((l, end, parent))
+            # self.add_mapping(l, end, parent, child)
+            end = l
+            parent = V[l - 1].start
+            # print("SWITCH @", l, "parent = ", parent, "options = ", options)
+    # assert start_site < end
+    # self.add_mapping(start_site, end, parent, child)
+    # print("mapping", 0, m, parent)
+    ret.append((0, end, parent))
+    # state = self.store.get_state(l, parent)
+    # if state != haplotype[l]:
+    #     self.add_mutation(child, l, haplotype[l])
+    # print("AFTER")
+    # self.print_state()
+    return ret
+
+
+def tree_copy_process_dev(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    site_position = np.array([site.position for site in ts.sites()])
+    edgeset_position = np.hstack([0, site_position, ts.sequence_length])
+    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        S[:, variant.index] = variant.genotypes
+    # print(S)
+    print("Size= ", S.shape)
+
+    store = tsinfer.build_ancestors(S, site_position, method="P")
+    matcher = tsinfer.AncestorMatcher(store, 1e-8)
+    traceback = tsinfer.Traceback(store)
+    h = np.zeros(store.num_sites, dtype=np.int8)
+    # For checking the output.
+    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
+
+    nodes = msprime.NodeTable()
+    edgesets = msprime.EdgesetTable()
+    sites = msprime.SiteTable()
+    mutations = msprime.MutationTable()
+    for site in ts.sites():
+        # Position == index for now.
+        sites.add_row(position=site.index, ancestral_state='0')
+    nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors)
+    for ancestor_id in range(1, store.num_ancestors):
+        start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
+                ancestor_id, h)
+        for site in focal_sites:
+            assert h[site] == 1
+        assert len(focal_sites) > 0
+        matcher.best_path(
+            num_ancestors=num_older_ancestors, haplotype=h,
+            start_site=0, end_site=store.num_sites,
+            focal_sites=focal_sites, error_rate=0, traceback=traceback)
+        segments = run_segment_traceback(traceback)
+        for left, right, parent in reversed(segments):
+            edgesets.add_row(
+                left=left, right=right,
+                # left=edgeset_position[left], right=edgeset_position[right],
+                parent=parent, children=(ancestor_id,))
+        nodes.add_row(
+            flags=msprime.NODE_IS_SAMPLE,
+            time=store.num_ancestors - num_older_ancestors)
+        for focal_site in focal_sites:
+            mutations.add_row(
+                site=focal_site, node=ancestor_id, derived_state='1')
+        A[ancestor_id] = h
+
+    msprime.sort_tables(
+        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    print("BEFORE")
+    print(nodes)
+    print(edgesets)
+    print(sites)
+    print(mutations)
+    msprime.simplify_tables(filter_invariant_sites=False,
+            samples=np.arange(store.num_ancestors, dtype=np.int32),
+            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    # Need to fix simplify with internal samples before we can implement this.
+    # Sometimes works, sometimes we don't get the ancestral haplotypes out
+    # correctly.
+    print("AFTER")
+    print(edgesets)
+    assert sites.num_rows == ts.num_sites
+    print(sites)
+    print(mutations)
+    ts = msprime.load_tables(
+        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    for tree in ts.trees():
+        print(tree)
+    B = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
+    for v  in ts.variants():
+        pos = int(v.position)
+        B[:, pos] = v.genotypes
+        if not np.array_equal(B[:, pos], A[:, pos]):
+            print("Site differs", pos)
+            print(A[:, pos])
+            print(B[:, pos])
+    print(A)
+    print()
+    print(B)
+    assert np.array_equal(A, B)
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -1497,4 +1594,9 @@ if __name__ == "__main__":
     #     ancestor_copy_ordering_dev(n, j * 10**7, 2)
     #     print()
     # ancestor_tree_dev(100, 5 * 10**5, 1)
-    ancestor_copy_ordering_dev(16, 2 * 10**5, 2)
+    # ancestor_copy_ordering_dev(100, 20 * 10**4, 2)
+    # tree_copy_process_dev(3, 2 * 10**4, 6)
+    for j in range(100):
+        print(j)
+        tree_copy_process_dev(4, 2 * 10**4, j + 2)
+
