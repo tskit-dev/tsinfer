@@ -77,7 +77,7 @@ def check_sample_coverage(tree, nodes):
     assert samples == set(range(tree.sample_size))
 
 def get_tree_likelihood(tree, state, mutation_node, L, recombination_rate):
-    print("get tree likelihood", state, mutation_node, L)
+    # print("get tree likelihood", state, mutation_node, L)
     n = tree.sample_size
     r = 1 - np.exp(-recombination_rate / n)
     recomb_proba = r / n
@@ -85,9 +85,7 @@ def get_tree_likelihood(tree, state, mutation_node, L, recombination_rate):
 
     L_next = {}
     for L_node, L_value in L.items():
-        if mutation_node == L_node:
-            L_next[L_node] = L_value
-        elif is_descendent(tree, mutation_node, L_node):
+        if is_descendent(tree, mutation_node, L_node):
             # print("Splitting for mutation_node = ", mutation_node, "L_ndoe = ", L_node)
             L_next[mutation_node] = L_value
             # Traverse upwards until we reach old L node, adding values
@@ -170,11 +168,73 @@ def best_path_ts(h, ts, recombination_rate):
     T = [set() for _ in range(m)]
     T_dest = np.zeros(m, dtype=int)
 
-    L_tree = {t1.root: 1}
+    P = [-1 for _ in range(ts.num_nodes)]
+    C = [None for _ in range(ts.num_nodes)]
+
+    L_size = []
+
+    L_tree = {u: 1 for u in ts.samples()}
     for t, diff in zip(ts.trees(), ts.diffs()):
-        # print("At tree", t.parent_dict)
-        # t.draw("t0.svg", width=800, height=800, mutation_locations=False)
-        # print("diff = ", diff)
+        # print("At tree", t.index, t.parent_dict)
+        # print("L before = ", L_tree)
+        # t.draw("t{}.svg".format(t.index), width=800, height=800, mutation_locations=False)
+        _, records_out, records_in = diff
+        for parent, children, _ in records_out:
+            for c in children:
+                P[c] = -1
+            C[parent] = None
+            # print("\tout = ", parent, children)
+            if parent in L_tree:
+                x = L_tree.pop(parent)
+                for c in children:
+                    L_tree[c] = x
+            else:
+                # Traverse upwards until we find an L value
+                u = parent
+                while u != -1 and u not in L_tree:
+                    u = P[u]
+                if u != -1:
+                    x = L_tree[u]
+                    for c in children:
+                        L_tree[c] = x
+        # print("AFTER OUT:", L_tree)
+        for parent, children, _ in records_in:
+            # print("\tin = ", parent, children)
+            C[parent] = children
+            for c in children:
+                P[c] = parent
+            # Coalesce the L values for children if possible.
+            L_children = []
+            for c in children:
+                if c in L_tree:
+                    L_children.append(L_tree[c])
+            if len(L_children) == len(children) and len(set(L_children)) == 1:
+                L_tree[parent] = L_tree[children[0]]
+                for c in children:
+                    del L_tree[c]
+            if len(L_children) > 0:
+                # Need to check for conflicts with L values higher in the tree.
+                u = P[parent]
+                while u != msprime.NULL_NODE and u not in L_tree:
+                    u = P[u]
+                # print("Traversed upwards from ", parent, "to", u)
+                if u != msprime.NULL_NODE:
+                    # print("CONFLICT:", u, L_tree[u])
+                    top = u
+                    x = L_tree.pop(top)
+                    u = parent
+                    while u != top:
+                        v = P[u]
+                        for w in C[v]:
+                            if w != u:
+                                L_tree[w] = x
+                        u = v
+        # print("AFTER IN:", L_tree)
+        P_dict = {u: P[u] for u in range(ts.num_nodes) if P[u] != -1}
+        assert t.parent_dict == P_dict
+        check_sample_coverage(t, L_tree.keys())
+        # print("DONE")
+
         for site in t.sites():
             L_next = {}
             l = site.index
@@ -244,17 +304,18 @@ def best_path_ts(h, ts, recombination_rate):
             assert samples == set(ts.samples())
 
             L_tree = get_tree_likelihood(t, h[l], mutation_node, L_tree, recombination_rate)
-            print("W", W)
-            print("L", L_tree)
+            # print("W", W)
+            # print("L", L_tree)
             check_sample_coverage(t, W.keys())
             check_sample_coverage(t, L_tree.keys())
             assert W == L_tree
-
+            L_size.append(len(L_tree))
 
             # print("\t", l,":", L)
             # print("L = ", L)
             # print("T = ", T[l])
             # print("T_dest", T_dest[l])
+    print("mean L_size = ", np.mean(L_size))
 
     # print(T)
     # print(T_dest)
@@ -280,14 +341,14 @@ def random_mosaic(H):
 def copy_process_dev(n, L, seed):
     random.seed(seed)
     ts = msprime.simulate(
-        n, length=L, mutation_rate=1, recombination_rate=0, random_seed=seed)
+        n, length=L, mutation_rate=1, recombination_rate=1, random_seed=seed)
     m = ts.num_sites
     H = np.zeros((n, m), dtype=int)
     for v in ts.variants():
         H[:, v.index] = v.genotypes
 
-    print(H)
-    for j in range(1):
+    # print(H)
+    for j in range(10):
         h = random_mosaic(H)
         # print()
         # print(h)
@@ -295,10 +356,10 @@ def copy_process_dev(n, L, seed):
         p = best_path_ts(h, ts, 1e-8)
 
         hp = H[p, np.arange(m)]
-        print()
-        print(h)
-        print(hp)
-        print(p)
+        # print()
+        # print(h)
+        # print(hp)
+        # print(p)
         assert np.array_equal(h, hp)
 
 
