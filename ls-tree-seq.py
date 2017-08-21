@@ -76,8 +76,9 @@ def check_sample_coverage(tree, nodes):
     # NOTE: will not work for more general samples.
     assert samples == set(range(tree.sample_size))
 
-def get_tree_likelihood(tree, state, mutation_node, L, recombination_rate):
+def get_tree_likelihood(tree, state, site, L, recombination_rate, T, T_dest):
     # print("get tree likelihood", state, mutation_node, L)
+    mutation_node = site.mutations[0].node
     n = tree.sample_size
     r = 1 - np.exp(-recombination_rate / n)
     recomb_proba = r / n
@@ -113,8 +114,7 @@ def get_tree_likelihood(tree, state, mutation_node, L, recombination_rate):
             z = x
         else:
             z = y
-            # print("\tRecomb at node ", v)
-            # T[l].add(v)
+            T[site.index].add(v)
         # print("\tstate = ", state, "v = ", v, "is_descendent = ",
         #         is_descendent(tree, mutation_node, v))
         if state == 1:
@@ -155,6 +155,15 @@ def get_tree_likelihood(tree, state, mutation_node, L, recombination_rate):
             u = tree.parent(u)
         if x != -1:
             W[last_u] = x
+
+    # Find a node with W == 1 and register as the recombinant haplotype root.
+    found = False
+    for u, value in W.items():
+        if value == 1.0:
+            T_dest[site.index] = u
+            found = True
+            break
+    assert found
     return W
 
 def best_path_ts(h, ts, recombination_rate):
@@ -173,11 +182,13 @@ def best_path_ts(h, ts, recombination_rate):
 
     L_size = []
 
+    T_tree = [set() for _ in range(m)]
+    T_dest_tree = np.zeros(m, dtype=int)
     L_tree = {u: 1 for u in ts.samples()}
     for t, diff in zip(ts.trees(), ts.diffs()):
         # print("At tree", t.index, t.parent_dict)
         # print("L before = ", L_tree)
-        # t.draw("t{}.svg".format(t.index), width=800, height=800, mutation_locations=False)
+        t.draw("t{}.svg".format(t.index), width=800, height=800, mutation_locations=False)
         _, records_out, records_in = diff
         for parent, children, _ in records_out:
             for c in children:
@@ -303,7 +314,8 @@ def best_path_ts(h, ts, recombination_rate):
                 samples |= leaves
             assert samples == set(ts.samples())
 
-            L_tree = get_tree_likelihood(t, h[l], mutation_node, L_tree, recombination_rate)
+            L_tree = get_tree_likelihood(t, h[l], site, L_tree, recombination_rate,
+                    T_tree, T_dest_tree)
             # print("W", W)
             # print("L", L_tree)
             check_sample_coverage(t, W.keys())
@@ -311,11 +323,14 @@ def best_path_ts(h, ts, recombination_rate):
             assert W == L_tree
             L_size.append(len(L_tree))
 
-            # print("\t", l,":", L)
-            # print("L = ", L)
-            # print("T = ", T[l])
-            # print("T_dest", T_dest[l])
-    print("mean L_size = ", np.mean(L_size))
+#             print(l,":", W)
+#             # print("L = ", L)
+#             print("\tmutation node = ", mutation_node)
+#             print("\tT = ", T[l])
+#             print("\tT_tree = ", T_tree[l])
+#             print("\tT_dest", T_dest[l])
+#             print("\tT_dest_tree", T_dest_tree[l])
+    # print("mean L_size = ", np.mean(L_size))
 
     # print(T)
     # print(T_dest)
@@ -327,7 +342,52 @@ def best_path_ts(h, ts, recombination_rate):
             assert l != 0
             j = T_dest[l - 1]
         P[l - 1] = j
-    return P
+
+    P_tree = np.zeros(m, dtype=int)
+    trees = ts.trees()
+    l = m - 1
+    tree = next(trees)
+    sites = list(ts.sites())
+    while tree.interval[1] < sites[l].position:
+        tree = next(trees)
+    u = T_dest_tree[m - 1]
+    while not tree.is_leaf(u):
+        u = tree.children(u)[0]
+    P_tree[m - 1] = u
+    # for l in range(m):
+    #     print(l, T_dest_tree[l], T_tree[l])
+    for l in range(m - 1, 0, -1):
+        trees = ts.trees()
+        tree = next(trees)
+        while tree.interval[1] < sites[l].position:
+            tree = next(trees)
+        left, right = tree.interval
+        assert left <= sites[l].position < right
+        j = P_tree[l]
+        for u in T_tree[l]:
+            if is_descendent(tree, j, u):
+                assert l != 0
+                # print("RECOMBINING at ", l, ":", j, u, T_dest_tree[l - 1])
+                j = T_dest_tree[l - 1]
+                break
+        # Change j into a sample
+        # P_tree[l - 1] = j
+        u = j
+        while not tree.is_leaf(u):
+            u = tree.children(u)[0]
+        P_tree[l - 1] = u
+    # print("P_tree = ", P_tree)
+    # Change these into samples
+    # for tree in ts.trees():
+    #     for site in tree.sites():
+    #         u = P_tree[site.index]
+    #         while not tree.is_leaf(u):
+    #             u = tree.children(u)[0]
+    #         # print("Mapping", P_tree[site.index], "->", u)
+    #         P_tree[site.index] = u
+    # print(P)
+    return P_tree
+    # return P
 
 
 
@@ -341,7 +401,7 @@ def random_mosaic(H):
 def copy_process_dev(n, L, seed):
     random.seed(seed)
     ts = msprime.simulate(
-        n, length=L, mutation_rate=1, recombination_rate=1, random_seed=seed)
+        n, length=L, mutation_rate=1, recombination_rate=0, random_seed=seed)
     m = ts.num_sites
     H = np.zeros((n, m), dtype=int)
     for v in ts.variants():
@@ -350,23 +410,28 @@ def copy_process_dev(n, L, seed):
     # print(H)
     for j in range(10):
         h = random_mosaic(H)
+        # h = np.hstack([H[0,:10], H[1,10:]])
         # print()
         # print(h)
         # p = best_path(h, H, 1e-8)
         p = best_path_ts(h, ts, 1e-8)
 
+        # print("p = ", p)
         hp = H[p, np.arange(m)]
         # print()
         # print(h)
         # print(hp)
-        # print(p)
         assert np.array_equal(h, hp)
 
 
 def main():
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
-    copy_process_dev(20, 10, 1)
+    for j in range(1, 10000):
+        print(j)
+        copy_process_dev(30, 50, j)
+    # copy_process_dev(20, 30, 4)
+
 
 if __name__ == "__main__":
     main()
