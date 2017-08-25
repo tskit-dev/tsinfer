@@ -726,10 +726,10 @@ def copy_process_dev(n, L, seed):
 def main():
     np.set_printoptions(linewidth=2000)
     np.set_printoptions(threshold=20000)
-    for j in range(1, 10000):
-        print(j)
-        copy_process_dev(200, 20, j)
-    # copy_process_dev(10, 10, 4)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     copy_process_dev(200, 20, j)
+    copy_process_dev(10, 10, 4)
 
 
 if __name__ == "__main__":

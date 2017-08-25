@@ -1474,6 +1474,9 @@ def tree_copy_process_dev(n, L, seed):
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
         Ne=10**4, random_seed=seed)
+    if ts.num_sites < 2:
+        # Skip this
+        return
     site_position = np.array([site.position for site in ts.sites()])
     edgeset_position = np.hstack([0, site_position, ts.sequence_length])
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
@@ -1489,14 +1492,18 @@ def tree_copy_process_dev(n, L, seed):
     # For checking the output.
     A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
 
+    # This code checks that we can sucessfully represent the ancestors
+    # using a tree sequence sequentially.
+
     nodes = msprime.NodeTable()
     edgesets = msprime.EdgesetTable()
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
-    for site in ts.sites():
-        # Position == index for now.
-        sites.add_row(position=site.index, ancestral_state='0')
     nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors)
+
+    for site in ts.sites():
+        sites.add_row(position=site.index, ancestral_state='0')
+
     for ancestor_id in range(1, store.num_ancestors):
         start_site, end_site, num_older_ancestors, focal_sites = store.get_ancestor(
                 ancestor_id, h)
@@ -1508,6 +1515,7 @@ def tree_copy_process_dev(n, L, seed):
             start_site=0, end_site=store.num_sites,
             focal_sites=focal_sites, error_rate=0, traceback=traceback)
         segments = run_segment_traceback(traceback)
+        traceback.reset()
         for left, right, parent in reversed(segments):
             edgesets.add_row(
                 left=left, right=right,
@@ -1516,45 +1524,61 @@ def tree_copy_process_dev(n, L, seed):
         nodes.add_row(
             flags=msprime.NODE_IS_SAMPLE,
             time=store.num_ancestors - num_older_ancestors)
+        A[ancestor_id] = h
+        # print("AFTER")
+        # print(nodes)
+        # print(edgesets)
         for focal_site in focal_sites:
+            # Position == index for now.
             mutations.add_row(
                 site=focal_site, node=ancestor_id, derived_state='1')
-        A[ancestor_id] = h
+    # print("A = ")
+    # print(A)
+
+    assert nodes.num_rows == store.num_ancestors
+    assert sites.num_rows == store.num_sites
+
+    # print("BEFORE")
+    # print(nodes)
+    # print(edgesets)
+    # print(sites)
+    # print(mutations)
 
     msprime.sort_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    print("BEFORE")
-    print(nodes)
-    print(edgesets)
-    print(sites)
-    print(mutations)
     msprime.simplify_tables(filter_invariant_sites=False,
             samples=np.arange(store.num_ancestors, dtype=np.int32),
             nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    # Need to fix simplify with internal samples before we can implement this.
-    # Sometimes works, sometimes we don't get the ancestral haplotypes out
-    # correctly.
-    print("AFTER")
-    print(edgesets)
-    assert sites.num_rows == ts.num_sites
-    print(sites)
-    print(mutations)
-    ts = msprime.load_tables(
+
+    assert nodes.num_rows == store.num_ancestors
+    assert sites.num_rows == store.num_sites
+
+    # print("AFTER")
+    # print(nodes)
+    # print(edgesets)
+    # print(sites)
+    # print(mutations)
+    new_ts = msprime.load_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    for tree in ts.trees():
-        print(tree)
-    B = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
-    for v  in ts.variants():
+    # for tree in ts.trees():
+    #     print(tree)
+    # print()
+    for v  in new_ts.variants():
         pos = int(v.position)
-        B[:, pos] = v.genotypes
-        if not np.array_equal(B[:, pos], A[:, pos]):
+        # print(pos)
+        # print(pos)
+        # print(v.genotypes)
+        # print(A[:, pos])
+        # print()
+        # assert np.array_equal(v.genotypes, A[:, pos])
+        if not np.array_equal(v.genotypes, A[:, pos]):
             print("Site differs", pos)
             print(A[:, pos])
-            print(B[:, pos])
-    print(A)
-    print()
-    print(B)
-    assert np.array_equal(A, B)
+            print(v.genotypes)
+    # # print(A)
+    # # print()
+    # # print(B)
+    # assert np.array_equal(A, B)
 
 
 if __name__ == "__main__":
@@ -1595,8 +1619,8 @@ if __name__ == "__main__":
     #     print()
     # ancestor_tree_dev(100, 5 * 10**5, 1)
     # ancestor_copy_ordering_dev(100, 20 * 10**4, 2)
-    # tree_copy_process_dev(3, 2 * 10**4, 6)
+    # tree_copy_process_dev(25, 1 * 10**4, 9)
+    # tree_copy_process_dev(15, 1 * 10**4, 5)
     for j in range(100):
         print(j)
-        tree_copy_process_dev(4, 2 * 10**4, j + 2)
-
+        tree_copy_process_dev(40, 20 * 10**4, j + 2)
