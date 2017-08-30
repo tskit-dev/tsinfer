@@ -1582,6 +1582,22 @@ def tree_copy_process_dev(n, L, seed):
     # assert np.array_equal(A, B)
     new_ts.dump("ancestors_example.hdf5")
 
+
+def rle(inarray):
+    """
+    run length encoding. Partial credit to R rle function.
+    Multi datatype arrays catered for including non Numpy
+    returns: tuple (runlengths, startpositions, values) """
+    ia = np.array(inarray)                  # force numpy
+    n = len(ia)
+    assert n > 0
+    y = np.array(ia[1:] != ia[:-1])     # pairwise unequal (string safe)
+    i = np.append(np.where(y), n - 1)   # must include last element posi
+    z = np.diff(np.append(-1, i))       # run lengths
+    p = np.cumsum(np.append(0, z))[:-1] # positions
+    for position, length, value in zip(p, z, ia[i]):
+        yield position, position + length, value
+
 def new_copy_process_dev(n, L, seed):
 
     ts = msprime.simulate(
@@ -1594,7 +1610,6 @@ def new_copy_process_dev(n, L, seed):
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
     # print(S)
-    print("Size= ", S.shape)
 
     site_position = np.array([site.position for site in ts.sites()])
     store = tsinfer.build_ancestors(S, site_position, method="C")
@@ -1603,6 +1618,9 @@ def new_copy_process_dev(n, L, seed):
     h = np.zeros(store.num_sites, dtype=np.int8)
     p = np.zeros(store.num_sites, dtype=np.int32)
     L = store.num_sites
+
+    print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
+            store.num_ancestors)
 
     nodes = msprime.NodeTable()
     edgesets = msprime.EdgesetTable()
@@ -1613,41 +1631,81 @@ def new_copy_process_dev(n, L, seed):
     for site in ts.sites():
         sites.add_row(position=site.index, ancestral_state='0')
 
-    # Add the first ancestor to work around the > 1 samples restriction.
-    _, _, _, focal_sites = store.get_ancestor(1, h)
-    nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - 1)
-    edgesets.add_row(left=0, right=L, parent=0, children=(1,))
-    for site in focal_sites:
-        mutations.add_row(site=site, node=1, derived_state='1')
-    ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    A[1] = h
+    match_time = 0
+    sort_time = 0
+    simplify_time = 0
 
-    # for x in ts.dump_tables():
-    #     print(x)
-    for ancestor_id in range(2, store.num_ancestors):
-        _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
-        A[ancestor_id] = h
+    # Add the first ancestor to work around the > 1 samples restriction.
+    num_older_ancestors = 1
+    ancestor_id = 1
+    _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
+    children = []
+    while num_older_ancestors == 1:
+        children.append(ancestor_id)
+        nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - 1)
         for site in focal_sites:
             mutations.add_row(site=site, node=ancestor_id, derived_state='1')
-            assert h[site] == 1
-            h[site] = 0
+        A[ancestor_id] = h
+        ancestor_id += 1
+        _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
 
-        matcher = _msprime.HaplotypeMatcher(ts._ll_tree_sequence, recombination_rate=1e-8)
-        matcher.run(h + ord('0'), p)
-        for k in range(store.num_sites):
-            edgesets.add_row(left=k, right=k + 1, parent=p[k], children=(ancestor_id,))
-        nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - ancestor_id)
+    edgesets.add_row(left=0, right=L, parent=0, children=tuple(children))
 
+    while ancestor_id < store.num_ancestors:
+        # print("Starting epoch")
+        # print(nodes)
+        # print(edgesets)
+        # print(sites)
+        # print(mutations)
+
+        before = time.clock()
         msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-        msprime.simplify_tables(np.arange(ancestor_id + 1, dtype=np.int32), nodes, edgesets)
-
+        sort_time += time.clock() - before
+        before = time.clock()
+        msprime.simplify_tables(np.arange(ancestor_id, dtype=np.int32), nodes, edgesets)
+        simplify_time += time.clock() - before
         ts = msprime.load_tables(
                 nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+
+        epoch = num_older_ancestors
+        num_in_epoch = 0
+        traceback_size = []
+        while num_older_ancestors == epoch:
+            A[ancestor_id] = h
+            for site in focal_sites:
+                mutations.add_row(site=site, node=ancestor_id, derived_state='1')
+                assert h[site] == 1
+                h[site] = 0
+            before = time.clock()
+            matcher = _msprime.HaplotypeMatcher(ts._ll_tree_sequence, recombination_rate=1e-8)
+            match_time += time.clock() - before
+            matcher.run(h + ord('0'), p)
+            traceback_size.append(matcher.mean_traceback_size)
+            for left, right, parent in rle(p):
+                edgesets.add_row(
+                    left=left, right=right, parent=parent, children=(ancestor_id,))
+            nodes.add_row(
+                flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - num_older_ancestors)
+            ancestor_id += 1
+            if ancestor_id == store.num_ancestors:
+                break
+            _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
+            num_in_epoch += 1
+        # print("epoch:", epoch, num_in_epoch, np.mean(traceback_size), edgesets.num_rows)
+
         # print(nodes)
         # print(edgesets)
 
         # print(A)
+
+    before = time.clock()
+    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
+    sort_time += time.clock() - before
+    before = time.clock()
+    msprime.simplify_tables(np.arange(ancestor_id, dtype=np.int32), nodes, edgesets)
+    simplify_time += time.clock() - before
+    ts = msprime.load_tables(
+            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
 
     for v in ts.variants():
         # assert np.array_equal(v.genotypes, A[:, v.index])
@@ -1656,6 +1714,9 @@ def new_copy_process_dev(n, L, seed):
             print("ERRO", v.index)
             print(v.genotypes)
             print(col)
+    print("sort_time = ", sort_time)
+    print("simplify_time = ", simplify_time)
+    print("match_time = ", match_time)
 
 
 
@@ -1703,6 +1764,7 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    for j in range(1, 1000):
+    # new_copy_process_dev(10000, 1000 * 10**4, 1)
+    for j in range(1, 10000):
         print(j)
-        new_copy_process_dev(40, 150 * 10**4, j)
+        new_copy_process_dev(800, 150 * 10**4, j)
