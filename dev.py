@@ -1582,7 +1582,6 @@ def tree_copy_process_dev(n, L, seed):
     # assert np.array_equal(A, B)
     new_ts.dump("ancestors_example.hdf5")
 
-
 def rle(inarray):
     """
     run length encoding. Partial credit to R rle function.
@@ -1597,6 +1596,152 @@ def rle(inarray):
     p = np.cumsum(np.append(0, z))[:-1] # positions
     for position, length, value in zip(p, z, ia[i]):
         yield position, position + length, value
+
+
+class TreeSequenceBuilder(object):
+
+    def __init__(self):
+        self.nodes = msprime.NodeTable()
+        self.edgesets = msprime.EdgesetTable()
+        self.sites = msprime.SiteTable()
+        self.mutations = msprime.MutationTable()
+        self.edges = []
+
+    def add_node(self, time):
+        self.nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=time)
+        return self.nodes.num_rows - 1
+
+    def add_site(self, position):
+        self.sites.add_row(position=position, ancestral_state='0')
+
+    def add_edgeset(self, left, right, parent, children):
+        # print("adding edgeset", left, right, parent, children)
+        self.edgesets.add_row(left, right, parent, tuple(children))
+
+    def add_mutation(self, site, node):
+        # print("adding mutation", site, node)
+        self.mutations.add_row(site=site, node=node, derived_state='1')
+
+    def add_edge(self, left, right, parent, child):
+        # print("adding edge", left, right, parent, child)
+        self.edgesets.add_row(left, right, parent, (child,))
+        self.edges.append((left, right, parent, child))
+
+    def finalise(self):
+        msprime.sort_tables(
+            self.nodes, self.edgesets, sites=self.sites, mutations=self.mutations)
+        samples = np.arange(self.nodes.num_rows, dtype=np.int32)
+        # print("simplify:")
+        # print(samples)
+        # print(self.nodes)
+        # print(self.edgesets)
+        msprime.simplify_tables(samples, self.nodes, self.edgesets)
+        ts = msprime.load_tables(
+            nodes=self.nodes, edgesets=self.edgesets, sites=self.sites,
+            mutations=self.mutations)
+        # print(self.nodes)
+        # print(self.edgesets)
+        # print(self.sites)
+        # print(self.mutations)
+        # print("Finalise")
+        # for e in sorted(self.edges):
+        #     print(*e, sep="\t")
+        # print("edgesets")
+        # print(self.edgesets)
+
+        children_map = collections.defaultdict(list)
+        for e in ts.edgesets():
+            if len(e.children) > 1:
+                children_map[e.children].append(e)
+        # print("MAP")
+        new_ancestors = []
+        for k, v in children_map.items():
+            if len(v) > 1:
+                # If all of the records in the list are adjacent we have a
+                # new ancestor.
+                records = list(sorted(v, key=lambda x: x.left))
+                # print(k, "->", records)
+                adjacent = True
+                for j in range(len(records) - 1):
+                    if records[j].right != records[j + 1].left:
+                        adjacent = False
+                # print("Adjacent = ", adjacent)
+                if adjacent:
+                    new_ancestors.append(records)
+        # print("NEw ancestors")
+        # for r in new_ancestors:
+        #     print(r)
+        # assert len(new_ancestors) < 2
+        # time_multiple = 1
+        for records in new_ancestors:
+            # Fine the extreme edges of the contiguous region.
+            left = ts.sequence_length
+            right = 0
+            for e in records:
+                if e.left < left:
+                    left = e.left
+                if e.right > right:
+                    right = e.right
+            # add a new node that is slightly younger than the youngest parent.
+            max_time = 10**9
+            min_time = -1
+            for e in records:
+                max_time = min(max_time, self.nodes.time[e.parent])
+                min_time = max(min_time, max(self.nodes.time[c] for c in e.children))
+            # time = min([self.nodes.time[e.parent] for e in records]) - time_multiple * 0.01
+            time = min_time + (max_time - min_time) / 2
+            # print("time = ", time)
+            # print(records)
+            # time_multiple += 1
+            new_node = self.add_node(time)
+            # print("Added node ", new_node, "at  time", time)
+            new_edgesets = msprime.EdgesetTable()
+            for e in ts.edgesets():
+                if e in records:
+                    # print("Removing edgeset", e)
+                    pass
+                else:
+                    new_edgesets.add_row(
+                        left=e.left, right=e.right, parent=e.parent,
+                        children=e.children)
+            # Add the edgeset mapping the children to the new parent.
+            new_edgesets.add_row(
+                left=left, right=right, parent=new_node, children=records[0].children)
+            # Now add edgesets to map this new parent to the old parents over the
+            # correct intervals.
+            for e in records:
+                new_edgesets.add_row(e.left, e.right, e.parent, (new_node,))
+
+            self.edgesets = new_edgesets
+
+            msprime.sort_tables(
+                self.nodes, self.edgesets, sites=self.sites, mutations=self.mutations)
+            samples = np.arange(self.nodes.num_rows, dtype=np.int32)
+            # print("simplify:")
+            # print(samples)
+            # print(self.nodes)
+            # print(self.edgesets)
+            msprime.simplify_tables(samples, self.nodes, self.edgesets)
+            ts = msprime.load_tables(
+                nodes=self.nodes, edgesets=self.edgesets, sites=self.sites,
+                mutations=self.mutations)
+
+        # # Try to find adjacent records from a parent with children subsets.
+        # parent_map = collections.defaultdict(list)
+        # for e in ts.edgesets():
+        #     parent_map[e.parent].append(e)
+        # for k, v in parent_map.items():
+        #     if len(v) > 1:
+        #         records = list(sorted(v, key=lambda x: x.left))
+        #         print("parent = ", k)
+        #         for e in records:
+        #             print("\t", e.left, e.right, e.children)
+        #         # print(k, ":", records)
+
+
+
+        return ts
+
 
 def new_copy_process_dev(n, L, seed):
 
@@ -1621,19 +1766,12 @@ def new_copy_process_dev(n, L, seed):
 
     print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
             store.num_ancestors)
-
-    nodes = msprime.NodeTable()
-    edgesets = msprime.EdgesetTable()
-    sites = msprime.SiteTable()
-    mutations = msprime.MutationTable()
-    # Initially we have a single node and no edgesets.
-    nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors)
+    tsb = TreeSequenceBuilder()
+    tsb.add_node(store.num_ancestors)
     for site in ts.sites():
-        sites.add_row(position=site.index, ancestral_state='0')
+        tsb.add_site(position=site.index)
 
-    match_time = 0
-    sort_time = 0
-    simplify_time = 0
+    ancestor_node_map = {0:0}
 
     # Add the first ancestor to work around the > 1 samples restriction.
     num_older_ancestors = 1
@@ -1642,81 +1780,68 @@ def new_copy_process_dev(n, L, seed):
     children = []
     while num_older_ancestors == 1:
         children.append(ancestor_id)
-        nodes.add_row(flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - 1)
+        tsb.add_node(store.num_ancestors - 1)
         for site in focal_sites:
-            mutations.add_row(site=site, node=ancestor_id, derived_state='1')
+            tsb.add_mutation(site=site, node=ancestor_id)
         A[ancestor_id] = h
+        ancestor_node_map[ancestor_id] = ancestor_id
         ancestor_id += 1
         _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
+    tsb.add_edgeset(0, L, 0, children)
 
-    edgesets.add_row(left=0, right=L, parent=0, children=tuple(children))
-
+    match_time = 0
     while ancestor_id < store.num_ancestors:
-        # print("Starting epoch")
-        # print(nodes)
-        # print(edgesets)
-        # print(sites)
-        # print(mutations)
-
-        before = time.clock()
-        msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-        sort_time += time.clock() - before
-        before = time.clock()
-        msprime.simplify_tables(np.arange(ancestor_id, dtype=np.int32), nodes, edgesets)
-        simplify_time += time.clock() - before
-        ts = msprime.load_tables(
-                nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-
+        ts = tsb.finalise()
         epoch = num_older_ancestors
         num_in_epoch = 0
         traceback_size = []
         while num_older_ancestors == epoch:
+            node_id = tsb.add_node(store.num_ancestors - num_older_ancestors)
+            ancestor_node_map[ancestor_id] = node_id
             A[ancestor_id] = h
             for site in focal_sites:
-                mutations.add_row(site=site, node=ancestor_id, derived_state='1')
+                tsb.add_mutation(site=site, node=node_id)
                 assert h[site] == 1
                 h[site] = 0
             before = time.clock()
             matcher = _msprime.HaplotypeMatcher(ts._ll_tree_sequence, recombination_rate=1e-8)
-            match_time += time.clock() - before
             matcher.run(h + ord('0'), p)
+            match_time += time.clock() - before
             traceback_size.append(matcher.mean_traceback_size)
             for left, right, parent in rle(p):
-                edgesets.add_row(
-                    left=left, right=right, parent=parent, children=(ancestor_id,))
-            nodes.add_row(
-                flags=msprime.NODE_IS_SAMPLE, time=store.num_ancestors - num_older_ancestors)
+                tsb.add_edge(left, right, parent, node_id)
             ancestor_id += 1
             if ancestor_id == store.num_ancestors:
                 break
             _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
             num_in_epoch += 1
-        # print("epoch:", epoch, num_in_epoch, np.mean(traceback_size), edgesets.num_rows)
-
+        print("epoch:", epoch, num_in_epoch, np.mean(traceback_size), tsb.edgesets.num_rows)
         # print(nodes)
         # print(edgesets)
-
         # print(A)
+    ts = tsb.finalise()
 
-    before = time.clock()
-    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-    sort_time += time.clock() - before
-    before = time.clock()
-    msprime.simplify_tables(np.arange(ancestor_id, dtype=np.int32), nodes, edgesets)
-    simplify_time += time.clock() - before
-    ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    # print(tsb.edgesets)
+    print("num_edgesets = ", tsb.edgesets.num_rows)
 
+    B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
     for v in ts.variants():
-        # assert np.array_equal(v.genotypes, A[:, v.index])
-        col = A[:ancestor_id + 1, v.index]
-        if not np.array_equal(v.genotypes, col):
-            print("ERRO", v.index)
-            print(v.genotypes)
-            print(col)
-    print("sort_time = ", sort_time)
-    print("simplify_time = ", simplify_time)
-    print("match_time = ", match_time)
+        B[:, v.index] = v.genotypes
+        # # assert np.array_equal(v.genotypes, A[:, v.index])
+        # col = A[:ancestor_id + 1, v.index]
+        # if not np.array_equal(v.genotypes, col):
+        #     print("ERRO", v.index)
+        #     print(v.genotypes)
+        #     print(col)
+    for ancestor_id in sorted(ancestor_node_map.keys()):
+        node_id = ancestor_node_map[ancestor_id]
+        # print(ancestor_id, "->",  node_id)
+        # print(A[ancestor_id])
+        # print(B[node_id])
+        assert np.array_equal(A[ancestor_id], B[node_id])
+    # print(A)
+    # print(B)
+    # print("match_time = ", match_time)
 
 
 
@@ -1764,7 +1889,8 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(800, 150 * 10**4, j)
+    # new_copy_process_dev(100, 1000 * 10**4, 1)
+    new_copy_process_dev(100, 50 * 10**4, 74)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(50, 100 * 10**4, j)
