@@ -1888,10 +1888,10 @@ def finalise_builder(tsb):
         site=site, node=node, derived_state=derived_state,
         derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
 
-    print(nodes)
-    print(edgesets)
-    print(sites)
-    print(mutations)
+    # print(nodes)
+    # print(edgesets)
+    # print(sites)
+    # print(mutations)
 
     msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
     samples = np.arange(nodes.num_rows, dtype=np.int32)
@@ -1944,7 +1944,7 @@ def new_copy_process_dev(n, L, seed):
     epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
     for epoch in range(store.num_epochs - 2, 0, -1):
         num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
-        print("STARTING EPOCH", epoch, num_epoch_ancestors)
+        # print("STARTING EPOCH", epoch, num_epoch_ancestors)
         e_left = []
         e_right = []
         e_parent = []
@@ -1953,6 +1953,9 @@ def new_copy_process_dev(n, L, seed):
         s_node = []
         for node in map(int, epoch_ancestors[:num_epoch_ancestors]):
             _, _, _, focal_sites = store.get_ancestor(node, h)
+            # print("node = ", node)
+            # print("h = ", h)
+            # print("focal_sites = ", focal_sites)
             for s in focal_sites:
                 assert h[s] == 1
                 h[s] = 0
@@ -1984,12 +1987,12 @@ def new_copy_process_dev(n, L, seed):
     for ancestor_id in range(store.num_ancestors):
         node_id = ancestor_id
         # node_id = ancestor_node_map[ancestor_id]
-        print(ancestor_id, "->",  node_id)
-        print(A[ancestor_id])
-        print(B[node_id])
-        # assert np.array_equal(A[ancestor_id], B[node_id])
+        # print(ancestor_id, "->",  node_id)
+        # print(A[ancestor_id])
+        # print(B[node_id])
         if not np.array_equal(A[ancestor_id], B[node_id]):
             print("ERROR")
+        assert np.array_equal(A[ancestor_id], B[node_id])
     # assert np.array_equal(A, B)
     # print(A)
     # print(B)
@@ -2067,9 +2070,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    new_copy_process_dev(10, 5 * 10**4, 2)
+    # new_copy_process_dev(20, 5 * 10**4, 1)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
-    # for j in range(1, 10000):
-    #     print(j)
-    #     new_copy_process_dev(40, 100 * 10**4, j)
+    for j in range(1, 10000):
+        print(j)
+        new_copy_process_dev(40, 100 * 10**4, j)

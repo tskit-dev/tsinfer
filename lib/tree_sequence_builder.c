@@ -32,13 +32,23 @@ cmp_node_id(const void *a, const void *b) {
     return (*ia > *ib) - (*ia < *ib);
 }
 
+/* Returns true if x is approximately equal to one. */
+static bool
+approximately_one(double x)
+{
+    double eps = 1e-8;
+    return fabs(x - 1.0) < eps;
+}
+
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
     size_t num_likelihoods;
     avl_node_t *a;
+    size_t j;
     node_id_t u;
     double x;
+    likelihood_list_t *z;
 
     /* Check the properties of the likelihood map */
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
@@ -65,6 +75,21 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
     assert(num_likelihoods == avl_count(&self->likelihood_nodes));
     assert(avl_count(&self->likelihood_nodes) ==
             object_heap_get_num_allocated(&self->avl_node_heap));
+
+    for (j = 0; j < self->num_sites; j++) {
+        z = self->traceback[j];
+        if (z != NULL) {
+            /* There must be at least one node with likelihood == 1. */
+            u = NULL_NODE;
+            while (z != NULL) {
+                if (approximately_one(z->likelihood)) {
+                    u = z->node;
+                }
+                z = z->next;
+            }
+            assert(u != NULL_NODE);
+        }
+    }
 }
 
 int
@@ -72,8 +97,6 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 {
     size_t j;
     likelihood_list_t *l;
-    /* node_mapping_t *u; */
-    /* mutation_list_node_t *v; */
     edge_t *edge;
 
     fprintf(out, "Tree sequence builder state\n");
@@ -479,7 +502,7 @@ tree_sequence_builder_update_site_state(tree_sequence_builder_t *self, site_id_t
     node_id_t u;
 
     /* tree_sequence_builder_print_state(self, stdout); */
-    tree_sequence_builder_check_state(self);
+    /* tree_sequence_builder_check_state(self); */
     if (mutation_node == NULL_NODE) {
         /* TODO We should be able to just put a pointer in to the previous site
          * here to save some time and memory. */
@@ -487,6 +510,7 @@ tree_sequence_builder_update_site_state(tree_sequence_builder_t *self, site_id_t
         if (ret != 0) {
             goto out;
         }
+        assert(state == 0);
     } else {
         /* Insert a new L-value for the mutation node if needed */
         if (L[mutation_node] == NULL_LIKELIHOOD) {
@@ -572,7 +596,7 @@ tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
     while (a != NULL) {
         tmp = a->next;
         u = *((node_id_t *) a->item);
-        if (L[u] == 1.0) {
+        if (approximately_one(L[u])) {
             output_edge->parent = u;
         }
         L[u] = NULL_LIKELIHOOD;
@@ -600,14 +624,17 @@ tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
         }
         /* # print("left = ", left, "right = ", right) */
         /* printf("left = %d right = %d\n", left, right); */
-        max_likelihood_node = NULL_NODE;
         for (l = right - 1; l >= (int) left; l--) {
             /* Reset the likelihood values for this locus from the traceback */
+            max_likelihood_node = NULL_NODE;
             for (z = self->traceback[l]; z != NULL; z = z->next) {
                 L[z->node] = z->likelihood;
-                if (z->likelihood == 1.0) {
+                if (approximately_one(z->likelihood)) {
                     max_likelihood_node = z->node;
                 }
+            }
+            if (max_likelihood_node == NULL_NODE) {
+                tree_sequence_builder_print_state(self, stdout);
             }
             assert(max_likelihood_node != NULL_NODE);
             u = output_edge->parent;
@@ -632,7 +659,7 @@ tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
             for (z = self->traceback[l]; z != NULL; z = z->next) {
                 L[z->node] = NULL_LIKELIHOOD;
             }
-            tree_sequence_builder_check_state(self);
+            /* tree_sequence_builder_check_state(self); */
         }
     }
     output_edge->left = 0;
