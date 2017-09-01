@@ -4,11 +4,21 @@
 
 #include "block_allocator.h"
 #include "object_heap.h"
+#include "avl.h"
 
-/* TODO change this to node_id_t */
+/* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;
+typedef int32_t node_id_t;
 typedef int8_t allele_t;
 typedef uint32_t site_id_t;
+
+typedef struct {
+    site_id_t left;
+    site_id_t right;
+    site_id_t end;
+    node_id_t parent;
+    node_id_t child;
+} edge_t;
 
 typedef struct _node_segment_list_node_t {
     ancestor_id_t start;
@@ -157,29 +167,47 @@ typedef struct {
     object_heap_t heap;
 } segment_list_t;
 
+
 typedef struct {
+    node_id_t index;
+    site_id_t position;
+    double time;
+} index_sort_t;
+
+typedef struct _likelihood_list_t {
+    node_id_t node;
+    double likelihood;
+    struct _likelihood_list_t *next;
+} likelihood_list_t;
+
+typedef struct {
+    site_id_t site;
+    node_id_t node;
+} site_mutation_t;
+
+typedef struct {
+    double recombination_rate;
     size_t num_sites;
-    size_t num_samples;
-    size_t num_ancestors;
+    size_t max_nodes;
+    size_t max_edges;
+    size_t max_output_edges;
     size_t num_nodes;
-    size_t num_edgesets;
-    size_t max_num_edgesets;
-    size_t max_num_nodes;
-    size_t num_children;
+    size_t num_edges;
     size_t num_mutations;
-    ancestor_store_t *store;
-    size_t node_mapping_block_size;
-    size_t mutation_list_node_block_size;
-    size_t edgeset_block_size;
-    uint32_t *num_child_mappings;
-    double *node_time;
-    node_mapping_t **child_mappings;
-    node_mapping_t **live_segments_head;
-    node_mapping_t **live_segments_tail;
-    edgeset_t *edgesets;
-    mutation_list_node_t **mutations;
-    object_heap_t node_mapping_heap;
-    object_heap_t mutation_list_node_heap;
+    edge_t *edges;
+    double *time;
+    node_id_t *mutations;
+    node_id_t *parent;
+    index_sort_t *sort_buffer;
+    node_id_t *insertion_order;
+    node_id_t *removal_order;
+    double *likelihood;
+    avl_tree_t likelihood_nodes;
+    likelihood_list_t **traceback;
+    object_heap_t avl_node_heap;
+    block_allocator_t likelihood_list_allocator;
+    edge_t *output_edge_buffer;
+    size_t total_traceback_size;
 } tree_sequence_builder_t;
 
 int ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
@@ -236,25 +264,28 @@ int traceback_set_best_match(traceback_t *self, site_id_t site, ancestor_id_t be
 int traceback_print_state(traceback_t *self, FILE *out);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        ancestor_store_t *store, size_t num_samples,
-        size_t parent_mapping_block_size, size_t edgeset_block_size,
-        size_t mutation_list_node_block_size);
+        size_t num_sites, size_t max_nodes, size_t max_edges);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
-int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self,
-        ancestor_id_t parent, segment_list_t *list);
-int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id,
-        allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        traceback_t *traceback);
+int tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *haplotype,
+        node_id_t child, size_t *num_outout_edges, edge_t **output_edges);
+int tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
+        double time, size_t num_edges, edge_t *edges, size_t num_site_mutations,
+        site_mutation_t *site_mutations);
+
+/* int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self, */
+/*         ancestor_id_t parent, segment_list_t *list); */
+/* int tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child_id, */
+/*         allele_t *haplotype, site_id_t start_site, site_id_t end_site, */
+/*         traceback_t *traceback); */
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
-int tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
-        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children,
-        uint32_t *children_length);
+int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
+        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         site_id_t *site, ancestor_id_t *node, allele_t *derived_state);
-int tree_sequence_builder_resolve(tree_sequence_builder_t *self,
-        int epoch, ancestor_id_t *ancestors, size_t num_ancestors);
+/* int tree_sequence_builder_resolve(tree_sequence_builder_t *self, */
+/*         int epoch, ancestor_id_t *ancestors, size_t num_ancestors); */
 
 int segment_list_alloc(segment_list_t *self, size_t block_size);
 int segment_list_free(segment_list_t *self);

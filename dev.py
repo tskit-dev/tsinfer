@@ -2022,8 +2022,8 @@ if __name__ == "__main__":
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
     # new_copy_process_dev(100, 1000 * 10**4, 1)
-    for x in range(1, 10):
-        new_copy_process_dev(20, x * 20 * 10**4, 74)
-    # for j in range(1, 10000):
-    #     print(j)
-    #     new_copy_process_dev(10, 100 * 10**4, j)
+    # for x in range(1, 10):
+    #     new_copy_process_dev(20, x * 20 * 10**4, 74)
+    for j in range(1, 10000):
+        print(j)
+        new_copy_process_dev(40, 100 * 10**4, j)

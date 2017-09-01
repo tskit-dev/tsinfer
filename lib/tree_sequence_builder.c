@@ -9,275 +9,184 @@
 /* TODO remove */
 #include <gsl/gsl_math.h>
 
-static int
-cmp_node_id(const void *a, const void *b) {
-    const ancestor_id_t ia = *(const ancestor_id_t *) a;
-    const ancestor_id_t ib = *(const ancestor_id_t *) b;
-    return (ia > ib) - (ia < ib);
-}
+#include "avl.h"
 
+#define NULL_LIKELIHOOD (-1)
+#define NULL_NODE (-1)
 
-/* Sort node mappings by increasing left coordinate. When there is a
- * tie, sort by decreasing right coordinate */
 static int
-cmp_node_mapping(const void *a, const void *b) {
-    const node_mapping_t ia = *(const node_mapping_t *) a;
-    const node_mapping_t ib = *(const node_mapping_t *) b;
-    int ret = (ia.left > ib.left) - (ia.left < ib.left);
+cmp_index_sort(const void *a, const void *b) {
+    const index_sort_t *ca = (const index_sort_t *) a;
+    const index_sort_t *cb = (const index_sort_t *) b;
+    int ret = (ca->position > cb->position) - (ca->position < cb->position);
     if (ret == 0) {
-        ret = (ia.right < ib.right) - (ia.right > ib.right);
+        ret = (ca->time > cb->time) - (ca->time < cb->time);
     }
     return ret;
 }
 
 static int
-cmp_edgeset(const void *a, const void *b) {
-    const edgeset_t ia = *(const edgeset_t *) a;
-    const edgeset_t ib = *(const edgeset_t *) b;
-    return (ia.time > ib.time) - (ia.time < ib.time);
+cmp_node_id(const void *a, const void *b) {
+    const node_id_t *ia = (const node_id_t *) a;
+    const node_id_t *ib = (const node_id_t *) b;
+    return (*ia > *ib) - (*ia < *ib);
 }
 
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
-    size_t j;
-    node_mapping_t *u;
-    size_t num_child_mappings;
+    size_t num_likelihoods;
+    avl_node_t *a;
+    node_id_t u;
+    double x;
 
-    for (j = 0; j < self->num_ancestors; j++) {
-        num_child_mappings = 0;
-        for (u = self->child_mappings[j]; u != NULL; u = u->next) {
-            assert(u->left < u->right);
-            num_child_mappings++;
+    /* Check the properties of the likelihood map */
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        assert(self->likelihood[u] != NULL_LIKELIHOOD);
+        x = self->likelihood[u];
+        u = self->parent[u];
+        if (u != NULL_NODE) {
+            /* Traverse up to the next L value, and ensure it's not equal to x */
+            while (self->likelihood[u] == NULL_LIKELIHOOD) {
+                u = self->parent[u];
+                assert(u != NULL_NODE);
+            }
+            assert(self->likelihood[u] != x);
         }
-        assert(num_child_mappings == self->num_child_mappings[j]);
     }
-    for (j = 0; j < self->num_ancestors; j++) {
-        for (u = self->live_segments_head[j]; u != NULL; u = u->next) {
-            assert(u->left < u->right);
+    /* Make sure that there are no other non null likelihoods in the array */
+    num_likelihoods = 0;
+    for (u = 0; u < (node_id_t) self->num_nodes; u++) {
+        if (self->likelihood[u] != NULL_LIKELIHOOD) {
+            num_likelihoods++;
         }
     }
+    assert(num_likelihoods == avl_count(&self->likelihood_nodes));
+    assert(avl_count(&self->likelihood_nodes) ==
+            object_heap_get_num_allocated(&self->avl_node_heap));
 }
 
 int
 tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 {
-    size_t j, l;
-    node_mapping_t *u;
-    mutation_list_node_t *v;
+    size_t j;
+    likelihood_list_t *l;
+    /* node_mapping_t *u; */
+    /* mutation_list_node_t *v; */
+    edge_t *edge;
 
     fprintf(out, "Tree sequence builder state\n");
-    fprintf(out, "num_samples = %d\n", (int) self->num_samples);
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
-    fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "num_nodes = %d\n", (int) self->num_nodes);
-    fprintf(out, "num_edgesets = %d\n", (int) self->num_edgesets);
-    fprintf(out, "num_children = %d\n", (int) self->num_children);
-    fprintf(out, "max_num_edgesets = %d\n", (int) self->max_num_edgesets);
-    fprintf(out, "max_num_nodes = %d\n", (int) self->max_num_nodes);
-    fprintf(out, "parent_mapping heap:\n");
-    object_heap_print_state(&self->node_mapping_heap, out);
-    fprintf(out, "child_mappings:\n");
-    for (j = 0; j < self->num_ancestors; j++) {
-        if (self->child_mappings[j] != NULL) {
-            fprintf(out, "%d\t:", (int) j);
-            for (u = self->child_mappings[j]; u != NULL; u = u->next) {
-                fprintf(out, "(%d, %d, %d)", u->left, u->right, u->node);
-                if (u->next != NULL) {
-                    fprintf(out, ",");
-                }
+    fprintf(out, "num_edges = %d\n", (int) self->num_edges);
+    fprintf(out, "max_nodes = %d\n", (int) self->max_nodes);
+    fprintf(out, "max_edges = %d\n", (int) self->max_edges);
+
+    fprintf(out, "edges = \n");
+    fprintf(out, "left\tright\tparent\tchild\n");
+    for (j = 0; j < self->num_edges; j++) {
+        edge = self->edges + j;
+        fprintf(out, "%d\t%d\t%d\t%d\t\t%d\t%d\n",
+                edge->left, edge->right, edge->parent, edge->child,
+                self->insertion_order[j], self->removal_order[j]);
+    }
+    fprintf(out, "nodes = \n");
+    fprintf(out, "id\ttime\n");
+    for (j = 0; j < self->num_nodes; j++) {
+        fprintf(out, "%d\t%f\n", (int) j, self->time[j]);
+    }
+    fprintf(out, "mutations = \n");
+    fprintf(out, "site\tnode\n");
+    for (j = 0; j < self->num_sites; j++) {
+        if (self->mutations[j] != NULL_NODE) {
+            fprintf(out, "%d\t%d\n", (int) j, self->mutations[j]);
+        }
+    }
+    fprintf(out, "tree = \n");
+    fprintf(out, "id\tparent\tlikelihood\n");
+    for (j = 0; j < self->num_nodes; j++) {
+        fprintf(out, "%d\t%d\t%f\n", (int) j, self->parent[j], self->likelihood[j]);
+    }
+    fprintf(out, "traceback\n");
+    for (j = 0; j < self->num_sites; j++) {
+        if (self->traceback[j] != NULL) {
+            fprintf(out, "\t%d\t", (int) j);
+            for (l = self->traceback[j]; l != NULL; l = l->next) {
+                fprintf(out, "(%d, %f)", l->node, l->likelihood);
             }
             fprintf(out, "\n");
         }
     }
-    fprintf(out, "node times\n");
-    fprintf(out, "**ancestors**\n");
-    for (j = 0; j < self->num_ancestors; j++) {
-        fprintf(out, "%d\t%f\n", (int) j, self->node_time[j]);
-    }
-    fprintf(out, "**samples**\n");
-    for (j = self->num_ancestors; j < self->num_ancestors + self->num_samples; j++) {
-        fprintf(out, "%d\t%f\n", (int) j, self->node_time[j]);
-    }
-    fprintf(out, "**minor nodes**\n");
-    for (j = self->num_ancestors + self->num_samples; j < self->num_nodes; j++) {
-        fprintf(out, "%d\t%f\n", (int) j, self->node_time[j]);
-    }
-    fprintf(out, "live segments\n");
-    for (j = 0; j < self->num_ancestors; j++) {
-        if (self->live_segments_head[j] != NULL) {
-            fprintf(out, "%d\t:", (int) j);
-            for (u = self->live_segments_head[j]; u != NULL; u = u->next) {
-                fprintf(out, "(%d, %d)", u->left, u->right);
-                if (u->next != NULL) {
-                    fprintf(out, ",");
-                }
-            }
-            fprintf(out, "\n");
-        }
-    }
-    fprintf(out, "edgesets:\n");
-    for (j = 0; j < self->num_edgesets; j++) {
-        fprintf(out, "%d\t%d\t%d\t", self->edgesets[j].left, self->edgesets[j].right,
-                self->edgesets[j].parent);
-        for (l = 0; l < self->edgesets[j].num_children; l++) {
-            fprintf(out, "%d", self->edgesets[j].children[l]);
-            if (l < self->edgesets[j].num_children - 1) {
-                fprintf(out, ",");
-            }
-        }
-        fprintf(out, "\n");
-    }
-    fprintf(out, "mutations:\n");
-    for (l = 0; l < self->num_sites; l++) {
-        if (self->mutations[l] != NULL) {
-            fprintf(out, "%d\t:", (int) l);
-            for (v = self->mutations[l]; v != NULL; v = v->next) {
-                fprintf(out, "(%d, %d)", v->node, v->derived_state);
-                if (v->next != NULL) {
-                    fprintf(out, ",");
-                }
-            }
-            fprintf(out, "\n");
-        }
-    }
+    object_heap_print_state(&self->avl_node_heap, out);
+    block_allocator_print_state(&self->likelihood_list_allocator, out);
+
     tree_sequence_builder_check_state(self);
     return 0;
 }
 
-/* #define RESOLVE_DEBUG */
-#ifdef RESOLVE_DEBUG
-static void
-tree_sequence_builder_draw_segments(tree_sequence_builder_t *self,
-        size_t num_segments, node_mapping_t *segments)
-{
-    size_t j, k;
-
-    printf("    ");
-    for (j = 0; j < self->num_sites; j++) {
-        printf("-");
-    }
-    printf("\n");
-    for (j = 0; j < num_segments; j++) {
-        printf("%.4d:", segments[j].node);
-        for (k = 0; k < segments[j].left; k++)  {
-            printf(" ");
-        }
-        for (k = segments[j].left; k < segments[j].right; k++)  {
-            printf("=");
-        }
-        printf("\n");
-    }
-    printf("    ");
-    for (j = 0; j < self->num_sites; j++) {
-        printf("-");
-    }
-    printf("\n");
-}
-#endif
-
-static inline void
-tree_sequence_builder_free_node_mapping(tree_sequence_builder_t *self, node_mapping_t *u)
-{
-    object_heap_free_object(&self->node_mapping_heap, u);
-}
-
-static inline mutation_list_node_t * WARN_UNUSED
-tree_sequence_builder_alloc_mutation_list_node(tree_sequence_builder_t *self,
-        ancestor_id_t node, allele_t derived_state)
-{
-    mutation_list_node_t *ret = NULL;
-
-    if (object_heap_empty(&self->mutation_list_node_heap)) {
-        if (object_heap_expand(&self->mutation_list_node_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (mutation_list_node_t *) object_heap_alloc_object(
-            &self->mutation_list_node_heap);
-    if (ret == NULL) {
-        goto out;
-    }
-    ret->node = node;
-    ret->derived_state = derived_state;
-    ret->next = NULL;
-    self->num_mutations++;
-out:
-    return ret;
-}
-
-static inline node_mapping_t * WARN_UNUSED
-tree_sequence_builder_alloc_node_mapping(tree_sequence_builder_t *self,
-        site_id_t left, site_id_t right, ancestor_id_t node)
-{
-    node_mapping_t *ret = NULL;
-
-    if (object_heap_empty(&self->node_mapping_heap)) {
-        if (object_heap_expand(&self->node_mapping_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (node_mapping_t *) object_heap_alloc_object(&self->node_mapping_heap);
-    if (ret == NULL) {
-        goto out;
-    }
-    ret->left = left;
-    ret->right = right;
-    ret->node = node;
-    ret->next = NULL;
-out:
-    return ret;
-}
-
 int
-tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        ancestor_store_t *store, size_t num_samples,
-        size_t node_mapping_block_size, size_t edgeset_block_size,
-        size_t mutation_list_node_block_size)
+tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
+        size_t max_nodes, size_t max_edges)
 {
     int ret = 0;
-    assert(edgeset_block_size > 0);
-    assert(mutation_list_node_block_size > 0);
-    assert(node_mapping_block_size > 0);
+    size_t j;
+    /* TODO fix this. */
+    size_t avl_node_block_size = 8192;
+    size_t likelihood_list_block_size = 8192;
+
+    /* TODO put in a check on the number of sites. We currently use an integer
+     * in the tree transition algorithm, so the max value of this and the
+     * max value of site_id_t are the practical limits. Probably simpler make
+     * site_id_t a signed integer in the long run */
 
     memset(self, 0, sizeof(tree_sequence_builder_t));
-    self->store = store;
-    self->num_sites = store->num_sites;
-    self->num_ancestors = store->num_ancestors;
-    self->num_samples = num_samples;
-    self->num_nodes = self->num_samples + self->num_ancestors;
-    self->node_mapping_block_size = node_mapping_block_size;
-    self->edgeset_block_size = edgeset_block_size;
-    self->num_edgesets = 0;
-    self->max_num_edgesets = edgeset_block_size;
-    /* For the internal node time map, we start with 2 * original nodes as a
-     * reasonable guess */
-    self->max_num_nodes = 2 * (self->num_samples + self->num_ancestors);
-    self->mutation_list_node_block_size = mutation_list_node_block_size;
-    ret = object_heap_init(&self->node_mapping_heap,
-            sizeof(node_mapping_t), self->node_mapping_block_size, NULL);
-    if (ret != 0) {
-        goto out;
-    }
-    ret = object_heap_init(&self->mutation_list_node_heap, sizeof(mutation_list_node_t),
-           self->mutation_list_node_block_size, NULL);
-    if (ret != 0) {
-        goto out;
-    }
-    self->num_child_mappings = calloc(self->num_ancestors, sizeof(uint32_t));
-    self->child_mappings = calloc(self->num_ancestors, sizeof(node_mapping_t *));
-    self->live_segments_head = calloc(self->num_ancestors, sizeof(node_mapping_t *));
-    self->live_segments_tail = calloc(self->num_ancestors, sizeof(node_mapping_t *));
-    self->edgesets = malloc(self->edgeset_block_size * sizeof(edgeset_t));
-    self->mutations = calloc(self->num_sites, sizeof(mutation_list_node_t *));
-    self->node_time = calloc(self->max_num_nodes, sizeof(double));
-    if (self->num_child_mappings == NULL || self->live_segments_head == NULL
-            || self->live_segments_tail == NULL || self->child_mappings == NULL
-            || self->edgesets == NULL || self->mutations == NULL
-            || self->node_time == NULL) {
+    self->recombination_rate = 1e-8;
+    self->num_sites = num_sites;
+    self->max_nodes = max_nodes;
+    self->max_edges = max_edges;
+    self->max_output_edges = num_sites; /* We can probably make this smaller */
+    self->num_nodes = 0;
+    self->num_edges = 0;
+
+    self->edges = malloc(self->max_edges * sizeof(edge_t));
+    self->sort_buffer = malloc(self->max_edges * sizeof(index_sort_t));
+    self->insertion_order = malloc(self->max_edges * sizeof(node_id_t));
+    self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
+    self->time = malloc(self->max_nodes * sizeof(double));
+    self->parent = malloc(self->max_nodes * sizeof(node_id_t));
+    self->likelihood = malloc(self->max_nodes * sizeof(double));
+    self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
+    self->mutations = malloc(self->num_sites * sizeof(node_id_t));
+    self->output_edge_buffer = malloc(self->max_output_edges * sizeof(edge_t));
+
+    if (self->edges == NULL || self->time == NULL || self->parent == NULL
+            || self->insertion_order == NULL || self->removal_order == NULL
+            || self->sort_buffer == NULL || self->likelihood == NULL
+            || self->traceback == NULL || self->output_edge_buffer == NULL
+            || self->mutations == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
+    /* The AVL node heap stores the avl node and the node_id_t payload in
+     * adjacent memory. */
+    ret = object_heap_init(&self->avl_node_heap,
+            sizeof(avl_node_t) + sizeof(node_id_t), avl_node_block_size, NULL);
+    if (ret != 0) {
+        goto out;
+    }
+    avl_init_tree(&self->likelihood_nodes, cmp_node_id, NULL);
+    ret = block_allocator_alloc(&self->likelihood_list_allocator,
+            likelihood_list_block_size);
+    if (ret != 0) {
+        goto out;
+    }
+    /* Initialise the likelihoods and tree. */
+    for (j = 0; j < self->max_nodes; j++) {
+        self->likelihood[j] = NULL_LIKELIHOOD;
+        self->parent[j] = NULL_NODE;
+    }
+    memset(self->mutations, 0xff, self->num_sites * sizeof(node_id_t));
 out:
     return ret;
 }
@@ -285,173 +194,529 @@ out:
 int
 tree_sequence_builder_free(tree_sequence_builder_t *self)
 {
-    size_t j;
-    for (j = 0; j < self->num_edgesets; j++) {
-        tsi_safe_free(self->edgesets[j].children);
-    }
-    object_heap_free(&self->node_mapping_heap);
-    object_heap_free(&self->mutation_list_node_heap);
-    tsi_safe_free(self->child_mappings);
-    tsi_safe_free(self->num_child_mappings);
-    tsi_safe_free(self->live_segments_head);
-    tsi_safe_free(self->live_segments_tail);
-    tsi_safe_free(self->node_time);
-    tsi_safe_free(self->edgesets);
+    tsi_safe_free(self->edges);
+    tsi_safe_free(self->time);
+    tsi_safe_free(self->parent);
+    tsi_safe_free(self->insertion_order);
+    tsi_safe_free(self->removal_order);
+    tsi_safe_free(self->sort_buffer);
+    tsi_safe_free(self->likelihood);
+    tsi_safe_free(self->traceback);
+    tsi_safe_free(self->output_edge_buffer);
     tsi_safe_free(self->mutations);
+    object_heap_free(&self->avl_node_heap);
+    block_allocator_free(&self->likelihood_list_allocator);
     return 0;
 }
 
-static inline int
-tree_sequence_builder_add_mapping(tree_sequence_builder_t *self, site_id_t left,
-        site_id_t right, ancestor_id_t parent, ancestor_id_t child)
+static int WARN_UNUSED
+tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
 {
     int ret = 0;
-    node_mapping_t *u;
+    size_t j;
+    node_id_t u;
+    index_sort_t *sort_buff = self->sort_buffer;
 
-    /* printf("add mapping %d -> %d\n", child, parent); */
-    assert(parent < (ancestor_id_t) (self->num_ancestors));
-    assert(child < (ancestor_id_t) (self->num_ancestors + self->num_samples));
-    /* Map the ancestor ID into a node index */
-    u = tree_sequence_builder_alloc_node_mapping(self, left, right, child);
-    if (u == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
+    /* sort by left and increasing time to give us the order in which
+     * records should be inserted */
+    for (j = 0; j < self->num_edges; j++) {
+        sort_buff[j].index = (node_id_t ) j;
+        sort_buff[j].position = self->edges[j].left;
+        u = self->edges[j].parent;
+        assert(u < (node_id_t) self->num_nodes);
+        sort_buff[j].time = self->time[u];
+    }
+    qsort(sort_buff, self->num_edges, sizeof(index_sort_t), cmp_index_sort);
+    for (j = 0; j < self->num_edges; j++) {
+        self->insertion_order[j] = sort_buff[j].index;
+    }
+    /* sort by right and decreasing time to give us the order in which
+     * records should be removed. */
+    for (j = 0; j < self->num_edges; j++) {
+        sort_buff[j].index = (node_id_t ) j;
+        sort_buff[j].position = self->edges[j].right;
+        u = self->edges[j].parent;
+        assert(u < (node_id_t) self->num_nodes);
+        sort_buff[j].time = -1 * self->time[u];
+    }
+    qsort(sort_buff, self->num_edges, sizeof(index_sort_t), cmp_index_sort);
+    for (j = 0; j < self->num_edges; j++) {
+        self->removal_order[j] = sort_buff[j].index;
+    }
+    return ret;
+}
+
+int
+tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
+        double time, size_t num_edges, edge_t *edges, size_t num_site_mutations,
+        site_mutation_t *site_mutations)
+{
+    int ret = 0;
+    size_t j;
+
+    assert(self->num_nodes + num_nodes < self->max_nodes);
+    for (j = 0; j < num_nodes; j++) {
+        self->time[self->num_nodes + j] = time;
+    }
+    self->num_nodes += num_nodes;
+    /* We assume that the edges are given in reverse order, so we insert them this
+     * way around to get closer to sortedness */
+    for (j = 0; j < num_edges; j++) {
+        assert(self->num_edges < self->max_edges);
+        self->edges[self->num_edges] = edges[num_edges - j - 1];
+        self->num_edges++;
+    }
+    ret = tree_sequence_builder_index_edges(self);
+    if (ret != 0) {
         goto out;
     }
-    u->next = self->child_mappings[parent];
-    self->child_mappings[parent] = u;
-    self->num_child_mappings[parent]++;
+    for (j = 0; j < num_site_mutations; j++) {
+        assert(site_mutations[j].node < (node_id_t) self->num_nodes);
+        assert(site_mutations[j].node >= 0);
+        assert(site_mutations[j].site < self->num_sites);
+        self->mutations[site_mutations[j].site] = site_mutations[j].node;
+    }
+    self->num_mutations += num_site_mutations;
+    /* tree_sequence_builder_print_state(self, stdout); */
 out:
     return ret;
 }
 
-static inline int
-tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site,
-        ancestor_id_t node, allele_t derived_state)
+static inline void
+tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *node)
+{
+    object_heap_free_object(&self->avl_node_heap, node);
+}
+
+static inline avl_node_t * WARN_UNUSED
+tree_sequence_builder_alloc_avl_node(tree_sequence_builder_t *self, node_id_t node)
+{
+    avl_node_t *ret = NULL;
+    node_id_t *payload;
+
+    if (object_heap_empty(&self->avl_node_heap)) {
+        if (object_heap_expand(&self->avl_node_heap) != 0) {
+            goto out;
+        }
+    }
+    ret = (avl_node_t *) object_heap_alloc_object(&self->avl_node_heap);
+    if (ret == NULL) {
+        goto out;
+    }
+    /* We store the node_id_t value after the avl_node */
+    payload = (node_id_t *) (ret + 1);
+    *payload = node;
+    avl_init_node(ret, payload);
+out:
+    return ret;
+}
+
+static int
+tree_sequence_builder_insert_likelihood(tree_sequence_builder_t *self, node_id_t node,
+        double likelihood)
 {
     int ret = 0;
-    mutation_list_node_t *u, *v;
+    avl_node_t *avl_node;
 
-    /* We can't handle zero derived states here yet as we're not handling the
-     * logic of traversing upwards correctly.
-     */
-    assert(derived_state == 1);
-
-    v = tree_sequence_builder_alloc_mutation_list_node(self, node, derived_state);
-    if (v == NULL) {
+    assert(likelihood >= 0);
+    avl_node = tree_sequence_builder_alloc_avl_node(self, node);
+    if (avl_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    if (self->mutations[site] == NULL) {
-        self->mutations[site] = v;
+    avl_node = avl_insert_node(&self->likelihood_nodes, avl_node);
+    assert(self->likelihood[node] == NULL_LIKELIHOOD);
+    assert(avl_node != NULL);
+    self->likelihood[node] = likelihood;
+out:
+    return ret;
+}
+
+static int
+tree_sequence_builder_delete_likelihood(tree_sequence_builder_t *self, node_id_t node)
+{
+    avl_node_t *avl_node;
+
+    avl_node = avl_search(&self->likelihood_nodes, &node);
+    assert(self->likelihood[node] != NULL_LIKELIHOOD);
+    assert(avl_node != NULL);
+    avl_unlink_node(&self->likelihood_nodes, avl_node);
+    tree_sequence_builder_free_avl_node(self, avl_node);
+    self->likelihood[node] = NULL_LIKELIHOOD;
+    return 0;
+}
+
+/* Store the current state of the likelihood tree in the traceback.
+ */
+static int WARN_UNUSED
+tree_sequence_builder_store_traceback(tree_sequence_builder_t *self, site_id_t site_id)
+{
+    int ret = 0;
+    avl_node_t *a;
+    node_id_t u;
+    likelihood_list_t *list_node;
+
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        list_node = block_allocator_get(&self->likelihood_list_allocator,
+                sizeof(likelihood_list_t));
+        if (list_node == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        list_node->node = u;
+        list_node->likelihood = self->likelihood[u];
+        list_node->next = self->traceback[site_id];
+        self->traceback[site_id] = list_node;
+    }
+    self->total_traceback_size += avl_count(&self->likelihood_nodes);
+out:
+    return ret;
+}
+
+/* Returns true if the node u is a descendant of v; i.e. if v is present on the
+ * path from u to root. Returns false in all other situations, including
+ * error conditions. */
+static inline bool
+tree_sequence_builder_is_descendant(tree_sequence_builder_t *self, node_id_t u,
+        node_id_t v)
+{
+    node_id_t *pi = self->parent;
+
+    while (u != NULL_NODE && u != v) {
+        u = pi[u];
+    }
+    return u == v;
+}
+
+static int WARN_UNUSED
+tree_sequence_builder_update_site_likelihood_values(tree_sequence_builder_t *self,
+        node_id_t mutation_node, char state)
+{
+    int ret = 0;
+    double n = (double) self->num_nodes;
+    double r = 1 - exp(-self->recombination_rate / n);
+    double recomb_proba = r / n;
+    double no_recomb_proba = 1 - r + r / n;
+    double *L = self->likelihood;
+    double x, y, max_L, emission;
+    bool is_descendant;
+    node_id_t u;
+    avl_node_t *a;
+
+    max_L = -1;
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        x = L[u] * no_recomb_proba;
+        assert(x >= 0);
+        if (x > recomb_proba) {
+            y = x;
+        } else {
+            y = recomb_proba;
+        }
+        is_descendant = tree_sequence_builder_is_descendant(self, u, mutation_node);
+        if (state == 1) {
+            emission = (double) is_descendant;
+        } else {
+            emission = (double) (! is_descendant);
+        }
+        L[u] = y * emission;
+        if (L[u] > max_L) {
+            max_L = L[u];
+        }
+        /* printf("mutation_node = %d u = %d, x = %f, y = %f, emission = %f\n", */
+        /*         mutation_node, u, x, y, emission); */
+    }
+    assert(max_L > 0);
+    /* Normalise */
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        L[u] /= max_L;
+    }
+    return ret;
+}
+
+static int WARN_UNUSED
+tree_sequence_builder_coalesce_likelihoods(tree_sequence_builder_t *self)
+{
+    int ret = 0;
+    avl_node_t *a, *tmp;
+    node_id_t u, v;
+
+    a = self->likelihood_nodes.head;
+    while (a != NULL) {
+        tmp = a->next;
+        u = *((node_id_t *) a->item);
+        if (self->parent[u] != NULL_NODE) {
+            /* If we can find an equal L value higher in the tree, delete
+             * this one.
+             */
+            v = self->parent[u];
+            while (self->likelihood[v] == NULL_LIKELIHOOD) {
+                v = self->parent[v];
+                assert(v != NULL_NODE);
+            }
+            if (self->likelihood[u] == self->likelihood[v]) {
+                /* Delete this likelihood value */
+                avl_unlink_node(&self->likelihood_nodes, a);
+                tree_sequence_builder_free_avl_node(self, a);
+                self->likelihood[u] = NULL_LIKELIHOOD;
+            }
+        }
+        a = tmp;
+    }
+    return ret;
+}
+
+static int
+tree_sequence_builder_update_site_state(tree_sequence_builder_t *self, site_id_t site,
+        allele_t state)
+{
+    int ret = 0;
+    node_id_t mutation_node = self->mutations[site];
+    node_id_t *pi = self->parent;
+    double *L = self->likelihood;
+    node_id_t u;
+
+    /* tree_sequence_builder_print_state(self, stdout); */
+    tree_sequence_builder_check_state(self);
+    if (mutation_node == NULL_NODE) {
+        /* TODO We should be able to just put a pointer in to the previous site
+         * here to save some time and memory. */
+        ret = tree_sequence_builder_store_traceback(self, site);
+        if (ret != 0) {
+            goto out;
+        }
     } else {
-        /* It's not worth keeping head and tail pointers for these lists because
-         * we should have small numbers of mutations at each site */
-        u = self->mutations[site];
-        while (u->next != NULL) {
-            u = u->next;
-        }
-        u->next = v;
-    }
-out:
-    return ret;
-}
-
-int
-tree_sequence_builder_update(tree_sequence_builder_t *self, ancestor_id_t child,
-        allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        traceback_t *traceback)
-{
-    int ret = 0;
-    site_id_t l;
-    site_id_t end = end_site;
-    ancestor_id_t parent;
-    bool switch_parent;
-    allele_t state;
-    node_segment_list_node_t *u;
-
-    /* traceback_print_state(traceback, stdout); */
-    parent = traceback->best_match[end - 1];
-    for (l = end_site - 1; l > start_site; l--) {
-        /* printf("Tracing back at site %d: parent = %d\n", l, parent); */
-        /* print_segment_chain(T_head[l], 1, stdout); */
-        /* printf("\n"); */
-        ret = ancestor_store_get_state(self->store, l, parent, &state);
-        if (ret != 0) {
-            goto out;
-        }
-        if (state != haplotype[l]) {
-            ret = tree_sequence_builder_add_mutation(self, l, child, haplotype[l]);
+        /* Insert a new L-value for the mutation node if needed */
+        if (L[mutation_node] == NULL_LIKELIHOOD) {
+            u = mutation_node;
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                assert(u != NULL_NODE);
+            }
+            ret = tree_sequence_builder_insert_likelihood(self, mutation_node, L[u]);
             if (ret != 0) {
                 goto out;
             }
         }
-        u = traceback->sites_head[l];
-        switch_parent = false;
-        while (u != NULL) {
-            if (u->start <= parent && parent < u->end) {
-                switch_parent = true;
-                break;
-            }
-            if (u->start > parent) {
-                break;
-            }
-            u = u->next;
+        ret = tree_sequence_builder_store_traceback(self, site);
+        if (ret != 0) {
+            goto out;
         }
-        if (switch_parent) {
-            /* Complete a segment at this site */
-            assert(l < end);
-            ret = tree_sequence_builder_add_mapping(self, l, end, parent, child);
-            if (ret != 0) {
-                goto out;
-            }
-            end = l;
-            parent = traceback->best_match[l - 1];
+        ret = tree_sequence_builder_update_site_likelihood_values(self, mutation_node, state);
+        if (ret != 0) {
+            goto out;
         }
-    }
-    assert(start_site < end);
-    ret = tree_sequence_builder_add_mapping(self, start_site, end, parent, child);
-    if (ret != 0) {
-        goto out;
-    }
-    l = start_site;
-    ret = ancestor_store_get_state(self->store, l, parent, &state);
-    if (ret != 0) {
-        goto out;
-    }
-    if (state != haplotype[l]) {
-        ret = tree_sequence_builder_add_mutation(self, l, child, haplotype[l]);
+        ret = tree_sequence_builder_coalesce_likelihoods(self);
         if (ret != 0) {
             goto out;
         }
     }
 out:
+    return ret;
+}
+
+static int
+tree_sequence_builder_reset(tree_sequence_builder_t *self)
+{
+    int ret = 0;
+    size_t j;
+
+    assert(avl_count(&self->likelihood_nodes) == 0);
+    for (j = 0; j < self->num_nodes; j++) {
+        ret = tree_sequence_builder_insert_likelihood(self, (node_id_t) j, 1.0);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+    memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t *));
+    ret = block_allocator_reset(&self->likelihood_list_allocator);
+    if (ret != 0) {
+        goto out;
+    }
+out:
+    return ret;
+}
+
+
+static int WARN_UNUSED
+tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
+       node_id_t child, size_t *num_output_edges, edge_t **output_edges)
+{
+    int ret = 0;
+    int M = self->num_edges;
+    int j, k, l;
+    size_t output_edge_index;
+    node_id_t *pi = self->parent;
+    double *L = self->likelihood;
+    edge_t *edges = self->edges;
+    edge_t *output_edge;
+    node_id_t *I, *O, u, max_likelihood_node;
+    site_id_t left, right;
+    avl_node_t *a, *tmp;
+    likelihood_list_t *z;
+
+    /* Prepare for the traceback and get the memory ready for recording
+     * the output edges. */
+    output_edge_index = 0;
+    output_edge = self->output_edge_buffer + output_edge_index;
+    output_edge->right = self->num_sites;
+    output_edge->parent = NULL_NODE;
+    output_edge->child = child;
+
+    /* Process the final likelihoods and find the maximum value. Reset
+     * the likelihood values so that we can reused the buffer during
+     * traceback. */
+    a = self->likelihood_nodes.head;
+    while (a != NULL) {
+        tmp = a->next;
+        u = *((node_id_t *) a->item);
+        if (L[u] == 1.0) {
+            output_edge->parent = u;
+        }
+        L[u] = NULL_LIKELIHOOD;
+        tree_sequence_builder_free_avl_node(self, a);
+        a = tmp;
+    }
+    avl_clear_tree(&self->likelihood_nodes);
+    assert(output_edge->parent != NULL_NODE);
+
+    /* Now go through the trees in reverse and run the traceback */
+    j = M - 1;
+    k = M - 1;
+    I = self->removal_order;
+    O = self->insertion_order;
+    while (j >= 0) {
+        right = edges[I[j]].right;
+        while (edges[O[k]].left == right) {
+            pi[edges[O[k]].child] = -1;
+            k--;
+        }
+        left = edges[O[k]].left;
+        while (j >= 0 && edges[I[j]].right == right) {
+            pi[edges[I[j]].child] = edges[I[j]].parent;
+            j--;
+        }
+        /* # print("left = ", left, "right = ", right) */
+        /* printf("left = %d right = %d\n", left, right); */
+        max_likelihood_node = NULL_NODE;
+        for (l = right - 1; l >= (int) left; l--) {
+            /* Reset the likelihood values for this locus from the traceback */
+            for (z = self->traceback[l]; z != NULL; z = z->next) {
+                L[z->node] = z->likelihood;
+                if (z->likelihood == 1.0) {
+                    max_likelihood_node = z->node;
+                }
+            }
+            assert(max_likelihood_node != NULL_NODE);
+            u = output_edge->parent;
+            /* Get the likelihood for u */
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                assert(u != NULL_NODE);
+            }
+            if (L[u] != 1.0) {
+                /* printf("RECOMB: %d\n", l); */
+                /* Need to recombine */
+                output_edge->left = l;
+                output_edge_index++;
+                assert(output_edge_index < self->max_output_edges);
+                output_edge++;
+                /* Start the next output edge */
+                output_edge->right = l;
+                output_edge->child = child;
+                output_edge->parent = max_likelihood_node;
+            }
+            /* Reset the likelihoods for the next site */
+            for (z = self->traceback[l]; z != NULL; z = z->next) {
+                L[z->node] = NULL_LIKELIHOOD;
+            }
+            tree_sequence_builder_check_state(self);
+        }
+    }
+    output_edge->left = 0;
+
+    *num_output_edges = output_edge_index + 1;
+    *output_edges = self->output_edge_buffer;
+/* out: */
     return ret;
 }
 
 int
-tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self,
-        ancestor_id_t parent, segment_list_t *list)
+tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *haplotype,
+       node_id_t node, size_t *num_output_edges, edge_t **output_edges)
 {
     int ret = 0;
-    node_mapping_t *u, *tmp;
+    int M = self->num_edges;
+    int j, k, l;
+    node_id_t *pi = self->parent;
+    double *L = self->likelihood;
+    edge_t *edges = self->edges;
+    node_id_t *I, *O, u, parent, child;
+    site_id_t left, right;
 
-    assert(parent < (ancestor_id_t) self->num_ancestors);
-    u = self->live_segments_head[parent];
-    while (u != NULL) {
-        ret = segment_list_append(list, u->left, u->right);
-        if (ret != 0) {
-            goto out;
-        }
-        tmp = u;
-        u = u->next;
-        tree_sequence_builder_free_node_mapping(self, tmp);
+    ret = tree_sequence_builder_reset(self);
+    if (ret != 0) {
+        goto out;
     }
+
+    j = 0;
+    k = 0;
+    I = self->insertion_order;
+    O = self->removal_order;
+    while (j < M) {
+        left = edges[I[j]].left;
+        while (edges[O[k]].right == left) {
+            parent = edges[O[k]].parent;
+            child = edges[O[k]].child;
+            k++;
+            pi[child] = -1;
+            if (L[child] == NULL_LIKELIHOOD) {
+                /* Traverse upwards until we find and L value for the child. */
+                u = parent;
+                while (L[u] == NULL_LIKELIHOOD) {
+                    u = pi[u];
+                    assert(u != NULL_NODE);
+                }
+                ret = tree_sequence_builder_insert_likelihood(self, child, L[u]);
+                if (ret != 0) {
+                    goto out;
+                }
+            }
+        }
+        right = edges[O[k]].right;
+        while (j < M && edges[I[j]].left == left) {
+            parent = edges[I[j]].parent;
+            child = edges[I[j]].child;
+            pi[child] = parent;
+            j++;
+            /* Traverse upwards until we find the L value for the parent. */
+            u = parent;
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                assert(u != NULL_NODE);
+            }
+            assert(L[child] != NULL_LIKELIHOOD);
+            /* if the child's L value is the same as the parent we can delete it */
+            if (L[child] == L[u]) {
+                tree_sequence_builder_delete_likelihood(self, child);
+            }
+        }
+        /* printf("NEW TREE: %d-%d\n", left, right); */
+        for (l = left; l < (int) right; l++) {
+            /* printf("update site %d\n", l); */
+            ret = tree_sequence_builder_update_site_state(self, l, haplotype[l]);
+            if (ret != 0) {
+                goto out;
+            }
+        }
+    }
+    ret =  tree_sequence_builder_run_traceback(self, node, num_output_edges,
+            output_edges);
 out:
-    self->live_segments_head[parent] = NULL;
-    self->live_segments_tail[parent] = NULL;
     return ret;
 }
-
 
 int
 tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
@@ -460,43 +725,28 @@ tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
     int ret = 0;
     size_t j;
 
-    memset(flags, 0, self->num_nodes * sizeof(uint32_t));
-    memcpy(time, self->node_time, self->num_nodes * sizeof(double));
-    for (j = 0; j < self->num_samples; j++) {
-        flags[self->num_ancestors + j] = 1;
+    for (j = 0; j < self->num_nodes; j++) {
+        flags[j] = 1;
+        time[j] = self->time[j];
     }
     return ret;
 }
 
 int
-tree_sequence_builder_dump_edgesets(tree_sequence_builder_t *self,
-        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children,
-        uint32_t *children_length)
+tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
+        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *child)
 {
     int ret = 0;
-    size_t j, k, offset;
-    edgeset_t *e;
+    size_t j;
+    edge_t *e;
 
-    /* Go through the edgesets and assign times */
-    for (j = 0; j < self->num_edgesets; j++) {
-        e = self->edgesets + j;
-        e->time = self->node_time[e->parent];
-    }
-    qsort(self->edgesets, self->num_edgesets, sizeof(edgeset_t), cmp_edgeset);
-
-    offset = 0;
-    for (j = 0; j < self->num_edgesets; j++) {
-        e = self->edgesets + j;
+    for (j = 0; j < self->num_edges; j++) {
+        e = self->edges + j;
         left[j] = e->left;
         right[j] = e->right;
         parent[j] = e->parent;
-        children_length[j] = e->num_children;
-        for (k = 0; k < e->num_children; k++) {
-            children[offset] = e->children[k];
-            offset++;
-        }
+        child[j] = e->child;
     }
-    assert(offset == self->num_children);
     return ret;
 }
 
@@ -506,520 +756,17 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
 {
     int ret = 0;
     site_id_t l;
-    size_t offset = 0;
-    mutation_list_node_t *u;
+    size_t j = 0;
 
     for (l = 0; l < self->num_sites; l++) {
-        for (u = self->mutations[l]; u != NULL; u = u->next) {
-            assert(offset < self->num_mutations);
-            site[offset] = l;
-            node[offset] = u->node;
-            derived_state[offset] = u->derived_state;
-            offset++;
+        if (self->mutations[l] != NULL_NODE) {
+            site[j] = l;
+            node[j] = self->mutations[l];
+            derived_state[j] = 1;
+            j++;
         }
-    }
-    assert(offset == self->num_mutations);
-    return ret;
-}
-
-static int
-tree_sequence_builder_alloc_minor_node(tree_sequence_builder_t *self,
-        ancestor_id_t *new_node)
-{
-    int ret = 0;
-    double *p;
-
-    if (self->num_nodes == self->max_num_nodes) {
-        self->max_num_nodes += self->max_num_nodes;
-        p = realloc(self->node_time, self->max_num_nodes * sizeof(double));
-        if (p == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
-        self->node_time = p;
-    }
-    /* printf("ALLOC NODE %d\n", (int) self->num_nodes); */
-    *new_node = (ancestor_id_t) self->num_nodes;
-    self->num_nodes++;
-out:
-    return ret;
-}
-
-static edgeset_t *
-tree_sequence_builder_alloc_edgeset(tree_sequence_builder_t *self, site_id_t left,
-        site_id_t right, ancestor_id_t parent, uint32_t num_children)
-{
-    edgeset_t *ret = NULL;
-    ancestor_id_t *children = NULL;
-    edgeset_t *p;
-
-    if (self->num_edgesets == self->max_num_edgesets) {
-        /* Grow the array */
-        self->max_num_edgesets += self->edgeset_block_size;
-        p = realloc(self->edgesets, self->max_num_edgesets * sizeof(edgeset_t));
-        if (p == NULL) {
-            goto out;
-        }
-        self->edgesets = p;
-    }
-    /* NOOoooooooooooooooooooooooo!!!!!!!!!!! This must be replaced with a sensible
-     * alloc strategy */
-    children = malloc(num_children * sizeof(ancestor_id_t));
-    if (children == NULL) {
-        goto out;
-    }
-    ret = self->edgesets + self->num_edgesets;
-    self->num_edgesets++;
-    self->num_children += num_children;
-    ret->left = left;
-    ret->right = right;
-    ret->parent = parent;
-    ret->num_children = num_children;
-    ret->children = children;
-    children = NULL;
-out:
-    if (children != NULL) {
-        free(children);
     }
     return ret;
 }
 
-static int
-tree_sequence_builder_record_non_overlapping(tree_sequence_builder_t *self,
-        site_id_t left, site_id_t right, ancestor_id_t parent, ancestor_id_t child)
-{
-    int ret = 0;
-    node_mapping_t *u;
-    edgeset_t *e;
 
-    /* printf("RECORD NON_OVERLAP (%d, %d), %d %d\n", left, right, parent, child); */
-    /* We shouldn't really be using a node_mapping here as it's wasteful of space. */
-    u = tree_sequence_builder_alloc_node_mapping(self, left, right, 0);
-    if (u == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    if (self->live_segments_head[parent] == NULL) {
-        self->live_segments_head[parent] = u;
-        self->live_segments_tail[parent] = u;
-    } else {
-        /* TODO: check for contiguous segments here */
-        self->live_segments_tail[parent]->next = u;
-        self->live_segments_tail[parent] = u;
-    }
-
-    e = tree_sequence_builder_alloc_edgeset(self, left, right, parent, 1);
-    if (e == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    e->children[0] = child;
-out:
-    return ret;
-}
-
-
-static int
-tree_sequence_builder_record_pairwise_coalescence(tree_sequence_builder_t *self,
-        site_id_t left, site_id_t right, ancestor_id_t parent, ancestor_id_t child1,
-        ancestor_id_t child2)
-{
-    int ret = 0;
-    edgeset_t *e;
-
-    e = tree_sequence_builder_alloc_edgeset(self, left, right, parent, 2);
-    if (e == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    assert(left < right);
-    /* printf("RECORD PAIRWISE COALESCENCE: (%d, %d): %d -> (%d, %d)\n", */
-    /*         left, right, parent, child1, child2); */
-    assert(child1 != child2);
-    if (child1 < child2) {
-        e->children[0] = child1;
-        e->children[1] = child2;
-    } else {
-        e->children[0] = child2;
-        e->children[1] = child1;
-    }
-out:
-
-    return ret;
-}
-
-static int
-tree_sequence_builder_record_coalescence(tree_sequence_builder_t *self,
-        ancestor_id_t parent, size_t num_segments, node_mapping_t *segments)
-{
-    int ret = 0;
-    size_t j;
-    edgeset_t *e;
-
-    assert(num_segments > 1);
-    /* printf("RECORD COALESCENCE: parent = %d\n", parent); */
-    e = tree_sequence_builder_alloc_edgeset(self, segments[0].left, segments[0].right,
-            parent, num_segments);
-    if (e == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    for (j = 0; j < num_segments; j++) {
-        /* printf("\t(%d, %d, %d)\n", segments[j].left, segments[j].right, segments[j].node); */
-        assert(segments[j].left == e->left);
-        assert(segments[j].right == e->right);
-        e->children[j] = segments[j].node;
-    }
-    qsort(e->children, e->num_children, sizeof(ancestor_id_t), cmp_node_id);
-out:
-    return ret;
-}
-
-inline static void
-update_segment(node_mapping_t *seg, site_id_t left, site_id_t right, ancestor_id_t node)
-{
-    seg->left = left;
-    seg->right = right;
-    seg->node = node;
-}
-
-static int
-tree_sequence_builder_resolve_identical(tree_sequence_builder_t *self,
-        size_t num_segments, node_mapping_t *segments,
-        size_t *num_result_segments, node_mapping_t *result_segments)
-{
-    int ret = 0;
-    node_mapping_t *S = segments;
-    ancestor_id_t parent;
-    size_t j, k, num_returned;
-
-    j = 0;
-    k = 1;
-    num_returned = 0;
-    while (j < num_segments) {
-        while (k < num_segments && S[j].left == S[k].left && S[j].right == S[k].right) {
-            k++;
-        }
-        if (k > j + 1) {
-            ret = tree_sequence_builder_alloc_minor_node(self, &parent);
-            if (ret != 0) {
-                goto out;
-            }
-            ret = tree_sequence_builder_record_coalescence(self, parent, k - j, S + j);
-            if (ret != 0) {
-                goto out;
-            }
-            S[j].node = parent;
-        }
-        assert(num_returned < num_segments);
-        update_segment(result_segments + num_returned, S[j].left, S[j].right, S[j].node);
-        num_returned++;
-        j = k;
-        k++;
-    }
-    assert(num_returned <= num_segments);
-    *num_result_segments = num_returned;
-out:
-    return ret;
-}
-
-static int
-tree_sequence_builder_resolve_largest_overlap(tree_sequence_builder_t *self,
-        size_t num_segments, size_t max_num_segments, node_mapping_t *segments,
-        size_t *num_result_segments, node_mapping_t *result_segments)
-{
-    int ret = 0;
-    node_mapping_t *S = segments;
-    node_mapping_t *R = result_segments;
-    ancestor_id_t parent;
-    size_t j, k, num_returned, intersection_j, intersection_k;
-    int intersection, max_intersection;
-    site_id_t right;
-
-    /* Keep the compiler happy */
-    intersection_j = 0;
-    intersection_k = 0;
-
-    max_intersection = 0;
-    j = 0;
-    k = 1;
-    while (1) {
-        while (k < num_segments && S[k].right <= S[j].right) {
-            intersection = S[k].right - S[k].left;
-            if (intersection > max_intersection) {
-                max_intersection = intersection;
-                intersection_j = j;
-                intersection_k = k;
-            }
-            k++;
-        }
-        if (k == num_segments) {
-            break;
-        }
-        intersection = S[j].right - S[k].left;
-        if (intersection > max_intersection) {
-            max_intersection = intersection;
-            intersection_j = j;
-            intersection_k = k;
-        }
-        j = k;
-        k++;
-    }
-
-    /* for (j = 0; j < num_segments; j++) { */
-    /*     printf("SEG: %d = (%d, %d) -> %d\n", (int) j, S[j].left, S[j].right, S[j].node); */
-    /* } */
-    if (max_intersection == 0) {
-        memcpy(result_segments, S, num_segments * sizeof(node_mapping_t));
-        num_returned = num_segments;
-    } else {
-        /* printf("max_intersection = %d (%d, %d)\n", max_intersection, */
-        /*         (int) intersection_j, (int) intersection_k); */
-        num_returned = 0;
-        for (j = 0; j < intersection_j; j++) {
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
-            num_returned++;
-        }
-        j = intersection_j;
-        k = intersection_k;
-        if (S[j].left != S[k].left) {
-            /* Trim off a new segment for the leading overhang. */
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[j].left, S[k].left, S[j].node);
-            num_returned++;
-            S[j].left = S[k].left;
-        }
-        /* Create a new segment for the coalesced region and record the coalescence */
-        ret = tree_sequence_builder_alloc_minor_node(self, &parent);
-        if (ret != 0) {
-            goto out;
-        }
-        right = GSL_MIN(S[j].right, S[k].right);
-        /* printf("left = %d right = %d\n~", S[j].left, right); */
-        ret = tree_sequence_builder_record_pairwise_coalescence(self, S[j].left,
-                right, parent, S[j].node, S[k].node);
-        if (ret != 0) {
-            goto out;
-        }
-        assert(num_returned < max_num_segments);
-        update_segment(R + num_returned, S[j].left, right, parent);
-        num_returned++;
-        /* Create segments for any overhang on the right hand side */
-        if (S[j].right > S[k].right) {
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[k].right, S[j].right, S[j].node);
-            num_returned++;
-        } else if (S[k].right > S[j].right) {
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[j].right, S[k].right, S[k].node);
-            num_returned++;
-        }
-        /* Fill in any missing segments between j and k */
-        for (j = intersection_j + 1; j < intersection_k; j++) {
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
-            num_returned++;
-        }
-        /* Fill out the remaining segments after k */
-        for (j = intersection_k + 1; j < num_segments; j++) {
-            assert(num_returned < max_num_segments);
-            update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
-            num_returned++;
-        }
-        /* TODO This is cheating!!!! We shouldn't need to sort the returned segments
-         * here as we can maintain the sorted order with a bit of care.
-         */
-        qsort(R, num_returned, sizeof(node_mapping_t), cmp_node_mapping);
-    }
-    assert(num_returned <= max_num_segments);
-    *num_result_segments = num_returned;
-out:
-    return ret;
-}
-
-static int
-tree_sequence_builder_resolve_non_overlapping(tree_sequence_builder_t *self,
-        ancestor_id_t ancestor, size_t num_segments, node_mapping_t *segments,
-        size_t *num_result_segments, node_mapping_t *result_segments)
-{
-    int ret = 0;
-    node_mapping_t *S = segments;
-    node_mapping_t *R = result_segments;
-    site_id_t next_left, max_right;
-    size_t j, k, num_returned;
-
-    j = 0;
-    k = 1;
-    max_right = 0;
-    num_returned = 0;
-    while (j < num_segments) {
-        next_left = self->num_sites;
-        if (j < num_segments - 1) {
-            next_left = S[j + 1].left;
-        }
-        if (max_right <= S[j].left && S[j].right <= next_left) {
-            ret = tree_sequence_builder_record_non_overlapping(self,
-                    S[j].left, S[j].right, ancestor, S[j].node);
-            if (ret != 0) {
-                goto out;
-            }
-        } else {
-            assert(num_returned < num_segments);
-            update_segment(R + num_returned, S[j].left, S[j].right, S[j].node);
-            num_returned++;
-        }
-        max_right = GSL_MAX(max_right, S[j].right);
-        while (k < num_segments && S[k].right <= S[j].right) {
-            assert(num_returned < num_segments);
-            update_segment(R + num_returned, S[k].left, S[k].right, S[k].node);
-            num_returned++;
-            k++;
-        }
-        j = k;
-        k++;
-    }
-    assert(num_returned <= num_segments);
-    *num_result_segments = num_returned;
-out:
-    return ret;
-}
-
-static int
-tree_sequence_builder_resolve_ancestor(tree_sequence_builder_t *self,
-        ancestor_id_t ancestor, size_t num_segments, size_t max_num_segments,
-        node_mapping_t *segments, node_mapping_t *results_buffer)
-{
-    int ret = 0;
-    node_mapping_t *S[2];
-    size_t N[2];
-    int input_buffer, output_buffer;
-    /* size_t last_iteration_size; */
-
-    qsort(segments, num_segments, sizeof(node_mapping_t), cmp_node_mapping);
-
-#ifdef RESOLVE_DEBUG
-    tree_sequence_builder_draw_segments(self, num_segments, segments);
-#endif
-
-    S[0] = segments;
-    N[0] = num_segments;
-    S[1] = results_buffer;
-    N[1] = 0;
-    input_buffer = 0;
-    output_buffer = 1;
-    /* last_iteration_size = num_segments + 1; */
-
-    /* printf("START %d\n", ancestor); */
-    while (N[input_buffer] > 0) {
-        /* assert(N[input_buffer] < last_iteration_size); */
-        /* last_iteration_size = N[input_buffer]; */
-
-        ret = tree_sequence_builder_resolve_identical(self,
-                N[input_buffer], S[input_buffer], &N[output_buffer], S[output_buffer]);
-        if (ret != 0) {
-            goto out;
-        }
-        /* printf("AFTER IDENTICAL: %d\n", (int) N[output_buffer]); */
-        /* tree_sequence_builder_draw_segments(self, N[output_buffer], S[output_buffer]); */
-        input_buffer = output_buffer;
-        output_buffer = (output_buffer + 1) % 2;
-
-        ret = tree_sequence_builder_resolve_largest_overlap(self,
-                N[input_buffer], max_num_segments,
-                S[input_buffer], &N[output_buffer], S[output_buffer]);
-        if (ret != 0) {
-            goto out;
-        }
-        /* printf("AFTER MAX_OVERLAP : %d\n", (int) N[output_buffer]); */
-        /* tree_sequence_builder_draw_segments(self, N[output_buffer], S[output_buffer]); */
-        input_buffer = output_buffer;
-        output_buffer = (output_buffer + 1) % 2;
-
-        ret = tree_sequence_builder_resolve_non_overlapping(self, ancestor,
-                N[input_buffer], S[input_buffer], &N[output_buffer], S[output_buffer]);
-        if (ret != 0) {
-            goto out;
-        }
-        /* printf("AFTER NON_OVERLAP: %d\n", (int) N[output_buffer]); */
-        /* tree_sequence_builder_draw_segments(self, N[output_buffer], S[output_buffer]); */
-        input_buffer = output_buffer;
-        output_buffer = (output_buffer + 1) % 2;
-    }
-    /* printf("END %d\n", ancestor); */
-out:
-    return ret;
-}
-
-int
-tree_sequence_builder_resolve(tree_sequence_builder_t *self, int epoch,
-        ancestor_id_t *ancestors, size_t num_ancestors)
-{
-    int ret = 0;
-    size_t j, k, max_num_segments, num_segments, num_nodes_before, used_nodes;
-    double interval;
-    node_mapping_t *u, *tmp;
-    node_mapping_t *segments = NULL;
-    node_mapping_t *segments_buffer = NULL;
-
-    max_num_segments = 0;
-    for (j = 0; j < num_ancestors; j++) {
-        max_num_segments = GSL_MAX(max_num_segments, self->num_child_mappings[ancestors[j]]);
-    }
-    /* We can have some extra segments during coalescence, so allow for them */
-    /* TODO this number is actually unbounded in pathological cases, so this is
-     * approach is definitely bad. CHANGE!!*/
-    max_num_segments *= 8;
-    segments = malloc(max_num_segments * sizeof(node_mapping_t));
-    segments_buffer = malloc(max_num_segments * sizeof(node_mapping_t));
-    if (segments == NULL || segments_buffer == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-
-    /* tree_sequence_builder_print_state(self, stdout); */
-    /* printf("Resolving for epoch %d\n", epoch); */
-
-    /* Search through the parent mappings for all referring to
-    for (j = 0 j < self->num_major_nodes; j++) {
-
-    }
-    */
-    for (j = 0; j < num_ancestors; j++) {
-        /* printf("ancestor %d: num_child_mappings = %d\n", ancestors[j], */
-        /*         self->num_child_mappings[ancestors[j]]); */
-        num_segments = 0;
-        u = self->child_mappings[ancestors[j]];
-        while  (u != NULL) {
-            segments[num_segments].left = u->left;
-            segments[num_segments].right = u->right;
-            segments[num_segments].node = u->node;
-            num_segments++;
-            tmp = u;
-            u = u->next;
-            tree_sequence_builder_free_node_mapping(self, tmp);
-        }
-        assert(num_segments == self->num_child_mappings[ancestors[j]]);
-        self->child_mappings[ancestors[j]] = NULL;
-        self->num_child_mappings[ancestors[j]] = 0;
-        num_nodes_before = self->num_nodes;
-        ret = tree_sequence_builder_resolve_ancestor(self, ancestors[j], num_segments,
-                max_num_segments, segments, segments_buffer);
-        if (ret != 0) {
-            goto out;
-        }
-        /* Assign node times */
-        self->node_time[ancestors[j]] = epoch;
-        used_nodes = self->num_nodes - num_nodes_before;
-        for (k = 0; k < used_nodes; k++) {
-            interval = 1.0 / ((double) used_nodes + 1);
-            self->node_time[num_nodes_before + k] = epoch - 1 + (k + 1) * interval;
-        }
-    }
-    /* printf("AFTER resolve\n"); */
-    /* tree_sequence_builder_print_state(self, stdout); */
-out:
-    tsi_safe_free(segments);
-    tsi_safe_free(segments_buffer);
-    return ret;
-}
