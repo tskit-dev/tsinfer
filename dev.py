@@ -1914,6 +1914,7 @@ def new_copy_process_dev(n, L, seed):
     if ts.num_sites < 2:
         # Skip this
         return
+    print("num sites=  ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -1944,7 +1945,6 @@ def new_copy_process_dev(n, L, seed):
     epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
     for epoch in range(store.num_epochs - 2, 0, -1):
         num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
-        # print("STARTING EPOCH", epoch, num_epoch_ancestors)
         e_left = []
         e_right = []
         e_parent = []
@@ -1967,6 +1967,7 @@ def new_copy_process_dev(n, L, seed):
                 e_right.append(right)
                 e_parent.append(parent)
                 e_child.append(child)
+        print("EPOCH", epoch, num_epoch_ancestors, node, store.num_ancestors)
         tsb.update(
             num_epoch_ancestors, epoch,
             e_left, e_right, e_parent, e_child,
@@ -2070,9 +2071,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(20, 5 * 10**4, 1)
+    new_copy_process_dev(10000, 1000 * 10**4, 1)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(40, 100 * 10**4, j)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(40, 100 * 10**4, j)

@@ -404,7 +404,7 @@ static inline bool
 tree_sequence_builder_is_descendant(tree_sequence_builder_t *self, node_id_t u,
         node_id_t v)
 {
-    node_id_t *pi = self->parent;
+    node_id_t *restrict pi = self->parent;
 
     while (u != NULL_NODE && u != v) {
         u = pi[u];
@@ -421,7 +421,7 @@ tree_sequence_builder_update_site_likelihood_values(tree_sequence_builder_t *sel
     double r = 1 - exp(-self->recombination_rate / n);
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
-    double *L = self->likelihood;
+    double *restrict L = self->likelihood;
     double x, y, max_L, emission;
     bool is_descendant;
     node_id_t u;
@@ -572,8 +572,8 @@ tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
     int M = self->num_edges;
     int j, k, l;
     size_t output_edge_index;
-    node_id_t *pi = self->parent;
-    double *L = self->likelihood;
+    node_id_t *restrict pi = self->parent;
+    double *restrict L = self->likelihood;
     edge_t *edges = self->edges;
     edge_t *output_edge;
     node_id_t *I, *O, u, max_likelihood_node;
@@ -677,7 +677,9 @@ tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *haploty
     int ret = 0;
     int M = self->num_edges;
     int j, k, l;
-    node_id_t *pi = self->parent;
+    node_id_t *restrict pi = self->parent;
+    /* Can't use restrict here for L because we access it the functions called
+     * from here. */
     double *L = self->likelihood;
     edge_t *edges = self->edges;
     node_id_t *I, *O, u, parent, child;
@@ -704,7 +706,7 @@ tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *haploty
                 u = parent;
                 while (L[u] == NULL_LIKELIHOOD) {
                     u = pi[u];
-                    assert(u != NULL_NODE);
+                    /* assert(u != NULL_NODE); */
                 }
                 ret = tree_sequence_builder_insert_likelihood(self, child, L[u]);
                 if (ret != 0) {
@@ -722,7 +724,7 @@ tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *haploty
             u = parent;
             while (L[u] == NULL_LIKELIHOOD) {
                 u = pi[u];
-                assert(u != NULL_NODE);
+                /* assert(u != NULL_NODE); */
             }
             assert(L[child] != NULL_LIKELIHOOD);
             /* if the child's L value is the same as the parent we can delete it */
