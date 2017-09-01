@@ -1854,6 +1854,58 @@ class TreeSequenceBuilder(object):
             nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
         return ts
 
+
+def finalise_builder(tsb):
+    nodes = msprime.NodeTable()
+    flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
+    flags[:] = 1
+    time = np.zeros(tsb.num_nodes, dtype=np.float64)
+    tsb.dump_nodes(flags=flags, time=time)
+    nodes.set_columns(flags=flags, time=time)
+
+    edgesets = msprime.EdgesetTable()
+    left = np.zeros(tsb.num_edges, dtype=np.float64)
+    right = np.zeros(tsb.num_edges, dtype=np.float64)
+    parent = np.zeros(tsb.num_edges, dtype=np.int32)
+    child = np.zeros(tsb.num_edges, dtype=np.int32)
+    tsb.dump_edges(left=left, right=right, parent=parent, child=child)
+    edgesets.set_columns(
+        left=left, right=right, parent=parent, children=child,
+        children_length=np.ones(tsb.num_edges, dtype=np.uint32))
+
+    sites = msprime.SiteTable()
+    sites.set_columns(
+        position=np.arange(tsb.num_sites),
+        ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
+        ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
+    mutations = msprime.MutationTable()
+    site = np.zeros(tsb.num_mutations, dtype=np.int32)
+    node = np.zeros(tsb.num_mutations, dtype=np.int32)
+    derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
+    tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
+    derived_state += ord('0')
+    mutations.set_columns(
+        site=site, node=node, derived_state=derived_state,
+        derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
+
+    print(nodes)
+    print(edgesets)
+    print(sites)
+    print(mutations)
+
+    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
+    samples = np.arange(nodes.num_rows, dtype=np.int32)
+    # print("simplify:")
+    # print(samples)
+    # print(nodes)
+    # print(edgesets)
+    msprime.simplify_tables(samples, nodes, edgesets)
+    ts = msprime.load_tables(
+        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+    return ts
+
+
+
 def new_copy_process_dev(n, L, seed):
 
     ts = msprime.simulate(
@@ -1869,82 +1921,76 @@ def new_copy_process_dev(n, L, seed):
 
     site_position = np.array([site.position for site in ts.sites()])
     store = tsinfer.build_ancestors(S, site_position, method="C")
-    # For checking the output.
-    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
     h = np.zeros(store.num_sites, dtype=np.int8)
     p = np.zeros(store.num_sites, dtype=np.int32)
     L = store.num_sites
 
     print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
             store.num_ancestors)
-    tsb = TreeSequenceBuilder()
-    tsb.add_node(store.num_ancestors)
-    for site in ts.sites():
-        tsb.add_site(position=site.index)
+    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+            100 * store.num_ancestors)
 
-    ancestor_node_map = {0:0}
+    tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
 
-    # Add the first ancestor to work around the > 1 samples restriction.
-    num_older_ancestors = 1
-    ancestor_id = 1
-    _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
-    while num_older_ancestors == 1:
-        tsb.add_edge(0, L, 0, ancestor_id)
-        tsb.add_node(store.num_ancestors - 1)
-        for site in focal_sites:
-            tsb.add_mutation(site=site, node=ancestor_id)
-        A[ancestor_id] = h
-        ancestor_node_map[ancestor_id] = ancestor_id
-        ancestor_id += 1
-        _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
+    # child = 1;
+    # for (j = store.num_epochs - 2; j > 0; j--) {
+    #     /* printf("STARTING EPOCH %d\n", (int) j); */
+    #     ret = ancestor_store_get_epoch_ancestors(&store, j, epoch_ancestors,
+    #             &num_epoch_ancestors);
+    #     if (ret != 0) {
+    #         fatal_error("error getting epoch ancestors");
+    #     }
 
-    while ancestor_id < store.num_ancestors:
-        tsb.update()
-        epoch = num_older_ancestors
-        num_in_epoch = 0
-        traceback_size = []
-        while num_older_ancestors == epoch:
-            node_id = tsb.add_node(store.num_ancestors - num_older_ancestors)
-            ancestor_node_map[ancestor_id] = node_id
-            A[ancestor_id] = h
-            for site in focal_sites:
-                tsb.add_mutation(site=site, node=node_id)
-                assert h[site] == 1
-                h[site] = 0
-            tsb.best_path(h, p)
-            for left, right, parent in rle(p):
-                tsb.add_edge(left, right, parent, node_id)
-            ancestor_id += 1
-            if ancestor_id == store.num_ancestors:
-                break
-            _, _, num_older_ancestors, focal_sites = store.get_ancestor(ancestor_id, h)
-            num_in_epoch += 1
-        # print("epoch:", epoch, num_in_epoch, np.mean(traceback_size), tsb.edgesets.num_rows)
-        # print(nodes)
-        # print(edgesets)
-        # print(A)
+    epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
+    for epoch in range(store.num_epochs - 2, 0, -1):
+        num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
+        print("STARTING EPOCH", epoch, num_epoch_ancestors)
+        e_left = []
+        e_right = []
+        e_parent = []
+        e_child = []
+        s_site = []
+        s_node = []
+        for node in map(int, epoch_ancestors[:num_epoch_ancestors]):
+            _, _, _, focal_sites = store.get_ancestor(node, h)
+            for s in focal_sites:
+                assert h[s] == 1
+                h[s] = 0
+                s_site.append(s)
+                s_node.append(node)
+            edges = tsb.find_path(node, h)
+            for left, right, parent, child in zip(*edges):
+                e_left.append(left)
+                e_right.append(right)
+                e_parent.append(parent)
+                e_child.append(child)
+        tsb.update(
+            num_epoch_ancestors, epoch,
+            e_left, e_right, e_parent, e_child,
+            s_site, s_node)
 
-    ts = tsb.finalise()
-    print("edges/edgesets", len(tsb.edges), ts.num_edgesets, len(tsb.edges) / ts.num_edgesets)
+    ts = finalise_builder(tsb)
 
-    # # print(tsb.edgesets)
-    # # print("num_edgesets = ", tsb.edgesets.num_rows)
+    # For checking the output.
+    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
+    for j in range(store.num_ancestors):
+        store.get_ancestor(j, h)
+        A[j] = h
 
     B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
     for v in ts.variants():
         B[:, v.index] = v.genotypes
-        # # assert np.array_equal(v.genotypes, A[:, v.index])
-        # col = A[:ancestor_id + 1, v.index]
-        # if not np.array_equal(v.genotypes, col):
-        #     print("ERRO", v.index)
-        #     print(v.genotypes)
-        #     print(col)
-    for ancestor_id in sorted(ancestor_node_map.keys()):
-        node_id = ancestor_node_map[ancestor_id]
-        # print(ancestor_id, "->",  node_id)
-        # print(A[ancestor_id])
-        # print(B[node_id])
-        assert np.array_equal(A[ancestor_id], B[node_id])
+
+    for ancestor_id in range(store.num_ancestors):
+        node_id = ancestor_id
+        # node_id = ancestor_node_map[ancestor_id]
+        print(ancestor_id, "->",  node_id)
+        print(A[ancestor_id])
+        print(B[node_id])
+        # assert np.array_equal(A[ancestor_id], B[node_id])
+        if not np.array_equal(A[ancestor_id], B[node_id]):
+            print("ERROR")
+    # assert np.array_equal(A, B)
     # print(A)
     # print(B)
     # print("match_time = ", match_time)
@@ -2021,9 +2067,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(100, 1000 * 10**4, 1)
+    new_copy_process_dev(10, 5 * 10**4, 2)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(40, 100 * 10**4, j)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(40, 100 * 10**4, j)
