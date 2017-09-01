@@ -2310,6 +2310,20 @@ out:
     return ret;
 }
 
+static PyObject *
+TreeSequenceBuilder_get_mean_traceback_size(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("d", tree_sequence_builder_get_mean_traceback_size(
+                self->tree_sequence_builder));
+out:
+    return ret;
+}
+
 static PyMemberDef TreeSequenceBuilder_members[] = {
     {NULL}  /* Sentinel */
 
@@ -2324,6 +2338,8 @@ static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
         "The total number of sites."},
     {"num_mutations", (getter) TreeSequenceBuilder_get_num_mutations, NULL,
         "The total number of mutations."},
+    {"mean_traceback_size", (getter) TreeSequenceBuilder_get_mean_traceback_size,
+        NULL, "The mean size of the traceback per site."},
     {NULL}  /* Sentinel */
 };
 

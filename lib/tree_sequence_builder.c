@@ -559,6 +559,7 @@ tree_sequence_builder_reset(tree_sequence_builder_t *self)
     if (ret != 0) {
         goto out;
     }
+    self->total_traceback_size = 0;
 out:
     return ret;
 }
@@ -798,4 +799,8 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
     return ret;
 }
 
-
+double
+tree_sequence_builder_get_mean_traceback_size(tree_sequence_builder_t *self)
+{
+    return self->total_traceback_size / ((double) self->num_sites);
+}

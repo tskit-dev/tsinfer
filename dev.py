@@ -1929,7 +1929,7 @@ def new_copy_process_dev(n, L, seed):
     print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
             store.num_ancestors)
     tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-            100 * store.num_ancestors)
+            1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
 
@@ -1967,7 +1967,8 @@ def new_copy_process_dev(n, L, seed):
                 e_right.append(right)
                 e_parent.append(parent)
                 e_child.append(child)
-        print("EPOCH", epoch, num_epoch_ancestors, node, store.num_ancestors)
+        print("EPOCH", epoch, num_epoch_ancestors, node, store.num_ancestors,
+                tsb.mean_traceback_size, tsb.num_edges)
         tsb.update(
             num_epoch_ancestors, epoch,
             e_left, e_right, e_parent, e_child,
@@ -2071,7 +2072,8 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    new_copy_process_dev(10000, 1000 * 10**4, 1)
+    # new_copy_process_dev(10000, 1000 * 10**4, 1)
+    new_copy_process_dev(1000, 1000 * 10**4, 1)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
     # for j in range(1, 10000):

@@ -273,6 +273,7 @@ int tree_sequence_builder_find_path(tree_sequence_builder_t *self, allele_t *hap
 int tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
         double time, size_t num_edges, edge_t *edges, size_t num_site_mutations,
         site_mutation_t *site_mutations);
+double tree_sequence_builder_get_mean_traceback_size(tree_sequence_builder_t *self);
 
 /* int tree_sequence_builder_get_live_segments(tree_sequence_builder_t *self, */
 /*         ancestor_id_t parent, segment_list_t *list); */
