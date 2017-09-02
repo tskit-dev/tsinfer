@@ -1620,13 +1620,18 @@ def is_descendant(pi, u, v):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, max_nodes):
+    def __init__(self, num_sites, replace_recombinations=True):
         self.num_nodes = 0
         self.num_sites = num_sites
-        self.time = np.zeros(max_nodes)
+        self.time = []
         self.mutations = {}
         self.edges = []
         self.mean_traceback_size = 0
+        self.replace_recombinations = replace_recombinations
+
+    def add_node(self, time):
+        self.num_nodes += 1
+        self.time.append(time)
 
     @property
     def num_edges(self):
@@ -1640,7 +1645,7 @@ class TreeSequenceBuilder(object):
         print("TreeSequenceBuilder state")
         print("num_sites = ", self.num_sites)
         print("num_nodes = ", self.num_nodes)
-        print("time = ", self.time[:self.num_nodes])
+        print("time = ", self.time)
         print("edges = ")
         for e in self.edges:
             print("\t", e)
@@ -1806,16 +1811,75 @@ class TreeSequenceBuilder(object):
             child.append(e.child)
         return left, right, parent, child
 
+    def _replace_recombinations(self):
+        # print("INDEXED")
+        indexed_edges = {}
+        for e in self.edges:
+            coords = e.left, e.right
+            if coords != (0, self.num_sites):
+                if coords not in indexed_edges:
+                    indexed_edges[coords] = collections.defaultdict(set)
+                indexed_edges[coords][e.parent].add(e.child)
+        candidates = collections.defaultdict(list)
+        for coords in sorted(indexed_edges.keys()):
+            for parent, children in indexed_edges[coords].items():
+                if len(children) > 1:
+                    candidates[frozenset(children)].append((coords[0], coords[1], parent))
+                    # print(coords, "\t", parent, "->", children)
+        replacements = []
+        for k, v in candidates.items():
+            if len(v) > 1:
+                # Check if they are contiguous
+                contiguous = True
+                for j in range(len(v) - 1):
+                    if v[j][1] != v[j + 1][0]:
+                        contiguous = False
+                        break
+                if contiguous:
+                    replacements.append((k, v))
+        # print("replacements::")
+        for children, intervals in replacements:
+            old_edges = self.edges
+            new_edges = []
+            # First remove the old edges
+            # print("replacement for", children, intervals)
+            for e in old_edges:
+                drop = False
+                if e.child in children:
+                    for left, right, parent in intervals:
+                        if e.left == left and e.right == right and e.parent == parent:
+                            drop = True
+                if not drop:
+                    new_edges.append(e)
+            # Add a new node
+            new_node = self.num_nodes
+            children_time = max(self.time[c] for c in children)
+            parent_time = min(self.time[p] for _, _, p in intervals)
+            new_time = children_time + (parent_time - children_time) / 2
+            self.add_node(new_time)
+            # For each of the segments add in a new edge
+            for left, right, parent in intervals:
+                new_edges.append(Edge(left, right, parent, new_node))
+            # For each child put in a new edge over the full interval.
+            left = intervals[0][0]
+            right = intervals[-1][1]
+            for child in children:
+                new_edges.append(Edge(left, right, new_node, child))
+            self.edges = new_edges
 
     def update(self, num_nodes, time, left, right, parent, child, site, node):
-        # print("Update")
-        # self.print_state()
-        self.time[self.num_nodes: self.num_nodes + num_nodes] = time
-        self.num_nodes += num_nodes
+        for _ in range(num_nodes):
+            self.add_node(time)
         for l, r, p, c in zip(left, right, parent, child):
             self.edges.append(Edge(l, r, p, c))
         for s, u in zip(site, node):
             self.mutations[s] = u
+
+        # print("AFTER UPDATE")
+        # self.print_state()
+        if self.replace_recombinations:
+            self._replace_recombinations()
+        # Index the edges
 
         M = len(self.edges)
         self.insertion_order = sorted(
@@ -1825,7 +1889,7 @@ class TreeSequenceBuilder(object):
             range(M), key=lambda j: (
                 self.edges[j].right, -self.time[self.edges[j].parent]))
 
-        # self.print_state()
+
     def dump_nodes(self, flags, time):
         time[:] = self.time[:self.num_nodes]
 
@@ -1896,7 +1960,7 @@ def finalise_builder(tsb):
 
 
 
-def new_copy_process_dev(n, L, seed):
+def new_copy_process_dev(n, L, seed, replace_recombinations=True):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
@@ -1918,11 +1982,12 @@ def new_copy_process_dev(n, L, seed):
 
     print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
             store.num_ancestors)
-    tsb = TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1)
+    tsb = TreeSequenceBuilder(store.num_sites, replace_recombinations=replace_recombinations)
     # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
     #         1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
+    ancestor_id_map = {0:0}
 
     epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
     for epoch in range(store.num_epochs - 2, 0, -1):
@@ -1935,8 +2000,11 @@ def new_copy_process_dev(n, L, seed):
         s_node = []
         find_time = 0
         update_time = 0
-        for node in map(int, epoch_ancestors[:num_epoch_ancestors]):
-            _, _, _, focal_sites = store.get_ancestor(node, h)
+        node = tsb.num_nodes
+        for ancestor_id in map(int, epoch_ancestors[:num_epoch_ancestors]):
+            _, _, _, focal_sites = store.get_ancestor(ancestor_id, h)
+            ancestor_id_map[ancestor_id] = node
+            # print("ancestor_id", ancestor_id)
             # print("node = ", node)
             # print("h = ", h)
             # print("focal_sites = ", focal_sites)
@@ -1956,18 +2024,21 @@ def new_copy_process_dev(n, L, seed):
                 e_right.append(right)
                 e_parent.append(parent)
                 e_child.append(child)
+            node += 1
         before = time.clock()
         tsb.update(
             num_epoch_ancestors, epoch,
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
         update_time += time.clock() - before
-        print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
-                "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
-                    epoch, num_epoch_ancestors, node, store.num_ancestors,
-                    tsb.mean_traceback_size, tsb.num_edges,
-                    find_time, update_time, num_epoch_ancestors / find_time))
+        # print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
+        #         "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
+        #             epoch, num_epoch_ancestors, node, store.num_ancestors,
+        #             tsb.mean_traceback_size, tsb.num_edges,
+        #             find_time, update_time, num_epoch_ancestors / find_time))
     # tsb.print_state()
+
+    print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
 
     ts = finalise_builder(tsb)
 
@@ -1982,8 +2053,8 @@ def new_copy_process_dev(n, L, seed):
         B[:, v.index] = v.genotypes
 
     for ancestor_id in range(store.num_ancestors):
-        node_id = ancestor_id
-        # node_id = ancestor_node_map[ancestor_id]
+        # node_id = ancestor_id
+        node_id = ancestor_id_map[ancestor_id]
         # print(ancestor_id, "->",  node_id)
         # print(A[ancestor_id])
         # print(B[node_id])
@@ -2068,9 +2139,11 @@ if __name__ == "__main__":
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
     # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    new_copy_process_dev(10, 10 * 10**4, 1)
-    # for x in range(1, 10):
-    #     new_copy_process_dev(20, x * 20 * 10**4, 74)
+    # new_copy_process_dev(20, 10 * 10**4, 1, True)
+    # new_copy_process_dev(20, 10 * 10**4, 1, False)
+    for x in range(1, 10):
+        new_copy_process_dev(20, x * 20 * 10**4, 74, True)
+        new_copy_process_dev(20, x * 20 * 10**4, 74, False)
     # for j in range(1, 10000):
     #     print(j)
-    #     new_copy_process_dev(40, 100 * 10**4, j)
+    #     new_copy_process_dev(40, 20 * 10**4, j)
