@@ -1951,6 +1951,8 @@ def new_copy_process_dev(n, L, seed):
         e_child = []
         s_site = []
         s_node = []
+        find_time = 0
+        update_time = 0
         for node in map(int, epoch_ancestors[:num_epoch_ancestors]):
             _, _, _, focal_sites = store.get_ancestor(node, h)
             # print("node = ", node)
@@ -1961,18 +1963,26 @@ def new_copy_process_dev(n, L, seed):
                 h[s] = 0
                 s_site.append(s)
                 s_node.append(node)
+            before = time.clock()
             edges = tsb.find_path(node, h)
+            find_time += time.clock() - before
             for left, right, parent, child in zip(*edges):
                 e_left.append(left)
                 e_right.append(right)
                 e_parent.append(parent)
                 e_child.append(child)
-        print("EPOCH", epoch, num_epoch_ancestors, node, store.num_ancestors,
-                tsb.mean_traceback_size, tsb.num_edges)
+        before = time.clock()
         tsb.update(
             num_epoch_ancestors, epoch,
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
+        update_time += time.clock() - before
+        print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
+                "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
+                    epoch, num_epoch_ancestors, node, store.num_ancestors,
+                    tsb.mean_traceback_size, tsb.num_edges,
+                    find_time, update_time, num_epoch_ancestors / find_time))
+
 
     ts = finalise_builder(tsb)
 
@@ -2073,7 +2083,7 @@ if __name__ == "__main__":
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
     # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    new_copy_process_dev(1000, 1000 * 10**4, 1)
+    new_copy_process_dev(10000, 1000 * 10**4, 1)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
     # for j in range(1, 10000):
