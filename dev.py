@@ -1620,47 +1620,35 @@ def is_descendant(pi, u, v):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self):
+    def __init__(self, num_sites, max_nodes):
         self.num_nodes = 0
-        self.num_match_nodes = 0
-        self.time = []
-        self.sites = []
+        self.num_sites = num_sites
+        self.time = np.zeros(max_nodes)
         self.mutations = {}
         self.edges = []
-        self.pending_edges = []
-        self.pending_mutations = []
+        self.mean_traceback_size = 0
+
+    @property
+    def num_edges(self):
+        return len(self.edges)
+
+    @property
+    def num_mutations(self):
+        return len(self.mutations)
 
     def print_state(self):
         print("TreeSequenceBuilder state")
-        print("time = ", self.time)
+        print("num_sites = ", self.num_sites)
+        print("num_nodes = ", self.num_nodes)
+        print("time = ", self.time[:self.num_nodes])
         print("edges = ")
         for e in self.edges:
             print("\t", e)
-        print("pending edgest = ")
-        for e in self.pending_edges:
-            print("\t", e)
+        print("mutations = ")
+        for l in sorted(self.mutations.keys()):
+            print("\t", l, "\t", self.mutations[l])
 
-    def add_node(self, time):
-        self.time.append(time)
-        self.num_nodes += 1
-        return self.num_nodes - 1
-
-    def add_site(self, position):
-        self.sites.append(position)
-
-    def add_mutation(self, site, node):
-        # print("adding mutation", site, node)
-        self.pending_mutations.append((site, node))
-
-    def add_edge(self, left, right, parent, child):
-        # print("adding edge", left, right, parent, child)
-        self.pending_edges.append(Edge(left, right, parent, child))
-
-    def get_sites(self, left, right):
-        # TODO this would be different for non integer coordinates.
-        return range(left, right)
-
-    def best_path(self, h, p):
+    def find_path(self, child_node, h):
 
         # print("best_path", h)
 
@@ -1669,11 +1657,11 @@ class TreeSequenceBuilder(object):
         M = len(self.edges)
         I = self.insertion_order
         O = self.removal_order
-        n = self.num_match_nodes
-        m = len(self.sites)
+        n = self.num_nodes
+        m = self.num_sites
         pi = np.zeros(n, dtype=int) - 1
         L = {u: 1.0 for u in range(n)}
-        traceback = [None for _ in range(m)]
+        traceback = [{} for _ in range(m)]
         edges = self.edges
 
         r = 1 - np.exp(-recombination_rate / n)
@@ -1717,7 +1705,7 @@ class TreeSequenceBuilder(object):
             # print("right = ", right)
             # print(L)
             # print(pi)
-            for site in self.get_sites(left, right):
+            for site in range(left, right):
                 if site not in self.mutations:
                     traceback[site] = dict(L)
                     continue
@@ -1773,8 +1761,9 @@ class TreeSequenceBuilder(object):
                 L = L_next
 
         u = [node for node, v in L.items() if v == 1.0][0]
-        p[:] = -1
-        p[m - 1] = u
+        output_edge = Edge(right=m, parent=u, child=child_node)
+        output_edges = [output_edge]
+
         # Now go back through the trees.
         j = M - 1
         k = M - 1
@@ -1792,30 +1781,42 @@ class TreeSequenceBuilder(object):
                 j -= 1
             # print("left = ", left, "right = ", right)
             for l in range(right - 1, max(left - 1, 0), -1):
-                u = p[l]
+                u = output_edge.parent
                 L = traceback[l]
                 v = u
                 while v not in L:
                     v = pi[v]
                 x = L[v]
                 if x != 1.0:
+                    output_edge.left = l
                     u = [node for node, v in L.items() if v == 1.0][0]
+                    output_edge = Edge(right=l, parent=u, child=child_node)
+                    output_edges.append(output_edge)
                 assert l > 0
-                p[l - 1] = u
-        # print(p)
-        assert np.all(p >= 0)
+        self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
+        output_edge.left = 0
+        left = []
+        right = []
+        parent = []
+        child = []
+        for e in output_edges:
+            left.append(e.left)
+            right.append(e.right)
+            parent.append(e.parent)
+            child.append(e.child)
+        return left, right, parent, child
 
 
-    def update(self):
+    def update(self, num_nodes, time, left, right, parent, child, site, node):
         # print("Update")
         # self.print_state()
-        self.edges.extend(self.pending_edges)
-        self.pending_edges = []
-        for site, node in self.pending_mutations:
-            self.mutations[site] = node
-        self.pending_mutations = []
+        self.time[self.num_nodes: self.num_nodes + num_nodes] = time
+        self.num_nodes += num_nodes
+        for l, r, p, c in zip(left, right, parent, child):
+            self.edges.append(Edge(l, r, p, c))
+        for s, u in zip(site, node):
+            self.mutations[s] = u
 
-        # Build the indexes for tree generation.
         M = len(self.edges)
         self.insertion_order = sorted(
             range(M), key=lambda j: (
@@ -1823,36 +1824,25 @@ class TreeSequenceBuilder(object):
         self.removal_order = sorted(
             range(M), key=lambda j: (
                 self.edges[j].right, -self.time[self.edges[j].parent]))
-        self.num_match_nodes = self.num_nodes
 
+        # self.print_state()
+    def dump_nodes(self, flags, time):
+        time[:] = self.time[:self.num_nodes]
 
-        # O = sorted(range(M), key=lambda j: (r[j], -t[u[j]]))
+    def dump_edges(self, left, right, parent, child):
+        for j, edge in enumerate(self.edges):
+            left[j] = edge.left
+            right[j] = edge.right
+            parent[j] = edge.parent
+            child[j] = edge.child
 
-    def finalise(self):
-        self.update()
-        nodes = msprime.NodeTable()
-        for t in self.time:
-            nodes.add_row(flags=1, time=t)
-        edgesets = msprime.EdgesetTable()
-        for e in self.edges:
-            edgesets.add_row(e.left, e.right, e.parent, (e.child,))
-        sites = msprime.SiteTable()
-        for site in self.sites:
-            sites.add_row(position=site, ancestral_state='0')
-        mutations = msprime.MutationTable()
-        for site, node in self.mutations.items():
-            mutations.add_row(site=site, node=node, derived_state='1')
-
-        msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-        samples = np.arange(nodes.num_rows, dtype=np.int32)
-        # print("simplify:")
-        # print(samples)
-        # print(nodes)
-        # print(edgesets)
-        msprime.simplify_tables(samples, nodes, edgesets)
-        ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-        return ts
+    def dump_mutations(self, site, node, derived_state):
+        j = 0
+        for l in sorted(self.mutations.keys()):
+            site[j] = l
+            node[j] = self.mutations[l]
+            derived_state[j] = 1
+            j += 1
 
 
 def finalise_builder(tsb):
@@ -1928,19 +1918,11 @@ def new_copy_process_dev(n, L, seed):
 
     print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
             store.num_ancestors)
-    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-            1000 * store.num_ancestors)
+    tsb = TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1)
+    # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+    #         1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
-
-    # child = 1;
-    # for (j = store.num_epochs - 2; j > 0; j--) {
-    #     /* printf("STARTING EPOCH %d\n", (int) j); */
-    #     ret = ancestor_store_get_epoch_ancestors(&store, j, epoch_ancestors,
-    #             &num_epoch_ancestors);
-    #     if (ret != 0) {
-    #         fatal_error("error getting epoch ancestors");
-    #     }
 
     epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
     for epoch in range(store.num_epochs - 2, 0, -1):
@@ -1964,6 +1946,9 @@ def new_copy_process_dev(n, L, seed):
                 s_site.append(s)
                 s_node.append(node)
             before = time.clock()
+            # When we update this API we should pass in arrays for left, right and
+            # parent. There's no point in passing child, since we already know what
+            # it is. We don't need to pass the 'node' parameter here then.
             edges = tsb.find_path(node, h)
             find_time += time.clock() - before
             for left, right, parent, child in zip(*edges):
@@ -1982,7 +1967,7 @@ def new_copy_process_dev(n, L, seed):
                     epoch, num_epoch_ancestors, node, store.num_ancestors,
                     tsb.mean_traceback_size, tsb.num_edges,
                     find_time, update_time, num_epoch_ancestors / find_time))
-
+    # tsb.print_state()
 
     ts = finalise_builder(tsb)
 
@@ -2083,7 +2068,7 @@ if __name__ == "__main__":
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
     # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    new_copy_process_dev(10000, 1000 * 10**4, 1)
+    new_copy_process_dev(10, 10 * 10**4, 1)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74)
     # for j in range(1, 10000):
