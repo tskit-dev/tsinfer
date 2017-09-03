@@ -1620,7 +1620,7 @@ def is_descendant(pi, u, v):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, replace_recombinations=True):
+    def __init__(self, num_sites, replace_recombinations=True, break_polytomies=True):
         self.num_nodes = 0
         self.num_sites = num_sites
         self.time = []
@@ -1628,10 +1628,12 @@ class TreeSequenceBuilder(object):
         self.edges = []
         self.mean_traceback_size = 0
         self.replace_recombinations = replace_recombinations
+        self.break_polytomies = break_polytomies
 
     def add_node(self, time):
         self.num_nodes += 1
         self.time.append(time)
+        return self.num_nodes - 1
 
     @property
     def num_edges(self):
@@ -1645,13 +1647,34 @@ class TreeSequenceBuilder(object):
         print("TreeSequenceBuilder state")
         print("num_sites = ", self.num_sites)
         print("num_nodes = ", self.num_nodes)
-        print("time = ", self.time)
+        nodes = msprime.NodeTable()
+        flags = np.zeros(self.num_nodes, dtype=np.uint32)
+        flags[:] = 1
+        time = np.zeros(self.num_nodes, dtype=np.float64)
+        self.dump_nodes(flags=flags, time=time)
+        nodes.set_columns(flags=flags, time=time)
+        print("nodes = ")
+        print(nodes)
+
+        edgesets = msprime.EdgesetTable()
+        left = np.zeros(self.num_edges, dtype=np.float64)
+        right = np.zeros(self.num_edges, dtype=np.float64)
+        parent = np.zeros(self.num_edges, dtype=np.int32)
+        child = np.zeros(self.num_edges, dtype=np.int32)
+        self.dump_edges(left=left, right=right, parent=parent, child=child)
+        edgesets.set_columns(
+            left=left, right=right, parent=parent, children=child,
+            children_length=np.ones(self.num_edges, dtype=np.uint32))
         print("edges = ")
-        for e in self.edges:
-            print("\t", e)
-        print("mutations = ")
-        for l in sorted(self.mutations.keys()):
-            print("\t", l, "\t", self.mutations[l])
+        print(edgesets)
+
+        if nodes.num_rows > 1:
+            msprime.sort_tables(nodes, edgesets)
+            samples = np.arange(nodes.num_rows, dtype=np.int32)
+            msprime.simplify_tables(samples, nodes, edgesets)
+            print("edgesets = ")
+            print(edgesets)
+
 
     def find_path(self, child_node, h):
 
@@ -1842,7 +1865,7 @@ class TreeSequenceBuilder(object):
             old_edges = self.edges
             new_edges = []
             # First remove the old edges
-            # print("replacement for", children, intervals)
+            # print("REPLACE for", children, intervals)
             for e in old_edges:
                 drop = False
                 if e.child in children:
@@ -1867,6 +1890,40 @@ class TreeSequenceBuilder(object):
                 new_edges.append(Edge(left, right, new_node, child))
             self.edges = new_edges
 
+    def insert_polytomy_ancestor(self, edges):
+        """
+        Insert a new ancestor for the specified edges and update the parents
+        to point to this new ancestor.
+        """
+        # print("BREAKING POLYTOMY FOR")
+        children_time = max(self.time[e.child] for e in edges)
+        parent_time = self.time[edges[0].parent]
+        time = children_time + (parent_time - children_time) / 2
+        new_node = self.add_node(time)
+        e = edges[0]
+        # Add the new edge.
+        self.edges.append(Edge(e.left, e.right, e.parent, new_node))
+        # Update the edges to point to this new node.
+        for e in edges:
+            # print("\t", e)
+            e.parent = new_node
+
+
+    def _break_polytomies(self):
+        # Gather all the egdes pointing to a given parent.
+        parent_map = {}
+        for e in self.edges:
+            if e.parent not in parent_map:
+                parent_map[e.parent] = collections.defaultdict(list)
+            parent_map[e.parent][(e.left, e.right)].append(e)
+
+        for parent, interval_map in parent_map.items():
+            # If all the coordinates are identical we have nothing to do.
+            if len(interval_map) > 1:
+                for interval, edges in interval_map.items():
+                    if len(edges) > 1:
+                        self.insert_polytomy_ancestor(edges)
+
     def update(self, num_nodes, time, left, right, parent, child, site, node):
         for _ in range(num_nodes):
             self.add_node(time)
@@ -1875,8 +1932,9 @@ class TreeSequenceBuilder(object):
         for s, u in zip(site, node):
             self.mutations[s] = u
 
-        # print("AFTER UPDATE")
-        # self.print_state()
+        if self.break_polytomies:
+            self._break_polytomies()
+
         if self.replace_recombinations:
             self._replace_recombinations()
         # Index the edges
@@ -1888,6 +1946,8 @@ class TreeSequenceBuilder(object):
         self.removal_order = sorted(
             range(M), key=lambda j: (
                 self.edges[j].right, -self.time[self.edges[j].parent]))
+        # print("AFTER UPDATE")
+        # self.print_state()
 
 
     def dump_nodes(self, flags, time):
@@ -1951,16 +2011,15 @@ def finalise_builder(tsb):
     samples = np.arange(nodes.num_rows, dtype=np.int32)
     # print("simplify:")
     # print(samples)
+    msprime.simplify_tables(samples, nodes, edgesets)
     # print(nodes)
     # print(edgesets)
-    msprime.simplify_tables(samples, nodes, edgesets)
     ts = msprime.load_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
     return ts
 
 
-
-def new_copy_process_dev(n, L, seed, replace_recombinations=True):
+def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomies=True):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
@@ -1968,7 +2027,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True):
     if ts.num_sites < 2:
         # Skip this
         return
-    print("num sites=  ", ts.num_sites)
+    # print("num sites=  ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -1980,9 +2039,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True):
     p = np.zeros(store.num_sites, dtype=np.int32)
     L = store.num_sites
 
-    print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
-            store.num_ancestors)
-    tsb = TreeSequenceBuilder(store.num_sites, replace_recombinations=replace_recombinations)
+    # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
+    #         store.num_ancestors)
+    tsb = TreeSequenceBuilder(
+            store.num_sites, replace_recombinations=replace_recombinations,
+            break_polytomies=break_polytomies)
     # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
     #         1000 * store.num_ancestors)
 
@@ -2038,7 +2099,10 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True):
         #             find_time, update_time, num_epoch_ancestors / find_time))
     # tsb.print_state()
 
-    print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
+    # print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
+    print("n={}\tm={}\ta={}\tnodes={}\tedges={}\treplace={}\tbreak={}".format(
+        ts.sample_size, store.num_sites, store.num_ancestors,
+        tsb.num_nodes, tsb.num_edges, replace_recombinations, break_polytomies))
 
     ts = finalise_builder(tsb)
 
@@ -2139,11 +2203,14 @@ if __name__ == "__main__":
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
     # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    # new_copy_process_dev(20, 10 * 10**4, 1, True)
+    # new_copy_process_dev(20, 14 * 10**4, 1, True, True)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
-    for x in range(1, 10):
-        new_copy_process_dev(20, x * 20 * 10**4, 74, True)
-        new_copy_process_dev(20, x * 20 * 10**4, 74, False)
-    # for j in range(1, 10000):
-    #     print(j)
-    #     new_copy_process_dev(40, 20 * 10**4, j)
+    # for x in range(1, 10):
+    #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, False)
+    #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
+    #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, False)
+    #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
+    #     print()
+    for j in range(1, 10000):
+        print(j)
+        new_copy_process_dev(40, 20 * 10**4, j)
