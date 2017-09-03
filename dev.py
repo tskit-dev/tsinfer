@@ -1626,6 +1626,7 @@ class TreeSequenceBuilder(object):
         self.time = []
         self.mutations = {}
         self.edges = []
+        self.zero_edges = []
         self.mean_traceback_size = 0
         self.replace_recombinations = replace_recombinations
         self.break_polytomies = break_polytomies
@@ -1637,7 +1638,7 @@ class TreeSequenceBuilder(object):
 
     @property
     def num_edges(self):
-        return len(self.edges)
+        return len(self.edges) + len(self.zero_edges)
 
     @property
     def num_mutations(self):
@@ -1691,6 +1692,8 @@ class TreeSequenceBuilder(object):
         L = {u: 1.0 for u in range(n)}
         traceback = [{} for _ in range(m)]
         edges = self.edges
+
+        self.print_state()
 
         r = 1 - np.exp(-recombination_rate / n)
         recomb_proba = r / n
@@ -1927,8 +1930,14 @@ class TreeSequenceBuilder(object):
     def update(self, num_nodes, time, left, right, parent, child, site, node):
         for _ in range(num_nodes):
             self.add_node(time)
+        keep_zeros = len(self.edges) == 0
         for l, r, p, c in zip(left, right, parent, child):
-            self.edges.append(Edge(l, r, p, c))
+            if p != 0 or keep_zeros:
+                self.edges.append(Edge(l, r, p, c))
+            else:
+                print("filtering", l, r, p, c)
+                self.zero_edges.append(Edge(l, r, p, c))
+
         for s, u in zip(site, node):
             self.mutations[s] = u
 
@@ -1954,7 +1963,7 @@ class TreeSequenceBuilder(object):
         time[:] = self.time[:self.num_nodes]
 
     def dump_edges(self, left, right, parent, child):
-        for j, edge in enumerate(self.edges):
+        for j, edge in enumerate(self.zero_edges + self.edges):
             left[j] = edge.left
             right[j] = edge.right
             parent[j] = edge.parent
@@ -2002,12 +2011,13 @@ def finalise_builder(tsb):
         site=site, node=node, derived_state=derived_state,
         derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
 
+    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
+    # print("SORTED")
     # print(nodes)
     # print(edgesets)
     # print(sites)
     # print(mutations)
 
-    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
     samples = np.arange(nodes.num_rows, dtype=np.int32)
     # print("simplify:")
     # print(samples)
@@ -2027,7 +2037,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     if ts.num_sites < 2:
         # Skip this
         return
-    # print("num sites=  ", ts.num_sites)
+    print("num sites=  ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -2041,11 +2051,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
     #         store.num_ancestors)
-    tsb = TreeSequenceBuilder(
-            store.num_sites, replace_recombinations=replace_recombinations,
-            break_polytomies=break_polytomies)
-    # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-    #         1000 * store.num_ancestors)
+    # tsb = TreeSequenceBuilder(
+    #         store.num_sites, replace_recombinations=replace_recombinations,
+    #         break_polytomies=break_polytomies)
+    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+            1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
     ancestor_id_map = {0:0}
@@ -2092,11 +2102,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
         update_time += time.clock() - before
-        # print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
-        #         "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
-        #             epoch, num_epoch_ancestors, node, store.num_ancestors,
-        #             tsb.mean_traceback_size, tsb.num_edges,
-        #             find_time, update_time, num_epoch_ancestors / find_time))
+        print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
+                "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
+                    epoch, num_epoch_ancestors, node, store.num_ancestors,
+                    tsb.mean_traceback_size, tsb.num_edges,
+                    find_time, update_time, num_epoch_ancestors / find_time))
     # tsb.print_state()
 
     # print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
@@ -2202,8 +2212,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(10000, 1000 * 10**4, 1)
-    # new_copy_process_dev(20, 14 * 10**4, 1, True, True)
+    new_copy_process_dev(10000, 1000 * 10**4, 1)
+
+    # new_copy_process_dev(20, 20 * 10**4, 1, True, True)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
     # for x in range(1, 10):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, False)
@@ -2211,6 +2222,6 @@ if __name__ == "__main__":
     #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, False)
     #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(40, 20 * 10**4, j)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(40, 20 * 10**4, j)
