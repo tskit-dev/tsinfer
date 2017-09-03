@@ -1603,6 +1603,7 @@ class Edge(object):
     right = attr.ib(default=None)
     parent = attr.ib(default=None)
     child = attr.ib(default=None)
+    marked = attr.ib(default=False)
 
 
 def is_descendant(pi, u, v):
@@ -1624,21 +1625,22 @@ class TreeSequenceBuilder(object):
         self.num_nodes = 0
         self.num_sites = num_sites
         self.time = []
+        self.flags = []
         self.mutations = {}
         self.edges = []
-        self.zero_edges = []
         self.mean_traceback_size = 0
         self.replace_recombinations = replace_recombinations
         self.break_polytomies = break_polytomies
 
-    def add_node(self, time):
+    def add_node(self, time, is_sample=True):
         self.num_nodes += 1
         self.time.append(time)
+        self.flags.append(int(is_sample))
         return self.num_nodes - 1
 
     @property
     def num_edges(self):
-        return len(self.edges) + len(self.zero_edges)
+        return len(self.edges)
 
     @property
     def num_mutations(self):
@@ -1650,7 +1652,6 @@ class TreeSequenceBuilder(object):
         print("num_nodes = ", self.num_nodes)
         nodes = msprime.NodeTable()
         flags = np.zeros(self.num_nodes, dtype=np.uint32)
-        flags[:] = 1
         time = np.zeros(self.num_nodes, dtype=np.float64)
         self.dump_nodes(flags=flags, time=time)
         nodes.set_columns(flags=flags, time=time)
@@ -1671,7 +1672,7 @@ class TreeSequenceBuilder(object):
 
         if nodes.num_rows > 1:
             msprime.sort_tables(nodes, edgesets)
-            samples = np.arange(nodes.num_rows, dtype=np.int32)
+            samples = np.where(nodes.flags == 1)[0].astype(np.int32)
             msprime.simplify_tables(samples, nodes, edgesets)
             print("edgesets = ")
             print(edgesets)
@@ -1693,7 +1694,7 @@ class TreeSequenceBuilder(object):
         traceback = [{} for _ in range(m)]
         edges = self.edges
 
-        self.print_state()
+        # self.print_state()
 
         r = 1 - np.exp(-recombination_rate / n)
         recomb_proba = r / n
@@ -1838,59 +1839,125 @@ class TreeSequenceBuilder(object):
         return left, right, parent, child
 
     def _replace_recombinations(self):
-        # print("INDEXED")
-        indexed_edges = {}
-        for e in self.edges:
-            coords = e.left, e.right
-            if coords != (0, self.num_sites):
-                if coords not in indexed_edges:
-                    indexed_edges[coords] = collections.defaultdict(set)
-                indexed_edges[coords][e.parent].add(e.child)
-        candidates = collections.defaultdict(list)
-        for coords in sorted(indexed_edges.keys()):
-            for parent, children in indexed_edges[coords].items():
-                if len(children) > 1:
-                    candidates[frozenset(children)].append((coords[0], coords[1], parent))
-                    # print(coords, "\t", parent, "->", children)
-        replacements = []
-        for k, v in candidates.items():
-            if len(v) > 1:
-                # Check if they are contiguous
-                contiguous = True
-                for j in range(len(v) - 1):
-                    if v[j][1] != v[j + 1][0]:
-                        contiguous = False
-                        break
-                if contiguous:
-                    replacements.append((k, v))
-        # print("replacements::")
-        for children, intervals in replacements:
-            old_edges = self.edges
+
+        edges = sorted(self.edges, key=lambda e: (e.left, e.right, e.parent, e.child))
+        last_left = edges[0].left
+        last_right = edges[0].right
+        last_parent=  edges[0].parent
+        group_start = 0
+        groups = []
+        for j in range(1, len(edges)):
+            condition = (
+                last_left != edges[j].left or
+                last_right != edges[j].right or
+                last_parent != edges[j].parent)
+            if condition:
+                if j - group_start > 1:
+                    # Exclude cases where the interval is (0, m)
+                    if not (last_left == 0 and last_right == self.num_sites):
+                        groups.append((group_start, j))
+                group_start = j
+                last_left = edges[j].left
+                last_right = edges[j].right
+                last_parent=  edges[j].parent
+        j = len(edges)
+        if j - group_start > 1:
+            # Exclude cases where the interval is (0, m)
+            if not (last_left == 0 and last_right == self.num_sites):
+                groups.append((group_start, j))
+
+        # print("CANDIDATES")
+        candidate_edges = []
+        for start, end in groups:
+            for j in range(start, end):
+                candidate_edges.append(edges[j])
+
+        candidate_edges.sort(key=lambda x: (x.child, x.left, x.right))
+
+        if len(candidate_edges) > 0:
+            group_start = 0
+            groups = []
+            for j in range(1, len(candidate_edges)):
+                condition = (
+                    candidate_edges[j - 1].right != candidate_edges[j].left or
+                    candidate_edges[j - 1].child != candidate_edges[j].child)
+                if condition:
+                    if j - group_start > 1:
+                        groups.append((group_start, j))
+                    group_start = j
+            j = len(candidate_edges)
+            if j - group_start > 1:
+                groups.append((group_start, j))
+            group_map = collections.defaultdict(list)
+            for start, end in groups:
+                # print("CANDIDATE")
+                key = tuple([
+                    tuple(candidate_edges[j].left for j in range(start, end)),
+                    tuple(candidate_edges[j].right for j in range(start, end)),
+                    tuple(candidate_edges[j].parent for j in range(start, end))])
+                group_map[key].append((start, end))
+                # for j in range(start, end):
+                #     print("\t", candidate_edges[j])
+
+            for key, group_list in group_map.items():
+                if len(group_list) > 1:
+                    # print(key)
+                    last_group_parents = None
+                    for start, end in group_list:
+                        # print("\tGroup", start, end)
+                        group_parents = []
+                        for j in range(start, end):
+                            if j > start:
+                                assert candidate_edges[j - 1].right == candidate_edges[j].left
+                                assert candidate_edges[j - 1].child == candidate_edges[j].child
+                            group_parents.append(candidate_edges[j].parent)
+                            # Mark the edges as removed.
+                            # print("\t\t", candidate_edges[j])
+                            assert not candidate_edges[j].marked
+                            candidate_edges[j].marked = True
+                        if last_group_parents is not None:
+                            # print(last_group_parents, group_parents)
+                            assert last_group_parents == group_parents
+                        last_group_parents = group_parents
+
+            # Build up the new list of edges, minus all the maked edges.
             new_edges = []
-            # First remove the old edges
-            # print("REPLACE for", children, intervals)
-            for e in old_edges:
-                drop = False
-                if e.child in children:
-                    for left, right, parent in intervals:
-                        if e.left == left and e.right == right and e.parent == parent:
-                            drop = True
-                if not drop:
+            for e in self.edges:
+                if not e.marked:
                     new_edges.append(e)
-            # Add a new node
-            new_node = self.num_nodes
-            children_time = max(self.time[c] for c in children)
-            parent_time = min(self.time[p] for _, _, p in intervals)
-            new_time = children_time + (parent_time - children_time) / 2
-            self.add_node(new_time)
-            # For each of the segments add in a new edge
-            for left, right, parent in intervals:
-                new_edges.append(Edge(left, right, parent, new_node))
-            # For each child put in a new edge over the full interval.
-            left = intervals[0][0]
-            right = intervals[-1][1]
-            for child in children:
-                new_edges.append(Edge(left, right, new_node, child))
+
+            for key, group_list in group_map.items():
+                # if key == ((0, 235, 284, 319, 654), (149, 155, 154, 143)):
+                #     continue
+                if len(group_list) > 1:
+                    # Add a new node
+                    children_time = -1
+                    parent_time = 1e200
+                    for start, end in group_list:
+                        for j in range(start, end):
+                            parent_time = min(
+                                parent_time, self.time[candidate_edges[j].parent])
+                            children_time = max(
+                                children_time, self.time[candidate_edges[j].child])
+                    new_time = children_time + (parent_time - children_time) / 2
+                    # TODO change this to is_sample=False when the rest is working.
+                    new_node = self.add_node(new_time, is_sample=True)
+                    # print("adding node ", new_node, "@time", new_time)
+                    start, end = group_list[0]
+                    left = candidate_edges[start].left
+                    right = candidate_edges[end - 1].right
+                    # For each of the segments add in a new edge
+                    for j in range(start, end):
+                        new_edges.append(Edge(
+                            candidate_edges[j].left, candidate_edges[j].right,
+                            candidate_edges[j].parent, new_node))
+                        # print("j Inserting", new_edges[-1])
+                    # For each child put in a new edge over the full interval.
+                    for start, _ in group_list:
+                        new_edges.append(Edge(
+                            left, right, new_node, candidate_edges[start].child))
+                        # print("s Inserting", new_edges[-1])
+
             self.edges = new_edges
 
     def insert_polytomy_ancestor(self, edges):
@@ -1930,13 +1997,8 @@ class TreeSequenceBuilder(object):
     def update(self, num_nodes, time, left, right, parent, child, site, node):
         for _ in range(num_nodes):
             self.add_node(time)
-        keep_zeros = len(self.edges) == 0
         for l, r, p, c in zip(left, right, parent, child):
-            if p != 0 or keep_zeros:
-                self.edges.append(Edge(l, r, p, c))
-            else:
-                print("filtering", l, r, p, c)
-                self.zero_edges.append(Edge(l, r, p, c))
+            self.edges.append(Edge(l, r, p, c))
 
         for s, u in zip(site, node):
             self.mutations[s] = u
@@ -1944,7 +2006,7 @@ class TreeSequenceBuilder(object):
         if self.break_polytomies:
             self._break_polytomies()
 
-        if self.replace_recombinations:
+        if self.replace_recombinations and len(self.edges) > 1:
             self._replace_recombinations()
         # Index the edges
 
@@ -1961,9 +2023,10 @@ class TreeSequenceBuilder(object):
 
     def dump_nodes(self, flags, time):
         time[:] = self.time[:self.num_nodes]
+        flags[:] = self.flags
 
     def dump_edges(self, left, right, parent, child):
-        for j, edge in enumerate(self.zero_edges + self.edges):
+        for j, edge in enumerate(self.edges):
             left[j] = edge.left
             right[j] = edge.right
             parent[j] = edge.parent
@@ -2018,7 +2081,7 @@ def finalise_builder(tsb):
     # print(sites)
     # print(mutations)
 
-    samples = np.arange(nodes.num_rows, dtype=np.int32)
+    samples = np.where(nodes.flags == 1)[0].astype(np.int32)
     # print("simplify:")
     # print(samples)
     msprime.simplify_tables(samples, nodes, edgesets)
@@ -2037,7 +2100,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     if ts.num_sites < 2:
         # Skip this
         return
-    print("num sites=  ", ts.num_sites)
+    # print("num sites=  ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
@@ -2051,11 +2114,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
     #         store.num_ancestors)
-    # tsb = TreeSequenceBuilder(
-    #         store.num_sites, replace_recombinations=replace_recombinations,
-    #         break_polytomies=break_polytomies)
-    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-            1000 * store.num_ancestors)
+    tsb = TreeSequenceBuilder(
+            store.num_sites, replace_recombinations=replace_recombinations,
+            break_polytomies=break_polytomies)
+    # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+    #         1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
     ancestor_id_map = {0:0}
@@ -2102,12 +2165,41 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
         update_time += time.clock() - before
-        print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
-                "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
-                    epoch, num_epoch_ancestors, node, store.num_ancestors,
-                    tsb.mean_traceback_size, tsb.num_edges,
-                    find_time, update_time, num_epoch_ancestors / find_time))
-    # tsb.print_state()
+        # print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
+        #         "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
+        #             epoch, num_epoch_ancestors, node, store.num_ancestors,
+        #             tsb.mean_traceback_size, tsb.num_edges,
+        #             find_time, update_time, num_epoch_ancestors / find_time))
+        # tsb.print_state()
+
+
+        # ts = finalise_builder(tsb)
+
+        # # For checking the output.
+        # A = np.zeros((ancestor_id, store.num_sites), dtype=np.int8)
+        # for j in range(ancestor_id):
+        #     store.get_ancestor(j, h)
+        #     A[j] = h
+
+        # B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
+        # for v in ts.variants():
+        #     B[:, v.index] = v.genotypes
+
+        # for j in range(ancestor_id):
+        #     # node_id = ancestor_id
+        #     node_id = ancestor_id_map[j]
+        #     print(j, "->",  node_id)
+        #     print(A[j])
+        #     print(B[node_id])
+        #     if not np.array_equal(A[j], B[node_id]):
+        #         print("ERROR")
+        #     assert np.array_equal(A[j], B[node_id])
+        # # assert np.array_equal(A, B)
+        # # print(A)
+        # # print(B)
+        # # print("match_time = ", match_time)
+
+
 
     # print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
     print("n={}\tm={}\ta={}\tnodes={}\tedges={}\treplace={}\tbreak={}".format(
@@ -2140,32 +2232,6 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     # print(B)
     # print("match_time = ", match_time)
 
-
-def generate_trees(l, r, u, c, t):
-    """
-    Algorithm T. Sequentially visits all trees in the specified
-    tree sequence.
-    """
-    # Calculate the index vectors
-    M = len(l)
-    I = sorted(range(M), key=lambda j: (l[j], t[u[j]]))
-    O = sorted(range(M), key=lambda j: (r[j], -t[u[j]]))
-    pi = [-1 for j in range(t.shape[0])]
-    j = 0
-    k = 0
-    while j < M:
-        x = l[I[j]]
-        while r[O[k]] == x:
-            h = O[k]
-            for q in c[h]:
-                pi[q] = -1
-            k = k + 1
-        while j < M and l[I[j]] == x:
-            h = I[j]
-            for q in c[h]:
-                pi[q] = u[h]
-            j += 1
-        yield pi
 
 
 if __name__ == "__main__":
@@ -2212,16 +2278,17 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    new_copy_process_dev(10000, 1000 * 10**4, 1)
+    # new_copy_process_dev(10000, 1000 * 10**4, 1)
 
-    # new_copy_process_dev(20, 20 * 10**4, 1, True, True)
+    # new_copy_process_dev(20, 2 * 20 * 10**4, 74, True, False)
+    # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
-    # for x in range(1, 10):
+    # for x in range(1, 20):
     #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, False)
-    #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
+    #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
     #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, False)
-    #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
+    #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    # for j in range(1, 10000):
-    #     print(j)
-    #     new_copy_process_dev(40, 20 * 10**4, j)
+    for j in range(1, 10000):
+        print(j)
+        new_copy_process_dev(50, 50 * 10**4, j, True, False)
