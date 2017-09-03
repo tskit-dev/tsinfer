@@ -644,9 +644,10 @@ tree_sequence_builder_run_traceback(tree_sequence_builder_t *self,
                 u = pi[u];
                 assert(u != NULL_NODE);
             }
-            if (L[u] != 1.0) {
+            if (!approximately_one(L[u])) {
                 /* printf("RECOMB: %d\n", l); */
                 /* Need to recombine */
+                assert(max_likelihood_node != output_edge->parent);
                 output_edge->left = l;
                 output_edge_index++;
                 assert(output_edge_index < self->max_output_edges);
