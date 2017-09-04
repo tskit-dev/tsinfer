@@ -480,11 +480,11 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
     static char *kwlist[] = {"num_nodes", "time",
         /*edgesets */
         "left", "right", "parent", "child",
-        /* site mutations */
+        /* mutations */
         "site", "node", NULL};
     unsigned long num_nodes;
     double time;
-    size_t j, num_edges, num_site_mutations;
+    size_t num_edges, num_mutations;
     PyObject *left = NULL;
     PyArrayObject *left_array = NULL;
     PyObject *right = NULL;
@@ -497,8 +497,6 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
     PyArrayObject *site_array = NULL;
     PyObject *node = NULL;
     PyArrayObject *node_array = NULL;
-    edge_t *edges = NULL;
-    site_mutation_t *site_mutations = NULL;
     npy_intp *shape;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
@@ -578,7 +576,7 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
         goto out;
     }
     shape = PyArray_DIMS(site_array);
-    num_site_mutations = shape[0];
+    num_mutations = shape[0];
 
     /* node */
     node_array = (PyArrayObject *) PyArray_FROM_OTF(node, NPY_INT32, NPY_ARRAY_IN_ARRAY);
@@ -590,30 +588,20 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
         goto out;
     }
     shape = PyArray_DIMS(node_array);
-    if (shape[0] != num_site_mutations) {
+    if (shape[0] != num_mutations) {
         PyErr_SetString(PyExc_ValueError, "node wrong size");
         goto out;
     }
-
-    /* Build the structs for the input */
-    edges = PyMem_Malloc(num_edges * sizeof(edge_t));
-    for (j = 0; j < num_edges; j++) {
-        edges[j].left = ((site_id_t *) PyArray_DATA(left_array))[j];
-        edges[j].right = ((site_id_t *) PyArray_DATA(right_array))[j];
-        edges[j].parent = ((node_id_t *) PyArray_DATA(parent_array))[j];
-        edges[j].child = ((node_id_t *) PyArray_DATA(child_array))[j];
-    }
-
-    /* Build the structs for the input */
-    site_mutations = PyMem_Malloc(num_site_mutations * sizeof(site_mutation_t));
-    for (j = 0; j < num_site_mutations; j++) {
-        site_mutations[j].site = ((site_id_t *) PyArray_DATA(site_array))[j];
-        site_mutations[j].node = ((node_id_t *) PyArray_DATA(node_array))[j];
-    }
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_update(self->tree_sequence_builder,
-            num_nodes, time, num_edges, edges, num_site_mutations,
-            site_mutations);
+            num_nodes, time, num_edges,
+            (site_id_t *) PyArray_DATA(left_array),
+            (site_id_t *) PyArray_DATA(right_array),
+            (node_id_t *) PyArray_DATA(parent_array),
+            (node_id_t *) PyArray_DATA(child_array),
+            num_mutations,
+            (site_id_t *) PyArray_DATA(site_array),
+            (node_id_t *) PyArray_DATA(node_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -621,12 +609,6 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
     }
     ret = Py_BuildValue("");
 out:
-    if (edges != NULL) {
-        PyMem_Free(edges);
-    }
-    if (site_mutations != NULL) {
-        PyMem_Free(site_mutations);
-    }
     Py_XDECREF(left_array);
     Py_XDECREF(right_array);
     Py_XDECREF(parent_array);
@@ -1102,23 +1084,23 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"node", "haplotype", NULL};
-    int node;
+    static char *kwlist[] = {"haplotype", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     npy_intp *shape;
-    size_t j, num_output_edges;
-    edge_t *output_edges;
+    size_t num_edges, num_mismatches;
+    site_id_t *ret_left, *ret_right, *ret_mismatches;
+    node_id_t *ret_parent;
     PyArrayObject *left = NULL;
     PyArrayObject *right = NULL;
     PyArrayObject *parent = NULL;
-    PyArrayObject *child = NULL;
+    PyArrayObject *mismatches = NULL;
     npy_intp dims[1];
 
     if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iO", kwlist, &node, &haplotype)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &haplotype)) {
         goto out;
     }
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
@@ -1137,35 +1119,31 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_find_path(self->ancestor_matcher,
-            (allele_t *) PyArray_DATA(haplotype_array), node,
-            &num_output_edges, &output_edges);
+            (allele_t *) PyArray_DATA(haplotype_array),
+            &num_edges, &ret_left, &ret_right, &ret_parent,
+            &num_mismatches, &ret_mismatches);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    dims[0] = num_output_edges;
-    left = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
-    right = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
-    parent = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
-    child = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
-    if (left == NULL || right == NULL || parent == NULL || child == NULL) {
+    dims[0] = num_edges;
+    left = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_left);
+    right = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_right);
+    parent = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_INT32, ret_parent);
+    dims[0] = num_mismatches;
+    mismatches = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32,
+            ret_mismatches);
+    if (left == NULL || right == NULL || parent == NULL || mismatches == NULL) {
         goto out;
     }
-    for (j = 0; j < num_output_edges; j++) {
-        ((site_id_t *) PyArray_DATA(left))[j] = output_edges[j].left;
-        ((site_id_t *) PyArray_DATA(right))[j] = output_edges[j].right;
-        ((node_id_t *) PyArray_DATA(parent))[j] = output_edges[j].parent;
-        ((node_id_t *) PyArray_DATA(child))[j] = output_edges[j].child;
-    }
-
-    ret = Py_BuildValue("OOOO", left, right, parent, child);
+    ret = Py_BuildValue("(OOO)O", left, right, parent, mismatches);
 out:
     Py_XDECREF(haplotype_array);
     Py_XDECREF(left);
     Py_XDECREF(right);
     Py_XDECREF(parent);
-    Py_XDECREF(child);
+    Py_XDECREF(mismatches);
     return ret;
 }
 

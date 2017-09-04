@@ -1614,7 +1614,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     positions = np.array([site.position for site in ts.sites()])
 
     recombination_rate = 1e-8
-    if False:
+    if True:
         ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
         ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
         matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
@@ -1654,7 +1654,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
                 s_site.append(s)
                 s_node.append(node)
             (left, right, parent), mismatches = matcher.find_path(a)
-            assert len(mismatches) == 0
+            assert mismatches.shape[0] == 0
             e_left.extend(left)
             e_right.extend(right)
             e_parent.extend(parent)
@@ -1673,40 +1673,40 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         assert np.array_equal(v.genotypes, A[:, v.index])
 
 
-    e_left = []
-    e_right = []
-    e_parent = []
-    e_child = []
-    s_site = []
-    s_node = []
-    # Now match the samples.
-    sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
-    for j in range(num_samples):
-        (left, right, parent), mismatches = matcher.find_path(samples[j])
-        for site in mismatches:
-            s_site.append(site)
-            s_node.append(sample_ids[j])
-        e_left.extend(left)
-        e_right.extend(right)
-        e_parent.extend(parent)
-        e_child.extend([sample_ids[j] for _ in parent])
-    ts_builder.update(
-        num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
-    ts_new = tsinfer.finalise(ts_builder, sample_ids)
+#     e_left = []
+#     e_right = []
+#     e_parent = []
+#     e_child = []
+#     s_site = []
+#     s_node = []
+#     # Now match the samples.
+#     sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
+#     for j in range(num_samples):
+#         (left, right, parent), mismatches = matcher.find_path(samples[j])
+#         for site in mismatches:
+#             s_site.append(site)
+#             s_node.append(sample_ids[j])
+#         e_left.extend(left)
+#         e_right.extend(right)
+#         e_parent.extend(parent)
+#         e_child.extend([sample_ids[j] for _ in parent])
+#     ts_builder.update(
+#         num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
+#     ts_new = tsinfer.finalise(ts_builder, sample_ids)
 
-    # for site in ts_new.sites():
-    #     print(site)
+#     # for site in ts_new.sites():
+#     #     print(site)
 
-    assert ts_new.num_sites == ts.num_sites
-    for site in ts_new.sites():
-        assert len(site.mutations) == 1
-    for v1, v2 in zip(ts.variants(), ts_new.variants()):
-        # print(v1.index)
-        # print("\t", v1.genotypes)
-        # print("\t", v2.genotypes)
-        # if not np.array_equal(v1.genotypes, v2.genotypes):
-        #     print("MISMATCH")
-        assert np.array_equal(v1.genotypes, v2.genotypes)
+#     assert ts_new.num_sites == ts.num_sites
+#     for site in ts_new.sites():
+#         assert len(site.mutations) == 1
+#     for v1, v2 in zip(ts.variants(), ts_new.variants()):
+#         # print(v1.index)
+#         # print("\t", v1.genotypes)
+#         # print("\t", v2.genotypes)
+#         # if not np.array_equal(v1.genotypes, v2.genotypes):
+#         #     print("MISMATCH")
+#         assert np.array_equal(v1.genotypes, v2.genotypes)
 
 
 if __name__ == "__main__":
@@ -1757,14 +1757,14 @@ if __name__ == "__main__":
 
     # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
-    # new_copy_process_dev(20, 20 * 10**4, 1, False)
+    new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(10, 50* 10**4, j, True, False)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(10, 50* 10**4, j, True, False)
 
