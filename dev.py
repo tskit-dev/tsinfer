@@ -1597,500 +1597,6 @@ def rle(inarray):
     for position, length, value in zip(p, z, ia[i]):
         yield position, position + length, value
 
-@attr.s
-class Edge(object):
-    left = attr.ib(default=None)
-    right = attr.ib(default=None)
-    parent = attr.ib(default=None)
-    child = attr.ib(default=None)
-    marked = attr.ib(default=False)
-
-
-def is_descendant(pi, u, v):
-    """
-    Returns True if the specified node u is a descendent of node v. That is,
-    v is on the path to root from u.
-    """
-    # print("IS_DESCENDENT(", u, v, ")")
-    while u != v and u != msprime.NULL_NODE:
-        # print("\t", u)
-        u = pi[u]
-    # print("END, ", u, v)
-    return u == v
-
-
-class TreeSequenceBuilder(object):
-
-    def __init__(self, num_sites, replace_recombinations=True, break_polytomies=True):
-        self.num_nodes = 0
-        self.num_sites = num_sites
-        self.time = []
-        self.flags = []
-        self.mutations = {}
-        self.edges = []
-        self.mean_traceback_size = 0
-        self.replace_recombinations = replace_recombinations
-        self.break_polytomies = break_polytomies
-
-    def add_node(self, time, is_sample=True):
-        self.num_nodes += 1
-        self.time.append(time)
-        self.flags.append(int(is_sample))
-        return self.num_nodes - 1
-
-    @property
-    def num_edges(self):
-        return len(self.edges)
-
-    @property
-    def num_mutations(self):
-        return len(self.mutations)
-
-    def print_state(self):
-        print("TreeSequenceBuilder state")
-        print("num_sites = ", self.num_sites)
-        print("num_nodes = ", self.num_nodes)
-        nodes = msprime.NodeTable()
-        flags = np.zeros(self.num_nodes, dtype=np.uint32)
-        time = np.zeros(self.num_nodes, dtype=np.float64)
-        self.dump_nodes(flags=flags, time=time)
-        nodes.set_columns(flags=flags, time=time)
-        print("nodes = ")
-        print(nodes)
-
-        edgesets = msprime.EdgesetTable()
-        left = np.zeros(self.num_edges, dtype=np.float64)
-        right = np.zeros(self.num_edges, dtype=np.float64)
-        parent = np.zeros(self.num_edges, dtype=np.int32)
-        child = np.zeros(self.num_edges, dtype=np.int32)
-        self.dump_edges(left=left, right=right, parent=parent, child=child)
-        edgesets.set_columns(
-            left=left, right=right, parent=parent, children=child,
-            children_length=np.ones(self.num_edges, dtype=np.uint32))
-        print("edges = ")
-        print(edgesets)
-
-        if nodes.num_rows > 1:
-            msprime.sort_tables(nodes, edgesets)
-            samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-            msprime.simplify_tables(samples, nodes, edgesets)
-            print("edgesets = ")
-            print(edgesets)
-
-
-    def find_path(self, child_node, h):
-
-        # print("best_path", h)
-
-        recombination_rate = 1e-8
-
-        M = len(self.edges)
-        I = self.insertion_order
-        O = self.removal_order
-        n = self.num_nodes
-        m = self.num_sites
-        pi = np.zeros(n, dtype=int) - 1
-        L = {u: 1.0 for u in range(n)}
-        traceback = [{} for _ in range(m)]
-        edges = self.edges
-
-        # self.print_state()
-
-        r = 1 - np.exp(-recombination_rate / n)
-        recomb_proba = r / n
-        no_recomb_proba = 1 - r + r / n
-
-        j = 0
-        k = 0
-        while j < M:
-            left = edges[I[j]].left
-            while edges[O[k]].right == left:
-                parent = edges[O[k]].parent
-                child = edges[O[k]].child
-                k = k + 1
-                pi[child] = -1
-                if child not in L:
-                    # If the child does not already have a u value, traverse
-                    # upwards until we find an L value for u
-                    u = parent
-                    while u not in L:
-                        u = pi[u]
-                    L[child] = L[u]
-            right = edges[O[k]].right
-            while j < M and edges[I[j]].left == left:
-                parent = edges[I[j]].parent
-                child = edges[I[j]].child
-                # print("INSERT", parent, child)
-                pi[child] = parent
-                j += 1
-                # Traverse upwards until we find the L value for the parent.
-                u = parent
-                while u not in L:
-                    u = pi[u]
-                # The child must have an L value. If it is the same as the parent
-                # we can delete it.
-                if L[child] == L[u]:
-                    del L[child]
-
-            # print("END OF TREE LOOP", left, right)
-            # print("left = ", left)
-            # print("right = ", right)
-            # print(L)
-            # print(pi)
-            for site in range(left, right):
-                if site not in self.mutations:
-                    traceback[site] = dict(L)
-                    continue
-                mutation_node = self.mutations[site]
-                state = h[site]
-                # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
-
-                # Insert an new L-value for the mutation node if needed.
-                if mutation_node not in L:
-                    u = mutation_node
-                    while u not in L:
-                        u = pi[u]
-                    L[mutation_node] = L[u]
-                traceback[site] = dict(L)
-
-                # Update the likelihoods for this site.
-                max_L = -1
-                for v in L.keys():
-                    x = L[v] * no_recomb_proba
-                    assert x >= 0
-                    y = recomb_proba
-                    if x > y:
-                        z = x
-                    else:
-                        z = y
-                    if state == 1:
-                        emission_p = int(is_descendant(pi, v, mutation_node))
-                    else:
-                        emission_p = int(not is_descendant(pi, v, mutation_node))
-                    L[v] = z * emission_p
-                    if L[v] > max_L:
-                        max_L = L[v]
-                assert max_L > 0
-
-                # Normalise
-                for v in L.keys():
-                    L[v] /= max_L
-
-                # Compress
-                # TODO we probably don't need the second dict here and can just take
-                # a copy of the keys.
-                L_next = {}
-                for u in L.keys():
-                    if pi[u] != -1:
-                        # Traverse upwards until we find another L value
-                        v = pi[u]
-                        while v not in L:
-                            v = pi[v]
-                        if L[u] != L[v]:
-                            L_next[u] = L[u]
-                    else:
-                        L_next[u] = L[u]
-                L = L_next
-
-        u = [node for node, v in L.items() if v == 1.0][0]
-        output_edge = Edge(right=m, parent=u, child=child_node)
-        output_edges = [output_edge]
-
-        # Now go back through the trees.
-        j = M - 1
-        k = M - 1
-        # print("TRACEBACK")
-        I = self.removal_order
-        O = self.insertion_order
-        while j >= 0:
-            right = edges[I[j]].right
-            while edges[O[k]].left == right:
-                pi[edges[O[k]].child] = -1
-                k -= 1
-            left = edges[O[k]].left
-            while j >= 0 and edges[I[j]].right == right:
-                pi[edges[I[j]].child] = edges[I[j]].parent
-                j -= 1
-            # print("left = ", left, "right = ", right)
-            for l in range(right - 1, max(left - 1, 0), -1):
-                u = output_edge.parent
-                L = traceback[l]
-                v = u
-                while v not in L:
-                    v = pi[v]
-                x = L[v]
-                if x != 1.0:
-                    output_edge.left = l
-                    u = [node for node, v in L.items() if v == 1.0][0]
-                    output_edge = Edge(right=l, parent=u, child=child_node)
-                    output_edges.append(output_edge)
-                assert l > 0
-        self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
-        output_edge.left = 0
-        left = []
-        right = []
-        parent = []
-        child = []
-        for e in output_edges:
-            left.append(e.left)
-            right.append(e.right)
-            parent.append(e.parent)
-            child.append(e.child)
-        return left, right, parent, child
-
-    def _replace_recombinations(self):
-
-        edges = sorted(self.edges, key=lambda e: (e.left, e.right, e.parent, e.child))
-        last_left = edges[0].left
-        last_right = edges[0].right
-        last_parent=  edges[0].parent
-        group_start = 0
-        groups = []
-        for j in range(1, len(edges)):
-            condition = (
-                last_left != edges[j].left or
-                last_right != edges[j].right or
-                last_parent != edges[j].parent)
-            if condition:
-                if j - group_start > 1:
-                    # Exclude cases where the interval is (0, m)
-                    if not (last_left == 0 and last_right == self.num_sites):
-                        groups.append((group_start, j))
-                group_start = j
-                last_left = edges[j].left
-                last_right = edges[j].right
-                last_parent=  edges[j].parent
-        j = len(edges)
-        if j - group_start > 1:
-            # Exclude cases where the interval is (0, m)
-            if not (last_left == 0 and last_right == self.num_sites):
-                groups.append((group_start, j))
-
-        # print("CANDIDATES")
-        candidate_edges = []
-        for start, end in groups:
-            for j in range(start, end):
-                candidate_edges.append(edges[j])
-
-        candidate_edges.sort(key=lambda x: (x.child, x.left, x.right))
-
-        if len(candidate_edges) > 0:
-            group_start = 0
-            groups = []
-            for j in range(1, len(candidate_edges)):
-                condition = (
-                    candidate_edges[j - 1].right != candidate_edges[j].left or
-                    candidate_edges[j - 1].child != candidate_edges[j].child)
-                if condition:
-                    if j - group_start > 1:
-                        groups.append((group_start, j))
-                    group_start = j
-            j = len(candidate_edges)
-            if j - group_start > 1:
-                groups.append((group_start, j))
-            group_map = collections.defaultdict(list)
-
-            for start, end in groups:
-                # print("CANDIDATE")
-                key = tuple([
-                    tuple(candidate_edges[j].left for j in range(start, end)),
-                    tuple(candidate_edges[j].right for j in range(start, end)),
-                    tuple(candidate_edges[j].parent for j in range(start, end))])
-                group_map[key].append((start, end))
-                # for j in range(start, end):
-                #     print("\t", candidate_edges[j])
-
-            for key, group_list in group_map.items():
-                if len(group_list) > 1:
-                    # print(key)
-                    last_group_parents = None
-                    for start, end in group_list:
-                        # print("\tGroup", start, end)
-                        group_parents = []
-                        for j in range(start, end):
-                            if j > start:
-                                assert candidate_edges[j - 1].right == candidate_edges[j].left
-                                assert candidate_edges[j - 1].child == candidate_edges[j].child
-                            group_parents.append(candidate_edges[j].parent)
-                            # Mark the edges as removed.
-                            # print("\t\t", candidate_edges[j])
-                            assert not candidate_edges[j].marked
-                            candidate_edges[j].marked = True
-                        if last_group_parents is not None:
-                            # print(last_group_parents, group_parents)
-                            assert last_group_parents == group_parents
-                        last_group_parents = group_parents
-
-            # Build up the new list of edges, minus all the maked edges.
-            new_edges = []
-            for e in self.edges:
-                if not e.marked:
-                    new_edges.append(e)
-
-            for key, group_list in group_map.items():
-                print("key = ", key)
-                if len(group_list) > 1:
-                    # Add a new node
-                    children_time = -1
-                    parent_time = 1e200
-                    for start, end in group_list:
-                        for j in range(start, end):
-                            parent_time = min(
-                                parent_time, self.time[candidate_edges[j].parent])
-                            children_time = max(
-                                children_time, self.time[candidate_edges[j].child])
-                    new_time = children_time + (parent_time - children_time) / 2
-                    # TODO change this to is_sample=False when the rest is working.
-                    new_node = self.add_node(new_time, is_sample=True)
-                    # print("adding node ", new_node, "@time", new_time)
-                    start, end = group_list[0]
-                    left = candidate_edges[start].left
-                    right = candidate_edges[end - 1].right
-                    # For each of the segments add in a new edge
-                    for j in range(start, end):
-                        new_edges.append(Edge(
-                            candidate_edges[j].left, candidate_edges[j].right,
-                            candidate_edges[j].parent, new_node))
-                        # print("j Inserting", new_edges[-1])
-                    # For each child put in a new edge over the full interval.
-                    for start, _ in group_list:
-                        new_edges.append(Edge(
-                            left, right, new_node, candidate_edges[start].child))
-                        # print("s Inserting", new_edges[-1])
-
-            self.edges = new_edges
-
-    def insert_polytomy_ancestor(self, edges):
-        """
-        Insert a new ancestor for the specified edges and update the parents
-        to point to this new ancestor.
-        """
-        # print("BREAKING POLYTOMY FOR")
-        children_time = max(self.time[e.child] for e in edges)
-        parent_time = self.time[edges[0].parent]
-        time = children_time + (parent_time - children_time) / 2
-        new_node = self.add_node(time)
-        e = edges[0]
-        # Add the new edge.
-        self.edges.append(Edge(e.left, e.right, e.parent, new_node))
-        # Update the edges to point to this new node.
-        for e in edges:
-            # print("\t", e)
-            e.parent = new_node
-
-
-    def _break_polytomies(self):
-        # Gather all the egdes pointing to a given parent.
-        parent_map = {}
-        for e in self.edges:
-            if e.parent not in parent_map:
-                parent_map[e.parent] = collections.defaultdict(list)
-            parent_map[e.parent][(e.left, e.right)].append(e)
-
-        for parent, interval_map in parent_map.items():
-            # If all the coordinates are identical we have nothing to do.
-            if len(interval_map) > 1:
-                for interval, edges in interval_map.items():
-                    if len(edges) > 1:
-                        self.insert_polytomy_ancestor(edges)
-
-    def update(self, num_nodes, time, left, right, parent, child, site, node):
-        for _ in range(num_nodes):
-            self.add_node(time)
-        for l, r, p, c in zip(left, right, parent, child):
-            self.edges.append(Edge(l, r, p, c))
-
-        for s, u in zip(site, node):
-            self.mutations[s] = u
-
-        if self.break_polytomies:
-            self._break_polytomies()
-
-        if self.replace_recombinations and len(self.edges) > 1:
-            self._replace_recombinations()
-        # Index the edges
-
-        M = len(self.edges)
-        self.insertion_order = sorted(
-            range(M), key=lambda j: (
-                self.edges[j].left, self.time[self.edges[j].parent]))
-        self.removal_order = sorted(
-            range(M), key=lambda j: (
-                self.edges[j].right, -self.time[self.edges[j].parent]))
-        # print("AFTER UPDATE")
-        # self.print_state()
-
-
-    def dump_nodes(self, flags, time):
-        time[:] = self.time[:self.num_nodes]
-        flags[:] = self.flags
-
-    def dump_edges(self, left, right, parent, child):
-        for j, edge in enumerate(self.edges):
-            left[j] = edge.left
-            right[j] = edge.right
-            parent[j] = edge.parent
-            child[j] = edge.child
-
-    def dump_mutations(self, site, node, derived_state):
-        j = 0
-        for l in sorted(self.mutations.keys()):
-            site[j] = l
-            node[j] = self.mutations[l]
-            derived_state[j] = 1
-            j += 1
-
-
-def finalise_builder(tsb):
-    nodes = msprime.NodeTable()
-    flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
-    flags[:] = 1
-    time = np.zeros(tsb.num_nodes, dtype=np.float64)
-    tsb.dump_nodes(flags=flags, time=time)
-    nodes.set_columns(flags=flags, time=time)
-
-    edgesets = msprime.EdgesetTable()
-    left = np.zeros(tsb.num_edges, dtype=np.float64)
-    right = np.zeros(tsb.num_edges, dtype=np.float64)
-    parent = np.zeros(tsb.num_edges, dtype=np.int32)
-    child = np.zeros(tsb.num_edges, dtype=np.int32)
-    tsb.dump_edges(left=left, right=right, parent=parent, child=child)
-    edgesets.set_columns(
-        left=left, right=right, parent=parent, children=child,
-        children_length=np.ones(tsb.num_edges, dtype=np.uint32))
-
-    sites = msprime.SiteTable()
-    sites.set_columns(
-        position=np.arange(tsb.num_sites),
-        ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
-        ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
-    mutations = msprime.MutationTable()
-    site = np.zeros(tsb.num_mutations, dtype=np.int32)
-    node = np.zeros(tsb.num_mutations, dtype=np.int32)
-    derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
-    tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
-    derived_state += ord('0')
-    mutations.set_columns(
-        site=site, node=node, derived_state=derived_state,
-        derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
-
-    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-    # print("SORTED")
-    # print(nodes)
-    # print(edgesets)
-    # print(sites)
-    # print(mutations)
-
-    samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-    # print("simplify:")
-    # print(samples)
-    msprime.simplify_tables(samples, nodes, edgesets)
-    # print(nodes)
-    # print(edgesets)
-    ts = msprime.load_tables(
-        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
-    return ts
-
 
 def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomies=True):
 
@@ -2100,128 +1606,83 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     if ts.num_sites < 2:
         # Skip this
         return
-    print("num sites=  ", ts.num_sites)
-    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    num_sites = ts.num_sites
+    samples = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
-        S[:, variant.index] = variant.genotypes
-    # print(S)
+        samples[:, variant.index] = variant.genotypes
+    positions = np.array([site.position for site in ts.sites()])
 
-    site_position = np.array([site.position for site in ts.sites()])
-    store = tsinfer.build_ancestors(S, site_position, method="C", show_progress=False)
-    h = np.zeros(store.num_sites, dtype=np.int8)
-    p = np.zeros(store.num_sites, dtype=np.int32)
-    L = store.num_sites
 
-    # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
-    #         store.num_ancestors)
-    # tsb = TreeSequenceBuilder(
-    #         store.num_sites, replace_recombinations=replace_recombinations,
-    #         break_polytomies=break_polytomies)
-    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-            1000 * store.num_ancestors)
-    matcher = _tsinfer.AncestorMatcher(tsb, 1e-8)
+    recombination_rate = 1e-8
+    if False:
+        ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
+        ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
+        matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
+    else:
+        ancestor_builder = tsinfer.AncestorBuilder(samples, positions)
+        ts_builder = tsinfer.TreeSequenceBuilder(num_sites)
+        matcher = tsinfer.AncestorMatcher(ts_builder, recombination_rate)
 
-    tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
-    ancestor_id_map = {0:0}
+    frequency_classes = ancestor_builder.get_frequency_classes()
 
-    epoch_ancestors = np.zeros(store.num_ancestors, dtype=np.int32)
-    for epoch in range(store.num_epochs - 2, 0, -1):
-        num_epoch_ancestors = store.get_epoch_ancestors(epoch, epoch_ancestors)
+    num_ancestors = 1
+    for _, ancestor_focal_sites in frequency_classes:
+        num_ancestors += len(ancestor_focal_sites)
+    # For checking the output.
+    A = np.zeros((num_ancestors, num_sites), dtype=np.int8)
+    ancestor_id_map = {0: 0}
+    ancestor_id = 1
+
+    print("num sites=  ", num_sites, "num_ancestors = ", num_ancestors)
+
+    # TODO this time is out by 1 I think.
+    root_time = frequency_classes[0][0] + 1
+    ts_builder.update(1, root_time, [], [], [], [], [], [])
+    a = np.zeros(num_sites, dtype=np.int8)
+
+    for age, ancestor_focal_sites in frequency_classes:
         e_left = []
         e_right = []
         e_parent = []
         e_child = []
         s_site = []
         s_node = []
-        find_time = 0
-        update_time = 0
-        node = tsb.num_nodes
-        for ancestor_id in map(int, epoch_ancestors[:num_epoch_ancestors]):
-            _, _, _, focal_sites = store.get_ancestor(ancestor_id, h)
+        node = ts_builder.num_nodes
+        for focal_sites in ancestor_focal_sites:
+            ancestor_builder.make_ancestor(focal_sites, a)
+            A[ancestor_id] = a
+            ancestor_id += 1
             ancestor_id_map[ancestor_id] = node
-            # print("ancestor_id", ancestor_id)
-            # print("node = ", node)
-            # print("h = ", h)
-            # print("focal_sites = ", focal_sites)
             for s in focal_sites:
-                assert h[s] == 1
-                h[s] = 0
+                assert a[s] == 1
+                a[s] = 0
                 s_site.append(s)
                 s_node.append(node)
-            before = time.clock()
             # When we update this API we should pass in arrays for left, right and
+
             # parent. There's no point in passing child, since we already know what
             # it is. We don't need to pass the 'node' parameter here then.
-            edges = matcher.find_path(node, h)
-            find_time += time.clock() - before
+            edges = matcher.find_path(node, a)
             for left, right, parent, child in zip(*edges):
                 e_left.append(left)
                 e_right.append(right)
                 e_parent.append(parent)
                 e_child.append(child)
             node += 1
-        before = time.clock()
-        tsb.update(
-            num_epoch_ancestors, epoch,
+        ts_builder.update(
+            len(ancestor_focal_sites), age,
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
-        update_time += time.clock() - before
-        # print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
-        #         "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
-        #             epoch, num_epoch_ancestors, node, store.num_ancestors,
-        #             matcher.mean_traceback_size, tsb.num_edges,
-        #             find_time, update_time, num_epoch_ancestors / find_time))
-        # tsb.print_state()
 
-
-        # ts = finalise_builder(tsb)
-
-        # # For checking the output.
-        # A = np.zeros((ancestor_id, store.num_sites), dtype=np.int8)
-        # for j in range(ancestor_id):
-        #     store.get_ancestor(j, h)
-        #     A[j] = h
-
-        # B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
-        # for v in ts.variants():
-        #     B[:, v.index] = v.genotypes
-
-        # for j in range(ancestor_id):
-        #     # node_id = ancestor_id
-        #     node_id = ancestor_id_map[j]
-        #     print(j, "->",  node_id)
-        #     print(A[j])
-        #     print(B[node_id])
-        #     if not np.array_equal(A[j], B[node_id]):
-        #         print("ERROR")
-        #     assert np.array_equal(A[j], B[node_id])
-        # # assert np.array_equal(A, B)
-        # # print(A)
-        # # print(B)
-        # # print("match_time = ", match_time)
-
-
-
-    # print("replace = ", replace_recombinations, "num_edges = ", tsb.num_edges)
-    print("n={}\tm={}\ta={}\tnodes={}\tedges={}\treplace={}\tbreak={}".format(
-        ts.sample_size, store.num_sites, store.num_ancestors,
-        tsb.num_nodes, tsb.num_edges, replace_recombinations, break_polytomies))
-
-    ts = finalise_builder(tsb)
-
-    # For checking the output.
-    A = np.zeros((store.num_ancestors, store.num_sites), dtype=np.int8)
-    for j in range(store.num_ancestors):
-        store.get_ancestor(j, h)
-        A[j] = h
+    ts = tsinfer.finalise(ts_builder)
 
     B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
     for v in ts.variants():
         B[:, v.index] = v.genotypes
 
-    for ancestor_id in range(store.num_ancestors):
-        # node_id = ancestor_id
-        node_id = ancestor_id_map[ancestor_id]
+    for ancestor_id in range(num_ancestors):
+        node_id = ancestor_id
+        # node_id = ancestor_id_map[ancestor_id]
         # print(ancestor_id, "->",  node_id)
         # print(A[ancestor_id])
         # print(B[node_id])
@@ -2250,7 +1711,7 @@ if __name__ == "__main__":
     # test_ancestor_store(20, 30, 861, method="P")
 
     # new_segments(20, 100, 1, num_threads=1, method="C", log_level="INFO")
-    # new_segments(20, 10, 1, num_threads=1, method="P")
+    # new_segments(20, 10, 1, num_threads=1, method="C")
 
     # export_samples(10, 100, 304)
 
@@ -2281,7 +1742,7 @@ if __name__ == "__main__":
 
     # new_copy_process_dev(10000, 10000 * 10**4, 1)
 
-    # new_copy_process_dev(20, 2 * 20 * 10**4, 74, True, False)
+    # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
     # for x in range(1, 20):
@@ -2292,5 +1753,5 @@ if __name__ == "__main__":
     #     print()
     for j in range(1, 10000):
         print(j)
-        new_copy_process_dev(500, 50 * 10**4, j, True, False)
+        new_copy_process_dev(10, 50 * 10**4, j, True, False)
 
