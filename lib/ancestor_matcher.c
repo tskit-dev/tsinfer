@@ -8,8 +8,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include <gsl/gsl_math.h>
-
 /* TODO move this into a general utilities file. */
 void
 __tsi_safe_free(void **ptr) {
@@ -21,275 +19,611 @@ __tsi_safe_free(void **ptr) {
     }
 }
 
+static int
+cmp_node_id(const void *a, const void *b) {
+    const node_id_t *ia = (const node_id_t *) a;
+    const node_id_t *ib = (const node_id_t *) b;
+    return (*ia > *ib) - (*ia < *ib);
+}
+
+/* Returns true if x is approximately equal to one. */
+static bool
+approximately_one(double x)
+{
+    double eps = 1e-9;
+    return fabs(x - 1.0) < eps;
+}
 
 static void
 ancestor_matcher_check_state(ancestor_matcher_t *self)
 {
+    size_t num_likelihoods;
+    avl_node_t *a;
+    size_t j;
+    node_id_t u;
+    double x;
+    likelihood_list_t *z;
+
+    /* Check the properties of the likelihood map */
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        assert(self->likelihood[u] != NULL_LIKELIHOOD);
+        x = self->likelihood[u];
+        u = self->parent[u];
+        if (u != NULL_NODE) {
+            /* Traverse up to the next L value, and ensure it's not equal to x */
+            while (self->likelihood[u] == NULL_LIKELIHOOD) {
+                u = self->parent[u];
+                assert(u != NULL_NODE);
+            }
+            assert(self->likelihood[u] != x);
+        }
+    }
+    /* Make sure that there are no other non null likelihoods in the array */
+    num_likelihoods = 0;
+    for (u = 0; u < (node_id_t) self->num_nodes; u++) {
+        if (self->likelihood[u] != NULL_LIKELIHOOD) {
+            num_likelihoods++;
+        }
+    }
+    assert(num_likelihoods == avl_count(&self->likelihood_nodes));
+    assert(avl_count(&self->likelihood_nodes) ==
+            object_heap_get_num_allocated(&self->avl_node_heap));
+
+    for (j = 0; j < self->num_sites; j++) {
+        z = self->traceback[j];
+        if (z != NULL) {
+            /* There must be at least one node with likelihood == 1. */
+            u = NULL_NODE;
+            while (z != NULL) {
+                if (approximately_one(z->likelihood)) {
+                    u = z->node;
+                }
+                z = z->next;
+            }
+            assert(u != NULL_NODE);
+        }
+    }
+
 }
 
 int
 ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
+    size_t j;
+    likelihood_list_t *l;
 
     fprintf(out, "Ancestor matcher state\n");
-    ancestor_store_print_state(self->store, out);
+    tree_sequence_builder_print_state(self->tree_sequence_builder, out);
+    fprintf(out, "tree = \n");
+    fprintf(out, "id\tparent\tlikelihood\n");
+    for (j = 0; j < self->num_nodes; j++) {
+        fprintf(out, "%d\t%d\t%f\n", (int) j, self->parent[j], self->likelihood[j]);
+    }
+    fprintf(out, "traceback\n");
+    for (j = 0; j < self->num_sites; j++) {
+        if (self->traceback[j] != NULL) {
+            fprintf(out, "\t%d\t", (int) j);
+            for (l = self->traceback[j]; l != NULL; l = l->next) {
+                fprintf(out, "(%d, %f)", l->node, l->likelihood);
+            }
+            fprintf(out, "\n");
+        }
+    }
+    object_heap_print_state(&self->avl_node_heap, out);
+    block_allocator_print_state(&self->likelihood_list_allocator, out);
+
     ancestor_matcher_check_state(self);
     return 0;
 }
 
 int
-ancestor_matcher_alloc(ancestor_matcher_t *self, ancestor_store_t *store,
-        double recombination_rate)
+ancestor_matcher_alloc(ancestor_matcher_t *self,
+        tree_sequence_builder_t *tree_sequence_builder, double recombination_rate)
 {
     int ret = 0;
+    size_t j;
+    /* TODO fix this. */
+    size_t avl_node_block_size = 8192;
+    size_t likelihood_list_block_size = 8192;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
-    self->store = store;
+    self->tree_sequence_builder = tree_sequence_builder;
     self->recombination_rate = recombination_rate;
+    self->num_sites = tree_sequence_builder->num_sites;;
+    self->max_output_edges = self->num_sites; /* We can probably make this smaller */
+    self->max_nodes = tree_sequence_builder->max_nodes;
+    self->parent = malloc(self->max_nodes * sizeof(node_id_t));
+    self->likelihood = malloc(self->max_nodes * sizeof(double));
+    self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
+    self->output_edge_buffer = malloc(self->max_output_edges * sizeof(edge_t));
+
+    if (self->parent == NULL || self->likelihood == NULL || self->traceback == NULL
+            || self->output_edge_buffer == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    /* The AVL node heap stores the avl node and the node_id_t payload in
+     * adjacent memory. */
+    ret = object_heap_init(&self->avl_node_heap,
+            sizeof(avl_node_t) + sizeof(node_id_t), avl_node_block_size, NULL);
+    if (ret != 0) {
+        goto out;
+    }
+    avl_init_tree(&self->likelihood_nodes, cmp_node_id, NULL);
+    ret = block_allocator_alloc(&self->likelihood_list_allocator,
+            likelihood_list_block_size);
+    if (ret != 0) {
+        goto out;
+    }
+    /* Initialise the likelihoods and tree. */
+    for (j = 0; j < self->max_nodes; j++) {
+        self->likelihood[j] = NULL_LIKELIHOOD;
+        self->parent[j] = NULL_NODE;
+    }
+out:
     return ret;
 }
 
 int
 ancestor_matcher_free(ancestor_matcher_t *self)
 {
+    tsi_safe_free(self->parent);
+    tsi_safe_free(self->likelihood);
+    tsi_safe_free(self->traceback);
+    tsi_safe_free(self->output_edge_buffer);
+    object_heap_free(&self->avl_node_heap);
+    block_allocator_free(&self->likelihood_list_allocator);
     return 0;
 }
 
-int
-ancestor_matcher_best_path(ancestor_matcher_t *self, size_t num_ancestors,
-        allele_t *haplotype, site_id_t start_site, site_id_t end_site,
-        size_t num_focal_sites, site_id_t *focal_sites, double error_rate,
-        traceback_t *traceback)
+
+static inline void
+ancestor_matcher_free_avl_node(ancestor_matcher_t *self, avl_node_t *node)
 {
-    int ret = 0;
-    double rho, r, pr, qr, possible_recombinants;
-    ancestor_id_t N = (ancestor_id_t) num_ancestors;
-    site_id_t site_id;
-    ancestor_id_t start, end;
-    double likelihood, next_likelihood, max_likelihood, x, y, z, *double_tmp;
-    ancestor_id_t *L_start = NULL;
-    ancestor_id_t *L_end = NULL;
-    double *L_likelihood = NULL;
-    ancestor_id_t *L_next_start = NULL;
-    ancestor_id_t *L_next_end = NULL;
-    ancestor_id_t *ancestor_id_tmp;
-    double *L_next_likelihood = NULL;
-    ancestor_id_t *S_start, *S_end;
-    allele_t state;
-    size_t l, s, L_size, S_size, L_next_size, focal_site_index;
-    /* TODO Is it really safe to have an upper bound here? */
-    size_t max_segments = self->store->max_site_segments * 32;
-    double last_position;
-    size_t total_likelihood_segments = 0;
+    object_heap_free_object(&self->avl_node_heap, node);
+}
 
-    /* Error rate and focal sites are mutually exclusive */
-    if (error_rate == 0) {
-        assert(num_focal_sites > 0);
-    } else {
-        assert(num_focal_sites == 0);
+static inline avl_node_t * WARN_UNUSED
+ancestor_matcher_alloc_avl_node(ancestor_matcher_t *self, node_id_t node)
+{
+    avl_node_t *ret = NULL;
+    node_id_t *payload;
+
+    if (object_heap_empty(&self->avl_node_heap)) {
+        if (object_heap_expand(&self->avl_node_heap) != 0) {
+            goto out;
+        }
     }
-
-    L_start = malloc(max_segments * sizeof(ancestor_id_t));
-    L_end = malloc(max_segments * sizeof(ancestor_id_t));
-    L_likelihood = malloc(max_segments * sizeof(double));
-    L_next_start = malloc(max_segments * sizeof(ancestor_id_t));
-    L_next_end = malloc(max_segments * sizeof(ancestor_id_t));
-    L_next_likelihood = malloc(max_segments * sizeof(double));
-    if (L_start == NULL || L_end == NULL || L_likelihood == NULL
-            || L_next_start == NULL || L_next_end == NULL || L_next_likelihood == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
+    ret = (avl_node_t *) object_heap_alloc_object(&self->avl_node_heap);
+    if (ret == NULL) {
         goto out;
-
     }
-    /* Initialise L to carry one segment covering entire interval. */
-    L_start[0] = 0;
-    L_end[0] = N;
-    L_likelihood[0] = 1;
-    L_size = 1;
-    /* ensure that that the initial recombination rate is 0 */
-    last_position = self->store->sites[start_site].position;
-    possible_recombinants = N;
-
-    /* Skip any focal sites that are not within this segment. */
-    focal_site_index = 0;
-    while (focal_site_index < num_focal_sites
-            && focal_sites[focal_site_index] < start_site) {
-        focal_site_index++;
-    }
-    for (site_id = start_site; site_id < end_site; site_id++) {
-        if (focal_site_index < num_focal_sites && site_id > focal_sites[focal_site_index]) {
-            focal_site_index++;
-        }
-        /* printf("site = %d next_focal_site = %d, focal_site_index = %d\n", */
-        /*         (int) site_id, (int) focal_sites[focal_site_index], (int) focal_site_index); */
-
-        total_likelihood_segments += L_size;
-        /* Compute the recombination rate back to the last site */
-        rho = self->recombination_rate * (
-                self->store->sites[site_id].position - last_position);
-        r = 1 - exp(-rho / possible_recombinants);
-        pr = r / possible_recombinants;
-        qr = 1 - r + r / possible_recombinants;
-
-        L_next_size = 0;
-        /* Make a get_site function in the store here? */
-        S_start = self->store->sites[site_id].start;
-        S_end = self->store->sites[site_id].end;
-        S_size = self->store->sites[site_id].num_segments;
-
-        /* printf("site = %d\n", site_id); */
-        /* printf("S = "); */
-        /* for (s = 0; s < S_size; s++) { */
-        /*     printf("(%d, %d: %d)", S_start[s], S_end[s], state); */
-        /* } */
-        /* printf("\n"); */
-        /* printf("L = "); */
-        /* for (l = 0; l < L_size; l++) { */
-        /*     printf("(%d, %d: %.6g)", L_start[l], L_end[l], L_likelihood[l]); */
-        /* } */
-        /* printf("\n"); */
-
-        l = 0;
-        s = 0;
-        start = 0;
-        while (start != N) {
-            end = N;
-            if (l < L_size) {
-                if (L_start[l] > start) {
-                    end = GSL_MIN(end, L_start[l]);
-                } else {
-                    end = GSL_MIN(end, L_end[l]);
-                }
-            }
-            state = 0;
-            if (s < S_size) {
-                if (S_start[s] > start) {
-                    end = GSL_MIN(end, S_start[s]);
-                } else {
-                    end = GSL_MIN(end, S_end[s]);
-                }
-                if (S_start[s] <= start && end <= S_end[s]) {
-                    state = 1;
-                }
-            }
-
-            /* printf("\tINNER LOOP: start = %d, end = %d\n", start, end); */
-            assert(start < end);
-
-            /* If this interval does not intersect with L, the likelihood is 0 */
-            likelihood = 0;
-            if (l < L_size && !(L_start[l] >= end || L_end[l] <= start)) {
-                likelihood = L_likelihood[l];
-            }
-            x = likelihood * qr;
-            y = pr; /* value for maximum is 1 by normalisation */
-            if (x >= y) {
-                z = x;
-            } else {
-                z = y;
-                /* printf("%d add_recombination %d %d\n", site_id, start, end); */
-                ret = traceback_add_recombination(traceback, site_id, start, end);
-                if (ret != 0) {
-                    goto out;
-                }
-            }
-
-            if (error_rate == 0) {
-                /* Ancestor matching */
-                next_likelihood = z * (state == haplotype[site_id]);
-
-                if (focal_site_index < num_focal_sites) {
-                    if (site_id == focal_sites[focal_site_index]) {
-                        assert(haplotype[site_id] == 1);
-                        assert(state == 0);
-                        next_likelihood = z;
-                    } else {
-                        assert(site_id < focal_sites[focal_site_index]);
-                    }
-                }
-            } else {
-                /* Sample matching */
-                if (state == haplotype[site_id]) {
-                    next_likelihood = z * (1 - error_rate);
-                } else {
-                    next_likelihood = z * error_rate;
-                }
-            }
-            /* printf("next_likelihood = %f\n", next_likelihood); */
-
-            /* Update L_next */
-            if (L_next_size == 0) {
-                L_next_size = 1;
-                L_next_start[0] = start;
-                L_next_end[0] = end;
-                L_next_likelihood[0] = next_likelihood;
-            } else {
-                /* printf("updating L_next: %d\n", (int) L_next_size); */
-                if (L_next_end[L_next_size - 1] == start
-                        && L_next_likelihood[L_next_size - 1] == next_likelihood) {
-                    L_next_end[L_next_size - 1] = end;
-                } else  {
-                    assert(L_next_size < max_segments);
-                    L_next_start[L_next_size] = start;
-                    L_next_end[L_next_size] = end;
-                    L_next_likelihood[L_next_size] = next_likelihood;
-                    L_next_size++;
-                }
-            }
-
-            start = end;
-            if (l < L_size && L_end[l] <= start) {
-                l++;
-            }
-            if (s < S_size && S_end[s] <= start) {
-                s++;
-            }
-        }
-
-        /* Swap L and L_next */
-        L_size = L_next_size;
-        ancestor_id_tmp = L_start;
-        L_start = L_next_start;
-        L_next_start = ancestor_id_tmp;
-        ancestor_id_tmp = L_end;
-        L_end = L_next_end;
-        L_next_end = ancestor_id_tmp;
-        double_tmp = L_likelihood;
-        L_likelihood = L_next_likelihood;
-        L_next_likelihood = double_tmp;
-        /* Normalise L and get set the best matching ancestor for this site. */
-        max_likelihood = -1;
-        for (l = 0; l < L_size; l++) {
-            if (L_likelihood[l] > max_likelihood) {
-                max_likelihood = L_likelihood[l];
-            }
-        }
-        assert(max_likelihood > 0);
-        for (l = 0; l < L_size; l++) {
-            if (L_likelihood[l] == max_likelihood) {
-                /* Set the best match to the oldest ancestor with the maximum
-                 * likelihood */
-                assert(L_start[l] < N);
-                ret = traceback_set_best_match(traceback, site_id, L_start[l]);
-                if (ret != 0) {
-                    goto out;
-                }
-            }
-            L_likelihood[l] /= max_likelihood;
-            /* printf("\t%d,%d -> %f\n", L_start[l], L_end[l], L_likelihood[l]); */
-        }
-    }
-    /* assert(focal_site_index == num_focal_sites); */
-
-    self->mean_likelihood_segments = total_likelihood_segments / (double)(
-            end_site - start_site);
+    /* We store the node_id_t value after the avl_node */
+    payload = (node_id_t *) (ret + 1);
+    *payload = node;
+    avl_init_node(ret, payload);
 out:
-    tsi_safe_free(L_start);
-    tsi_safe_free(L_end);
-    tsi_safe_free(L_likelihood);
-    tsi_safe_free(L_next_start);
-    tsi_safe_free(L_next_end);
-    tsi_safe_free(L_next_likelihood);
     return ret;
 }
 
+static int
+ancestor_matcher_insert_likelihood(ancestor_matcher_t *self, node_id_t node,
+        double likelihood)
+{
+    int ret = 0;
+    avl_node_t *avl_node;
+
+    assert(likelihood >= 0);
+    avl_node = ancestor_matcher_alloc_avl_node(self, node);
+    if (avl_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    avl_node = avl_insert_node(&self->likelihood_nodes, avl_node);
+    assert(self->likelihood[node] == NULL_LIKELIHOOD);
+    assert(avl_node != NULL);
+    self->likelihood[node] = likelihood;
+out:
+    return ret;
+}
+
+static int
+ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, node_id_t node)
+{
+    avl_node_t *avl_node;
+
+    avl_node = avl_search(&self->likelihood_nodes, &node);
+    assert(self->likelihood[node] != NULL_LIKELIHOOD);
+    assert(avl_node != NULL);
+    avl_unlink_node(&self->likelihood_nodes, avl_node);
+    ancestor_matcher_free_avl_node(self, avl_node);
+    self->likelihood[node] = NULL_LIKELIHOOD;
+    return 0;
+}
+
+/* Store the current state of the likelihood tree in the traceback.
+ */
+static int WARN_UNUSED
+ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id)
+{
+    int ret = 0;
+    avl_node_t *a;
+    node_id_t u;
+    likelihood_list_t *list_node;
+
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        list_node = block_allocator_get(&self->likelihood_list_allocator,
+                sizeof(likelihood_list_t));
+        if (list_node == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        list_node->node = u;
+        list_node->likelihood = self->likelihood[u];
+        list_node->next = self->traceback[site_id];
+        self->traceback[site_id] = list_node;
+    }
+    self->total_traceback_size += avl_count(&self->likelihood_nodes);
+out:
+    return ret;
+}
+
+/* Returns true if the node u is a descendant of v; i.e. if v is present on the
+ * path from u to root. Returns false in all other situations, including
+ * error conditions. */
+static inline bool
+ancestor_matcher_is_descendant(ancestor_matcher_t *self, node_id_t u,
+        node_id_t v)
+{
+    node_id_t *restrict pi = self->parent;
+
+    while (u != NULL_NODE && u != v) {
+        u = pi[u];
+    }
+    return u == v;
+}
+
+static int WARN_UNUSED
+ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
+        node_id_t mutation_node, char state)
+{
+    int ret = 0;
+    double n = (double) self->num_nodes;
+    double r = 1 - exp(-self->recombination_rate / n);
+    double recomb_proba = r / n;
+    double no_recomb_proba = 1 - r + r / n;
+    double *restrict L = self->likelihood;
+    double x, y, max_L, emission;
+    bool is_descendant;
+    node_id_t u;
+    avl_node_t *a;
+
+    max_L = -1;
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        x = L[u] * no_recomb_proba;
+        assert(x >= 0);
+        if (x > recomb_proba) {
+            y = x;
+        } else {
+            y = recomb_proba;
+        }
+        is_descendant = ancestor_matcher_is_descendant(self, u, mutation_node);
+        if (state == 1) {
+            emission = (double) is_descendant;
+        } else {
+            emission = (double) (! is_descendant);
+        }
+        L[u] = y * emission;
+        if (L[u] > max_L) {
+            max_L = L[u];
+        }
+        /* printf("mutation_node = %d u = %d, x = %f, y = %f, emission = %f\n", */
+        /*         mutation_node, u, x, y, emission); */
+    }
+    assert(max_L > 0);
+    /* Normalise */
+    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+        u = *((node_id_t *) a->item);
+        L[u] /= max_L;
+    }
+    return ret;
+}
+
+static int WARN_UNUSED
+ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self)
+{
+    int ret = 0;
+    avl_node_t *a, *tmp;
+    node_id_t u, v;
+
+    a = self->likelihood_nodes.head;
+    while (a != NULL) {
+        tmp = a->next;
+        u = *((node_id_t *) a->item);
+        if (self->parent[u] != NULL_NODE) {
+            /* If we can find an equal L value higher in the tree, delete
+             * this one.
+             */
+            v = self->parent[u];
+            while (self->likelihood[v] == NULL_LIKELIHOOD) {
+                v = self->parent[v];
+                assert(v != NULL_NODE);
+            }
+            if (self->likelihood[u] == self->likelihood[v]) {
+                /* Delete this likelihood value */
+                avl_unlink_node(&self->likelihood_nodes, a);
+                ancestor_matcher_free_avl_node(self, a);
+                self->likelihood[u] = NULL_LIKELIHOOD;
+            }
+        }
+        a = tmp;
+    }
+    return ret;
+}
+
+static int
+ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
+        allele_t state)
+{
+    int ret = 0;
+    node_id_t mutation_node = self->tree_sequence_builder->mutations[site];
+    node_id_t *pi = self->parent;
+    double *L = self->likelihood;
+    node_id_t u;
+
+    /* ancestor_matcher_print_state(self, stdout); */
+    /* ancestor_matcher_check_state(self); */
+    if (mutation_node == NULL_NODE) {
+        /* TODO We should be able to just put a pointer in to the previous site
+         * here to save some time and memory. */
+        ret = ancestor_matcher_store_traceback(self, site);
+        if (ret != 0) {
+            goto out;
+        }
+        assert(state == 0);
+    } else {
+        /* Insert a new L-value for the mutation node if needed */
+        if (L[mutation_node] == NULL_LIKELIHOOD) {
+            u = mutation_node;
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                assert(u != NULL_NODE);
+            }
+            ret = ancestor_matcher_insert_likelihood(self, mutation_node, L[u]);
+            if (ret != 0) {
+                goto out;
+            }
+        }
+        ret = ancestor_matcher_store_traceback(self, site);
+        if (ret != 0) {
+            goto out;
+        }
+        ret = ancestor_matcher_update_site_likelihood_values(self, mutation_node, state);
+        if (ret != 0) {
+            goto out;
+        }
+        ret = ancestor_matcher_coalesce_likelihoods(self);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
+}
+
+static int
+ancestor_matcher_reset(ancestor_matcher_t *self)
+{
+    int ret = 0;
+    size_t j;
+
+    /* TODO realloc when this grows */
+    assert(self->max_nodes == self->tree_sequence_builder->max_nodes);
+    self->num_nodes = self->tree_sequence_builder->num_nodes;
+
+    assert(avl_count(&self->likelihood_nodes) == 0);
+    for (j = 0; j < self->num_nodes; j++) {
+        ret = ancestor_matcher_insert_likelihood(self, (node_id_t) j, 1.0);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+    memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t *));
+    ret = block_allocator_reset(&self->likelihood_list_allocator);
+    if (ret != 0) {
+        goto out;
+    }
+    self->total_traceback_size = 0;
+out:
+    return ret;
+}
+
+static int WARN_UNUSED
+ancestor_matcher_run_traceback(ancestor_matcher_t *self,
+       node_id_t child, size_t *num_output_edges, edge_t **output_edges)
+{
+    int ret = 0;
+    int M = self->tree_sequence_builder->num_edges;
+    int j, k, l;
+    size_t output_edge_index;
+    node_id_t *restrict pi = self->parent;
+    double *restrict L = self->likelihood;
+    edge_t *edges = self->tree_sequence_builder->edges;
+    edge_t *output_edge;
+    node_id_t *I, *O, u, max_likelihood_node;
+    site_id_t left, right;
+    avl_node_t *a, *tmp;
+    likelihood_list_t *z;
+
+    /* Prepare for the traceback and get the memory ready for recording
+     * the output edges. */
+    output_edge_index = 0;
+    output_edge = self->output_edge_buffer + output_edge_index;
+    output_edge->right = self->num_sites;
+    output_edge->parent = NULL_NODE;
+    output_edge->child = child;
+
+    /* Process the final likelihoods and find the maximum value. Reset
+     * the likelihood values so that we can reused the buffer during
+     * traceback. */
+    a = self->likelihood_nodes.head;
+    while (a != NULL) {
+        tmp = a->next;
+        u = *((node_id_t *) a->item);
+        if (approximately_one(L[u])) {
+            output_edge->parent = u;
+        }
+        L[u] = NULL_LIKELIHOOD;
+        ancestor_matcher_free_avl_node(self, a);
+        a = tmp;
+    }
+    avl_clear_tree(&self->likelihood_nodes);
+    assert(output_edge->parent != NULL_NODE);
+
+    /* Now go through the trees in reverse and run the traceback */
+    j = M - 1;
+    k = M - 1;
+    I = self->tree_sequence_builder->removal_order;
+    O = self->tree_sequence_builder->insertion_order;
+    while (j >= 0) {
+        right = edges[I[j]].right;
+        while (edges[O[k]].left == right) {
+            pi[edges[O[k]].child] = -1;
+            k--;
+        }
+        left = edges[O[k]].left;
+        while (j >= 0 && edges[I[j]].right == right) {
+            pi[edges[I[j]].child] = edges[I[j]].parent;
+            j--;
+        }
+        /* # print("left = ", left, "right = ", right) */
+        /* printf("left = %d right = %d\n", left, right); */
+        for (l = right - 1; l >= (int) left; l--) {
+            /* Reset the likelihood values for this locus from the traceback */
+            max_likelihood_node = NULL_NODE;
+            for (z = self->traceback[l]; z != NULL; z = z->next) {
+                L[z->node] = z->likelihood;
+                if (approximately_one(z->likelihood)) {
+                    max_likelihood_node = z->node;
+                }
+            }
+            assert(max_likelihood_node != NULL_NODE);
+            u = output_edge->parent;
+            /* Get the likelihood for u */
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                assert(u != NULL_NODE);
+            }
+            if (!approximately_one(L[u])) {
+                /* printf("RECOMB: %d\n", l); */
+                /* Need to recombine */
+                assert(max_likelihood_node != output_edge->parent);
+                output_edge->left = l;
+                output_edge_index++;
+                assert(output_edge_index < self->max_output_edges);
+                output_edge++;
+                /* Start the next output edge */
+                output_edge->right = l;
+                output_edge->child = child;
+                output_edge->parent = max_likelihood_node;
+            }
+            /* Reset the likelihoods for the next site */
+            for (z = self->traceback[l]; z != NULL; z = z->next) {
+                L[z->node] = NULL_LIKELIHOOD;
+            }
+            /* ancestor_matcher_check_state(self); */
+        }
+    }
+    output_edge->left = 0;
+
+    *num_output_edges = output_edge_index + 1;
+    *output_edges = self->output_edge_buffer;
+/* out: */
+    return ret;
+}
+
+int
+ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
+       node_id_t node, size_t *num_output_edges, edge_t **output_edges)
+{
+    int ret = 0;
+    int M = self->tree_sequence_builder->num_edges;
+    int j, k, l;
+    node_id_t *restrict pi = self->parent;
+    /* Can't use restrict here for L because we access it in the functions called
+     * from here. */
+    double *L = self->likelihood;
+    edge_t *edges = self->tree_sequence_builder->edges;
+    node_id_t *I, *O, u, parent, child;
+    site_id_t left, right;
+
+    ret = ancestor_matcher_reset(self);
+    if (ret != 0) {
+        goto out;
+    }
+
+    j = 0;
+    k = 0;
+    I = self->tree_sequence_builder->insertion_order;
+    O = self->tree_sequence_builder->removal_order;
+    while (j < M) {
+        left = edges[I[j]].left;
+        while (edges[O[k]].right == left) {
+            parent = edges[O[k]].parent;
+            child = edges[O[k]].child;
+            k++;
+            pi[child] = -1;
+            if (L[child] == NULL_LIKELIHOOD) {
+                /* Traverse upwards until we find and L value for the child. */
+                u = parent;
+                while (L[u] == NULL_LIKELIHOOD) {
+                    u = pi[u];
+                    /* assert(u != NULL_NODE); */
+                }
+                ret = ancestor_matcher_insert_likelihood(self, child, L[u]);
+                if (ret != 0) {
+                    goto out;
+                }
+            }
+        }
+        right = edges[O[k]].right;
+        while (j < M && edges[I[j]].left == left) {
+            parent = edges[I[j]].parent;
+            child = edges[I[j]].child;
+            pi[child] = parent;
+            j++;
+            /* Traverse upwards until we find the L value for the parent. */
+            u = parent;
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = pi[u];
+                /* assert(u != NULL_NODE); */
+            }
+            assert(L[child] != NULL_LIKELIHOOD);
+            /* if the child's L value is the same as the parent we can delete it */
+            if (L[child] == L[u]) {
+                ancestor_matcher_delete_likelihood(self, child);
+            }
+        }
+        /* printf("NEW TREE: %d-%d\n", left, right); */
+        for (l = left; l < (int) right; l++) {
+            /* printf("update site %d\n", l); */
+            ret = ancestor_matcher_update_site_state(self, l, haplotype[l]);
+            if (ret != 0) {
+                goto out;
+            }
+        }
+    }
+    ret =  ancestor_matcher_run_traceback(self, node, num_output_edges,
+            output_edges);
+out:
+    return ret;
+}
+
+double
+ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self)
+{
+    return self->total_traceback_size / ((double) self->num_sites);
+}

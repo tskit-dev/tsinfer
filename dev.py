@@ -1889,6 +1889,7 @@ class TreeSequenceBuilder(object):
             if j - group_start > 1:
                 groups.append((group_start, j))
             group_map = collections.defaultdict(list)
+
             for start, end in groups:
                 # print("CANDIDATE")
                 key = tuple([
@@ -1927,8 +1928,7 @@ class TreeSequenceBuilder(object):
                     new_edges.append(e)
 
             for key, group_list in group_map.items():
-                # if key == ((0, 235, 284, 319, 654), (149, 155, 154, 143)):
-                #     continue
+                print("key = ", key)
                 if len(group_list) > 1:
                     # Add a new node
                     children_time = -1
@@ -2114,11 +2114,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
     #         store.num_ancestors)
-    # tsb = TreeSequenceBuilder(
-    #         store.num_sites, replace_recombinations=replace_recombinations,
-    #         break_polytomies=break_polytomies)
-    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-            1000 * store.num_ancestors)
+    tsb = TreeSequenceBuilder(
+            store.num_sites, replace_recombinations=replace_recombinations,
+            break_polytomies=break_polytomies)
+    # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+    #         1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
     ancestor_id_map = {0:0}
@@ -2278,9 +2278,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    new_copy_process_dev(10000, 10000 * 10**4, 1)
+    # new_copy_process_dev(10000, 10000 * 10**4, 1)
 
-    # new_copy_process_dev(20, 2 * 20 * 10**4, 74, True, False)
+    new_copy_process_dev(20, 2 * 20 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
     # for x in range(1, 20):

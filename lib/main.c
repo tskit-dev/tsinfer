@@ -453,8 +453,6 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     int ret;
     ancestor_store_t store;
     ancestor_matcher_t matcher;
-    traceback_t traceback;
-    segment_list_t segment_list;
     /* segment_list_node_t *seg; */
     tree_sequence_builder_t ts_builder;
     /* ancestor_id_t sample_id; */
@@ -486,22 +484,13 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     read_sites(site_file, &store, num_sites, positions,
             num_ancestors, ancestor_age,
             num_focal_sites, focal_site_ancestor, focal_site);
-    ret = ancestor_matcher_alloc(&matcher, &store, 0.01);
-    if (ret != 0) {
-        fatal_error("alloc error");
-    }
-    ret = traceback_alloc(&traceback, num_sites, 8192);
-    if (ret != 0) {
-        fatal_error("alloc error");
-    }
-    ret = segment_list_alloc(&segment_list, 8192);
-    if (ret != 0) {
-        fatal_error("alloc error");
-    }
-    /* printf("num sites = %d, num_ancestors = %d num_samples = %d\n", */
-    /*         (int) num_sites, (int) num_ancestors, (int) num_samples); */
     ret = tree_sequence_builder_alloc(&ts_builder, num_sites, store.num_ancestors + 1,
             65536);
+    if (ret != 0) {
+        fatal_error("alloc error");
+    }
+
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.01);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -546,7 +535,7 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
             }
             /* printf("Got ancestor (%d-%d), %d, %d\n", start, end, (int) num_older_ancestors, */
             /*         (int) num_focal_sites); */
-            ret = tree_sequence_builder_find_path(&ts_builder, ancestor, child,
+            ret = ancestor_matcher_find_path(&matcher, ancestor, child,
                     &num_output_edges, &output_edges);
             if (ret != 0) {
                 fatal_error("find_path error");
@@ -614,8 +603,6 @@ run_match(const char *sample_file, const char *ancestor_file, const char *site_f
     tree_sequence_builder_free(&ts_builder);
     ancestor_matcher_free(&matcher);
     ancestor_store_free(&store);
-    segment_list_free(&segment_list);
-    traceback_free(&traceback);
     free(focal_site);
     free(focal_site_ancestor);
     free(ancestor_age);

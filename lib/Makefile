@@ -11,8 +11,8 @@ CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
 LDFLAGS=-lm
 
 COMPILED=ancestor_matcher.o object_heap.o ancestor_builder.o ancestor_store.o\
-	 ancestor_sorter.o ancestor_store_builder.o traceback.o \
-	 tree_sequence_builder.c segment_list.c block_allocator.o avl.o
+	 ancestor_sorter.o ancestor_store_builder.o \
+	 tree_sequence_builder.c block_allocator.o avl.o
 
 HEADERS=tsinfer.h err.h block_allocator.h object_heap.h
 
