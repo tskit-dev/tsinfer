@@ -167,15 +167,22 @@ run_generate(const char *sample_file, const char *ancestor_file,
     allele_t *a;
     size_t age;
     int ret;
+    /* Buffers for edge output */
     size_t total_edges;
-    edge_t *edges_buffer = NULL;
-    edge_t *output_edges;
-    size_t num_output_edges;
+    size_t num_edges;
     size_t max_edges = 1024;
-    site_mutation_t *site_mutation_buffer = NULL;
-    size_t max_site_mutations = 1024;
-    size_t num_site_mutations;
+    site_id_t *left_buffer, *left_output;
+    site_id_t *right_buffer, *right_output;
+    node_id_t *parent_buffer, *parent_output;
+    node_id_t *child_buffer;
+    /* Buffers for mutation output */
+    size_t max_mutations = 1024;
+    size_t total_mutations;
+    site_id_t *site_buffer;
+    node_id_t *node_buffer;
     node_id_t child;
+    site_id_t *mismatches;
+    size_t num_mismatches;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, positions, haplotypes);
@@ -198,16 +205,24 @@ run_generate(const char *sample_file, const char *ancestor_file,
     }
 
     age = ancestor_builder.num_frequency_classes + 1;
-    ret = tree_sequence_builder_update(&ts_builder, 1, age, 0, NULL, 0, NULL);
+    ret = tree_sequence_builder_update(&ts_builder, 1, age,
+            0, NULL, NULL, NULL, NULL, 0, NULL, NULL);
     if (ret != 0) {
         fatal_error("initial update");
     }
     a = malloc(num_sites * sizeof(allele_t));
-    edges_buffer = malloc(max_edges * sizeof(edge_t));
-    site_mutation_buffer = malloc(max_site_mutations * sizeof(site_mutation_t));
-    if (a == NULL || edges_buffer == NULL || site_mutation_buffer == NULL) {
-        fatal_error("ancestor alloc");
+    left_buffer = malloc(max_edges * sizeof(site_id_t));
+    right_buffer = malloc(max_edges * sizeof(site_id_t));
+    parent_buffer = malloc(max_edges * sizeof(node_id_t));
+    child_buffer = malloc(max_edges * sizeof(node_id_t));
+    node_buffer = malloc(max_mutations * sizeof(node_id_t));
+    site_buffer = malloc(max_mutations * sizeof(site_id_t));
+    if (a == NULL || left_buffer == NULL || right_buffer == NULL
+            || parent_buffer == NULL || child_buffer == NULL || node_buffer == NULL
+            || site_buffer == NULL) {
+        fatal_error("alloc");
     }
+
     child = 1;
     for (j = 0; j < ancestor_builder.num_frequency_classes; j++) {
         age--;
@@ -217,33 +232,43 @@ run_generate(const char *sample_file, const char *ancestor_file,
                     (int) j, (int) age, (int) num_ancestors);
         }
         total_edges = 0;
-        num_site_mutations = 0;
+        total_mutations = 0;
         for (k = 0; k < num_ancestors; k++) {
             focal_sites = ancestor_builder.frequency_classes[j].ancestor_focal_sites[k];
             num_focal_sites = ancestor_builder.frequency_classes[j].num_ancestor_focal_sites[k];
-            ret = ancestor_builder_make_ancestor(&ancestor_builder, num_focal_sites, focal_sites, a);
+            ret = ancestor_builder_make_ancestor(&ancestor_builder, num_focal_sites,
+                    focal_sites, a);
             if (ret != 0) {
                 fatal_error("Error in make ancestor");
             }
             for (l = 0; l < num_focal_sites; l++) {
-                assert(num_site_mutations < max_site_mutations);
-                site_mutation_buffer[num_site_mutations].node = child;
-                site_mutation_buffer[num_site_mutations].site = focal_sites[l];
-                num_site_mutations++;
+                assert(total_mutations < max_mutations);
+                node_buffer[total_mutations] = child;
+                site_buffer[total_mutations] = focal_sites[l];
+                total_mutations++;
                 assert(a[focal_sites[l]] == 1);
                 a[focal_sites[l]] = 0;
             }
-            /* printf("Got ancestor (%d-%d), %d, %d\n", start, end, (int) num_older_ancestors, */
-            /*         (int) num_focal_sites); */
-            ret = ancestor_matcher_find_path(&matcher, a, child, &num_output_edges, &output_edges);
+
+            ret = ancestor_matcher_find_path(&matcher, a,
+                    &num_edges, &left_output, &right_output, &parent_output,
+                    &num_mismatches, &mismatches);
             if (ret != 0) {
                 fatal_error("find_path error");
             }
-            if (total_edges + num_output_edges > max_edges) {
+            assert(num_mismatches == 0);
+            if (total_edges + num_edges > max_edges) {
                 fatal_error("out of edge buffer space\n");
             }
-            memcpy(edges_buffer + total_edges, output_edges, num_output_edges * sizeof(edge_t));
-            total_edges += num_output_edges;
+            memcpy(left_buffer + total_edges, left_output, num_edges * sizeof(site_id_t));
+            memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
+            memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
+            /* Update the child buffer */
+            for (l = 0; l < num_edges; l++) {
+                child_buffer[total_edges + l] = child;
+            }
+            total_edges += num_edges;
+
             if (verbose > 0) {
                 printf("ancestor %d:\t", (int) child);
                 for (l = 0; l < num_sites; l++) {
@@ -251,18 +276,18 @@ run_generate(const char *sample_file, const char *ancestor_file,
                 }
                 printf("\n");
                 printf("\tnum_focal=%d", (int) num_focal_sites);
-                printf("\tedges = (%d):: \t", (int) num_output_edges);
-                for (l = 0; l < num_output_edges; l++) {
-                    printf("(%d, %d, %d, %d), ", output_edges[l].left,
-                            output_edges[l].right, output_edges[l].parent,
-                            output_edges[l].child);
+                printf("\tedges = (%d):: \t", (int) num_edges);
+                for (l = 0; l < num_edges; l++) {
+                    printf("(%d, %d, %d, %d), ", left_output[l], right_output[l],
+                            parent_output[l], child);
                 }
                 printf("\n");
             }
             child++;
         }
         ret = tree_sequence_builder_update(&ts_builder, num_ancestors, age,
-                total_edges, edges_buffer, num_site_mutations, site_mutation_buffer);
+                total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
+                total_mutations, site_buffer, node_buffer);
         if (ret != 0) {
             fatal_error("builder update");
         }
@@ -299,8 +324,12 @@ run_generate(const char *sample_file, const char *ancestor_file,
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(a);
-    tsi_safe_free(edges_buffer);
-    tsi_safe_free(site_mutation_buffer);
+    tsi_safe_free(left_buffer);
+    tsi_safe_free(right_buffer);
+    tsi_safe_free(parent_buffer);
+    tsi_safe_free(child_buffer);
+    tsi_safe_free(node_buffer);
+    tsi_safe_free(site_buffer);
 }
 
 

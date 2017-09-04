@@ -130,16 +130,18 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->tree_sequence_builder = tree_sequence_builder;
     self->recombination_rate = recombination_rate;
-    self->num_sites = tree_sequence_builder->num_sites;;
-    self->max_output_edges = self->num_sites; /* We can probably make this smaller */
+    self->num_sites = tree_sequence_builder->num_sites;
+    self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->max_nodes = tree_sequence_builder->max_nodes;
     self->parent = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
-    self->output_edge_buffer = malloc(self->max_output_edges * sizeof(edge_t));
-
+    self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
+    self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
+    self->output.parent = malloc(self->output.max_size * sizeof(node_id_t));
     if (self->parent == NULL || self->likelihood == NULL || self->traceback == NULL
-            || self->output_edge_buffer == NULL) {
+            || self->output.left == NULL || self->output.right == NULL
+            || self->output.parent == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -171,12 +173,13 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->parent);
     tsi_safe_free(self->likelihood);
     tsi_safe_free(self->traceback);
-    tsi_safe_free(self->output_edge_buffer);
+    tsi_safe_free(self->output.left);
+    tsi_safe_free(self->output.right);
+    tsi_safe_free(self->output.parent);
     object_heap_free(&self->avl_node_heap);
     block_allocator_free(&self->likelihood_list_allocator);
     return 0;
 }
-
 
 static inline void
 ancestor_matcher_free_avl_node(ancestor_matcher_t *self, avl_node_t *node)
@@ -442,17 +445,14 @@ out:
 }
 
 static int WARN_UNUSED
-ancestor_matcher_run_traceback(ancestor_matcher_t *self,
-       node_id_t child, size_t *num_output_edges, edge_t **output_edges)
+ancestor_matcher_run_traceback(ancestor_matcher_t *self)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
     int j, k, l;
-    size_t output_edge_index;
     node_id_t *restrict pi = self->parent;
     double *restrict L = self->likelihood;
     edge_t *edges = self->tree_sequence_builder->edges;
-    edge_t *output_edge;
     node_id_t *I, *O, u, max_likelihood_node;
     site_id_t left, right;
     avl_node_t *a, *tmp;
@@ -460,11 +460,9 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self,
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
-    output_edge_index = 0;
-    output_edge = self->output_edge_buffer + output_edge_index;
-    output_edge->right = self->num_sites;
-    output_edge->parent = NULL_NODE;
-    output_edge->child = child;
+    self->output.size = 0;
+    self->output.right[self->output.size] = self->num_sites;
+    self->output.parent[self->output.size] = NULL_NODE;
 
     /* Process the final likelihoods and find the maximum value. Reset
      * the likelihood values so that we can reused the buffer during
@@ -474,14 +472,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self,
         tmp = a->next;
         u = *((node_id_t *) a->item);
         if (approximately_one(L[u])) {
-            output_edge->parent = u;
+            self->output.parent[self->output.size] = u;
         }
         L[u] = NULL_LIKELIHOOD;
         ancestor_matcher_free_avl_node(self, a);
         a = tmp;
     }
     avl_clear_tree(&self->likelihood_nodes);
-    assert(output_edge->parent != NULL_NODE);
+    assert(self->output.parent[self->output.size] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
     j = M - 1;
@@ -511,7 +509,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self,
                 }
             }
             assert(max_likelihood_node != NULL_NODE);
-            u = output_edge->parent;
+            u = self->output.parent[self->output.size];
             /* Get the likelihood for u */
             while (L[u] == NULL_LIKELIHOOD) {
                 u = pi[u];
@@ -520,15 +518,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self,
             if (!approximately_one(L[u])) {
                 /* printf("RECOMB: %d\n", l); */
                 /* Need to recombine */
-                assert(max_likelihood_node != output_edge->parent);
-                output_edge->left = l;
-                output_edge_index++;
-                assert(output_edge_index < self->max_output_edges);
-                output_edge++;
+                assert(max_likelihood_node != self->output.parent[self->output.size]);
+
+                self->output.left[self->output.size] = l;
+                self->output.size++;
+                assert(self->output.size < self->output.max_size);
                 /* Start the next output edge */
-                output_edge->right = l;
-                output_edge->child = child;
-                output_edge->parent = max_likelihood_node;
+                self->output.right[self->output.size] = l;
+                self->output.parent[self->output.size] = max_likelihood_node;
             }
             /* Reset the likelihoods for the next site */
             for (z = self->traceback[l]; z != NULL; z = z->next) {
@@ -537,17 +534,17 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self,
             /* ancestor_matcher_check_state(self); */
         }
     }
-    output_edge->left = 0;
+    self->output.left[self->output.size] = 0;
+    self->output.size++;
 
-    *num_output_edges = output_edge_index + 1;
-    *output_edges = self->output_edge_buffer;
 /* out: */
     return ret;
 }
 
 int
 ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
-       node_id_t node, size_t *num_output_edges, edge_t **output_edges)
+        size_t *num_output_edges, site_id_t **left_output, site_id_t **right_output,
+        node_id_t **parent_output, size_t *num_mismatches, site_id_t **mismatches)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
@@ -616,8 +613,16 @@ ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
             }
         }
     }
-    ret =  ancestor_matcher_run_traceback(self, node, num_output_edges,
-            output_edges);
+    ret = ancestor_matcher_run_traceback(self);
+    if (ret != 0) {
+        goto out;
+    }
+    *num_mismatches = 0;
+
+    *left_output = self->output.left;
+    *right_output = self->output.right;
+    *parent_output = self->output.parent;
+    *num_output_edges = self->output.size;
 out:
     return ret;
 }

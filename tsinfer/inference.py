@@ -75,13 +75,16 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
 
     return ts
 
-def finalise(tsb):
-
+def finalise(tsb, samples=None):
     nodes = msprime.NodeTable()
     flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
-    flags[:] = 1
     time = np.zeros(tsb.num_nodes, dtype=np.float64)
+    # Probably we shouldn't bother passing flags to dump_nodes.
     tsb.dump_nodes(flags=flags, time=time)
+    flags[:] = 1
+    if samples is not None:
+        flags[:] = 0
+        flags[samples] = 1
     nodes.set_columns(flags=flags, time=time)
 
     edgesets = msprime.EdgesetTable()
@@ -116,12 +119,17 @@ def finalise(tsb):
     # print(sites)
     # print(mutations)
 
-    samples = np.where(nodes.flags == 1)[0].astype(np.int32)
+    if samples is None:
+        samples = np.where(nodes.flags == 1)[0].astype(np.int32)
     # print("simplify:")
     # print(samples)
-    msprime.simplify_tables(samples, nodes, edgesets)
+    msprime.simplify_tables(
+        samples, nodes, edgesets, sites=sites, mutations=mutations,
+        filter_invariant_sites=False)
     # print(nodes)
     # print(edgesets)
+    # print(sites)
+    # print(mutations)
     ts = msprime.load_tables(
         nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
     return ts
@@ -514,7 +522,20 @@ class AncestorMatcher(object):
         self.recombination_rate = recombination_rate
         self.num_sites = tree_sequence_builder.num_sites
 
-    def find_path(self, child_node, h):
+    def get_max_likelihood_node(self, L):
+        """
+        Returns the node with the maxmimum likelihood from the specified map.
+        """
+        u = -1
+        max_likelihood = -1
+        for node, likelihood in L.items():
+            if likelihood > max_likelihood:
+                u = node
+                max_likelihood = likelihood
+        assert u != -1
+        return u
+
+    def find_path(self, h):
 
         # print("best_path", h)
 
@@ -525,7 +546,7 @@ class AncestorMatcher(object):
         m = self.tree_sequence_builder.num_sites
         pi = np.zeros(n, dtype=int) - 1
         L = {u: 1.0 for u in range(n)}
-        traceback = [{} for _ in range(m)]
+        traceback = [dict(L) for _ in range(m)]
         edges = self.tree_sequence_builder.edges
 
         r = 1 - np.exp(-self.recombination_rate / n)
@@ -570,11 +591,13 @@ class AncestorMatcher(object):
             # print(L)
             # print(pi)
             for site in range(left, right):
+                state = h[site]
                 if site not in self.tree_sequence_builder.mutations:
+                    if state == 0:
+                        assert len(L) > 0
                     traceback[site] = dict(L)
                     continue
                 mutation_node = self.tree_sequence_builder.mutations[site]
-                state = h[site]
                 # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
                 # Insert an new L-value for the mutation node if needed.
@@ -624,14 +647,18 @@ class AncestorMatcher(object):
                         L_next[u] = L[u]
                 L = L_next
 
-        u = [node for node, v in L.items() if v == 1.0][0]
-        output_edge = Edge(right=m, parent=u, child=child_node)
+        # print("LIKELIHOODS")
+        # for l in range(self.num_sites):
+        #     print("\t", l, traceback[l])
+
+
+        u = self.get_max_likelihood_node(L)
+        output_edge = Edge(right=m, parent=u)
         output_edges = [output_edge]
 
         # Now go back through the trees.
         j = M - 1
         k = M - 1
-        # print("TRACEBACK")
         I = self.tree_sequence_builder.removal_order
         O = self.tree_sequence_builder.insertion_order
         while j >= 0:
@@ -643,7 +670,6 @@ class AncestorMatcher(object):
             while j >= 0 and edges[I[j]].right == right:
                 pi[edges[I[j]].child] = edges[I[j]].parent
                 j -= 1
-            # print("left = ", left, "right = ", right)
             for l in range(right - 1, max(left - 1, 0), -1):
                 u = output_edge.parent
                 L = traceback[l]
@@ -651,23 +677,31 @@ class AncestorMatcher(object):
                 while v not in L:
                     v = pi[v]
                 x = L[v]
+                # TODO check this approximately!!
                 if x != 1.0:
                     output_edge.left = l
-                    u = [node for node, v in L.items() if v == 1.0][0]
-                    output_edge = Edge(right=l, parent=u, child=child_node)
+                    u = self.get_max_likelihood_node(L)
+                    output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 assert l > 0
+        # For now we hack in mismatches by seeing if the input haplotype
+        # is 1 and there are no mutations. We should check to see if the chosen
+        # node is a descendent of the mutation node (if it exists).
         self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
         output_edge.left = 0
+
+        mismatches = []
+        for e in output_edges:
+            for l in range(e.left, e.right):
+                if h[l] == 1 and l not in self.tree_sequence_builder.mutations:
+                    mismatches.append(l)
         left = []
         right = []
         parent = []
-        child = []
         for e in output_edges:
             left.append(e.left)
             right.append(e.right)
             parent.append(e.parent)
-            child.append(e.child)
-        return left, right, parent, child
+        return (left, right, parent), mismatches
 
 

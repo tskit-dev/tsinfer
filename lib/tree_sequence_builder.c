@@ -150,12 +150,14 @@ tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
 }
 
 int
-tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
-        double time, size_t num_edges, edge_t *edges, size_t num_site_mutations,
-        site_mutation_t *site_mutations)
+tree_sequence_builder_update(tree_sequence_builder_t *self,
+        size_t num_nodes, double time,
+        size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
+        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node)
 {
     int ret = 0;
     size_t j;
+    edge_t *e;
 
     assert(self->num_nodes + num_nodes < self->max_nodes);
     for (j = 0; j < num_nodes; j++) {
@@ -166,21 +168,31 @@ tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
      * way around to get closer to sortedness */
     for (j = 0; j < num_edges; j++) {
         assert(self->num_edges < self->max_edges);
-        self->edges[self->num_edges] = edges[num_edges - j - 1];
+        e = self->edges + self->num_edges;
+        e->left = left[j];
+        e->right = right[j];
+        e->parent = parent[j];
+        e->child = child[j];
+        assert(e->left < e->right);
+        assert(e->parent != NULL_NODE);
+        assert(e->child != NULL_NODE);
+        assert(e->child < (node_id_t) self->num_nodes);
+        assert(e->parent < (node_id_t) self->num_nodes);
         self->num_edges++;
     }
     ret = tree_sequence_builder_index_edges(self);
     if (ret != 0) {
         goto out;
     }
-    for (j = 0; j < num_site_mutations; j++) {
-        assert(site_mutations[j].node < (node_id_t) self->num_nodes);
-        assert(site_mutations[j].node >= 0);
-        assert(site_mutations[j].site < self->num_sites);
-        self->mutations[site_mutations[j].site] = site_mutations[j].node;
+    for (j = 0; j < num_mutations; j++) {
+        assert(node[j] < (node_id_t) self->num_nodes);
+        assert(node[j] >= 0);
+        assert(site[j] < self->num_sites);
+        assert(self->mutations[site[j]] == NULL_NODE);
+        self->mutations[site[j]] = node[j];
     }
-    self->num_mutations += num_site_mutations;
-    /* tree_sequence_builder_print_state(self, stdout); */
+    self->num_mutations += num_mutations;
+    tree_sequence_builder_print_state(self, stdout);
 out:
     return ret;
 }

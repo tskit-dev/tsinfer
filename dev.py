@@ -1607,14 +1607,14 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         # Skip this
         return
     num_sites = ts.num_sites
+    num_samples = ts.sample_size
     samples = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         samples[:, variant.index] = variant.genotypes
     positions = np.array([site.position for site in ts.sites()])
 
-
     recombination_rate = 1e-8
-    if True:
+    if False:
         ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
         ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
         matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
@@ -1628,10 +1628,6 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     num_ancestors = 1
     for _, ancestor_focal_sites in frequency_classes:
         num_ancestors += len(ancestor_focal_sites)
-    # For checking the output.
-    A = np.zeros((num_ancestors, num_sites), dtype=np.int8)
-    ancestor_id_map = {0: 0}
-    ancestor_id = 1
 
     print("num sites=  ", num_sites, "num_ancestors = ", num_ancestors)
 
@@ -1639,6 +1635,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     root_time = frequency_classes[0][0] + 1
     ts_builder.update(1, root_time, [], [], [], [], [], [])
     a = np.zeros(num_sites, dtype=np.int8)
+    A = np.zeros((num_ancestors, num_sites), dtype=np.int8)
 
     for age, ancestor_focal_sites in frequency_classes:
         e_left = []
@@ -1650,50 +1647,66 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         node = ts_builder.num_nodes
         for focal_sites in ancestor_focal_sites:
             ancestor_builder.make_ancestor(focal_sites, a)
-            A[ancestor_id] = a
-            ancestor_id += 1
-            ancestor_id_map[ancestor_id] = node
+            A[node] = a
             for s in focal_sites:
                 assert a[s] == 1
                 a[s] = 0
                 s_site.append(s)
                 s_node.append(node)
-            # When we update this API we should pass in arrays for left, right and
-
-            # parent. There's no point in passing child, since we already know what
-            # it is. We don't need to pass the 'node' parameter here then.
-            edges = matcher.find_path(node, a)
-            for left, right, parent, child in zip(*edges):
-                e_left.append(left)
-                e_right.append(right)
-                e_parent.append(parent)
-                e_child.append(child)
+            (left, right, parent), mismatches = matcher.find_path(a)
+            assert len(mismatches) == 0
+            e_left.extend(left)
+            e_right.extend(right)
+            e_parent.extend(parent)
+            e_child.extend([node for _ in parent])
             node += 1
         ts_builder.update(
             len(ancestor_focal_sites), age,
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
 
-    ts = tsinfer.finalise(ts_builder)
+    # Check the ancestors are encoded OK.
+    ts_new = tsinfer.finalise(ts_builder)
+    for v in ts_new.variants():
+        # print(v.genotypes)
+        # print(A[:, v.index])
+        assert np.array_equal(v.genotypes, A[:, v.index])
 
-    B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
-    for v in ts.variants():
-        B[:, v.index] = v.genotypes
 
-    for ancestor_id in range(num_ancestors):
-        node_id = ancestor_id
-        # node_id = ancestor_id_map[ancestor_id]
-        # print(ancestor_id, "->",  node_id)
-        # print(A[ancestor_id])
-        # print(B[node_id])
-        if not np.array_equal(A[ancestor_id], B[node_id]):
-            print("ERROR")
-        assert np.array_equal(A[ancestor_id], B[node_id])
-    # assert np.array_equal(A, B)
-    # print(A)
-    # print(B)
-    # print("match_time = ", match_time)
+    e_left = []
+    e_right = []
+    e_parent = []
+    e_child = []
+    s_site = []
+    s_node = []
+    # Now match the samples.
+    sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
+    for j in range(num_samples):
+        (left, right, parent), mismatches = matcher.find_path(samples[j])
+        for site in mismatches:
+            s_site.append(site)
+            s_node.append(sample_ids[j])
+        e_left.extend(left)
+        e_right.extend(right)
+        e_parent.extend(parent)
+        e_child.extend([sample_ids[j] for _ in parent])
+    ts_builder.update(
+        num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
+    ts_new = tsinfer.finalise(ts_builder, sample_ids)
 
+    # for site in ts_new.sites():
+    #     print(site)
+
+    assert ts_new.num_sites == ts.num_sites
+    for site in ts_new.sites():
+        assert len(site.mutations) == 1
+    for v1, v2 in zip(ts.variants(), ts_new.variants()):
+        # print(v1.index)
+        # print("\t", v1.genotypes)
+        # print("\t", v2.genotypes)
+        # if not np.array_equal(v1.genotypes, v2.genotypes):
+        #     print("MISMATCH")
+        assert np.array_equal(v1.genotypes, v2.genotypes)
 
 
 if __name__ == "__main__":
@@ -1744,7 +1757,7 @@ if __name__ == "__main__":
 
     # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
-    # new_copy_process_dev(20, 10 * 10**4, 1, False)
+    # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
@@ -1753,5 +1766,5 @@ if __name__ == "__main__":
     #     print()
     for j in range(1, 10000):
         print(j)
-        new_copy_process_dev(100, 500 * 10**4, j, True, False)
+        new_copy_process_dev(10, 50* 10**4, j, True, False)
 

@@ -145,7 +145,6 @@ typedef struct {
 typedef struct {
     tree_sequence_builder_t *tree_sequence_builder;
     double recombination_rate;
-    size_t max_output_edges;
     size_t num_nodes;
     size_t num_sites;
     size_t max_nodes;
@@ -155,8 +154,14 @@ typedef struct {
     likelihood_list_t **traceback;
     object_heap_t avl_node_heap;
     block_allocator_t likelihood_list_allocator;
-    edge_t *output_edge_buffer;
     size_t total_traceback_size;
+    struct {
+        site_id_t *left;
+        site_id_t *right;
+        node_id_t *parent;
+        size_t size;
+        size_t max_size;
+    } output;
 } ancestor_matcher_t;
 
 /* New API */
@@ -172,7 +177,8 @@ int ancestor_matcher_alloc(ancestor_matcher_t *self,
         double recombination_rate);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
-        node_id_t child, size_t *num_outout_edges, edge_t **output_edges);
+        size_t *num_output_edges, site_id_t **left_output, site_id_t **right_output,
+        node_id_t **parent_output, size_t *num_mismatches, site_id_t **mismatches);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 
@@ -180,9 +186,10 @@ int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         size_t num_sites, size_t max_nodes, size_t max_edges);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
-int tree_sequence_builder_update(tree_sequence_builder_t *self, size_t num_nodes,
-        double time, size_t num_edges, edge_t *edges, size_t num_site_mutations,
-        site_mutation_t *site_mutations);
+int tree_sequence_builder_update(tree_sequence_builder_t *self,
+        size_t num_nodes, double time,
+        size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
+        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node);
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
