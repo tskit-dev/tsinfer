@@ -64,39 +64,6 @@ typedef struct {
 
 typedef struct {
     size_t num_sites;
-    size_t num_ancestors;
-    size_t total_segments;
-    size_t max_site_segments;
-    double mean_site_segments;
-    size_t total_memory;
-    site_state_t *sites;
-    struct {
-        /* TODO add start_site and end_site to improve get_ancestor performance. */
-        site_id_t **focal_sites;
-        uint32_t *num_focal_sites;
-        uint32_t *age;
-        uint32_t *num_older_ancestors;
-        site_id_t *focal_sites_mem;
-    } ancestors;
-    size_t num_epochs;
-    struct {
-        ancestor_id_t *first_ancestor;
-        size_t *num_ancestors;
-    } epochs;
-} ancestor_store_t;
-
-typedef struct {
-    size_t num_sites;
-    size_t num_ancestors;
-    size_t total_segments;
-    size_t segment_block_size;
-    node_segment_list_node_t **sites_head;
-    node_segment_list_node_t **sites_tail;
-    block_allocator_t allocator;
-} ancestor_store_builder_t;
-
-typedef struct {
-    size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
     size_t num_frequency_classes;
@@ -105,20 +72,6 @@ typedef struct {
     site_t **sorted_sites;
     frequency_class_t *frequency_classes;
 } ancestor_builder_t;
-
-typedef struct {
-    site_id_t index;
-    site_id_t current_position;
-    allele_t state;
-} permutation_sort_t;
-
-typedef struct {
-    size_t num_sites;
-    size_t num_ancestors;
-    allele_t *ancestors;
-    site_id_t *permutation;
-    permutation_sort_t *sort_buffer;
-} ancestor_sorter_t;
 
 typedef struct _mutation_list_node_t {
     ancestor_id_t node;
@@ -205,38 +158,6 @@ typedef struct {
     edge_t *output_edge_buffer;
     size_t total_traceback_size;
 } ancestor_matcher_t;
-
-/* Deprecated */
-
-int ancestor_store_builder_alloc(ancestor_store_builder_t *self, size_t num_sites,
-        size_t segment_block_size);
-int ancestor_store_builder_free(ancestor_store_builder_t *self);
-int ancestor_store_builder_print_state(ancestor_store_builder_t *self, FILE *out);
-int ancestor_store_builder_add(ancestor_store_builder_t *self, allele_t *ancestor);
-int ancestor_store_builder_dump(ancestor_store_builder_t *self,
-        site_id_t *site, ancestor_id_t *start, ancestor_id_t *end);
-int ancestor_store_alloc(ancestor_store_t *self,
-        size_t num_sites, double *position,
-        size_t num_ancestors, uint32_t *ancestor_age,
-        size_t num_focal_sites, ancestor_id_t *focal_site_ancestor, site_id_t *focal_site,
-        size_t num_segments, site_id_t *site, ancestor_id_t *start, ancestor_id_t *end);
-int ancestor_store_free(ancestor_store_t *self);
-int ancestor_store_print_state(ancestor_store_t *self, FILE *out);
-int ancestor_store_init_build(ancestor_store_t *self, size_t segment_block_size);
-int ancestor_store_get_state(ancestor_store_t *self, site_id_t site_id,
-        ancestor_id_t ancestor_id, allele_t *state);
-int ancestor_store_get_ancestor(ancestor_store_t *self, ancestor_id_t ancestor_id,
-        allele_t *ancestor, site_id_t *start_site, site_id_t *end_site,
-        size_t *num_older_ancestors, size_t *num_focal_sites, site_id_t **focal_sites);
-int ancestor_store_get_epoch_ancestors(ancestor_store_t *self, int epoch,
-        ancestor_id_t *epoch_ancestors, size_t *num_epoch_ancestors);
-
-int ancestor_sorter_alloc(ancestor_sorter_t *self, size_t num_ancestors,
-        size_t num_sites, allele_t *ancestors, site_id_t *permutation);
-int ancestor_sorter_free(ancestor_sorter_t *self);
-int ancestor_sorter_print_state(ancestor_sorter_t *self, FILE *out);
-int ancestor_sorter_sort(ancestor_sorter_t *self);
-
 
 /* New API */
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
