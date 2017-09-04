@@ -2100,25 +2100,25 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     if ts.num_sites < 2:
         # Skip this
         return
-    # print("num sites=  ", ts.num_sites)
+    print("num sites=  ", ts.num_sites)
     S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
     for variant in ts.variants():
         S[:, variant.index] = variant.genotypes
     # print(S)
 
     site_position = np.array([site.position for site in ts.sites()])
-    store = tsinfer.build_ancestors(S, site_position, method="C")
+    store = tsinfer.build_ancestors(S, site_position, method="C", show_progress=False)
     h = np.zeros(store.num_sites, dtype=np.int8)
     p = np.zeros(store.num_sites, dtype=np.int32)
     L = store.num_sites
 
     # print("n = ", S.shape[0], "num_sites = ", store.num_sites, "num_ancestors = ",
     #         store.num_ancestors)
-    tsb = TreeSequenceBuilder(
-            store.num_sites, replace_recombinations=replace_recombinations,
-            break_polytomies=break_polytomies)
-    # tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
-    #         1000 * store.num_ancestors)
+    # tsb = TreeSequenceBuilder(
+    #         store.num_sites, replace_recombinations=replace_recombinations,
+    #         break_polytomies=break_polytomies)
+    tsb = _tsinfer.TreeSequenceBuilder(store.num_sites, store.num_ancestors + 1,
+            1000 * store.num_ancestors)
 
     tsb.update(1, store.num_epochs - 1, [], [], [], [], [], [])
     ancestor_id_map = {0:0}
@@ -2165,11 +2165,11 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
         update_time += time.clock() - before
-        # print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
-        #         "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
-        #             epoch, num_epoch_ancestors, node, store.num_ancestors,
-        #             tsb.mean_traceback_size, tsb.num_edges,
-        #             find_time, update_time, num_epoch_ancestors / find_time))
+        print("EPOCH: {} {} curr={} total={} tbsz={:.2f} nedg={} "
+                "find={:.2f} update={:.2f} rate={:.2f} find/s".format(
+                    epoch, num_epoch_ancestors, node, store.num_ancestors,
+                    tsb.mean_traceback_size, tsb.num_edges,
+                    find_time, update_time, num_epoch_ancestors / find_time))
         # tsb.print_state()
 
 
@@ -2278,17 +2278,17 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(10000, 1000 * 10**4, 1)
+    new_copy_process_dev(10000, 10000 * 10**4, 1)
 
     # new_copy_process_dev(20, 2 * 20 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 10 * 10**4, 1, False)
     # for x in range(1, 20):
-    #     new_copy_process_dev(20, x * 20 * 10**4, 74, False, False)
+    #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
-    #     new_copy_process_dev(20, x * 20 * 10**4, 74, True, False)
+    #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    for j in range(1, 10000):
-        print(j)
-        new_copy_process_dev(50, 50 * 10**4, j, True, False)
+    # for j in range(1, 10000):
+    #     print(j)
+    #     new_copy_process_dev(50, 50 * 10**4, j, True, False)
