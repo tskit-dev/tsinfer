@@ -36,22 +36,17 @@ typedef struct {
     ancestor_store_builder_t *store_builder;
 } AncestorStoreBuilder;
 
-typedef struct {
-    PyObject_HEAD
-    ancestor_matcher_t *matcher;
-    AncestorStore *store;
-} AncestorMatcher;
-
-typedef struct {
-    PyObject_HEAD
-    traceback_t *traceback;
-} Traceback;
 
 typedef struct {
     PyObject_HEAD
     tree_sequence_builder_t *tree_sequence_builder;
 } TreeSequenceBuilder;
 
+typedef struct {
+    PyObject_HEAD
+    ancestor_matcher_t *ancestor_matcher;
+    TreeSequenceBuilder *tree_sequence_builder;
+} AncestorMatcher;
 
 /* Deprecated */
 typedef struct {
@@ -1322,376 +1317,6 @@ static PyTypeObject AncestorStoreType = {
     (initproc)AncestorStore_init,      /* tp_init */
 };
 
-
-/*===================================================================
- * Traceback
- *===================================================================
- */
-
-static int
-Traceback_check_state(Traceback *self)
-{
-    int ret = 0;
-    if (self->traceback == NULL) {
-        PyErr_SetString(PyExc_SystemError, "Traceback not initialised");
-        ret = -1;
-    }
-    return ret;
-}
-
-static void
-Traceback_dealloc(Traceback* self)
-{
-    if (self->traceback != NULL) {
-        traceback_free(self->traceback);
-        PyMem_Free(self->traceback);
-        self->traceback = NULL;
-    }
-    Py_TYPE(self)->tp_free((PyObject*)self);
-}
-
-static int
-Traceback_init(Traceback *self, PyObject *args, PyObject *kwds)
-{
-    int ret = -1;
-    int err;
-    static char *kwlist[] = {"num_sites", "segment_block_size", NULL};
-    unsigned long segment_block_size = 1024 * 1024;
-    unsigned long num_sites;
-
-    self->traceback = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "k|k", kwlist,
-                &num_sites, &segment_block_size)) {
-        goto out;
-    }
-    self->traceback = PyMem_Malloc(sizeof(traceback_t));
-    if (self->traceback == NULL) {
-        PyErr_NoMemory();
-        goto out;
-    }
-    err = traceback_alloc(self->traceback, num_sites, segment_block_size);
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = 0;
-out:
-    return ret;
-}
-
-static PyObject *
-Traceback_reset(Traceback *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    PyObject *ret = NULL;
-    static char *kwlist[] = {NULL};
-
-    if (Traceback_check_state(self) != 0) {
-        goto out;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "", kwlist)) {
-        goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = traceback_reset(self->traceback);
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("");
-out:
-    return ret;
-}
-
-
-static PyObject *
-Traceback_get_total_memory(Traceback *self, void *closure)
-{
-    PyObject *ret = NULL;
-
-    if (Traceback_check_state(self) != 0) {
-        goto out;
-    }
-    ret = Py_BuildValue("k", (unsigned long) self->traceback->allocator.total_size);
-out:
-    return ret;
-}
-
-static PyMemberDef Traceback_members[] = {
-    {NULL}  /* Sentinel */
-};
-
-static PyGetSetDef Traceback_getsetters[] = {
-    {"total_memory", (getter) Traceback_get_total_memory, NULL,
-        "The total amount of memory used by this traceback."},
-    {NULL}  /* Sentinel */
-};
-
-static PyMethodDef Traceback_methods[] = {
-    {"reset", (PyCFunction) Traceback_reset, METH_VARARGS|METH_KEYWORDS,
-        "Resets the traceback, making it ready for reuse.."},
-    {NULL}  /* Sentinel */
-};
-
-static PyTypeObject TracebackType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "_tsinfer.Traceback",             /* tp_name */
-    sizeof(Traceback),             /* tp_basicsize */
-    0,                         /* tp_itemsize */
-    (destructor)Traceback_dealloc, /* tp_dealloc */
-    0,                         /* tp_print */
-    0,                         /* tp_getattr */
-    0,                         /* tp_setattr */
-    0,                         /* tp_reserved */
-    0,                         /* tp_repr */
-    0,                         /* tp_as_number */
-    0,                         /* tp_as_sequence */
-    0,                         /* tp_as_mapping */
-    0,                         /* tp_hash  */
-    0,                         /* tp_call */
-    0,                         /* tp_str */
-    0,                         /* tp_getattro */
-    0,                         /* tp_setattro */
-    0,                         /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,        /* tp_flags */
-    "Traceback objects",           /* tp_doc */
-    0,                     /* tp_traverse */
-    0,                     /* tp_clear */
-    0,                     /* tp_richcompare */
-    0,                     /* tp_weaklistoffset */
-    0,                     /* tp_iter */
-    0,                     /* tp_iternext */
-    Traceback_methods,             /* tp_methods */
-    Traceback_members,             /* tp_members */
-    Traceback_getsetters,          /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    (initproc)Traceback_init,      /* tp_init */
-};
-
-
-/*===================================================================
- * AncestorMatcher
- *===================================================================
- */
-
-static int
-AncestorMatcher_check_state(AncestorMatcher *self)
-{
-    int ret = 0;
-    if (self->matcher == NULL) {
-        PyErr_SetString(PyExc_SystemError, "AncestorMatcher not initialised");
-        ret = -1;
-    }
-    return ret;
-}
-
-static void
-AncestorMatcher_dealloc(AncestorMatcher* self)
-{
-    if (self->matcher != NULL) {
-        ancestor_matcher_free(self->matcher);
-        PyMem_Free(self->matcher);
-        self->matcher = NULL;
-    }
-    Py_XDECREF(self->store);
-    Py_TYPE(self)->tp_free((PyObject*)self);
-}
-
-static int
-AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
-{
-    int ret = -1;
-    int err;
-    static char *kwlist[] = {"store", "recombination_rate", NULL};
-    AncestorStore *store = NULL;
-    double recombination_rate;
-
-    self->matcher = NULL;
-    self->store = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d", kwlist,
-                &AncestorStoreType, &store, &recombination_rate)) {
-        goto out;
-    }
-    self->store = store;
-    Py_INCREF(self->store);
-    if (AncestorStore_check_state(self->store) != 0) {
-        goto out;
-    }
-    self->matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
-    if (self->matcher == NULL) {
-        PyErr_NoMemory();
-        goto out;
-    }
-    err = ancestor_matcher_alloc(self->matcher, self->store->store, recombination_rate);
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = 0;
-out:
-    return ret;
-}
-
-static PyObject *
-AncestorMatcher_best_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    PyObject *ret = NULL;
-    static char *kwlist[] = {"num_ancestors", "haplotype", "start_site", "end_site",
-        "focal_sites", "error_rate", "traceback", NULL};
-    PyObject *haplotype = NULL;
-    PyArrayObject *haplotype_array = NULL;
-    PyObject *focal_sites = NULL;
-    PyArrayObject *focal_sites_array = NULL;
-    Traceback *traceback = NULL;
-    double error_rate;
-    unsigned long num_ancestors, start_site, end_site;
-    size_t num_sites, num_focal_sites;
-    npy_intp *shape;
-
-    if (AncestorMatcher_check_state(self) != 0) {
-        goto out;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOkkOdO!", kwlist,
-            &num_ancestors, &haplotype, &start_site, &end_site, &focal_sites,
-            &error_rate, &TracebackType, &traceback)) {
-        goto out;
-    }
-    Py_INCREF(traceback);
-    num_sites = self->matcher->store->num_sites;
-    /* haplotype */
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (haplotype_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(haplotype_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input haplotype wrong size");
-        goto out;
-    }
-    /* focal_sites */
-    focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_UINT32,
-            NPY_ARRAY_IN_ARRAY);
-    if (focal_sites_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(focal_sites_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(focal_sites_array);
-    num_focal_sites = shape[0];
-    if (num_focal_sites > num_sites) {
-        PyErr_SetString(PyExc_ValueError, "len(num_focal_sites) must be <= num_sites");
-        goto out;
-    }
-    /* start and end */
-    if (start_site >= end_site) {
-        PyErr_SetString(PyExc_ValueError, "start must be < end");
-        goto out;
-    }
-    if (end_site > num_sites) {
-        PyErr_SetString(PyExc_ValueError, "end must be <= num_sites");
-        goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = ancestor_matcher_best_path(self->matcher, num_ancestors,
-        (int8_t *) PyArray_DATA(haplotype_array), start_site, end_site,
-        num_focal_sites, (uint32_t *) PyArray_DATA(focal_sites_array),
-        error_rate, traceback->traceback);
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("");
-out:
-    Py_XDECREF(haplotype_array);
-    Py_XDECREF(focal_sites_array);
-    Py_XDECREF(traceback);
-    return ret;
-}
-
-static PyObject *
-AncestorMatcher_get_mean_likelihood_segments(AncestorMatcher *self, void *closure)
-{
-    PyObject *ret = NULL;
-
-    if (AncestorMatcher_check_state(self) != 0) {
-        goto out;
-    }
-    ret = Py_BuildValue("d", self->matcher->mean_likelihood_segments);
-out:
-    return ret;
-}
-
-static PyMemberDef AncestorMatcher_members[] = {
-    {NULL}  /* Sentinel */
-
-};
-
-static PyGetSetDef AncestorMatcher_getsetters[] = {
-    {"mean_likelihood_segments", (getter) AncestorMatcher_get_mean_likelihood_segments,
-        NULL, "The mean number of likelihood segments in the last match performed."},
-    {NULL}  /* Sentinel */
-};
-
-static PyMethodDef AncestorMatcher_methods[] = {
-    {"best_path", (PyCFunction) AncestorMatcher_best_path,
-        METH_VARARGS|METH_KEYWORDS,
-        "Fills the specified numpy array with the best path through the ancestors."},
-    {NULL}  /* Sentinel */
-};
-
-static PyTypeObject AncestorMatcherType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "_tsinfer.AncestorMatcher",             /* tp_name */
-    sizeof(AncestorMatcher),             /* tp_basicsize */
-    0,                         /* tp_itemsize */
-    (destructor)AncestorMatcher_dealloc, /* tp_dealloc */
-    0,                         /* tp_print */
-    0,                         /* tp_getattr */
-    0,                         /* tp_setattr */
-    0,                         /* tp_reserved */
-    0,                         /* tp_repr */
-    0,                         /* tp_as_number */
-    0,                         /* tp_as_sequence */
-    0,                         /* tp_as_mapping */
-    0,                         /* tp_hash  */
-    0,                         /* tp_call */
-    0,                         /* tp_str */
-    0,                         /* tp_getattro */
-    0,                         /* tp_setattro */
-    0,                         /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,        /* tp_flags */
-    "AncestorMatcher objects",           /* tp_doc */
-    0,                     /* tp_traverse */
-    0,                     /* tp_clear */
-    0,                     /* tp_richcompare */
-    0,                     /* tp_weaklistoffset */
-    0,                     /* tp_iter */
-    0,                     /* tp_iternext */
-    AncestorMatcher_methods,             /* tp_methods */
-    AncestorMatcher_members,             /* tp_members */
-    AncestorMatcher_getsetters,          /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    (initproc)AncestorMatcher_init,      /* tp_init */
-};
-
 /*===================================================================
  * TreeSequenceBuilder
  *===================================================================
@@ -1911,78 +1536,6 @@ out:
     Py_XDECREF(child_array);
     Py_XDECREF(site_array);
     Py_XDECREF(node_array);
-    return ret;
-}
-
-static PyObject *
-TreeSequenceBuilder_find_path(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    PyObject *ret = NULL;
-    static char *kwlist[] = {"node", "haplotype", NULL};
-    int node;
-    PyObject *haplotype = NULL;
-    PyArrayObject *haplotype_array = NULL;
-    npy_intp *shape;
-    size_t j, num_output_edges;
-    edge_t *output_edges;
-    PyArrayObject *left = NULL;
-    PyArrayObject *right = NULL;
-    PyArrayObject *parent = NULL;
-    PyArrayObject *child = NULL;
-    npy_intp dims[1];
-
-    if (TreeSequenceBuilder_check_state(self) != 0) {
-        goto out;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iO", kwlist, &node, &haplotype)) {
-        goto out;
-    }
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (haplotype_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(haplotype_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != self->tree_sequence_builder->num_sites) {
-        PyErr_SetString(PyExc_ValueError, "Incorrect size for input haplotype.");
-        goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_find_path(self->tree_sequence_builder,
-            (allele_t *) PyArray_DATA(haplotype_array), node,
-            &num_output_edges, &output_edges);
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    dims[0] = num_output_edges;
-    left = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
-    right = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
-    parent = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
-    child = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
-    if (left == NULL || right == NULL || parent == NULL || child == NULL) {
-        goto out;
-    }
-    for (j = 0; j < num_output_edges; j++) {
-        ((site_id_t *) PyArray_DATA(left))[j] = output_edges[j].left;
-        ((site_id_t *) PyArray_DATA(right))[j] = output_edges[j].right;
-        ((node_id_t *) PyArray_DATA(parent))[j] = output_edges[j].parent;
-        ((node_id_t *) PyArray_DATA(child))[j] = output_edges[j].child;
-    }
-
-    ret = Py_BuildValue("OOOO", left, right, parent, child);
-out:
-    Py_XDECREF(haplotype_array);
-    Py_XDECREF(left);
-    Py_XDECREF(right);
-    Py_XDECREF(parent);
-    Py_XDECREF(child);
     return ret;
 }
 
@@ -2309,21 +1862,6 @@ TreeSequenceBuilder_get_num_mutations(TreeSequenceBuilder *self, void *closure)
 out:
     return ret;
 }
-
-static PyObject *
-TreeSequenceBuilder_get_mean_traceback_size(TreeSequenceBuilder *self, void *closure)
-{
-    PyObject *ret = NULL;
-
-    if (TreeSequenceBuilder_check_state(self) != 0) {
-        goto out;
-    }
-    ret = Py_BuildValue("d", tree_sequence_builder_get_mean_traceback_size(
-                self->tree_sequence_builder));
-out:
-    return ret;
-}
-
 static PyMemberDef TreeSequenceBuilder_members[] = {
     {NULL}  /* Sentinel */
 
@@ -2338,8 +1876,6 @@ static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
         "The total number of sites."},
     {"num_mutations", (getter) TreeSequenceBuilder_get_num_mutations, NULL,
         "The total number of mutations."},
-    {"mean_traceback_size", (getter) TreeSequenceBuilder_get_mean_traceback_size,
-        NULL, "The mean size of the traceback per site."},
     {NULL}  /* Sentinel */
 };
 
@@ -2347,9 +1883,6 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
     {"update", (PyCFunction) TreeSequenceBuilder_update,
         METH_VARARGS|METH_KEYWORDS,
         "Updates the builder with the specified copy results."},
-    {"find_path", (PyCFunction) TreeSequenceBuilder_find_path,
-        METH_VARARGS|METH_KEYWORDS,
-        "Finds the maximum likelihood path through the existing ancestors."},
     {"dump_nodes", (PyCFunction) TreeSequenceBuilder_dump_nodes,
         METH_VARARGS|METH_KEYWORDS,
         "Dumps node data into numpy arrays."},
@@ -2401,6 +1934,215 @@ static PyTypeObject TreeSequenceBuilderType = {
     (initproc)TreeSequenceBuilder_init,      /* tp_init */
 };
 
+
+/*===================================================================
+ * AncestorMatcher
+ *===================================================================
+ */
+
+static int
+AncestorMatcher_check_state(AncestorMatcher *self)
+{
+    int ret = 0;
+    if (self->ancestor_matcher == NULL) {
+        PyErr_SetString(PyExc_SystemError, "AncestorMatcher not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+static void
+AncestorMatcher_dealloc(AncestorMatcher* self)
+{
+    if (self->ancestor_matcher != NULL) {
+        ancestor_matcher_free(self->ancestor_matcher);
+        PyMem_Free(self->ancestor_matcher);
+        self->ancestor_matcher = NULL;
+    }
+    Py_XDECREF(self->tree_sequence_builder);
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate", NULL};
+    TreeSequenceBuilder *tree_sequence_builder = NULL;
+    double recombination_rate;
+
+    self->ancestor_matcher = NULL;
+    self->tree_sequence_builder = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d", kwlist,
+                &TreeSequenceBuilderType, &tree_sequence_builder,
+                &recombination_rate)) {
+        goto out;
+    }
+    self->tree_sequence_builder = tree_sequence_builder;
+    Py_INCREF(self->tree_sequence_builder);
+    if (TreeSequenceBuilder_check_state(self->tree_sequence_builder) != 0) {
+        goto out;
+    }
+    self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
+    if (self->ancestor_matcher == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = ancestor_matcher_alloc(self->ancestor_matcher,
+            self->tree_sequence_builder->tree_sequence_builder, recombination_rate);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    static char *kwlist[] = {"node", "haplotype", NULL};
+    int node;
+    PyObject *haplotype = NULL;
+    PyArrayObject *haplotype_array = NULL;
+    npy_intp *shape;
+    size_t j, num_output_edges;
+    edge_t *output_edges;
+    PyArrayObject *left = NULL;
+    PyArrayObject *right = NULL;
+    PyArrayObject *parent = NULL;
+    PyArrayObject *child = NULL;
+    npy_intp dims[1];
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iO", kwlist, &node, &haplotype)) {
+        goto out;
+    }
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (haplotype_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(haplotype_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(haplotype_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "Incorrect size for input haplotype.");
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_matcher_find_path(self->ancestor_matcher,
+            (allele_t *) PyArray_DATA(haplotype_array), node,
+            &num_output_edges, &output_edges);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    dims[0] = num_output_edges;
+    left = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
+    right = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_UINT32, 0);
+    parent = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
+    child = (PyArrayObject *) PyArray_EMPTY(1, dims, NPY_INT32, 0);
+    if (left == NULL || right == NULL || parent == NULL || child == NULL) {
+        goto out;
+    }
+    for (j = 0; j < num_output_edges; j++) {
+        ((site_id_t *) PyArray_DATA(left))[j] = output_edges[j].left;
+        ((site_id_t *) PyArray_DATA(right))[j] = output_edges[j].right;
+        ((node_id_t *) PyArray_DATA(parent))[j] = output_edges[j].parent;
+        ((node_id_t *) PyArray_DATA(child))[j] = output_edges[j].child;
+    }
+
+    ret = Py_BuildValue("OOOO", left, right, parent, child);
+out:
+    Py_XDECREF(haplotype_array);
+    Py_XDECREF(left);
+    Py_XDECREF(right);
+    Py_XDECREF(parent);
+    Py_XDECREF(child);
+    return ret;
+}
+
+
+static PyObject *
+AncestorMatcher_get_mean_traceback_size(AncestorMatcher *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("d", ancestor_matcher_get_mean_traceback_size(
+                self->ancestor_matcher));
+out:
+    return ret;
+}
+
+static PyMemberDef AncestorMatcher_members[] = {
+    {NULL}  /* Sentinel */
+
+};
+
+static PyGetSetDef AncestorMatcher_getsetters[] = {
+    {"mean_traceback_size", (getter) AncestorMatcher_get_mean_traceback_size,
+        NULL, "The mean size of the traceback per site."},
+    {NULL}  /* Sentinel */
+};
+
+static PyMethodDef AncestorMatcher_methods[] = {
+    {"find_path", (PyCFunction) AncestorMatcher_find_path,
+        METH_VARARGS|METH_KEYWORDS,
+        "Returns a best match path for the specified haplotype through the ancestors."},
+    {NULL}  /* Sentinel */
+};
+
+static PyTypeObject AncestorMatcherType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.AncestorMatcher",             /* tp_name */
+    sizeof(AncestorMatcher),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)AncestorMatcher_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "AncestorMatcher objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    AncestorMatcher_methods,             /* tp_methods */
+    AncestorMatcher_members,             /* tp_members */
+    AncestorMatcher_getsetters,          /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)AncestorMatcher_init,      /* tp_init */
+};
 
 /*===================================================================
  * ReferencePanel
@@ -2995,13 +2737,6 @@ init_tsinfer(void)
     }
     Py_INCREF(&AncestorMatcherType);
     PyModule_AddObject(module, "AncestorMatcher", (PyObject *) &AncestorMatcherType);
-    /* Traceback type */
-    TracebackType.tp_new = PyType_GenericNew;
-    if (PyType_Ready(&TracebackType) < 0) {
-        INITERROR;
-    }
-    Py_INCREF(&TracebackType);
-    PyModule_AddObject(module, "Traceback", (PyObject *) &TracebackType);
     /* TreeSequenceBuilder type */
     TreeSequenceBuilderType.tp_new = PyType_GenericNew;
     if (PyType_Ready(&TreeSequenceBuilderType) < 0) {

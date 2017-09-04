@@ -23,8 +23,8 @@ _tsinfer_module = Extension(
     sources=[
         "_tsinfermodule.c", d + "ls.c", d + "ancestor_matcher.c",
         d + "ancestor_store.c", d + "ancestor_builder.c", d + "object_heap.c",
-        d + "ancestor_sorter.c", d + "ancestor_store_builder.c", d + "traceback.c",
-        d + "tree_sequence_builder.c", d + "segment_list.c", d + "block_allocator.c",
+        d + "ancestor_sorter.c", d + "ancestor_store_builder.c",
+        d + "tree_sequence_builder.c", d + "block_allocator.c",
         d + "avl.c"],
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
