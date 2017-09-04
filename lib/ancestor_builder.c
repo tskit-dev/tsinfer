@@ -197,6 +197,11 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
             goto out;
         }
     }
+    /* Compute the number of ancestors */
+    self->num_ancestors = 1;
+    for (j = 0; j < self->num_frequency_classes; j++) {
+        self->num_ancestors += self->frequency_classes[j].num_ancestors;
+    }
 out:
     return ret;
 }
@@ -393,6 +398,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     fprintf(out, "Ancestor builder\n");
     fprintf(out, "num_samples = %d\n", (int) self->num_samples);
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
+    fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
     fprintf(out, "haplotypes = \n");
 
     for (j = 0; j < self->num_samples; j++) {
