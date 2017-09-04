@@ -1640,9 +1640,9 @@ if __name__ == "__main__":
     # for j in range(1, 100000):
     #     print(j)
     #     new_segments(20, 300, j)
-        # new_segments(10, 30, j, num_threads=1, method="P")
-        # test_ancestor_store(20, 30, j, method="P")
-        # test_ancestor_store(1000, 5000, j, method="C")
+    #     # new_segments(10, 30, j, num_threads=1, method="P")
+    #     # test_ancestor_store(20, 30, j, method="P")
+    #     # test_ancestor_store(1000, 5000, j, method="C")
 
     # test_ancestor_store(20, 30, 861, method="P")
 

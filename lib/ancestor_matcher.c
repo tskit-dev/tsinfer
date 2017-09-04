@@ -125,7 +125,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     size_t j;
     /* TODO fix this. */
     size_t avl_node_block_size = 8192;
-    size_t likelihood_list_block_size = 8192;
+    size_t likelihood_list_block_size = 1024 * 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->tree_sequence_builder = tree_sequence_builder;
@@ -256,20 +256,24 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id)
     int ret = 0;
     avl_node_t *a;
     node_id_t u;
-    likelihood_list_t *list_node;
+    likelihood_list_t *restrict list_node;
+    double *restrict L = self->likelihood;
+    likelihood_list_t **restrict T = self->traceback;
 
+    /* Allocate the entire list at once to save some overhead */
+    list_node = block_allocator_get(&self->likelihood_list_allocator,
+            avl_count(&self->likelihood_nodes) * sizeof(likelihood_list_t));
+    if (list_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
-        list_node = block_allocator_get(&self->likelihood_list_allocator,
-                sizeof(likelihood_list_t));
-        if (list_node == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
         list_node->node = u;
-        list_node->likelihood = self->likelihood[u];
-        list_node->next = self->traceback[site_id];
-        self->traceback[site_id] = list_node;
+        list_node->likelihood = L[u];
+        list_node->next = T[site_id];
+        T[site_id] = list_node;
+        list_node++;
     }
     self->total_traceback_size += avl_count(&self->likelihood_nodes);
 out:
