@@ -17,139 +17,186 @@ import msprime
 import _tsinfer
 
 
-def infer(samples, positions, length, recombination_rate, error_rate, method="C",
-        num_threads=1, progress=False, log_level="WARNING"):
-    # Primary entry point.
+class InferenceManager(object):
 
-    daiquiri.setup(level=log_level)
-    logger = daiquiri.getLogger()
-    num_samples, num_sites = samples.shape
-    logger.info("Staring infer for {} samples and {} sites".format(num_samples, num_sites))
+    def __init__(
+            self, samples, positions, length, recombination_rate, method="C",
+            progress=False, log_level="WARNING"):
+        self.samples = samples
+        self.num_samples = samples.shape[0]
+        self.num_sites = samples.shape[1]
+        self.positions = positions
+        assert self.positions.shape[0] == self.num_sites
+        self.length = length
+        self.recombination_rate = recombination_rate
+        # Set up logging.
+        daiquiri.setup(level=log_level)
+        self.logger = daiquiri.getLogger()
+        self.progress = progress
 
-    if method == "C":
-        ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
-        ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
-        matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
-    else:
-        ancestor_builder = AncestorBuilder(samples, positions)
-        ts_builder = TreeSequenceBuilder(num_sites)
-        matcher = AncestorMatcher()
+        self.ancestor_builder_class = AncestorBuilder
+        self.tree_sequence_builder_class = TreeSequenceBuilder
+        self.ancestor_matcher_class = AncestorMatcher
+        if method == "C":
+            self.ancestor_builder_class = _tsinfer.AncestorBuilder
+            self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
+            self.ancestor_matcher_class = _tsinfer.AncestorMatcher
+        self.ancestor_builder = None
+        self.tree_sequence_builder = None
+        self.sample_ids = None
 
-    frequency_classes = ancestor_builder.get_frequency_classes()
-    # TODO this time is out by 1 I think.
-    root_time = frequency_classes[0][0] + 1
-    ts_builder.update(1, root_time, [], [], [], [], [], [])
-    a = np.zeros(num_sites, dtype=np.int8)
-    logger.info("Copying {} ancestors".format( ancestor_builder.num_ancestors))
+    def initialise(self):
+        # This is slow, so we should figure out a way to report progress on it.
+        self.logger.info("Initialising ancestor builder for {} samples and {} sites".
+                format(self.num_samples, self.num_sites))
+        self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
+        self.num_ancestors = self.ancestor_builder.num_ancestors
+        self.tree_sequence_builder = self.tree_sequence_builder_class(
+            self.num_sites, 10**6, 10**7)
+        if self.progress:
+            total = self.num_samples + self.num_ancestors - 1
+            self.progress_monitor = tqdm.tqdm(total=total)
 
-    for age, ancestor_focal_sites in frequency_classes:
+    def process_ancestors(self):
+
+        frequency_classes = self.ancestor_builder.get_frequency_classes()
+        # TODO this time is out by 1 I think.
+        root_time = frequency_classes[0][0] + 1
+        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [])
+        a = np.zeros(self.num_sites, dtype=np.int8)
+        self.logger.info("Copying {} ancestors".format(
+            self.ancestor_builder.num_ancestors))
+        matcher = self.ancestor_matcher_class(
+            self.tree_sequence_builder, self.recombination_rate)
+
+        for age, ancestor_focal_sites in frequency_classes:
+            e_left = []
+            e_right = []
+            e_parent = []
+            e_child = []
+            s_site = []
+            s_node = []
+            child = self.tree_sequence_builder.num_nodes
+            for focal_sites in ancestor_focal_sites:
+                self.ancestor_builder.make_ancestor(focal_sites, a)
+                for s in focal_sites:
+                    assert a[s] == 1
+                    a[s] = 0
+                    s_site.append(s)
+                    s_node.append(child)
+                (left, right, parent), mismatches = matcher.find_path(a)
+                assert mismatches.shape[0] == 0
+                e_left.extend(left)
+                e_right.extend(right)
+                e_parent.extend(parent)
+                e_child.extend([child for _ in parent])
+                child += 1
+                if self.progress:
+                    self.progress_monitor.update()
+            self.tree_sequence_builder.update(
+                len(ancestor_focal_sites), age,
+                e_left, e_right, e_parent, e_child,
+                s_site, s_node)
+
+    def process_samples(self):
         e_left = []
         e_right = []
         e_parent = []
         e_child = []
         s_site = []
         s_node = []
-        child = ts_builder.num_nodes
-        for focal_sites in ancestor_focal_sites:
-            ancestor_builder.make_ancestor(focal_sites, a)
-            for s in focal_sites:
-                assert a[s] == 1
-                a[s] = 0
-                s_site.append(s)
-                s_node.append(child)
-            (left, right, parent), mismatches = matcher.find_path(a)
-            assert mismatches.shape[0] == 0
+        matcher = self.ancestor_matcher_class(
+            self.tree_sequence_builder, self.recombination_rate)
+        self.logger.info("Copying {} samples".format(self.num_samples))
+        # Now match the samples.
+        self.sample_ids = self.tree_sequence_builder.num_nodes + np.arange(
+                self.num_samples, dtype=np.int32)
+        for j in range(self.num_samples):
+            (left, right, parent), mismatches = matcher.find_path(self.samples[j])
+            for site in mismatches:
+                s_site.append(site)
+                s_node.append(self.sample_ids[j])
             e_left.extend(left)
             e_right.extend(right)
             e_parent.extend(parent)
-            e_child.extend([child for _ in parent])
-            child += 1
-        ts_builder.update(
-            len(ancestor_focal_sites), age,
-            e_left, e_right, e_parent, e_child,
-            s_site, s_node)
+            e_child.extend([self.sample_ids[j] for _ in parent])
+            if self.progress:
+                self.progress_monitor.update()
+        self.tree_sequence_builder.update(
+            self.num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
 
-    e_left = []
-    e_right = []
-    e_parent = []
-    e_child = []
-    s_site = []
-    s_node = []
-    logger.info("Copying {} num_samples".format(num_samples))
-    # Now match the samples.
-    sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
-    for j in range(num_samples):
-        (left, right, parent), mismatches = matcher.find_path(samples[j])
-        for site in mismatches:
-            s_site.append(site)
-            s_node.append(sample_ids[j])
-        e_left.extend(left)
-        e_right.extend(right)
-        e_parent.extend(parent)
-        e_child.extend([sample_ids[j] for _ in parent])
-    ts_builder.update(
-        num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
-    ts = finalise(ts_builder, sample_ids)
+    def finalise(self):
+        self.logger.info("Finalising tree sequence")
+        return self._finalise(self.sample_ids)
 
-    return ts
+    def _finalise(self, samples=None):
+        tsb = self.tree_sequence_builder
+        nodes = msprime.NodeTable()
+        flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
+        time = np.zeros(tsb.num_nodes, dtype=np.float64)
+        # Probably we shouldn't bother passing flags to dump_nodes.
+        tsb.dump_nodes(flags=flags, time=time)
+        flags[:] = 1
+        if samples is not None:
+            flags[:] = 0
+            flags[samples] = 1
+        nodes.set_columns(flags=flags, time=time)
 
-def finalise(tsb, samples=None):
-    nodes = msprime.NodeTable()
-    flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
-    time = np.zeros(tsb.num_nodes, dtype=np.float64)
-    # Probably we shouldn't bother passing flags to dump_nodes.
-    tsb.dump_nodes(flags=flags, time=time)
-    flags[:] = 1
-    if samples is not None:
-        flags[:] = 0
-        flags[samples] = 1
-    nodes.set_columns(flags=flags, time=time)
+        edgesets = msprime.EdgesetTable()
+        left = np.zeros(tsb.num_edges, dtype=np.float64)
+        right = np.zeros(tsb.num_edges, dtype=np.float64)
+        parent = np.zeros(tsb.num_edges, dtype=np.int32)
+        child = np.zeros(tsb.num_edges, dtype=np.int32)
+        tsb.dump_edges(left=left, right=right, parent=parent, child=child)
+        edgesets.set_columns(
+            left=left, right=right, parent=parent, children=child,
+            children_length=np.ones(tsb.num_edges, dtype=np.uint32))
 
-    edgesets = msprime.EdgesetTable()
-    left = np.zeros(tsb.num_edges, dtype=np.float64)
-    right = np.zeros(tsb.num_edges, dtype=np.float64)
-    parent = np.zeros(tsb.num_edges, dtype=np.int32)
-    child = np.zeros(tsb.num_edges, dtype=np.int32)
-    tsb.dump_edges(left=left, right=right, parent=parent, child=child)
-    edgesets.set_columns(
-        left=left, right=right, parent=parent, children=child,
-        children_length=np.ones(tsb.num_edges, dtype=np.uint32))
+        sites = msprime.SiteTable()
+        sites.set_columns(
+            position=np.arange(tsb.num_sites),
+            ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
+            ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
+        mutations = msprime.MutationTable()
+        site = np.zeros(tsb.num_mutations, dtype=np.int32)
+        node = np.zeros(tsb.num_mutations, dtype=np.int32)
+        derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
+        tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
+        derived_state += ord('0')
+        mutations.set_columns(
+            site=site, node=node, derived_state=derived_state,
+            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
 
-    sites = msprime.SiteTable()
-    sites.set_columns(
-        position=np.arange(tsb.num_sites),
-        ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
-        ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
-    mutations = msprime.MutationTable()
-    site = np.zeros(tsb.num_mutations, dtype=np.int32)
-    node = np.zeros(tsb.num_mutations, dtype=np.int32)
-    derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
-    tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
-    derived_state += ord('0')
-    mutations.set_columns(
-        site=site, node=node, derived_state=derived_state,
-        derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
+        msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
 
-    msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
-    # print("SORTED")
-    # print(nodes)
-    # print(edgesets)
-    # print(sites)
-    # print(mutations)
+        if samples is None:
+            samples = np.where(nodes.flags == 1)[0].astype(np.int32)
+        # print("simplify:")
+        # print(samples)
+        msprime.simplify_tables(
+            samples, nodes, edgesets, sites=sites, mutations=mutations,
+            filter_invariant_sites=False)
+        # print(nodes)
+        # print(edgesets)
+        # print(sites)
+        # print(mutations)
+        ts = msprime.load_tables(
+            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+        return ts
 
-    if samples is None:
-        samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-    # print("simplify:")
-    # print(samples)
-    msprime.simplify_tables(
-        samples, nodes, edgesets, sites=sites, mutations=mutations,
-        filter_invariant_sites=False)
-    # print(nodes)
-    # print(edgesets)
-    # print(sites)
-    # print(mutations)
-    ts = msprime.load_tables(
-        nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+
+
+def infer(samples, positions, length, recombination_rate, error_rate, method="C",
+        num_threads=1, progress=False, log_level="WARNING"):
+    # Primary entry point.
+
+    manager = InferenceManager(
+        samples, positions, length, recombination_rate,
+        method=method, progress=progress, log_level=log_level)
+    manager.initialise()
+    manager.process_ancestors()
+    manager.process_samples()
+    ts = manager.finalise()
     return ts
 
 
