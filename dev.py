@@ -1614,7 +1614,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
 
     recombination_rate = 1e-8
-    if False:
+    if True:
         ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
         ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
         matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
@@ -1753,5 +1753,5 @@ if __name__ == "__main__":
     #     print()
     for j in range(1, 10000):
         print(j)
-        new_copy_process_dev(10, 50 * 10**4, j, True, False)
+        new_copy_process_dev(100, 500 * 10**4, j, True, False)
 
