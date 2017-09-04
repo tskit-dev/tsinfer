@@ -323,7 +323,7 @@ def new_segments(n, L, seed, num_threads=10, method="C", log_level="WARNING"):
     tsp = tsinfer.infer(S, positions, L, 1e-9, 1e-200,
             num_threads=num_threads, method=method, log_level=log_level)
     new_positions = np.array([site.position for site in tsp.sites()])
-    assert np.all(new_positions == positions)
+    # assert np.all(new_positions == positions)
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -1673,40 +1673,40 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         assert np.array_equal(v.genotypes, A[:, v.index])
 
 
-#     e_left = []
-#     e_right = []
-#     e_parent = []
-#     e_child = []
-#     s_site = []
-#     s_node = []
-#     # Now match the samples.
-#     sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
-#     for j in range(num_samples):
-#         (left, right, parent), mismatches = matcher.find_path(samples[j])
-#         for site in mismatches:
-#             s_site.append(site)
-#             s_node.append(sample_ids[j])
-#         e_left.extend(left)
-#         e_right.extend(right)
-#         e_parent.extend(parent)
-#         e_child.extend([sample_ids[j] for _ in parent])
-#     ts_builder.update(
-#         num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
-#     ts_new = tsinfer.finalise(ts_builder, sample_ids)
+    e_left = []
+    e_right = []
+    e_parent = []
+    e_child = []
+    s_site = []
+    s_node = []
+    # Now match the samples.
+    sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
+    for j in range(num_samples):
+        (left, right, parent), mismatches = matcher.find_path(samples[j])
+        for site in mismatches:
+            s_site.append(site)
+            s_node.append(sample_ids[j])
+        e_left.extend(left)
+        e_right.extend(right)
+        e_parent.extend(parent)
+        e_child.extend([sample_ids[j] for _ in parent])
+    ts_builder.update(
+        num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
+    ts_new = tsinfer.finalise(ts_builder, sample_ids)
 
 #     # for site in ts_new.sites():
 #     #     print(site)
 
-#     assert ts_new.num_sites == ts.num_sites
-#     for site in ts_new.sites():
-#         assert len(site.mutations) == 1
-#     for v1, v2 in zip(ts.variants(), ts_new.variants()):
-#         # print(v1.index)
-#         # print("\t", v1.genotypes)
-#         # print("\t", v2.genotypes)
-#         # if not np.array_equal(v1.genotypes, v2.genotypes):
-#         #     print("MISMATCH")
-#         assert np.array_equal(v1.genotypes, v2.genotypes)
+    assert ts_new.num_sites == ts.num_sites
+    for site in ts_new.sites():
+        assert len(site.mutations) == 1
+    for v1, v2 in zip(ts.variants(), ts_new.variants()):
+        # print(v1.index)
+        # print("\t", v1.genotypes)
+        # print("\t", v2.genotypes)
+        # if not np.array_equal(v1.genotypes, v2.genotypes):
+        #     print("MISMATCH")
+        assert np.array_equal(v1.genotypes, v2.genotypes)
 
 
 if __name__ == "__main__":
@@ -1723,7 +1723,7 @@ if __name__ == "__main__":
 
     # test_ancestor_store(20, 30, 861, method="P")
 
-    # new_segments(20, 100, 1, num_threads=1, method="C", log_level="INFO")
+    new_segments(200, 100, 1, num_threads=1, method="C", log_level="INFO")
     # new_segments(20, 10, 1, num_threads=1, method="C")
 
     # export_samples(10, 100, 304)
@@ -1757,7 +1757,7 @@ if __name__ == "__main__":
 
     # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
-    new_copy_process_dev(20, 20 * 10**4, 1, False)
+    # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
@@ -1766,5 +1766,5 @@ if __name__ == "__main__":
     #     print()
     # for j in range(1, 10000):
     #     print(j)
-    #     new_copy_process_dev(10, 50* 10**4, j, True, False)
+    #     new_copy_process_dev(100, 50* 10**4, j, True, False)
 

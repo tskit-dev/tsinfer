@@ -40,6 +40,7 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
     root_time = frequency_classes[0][0] + 1
     ts_builder.update(1, root_time, [], [], [], [], [], [])
     a = np.zeros(num_sites, dtype=np.int8)
+    logger.info("Copying {} ancestors".format( ancestor_builder.num_ancestors))
 
     for age, ancestor_focal_sites in frequency_classes:
         e_left = []
@@ -48,30 +49,47 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
         e_child = []
         s_site = []
         s_node = []
-        node = ts_builder.num_nodes
+        child = ts_builder.num_nodes
         for focal_sites in ancestor_focal_sites:
             ancestor_builder.make_ancestor(focal_sites, a)
             for s in focal_sites:
                 assert a[s] == 1
                 a[s] = 0
                 s_site.append(s)
-                s_node.append(node)
-            # When we update this API we should pass in arrays for left, right and
-            # parent. There's no point in passing child, since we already know what
-            # it is. We don't need to pass the 'node' parameter here then.
-            edges = matcher.find_path(node, a)
-            for left, right, parent, child in zip(*edges):
-                e_left.append(left)
-                e_right.append(right)
-                e_parent.append(parent)
-                e_child.append(child)
-            node += 1
+                s_node.append(child)
+            (left, right, parent), mismatches = matcher.find_path(a)
+            assert mismatches.shape[0] == 0
+            e_left.extend(left)
+            e_right.extend(right)
+            e_parent.extend(parent)
+            e_child.extend([child for _ in parent])
+            child += 1
         ts_builder.update(
             len(ancestor_focal_sites), age,
             e_left, e_right, e_parent, e_child,
             s_site, s_node)
 
-    ts = finalise(ts_builder)
+    e_left = []
+    e_right = []
+    e_parent = []
+    e_child = []
+    s_site = []
+    s_node = []
+    logger.info("Copying {} num_samples".format(num_samples))
+    # Now match the samples.
+    sample_ids = ts_builder.num_nodes + np.arange(num_samples, dtype=np.int32)
+    for j in range(num_samples):
+        (left, right, parent), mismatches = matcher.find_path(samples[j])
+        for site in mismatches:
+            s_site.append(site)
+            s_node.append(sample_ids[j])
+        e_left.extend(left)
+        e_right.extend(right)
+        e_parent.extend(parent)
+        e_child.extend([sample_ids[j] for _ in parent])
+    ts_builder.update(
+        num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
+    ts = finalise(ts_builder, sample_ids)
 
     return ts
 

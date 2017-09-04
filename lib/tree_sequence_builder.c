@@ -192,7 +192,7 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
         self->mutations[site[j]] = node[j];
     }
     self->num_mutations += num_mutations;
-    tree_sequence_builder_print_state(self, stdout);
+    /* tree_sequence_builder_print_state(self, stdout); */
 out:
     return ret;
 }

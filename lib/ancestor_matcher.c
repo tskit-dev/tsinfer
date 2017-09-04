@@ -132,6 +132,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->recombination_rate = recombination_rate;
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
+    self->max_num_mismatches = self->num_sites; /* Ditto here */
     self->max_nodes = tree_sequence_builder->max_nodes;
     self->parent = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
@@ -139,9 +140,10 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.parent = malloc(self->output.max_size * sizeof(node_id_t));
+    self->mismatches = malloc(self->max_num_mismatches * sizeof(site_id_t));
     if (self->parent == NULL || self->likelihood == NULL || self->traceback == NULL
             || self->output.left == NULL || self->output.right == NULL
-            || self->output.parent == NULL) {
+            || self->output.parent == NULL || self->mismatches == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -176,6 +178,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->output.left);
     tsi_safe_free(self->output.right);
     tsi_safe_free(self->output.parent);
+    tsi_safe_free(self->mismatches);
     object_heap_free(&self->avl_node_heap);
     block_allocator_free(&self->likelihood_list_allocator);
     return 0;
@@ -386,7 +389,6 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
         if (ret != 0) {
             goto out;
         }
-        assert(state == 0);
     } else {
         /* Insert a new L-value for the mutation node if needed */
         if (L[mutation_node] == NULL_LIKELIHOOD) {
@@ -445,7 +447,7 @@ out:
 }
 
 static int WARN_UNUSED
-ancestor_matcher_run_traceback(ancestor_matcher_t *self)
+ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
@@ -537,6 +539,16 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self)
     self->output.left[self->output.size] = 0;
     self->output.size++;
 
+    self->num_mismatches = 0;
+    /* For now, naively go through each site. If there is no mutation and
+     * we have a state of 1, then it must be a mismatch. */
+    for (l = 0; l < (int) self->num_sites; l++) {
+        if (haplotype[l] == 1 && self->tree_sequence_builder->mutations[l] == NULL_NODE) {
+            assert(self->num_mismatches < self->max_num_mismatches);
+            self->mismatches[self->num_mismatches] = l;
+            self->num_mismatches++;
+        }
+    }
 /* out: */
     return ret;
 }
@@ -613,16 +625,16 @@ ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
             }
         }
     }
-    ret = ancestor_matcher_run_traceback(self);
+    ret = ancestor_matcher_run_traceback(self, haplotype);
     if (ret != 0) {
         goto out;
     }
-    *num_mismatches = 0;
-
     *left_output = self->output.left;
     *right_output = self->output.right;
     *parent_output = self->output.parent;
     *num_output_edges = self->output.size;
+    *num_mismatches = self->num_mismatches;
+    *mismatches = self->mismatches;
 out:
     return ret;
 }

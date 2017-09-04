@@ -155,6 +155,9 @@ typedef struct {
     object_heap_t avl_node_heap;
     block_allocator_t likelihood_list_allocator;
     size_t total_traceback_size;
+    /* Some better nameing is needed here. The 'output' struct here
+     * is really the 'path', and mismatches are also output. Perhaps
+     * we should put both into the output struct? */
     struct {
         site_id_t *left;
         site_id_t *right;
@@ -162,6 +165,9 @@ typedef struct {
         size_t size;
         size_t max_size;
     } output;
+    size_t num_mismatches;
+    size_t max_num_mismatches;
+    site_id_t *mismatches;
 } ancestor_matcher_t;
 
 /* New API */

@@ -164,7 +164,7 @@ run_generate(const char *sample_file, const char *ancestor_file,
     ancestor_builder_t ancestor_builder;
     tree_sequence_builder_t ts_builder;
     ancestor_matcher_t matcher;
-    allele_t *a;
+    allele_t *a, *sample;
     size_t age;
     int ret;
     /* Buffers for edge output */
@@ -190,7 +190,8 @@ run_generate(const char *sample_file, const char *ancestor_file,
         fatal_error("Builder alloc error.");
     }
     num_ancestors = ancestor_builder.num_ancestors;
-    ret = tree_sequence_builder_alloc(&ts_builder, num_sites, num_ancestors + 1, 65536);
+    ret = tree_sequence_builder_alloc(&ts_builder, num_sites,
+            num_samples + num_ancestors + 1, 65536);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -294,27 +295,46 @@ run_generate(const char *sample_file, const char *ancestor_file,
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
 
-    /* /1* Copy samples *1/ */
-    /* for (j = 0; j < num_samples; j++) { */
-    /*     sample = samples + j * num_sites; */
-    /*     sample_id = num_ancestors + j; */
-    /*     ret = ancestor_matcher_best_path(&matcher, num_ancestors, sample, */
-    /*             0, num_sites, 0, NULL, mutation_rate, &traceback); */
-    /*     if (ret != 0) { */
-    /*         fatal_error("match error"); */
-    /*     } */
-    /*     ret = tree_sequence_builder_update(&ts_builder, sample_id, sample, */
-    /*             0, num_sites, &traceback); */
-    /*     if (ret != 0) { */
-    /*         fatal_error("update error"); */
-    /*     } */
-    /*     ret = traceback_reset(&traceback); */
-    /*     if (ret != 0) { */
-    /*         fatal_error("traceback reset error"); */
-    /*     } */
-    /*     /1* printf("COPIED SAMPLE %d->%d\n", (int) j, (int) sample_id); *1/ */
-    /*     /1* tree_sequence_builder_print_state(&ts_builder, stdout); *1/ */
-    /* } */
+    total_edges = 0;
+    total_mutations = 0;
+    /* Copy samples */
+    for (j = 0; j < num_samples; j++) {
+        sample = haplotypes + j * num_sites;
+        child = num_ancestors + j;
+        ret = ancestor_matcher_find_path(&matcher, sample,
+                &num_edges, &left_output, &right_output, &parent_output,
+                &num_mismatches, &mismatches);
+        if (ret != 0) {
+            fatal_error("find_path error");
+        }
+        for (l = 0; l < num_mismatches; l++) {
+            node_buffer[total_mutations] = child;
+            site_buffer[total_mutations] = mismatches[l];
+            total_mutations++;
+        }
+
+        if (total_edges + num_edges > max_edges) {
+            fatal_error("out of edge buffer space\n");
+        }
+        memcpy(left_buffer + total_edges, left_output, num_edges * sizeof(site_id_t));
+        memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
+        memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
+        /* Update the child buffer */
+        for (l = 0; l < num_edges; l++) {
+            child_buffer[total_edges + l] = child;
+        }
+        total_edges += num_edges;
+
+        /* printf("COPIED SAMPLE %d->%d\n", (int) j, (int) sample_id); */
+        /* tree_sequence_builder_print_state(&ts_builder, stdout); */
+    }
+
+    ret = tree_sequence_builder_update(&ts_builder, num_samples, 0,
+            total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
+            total_mutations, site_buffer, node_buffer);
+    if (ret != 0) {
+        fatal_error("builder update");
+    }
 
     output_ts(&ts_builder);
 
