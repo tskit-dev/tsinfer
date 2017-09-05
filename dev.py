@@ -1615,7 +1615,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     positions = np.array([site.position for site in ts.sites()])
 
     ts_new = tsinfer.infer(samples, positions, ts.sequence_length, 1e-8, 0,
-            num_threads=2, progress=True, log_level="INFO")
+            num_threads=10, progress=True, log_level="DEBUG")
 
 #     # for site in ts_new.sites():
 #     #     print(site)
@@ -1639,10 +1639,10 @@ if __name__ == "__main__":
 
     # for j in range(1, 100000):
     #     print(j)
-    #     new_segments(20, 300, j, num_threads=10)
-    #     # new_segments(10, 30, j, num_threads=1, method="P")
-    #     # test_ancestor_store(20, 30, j, method="P")
-    #     # test_ancestor_store(1000, 5000, j, method="C")
+    #     new_segments(20, 300, j, num_threads=4)
+        # new_segments(10, 30, j, num_threads=1, method="P")
+        # test_ancestor_store(20, 30, j, method="P")
+        # test_ancestor_store(1000, 5000, j, method="C")
 
     # test_ancestor_store(20, 30, 861, method="P")
 
@@ -1676,9 +1676,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(1000, 10000 * 10**4, 1)
+    new_copy_process_dev(1000, 10000 * 10**4, 1)
 
-    new_copy_process_dev(2000, 100 * 10**4, 74, True, False)
+    # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):

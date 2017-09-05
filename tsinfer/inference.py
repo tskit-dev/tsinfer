@@ -5,6 +5,7 @@ TODO module docs.
 
 import collections
 import math
+import queue
 import threading
 
 # TODO remove this dependency. It's not used for anything important.
@@ -191,6 +192,19 @@ class InferenceManager(object):
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.num_sites, 10**6, 10**7)
+
+        frequency_classes = self.ancestor_builder.get_frequency_classes()
+        # TODO change the builder API here to just return the list of focal sites.
+        # We really don't care about the actual frequency here.
+        self.num_epochs = len(frequency_classes)
+        self.epoch_ancestors = [None for _ in range(self.num_epochs)]
+        self.epoch_time = [0 for _ in range(self.num_epochs)]
+        for j, fc in enumerate(frequency_classes):
+            self.epoch_time[j] = self.num_epochs - j
+            self.epoch_ancestors[j] = fc[1]
+        root_time = self.num_epochs + 1
+        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [])
+
         if self.progress:
             total = self.num_samples + self.num_ancestors - 1
             self.progress_monitor = tqdm.tqdm(total=total)
@@ -201,37 +215,126 @@ class InferenceManager(object):
             with self.progress_monitor_lock:
                 self.progress_monitor.update()
 
-    def process_ancestors(self):
+    def __find_path_ancestor(self, ancestor, node_id, focal_sites, matcher, results):
+        # TODO make this an array natively.
+        focal_sites = np.array(focal_sites)
+        results.add_mutations(focal_sites, node_id)
+        # TODO change the ancestor builder so that we don't need to do this.
+        assert np.all(ancestor[focal_sites] == 1)
+        ancestor[focal_sites] = 0
+        (left, right, parent), mismatches = matcher.find_path(ancestor)
+        assert mismatches.shape[0] == 0
+        results.add_edges(left, right, parent, node_id)
+        self.__update_progress()
 
-        frequency_classes = self.ancestor_builder.get_frequency_classes()
-        # TODO this time is out by 1 I think.
-        root_time = frequency_classes[0][0] + 1
-        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [])
+    def process_ancestors(self):
+        self.logger.info("Copying {} ancestors".format(self.num_ancestors))
+        if self.num_threads == 1:
+            self.__process_ancestors_single_threaded()
+        else:
+            self.__process_ancestors_multi_threaded()
+
+    def __process_ancestors_multi_threaded(self):
+        build_queue = queue.Queue()
+        match_queue = queue.Queue()
+        matchers = [
+            self.ancestor_matcher_class(
+                self.tree_sequence_builder, self.recombination_rate)
+            for _ in range(self.num_threads)]
+        results = [ResultBuffer() for _ in range(self.num_threads)]
+        mean_traceback_size = np.zeros(self.num_threads)
+        num_matches = np.zeros(self.num_threads)
+
+        def build_worker():
+            self.logger.info("Build worker thread starting")
+            a = np.zeros(self.num_sites, dtype=np.int8)
+            while True:
+                work = build_queue.get()
+                if work is None:
+                    break
+                node_id, focal_sites = work
+                self.ancestor_builder.make_ancestor(focal_sites, a)
+                match_queue.put((node_id, focal_sites, a.copy()))
+                build_queue.task_done()
+            build_queue.task_done()
+            self.logger.info("Ancestor build worker thread exiting")
+
+        def match_worker(thread_index):
+            self.logger.info("Ancestor match thread {} starting".format(thread_index))
+            matcher = matchers[thread_index]
+            result_buffer = results[thread_index]
+            while True:
+                work = match_queue.get()
+                if work is None:
+                    break
+                node_id, focal_sites, a = work
+                self.__find_path_ancestor(
+                        a, node_id, focal_sites, matcher, result_buffer)
+                mean_traceback_size[thread_index] += matcher.mean_traceback_size
+                num_matches[thread_index] += 1
+                match_queue.task_done()
+            match_queue.task_done()
+            self.logger.info("Ancestor match thread {} exiting".format(thread_index))
+
+        build_thread = threading.Thread(target=build_worker)
+        build_thread.start()
+        match_threads = [
+            threading.Thread(target=match_worker, args=(j,))
+            for j in range(self.num_threads)]
+        for j in range(self.num_threads):
+            match_threads[j].start()
+
+        for epoch in range(self.num_epochs):
+            time = self.epoch_time[epoch]
+            ancestor_focal_sites = self.epoch_ancestors[epoch]
+            self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+                epoch, time, len(ancestor_focal_sites)))
+            child = self.tree_sequence_builder.num_nodes
+            for focal_sites in ancestor_focal_sites:
+                build_queue.put((child, focal_sites))
+                child += 1
+            # Wait until the build_queue and match queue are both empty.
+            build_queue.join()
+            match_queue.join()
+            epoch_results = ResultBuffer.combine(results)
+            self.tree_sequence_builder.update(
+                len(ancestor_focal_sites), time,
+                epoch_results.left, epoch_results.right, epoch_results.parent,
+                epoch_results.child, epoch_results.site, epoch_results.node)
+            self.logger.debug("Finished epoch {}; mean_tb_size={:.2f} edges={}".format(
+                epoch, np.mean(mean_traceback_size), self.tree_sequence_builder.num_edges))
+            mean_traceback_size[:] = 0
+            num_matches[:] = 0
+            for j in range(self.num_threads):
+                results[j].clear()
+
+        # Signal to the workers to quit and clean up.
+        build_queue.put(None)
+        build_thread.join()
+        for j in range(self.num_threads):
+            match_queue.put(None)
+        for j in range(self.num_threads):
+            match_threads[j].join()
+
+
+    def __process_ancestors_single_threaded(self):
         a = np.zeros(self.num_sites, dtype=np.int8)
-        self.logger.info("Copying {} ancestors".format(
-            self.ancestor_builder.num_ancestors))
         matcher = self.ancestor_matcher_class(
             self.tree_sequence_builder, self.recombination_rate)
-
         results = ResultBuffer()
-        for age, ancestor_focal_sites in frequency_classes:
+
+        for epoch in range(self.num_epochs):
+            time = self.epoch_time[epoch]
+            ancestor_focal_sites = self.epoch_ancestors[epoch]
+            self.logger.info("Epoch {}; time = {}; {} ancestors to process".format(
+                epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
                 self.ancestor_builder.make_ancestor(focal_sites, a)
-                # TODO make this an array natively.
-                focal_sites = np.array(focal_sites)
-                results.add_mutations(focal_sites, child)
-                # TODO change the ancestor builder so that we don't need to do this.
-                assert np.all(a[focal_sites] == 1)
-                a[focal_sites] = 0
-                (left, right, parent), mismatches = matcher.find_path(a)
-                assert mismatches.shape[0] == 0
-                results.add_edges(left, right, parent, child)
+                self.__find_path_ancestor(a, child, focal_sites, matcher, results)
                 child += 1
-                if self.progress:
-                    self.progress_monitor.update()
             self.tree_sequence_builder.update(
-                len(ancestor_focal_sites), age,
+                len(ancestor_focal_sites), time,
                 results.left, results.right, results.parent, results.child,
                 results.site, results.node)
             results.clear()
