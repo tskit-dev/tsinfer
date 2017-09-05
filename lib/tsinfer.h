@@ -187,6 +187,7 @@ int ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
         node_id_t **parent_output, size_t *num_mismatches, site_id_t **mismatches);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
+size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         size_t num_sites, size_t max_nodes, size_t max_edges);

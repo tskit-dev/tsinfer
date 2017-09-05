@@ -1162,6 +1162,21 @@ out:
     return ret;
 }
 
+static PyObject *
+AncestorMatcher_get_total_memory(AncestorMatcher *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k", (unsigned long)
+            ancestor_matcher_get_total_memory(self->ancestor_matcher));
+out:
+    return ret;
+}
+
+
 static PyMemberDef AncestorMatcher_members[] = {
     {NULL}  /* Sentinel */
 
@@ -1170,6 +1185,8 @@ static PyMemberDef AncestorMatcher_members[] = {
 static PyGetSetDef AncestorMatcher_getsetters[] = {
     {"mean_traceback_size", (getter) AncestorMatcher_get_mean_traceback_size,
         NULL, "The mean size of the traceback per site."},
+    {"total_memory", (getter) AncestorMatcher_get_total_memory,
+        NULL, "The total amount of memory used by this matcher."},
     {NULL}  /* Sentinel */
 };
 

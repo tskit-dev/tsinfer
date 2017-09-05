@@ -1598,6 +1598,26 @@ def rle(inarray):
         yield position, position + length, value
 
 
+def large_infer(n, L, seed):
+
+    ts = msprime.simulate(
+        n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
+        Ne=10**4, random_seed=seed)
+    if ts.num_sites < 2:
+        # Skip this
+        return
+    num_sites = ts.num_sites
+    num_samples = ts.sample_size
+    print("Simulated ", num_samples, "samples", num_sites, "sites")
+    samples = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
+    for variant in ts.variants():
+        samples[:, variant.index] = variant.genotypes
+    positions = np.array([site.position for site in ts.sites()])
+
+    ts_new = tsinfer.infer(
+        samples, positions, ts.sequence_length, 1e-8, 0,
+        method="C", num_threads=10, log_level="DEBUG", progress=True)
+
 def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomies=True):
 
     ts = msprime.simulate(
@@ -1673,7 +1693,7 @@ if __name__ == "__main__":
 
     # test_ancestor_store(20, 30, 861, method="P")
 
-    # new_segments(200, 100, 1, num_threads=1, method="C", log_level="INFO")
+    # new_segments(200, 10, 1, num_threads=2, method="C", log_level="DEBUG")
     # new_segments(20, 10, 1, num_threads=1, method="C")
 
     # export_samples(10, 100, 304)
@@ -1703,9 +1723,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # new_copy_process_dev(1000, 10000 * 10**4, 1)
+    large_infer(1000, 10000 * 10**4, 1)
 
-    new_copy_process_dev(20, 20 * 10**4, 74, True, False)
+    # new_copy_process_dev(20, 20 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):

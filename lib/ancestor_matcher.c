@@ -648,3 +648,12 @@ ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self)
 {
     return self->total_traceback_size / ((double) self->num_sites);
 }
+
+size_t
+ancestor_matcher_get_total_memory(ancestor_matcher_t *self)
+{
+    size_t total = self->likelihood_list_allocator.total_size;
+    /* TODO add contributions from other objects */
+
+    return total;
+}

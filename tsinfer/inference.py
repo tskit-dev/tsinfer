@@ -302,8 +302,13 @@ class InferenceManager(object):
                 epoch_results.left, epoch_results.right, epoch_results.parent,
                 epoch_results.child, epoch_results.site, epoch_results.node)
             mean_traceback_size /= num_matches
-            self.logger.debug("Finished epoch {}; mean_tb_size={:.2f} edges={}".format(
-                epoch, np.mean(mean_traceback_size), self.tree_sequence_builder.num_edges))
+            mean_memory = np.mean([matcher.total_memory for matcher in matchers])
+            self.logger.debug(
+                "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
+                "mean_matcher_mem={}".format(
+                    epoch, np.mean(mean_traceback_size),
+                    self.tree_sequence_builder.num_edges,
+                    humanize.naturalsize(mean_memory, binary=True)))
             mean_traceback_size[:] = 0
             num_matches[:] = 0
             for j in range(self.num_threads):
