@@ -301,6 +301,7 @@ class InferenceManager(object):
                 len(ancestor_focal_sites), time,
                 epoch_results.left, epoch_results.right, epoch_results.parent,
                 epoch_results.child, epoch_results.site, epoch_results.node)
+            mean_traceback_size /= num_matches
             self.logger.debug("Finished epoch {}; mean_tb_size={:.2f} edges={}".format(
                 epoch, np.mean(mean_traceback_size), self.tree_sequence_builder.num_edges))
             mean_traceback_size[:] = 0
