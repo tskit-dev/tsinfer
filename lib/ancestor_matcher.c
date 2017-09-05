@@ -123,9 +123,9 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
 {
     int ret = 0;
     size_t j;
-    /* TODO fix this. */
+    /* TODO make these input parameters. */
     size_t avl_node_block_size = 8192;
-    size_t likelihood_list_block_size = 1024 * 1024 * 1024;
+    size_t likelihood_list_block_size = 64 * 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->tree_sequence_builder = tree_sequence_builder;

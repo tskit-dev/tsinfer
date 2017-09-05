@@ -4,6 +4,8 @@ TODO module docs.
 """
 
 import collections
+import math
+import threading
 
 # TODO remove this dependency. It's not used for anything important.
 import attr
@@ -17,11 +19,145 @@ import msprime
 import _tsinfer
 
 
+class ResultBuffer(object):
+    """
+    A wrapper for numpy arrays representing the results of a copying operations.
+    """
+    def __init__(self, chunk_size=1024):
+        if chunk_size < 1:
+            raise ValueError("chunk size must be > 0")
+        self.chunk_size = chunk_size
+        # edges
+        self.__left = np.empty(chunk_size, dtype=np.uint32)
+        self.__right = np.empty(chunk_size, dtype=np.uint32)
+        self.__parent = np.empty(chunk_size, dtype=np.int32)
+        self.__child = np.empty(chunk_size, dtype=np.int32)
+        self.num_edges = 0
+        self.max_edges = chunk_size
+        # mutations
+        self.__site = np.empty(chunk_size, dtype=np.uint32)
+        self.__node = np.empty(chunk_size, dtype=np.int32)
+        self.num_mutations = 0
+        self.max_mutations = chunk_size
+
+    @property
+    def left(self):
+        return self.__left[:self.num_edges]
+
+    @property
+    def right(self):
+        return self.__right[:self.num_edges]
+
+    @property
+    def parent(self):
+        return self.__parent[:self.num_edges]
+
+    @property
+    def child(self):
+        return self.__child[:self.num_edges]
+
+    @property
+    def site(self):
+        return self.__site[:self.num_mutations]
+
+    @property
+    def node(self):
+        return self.__node[:self.num_mutations]
+
+    def clear(self):
+        """
+        Clears this result buffer.
+        """
+        self.num_edges = 0
+        self.num_mutations = 0
+
+    def print_state(self):
+        print("Edges = ")
+        print("\tnum_edges = {} max_edges = {}".format(self.num_edges, self.max_edges))
+        print("\tleft\tright\tparent\tchild")
+        for j in range(self.num_edges):
+            print("\t{}\t{}\t{}\t{}".format(
+                self.__left[j], self.__right[j], self.__parent[j], self.__child[j]))
+        print("Mutations = ")
+        print("\tnum_mutations = {} max_mutations = {}".format(
+            self.num_mutations, self.max_mutations))
+        print("\tleft\tright\tparent\tchild")
+        for j in range(self.num_mutations):
+            print("\t{}\t{}".format(self.__site[j], self.__node[j]))
+
+    def check_edges_size(self, additional):
+        """
+        Ensures that there is enough space for the specified number of additional
+        edges.
+        """
+        if self.num_edges + additional > self.max_edges:
+            new_size = self.max_edges + max(additional, self.chunk_size)
+            self.__left.resize(new_size)
+            self.__right.resize(new_size)
+            self.__parent.resize(new_size)
+            self.__child.resize(new_size)
+            self.max_edges = new_size
+
+    def add_edges(self, left, right, parent, child):
+        """
+        Adds the specified edges from the specified values. Left, right and parent
+        must be numpy arrays of the same size. Child may be either a numpy array of
+        the same size, or a single value.
+        """
+        size = left.shape[0]
+        assert right.shape == (size,)
+        assert parent.shape == (size,)
+        self.check_edges_size(size)
+        self.__left[self.num_edges: self.num_edges + size] = left
+        self.__right[self.num_edges: self.num_edges + size] = right
+        self.__parent[self.num_edges: self.num_edges + size] = parent
+        self.__child[self.num_edges: self.num_edges + size] = child
+        self.num_edges += size
+
+    def check_mutations_size(self, additional):
+        """
+        Ensures that there is enough space for the specified number of additional
+        mutations.
+        """
+        if self.num_mutations + additional > self.max_mutations:
+            new_size = self.max_mutations + max(additional, self.chunk_size)
+            self.__site.resize(new_size)
+            self.__node.resize(new_size)
+            self.max_mutations = new_size
+
+    def add_mutations(self, site, node):
+        """
+        Adds the specified mutations from the specified values. Site must be a
+        numpy array. Node may be either a numpy array of the same size, or a
+        single value.
+        """
+        size = site.shape[0]
+        self.check_mutations_size(size)
+        self.__site[self.num_mutations: self.num_mutations + size] = site
+        self.__node[self.num_mutations: self.num_mutations + size] = node
+        self.num_mutations += size
+
+    @classmethod
+    def combine(cls, result_buffers):
+        """
+        Combines the specfied list of result buffers into a single new buffer.
+        """
+        # There is an inefficiency here where we are allocating too much
+        # space for mutations. Should add a second parameter for mutations size.
+        size = sum(result.num_edges for result in result_buffers)
+        combined = cls(size)
+        for result in result_buffers:
+            combined.add_edges(
+                result.left, result.right, result.parent, result.child)
+            combined.add_mutations(result.site, result.node)
+        return combined
+
+
 class InferenceManager(object):
 
     def __init__(
-            self, samples, positions, length, recombination_rate, method="C",
-            progress=False, log_level="WARNING"):
+            self, samples, positions, length, recombination_rate,
+            num_threads=1, method="C", progress=False, log_level="WARNING"):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
@@ -29,10 +165,12 @@ class InferenceManager(object):
         assert self.positions.shape[0] == self.num_sites
         self.length = length
         self.recombination_rate = recombination_rate
+        self.num_threads = num_threads
         # Set up logging.
         daiquiri.setup(level=log_level)
         self.logger = daiquiri.getLogger()
         self.progress = progress
+        self.progress_monitor_lock = None
 
         self.ancestor_builder_class = AncestorBuilder
         self.tree_sequence_builder_class = TreeSequenceBuilder
@@ -56,6 +194,12 @@ class InferenceManager(object):
         if self.progress:
             total = self.num_samples + self.num_ancestors - 1
             self.progress_monitor = tqdm.tqdm(total=total)
+            self.progress_monitor_lock = threading.Lock()
+
+    def __update_progress(self):
+        if self.progress:
+            with self.progress_monitor_lock:
+                self.progress_monitor.update()
 
     def process_ancestors(self):
 
@@ -69,61 +213,83 @@ class InferenceManager(object):
         matcher = self.ancestor_matcher_class(
             self.tree_sequence_builder, self.recombination_rate)
 
+        results = ResultBuffer()
         for age, ancestor_focal_sites in frequency_classes:
-            e_left = []
-            e_right = []
-            e_parent = []
-            e_child = []
-            s_site = []
-            s_node = []
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
                 self.ancestor_builder.make_ancestor(focal_sites, a)
-                for s in focal_sites:
-                    assert a[s] == 1
-                    a[s] = 0
-                    s_site.append(s)
-                    s_node.append(child)
+                # TODO make this an array natively.
+                focal_sites = np.array(focal_sites)
+                results.add_mutations(focal_sites, child)
+                # TODO change the ancestor builder so that we don't need to do this.
+                assert np.all(a[focal_sites] == 1)
+                a[focal_sites] = 0
                 (left, right, parent), mismatches = matcher.find_path(a)
                 assert mismatches.shape[0] == 0
-                e_left.extend(left)
-                e_right.extend(right)
-                e_parent.extend(parent)
-                e_child.extend([child for _ in parent])
+                results.add_edges(left, right, parent, child)
                 child += 1
                 if self.progress:
                     self.progress_monitor.update()
             self.tree_sequence_builder.update(
                 len(ancestor_focal_sites), age,
-                e_left, e_right, e_parent, e_child,
-                s_site, s_node)
+                results.left, results.right, results.parent, results.child,
+                results.site, results.node)
+            results.clear()
+
+
+    def __process_sample(self, sample_index, matcher, results):
+        child = self.sample_ids[sample_index]
+        (left, right, parent), mismatches = matcher.find_path(self.samples[sample_index])
+        results.add_mutations(mismatches, child)
+        results.add_edges(left, right, parent, child)
+        self.__update_progress()
+
+    def __process_samples_threads(self):
+        results = [ResultBuffer() for _ in range(self.num_threads)]
+        matchers = [
+            self.ancestor_matcher_class(
+                self.tree_sequence_builder, self.recombination_rate)
+            for _ in range(self.num_threads)]
+        chunk_size = int(math.ceil(self.num_samples / self.num_threads))
+
+        def worker(thread_index):
+            self.logger.info("Started sample worker thread {}".format(thread_index))
+            start = thread_index * chunk_size
+            mean_traceback_size = 0
+            num_matches = 0
+            for sample_index in range(start, start + chunk_size):
+                self.__process_sample(
+                    sample_index, matchers[thread_index], results[thread_index])
+                mean_traceback_size += matchers[thread_index].mean_traceback_size
+                num_matches += 1
+            mean_traceback_size /= num_matches
+            self.logger.info("Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
+                thread_index, mean_traceback_size, results[thread_index].num_edges))
+
+        threads = [
+            threading.Thread(target=worker, args=(j,)) for j in range(self.num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return ResultBuffer.combine(results)
 
     def process_samples(self):
-        e_left = []
-        e_right = []
-        e_parent = []
-        e_child = []
-        s_site = []
-        s_node = []
-        matcher = self.ancestor_matcher_class(
-            self.tree_sequence_builder, self.recombination_rate)
-        self.logger.info("Copying {} samples".format(self.num_samples))
-        # Now match the samples.
+        self.logger.info("Processing {} samples".format(self.num_samples))
         self.sample_ids = self.tree_sequence_builder.num_nodes + np.arange(
                 self.num_samples, dtype=np.int32)
-        for j in range(self.num_samples):
-            (left, right, parent), mismatches = matcher.find_path(self.samples[j])
-            for site in mismatches:
-                s_site.append(site)
-                s_node.append(self.sample_ids[j])
-            e_left.extend(left)
-            e_right.extend(right)
-            e_parent.extend(parent)
-            e_child.extend([self.sample_ids[j] for _ in parent])
-            if self.progress:
-                self.progress_monitor.update()
+        if self.num_threads == 1:
+            results = ResultBuffer(self.num_samples)
+            matcher = self.ancestor_matcher_class(
+                self.tree_sequence_builder, self.recombination_rate)
+            for j in range(self.num_samples):
+                self.__process_sample(j, matcher, results)
+        else:
+            results = self.__process_samples_threads()
         self.tree_sequence_builder.update(
-            self.num_samples, 0, e_left, e_right, e_parent, e_child, s_site, s_node)
+            self.num_samples, 0,
+            results.left, results.right, results.parent, results.child,
+            results.site, results.node)
 
     def finalise(self):
         self.logger.info("Finalising tree sequence")
@@ -192,7 +358,7 @@ def infer(samples, positions, length, recombination_rate, error_rate, method="C"
 
     manager = InferenceManager(
         samples, positions, length, recombination_rate,
-        method=method, progress=progress, log_level=log_level)
+        num_threads=num_threads, method=method, progress=progress, log_level=log_level)
     manager.initialise()
     manager.process_ancestors()
     manager.process_samples()
