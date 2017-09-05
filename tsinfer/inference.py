@@ -400,13 +400,14 @@ class InferenceManager(object):
         return self._finalise(self.sample_ids)
 
     def _finalise(self, samples=None):
+        # TODO we badly need a better API here for this. This is a very useful
+        # method for testing, where we want to be able to incrementally check
+        # that we are always representing the input data.
         tsb = self.tree_sequence_builder
         nodes = msprime.NodeTable()
         flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
         time = np.zeros(tsb.num_nodes, dtype=np.float64)
-        # Probably we shouldn't bother passing flags to dump_nodes.
         tsb.dump_nodes(flags=flags, time=time)
-        flags[:] = 1
         if samples is not None:
             flags[:] = 0
             flags[samples] = 1
@@ -454,6 +455,19 @@ class InferenceManager(object):
             nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
         return ts
 
+    def ancestors(self):
+        """
+        Convenience method to get an array of the ancestors.
+        """
+        builder = self.ancestor_builder_class(self.samples, self.positions)
+        frequency_classes = builder.get_frequency_classes()
+        A = np.zeros((builder.num_ancestors, self.num_sites), dtype=np.int8)
+        ancestor_id = 1
+        for age, ancestor_focal_sites in frequency_classes:
+            for focal_sites in ancestor_focal_sites:
+                builder.make_ancestor(focal_sites, A[ancestor_id,:])
+                ancestor_id += 1
+        return A
 
 
 def infer(samples, positions, length, recombination_rate, error_rate, method="C",
@@ -518,12 +532,14 @@ class AncestorBuilder(object):
                 frequency_sites[site.frequency].append(site)
         # Group together identical sites within a frequency class
         self.frequency_classes = {}
+        self.num_ancestors = 1
         for frequency, sites in frequency_sites.items():
             patterns = collections.defaultdict(list)
             for site in sites:
                 state = tuple(self.haplotypes[:, site.id])
                 patterns[state].append(site.id)
             self.frequency_classes[frequency] = list(patterns.values())
+            self.num_ancestors += len(self.frequency_classes[frequency])
 
     def get_frequency_classes(self):
         ret = []
@@ -561,7 +577,8 @@ class AncestorBuilder(object):
 
     def make_ancestor(self, focal_sites, a):
         # a[:] = -1
-        # Setting to 0 for now to see if we can take advantage of other RLE.
+        # Setting to 0 for now to see if we can take advantage of other RLE.:w
+
         a[:] = 0
         focal_site = self.sites[focal_sites[0]]
         sites = range(focal_sites[-1] + 1, self.num_sites)
@@ -577,9 +594,11 @@ class AncestorBuilder(object):
         return a
 
 
+
+
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, replace_recombinations=False, break_polytomies=False):
+    def __init__(self, num_sites, max_nodes, max_edges):
         self.num_nodes = 0
         self.num_sites = num_sites
         self.time = []
@@ -587,8 +606,9 @@ class TreeSequenceBuilder(object):
         self.mutations = {}
         self.edges = []
         self.mean_traceback_size = 0
-        self.replace_recombinations = replace_recombinations
-        self.break_polytomies = break_polytomies
+        # Disabling for now.
+        self.replace_recombinations = False
+        self.break_polytomies = False
 
     def add_node(self, time, is_sample=True):
         self.num_nodes += 1
@@ -635,42 +655,97 @@ class TreeSequenceBuilder(object):
             print(edgesets)
 
     def _replace_recombinations(self):
-
-        edges = sorted(self.edges, key=lambda e: (e.left, e.right, e.parent, e.child))
-        last_left = edges[0].left
-        last_right = edges[0].right
-        last_parent=  edges[0].parent
-        group_start = 0
-        groups = []
-        for j in range(1, len(edges)):
-            condition = (
-                last_left != edges[j].left or
-                last_right != edges[j].right or
-                last_parent != edges[j].parent)
+        # First filter out all edges covering the full interval.
+        output_edges = []
+        active = self.edges
+        filtered = []
+        for j in range(len(active)):
+            condition = not (active[j].left == 0 and active[j].right == self.num_sites)
             if condition:
-                if j - group_start > 1:
-                    # Exclude cases where the interval is (0, m)
-                    if not (last_left == 0 and last_right == self.num_sites):
-                        groups.append((group_start, j))
-                group_start = j
-                last_left = edges[j].left
-                last_right = edges[j].right
-                last_parent=  edges[j].parent
-        j = len(edges)
-        if j - group_start > 1:
-            # Exclude cases where the interval is (0, m)
-            if not (last_left == 0 and last_right == self.num_sites):
-                groups.append((group_start, j))
+                filtered.append(active[j])
+            else:
+                output_edges.append(active[j])
+        active = filtered
+        if len(active) > 0:
+            # Now sort by (l, r, p, c) to group together all identical (l, r, p) values.
+            active.sort(key=lambda e: (e.left, e.right, e.parent, e.child))
+            filtered = []
+            prev_cond = False
+            for j in range(len(active) - 1):
+                next_cond = (
+                    active[j].left == active[j + 1].left and
+                    active[j].right == active[j + 1].right and
+                    active[j].parent == active[j + 1].parent)
+                if prev_cond or next_cond:
+                    filtered.append(active[j])
+                else:
+                    output_edges.append(active[j])
+                prev_cond = next_cond
+            j = len(active) - 1
+            if prev_cond:
+                filtered.append(active[j])
+            else:
+                output_edges.append(active[j])
+            active = filtered
 
-        # print("CANDIDATES")
-        candidate_edges = []
-        for start, end in groups:
-            for j in range(start, end):
-                candidate_edges.append(edges[j])
+        if len(active) > 0:
+            # Now sort by (child, left, right) to group together all contiguous
+            active.sort(key=lambda x: (x.child, x.left, x.right))
+            filtered = []
+            prev_cond = False
+            for j in range(len(active) - 1):
+                next_cond = (
+                    active[j].right == active[j + 1].left and
+                    active[j].child == active[j + 1].child)
+                if next_cond or prev_cond:
+                    filtered.append(active[j])
+                else:
+                    output_edges.append(active[j])
+                prev_cond = next_cond
+            j = len(active) - 1
+            if prev_cond:
+                filtered.append(active[j])
+            else:
+                output_edges.append(active[j])
 
-        candidate_edges.sort(key=lambda x: (x.child, x.left, x.right))
+            # Tmp for the old code below
+            candidate_edges = active
+            # From here is a hodge-podge of two different algorithms. For the C
+            # implementation we need something that's simpler to implement,
+            # but I'm having trouble figuring out how to do it without having
+            # to do a lot of work. It seems that there _should_ be some way of
+            # sorting and filtering our way closer to the required result, but
+            # I'm having trouble finding it.
+            active = list(filtered)
+            # We sort by left, right, parent again to find identical edges.
+            # Remove any that there is only one of.
+            active.sort(key=lambda x: (x.left, x.right, x.parent, x.child))
+            filtered = []
+            if len(active) > 0:
+                prev_cond = False
+                for j in range(len(active) - 1):
+                    next_cond = (
+                        active[j].left == active[j + 1].left and
+                        active[j].right == active[j + 1].right and
+                        active[j].parent == active[j + 1].parent)
+                    if next_cond or prev_cond:
+                        filtered.append(active[j])
+                    else:
+                        output_edges.append(active[j])
+                    prev_cond = next_cond
+                j = len(active) - 1
+                if prev_cond:
+                    filtered.append(active[j])
+                else:
+                    output_edges.append(active[j])
+            active = filtered
+            active.sort(key=lambda x: (x.child, x.left, x.right, x.parent))
+            filtered = []
 
-        if len(candidate_edges) > 0:
+            print("FILTERED = ")
+            for e in active:
+                print(e)
+
             group_start = 0
             groups = []
             for j in range(1, len(candidate_edges)):
@@ -698,7 +773,7 @@ class TreeSequenceBuilder(object):
 
             for key, group_list in group_map.items():
                 if len(group_list) > 1:
-                    # print(key)
+                    print(key)
                     last_group_parents = None
                     for start, end in group_list:
                         # print("\tGroup", start, end)
@@ -709,7 +784,7 @@ class TreeSequenceBuilder(object):
                                 assert candidate_edges[j - 1].child == candidate_edges[j].child
                             group_parents.append(candidate_edges[j].parent)
                             # Mark the edges as removed.
-                            # print("\t\t", candidate_edges[j])
+                            print("\t\t", candidate_edges[j])
                             assert not candidate_edges[j].marked
                             candidate_edges[j].marked = True
                         if last_group_parents is not None:
@@ -719,13 +794,17 @@ class TreeSequenceBuilder(object):
 
             # Build up the new list of edges, minus all the maked edges.
             new_edges = []
+            num_removed = 0
             for e in self.edges:
                 if not e.marked:
                     new_edges.append(e)
+                else:
+                    num_removed += 1
+            # assert num_removed == len(filtered)
 
             for key, group_list in group_map.items():
-                print("key = ", key)
                 if len(group_list) > 1:
+                    print("key = ", key)
                     # Add a new node
                     children_time = -1
                     parent_time = 1e200
@@ -736,8 +815,7 @@ class TreeSequenceBuilder(object):
                             children_time = max(
                                 children_time, self.time[candidate_edges[j].child])
                     new_time = children_time + (parent_time - children_time) / 2
-                    # TODO change this to is_sample=False when the rest is working.
-                    new_node = self.add_node(new_time, is_sample=True)
+                    new_node = self.add_node(new_time, is_sample=False)
                     # print("adding node ", new_node, "@time", new_time)
                     start, end = group_list[0]
                     left = candidate_edges[start].left
@@ -800,6 +878,7 @@ class TreeSequenceBuilder(object):
             self.mutations[s] = u
 
         if self.break_polytomies:
+            assert False
             self._break_polytomies()
 
         if self.replace_recombinations and len(self.edges) > 1:
@@ -987,6 +1066,7 @@ class AncestorMatcher(object):
         #     print("\t", l, traceback[l])
 
 
+
         u = self.get_max_likelihood_node(L)
         output_edge = Edge(right=m, parent=u)
         output_edges = [output_edge]
@@ -1030,13 +1110,13 @@ class AncestorMatcher(object):
             for l in range(e.left, e.right):
                 if h[l] == 1 and l not in self.tree_sequence_builder.mutations:
                     mismatches.append(l)
-        left = []
-        right = []
-        parent = []
-        for e in output_edges:
-            left.append(e.left)
-            right.append(e.right)
-            parent.append(e.parent)
-        return (left, right, parent), mismatches
+        left = np.zeros(len(output_edges), dtype=np.uint32)
+        right = np.zeros(len(output_edges), dtype=np.uint32)
+        parent = np.zeros(len(output_edges), dtype=np.int32)
+        for j, e in enumerate(output_edges):
+            left[j] = e.left
+            right[j] = e.right
+            parent[j] = e.parent
+        return (left, right, parent), np.array(mismatches, dtype=np.uint32)
 
 

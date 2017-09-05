@@ -1614,15 +1614,42 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         samples[:, variant.index] = variant.genotypes
     positions = np.array([site.position for site in ts.sites()])
 
-    ts_new = tsinfer.infer(samples, positions, ts.sequence_length, 1e-8, 0,
-            num_threads=10, progress=True, log_level="DEBUG")
+    # ts_new = tsinfer.infer(
+    #     samples, positions, ts.sequence_length, 1e-8, 0,
+    #     method="Python")
+
+    manager = tsinfer.InferenceManager(
+        samples, positions, ts.sequence_length, 1e-8,
+        method="python")
+    manager.initialise()
+    manager.process_ancestors()
+    ts_new = manager._finalise()
+
+    A = manager.ancestors()
+    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+    for v in ts_new.variants():
+        B[:, v.index] = v.genotypes
+        assert np.array_equal(B[:, v.index], A[:, v.index])
+        # if not np.array_equal(B[:, v.index], A[:, v.index]):
+        #     print("ERROR")
+
+    print("CHECKED ancestors, OK")
+    # for h in ts_new.haplotypes():
+    #     print(h)
+
+            # num_threads=10, progress=True, log_level="DEBUG")
 
 #     # for site in ts_new.sites():
 #     #     print(site)
 
     assert ts_new.num_sites == ts.num_sites
     for site in ts_new.sites():
-        assert len(site.mutations) == 1
+        # print(site)
+        assert len(site.mutations) <= 1
+
+    manager.process_samples()
+    ts_new = manager.finalise()
+
     for v1, v2 in zip(ts.variants(), ts_new.variants()):
         # print(v1.index)
         # print("\t", v1.genotypes)
@@ -1676,9 +1703,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    new_copy_process_dev(1000, 10000 * 10**4, 1)
+    # new_copy_process_dev(1000, 10000 * 10**4, 1)
 
-    # new_copy_process_dev(20, 10 * 10**4, 74, True, False)
+    new_copy_process_dev(20, 20 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):
