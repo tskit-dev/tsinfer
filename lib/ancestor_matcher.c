@@ -254,26 +254,47 @@ static int WARN_UNUSED
 ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id)
 {
     int ret = 0;
-    avl_node_t *a;
+    avl_node_t *restrict a;
     node_id_t u;
     likelihood_list_t *restrict list_node;
     double *restrict L = self->likelihood;
     likelihood_list_t **restrict T = self->traceback;
+    bool match, loop_completed;
 
-    /* Allocate the entire list at once to save some overhead */
-    list_node = block_allocator_get(&self->likelihood_list_allocator,
-            avl_count(&self->likelihood_nodes) * sizeof(likelihood_list_t));
-    if (list_node == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
+    /* Check to see if the previous site has the same likelihoods. If so,
+     * we can reuse the same list. */
+    match = false;
+    if (site_id > 0) {
+        loop_completed = true;
+        list_node = T[site_id - 1];
+        for (a = self->likelihood_nodes.tail; a != NULL; a = a->prev) {
+            u = *((node_id_t *) a->item);
+            if (list_node == NULL || list_node->node != u || list_node->likelihood != L[u]) {
+                loop_completed = false;
+                break;
+            }
+            list_node = list_node->next;
+        }
+        match = loop_completed && list_node == NULL;
     }
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
-        list_node->node = u;
-        list_node->likelihood = L[u];
-        list_node->next = T[site_id];
-        T[site_id] = list_node;
-        list_node++;
+    if (match) {
+        T[site_id] = T[site_id - 1];
+    } else {
+        /* Allocate the entire list at once to save some overhead */
+        list_node = block_allocator_get(&self->likelihood_list_allocator,
+                avl_count(&self->likelihood_nodes) * sizeof(likelihood_list_t));
+        if (list_node == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+            u = *((node_id_t *) a->item);
+            list_node->node = u;
+            list_node->likelihood = L[u];
+            list_node->next = T[site_id];
+            T[site_id] = list_node;
+            list_node++;
+        }
     }
     self->total_traceback_size += avl_count(&self->likelihood_nodes);
 out:
@@ -387,8 +408,6 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
     /* ancestor_matcher_print_state(self, stdout); */
     /* ancestor_matcher_check_state(self); */
     if (mutation_node == NULL_NODE) {
-        /* TODO We should be able to just put a pointer in to the previous site
-         * here to save some time and memory. */
         ret = ancestor_matcher_store_traceback(self, site);
         if (ret != 0) {
             goto out;
