@@ -1014,6 +1014,8 @@ class AncestorMatcher(object):
                     if state == 0:
                         assert len(L) > 0
                     traceback[site] = dict(L)
+                    if site > 0 and (site - 1) not in self.tree_sequence_builder.mutations:
+                        assert traceback[site] == traceback[site - 1]
                     continue
                 mutation_node = self.tree_sequence_builder.mutations[site]
                 # print("Site ", site, "mutation = ", mutation_node, "state = ", state)

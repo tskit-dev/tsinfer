@@ -1653,14 +1653,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         # if not np.array_equal(B[:, v.index], A[:, v.index]):
         #     print("ERROR")
 
-    print("CHECKED ancestors, OK")
-    # for h in ts_new.haplotypes():
-    #     print(h)
-
-            # num_threads=10, progress=True, log_level="DEBUG")
-
-#     # for site in ts_new.sites():
-#     #     print(site)
+    # print("CHECKED ancestors, OK")
 
     assert ts_new.num_sites == ts.num_sites
     for site in ts_new.sites():
@@ -1736,5 +1729,5 @@ if __name__ == "__main__":
     #     print()
     # for j in range(1, 10000):
     #     print(j)
-    #     new_copy_process_dev(100, 50* 10**4, j, True, False)
+    #     new_copy_process_dev(40, 50* 10**4, j, True, False)
 

@@ -408,9 +408,16 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
     /* ancestor_matcher_print_state(self, stdout); */
     /* ancestor_matcher_check_state(self); */
     if (mutation_node == NULL_NODE) {
-        ret = ancestor_matcher_store_traceback(self, site);
-        if (ret != 0) {
-            goto out;
+        if (site > 0 &&
+                self->tree_sequence_builder->mutations[site - 1] == NULL_NODE) {
+            /* If there are no mutations at this or the last site, then
+             * we are guaranteed that the likelihoods are equal. */
+            self->traceback[site] = self->traceback[site - 1];
+        } else {
+            ret = ancestor_matcher_store_traceback(self, site);
+            if (ret != 0) {
+                goto out;
+            }
         }
     } else {
         /* Insert a new L-value for the mutation node if needed */
