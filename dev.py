@@ -1646,30 +1646,43 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     ts_new = manager._finalise()
 
     A = manager.ancestors()
-    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+    B = np.zeros((manager.tree_sequence_builder.num_nodes, manager.num_sites), dtype=np.int8)
     for v in ts_new.variants():
         B[:, v.index] = v.genotypes
-        assert np.array_equal(B[:, v.index], A[:, v.index])
+
+    for k in range(manager.num_ancestors):
+        node = manager.ancestor_id_map[k]
+        # print(k, "-> ", node)
+        assert np.array_equal(A[k], B[node])
+        # print(v.index)
+        # print(A[:, v.index])
+        # print(B[:, v.index])
+        # # assert np.array_equal(B[:, v.index], A[:, v.index])
         # if not np.array_equal(B[:, v.index], A[:, v.index]):
         #     print("ERROR")
-
-    # print("CHECKED ancestors, OK")
+    print("CHECKED ancestors, OK")
 
     assert ts_new.num_sites == ts.num_sites
     for site in ts_new.sites():
         # print(site)
         assert len(site.mutations) <= 1
-
+    # Disable recombination finding for samples. Otherwise this
+    # mucks up the node mapping hacks we've done below.
+    manager.tree_sequence_builder.replace_recombinations = False
     manager.process_samples()
     ts_new = manager.finalise()
+    n = ts.sample_size
 
     for v1, v2 in zip(ts.variants(), ts_new.variants()):
+        # Hack to get just the samples from the new TS.
+        g = v2.genotypes[:n][::-1]
         # print(v1.index)
         # print("\t", v1.genotypes)
-        # print("\t", v2.genotypes)
+        # print("\t", g)
         # if not np.array_equal(v1.genotypes, v2.genotypes):
         #     print("MISMATCH")
-        assert np.array_equal(v1.genotypes, v2.genotypes)
+        assert np.array_equal(v1.genotypes, g)
+    print("CHECKED samples, OK")
 
 
 if __name__ == "__main__":
@@ -1716,9 +1729,9 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    large_infer(1000, 10000 * 10**4, 1)
+    # large_infer(1000, 10000 * 10**4, 1)
 
-    # new_copy_process_dev(20, 20 * 10**4, 74, True, False)
+    # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False)
     # for x in range(1, 20):
@@ -1727,7 +1740,8 @@ if __name__ == "__main__":
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    # for j in range(1, 10000):
-    #     print(j)
-    #     new_copy_process_dev(40, 50* 10**4, j, True, False)
+    for j in range(1, 10000):
+        print("HERE", j)
+        new_copy_process_dev(20, 25 * 10**4, j, True, False)
 
+    # new_copy_process_dev(10, 25* 10**4, 28, True, False)
