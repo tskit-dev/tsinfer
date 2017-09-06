@@ -182,6 +182,7 @@ run_generate(const char *sample_file, int verbose)
     node_id_t child;
     site_id_t *mismatches;
     size_t num_mismatches;
+    int flags = TSI_RESOLVE_SHARED_RECOMBS;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, positions, haplotypes);
@@ -190,7 +191,7 @@ run_generate(const char *sample_file, int verbose)
     }
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, num_sites,
-            num_samples + num_ancestors + 1, 65536);
+            100 * (num_samples + num_ancestors), 65536, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -223,7 +224,6 @@ run_generate(const char *sample_file, int verbose)
         fatal_error("alloc");
     }
 
-    child = 1;
     for (j = 0; j < ancestor_builder.num_frequency_classes; j++) {
         age--;
         num_ancestors = ancestor_builder.frequency_classes[j].num_ancestors;
@@ -233,6 +233,7 @@ run_generate(const char *sample_file, int verbose)
         }
         total_edges = 0;
         total_mutations = 0;
+        child = ts_builder.num_nodes;
         for (k = 0; k < num_ancestors; k++) {
             focal_sites = ancestor_builder.frequency_classes[j].ancestor_focal_sites[k];
             num_focal_sites = ancestor_builder.frequency_classes[j].num_ancestor_focal_sites[k];

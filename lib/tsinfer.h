@@ -10,6 +10,8 @@
 #define NULL_LIKELIHOOD (-1)
 #define NULL_NODE (-1)
 
+#define TSI_RESOLVE_SHARED_RECOMBS 1
+
 /* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;
 typedef int32_t node_id_t;
@@ -128,6 +130,7 @@ typedef struct {
 } site_mutation_t;
 
 typedef struct {
+    int flags;
     size_t num_sites;
     size_t max_nodes;
     size_t max_edges;
@@ -190,7 +193,7 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t max_nodes, size_t max_edges);
+        size_t num_sites, size_t max_nodes, size_t max_edges, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_update(tree_sequence_builder_t *self,
