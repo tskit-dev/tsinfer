@@ -158,11 +158,13 @@ class InferenceManager(object):
 
     def __init__(
             self, samples, positions, length, recombination_rate,
-            num_threads=1, method="C", progress=False, log_level="WARNING"):
+            num_threads=1, method="C", progress=False, log_level="WARNING",
+            resolve_shared_recombinations=True):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
         self.positions = positions
+        self.resolve_shared_recombinations = resolve_shared_recombinations
         assert self.positions.shape[0] == self.num_sites
         self.length = length
         self.recombination_rate = recombination_rate
@@ -193,7 +195,8 @@ class InferenceManager(object):
         self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.num_sites, 10**6, 10**7)
+            self.num_sites, 10**6, 10**7,
+            resolve_shared_recombinations=self.resolve_shared_recombinations)
 
         frequency_classes = self.ancestor_builder.get_frequency_classes()
         # TODO change the builder API here to just return the list of focal sites.
@@ -221,8 +224,6 @@ class InferenceManager(object):
     def __find_path_ancestor(self, ancestor, node_id, focal_sites, matcher, results):
         # TODO make this an array natively.
         focal_sites = np.array(focal_sites)
-        if 111 in focal_sites:
-            print("Adding mutation for 111 to ", node_id)
         results.add_mutations(focal_sites, node_id)
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
@@ -496,12 +497,14 @@ class InferenceManager(object):
 
 
 def infer(samples, positions, length, recombination_rate, error_rate, method="C",
-        num_threads=1, progress=False, log_level="WARNING"):
+        num_threads=1, progress=False, log_level="WARNING",
+        resolve_shared_recombinations=True):
     # Primary entry point.
 
     manager = InferenceManager(
         samples, positions, length, recombination_rate,
-        num_threads=num_threads, method=method, progress=progress, log_level=log_level)
+        num_threads=num_threads, method=method, progress=progress, log_level=log_level,
+        resolve_shared_recombinations=resolve_shared_recombinations)
     manager.initialise()
     manager.process_ancestors()
     manager.process_samples()
@@ -702,8 +705,7 @@ class TreeSequenceBuilder(object):
 
     def _replace_recombinations(self):
         # print("START!!")
-        # First filter out all edges covering the full interval or involve a
-        # non sample node.
+        # First filter out all edges covering the full interval
         output_edges = []
         active = self.edges
         filtered = []
@@ -781,12 +783,6 @@ class TreeSequenceBuilder(object):
 
         if len(active) > 0:
             assert len(active) + len(output_edges) == len(self.edges)
-
-            candidate_edges = list(active)
-
-            ####################
-            # New algorithm
-            ####################
             active.sort(key=lambda x: (x.child, x.left, x.right, x.parent))
             used = [True for _ in active]
 
@@ -898,99 +894,6 @@ class TreeSequenceBuilder(object):
                 # print("AFTER")
                 # for e in self.edges:
                 #     print("\t", e)
-
-            # ####################
-            # # old algorithm
-            # ###################k
-            # # Other
-            # group_start = 0
-            # groups = []
-            # candidate_edges.sort(key=lambda x: (x.child, x.left, x.right, x.parent))
-            # used = {id(e): True for e in self.edges}
-            # for j in range(1, len(candidate_edges)):
-            #     condition = (
-            #         candidate_edges[j - 1].right != candidate_edges[j].left or
-            #         candidate_edges[j - 1].child != candidate_edges[j].child)
-            #     if condition:
-            #         if j - group_start > 1:
-            #             groups.append((group_start, j))
-            #         group_start = j
-            # j = len(candidate_edges)
-            # if j - group_start > 1:
-            #     groups.append((group_start, j))
-            # group_map = collections.defaultdict(list)
-
-            # for start, end in groups:
-            #     # print("CANDIDATE")
-            #     key = tuple([
-            #         tuple(candidate_edges[j].left for j in range(start, end)),
-            #         tuple(candidate_edges[j].right for j in range(start, end)),
-            #         tuple(candidate_edges[j].parent for j in range(start, end))])
-            #     group_map[key].append((start, end))
-            #     # for j in range(start, end):
-            #     #     print("\t", candidate_edges[j])
-
-            # for key, group_list in group_map.items():
-            #     if len(group_list) > 1:
-            #         last_group_parents = None
-            #         for start, end in group_list:
-            #             # print("\tGroup", start, end)
-            #             group_parents = []
-            #             for j in range(start, end):
-            #                 if j > start:
-            #                     assert candidate_edges[j - 1].right == candidate_edges[j].left
-            #                     assert candidate_edges[j - 1].child == candidate_edges[j].child
-            #                 group_parents.append(candidate_edges[j].parent)
-            #                 # Mark the edges as removed.
-            #                 # print("\t\t", candidate_edges[j])
-            #                 # assert not candidate_edges[j].marked
-            #                 # candidate_edges[j].marked = True
-            #                 used[id(candidate_edges[j])] = False
-            #             if last_group_parents is not None:
-            #                 # print(last_group_parents, group_parents)
-            #                 assert last_group_parents == group_parents
-            #             last_group_parents = group_parents
-
-            # # Build up the new list of edges, minus all the maked edges.
-            # new_edges = []
-            # # num_removed = 0
-            # for e in self.edges:
-            #     if used[id(e)]:
-            #         new_edges.append(e)
-            # #     else:
-            # #         num_removed += 1
-            # # assert num_removed == len(filtered)
-
-            # for key, group_list in group_map.items():
-            #     if len(group_list) > 1:
-            #         print("key = ", key)
-            #         # Add a new node
-            #         children_time = -1
-            #         parent_time = 1e200
-            #         for start, end in group_list:
-            #             for j in range(start, end):
-            #                 parent_time = min(
-            #                     parent_time, self.time[candidate_edges[j].parent])
-            #                 children_time = max(
-            #                     children_time, self.time[candidate_edges[j].child])
-            #         new_time = children_time + (parent_time - children_time) / 2
-            #         new_node = self.add_node(new_time, is_sample=True)
-            #         print("adding node ", new_node, "@time", new_time)
-            #         start, end = group_list[0]
-            #         left = candidate_edges[start].left
-            #         right = candidate_edges[end - 1].right
-            #         # For each of the segments add in a new edge
-            #         for j in range(start, end):
-            #             new_edges.append(Edge(
-            #                 candidate_edges[j].left, candidate_edges[j].right,
-            #                 candidate_edges[j].parent, new_node))
-            #             print("j Inserting", new_edges[-1])
-            #         # For each child put in a new edge over the full interval.
-            #         for start, _ in group_list:
-            #             new_edges.append(Edge(
-            #                 left, right, new_node, candidate_edges[start].child))
-            #             print("s Inserting", new_edges[-1])
-            # self.edges = new_edges
 
 
     def insert_polytomy_ancestor(self, edges):

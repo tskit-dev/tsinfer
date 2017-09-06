@@ -255,8 +255,8 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     /* These are both probably way too much, but should be safe upper bounds */
     size_t max_edges = 2 * self->num_edges;
     size_t max_paths = self->num_edges;
-    size_t j, k, l, num_output, num_active, num_filtered, num_paths, num_matches,
-           num_shared_recombinations;;
+    size_t j, k, l, num_output, num_active, num_filtered, num_paths, num_matches;
+    size_t num_shared_recombinations = 0;
     edge_t *active = NULL;
     edge_t *filtered = NULL;
     edge_t *output = NULL;
@@ -289,7 +289,6 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     num_filtered = 0;
     num_output = 0;
     num_paths = 0;
-    num_shared_recombinations = 0;
     /* First filter out all edges covering the full interval */
     for (j = 0; j < num_active; j++) {
         if (! (active[j].left == 0 && active[j].right == self->num_sites)) {

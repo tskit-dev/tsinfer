@@ -1598,7 +1598,7 @@ def rle(inarray):
         yield position, position + length, value
 
 
-def large_infer(n, L, seed):
+def large_infer(n, L, seed, log_level="INFO"):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
@@ -1616,7 +1616,8 @@ def large_infer(n, L, seed):
 
     ts_new = tsinfer.infer(
         samples, positions, ts.sequence_length, 1e-8, 0,
-        method="C", num_threads=10, log_level="DEBUG", progress=True)
+        method="C", num_threads=10, log_level=log_level, progress=True,
+        resolve_shared_recombinations=False)
 
 def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomies=True):
 
@@ -1640,7 +1641,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="python")
+        method="C")
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
@@ -1668,21 +1669,22 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         assert len(site.mutations) <= 1
     # Disable recombination finding for samples. Otherwise this
     # mucks up the node mapping hacks we've done below.
-    manager.tree_sequence_builder.replace_recombinations = False
-    manager.process_samples()
-    ts_new = manager.finalise()
-    n = ts.sample_size
+    # manager.tree_sequence_builder.replace_recombinations = False
 
-    for v1, v2 in zip(ts.variants(), ts_new.variants()):
-        # Hack to get just the samples from the new TS.
-        g = v2.genotypes[:n][::-1]
-        # print(v1.index)
-        # print("\t", v1.genotypes)
-        # print("\t", g)
-        # if not np.array_equal(v1.genotypes, v2.genotypes):
-        #     print("MISMATCH")
-        assert np.array_equal(v1.genotypes, g)
-    print("CHECKED samples, OK")
+    # manager.process_samples()
+    # ts_new = manager.finalise()
+    # n = ts.sample_size
+
+    # for v1, v2 in zip(ts.variants(), ts_new.variants()):
+    #     # Hack to get just the samples from the new TS.
+    #     g = v2.genotypes[:n][::-1]
+    #     # print(v1.index)
+    #     # print("\t", v1.genotypes)
+    #     # print("\t", g)
+    #     # if not np.array_equal(v1.genotypes, v2.genotypes):
+    #     #     print("MISMATCH")
+    #     assert np.array_equal(v1.genotypes, g)
+    # print("CHECKED samples, OK")
 
 
 if __name__ == "__main__":
@@ -1729,7 +1731,7 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # large_infer(1000, 10000 * 10**4, 1)
+    large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
 
     # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
@@ -1740,8 +1742,8 @@ if __name__ == "__main__":
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    for j in range(1, 10000):
-        print("HERE", j)
-        new_copy_process_dev(20, 25 * 10**4, j, True, False)
+    # for j in range(1, 10000):
+    #     print("HERE", j)
+    #     new_copy_process_dev(200, 50 * 10**4, j, True, False)
 
-    # new_copy_process_dev(10, 25* 10**4, 28, True, False)
+    # new_copy_process_dev(100, 250 * 10**4, 28, True, False)
