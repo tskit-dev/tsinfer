@@ -339,15 +339,15 @@ def new_segments(n, L, seed, num_threads=10, method="C", log_level="WARNING"):
     #     if len(site.mutations) > 1:
     #         print("Recurrent mutation")
 
-    ts_simplified = tsp.simplify()
     # Need to compare on the haplotypes here because we might have a
     # ancestral state of 1 after simplify.
     H = list(tsp.haplotypes())
     for j in range(S.shape[0]):
         assert "".join(map(str, S[j])) == H[j]
 
-    num_edges = sum(len(e.children) for e in ts_simplified.edgesets())
-    print(ts.num_edgesets, ts_simplified.num_edgesets, num_edges, num_edges / ts_simplified.num_edgesets)
+    # t = tsp.dump_tables()
+    # print(t.nodes)
+    # print(t.edgesets)
 
 
 
@@ -1641,31 +1641,35 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="P")
+        method="C")
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
 
-    A = manager.ancestors()
-    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
-    for v in ts_new.variants():
-        B[:, v.index] = v.genotypes
-        if not np.array_equal(B[:, v.index], A[:, v.index]):
-            print("ERROR", v.index)
+# Disabling this here because we don't track samples in the C
+# implementation. It's a good check though, we should definitely
+# code up what's needed to support it.
 
-    for k in range(manager.num_ancestors):
-        # node = manager.ancestor_id_map[k]
-        # print(k, "-> ", node)
-        # assert np.array_equal(A[k], B[node])00
-        assert np.array_equal(A[k], B[k])
+#     A = manager.ancestors()
+#     B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+#     for v in ts_new.variants():
+#         B[:, v.index] = v.genotypes
+#         if not np.array_equal(B[:, v.index], A[:, v.index]):
+#             print("ERROR", v.index)
 
-        # print(v.index)
-        # print(A[:, v.index])
-        # print(B[:, v.index])
-        # # assert np.array_equal(B[:, v.index], A[:, v.index])
-        # if not np.array_equal(B[:, v.index], A[:, v.index]):
-        #     print("ERROR")
-    print("CHECKED ancestors, OK")
+#     for k in range(manager.num_ancestors):
+#         # node = manager.ancestor_id_map[k]
+#         # print(k, "-> ", node)
+#         # assert np.array_equal(A[k], B[node])00
+#         assert np.array_equal(A[k], B[k])
+
+#         # print(v.index)
+#         # print(A[:, v.index])
+#         # print(B[:, v.index])
+#         # # assert np.array_equal(B[:, v.index], A[:, v.index])
+#         # if not np.array_equal(B[:, v.index], A[:, v.index]):
+#         #     print("ERROR")
+#     print("CHECKED ancestors, OK")
 
     assert ts_new.num_sites == ts.num_sites
     for site in ts_new.sites():
@@ -1675,20 +1679,21 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
     # mucks up the node mapping hacks we've done below.
     # manager.tree_sequence_builder.replace_recombinations = False
 
-    # manager.process_samples()
-    # ts_new = manager.finalise()
-    # n = ts.sample_size
+    manager.process_samples()
+    ts_new = manager.finalise()
+    n = ts.sample_size
 
-    # for v1, v2 in zip(ts.variants(), ts_new.variants()):
-    #     # Hack to get just the samples from the new TS.
-    #     g = v2.genotypes[:n][::-1]
-    #     # print(v1.index)
-    #     # print("\t", v1.genotypes)
-    #     # print("\t", g)
-    #     # if not np.array_equal(v1.genotypes, v2.genotypes):
-    #     #     print("MISMATCH")
-    #     assert np.array_equal(v1.genotypes, g)
-    # print("CHECKED samples, OK")
+    for v1, v2 in zip(ts.variants(), ts_new.variants()):
+        # Hack to get just the samples from the new TS.
+        # g = v2.genotypes[:n][::-1]
+        # print(v1.index)
+        # print("\t", v1.genotypes)
+        # print("\t", g)
+        # if not np.array_equal(v1.genotypes, v2.genotypes):
+            # print("MISMATCH")
+        # assert np.array_equal(v1.genotypes, g)
+        assert np.array_equal(v1.genotypes, v2.genotypes)
+    print("CHECKED samples, OK")
 
 
 if __name__ == "__main__":
@@ -1696,9 +1701,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(20, 300, j, num_threads=4)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(50, 300, j, num_threads=4)
         # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
         # test_ancestor_store(1000, 5000, j, method="C")
@@ -1706,7 +1711,7 @@ if __name__ == "__main__":
     # test_ancestor_store(20, 30, 861, method="P")
 
     # new_segments(200, 10, 1, num_threads=2, method="C", log_level="DEBUG")
-    # new_segments(20, 10, 1, num_threads=1, method="C")
+    # new_segments(20, 100, 1, num_threads=2, method="C", log_level="DEBUG")
 
     # export_samples(10, 100, 304)
 
@@ -1748,6 +1753,6 @@ if __name__ == "__main__":
     #     print()
     # for j in range(1, 10000):
     #     print("HERE", j)
-    #     new_copy_process_dev(10, 15 * 10**4, j, True, False)
+    #     new_copy_process_dev(20, 20 * 10**4, j, True, False)
 
-    new_copy_process_dev(10, 15 * 10**4, 28, True, False)
+    # new_copy_process_dev(10, 15 * 10**4, 28, True, False)

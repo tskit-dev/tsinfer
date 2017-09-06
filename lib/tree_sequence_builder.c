@@ -269,6 +269,7 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     edge_t *tmp;
     bool prev_cond, next_cond;
     double parent_time, children_time, new_time;
+    site_id_t left, right;
     node_id_t new_node;
 
     active = malloc(max_edges * sizeof(edge_t));
@@ -523,9 +524,11 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                     marked[l] = true;
                 }
             }
-            parent_time = self->time[0] + 1;
-            /* The parents from the first path */
             path = paths[shared_recombinations[j][0]];
+            left = active[path.start].left;
+            right = active[path.end - 1].right;
+            /* The parents from the first path */
+            parent_time = self->time[0] + 1;
             for (l = path.start; l < path.end; l++) {
                  parent_time = GSL_MIN(parent_time, self->time[active[l].parent]);
             }
@@ -543,7 +546,16 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
             }
             /* printf("New node %d at time %f\n", new_node, new_time); */
             /* For each edge in the path, add a new edge with the new node as the
-             * child */
+             * child. If there are overhangs on either side of this interval we
+             * insert edges pointing the new node to 0. */
+            if (left != 0) {
+                assert(num_output < max_edges);
+                output[num_output].left = 0;
+                output[num_output].right = left;
+                output[num_output].parent = 0;
+                output[num_output].child = new_node;
+                num_output++;
+            }
             path = paths[shared_recombinations[j][0]];
             for (l = path.start; l < path.end; l++) {
                 assert(num_output < max_edges);
@@ -556,13 +568,21 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 /*         output[num_output].parent, output[num_output].child); */
                 num_output++;
             }
+            if (right != self->num_sites) {
+                assert(num_output < max_edges);
+                output[num_output].left = right;
+                output[num_output].right = self->num_sites;
+                output[num_output].parent = 0;
+                output[num_output].child = new_node;
+                num_output++;
+            }
             /* For each child add a new edge covering the whole interval */
             for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
                 path = paths[shared_recombinations[j][k]];
                 l = path.start;
                 assert(num_output < max_edges);
-                output[num_output].left = active[l].left;
-                output[num_output].right = active[path.end - 1].right;
+                output[num_output].left = left;
+                output[num_output].right = right;
                 output[num_output].parent = new_node;
                 output[num_output].child = active[l].child;
                 /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */

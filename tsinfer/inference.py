@@ -185,8 +185,6 @@ class InferenceManager(object):
         self.ancestor_builder = None
         self.tree_sequence_builder = None
         self.sample_ids = None
-        # Maps ancestor IDs to their node IDs.
-        self.ancestor_id_map = {}
 
     def initialise(self):
         # This is slow, so we should figure out a way to report progress on it.
@@ -209,7 +207,6 @@ class InferenceManager(object):
             self.epoch_ancestors[j] = fc[1]
         root_time = self.num_epochs + 1
         self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [])
-        self.ancestor_id_map[0] = 0
 
         if self.progress:
             total = self.num_samples + self.num_ancestors - 1
@@ -344,8 +341,6 @@ class InferenceManager(object):
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
-                self.ancestor_id_map[ancestor_id] = child
-                ancestor_id += 1
                 self.ancestor_builder.make_ancestor(focal_sites, a)
                 self.__find_path_ancestor(a, child, focal_sites, matcher, results)
                 child += 1
@@ -354,7 +349,6 @@ class InferenceManager(object):
                 results.left, results.right, results.parent, results.child,
                 results.site, results.node)
             results.clear()
-
 
     def __process_sample(self, sample_index, matcher, results):
         child = self.sample_ids[sample_index]
@@ -369,26 +363,35 @@ class InferenceManager(object):
             self.ancestor_matcher_class(
                 self.tree_sequence_builder, self.recombination_rate)
             for _ in range(self.num_threads)]
-        chunk_size = int(math.ceil(self.num_samples / self.num_threads))
+        work_queue = queue.Queue()
 
         def worker(thread_index):
             self.logger.info("Started sample worker thread {}".format(thread_index))
-            start = thread_index * chunk_size
             mean_traceback_size = 0
             num_matches = 0
-            for sample_index in range(start, start + chunk_size):
+            while True:
+                sample_index = work_queue.get()
+                if sample_index is None:
+                    break
                 self.__process_sample(
                     sample_index, matchers[thread_index], results[thread_index])
                 mean_traceback_size += matchers[thread_index].mean_traceback_size
                 num_matches += 1
+                work_queue.task_done()
             mean_traceback_size /= num_matches
             self.logger.info("Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
                 thread_index, mean_traceback_size, results[thread_index].num_edges))
+            work_queue.task_done()
 
         threads = [
             threading.Thread(target=worker, args=(j,)) for j in range(self.num_threads)]
         for t in threads:
             t.start()
+        for sample_index in range(self.num_samples):
+            work_queue.put(sample_index)
+        for _ in range(self.num_threads):
+            work_queue.put(None)
+        work_queue.join()
         for t in threads:
             t.join()
         return ResultBuffer.combine(results)
@@ -456,7 +459,6 @@ class InferenceManager(object):
 
         msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
 
-        # UGLY hacks to work around the simplify bug.
         if samples is None:
             samples = np.where(nodes.flags == 1)[0].astype(np.int32)
         # else:
@@ -464,10 +466,10 @@ class InferenceManager(object):
         # print("simplify:")
         # print(samples)
         # print("BEFORE SIMPLIFY")
-        print(nodes)
-        print(edgesets)
-        print(sites)
-        print(mutations)
+        # print(nodes)
+        # print(edgesets)
+        # print(sites)
+        # print(mutations)
         # print(sites) Otherwise this
         # mucks up the node mapping hacks we've done below.
         # print(mutations)
@@ -874,6 +876,12 @@ class TreeSequenceBuilder(object):
                         # print("s add", output_edges[-1])
                     left = active[start].left
                     right = active[end - 1].right
+                    if left != 0:
+                        output_edges.append(Edge(0, left, 0, new_node))
+                        # print("X add", output_edges[-1])
+                    if right != self.num_sites:
+                        output_edges.append(Edge(right, self.num_sites, 0, new_node))
+                        # print("Y add", output_edges[-1])
                     # For each group, add a new segment covering the full interval.
                     for group_index in group_index_list:
                         j = groups[group_index][0]
