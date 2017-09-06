@@ -1641,20 +1641,24 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="C")
+        method="P")
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
 
     A = manager.ancestors()
-    B = np.zeros((manager.tree_sequence_builder.num_nodes, manager.num_sites), dtype=np.int8)
+    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
     for v in ts_new.variants():
         B[:, v.index] = v.genotypes
+        if not np.array_equal(B[:, v.index], A[:, v.index]):
+            print("ERROR", v.index)
 
     for k in range(manager.num_ancestors):
-        node = manager.ancestor_id_map[k]
+        # node = manager.ancestor_id_map[k]
         # print(k, "-> ", node)
-        assert np.array_equal(A[k], B[node])
+        # assert np.array_equal(A[k], B[node])00
+        assert np.array_equal(A[k], B[k])
+
         # print(v.index)
         # print(A[:, v.index])
         # print(B[:, v.index])
@@ -1731,7 +1735,7 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
+    # large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
 
     # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
@@ -1744,6 +1748,6 @@ if __name__ == "__main__":
     #     print()
     # for j in range(1, 10000):
     #     print("HERE", j)
-    #     new_copy_process_dev(200, 50 * 10**4, j, True, False)
+    #     new_copy_process_dev(10, 15 * 10**4, j, True, False)
 
-    # new_copy_process_dev(100, 250 * 10**4, 28, True, False)
+    new_copy_process_dev(10, 15 * 10**4, 28, True, False)

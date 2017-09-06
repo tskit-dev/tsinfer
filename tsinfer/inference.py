@@ -423,10 +423,10 @@ class InferenceManager(object):
         flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
         time = np.zeros(tsb.num_nodes, dtype=np.float64)
         tsb.dump_nodes(flags=flags, time=time)
-        flags[:] = 1
-        # if samples is not None:
-        #     flags[:] = 0
-        #     flags[samples] = 1
+        # flags[:] = 1
+        if samples is not None:
+            flags[:] = 0
+            flags[samples] = 1
         nodes.set_columns(flags=flags, time=time)
 
         edgesets = msprime.EdgesetTable()
@@ -459,13 +459,15 @@ class InferenceManager(object):
         # UGLY hacks to work around the simplify bug.
         if samples is None:
             samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-        else:
-            samples = np.where(nodes.flags == 1)[0].astype(np.int32)[::-1]
+        # else:
+        #     samples = np.where(nodes.flags == 1)[0].astype(np.int32)[::-1]
         # print("simplify:")
         # print(samples)
         # print("BEFORE SIMPLIFY")
-        # print(nodes)
-        # print(edgesets)
+        print(nodes)
+        print(edgesets)
+        print(sites)
+        print(mutations)
         # print(sites) Otherwise this
         # mucks up the node mapping hacks we've done below.
         # print(mutations)
@@ -648,7 +650,8 @@ def edge_group_equal(edges, group1, group2):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, max_nodes, max_edges):
+    def __init__(
+            self, num_sites, max_nodes, max_edges, resolve_shared_recombinations=True):
         self.num_nodes = 0
         self.num_sites = num_sites
         self.time = []
@@ -656,7 +659,7 @@ class TreeSequenceBuilder(object):
         self.mutations = {}
         self.edges = []
         self.mean_traceback_size = 0
-        self.replace_recombinations = True
+        self.resolve_shared_recombinations=True
         self.break_polytomies = False
 
     def add_node(self, time, is_sample=True):
@@ -948,7 +951,7 @@ class TreeSequenceBuilder(object):
 
         # print("replaces_done = ", self.replaces_done)
         # if self.replaces_done < 2:
-        if self.replace_recombinations and len(self.edges) > 1:
+        if self.resolve_shared_recombinations:
             self._replace_recombinations()
 
         # Index the edges
