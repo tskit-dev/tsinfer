@@ -153,8 +153,7 @@ output_ts(tree_sequence_builder_t *ts_builder)
 }
 
 static void
-run_generate(const char *sample_file, const char *ancestor_file,
-        const char *site_file, int verbose)
+run_generate(const char *sample_file, int verbose)
 {
     size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
@@ -360,10 +359,8 @@ main(int argc, char** argv)
     struct arg_rex *cmd1 = arg_rex1(NULL, NULL, "generate", NULL, REG_ICASE, NULL);
     struct arg_lit *verbose1 = arg_lit0("v", "verbose", NULL);
     struct arg_file *sample_file1 = arg_file1(NULL, NULL, NULL, NULL);
-    struct arg_file *ancestor_file1 = arg_file1(NULL, NULL, NULL, NULL);
-    struct arg_file *site_file1 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_end *end1 = arg_end(20);
-    void* argtable1[] = {cmd1, verbose1, sample_file1, ancestor_file1, site_file1, end1};
+    void* argtable1[] = {cmd1, verbose1, sample_file1, end1};
     int nerrors1;
 
     int exitcode = EXIT_SUCCESS;
@@ -372,8 +369,7 @@ main(int argc, char** argv)
     nerrors1 = arg_parse(argc, argv, argtable1);
 
     if (nerrors1 == 0) {
-        run_generate(sample_file1->filename[0], ancestor_file1->filename[0],
-                site_file1->filename[0], verbose1->count);
+        run_generate(sample_file1->filename[0], verbose1->count);
     } else {
         /* We get here if the command line matched none of the possible syntaxes */
         if (cmd1->count > 0) {
