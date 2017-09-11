@@ -182,7 +182,7 @@ run_generate(const char *sample_file, int verbose)
     node_id_t child;
     site_id_t *mismatches;
     size_t num_mismatches;
-    int flags = TSI_RESOLVE_SHARED_RECOMBS;
+    int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, positions, haplotypes);

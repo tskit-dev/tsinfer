@@ -61,7 +61,24 @@ cmp_edge_clrp(const void *a, const void *b) {
     return ret;
 }
 
+/* Sorts edges by (parent, left, right, child) order. */
+static int
+cmp_edge_plrc(const void *a, const void *b) {
+    const edge_t *ca = (const edge_t *) a;
+    const edge_t *cb = (const edge_t *) b;
 
+    int ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
+    if (ret == 0) {
+        ret = (ca->left > cb->left) - (ca->left < cb->left);
+        if (ret == 0) {
+            ret = (ca->right > cb->right) - (ca->right < cb->right);
+            if (ret == 0) {
+                ret = (ca->child > cb->child) - (ca->child < cb->child);
+            }
+        }
+    }
+    return ret;
+}
 
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
@@ -171,12 +188,35 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time)
     int ret = 0;
 
     if (self->num_nodes == self->max_nodes) {
-        ret = -2;
+        /* FIXME */
+        ret = -6;
         goto out;
     }
     ret = self->num_nodes;
     self->time[ret] = time;
     self->num_nodes++;
+out:
+    return ret;
+}
+
+static int WARN_UNUSED
+tree_sequence_builder_add_edge(tree_sequence_builder_t *self,
+        site_id_t left, site_id_t right, node_id_t parent, node_id_t child)
+{
+    int ret = 0;
+    edge_t *e;
+
+    if (self->num_edges == self->max_edges) {
+        /* FIXME */
+        ret = -7;
+        goto out;
+    }
+    e = self->edges + self->num_edges;
+    e->left = left;
+    e->right = right;
+    e->parent = parent;
+    e->child = child;
+    self->num_edges++;
 out:
     return ret;
 }
@@ -221,12 +261,12 @@ tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
 typedef struct {
     site_id_t start;
     site_id_t end;
-} identity_path_t;
+} edge_group_t;
 
 /* Returns true if the specified pair of paths through the specified set
  * of edges are considered equal. */
 static bool
-paths_equal(edge_t *edges, identity_path_t p1, identity_path_t p2)
+paths_equal(edge_t *edges, edge_group_t p1, edge_group_t p2)
 {
     bool ret = false;
     site_id_t len = p1.end - p1.start;
@@ -260,8 +300,8 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     edge_t *active = NULL;
     edge_t *filtered = NULL;
     edge_t *output = NULL;
-    identity_path_t *paths = NULL;
-    identity_path_t path;
+    edge_group_t *paths = NULL;
+    edge_group_t path;
     bool *match_found = NULL;
     bool *marked = NULL;
     size_t *matches = NULL;
@@ -275,7 +315,7 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     active = malloc(max_edges * sizeof(edge_t));
     filtered = malloc(max_edges * sizeof(edge_t));
     output = malloc(max_edges * sizeof(edge_t));
-    paths = malloc(max_paths * sizeof(identity_path_t));
+    paths = malloc(max_paths * sizeof(edge_group_t));
     if (active == NULL || filtered == NULL || output == NULL || paths == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -624,6 +664,101 @@ out:
     return ret;
 }
 
+static int
+tree_sequence_builder_resolve_polytomies(tree_sequence_builder_t *self)
+{
+    int ret = 0;
+    edge_t *edges = self->edges;
+    size_t max_groups = self->num_edges;
+    size_t *parent_count = NULL;
+    edge_group_t *groups = NULL;
+    size_t j, g, num_groups, size;
+    node_id_t parent, new_node;
+    double parent_time, children_time, new_time;
+
+    parent_count = calloc(self->num_nodes, sizeof(size_t));
+    groups = malloc(max_groups * sizeof(edge_group_t));
+    if (parent_count == NULL || groups == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    for (j = 0; j < self->num_edges; j++) {
+        parent_count[edges[j].parent]++;
+    }
+
+    /* Sort by (parent, left, right) to group together all edges for a given parent.
+     */
+    qsort(edges, self->num_edges, sizeof(edge_t), cmp_edge_plrc);
+
+    /* printf("RESOLVE\n"); */
+    /* for (j = 0; j < self->num_edges; j++) { */
+    /*     printf("\t%d\t%d\t%d\t%d\n", edges[j].left, edges[j].right, */
+    /*             edges[j].parent, edges[j].child); */
+    /* } */
+
+    num_groups = 0;
+    groups[0].start = 0;
+    for (j = 1; j < self->num_edges; j++) {
+        if (edges[j - 1].left != edges[j].left
+                || edges[j - 1].right != edges[j].right
+                || edges[j - 1].parent != edges[j].parent) {
+            size = j - groups[num_groups].start;
+            if (size > 1 && size != parent_count[edges[j - 1].parent]) {
+                groups[num_groups].end = j;
+                num_groups++;
+                assert(num_groups < max_groups);
+            }
+            groups[num_groups].start = j;
+        }
+    }
+    j = self->num_edges;
+    size = j - groups[num_groups].start;
+    if (size > 1 && size != parent_count[edges[j - 1].parent]) {
+        groups[num_groups].end = j;
+        num_groups++;
+        assert(num_groups < max_groups);
+    }
+
+    for (g = 0; g < num_groups; g++) {
+        /* printf("Group: %d %d\n", groups[g].start, groups[g].end); */
+        /* for (j = groups[g].start; j < groups[g].end; j++) { */
+        /*     printf("\t%d\t%d\t%d\t%d\n", edges[j].left, edges[j].right, */
+        /*             edges[j].parent, edges[j].child); */
+        /* } */
+        parent = edges[groups[g].start].parent;
+        parent_time = self->time[parent];
+        children_time = -1;
+        for (j = groups[g].start; j < groups[g].end; j++) {
+            children_time = GSL_MAX(children_time, self->time[edges[j].child]);
+        }
+        new_time = children_time + (parent_time - children_time) / 2;
+        new_node = tree_sequence_builder_add_node(self, new_time);
+        if (new_node < 0) {
+            ret = new_node;
+            goto out;
+        }
+        /* Update the existing edges to point to this new node. */
+        for (j = groups[g].start; j < groups[g].end; j++) {
+            edges[j].parent = new_node;
+            /* printf("U\t%d\t%d\t%d\t%d\n", edges[j].left, edges[j].right, */
+            /*         edges[j].parent, edges[j].child); */
+        }
+        /* Insert a new edge */
+        ret = tree_sequence_builder_add_edge(self, 0, self->num_sites, parent, new_node);
+        if (ret != 0) {
+            goto out;
+        }
+        /* printf("Inserted:"); */
+        /* j = self->num_edges - 1; */
+        /* printf("U\t%d\t%d\t%d\t%d\n", edges[j].left, edges[j].right, */
+        /*         edges[j].parent, edges[j].child); */
+    }
+out:
+    tsi_safe_free(parent_count);
+    tsi_safe_free(groups);
+    return ret;
+}
+
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
@@ -660,6 +795,14 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
         ret = tree_sequence_builder_resolve_shared_recombs(self);
         if (ret != 0) {
             goto out;
+        }
+    }
+    if (self->flags & TSI_RESOLVE_POLYTOMIES) {
+        if (self->num_edges > 1) {
+            ret = tree_sequence_builder_resolve_polytomies(self);
+            if (ret != 0) {
+                goto out;
+            }
         }
     }
     ret = tree_sequence_builder_index_edges(self);

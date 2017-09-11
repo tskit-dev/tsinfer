@@ -10,7 +10,8 @@
 #define NULL_LIKELIHOOD (-1)
 #define NULL_NODE (-1)
 
-#define TSI_RESOLVE_SHARED_RECOMBS 1
+#define TSI_RESOLVE_SHARED_RECOMBS  1
+#define TSI_RESOLVE_POLYTOMIES      2
 
 /* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;
