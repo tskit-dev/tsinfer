@@ -1616,7 +1616,7 @@ def large_infer(n, L, seed, log_level="INFO"):
     ts_new = tsinfer.infer(
         samples, positions, ts.sequence_length, 1e-8, 0,
         method="C", num_threads=10, log_level=log_level, progress=True,
-        resolve_shared_recombinations=False, resolve_polytomies=True)
+        resolve_shared_recombinations=False, resolve_polytomies=False)
 
 def new_copy_process_dev(n, L, seed):
 
