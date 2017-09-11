@@ -159,12 +159,13 @@ class InferenceManager(object):
     def __init__(
             self, samples, positions, length, recombination_rate,
             num_threads=1, method="C", progress=False, log_level="WARNING",
-            resolve_shared_recombinations=True):
+            resolve_shared_recombinations=False, resolve_polytomies=False):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
         self.positions = positions
         self.resolve_shared_recombinations = resolve_shared_recombinations
+        self.resolve_polytomies = resolve_polytomies
         assert self.positions.shape[0] == self.num_sites
         self.length = length
         self.recombination_rate = recombination_rate
@@ -194,7 +195,8 @@ class InferenceManager(object):
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.num_sites, 10**6, 10**7,
-            resolve_shared_recombinations=self.resolve_shared_recombinations)
+            resolve_shared_recombinations=self.resolve_shared_recombinations,
+            resolve_polytomies=self.resolve_polytomies)
 
         frequency_classes = self.ancestor_builder.get_frequency_classes()
         # TODO change the builder API here to just return the list of focal sites.
@@ -660,7 +662,8 @@ def edge_group_equal(edges, group1, group2):
 class TreeSequenceBuilder(object):
 
     def __init__(
-            self, num_sites, max_nodes, max_edges, resolve_shared_recombinations=True):
+            self, num_sites, max_nodes, max_edges, resolve_shared_recombinations=True,
+            resolve_polytomies=True):
         self.num_nodes = 0
         self.num_sites = num_sites
         self.time = []
@@ -669,7 +672,7 @@ class TreeSequenceBuilder(object):
         self.edges = []
         self.mean_traceback_size = 0
         self.resolve_shared_recombinations=True
-        self.break_polytomies = False
+        self.resolve_polytomies = True
 
     def add_node(self, time, is_sample=True):
         self.num_nodes += 1
@@ -907,7 +910,7 @@ class TreeSequenceBuilder(object):
                 # for e in self.edges:
                 #     print("\t", e)
 
-                self.replaces_done += 1
+                # self.replaces_done += 1
                 self.edges = output_edges
                 # print("AFTER")
                 # for e in self.edges:
@@ -923,34 +926,61 @@ class TreeSequenceBuilder(object):
         children_time = max(self.time[e.child] for e in edges)
         parent_time = self.time[edges[0].parent]
         time = children_time + (parent_time - children_time) / 2
-        new_node = self.add_node(time)
+        new_node = self.add_node(time, is_sample=False)
         e = edges[0]
         # Add the new edge.
-        self.edges.append(Edge(e.left, e.right, e.parent, new_node))
+        self.edges.append(Edge(0, self.num_sites, e.parent, new_node))
         # Update the edges to point to this new node.
         for e in edges:
             # print("\t", e)
             e.parent = new_node
 
-
-    def _break_polytomies(self):
+    def _resolve_polytomies(self):
         # Gather all the egdes pointing to a given parent.
-        parent_map = {}
+        active = list(self.edges)
+        active.sort(key=lambda e: (e.parent, e.left, e.right, e.child))
+        parent_count = [0 for _ in range(self.num_sites)]
+        # print("ACTIVE")
+        for e in active:
+            parent_count[e.parent] += 1
+            # print(e.left, e.right, e.parent, e.child, sep="\t")
 
-        for e in self.edges:
-            if e.parent not in parent_map:
-                parent_map[e.parent] = collections.defaultdict(list)
-            parent_map[e.parent][(e.left, e.right)].append(e)
+        group_start = 0
+        groups = []
+        for j in range(1, len(active)):
+            condition = (
+                active[j - 1].left != active[j].left or
+                active[j - 1].right != active[j].right or
+                active[j - 1].parent != active[j].parent)
+            if condition:
+                size = j - group_start
+                if size > 1 and size != parent_count[active[j -1].parent]:
+                    groups.append((group_start, j))
+                group_start = j
+        j = len(active)
+        size = j - group_start
+        if size > 1 and size != parent_count[active[j -1].parent]:
+            groups.append((group_start, j))
 
-        for parent, interval_map in parent_map.items():
-            # If all the coordinates are identical we have nothing to do.
-            if len(interval_map) > 1:
-                for interval, edges in interval_map.items():
-                    if len(edges) > 1:
-                        self.insert_polytomy_ancestor(edges)
+        for start, end in groups:
+            # print("BREAKING POLYTOMY FOR group:", start, end)
+            # for j in range(start, end):
+            #     print("\t", active[j])
 
+            parent = active[start].parent
+            children_time = max(self.time[active[j].child] for j in range(start, end))
+            parent_time = self.time[parent]
+            time = children_time + (parent_time - children_time) / 2
+            new_node = self.add_node(time, is_sample=False)
 
-    replaces_done = 0
+            # Update the edges to point to this new node.
+            for j in range(start, end):
+                active[j].parent = new_node
+            # Add the new edge.
+            active.append(Edge(0, self.num_sites, parent, new_node))
+
+        self.edges = active
+
     def update(self, num_nodes, time, left, right, parent, child, site, node):
         for _ in range(num_nodes):
             self.add_node(time)
@@ -960,9 +990,8 @@ class TreeSequenceBuilder(object):
         for s, u in zip(site, node):
             self.mutations[s] = u
 
-        if self.break_polytomies:
-            assert False
-            self._break_polytomies()
+        if self.resolve_polytomies:
+            self._resolve_polytomies()
 
         # print("replaces_done = ", self.replaces_done)
         # if self.replaces_done < 2:

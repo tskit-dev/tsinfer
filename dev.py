@@ -1618,7 +1618,7 @@ def large_infer(n, L, seed, log_level="INFO"):
         method="C", num_threads=10, log_level=log_level, progress=True,
         resolve_shared_recombinations=False)
 
-def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomies=True):
+def new_copy_process_dev(n, L, seed):
 
     ts = msprime.simulate(
         n, length=L, recombination_rate=1e-8, mutation_rate=1e-8,
@@ -1640,7 +1640,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="C", num_threads=2)
+        method="P", num_threads=1, resolve_polytomies=True)
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
@@ -1765,9 +1765,9 @@ if __name__ == "__main__":
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    # for j in range(1, 10000):
-    #     print("HERE", j)
-    #     new_copy_process_dev(20, 20 * 10**4, j, True, False)
+    for j in range(1, 10000):
+        print("HERE", j)
+        new_copy_process_dev(20, 20 * 10**4, j)
 
     # new_copy_process_dev(10, 25 * 10**4, 28, True, False)
-    analyse_tracebacks(94)
+    # analyse_tracebacks(94)
