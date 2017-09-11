@@ -316,6 +316,13 @@ class InferenceManager(object):
             for j in range(self.num_threads):
                 results[j].clear()
 
+            # # TMP dump tracebacks
+            # filename = "tmp__NOBACKUP__/tracebacks/tracebacks{}.pkl".format(epoch)
+            # import pickle
+            # tracebacks = [matchers[0].get_traceback(l) for l in range(self.num_sites)]
+            # with open(filename, "wb") as f:
+            #     pickle.dump(tracebacks, f)
+
         # Signal to the workers to quit and clean up.
         build_queue.put(None)
         build_thread.join()

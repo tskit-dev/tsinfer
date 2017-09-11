@@ -1154,6 +1154,52 @@ out:
     return ret;
 }
 
+static PyObject *
+AncestorMatcher_get_traceback(AncestorMatcher *self, PyObject *args)
+{
+    PyObject *ret = NULL;
+    unsigned long site;
+    likelihood_list_t *z;
+    PyObject *dict = NULL;
+    PyObject *key = NULL;
+    PyObject *value = NULL;
+
+    if (AncestorMatcher_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTuple(args, "k", &site)) {
+        goto out;
+    }
+    if (site >= self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "site out of range");
+        goto out;
+    }
+    dict = PyDict_New();
+    if (dict == NULL) {
+        goto out;
+    }
+    for (z = self->ancestor_matcher->traceback[site]; z != NULL; z = z->next) {
+        key = Py_BuildValue("k", (unsigned long) z->node);
+        value = Py_BuildValue("d", z->likelihood);
+        if (key == NULL || value == NULL) {
+            goto out;
+        }
+        if (PyDict_SetItem(dict, key, value) != 0) {
+            goto out;
+        }
+        Py_DECREF(key);
+        key = NULL;
+        Py_DECREF(value);
+        value = NULL;
+    }
+    ret = dict;
+    dict = NULL;
+out:
+    Py_XDECREF(key);
+    Py_XDECREF(value);
+    Py_XDECREF(dict);
+    return ret;
+}
 
 static PyObject *
 AncestorMatcher_get_mean_traceback_size(AncestorMatcher *self, void *closure)
@@ -1201,6 +1247,8 @@ static PyMethodDef AncestorMatcher_methods[] = {
     {"find_path", (PyCFunction) AncestorMatcher_find_path,
         METH_VARARGS|METH_KEYWORDS,
         "Returns a best match path for the specified haplotype through the ancestors."},
+    {"get_traceback", (PyCFunction) AncestorMatcher_get_traceback,
+        METH_VARARGS, "Returns the traceback likelihood dictionary at the specified site."},
     {NULL}  /* Sentinel */
 };
 

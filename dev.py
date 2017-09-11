@@ -1,7 +1,6 @@
 
 
 import subprocess
-import os
 import numpy as np
 import itertools
 import multiprocessing
@@ -1641,7 +1640,7 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="C")
+        method="C", num_threads=2)
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
@@ -1695,16 +1694,31 @@ def new_copy_process_dev(n, L, seed, replace_recombinations=True, break_polytomi
         assert np.array_equal(v1.genotypes, v2.genotypes)
     print("CHECKED samples, OK")
 
+def analyse_tracebacks(epoch):
+    filename = "tmp__NOBACKUP__/tracebacks/tracebacks{}.pkl".format(epoch)
+    import pickle
+    with open(filename, "rb") as f:
+        tracebacks = pickle.load(f)
+    max_len = 0
+    for j, L in enumerate(tracebacks):
+        if len(L) > max_len:
+            max_len = len(L)
+            max_index = j
+    # print(j, "\t", L)
+    print("max len = ", max_len)
+    for k, v in tracebacks[max_index].items():
+        print(k, "\t", v)
+
 
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(50, 300, j, num_threads=4)
-        # new_segments(10, 30, j, num_threads=1, method="P")
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(50, 300, j, num_threads=4)
+    #     # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
         # test_ancestor_store(1000, 5000, j, method="C")
 
@@ -1755,4 +1769,5 @@ if __name__ == "__main__":
     #     print("HERE", j)
     #     new_copy_process_dev(20, 20 * 10**4, j, True, False)
 
-    # new_copy_process_dev(10, 15 * 10**4, 28, True, False)
+    # new_copy_process_dev(10, 25 * 10**4, 28, True, False)
+    analyse_tracebacks(94)
