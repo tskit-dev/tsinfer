@@ -450,13 +450,15 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     unsigned long max_nodes;
     unsigned long max_edges;
     int resolve_shared_recombs = 1;
+    int resolve_polytomies = 1;
     static char *kwlist[] = {"num_sites", "max_nodes", "max_edges",
-        "resolve_shared_recombinations", NULL};
+        "resolve_shared_recombinations", "resolve_polytomies", NULL};
     int flags = 0;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kkk|i", kwlist,
-                &num_sites, &max_nodes, &max_edges, &resolve_shared_recombs)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kkk|ii", kwlist,
+                &num_sites, &max_nodes, &max_edges, &resolve_shared_recombs,
+                &resolve_polytomies)) {
         goto out;
     }
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
@@ -466,6 +468,9 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     }
     if (resolve_shared_recombs) {
         flags |= TSI_RESOLVE_SHARED_RECOMBS;
+    }
+    if (resolve_polytomies) {
+        flags |= TSI_RESOLVE_POLYTOMIES;
     }
 
     err = tree_sequence_builder_alloc(self->tree_sequence_builder, num_sites,

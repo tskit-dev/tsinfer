@@ -511,13 +511,14 @@ class InferenceManager(object):
 
 def infer(samples, positions, length, recombination_rate, error_rate, method="C",
         num_threads=1, progress=False, log_level="WARNING",
-        resolve_shared_recombinations=True):
+        resolve_shared_recombinations=False, resolve_polytomies=False):
     # Primary entry point.
 
     manager = InferenceManager(
         samples, positions, length, recombination_rate,
         num_threads=num_threads, method=method, progress=progress, log_level=log_level,
-        resolve_shared_recombinations=resolve_shared_recombinations)
+        resolve_shared_recombinations=resolve_shared_recombinations,
+        resolve_polytomies=resolve_polytomies)
     manager.initialise()
     manager.process_ancestors()
     manager.process_samples()
@@ -939,7 +940,7 @@ class TreeSequenceBuilder(object):
         # Gather all the egdes pointing to a given parent.
         active = list(self.edges)
         active.sort(key=lambda e: (e.parent, e.left, e.right, e.child))
-        parent_count = [0 for _ in range(self.num_sites)]
+        parent_count = [0 for _ in range(self.num_nodes)]
         # print("ACTIVE")
         for e in active:
             parent_count[e.parent] += 1

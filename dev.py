@@ -1616,7 +1616,7 @@ def large_infer(n, L, seed, log_level="INFO"):
     ts_new = tsinfer.infer(
         samples, positions, ts.sequence_length, 1e-8, 0,
         method="C", num_threads=10, log_level=log_level, progress=True,
-        resolve_shared_recombinations=False)
+        resolve_shared_recombinations=False, resolve_polytomies=True)
 
 def new_copy_process_dev(n, L, seed):
 
@@ -1640,7 +1640,8 @@ def new_copy_process_dev(n, L, seed):
 
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
-        method="P", num_threads=1, resolve_polytomies=True)
+        method="C", num_threads=1, resolve_polytomies=True,
+        resolve_shared_recombinations=False)
     manager.initialise()
     manager.process_ancestors()
     ts_new = manager._finalise()
@@ -1693,6 +1694,9 @@ def new_copy_process_dev(n, L, seed):
         # assert np.array_equal(v1.genotypes, g)
         assert np.array_equal(v1.genotypes, v2.genotypes)
     print("CHECKED samples, OK")
+    # t = ts_new.dump_tables()
+    # print(t.nodes)
+    # print(t.edgesets)
 
 def analyse_tracebacks(epoch):
     filename = "tmp__NOBACKUP__/tracebacks/tracebacks{}.pkl".format(epoch)
@@ -1754,7 +1758,7 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    # large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
+    large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
 
     # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
@@ -1765,9 +1769,10 @@ if __name__ == "__main__":
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
-    for j in range(1, 10000):
-        print("HERE", j)
-        new_copy_process_dev(20, 20 * 10**4, j)
+    # for j in range(1, 10000):
+    #     print("HERE", j)
+    #     new_copy_process_dev(50, 200 * 10**4, j)
+    # new_copy_process_dev(50, 50 * 10**4, 33)
 
     # new_copy_process_dev(10, 25 * 10**4, 28, True, False)
     # analyse_tracebacks(94)
