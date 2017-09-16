@@ -28,6 +28,7 @@ _tsinfer_module = Extension(
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
     libraries=["m"],
+    extra_compile_args=["-std=c99"],
     include_dirs = [np.get_include()],
 )
 
