@@ -373,6 +373,8 @@ class InferenceManager(object):
                 self.tree_sequence_builder, self.recombination_rate)
             for _ in range(self.num_threads)]
         work_queue = queue.Queue()
+        # TODO we need to find some mechanism for communicating error back to the
+        # main thread. Possibly concurrent.futures would make this easier.
 
         def worker(thread_index):
             self.logger.info("Started sample worker thread {}".format(thread_index))
@@ -387,7 +389,8 @@ class InferenceManager(object):
                 mean_traceback_size += matchers[thread_index].mean_traceback_size
                 num_matches += 1
                 work_queue.task_done()
-            mean_traceback_size /= num_matches
+            if num_matches > 0:
+                mean_traceback_size /= num_matches
             self.logger.info("Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
                 thread_index, mean_traceback_size, results[thread_index].num_edges))
             work_queue.task_done()
