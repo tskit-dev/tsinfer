@@ -1719,9 +1719,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # for j in range(1, 100000):
-    #     print(j)
-    #     new_segments(50, 300, j, num_threads=4)
+    for j in range(1, 100000):
+        print(j)
+        new_segments(50, 300, j, num_threads=4)
     #     # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
         # test_ancestor_store(1000, 5000, j, method="C")
@@ -1758,11 +1758,11 @@ if __name__ == "__main__":
     #     print(j)
     #     tree_copy_process_dev(50, 30 * 10**4, j + 2)
 
-    large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
+    # large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
 
     # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
-    # new_copy_process_dev(20, 20 * 10**4, 1, False)
+    # new_copy_process_dev(20, 20 * 10**4, 1)
     # for x in range(1, 20):
     #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
     #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
@@ -1771,8 +1771,7 @@ if __name__ == "__main__":
     #     print()
     # for j in range(1, 10000):
     #     print("HERE", j)
-    #     new_copy_process_dev(50, 200 * 10**4, j)
-    # new_copy_process_dev(50, 50 * 10**4, 33)
+    #     new_copy_process_dev(3, 10 * 10**4, j)
 
     # new_copy_process_dev(10, 25 * 10**4, 28, True, False)
     # analyse_tracebacks(94)

@@ -185,12 +185,14 @@ run_generate(const char *sample_file, int verbose)
     int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
-    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, positions, haplotypes);
+    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
+            positions, haplotypes);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
     num_ancestors = ancestor_builder.num_ancestors;
-    ret = tree_sequence_builder_alloc(&ts_builder, num_sites,
+    ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
+            num_sites, positions,
             100 * (num_samples + num_ancestors), 65536, flags);
     if (ret != 0) {
         fatal_error("alloc error");

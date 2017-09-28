@@ -84,7 +84,6 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
             assert(u != NULL_NODE);
         }
     }
-
 }
 
 int
@@ -317,7 +316,7 @@ ancestor_matcher_is_descendant(ancestor_matcher_t *self, node_id_t u,
 }
 
 static int WARN_UNUSED
-ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
+ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id_t site,
         node_id_t mutation_node, char state)
 {
     int ret = 0;
@@ -330,6 +329,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     bool is_descendant;
     node_id_t u;
     avl_node_t *a;
+    double distance = 1;
+
+    if (site > 0) {
+        distance = self->tree_sequence_builder->sites.position[site] -
+                self->tree_sequence_builder->sites.position[site - 1];
+    }
+    recomb_proba *= distance;
+    no_recomb_proba *= distance;
 
     max_L = -1;
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
@@ -436,7 +443,8 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
         if (ret != 0) {
             goto out;
         }
-        ret = ancestor_matcher_update_site_likelihood_values(self, mutation_node, state);
+        ret = ancestor_matcher_update_site_likelihood_values(self, site,
+                mutation_node, state);
         if (ret != 0) {
             goto out;
         }

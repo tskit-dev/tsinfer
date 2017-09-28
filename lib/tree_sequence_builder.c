@@ -137,7 +137,8 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 }
 
 int
-tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
+tree_sequence_builder_alloc(tree_sequence_builder_t *self,
+        double sequence_length, size_t num_sites, double *position,
         size_t max_nodes, size_t max_edges, int flags)
 {
     int ret = 0;
@@ -146,6 +147,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
      * max value of site_id_t are the practical limits. Probably simpler make
      * site_id_t a signed integer in the long run */
     memset(self, 0, sizeof(tree_sequence_builder_t));
+    self->sequence_length = sequence_length;
     self->num_sites = num_sites;
     self->max_nodes = max_nodes;
     self->max_edges = max_edges;
@@ -159,13 +161,16 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
     self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
     self->time = malloc(self->max_nodes * sizeof(double));
     self->mutations = malloc(self->num_sites * sizeof(node_id_t));
+    self->sites.position = malloc(self->num_sites * sizeof(double));
     if (self->edges == NULL || self->time == NULL
             || self->insertion_order == NULL || self->removal_order == NULL
-            || self->sort_buffer == NULL || self->mutations == NULL)  {
+            || self->sort_buffer == NULL || self->mutations == NULL
+            || self->sites.position == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     memset(self->mutations, 0xff, self->num_sites * sizeof(node_id_t));
+    memcpy(self->sites.position, position, self->num_sites * sizeof(double));
 out:
     return ret;
 }
@@ -179,6 +184,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->removal_order);
     tsi_safe_free(self->sort_buffer);
     tsi_safe_free(self->mutations);
+    tsi_safe_free(self->sites.position);
     return 0;
 }
 
@@ -836,6 +842,24 @@ tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
     return ret;
 }
 
+/* Translates the specified site-index edge coordinate into the appropriate value
+ * in the external coordinate system */
+static double
+tree_sequence_builder_translate_coord(tree_sequence_builder_t *self, site_id_t coord)
+{
+    double ret = -1;
+
+    if (coord == 0) {
+        ret = 0;
+    } else if (coord == self->num_sites) {
+        ret = self->sequence_length;
+    } else if (coord < self->num_sites) {
+        ret = self->sites.position[coord];
+    }
+    assert(ret != -1);
+    return ret;
+}
+
 int
 tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
         double *left, double *right, ancestor_id_t *parent, ancestor_id_t *child)
@@ -846,8 +870,8 @@ tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 
     for (j = 0; j < self->num_edges; j++) {
         e = self->edges + j;
-        left[j] = e->left;
-        right[j] = e->right;
+        left[j] = tree_sequence_builder_translate_coord(self, (site_id_t) e->left);
+        right[j] = tree_sequence_builder_translate_coord(self, (site_id_t) e->right);
         parent[j] = e->parent;
         child[j] = e->child;
     }

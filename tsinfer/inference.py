@@ -157,17 +157,17 @@ class ResultBuffer(object):
 class InferenceManager(object):
 
     def __init__(
-            self, samples, positions, length, recombination_rate,
+            self, samples, positions, sequence_length, recombination_rate,
             num_threads=1, method="C", progress=False, log_level="WARNING",
             resolve_shared_recombinations=False, resolve_polytomies=False):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
+        assert self.num_sites == positions.shape[0]
         self.positions = positions
         self.resolve_shared_recombinations = resolve_shared_recombinations
         self.resolve_polytomies = resolve_polytomies
-        assert self.positions.shape[0] == self.num_sites
-        self.length = length
+        self.sequence_length = sequence_length
         self.recombination_rate = recombination_rate
         self.num_threads = num_threads
         # Set up logging.
@@ -194,7 +194,7 @@ class InferenceManager(object):
         self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.num_sites, 10**6, 10**7,
+            self.sequence_length, self.positions, 10**6, 10**7,
             resolve_shared_recombinations=self.resolve_shared_recombinations,
             resolve_polytomies=self.resolve_polytomies)
 
@@ -456,7 +456,7 @@ class InferenceManager(object):
 
         sites = msprime.SiteTable()
         sites.set_columns(
-            position=np.arange(tsb.num_sites),
+            position=self.positions,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
             ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
         mutations = msprime.MutationTable()
@@ -666,10 +666,12 @@ def edge_group_equal(edges, group1, group2):
 class TreeSequenceBuilder(object):
 
     def __init__(
-            self, num_sites, max_nodes, max_edges, resolve_shared_recombinations=True,
-            resolve_polytomies=True):
+            self, sequence_length, positions, max_nodes, max_edges,
+            resolve_shared_recombinations=True, resolve_polytomies=True):
         self.num_nodes = 0
-        self.num_sites = num_sites
+        self.sequence_length = sequence_length
+        self.positions = positions
+        self.num_sites = positions.shape[0]
         self.time = []
         self.flags = []
         self.mutations = {}
@@ -1019,9 +1021,11 @@ class TreeSequenceBuilder(object):
         flags[:] = self.flags
 
     def dump_edges(self, left, right, parent, child):
+        x = np.hstack([self.positions, [self.sequence_length]])
+        x[0] = 0
         for j, edge in enumerate(self.edges):
-            left[j] = edge.left
-            right[j] = edge.right
+            left[j] = x[edge.left]
+            right[j] = x[edge.right]
             parent[j] = edge.parent
             child[j] = edge.child
 
@@ -1053,6 +1057,7 @@ class AncestorMatcher(object):
         self.tree_sequence_builder = tree_sequence_builder
         self.recombination_rate = recombination_rate
         self.num_sites = tree_sequence_builder.num_sites
+        self.positions = tree_sequence_builder.positions
 
     def get_max_likelihood_node(self, L):
         """
@@ -1142,12 +1147,16 @@ class AncestorMatcher(object):
                     L[mutation_node] = L[u]
                 traceback[site] = dict(L)
 
+                distance = 1
+                if site > 0:
+                    distance = self.positions[site] - self.positions[site - 1]
                 # Update the likelihoods for this site.
+                # print("Site ", site, "distance = ", distance)
                 max_L = -1
                 for v in L.keys():
-                    x = L[v] * no_recomb_proba
+                    x = L[v] * no_recomb_proba * distance
                     assert x >= 0
-                    y = recomb_proba
+                    y = recomb_proba * distance
                     if x > y:
                         z = x
                     else:

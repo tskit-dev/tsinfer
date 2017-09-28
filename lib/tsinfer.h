@@ -132,7 +132,11 @@ typedef struct {
 
 typedef struct {
     int flags;
+    double sequence_length;
     size_t num_sites;
+    struct {
+        double *position;
+    } sites;
     size_t max_nodes;
     size_t max_edges;
     size_t num_nodes;
@@ -194,7 +198,8 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t max_nodes, size_t max_edges, int flags);
+        double sequence_length, size_t num_sites, double *position,
+        size_t max_nodes, size_t max_edges, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_update(tree_sequence_builder_t *self,

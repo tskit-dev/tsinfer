@@ -446,21 +446,37 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
 {
     int ret = -1;
     int err;
-    unsigned long num_sites;
+    PyObject *position = NULL;
+    PyArrayObject *position_array = NULL;
+    size_t num_sites;
+    double sequence_length;
     unsigned long max_nodes;
     unsigned long max_edges;
     int resolve_shared_recombs = 1;
     int resolve_polytomies = 1;
-    static char *kwlist[] = {"num_sites", "max_nodes", "max_edges",
+    static char *kwlist[] = {"sequence_length", "position", "max_nodes", "max_edges",
         "resolve_shared_recombinations", "resolve_polytomies", NULL};
     int flags = 0;
+    npy_intp *shape;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kkk|ii", kwlist,
-                &num_sites, &max_nodes, &max_edges, &resolve_shared_recombs,
-                &resolve_polytomies)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dOkk|ii", kwlist,
+                &sequence_length, &position, &max_nodes, &max_edges,
+                &resolve_shared_recombs, &resolve_polytomies)) {
         goto out;
     }
+    /* position */
+    position_array = (PyArrayObject *) PyArray_FROM_OTF(position, NPY_FLOAT64,
+            NPY_ARRAY_IN_ARRAY);
+    if (position_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(position_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(position_array);
+    num_sites = shape[0];
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
     if (self->tree_sequence_builder == NULL) {
         PyErr_NoMemory();
@@ -473,7 +489,8 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
         flags |= TSI_RESOLVE_POLYTOMIES;
     }
 
-    err = tree_sequence_builder_alloc(self->tree_sequence_builder, num_sites,
+    err = tree_sequence_builder_alloc(self->tree_sequence_builder,
+            sequence_length, num_sites, (double *) PyArray_DATA(position_array),
             max_nodes, max_edges, flags);
     if (err != 0) {
         handle_library_error(err);
