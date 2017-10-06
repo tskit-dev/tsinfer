@@ -444,15 +444,13 @@ class InferenceManager(object):
             flags[samples] = 1
         nodes.set_columns(flags=flags, time=time)
 
-        edgesets = msprime.EdgesetTable()
+        edges = msprime.EdgeTable()
         left = np.zeros(tsb.num_edges, dtype=np.float64)
         right = np.zeros(tsb.num_edges, dtype=np.float64)
         parent = np.zeros(tsb.num_edges, dtype=np.int32)
         child = np.zeros(tsb.num_edges, dtype=np.int32)
         tsb.dump_edges(left=left, right=right, parent=parent, child=child)
-        edgesets.set_columns(
-            left=left, right=right, parent=parent, children=child,
-            children_length=np.ones(tsb.num_edges, dtype=np.uint32))
+        edges.set_columns(left=left, right=right, parent=parent, child=child)
 
         sites = msprime.SiteTable()
         sites.set_columns(
@@ -469,7 +467,7 @@ class InferenceManager(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
 
-        msprime.sort_tables(nodes, edgesets, sites=sites, mutations=mutations)
+        msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
 
         if samples is None:
             samples = np.where(nodes.flags == 1)[0].astype(np.int32)
@@ -479,22 +477,22 @@ class InferenceManager(object):
         # print(samples)
         # print("BEFORE SIMPLIFY")
         # print(nodes)
-        # print(edgesets)
+        # print(edges)
         # print(sites)
         # print(mutations)
         # print(sites) Otherwise this
         # mucks up the node mapping hacks we've done below.
         # print(mutations)
         msprime.simplify_tables(
-            samples, nodes, edgesets, sites=sites, mutations=mutations,
+            samples, nodes, edges, sites=sites, mutations=mutations,
             filter_invariant_sites=False)
         # print("AFTER SIMPLIFY")
         # print(nodes)
-        # print(edgesets)
+        # print(edges)
         # print(sites)
         # print(mutations)
         ts = msprime.load_tables(
-            nodes=nodes, edgesets=edgesets, sites=sites, mutations=mutations)
+            nodes=nodes, edges=edges, sites=sites, mutations=mutations)
         return ts
 
     def ancestors(self):
@@ -705,24 +703,22 @@ class TreeSequenceBuilder(object):
         print("nodes = ")
         print(nodes)
 
-        edgesets = msprime.EdgesetTable()
+        edges = msprime.EdgeTable()
         left = np.zeros(self.num_edges, dtype=np.float64)
         right = np.zeros(self.num_edges, dtype=np.float64)
         parent = np.zeros(self.num_edges, dtype=np.int32)
         child = np.zeros(self.num_edges, dtype=np.int32)
         self.dump_edges(left=left, right=right, parent=parent, child=child)
-        edgesets.set_columns(
-            left=left, right=right, parent=parent, children=child,
-            children_length=np.ones(self.num_edges, dtype=np.uint32))
+        edges.set_columns(left=left, right=right, parent=parent, child=child)
         print("edges = ")
-        print(edgesets)
+        print(edges)
 
         if nodes.num_rows > 1:
-            msprime.sort_tables(nodes, edgesets)
+            msprime.sort_tables(nodes, edges)
             samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-            msprime.simplify_tables(samples, nodes, edgesets)
-            print("edgesets = ")
-            print(edgesets)
+            msprime.simplify_tables(samples, nodes, edges)
+            print("edges = ")
+            print(edges)
 
     def _replace_recombinations(self):
         # print("START!!")

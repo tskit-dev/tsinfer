@@ -1721,8 +1721,8 @@ if __name__ == "__main__":
 
     for j in range(1, 100000):
         print(j)
-        new_segments(50, 300, j, num_threads=4)
-    #     # new_segments(10, 30, j, num_threads=1, method="P")
+        new_segments(100, 300, j, num_threads=4)
+        # new_segments(10, 30, j, num_threads=1, method="P")
         # test_ancestor_store(20, 30, j, method="P")
         # test_ancestor_store(1000, 5000, j, method="C")
 
