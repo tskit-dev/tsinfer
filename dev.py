@@ -1641,40 +1641,47 @@ def new_copy_process_dev(n, L, seed):
     manager = tsinfer.InferenceManager(
         samples, positions, ts.sequence_length, 1e-8,
         method="C", num_threads=1, resolve_polytomies=True,
-        resolve_shared_recombinations=False)
+        resolve_shared_recombinations=True)
     manager.initialise()
     manager.process_ancestors()
-    ts_new = manager._finalise()
 
-# Disabling this here because we don't track samples in the C
-# implementation. It's a good check though, we should definitely
-# code up what's needed to support it.
+    ts_new = manager.get_tree_sequence()
+    # print("T:", ts_new.num_trees, ts_new.num_edges)
+    # ts_new = ts_new.simplify()
+    # print("T:", ts_new.num_trees, ts_new.num_edges)
+    # for t in ts_new.trees():
+    #     node_labels = {u: "*{}*".format(u) for u in ts_new.samples()}
+    #     print(t.draw(format="unicode", node_label_text=node_labels))
 
-#     A = manager.ancestors()
-#     B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
-#     for v in ts_new.variants():
-#         B[:, v.index] = v.genotypes
-#         if not np.array_equal(B[:, v.index], A[:, v.index]):
-#             print("ERROR", v.index)
+    # print(ts_new.tables)
 
-#     for k in range(manager.num_ancestors):
-#         # node = manager.ancestor_id_map[k]
-#         # print(k, "-> ", node)
-#         # assert np.array_equal(A[k], B[node])00
-#         assert np.array_equal(A[k], B[k])
+    assert ts_new.num_samples == manager.num_ancestors
+    A = manager.ancestors()
+    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+    for v in ts_new.variants():
+        B[:, v.index] = v.genotypes
+        if not np.array_equal(B[:, v.index], A[:, v.index]):
+            print("ERROR", v.index)
 
-#         # print(v.index)
-#         # print(A[:, v.index])
-#         # print(B[:, v.index])
-#         # # assert np.array_equal(B[:, v.index], A[:, v.index])
-#         # if not np.array_equal(B[:, v.index], A[:, v.index]):
-#         #     print("ERROR")
-#     print("CHECKED ancestors, OK")
+    for k in range(manager.num_ancestors):
+        # node = manager.ancestor_id_map[k]
+        # print(k, "-> ", node)
+        # assert np.array_equal(A[k], B[node])00
+        assert np.array_equal(A[k], B[k])
+
+        # print(v.index)
+        # print(A[:, v.index])
+        # print(B[:, v.index])
+        # # assert np.array_equal(B[:, v.index], A[:, v.index])
+        # if not np.array_equal(B[:, v.index], A[:, v.index]):
+        #     print("ERROR")
+    print("CHECKED ancestors, OK")
 
     assert ts_new.num_sites == ts.num_sites
     for site in ts_new.sites():
         # print(site)
         assert len(site.mutations) <= 1
+
     # Disable recombination finding for samples. Otherwise this
     # mucks up the node mapping hacks we've done below.
     # manager.tree_sequence_builder.replace_recombinations = False
@@ -1682,6 +1689,10 @@ def new_copy_process_dev(n, L, seed):
     manager.process_samples()
     ts_new = manager.finalise()
     n = ts.sample_size
+
+    # for t in ts_new.trees():
+    #     # node_labels = {u: "*{}*".format(u) for u in ts_new.samples()}
+    #     print(t.draw(format="unicode"))
 
     for v1, v2 in zip(ts.variants(), ts_new.variants()):
         # Hack to get just the samples from the new TS.
@@ -1719,12 +1730,12 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    for j in range(1, 100000):
-        print(j)
-        new_segments(100, 300, j, num_threads=4)
-        # new_segments(10, 30, j, num_threads=1, method="P")
-        # test_ancestor_store(20, 30, j, method="P")
-        # test_ancestor_store(1000, 5000, j, method="C")
+    # for j in range(1, 100000):
+    #     print(j)
+    #     new_segments(100, 300, j, num_threads=4)
+    #     # new_segments(10, 30, j, num_threads=1, method="P")
+    #     # test_ancestor_store(20, 30, j, method="P")
+    #     # test_ancestor_store(1000, 5000, j, method="C")
 
     # test_ancestor_store(20, 30, 861, method="P")
 
@@ -1761,13 +1772,18 @@ if __name__ == "__main__":
     # large_infer(1000, 10000 * 10**4, 1, log_level="DEBUG")
 
     # new_copy_process_dev(20, 28 * 10**4, 74, True, False)
+
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
-    # new_copy_process_dev(20, 20 * 10**4, 1)
-    # for x in range(1, 20):
-    #     new_copy_process_dev(50, x * 20 * 10**4, 74, False, False)
-    #     # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
-    #     new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
-    #     # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
+
+    new_copy_process_dev(10, 50* 10**4, 1)
+
+    for seed in range(1, 1000):
+        for x in range(1, 20):
+            new_copy_process_dev(50, x * 20 * 10**4, seed)
+
+        # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
+        # new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
+        # new_copy_process_dev(20, x * 20 * 10**4, 74, True, True)
     #     print()
     # for j in range(1, 10000):
     #     print("HERE", j)

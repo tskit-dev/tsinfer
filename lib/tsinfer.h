@@ -144,6 +144,7 @@ typedef struct {
     size_t num_mutations;
     edge_t *edges;
     double *time;
+    uint32_t *node_flags;
     node_id_t *mutations;
     index_sort_t *sort_buffer;
     node_id_t *insertion_order;

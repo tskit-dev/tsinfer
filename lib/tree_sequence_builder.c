@@ -160,6 +160,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->insertion_order = malloc(self->max_edges * sizeof(node_id_t));
     self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
     self->time = malloc(self->max_nodes * sizeof(double));
+    self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
     self->mutations = malloc(self->num_sites * sizeof(node_id_t));
     self->sites.position = malloc(self->num_sites * sizeof(double));
     if (self->edges == NULL || self->time == NULL
@@ -180,6 +181,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
 {
     tsi_safe_free(self->edges);
     tsi_safe_free(self->time);
+    tsi_safe_free(self->node_flags);
     tsi_safe_free(self->insertion_order);
     tsi_safe_free(self->removal_order);
     tsi_safe_free(self->sort_buffer);
@@ -189,17 +191,23 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
 }
 
 static node_id_t WARN_UNUSED
-tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time)
+tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
+        bool is_sample)
 {
     int ret = 0;
+    uint32_t flags = 0;
 
     if (self->num_nodes == self->max_nodes) {
         /* FIXME */
         ret = -6;
         goto out;
     }
+    if (is_sample) {
+        flags = 1;
+    }
     ret = self->num_nodes;
     self->time[ret] = time;
+    self->node_flags[ret] = flags;
     self->num_nodes++;
 out:
     return ret;
@@ -585,7 +593,7 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 children_time = GSL_MAX(children_time, self->time[active[path.start].child]);
             }
             new_time = children_time + (parent_time - children_time) / 2;
-            new_node = tree_sequence_builder_add_node(self, new_time);
+            new_node = tree_sequence_builder_add_node(self, new_time, false);
             if (new_node < 0) {
                 ret = new_node;
                 goto out;
@@ -738,7 +746,7 @@ tree_sequence_builder_resolve_polytomies(tree_sequence_builder_t *self)
             children_time = GSL_MAX(children_time, self->time[edges[j].child]);
         }
         new_time = children_time + (parent_time - children_time) / 2;
-        new_node = tree_sequence_builder_add_node(self, new_time);
+        new_node = tree_sequence_builder_add_node(self, new_time, false);
         if (new_node < 0) {
             ret = new_node;
             goto out;
@@ -776,7 +784,7 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     edge_t *e;
 
     for (j = 0; j < num_nodes; j++) {
-        ret = tree_sequence_builder_add_node(self, time);
+        ret = tree_sequence_builder_add_node(self, time, true);
         if (ret < 0) {
             goto out;
         }
@@ -836,7 +844,7 @@ tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
     size_t j;
 
     for (j = 0; j < self->num_nodes; j++) {
-        flags[j] = 1;
+        flags[j] = self->node_flags[j];
         time[j] = self->time[j];
     }
     return ret;

@@ -427,21 +427,20 @@ class InferenceManager(object):
 
     def finalise(self):
         self.logger.info("Finalising tree sequence")
-        return self._finalise(self.sample_ids)
+        ts = self.get_tree_sequence()
+        return ts.simplify(
+            samples=self.sample_ids, filter_zero_mutation_sites=False)
 
-    def _finalise(self, samples=None):
-        # TODO we badly need a better API here for this. This is a very useful
-        # method for testing, where we want to be able to incrementally check
-        # that we are always representing the input data.
+    def get_tree_sequence(self):
+        """
+        Returns the current state of the build tree sequence. All samples and
+        ancestors will have the sample node flag set.
+        """
         tsb = self.tree_sequence_builder
         nodes = msprime.NodeTable()
         flags = np.zeros(tsb.num_nodes, dtype=np.uint32)
         time = np.zeros(tsb.num_nodes, dtype=np.float64)
         tsb.dump_nodes(flags=flags, time=time)
-        # flags[:] = 1
-        if samples is not None:
-            flags[:] = 0
-            flags[samples] = 1
         nodes.set_columns(flags=flags, time=time)
 
         edges = msprime.EdgeTable()
@@ -460,40 +459,18 @@ class InferenceManager(object):
         mutations = msprime.MutationTable()
         site = np.zeros(tsb.num_mutations, dtype=np.int32)
         node = np.zeros(tsb.num_mutations, dtype=np.int32)
+        parent = np.zeros(tsb.num_mutations, dtype=np.int32) - 1
         derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
+        # TODO add parent to dump_mutations
         tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
         derived_state += ord('0')
         mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
-            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32))
-
+            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32),
+            parent=parent);
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
-
-        if samples is None:
-            samples = np.where(nodes.flags == 1)[0].astype(np.int32)
-        # else:
-        #     samples = np.where(nodes.flags == 1)[0].astype(np.int32)[::-1]
-        # print("simplify:")
-        # print(samples)
-        # print("BEFORE SIMPLIFY")
-        # print(nodes)
-        # print(edges)
-        # print(sites)
-        # print(mutations)
-        # print(sites) Otherwise this
-        # mucks up the node mapping hacks we've done below.
-        # print(mutations)
-        msprime.simplify_tables(
-            samples, nodes, edges, sites=sites, mutations=mutations,
-            filter_invariant_sites=False)
-        # print("AFTER SIMPLIFY")
-        # print(nodes)
-        # print(edges)
-        # print(sites)
-        # print(mutations)
-        ts = msprime.load_tables(
+        return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations)
-        return ts
 
     def ancestors(self):
         """
@@ -675,8 +652,8 @@ class TreeSequenceBuilder(object):
         self.mutations = {}
         self.edges = []
         self.mean_traceback_size = 0
-        self.resolve_shared_recombinations=True
-        self.resolve_polytomies = True
+        self.resolve_shared_recombinations = resolve_shared_recombinations
+        self.resolve_polytomies = resolve_polytomies
 
     def add_node(self, time, is_sample=True):
         self.num_nodes += 1
