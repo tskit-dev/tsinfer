@@ -487,13 +487,13 @@ class InferenceManager(object):
         return A
 
 
-def infer(samples, positions, length, recombination_rate, error_rate, method="C",
+def infer(samples, positions, sequence_length, recombination_rate,
+        error_rate=0, method="C",
         num_threads=1, progress=False, log_level="WARNING",
         resolve_shared_recombinations=False, resolve_polytomies=False):
     # Primary entry point.
-
     manager = InferenceManager(
-        samples, positions, length, recombination_rate,
+        samples, np.array(positions), sequence_length, recombination_rate,
         num_threads=num_threads, method=method, progress=progress, log_level=log_level,
         resolve_shared_recombinations=resolve_shared_recombinations,
         resolve_polytomies=resolve_polytomies)

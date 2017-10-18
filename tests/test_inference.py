@@ -7,7 +7,6 @@ import numpy as np
 import msprime
 
 import tsinfer
-import _tsinfer
 
 
 def get_random_data_example(num_samples, num_sites):
@@ -18,35 +17,49 @@ def get_random_data_example(num_samples, num_sites):
             S[0, j] = 1
         elif np.sum(S[:, j]) == num_samples:
             S[0, j] = 0
-    return S
+    return S, np.arange(num_sites)
+
+
+class TsinferTestCase(unittest.TestCase):
+    """
+    Superclass containing assert utilities for tsinfer test cases.
+    """
+    def assertTreeSequencesEqual(self, ts1, ts2):
+        self.assertEqual(ts1.sequence_length, ts2.sequence_length)
+        t1 = ts1.tables
+        t2 = ts2.tables
+        self.assertEqual(t1.nodes, t2.nodes)
+        self.assertEqual(t1.edges, t2.edges)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.mutations, t2.mutations)
 
 
 class TestRoundTrip(unittest.TestCase):
     """
-    Test that we can round-trip data from a simulation through tsinfer.
+    Test that we can round-trip data tsinfer.
     """
+    def verify_data_round_trip(
+            self, samples, positions, sequence_length=None, recombination_rate=1e-9,
+            error_rate=None):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        for method in ["python", "c"]:
+            ts = tsinfer.infer(
+                samples=samples, positions=positions, sequence_length=sequence_length,
+                recombination_rate=recombination_rate, error_rate=error_rate,
+                method=method)
+            self.assertEqual(ts.sequence_length, sequence_length)
+            self.assertEqual(ts.num_sites, len(positions))
+            for v in ts.variants():
+                self.assertEqual(v.position, positions[v.index])
+                self.assertTrue(np.array_equal(samples[:, v.index], v.genotypes))
+
     def verify_round_trip(self, ts, rho):
         S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
         for variant in ts.variants():
             S[:, variant.index] = variant.genotypes
-        sites = [mut.position for mut in ts.mutations()]
-        for algorithm in ["python", "c"]:
-            panel = tsinfer.ReferencePanel(
-                S, sites, ts.sequence_length, rho=rho, algorithm=algorithm)
-            P, mutations = panel.infer_paths(num_workers=1)
-            ts_new = panel.convert_records(P, mutations)
-            self.assertEqual(ts.num_sites, ts_new.num_sites)
-            for m1, m2 in zip(ts.mutations(), ts_new.mutations()):
-                self.assertEqual(m1.position, m2.position)
-            for v1, v2 in zip(ts.variants(), ts_new.variants()):
-                self.assertTrue(np.all(v1.genotypes == v2.genotypes))
-            ts_simplified = ts_new.simplify()
-            # Check that we get the same variants.
-            self.assertEqual(ts.num_sites, ts_simplified.num_sites)
-            for v1, v2 in zip(ts.variants(), ts_simplified.variants()):
-                self.assertTrue(np.all(v1.genotypes == v2.genotypes))
-            for m1, m2 in zip(ts.mutations(), ts_simplified.mutations()):
-                self.assertEqual(m1.position, m2.position)
+        positions = [mut.position for mut in ts.mutations()]
+        self.verify_data_round_trip(S, positions, ts.sequence_length, 1e-9)
 
     def test_simple_example(self):
         rho = 2
@@ -65,50 +78,36 @@ class TestRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 0)
         self.verify_round_trip(ts, 1e-9)
 
-    def verify_data_round_trip(self, S, rho, err):
-        num_samples, num_sites = S.shape
-        sites = np.arange(num_sites)
-        for algorithm in ["python", "c"]:
-            panel = tsinfer.ReferencePanel(
-                S, sites, num_sites, rho=rho, ancestor_error=err, sample_error=err, algorithm=algorithm)
-            P, mutations = panel.infer_paths(num_workers=1)
-            ts_new = panel.convert_records(P, mutations)
-            for variant in ts_new.variants():
-                self.assertTrue(np.all(variant.genotypes == S[:, variant.index]))
-            self.assertEqual(num_sites, ts_new.num_sites)
-            ts_simplified = ts_new.simplify()
-            self.assertEqual(num_sites, ts_simplified.num_sites)
-            S2 = np.empty(S.shape, np.uint8)
-            for j, h in enumerate(ts_simplified.haplotypes()):
-                S2[j,:] = np.fromstring(h, np.uint8) - ord('0')
-            self.assertTrue(np.all(S2 == S))
-
     def test_random_data_high_recombination(self):
-        S = get_random_data_example(20, 30)
+        S, positions = get_random_data_example(20, 30)
         # Force recombination to do all the matching.
-        self.verify_data_round_trip(S, 1, 0)
+        self.verify_data_round_trip(S, positions, recombination_rate=1, error_rate=0)
 
+    @unittest.skip("Error handling not supported")
     def test_random_data_no_recombination(self):
         np.random.seed(4)
         num_random_tests = 100
         for _ in range(num_random_tests):
-            S = get_random_data_example(5, 10)
-            self.verify_data_round_trip(S, 1e-8, 1e-3)
+            S, positions = get_random_data_example(5, 10)
+            self.verify_data_round_trip(S, positions, recombination_rate=0, error_rate=1)
 
-class TestThreads(unittest.TestCase):
+
+class TestThreads(TsinferTestCase):
 
     def test_equivalance(self):
         rho = 2
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
-        S = np.zeros((ts.sample_size, ts.num_sites), dtype="u1")
+        S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
         for variant in ts.variants():
             S[:, variant.index] = variant.genotypes
-        sites = [mut.position for mut in ts.mutations()]
-        panel = tsinfer.ReferencePanel(S, sites, ts.sequence_length, rho=rho)
-        P1, mutations1 = panel.infer_paths(num_workers=1)
-        P2, mutations2 = panel.infer_paths(num_workers=4)
-        self.assertTrue(np.all(P1 == P2))
-        self.assertTrue(np.all(mutations1 == mutations2))
+        positions = [site.position for site in ts.sites()]
+        ts1 = tsinfer.infer(
+            samples=S, positions=positions, sequence_length=ts.sequence_length,
+            recombination_rate=1e-9, num_threads=1)
+        ts2 = tsinfer.infer(
+            samples=S, positions=positions, sequence_length=ts.sequence_length,
+            recombination_rate=1e-9, num_threads=5)
+        self.assertTreeSequencesEqual(ts1, ts2)
 
 
 class TestAncestorStorage(unittest.TestCase):
@@ -121,87 +120,49 @@ class TestAncestorStorage(unittest.TestCase):
     # TODO clean up this verification method and figure out a better API
     # for specifying the classes to use.
 
-    def verify_ancestor_storage(self, ts, method="C"):
-        n = ts.sample_size
-        num_sites = ts.num_sites
+    def verify_ancestor_storage(
+            self, ts, method="C", resolve_polytomies=False,
+            resolve_shared_recombinations=False):
 
         samples = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
         for variant in ts.variants():
             samples[:, variant.index] = variant.genotypes
         positions = np.array([site.position for site in ts.sites()])
+        manager = tsinfer.InferenceManager(
+            samples, positions, ts.sequence_length, 1e-8,
+            method=method, num_threads=1,
+            resolve_polytomies=resolve_polytomies,
+            resolve_shared_recombinations=resolve_shared_recombinations)
+        manager.initialise()
+        manager.process_ancestors()
+        ts_new = manager.get_tree_sequence()
 
-        recombination_rate = 1e-8
-        if method == "C":
-            ancestor_builder = _tsinfer.AncestorBuilder(samples, positions)
-            ts_builder = _tsinfer.TreeSequenceBuilder(num_sites, 10**6, 10**6)
-            matcher = _tsinfer.AncestorMatcher(ts_builder, recombination_rate)
-        else:
-            ancestor_builder = tsinfer.AncestorBuilder(samples, positions)
-            ts_builder = tsinfer.TreeSequenceBuilder(num_sites)
-            matcher = tsinfer.AncestorMatcher(ts_builder, recombination_rate)
-
-        frequency_classes = ancestor_builder.get_frequency_classes()
-
-        num_ancestors = 1
-        for _, ancestor_focal_sites in frequency_classes:
-            num_ancestors += len(ancestor_focal_sites)
-        # For checking the output.
-        A = np.zeros((num_ancestors, num_sites), dtype=np.int8)
-        ancestor_id_map = {0: 0}
-        ancestor_id = 1
-
-        # TODO this time is out by 1 I think.
-        root_time = frequency_classes[0][0] + 1
-        ts_builder.update(1, root_time, [], [], [], [], [], [])
-        a = np.zeros(num_sites, dtype=np.int8)
-
-        for age, ancestor_focal_sites in frequency_classes:
-            e_left = []
-            e_right = []
-            e_parent = []
-            e_child = []
-            s_site = []
-            s_node = []
-            node = ts_builder.num_nodes
-            for focal_sites in ancestor_focal_sites:
-                ancestor_builder.make_ancestor(focal_sites, a)
-                A[ancestor_id] = a
-                ancestor_id += 1
-                ancestor_id_map[ancestor_id] = node
-                for s in focal_sites:
-                    assert a[s] == 1
-                    a[s] = 0
-                    s_site.append(s)
-                    s_node.append(node)
-                # When we update this API we should pass in arrays for left, right and
-
-                # parent. There's no point in passing child, since we already know what
-                # it is. We don't need to pass the 'node' parameter here then.
-                edges = matcher.find_path(node, a)
-                for left, right, parent, child in zip(*edges):
-                    e_left.append(left)
-                    e_right.append(right)
-                    e_parent.append(parent)
-                    e_child.append(child)
-                node += 1
-            ts_builder.update(
-                len(ancestor_focal_sites), age,
-                e_left, e_right, e_parent, e_child,
-                s_site, s_node)
-
-        ts = tsinfer.finalise(ts_builder, all_ancestors=True)
-
-        B = np.zeros((ts.sample_size, ts.num_sites), dtype=np.int8)
-        for v in ts.variants():
+        self.assertEqual(ts_new.num_samples, manager.num_ancestors)
+        self.assertEqual(ts_new.num_sites, manager.num_sites)
+        A = manager.ancestors()
+        B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+        for v in ts_new.variants():
             B[:, v.index] = v.genotypes
+        self.assertTrue(np.array_equal(A, B))
 
-        for ancestor_id in range(num_ancestors):
-            node_id = ancestor_id
-            assert np.array_equal(A[ancestor_id], B[node_id])
-
-    def test_small_case(self):
+    def verify_small_case(
+            self, resolve_polytomies=False, resolve_shared_recombinations=False):
         ts = msprime.simulate(
             20, length=10, recombination_rate=1, mutation_rate=0.1, random_seed=1)
         assert ts.num_sites < 50
-        self.verify_ancestor_storage(ts)
-        self.verify_ancestor_storage(ts, method="P")
+        for method in ["C", "Python"]:
+            self.verify_ancestor_storage(
+                ts, method=method, resolve_polytomies=resolve_polytomies,
+                resolve_shared_recombinations=resolve_shared_recombinations)
+
+    def test_small_case(self):
+        self.verify_small_case(False, False)
+
+    def test_small_case_resolve_polytomies(self):
+        self.verify_small_case(True, False)
+
+    def test_small_case_resolve_shared_recom(self):
+        self.verify_small_case(False, True)
+
+    def test_small_case_resolve_all(self):
+        self.verify_small_case(True, True)
