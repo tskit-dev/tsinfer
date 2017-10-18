@@ -4,12 +4,8 @@ TODO module docs.
 """
 
 import collections
-import math
 import queue
 import threading
-
-# TODO remove this dependency. It's not used for anything important.
-import attr
 
 import numpy as np
 import tqdm
@@ -189,8 +185,9 @@ class InferenceManager(object):
 
     def initialise(self):
         # This is slow, so we should figure out a way to report progress on it.
-        self.logger.info("Initialising ancestor builder for {} samples and {} sites".
-                format(self.num_samples, self.num_sites))
+        self.logger.info(
+            "Initialising ancestor builder for {} samples and {} sites".format(
+                self.num_samples, self.num_sites))
         self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
@@ -333,16 +330,12 @@ class InferenceManager(object):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-
     def __process_ancestors_single_threaded(self):
         a = np.zeros(self.num_sites, dtype=np.int8)
         matcher = self.ancestor_matcher_class(
             self.tree_sequence_builder, self.recombination_rate)
         results = ResultBuffer()
 
-        # TODO remove this stuff for ancestor ID maps. It's just here for
-        # debugging.
-        ancestor_id = 1
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
             ancestor_focal_sites = self.epoch_ancestors[epoch]
@@ -391,8 +384,9 @@ class InferenceManager(object):
                 work_queue.task_done()
             if num_matches > 0:
                 mean_traceback_size /= num_matches
-            self.logger.info("Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
-                thread_index, mean_traceback_size, results[thread_index].num_edges))
+            self.logger.info(
+                "Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
+                    thread_index, mean_traceback_size, results[thread_index].num_edges))
             work_queue.task_done()
 
         threads = [
@@ -467,7 +461,7 @@ class InferenceManager(object):
         mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
             derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32),
-            parent=parent);
+            parent=parent)
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations)
@@ -482,14 +476,14 @@ class InferenceManager(object):
         ancestor_id = 1
         for age, ancestor_focal_sites in frequency_classes:
             for focal_sites in ancestor_focal_sites:
-                builder.make_ancestor(focal_sites, A[ancestor_id,:])
+                builder.make_ancestor(focal_sites, A[ancestor_id, :])
                 ancestor_id += 1
         return A
 
 
-def infer(samples, positions, sequence_length, recombination_rate,
-        error_rate=0, method="C",
-        num_threads=1, progress=False, log_level="WARNING",
+def infer(
+        samples, positions, sequence_length, recombination_rate, error_rate=0,
+        method="C", num_threads=1, progress=False, log_level="WARNING",
         resolve_shared_recombinations=False, resolve_polytomies=False):
     # Primary entry point.
     manager = InferenceManager(
@@ -517,18 +511,19 @@ def infer(samples, positions, sequence_length, recombination_rate,
 ###############################################################
 
 
-@attr.s
 class Edge(object):
-    left = attr.ib(default=None)
-    right = attr.ib(default=None)
-    parent = attr.ib(default=None)
-    child = attr.ib(default=None)
+
+    def __init__(self, left=None, right=None, parent=None, child=None):
+        self.left = left
+        self.right = right
+        self.parent = parent
+        self.child = child
 
 
-@attr.s
 class Site(object):
-    id = attr.ib(default=None)
-    frequency = attr.ib(default=None)
+    def __init__(self, id, frequency):
+        self.id = id
+        self.frequency = frequency
 
 
 class AncestorBuilder(object):
@@ -613,7 +608,6 @@ class AncestorBuilder(object):
         return a
 
 
-
 def edge_group_equal(edges, group1, group2):
     """
     Returns true if the specified subsets of the list of edges are considered
@@ -635,7 +629,6 @@ def edge_group_equal(edges, group1, group2):
                 ret = False
                 break
     return ret
-
 
 
 class TreeSequenceBuilder(object):
@@ -675,6 +668,7 @@ class TreeSequenceBuilder(object):
         print("num_nodes = ", self.num_nodes)
         nodes = msprime.NodeTable()
         flags = np.zeros(self.num_nodes, dtype=np.uint32)
+        time = np.zeros(self.num_nodes, dtype=np.float64)
         self.dump_nodes(flags=flags, time=time)
         nodes.set_columns(flags=flags, time=time)
         print("nodes = ")
@@ -802,7 +796,8 @@ class TreeSequenceBuilder(object):
                 if not match_found[j]:
                     for k in range(j + 1, len(groups)):
                         # Compare this group to the others.
-                        if not match_found[k] and edge_group_equal(active, groups[j], groups[k]):
+                        if not match_found[k] and edge_group_equal(
+                                active, groups[j], groups[k]):
                             matches.append(k)
                             match_found[k] = True
                 if len(matches) > 0:
@@ -825,8 +820,10 @@ class TreeSequenceBuilder(object):
                     for group_index in group_index_list:
                         start, end = groups[group_index]
                         left_set.add(tuple([active[j].left for j in range(start, end)]))
-                        right_set.add(tuple([active[j].right for j in range(start, end)]))
-                        parent_set.add(tuple([active[j].parent for j in range(start, end)]))
+                        right_set.add(
+                            tuple([active[j].right for j in range(start, end)]))
+                        parent_set.add(
+                            tuple([active[j].parent for j in range(start, end)]))
                         children = set(active[j].child for j in range(start, end))
                         assert len(children) == 1
                         for j in range(start, end - 1):
@@ -895,7 +892,6 @@ class TreeSequenceBuilder(object):
                 # for e in self.edges:
                 #     print("\t", e)
 
-
     def insert_polytomy_ancestor(self, edges):
         """
         Insert a new ancestor for the specified edges and update the parents
@@ -933,12 +929,12 @@ class TreeSequenceBuilder(object):
                 active[j - 1].parent != active[j].parent)
             if condition:
                 size = j - group_start
-                if size > 1 and size != parent_count[active[j -1].parent]:
+                if size > 1 and size != parent_count[active[j - 1].parent]:
                     groups.append((group_start, j))
                 group_start = j
         j = len(active)
         size = j - group_start
-        if size > 1 and size != parent_count[active[j -1].parent]:
+        if size > 1 and size != parent_count[active[j - 1].parent]:
             groups.append((group_start, j))
 
         for start, end in groups:
@@ -987,7 +983,6 @@ class TreeSequenceBuilder(object):
                 self.edges[j].right, -self.time[self.edges[j].parent]))
         # print("AFTER UPDATE")
         # self.print_state()
-
 
     def dump_nodes(self, flags, time):
         time[:] = self.time[:self.num_nodes]
@@ -1106,7 +1101,8 @@ class AncestorMatcher(object):
                     if state == 0:
                         assert len(L) > 0
                     traceback[site] = dict(L)
-                    if site > 0 and (site - 1) not in self.tree_sequence_builder.mutations:
+                    if site > 0 and (site - 1) \
+                            not in self.tree_sequence_builder.mutations:
                         assert traceback[site] == traceback[site - 1]
                     continue
                 mutation_node = self.tree_sequence_builder.mutations[site]
@@ -1167,8 +1163,6 @@ class AncestorMatcher(object):
         # for l in range(self.num_sites):
         #     print("\t", l, traceback[l])
 
-
-
         u = self.get_max_likelihood_node(L)
         output_edge = Edge(right=m, parent=u)
         output_edges = [output_edge]
@@ -1220,5 +1214,3 @@ class AncestorMatcher(object):
             right[j] = e.right
             parent[j] = e.parent
         return (left, right, parent), np.array(mismatches, dtype=np.uint32)
-
-
