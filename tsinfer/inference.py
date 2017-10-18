@@ -3,9 +3,12 @@
 TODO module docs.
 """
 
+import contextlib
 import collections
 import queue
 import threading
+import _thread
+import traceback
 
 import numpy as np
 import tqdm
@@ -183,6 +186,20 @@ class InferenceManager(object):
         self.tree_sequence_builder = None
         self.sample_ids = None
 
+    @contextlib.contextmanager
+    def catch_thread_error(self):
+        """
+        Makes sure that errors that occur in the target of threads results in an
+        error being raised in the main thread. Threads **must** be run with daemon
+        status or a deadlock will occur!
+        """
+        try:
+            yield
+        except Exception:
+            self.logger.critical("Exception occured in thread; exiting")
+            self.logger.critical(traceback.format_exc())
+            _thread.interrupt_main()
+
     def initialise(self):
         # This is slow, so we should figure out a way to report progress on it.
         self.logger.info(
@@ -248,40 +265,43 @@ class InferenceManager(object):
         num_matches = np.zeros(self.num_threads)
 
         def build_worker():
-            self.logger.info("Build worker thread starting")
-            a = np.zeros(self.num_sites, dtype=np.int8)
-            while True:
-                work = build_queue.get()
-                if work is None:
-                    break
-                node_id, focal_sites = work
-                self.ancestor_builder.make_ancestor(focal_sites, a)
-                match_queue.put((node_id, focal_sites, a.copy()))
+            with self.catch_thread_error():
+                self.logger.info("Build worker thread starting")
+                a = np.zeros(self.num_sites, dtype=np.int8)
+                while True:
+                    work = build_queue.get()
+                    if work is None:
+                        break
+                    node_id, focal_sites = work
+                    self.ancestor_builder.make_ancestor(focal_sites, a)
+                    match_queue.put((node_id, focal_sites, a.copy()))
+                    build_queue.task_done()
                 build_queue.task_done()
-            build_queue.task_done()
-            self.logger.info("Ancestor build worker thread exiting")
+                self.logger.info("Ancestor build worker thread exiting")
 
         def match_worker(thread_index):
-            self.logger.info("Ancestor match thread {} starting".format(thread_index))
-            matcher = matchers[thread_index]
-            result_buffer = results[thread_index]
-            while True:
-                work = match_queue.get()
-                if work is None:
-                    break
-                node_id, focal_sites, a = work
-                self.__find_path_ancestor(
-                        a, node_id, focal_sites, matcher, result_buffer)
-                mean_traceback_size[thread_index] += matcher.mean_traceback_size
-                num_matches[thread_index] += 1
+            with self.catch_thread_error():
+                self.logger.info(
+                    "Ancestor match thread {} starting".format(thread_index))
+                matcher = matchers[thread_index]
+                result_buffer = results[thread_index]
+                while True:
+                    work = match_queue.get()
+                    if work is None:
+                        break
+                    node_id, focal_sites, a = work
+                    self.__find_path_ancestor(
+                            a, node_id, focal_sites, matcher, result_buffer)
+                    mean_traceback_size[thread_index] += matcher.mean_traceback_size
+                    num_matches[thread_index] += 1
+                    match_queue.task_done()
                 match_queue.task_done()
-            match_queue.task_done()
-            self.logger.info("Ancestor match thread {} exiting".format(thread_index))
+                self.logger.info("Ancestor match thread {} exiting".format(thread_index))
 
-        build_thread = threading.Thread(target=build_worker)
+        build_thread = threading.Thread(target=build_worker, daemon=True)
         build_thread.start()
         match_threads = [
-            threading.Thread(target=match_worker, args=(j,))
+            threading.Thread(target=match_worker, args=(j,), daemon=True)
             for j in range(self.num_threads)]
         for j in range(self.num_threads):
             match_threads[j].start()
@@ -324,7 +344,6 @@ class InferenceManager(object):
 
         # Signal to the workers to quit and clean up.
         build_queue.put(None)
-        build_thread.join()
         for j in range(self.num_threads):
             match_queue.put(None)
         for j in range(self.num_threads):
@@ -370,34 +389,36 @@ class InferenceManager(object):
         # main thread. Possibly concurrent.futures would make this easier.
 
         def worker(thread_index):
-            self.logger.info("Started sample worker thread {}".format(thread_index))
-            mean_traceback_size = 0
-            num_matches = 0
-            while True:
-                sample_index = work_queue.get()
-                if sample_index is None:
-                    break
-                self.__process_sample(
-                    sample_index, matchers[thread_index], results[thread_index])
-                mean_traceback_size += matchers[thread_index].mean_traceback_size
-                num_matches += 1
+            with self.catch_thread_error():
+                self.logger.info("Started sample worker thread {}".format(thread_index))
+                mean_traceback_size = 0
+                num_matches = 0
+                while True:
+                    sample_index = work_queue.get()
+                    if sample_index is None:
+                        break
+                    self.__process_sample(
+                        sample_index, matchers[thread_index], results[thread_index])
+                    mean_traceback_size += matchers[thread_index].mean_traceback_size
+                    num_matches += 1
+                    work_queue.task_done()
+                if num_matches > 0:
+                    mean_traceback_size /= num_matches
+                self.logger.info(
+                    "Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
+                        thread_index, mean_traceback_size,
+                        results[thread_index].num_edges))
                 work_queue.task_done()
-            if num_matches > 0:
-                mean_traceback_size /= num_matches
-            self.logger.info(
-                "Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
-                    thread_index, mean_traceback_size, results[thread_index].num_edges))
-            work_queue.task_done()
 
         threads = [
-            threading.Thread(target=worker, args=(j,)) for j in range(self.num_threads)]
+            threading.Thread(target=worker, args=(j,), daemon=True)
+            for j in range(self.num_threads)]
         for t in threads:
             t.start()
         for sample_index in range(self.num_samples):
             work_queue.put(sample_index)
         for _ in range(self.num_threads):
             work_queue.put(None)
-        work_queue.join()
         for t in threads:
             t.join()
         return ResultBuffer.combine(results)

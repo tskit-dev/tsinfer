@@ -1740,7 +1740,7 @@ if __name__ == "__main__":
     # test_ancestor_store(20, 30, 861, method="P")
 
     # new_segments(200, 10, 1, num_threads=2, method="C", log_level="DEBUG")
-    # new_segments(20, 100, 1, num_threads=2, method="C", log_level="DEBUG")
+    new_segments(20, 100, 1, num_threads=2, method="C", log_level="INFO")
 
     # export_samples(10, 100, 304)
 
@@ -1775,11 +1775,11 @@ if __name__ == "__main__":
 
     # new_copy_process_dev(20, 20 * 10**4, 1, False, False)
 
-    new_copy_process_dev(10, 50* 10**4, 1)
+    # new_copy_process_dev(10, 50* 10**4, 1)
 
-    for seed in range(1, 1000):
-        for x in range(1, 20):
-            new_copy_process_dev(50, x * 20 * 10**4, seed)
+    # for seed in range(1, 1000):
+    #     for x in range(1, 20):
+    #         new_copy_process_dev(50, x * 20 * 10**4, seed)
 
         # new_copy_process_dev(20, x * 20 * 10**4, 74, False, True)
         # new_copy_process_dev(50, x * 20 * 10**4, 74, True, False)
