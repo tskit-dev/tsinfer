@@ -1,21 +1,10 @@
-from __future__ import division
-from __future__ import print_function
+from setuptools import setup, Extension
 
-import subprocess
-# TODO this will need to get imported somewhere else so that we can add
-# numpy as a setup-requires.
-import numpy as np
 
-# First, we try to use setuptools. If it's not available locally,
-# we fall back on ez_setup.
-try:
-    from setuptools import setup, Extension
-except ImportError:
-    from ez_setup import use_setuptools
-    use_setuptools()
-    from setuptools import setup, Extension
+def get_numpy_includes():
+    import numpy as np
+    return np.get_include()
 
-long_description = "TODO"
 
 d = "lib/"
 _tsinfer_module = Extension(
@@ -29,8 +18,12 @@ _tsinfer_module = Extension(
     undef_macros=["NDEBUG"],
     libraries=["m"],
     extra_compile_args=["-std=c99"],
-    include_dirs = [np.get_include()],
+    include_dirs=[get_numpy_includes()],
 )
+
+long_description = "TODO"
+# with open("README.txt") as f:
+#     long_description = f.read()
 
 setup(
     name="tsinfer",
@@ -40,5 +33,28 @@ setup(
     author="Jerome Kelleher",
     author_email="jerome.kelleher@well.ox.ac.uk",
     url="http://pypi.python.org/pypi/tsinfer",
+    # entry_points={
+    #     'console_scripts': [
+    #         'htsget=htsget.cli:htsget_main',
+    #     ]
+    # },
+    install_requires=[],
     ext_modules=[_tsinfer_module],
+    keywords=[],
+    license="GNU GPLv3+",
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"
+        "Development Status :: 3 - Alpha",
+        "Environment :: Other Environment",
+        "Intended Audience :: Science/Research",
+        "Operating System :: POSIX",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Bio-Informatics",
+    ],
+    setup_requires=['setuptools_scm', 'numpy'],
+    use_scm_version={"write_to": "tsinfer/_version.py"},
 )
