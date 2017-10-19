@@ -335,13 +335,6 @@ class InferenceManager(object):
             for j in range(self.num_threads):
                 results[j].clear()
 
-            # # TMP dump tracebacks
-            # filename = "tmp__NOBACKUP__/tracebacks/tracebacks{}.pkl".format(epoch)
-            # import pickle
-            # tracebacks = [matchers[0].get_traceback(l) for l in range(self.num_sites)]
-            # with open(filename, "wb") as f:
-            #     pickle.dump(tracebacks, f)
-
         # Signal to the workers to quit and clean up.
         build_queue.put(None)
         for j in range(self.num_threads):
@@ -385,8 +378,6 @@ class InferenceManager(object):
                 self.tree_sequence_builder, self.recombination_rate)
             for _ in range(self.num_threads)]
         work_queue = queue.Queue()
-        # TODO we need to find some mechanism for communicating error back to the
-        # main thread. Possibly concurrent.futures would make this easier.
 
         def worker(thread_index):
             with self.catch_thread_error():
