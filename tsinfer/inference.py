@@ -37,6 +37,7 @@ class ResultBuffer(object):
         # mutations
         self.__site = np.empty(chunk_size, dtype=np.uint32)
         self.__node = np.empty(chunk_size, dtype=np.int32)
+        self.__derived_state = np.empty(chunk_size, dtype=np.int8)
         self.num_mutations = 0
         self.max_mutations = chunk_size
 
@@ -63,6 +64,10 @@ class ResultBuffer(object):
     @property
     def node(self):
         return self.__node[:self.num_mutations]
+
+    @property
+    def derived_state(self):
+        return self.__derived_state[:self.num_mutations]
 
     def clear(self):
         """
@@ -123,9 +128,10 @@ class ResultBuffer(object):
             new_size = self.max_mutations + max(additional, self.chunk_size)
             self.__site.resize(new_size)
             self.__node.resize(new_size)
+            self.__derived_state.resize(new_size)
             self.max_mutations = new_size
 
-    def add_mutations(self, site, node):
+    def add_mutations(self, site, node, derived_state=None):
         """
         Adds the specified mutations from the specified values. Site must be a
         numpy array. Node may be either a numpy array of the same size, or a
@@ -135,7 +141,21 @@ class ResultBuffer(object):
         self.check_mutations_size(size)
         self.__site[self.num_mutations: self.num_mutations + size] = site
         self.__node[self.num_mutations: self.num_mutations + size] = node
+        fill = derived_state
+        if derived_state is None:
+            fill = 1
+        self.__derived_state[self.num_mutations: self.num_mutations + size] = fill
         self.num_mutations += size
+
+    def add_back_mutation(self, site, node):
+        """
+        Adds a single back mutation for the specified site.
+        """
+        self.check_mutations_size(1)
+        self.__site[self.num_mutations] = site
+        self.__node[self.num_mutations] = node
+        self.__derived_state[self.num_mutations] = 0
+        self.num_mutations += 1
 
     @classmethod
     def combine(cls, result_buffers):
@@ -149,7 +169,7 @@ class ResultBuffer(object):
         for result in result_buffers:
             combined.add_edges(
                 result.left, result.right, result.parent, result.child)
-            combined.add_mutations(result.site, result.node)
+            combined.add_mutations(result.site, result.node, result.derived_state)
         return combined
 
 
@@ -222,7 +242,7 @@ class InferenceManager(object):
             self.epoch_time[j] = self.num_epochs - j
             self.epoch_ancestors[j] = fc[1]
         root_time = self.num_epochs + 1
-        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [])
+        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [], [])
 
         if self.progress:
             total = self.num_samples + self.num_ancestors - 1
@@ -241,8 +261,8 @@ class InferenceManager(object):
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
         ancestor[focal_sites] = 0
-        (left, right, parent), mismatches = matcher.find_path(ancestor)
-        assert mismatches.shape[0] == 0
+        (left, right, parent), matched_haplotype = matcher.find_path(ancestor)
+        assert np.all(matched_haplotype == ancestor)
         results.add_edges(left, right, parent, node_id)
         self.__update_progress()
 
@@ -361,13 +381,16 @@ class InferenceManager(object):
             self.tree_sequence_builder.update(
                 len(ancestor_focal_sites), time,
                 results.left, results.right, results.parent, results.child,
-                results.site, results.node)
+                results.site, results.node, results.derived_state)
             results.clear()
 
     def __process_sample(self, sample_index, matcher, results):
         child = self.sample_ids[sample_index]
-        (left, right, parent), mismatches = matcher.find_path(self.samples[sample_index])
-        results.add_mutations(mismatches, child)
+        haplotype = self.samples[sample_index]
+        (left, right, parent), matched_haplotype = matcher.find_path(haplotype)
+        diffs = np.where(haplotype != matched_haplotype)[0]
+        derived_state = haplotype[diffs]
+        results.add_mutations(diffs, child, derived_state)
         results.add_edges(left, right, parent, child)
         self.__update_progress()
 
@@ -375,7 +398,7 @@ class InferenceManager(object):
         results = [ResultBuffer() for _ in range(self.num_threads)]
         matchers = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate)
+                self.tree_sequence_builder, self.recombination_rate, self.error_rate)
             for _ in range(self.num_threads)]
         work_queue = queue.Queue()
 
@@ -414,14 +437,14 @@ class InferenceManager(object):
             t.join()
         return ResultBuffer.combine(results)
 
-    def process_samples(self):
+    def process_samples(self, sample_error=0.0):
         self.logger.info("Processing {} samples".format(self.num_samples))
         self.sample_ids = self.tree_sequence_builder.num_nodes + np.arange(
                 self.num_samples, dtype=np.int32)
         if self.num_threads == 1:
             results = ResultBuffer(self.num_samples)
             matcher = self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate)
+                self.tree_sequence_builder, self.recombination_rate, sample_error)
             for j in range(self.num_samples):
                 self.__process_sample(j, matcher, results)
         else:
@@ -429,7 +452,7 @@ class InferenceManager(object):
         self.tree_sequence_builder.update(
             self.num_samples, 0,
             results.left, results.right, results.parent, results.child,
-            results.site, results.node)
+            results.site, results.node, results.derived_state)
 
     def finalise(self):
         self.logger.info("Finalising tree sequence")
@@ -465,10 +488,11 @@ class InferenceManager(object):
         mutations = msprime.MutationTable()
         site = np.zeros(tsb.num_mutations, dtype=np.int32)
         node = np.zeros(tsb.num_mutations, dtype=np.int32)
-        parent = np.zeros(tsb.num_mutations, dtype=np.int32) - 1
+        parent = np.zeros(tsb.num_mutations, dtype=np.int32)
         derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
         # TODO add parent to dump_mutations
-        tsb.dump_mutations(site=site, node=node, derived_state=derived_state)
+        tsb.dump_mutations(
+            site=site, node=node, derived_state=derived_state, parent=parent)
         derived_state += ord('0')
         mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
@@ -494,7 +518,7 @@ class InferenceManager(object):
 
 
 def infer(
-        samples, positions, sequence_length, recombination_rate, error_rate=0,
+        samples, positions, sequence_length, recombination_rate, sample_error=0,
         method="C", num_threads=1, progress=False, log_level="WARNING",
         resolve_shared_recombinations=False, resolve_polytomies=False):
     # Primary entry point.
@@ -505,7 +529,7 @@ def infer(
         resolve_polytomies=resolve_polytomies)
     manager.initialise()
     manager.process_ancestors()
-    manager.process_samples()
+    manager.process_samples(sample_error)
     ts = manager.finalise()
     return ts
 
@@ -654,7 +678,7 @@ class TreeSequenceBuilder(object):
         self.num_sites = positions.shape[0]
         self.time = []
         self.flags = []
-        self.mutations = {}
+        self.mutations = collections.defaultdict(list)
         self.edges = []
         self.mean_traceback_size = 0
         self.resolve_shared_recombinations = resolve_shared_recombinations
@@ -672,7 +696,7 @@ class TreeSequenceBuilder(object):
 
     @property
     def num_mutations(self):
-        return len(self.mutations)
+        return sum(len(node_state_list) for node_state_list in self.mutations.values())
 
     def print_state(self):
         print("TreeSequenceBuilder state")
@@ -968,14 +992,16 @@ class TreeSequenceBuilder(object):
 
         self.edges = active
 
-    def update(self, num_nodes, time, left, right, parent, child, site, node):
+    def update(
+            self, num_nodes, time, left, right, parent, child, site, node,
+            derived_state):
         for _ in range(num_nodes):
             self.add_node(time)
         for l, r, p, c in zip(left, right, parent, child):
             self.edges.append(Edge(l, r, p, c))
 
-        for s, u in zip(site, node):
-            self.mutations[s] = u
+        for s, u, d in zip(site, node, derived_state):
+            self.mutations[s].append((u, d))
 
         if self.resolve_polytomies:
             self._resolve_polytomies()
@@ -1009,13 +1035,18 @@ class TreeSequenceBuilder(object):
             parent[j] = edge.parent
             child[j] = edge.child
 
-    def dump_mutations(self, site, node, derived_state):
+    def dump_mutations(self, site, node, derived_state, parent):
         j = 0
         for l in sorted(self.mutations.keys()):
-            site[j] = l
-            node[j] = self.mutations[l]
-            derived_state[j] = 1
-            j += 1
+            p = j
+            for u, d in self.mutations[l]:
+                site[j] = l
+                node[j] = u
+                derived_state[j] = d
+                parent[j] = -1
+                if j != p:
+                    parent[j] = p
+                j += 1
 
 
 def is_descendant(pi, u, v):
@@ -1023,19 +1054,23 @@ def is_descendant(pi, u, v):
     Returns True if the specified node u is a descendent of node v. That is,
     v is on the path to root from u.
     """
-    # print("IS_DESCENDENT(", u, v, ")")
-    while u != v and u != msprime.NULL_NODE:
-        # print("\t", u)
-        u = pi[u]
-    # print("END, ", u, v)
-    return u == v
+    ret = False
+    if v != -1:
+        # print("IS_DESCENDENT(", u, v, ")")
+        while u != v and u != msprime.NULL_NODE:
+            # print("\t", u)
+            u = pi[u]
+        # print("END, ", u, v)
+        ret = u == v
+    return ret
 
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, recombination_rate):
+    def __init__(self, tree_sequence_builder, recombination_rate, error_rate=0):
         self.tree_sequence_builder = tree_sequence_builder
         self.recombination_rate = recombination_rate
+        self.error_rate = error_rate
         self.num_sites = tree_sequence_builder.num_sites
         self.positions = tree_sequence_builder.positions
 
@@ -1054,8 +1089,6 @@ class AncestorMatcher(object):
 
     def find_path(self, h):
 
-        # print("best_path", h)
-
         M = len(self.tree_sequence_builder.edges)
         I = self.tree_sequence_builder.insertion_order
         O = self.tree_sequence_builder.removal_order
@@ -1069,6 +1102,7 @@ class AncestorMatcher(object):
         r = 1 - np.exp(-self.recombination_rate / n)
         recomb_proba = r / n
         no_recomb_proba = 1 - r + r / n
+        err = self.error_rate
 
         j = 0
         k = 0
@@ -1110,22 +1144,28 @@ class AncestorMatcher(object):
             for site in range(left, right):
                 state = h[site]
                 if site not in self.tree_sequence_builder.mutations:
-                    if state == 0:
-                        assert len(L) > 0
-                    traceback[site] = dict(L)
-                    if site > 0 and (site - 1) \
-                            not in self.tree_sequence_builder.mutations:
-                        assert traceback[site] == traceback[site - 1]
-                    continue
-                mutation_node = self.tree_sequence_builder.mutations[site]
-                # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
+                    if err == 0:
+                        # This is a special case for ancestor matching. Very awkward
+                        # flow control here. FIXME
+                        if state == 0:
+                            assert len(L) > 0
+                        traceback[site] = dict(L)
+                        if site > 0 and (site - 1) \
+                                not in self.tree_sequence_builder.mutations:
+                            assert traceback[site] == traceback[site - 1]
+                        # NASTY!!!!
+                        continue
+                    mutation_node = msprime.NULL_NODE
+                else:
+                    mutation_node = self.tree_sequence_builder.mutations[site][0][0]
+                    # Insert an new L-value for the mutation node if needed.
+                    if mutation_node not in L:
+                        u = mutation_node
+                        while u not in L:
+                            u = pi[u]
+                        L[mutation_node] = L[u]
 
-                # Insert an new L-value for the mutation node if needed.
-                if mutation_node not in L:
-                    u = mutation_node
-                    while u not in L:
-                        u = pi[u]
-                    L[mutation_node] = L[u]
+                # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
                 traceback[site] = dict(L)
 
                 distance = 1
@@ -1142,10 +1182,11 @@ class AncestorMatcher(object):
                         z = x
                     else:
                         z = y
+                    d = is_descendant(pi, v, mutation_node)
                     if state == 1:
-                        emission_p = int(is_descendant(pi, v, mutation_node))
+                        emission_p = (1 - err) * d + err * (not d)
                     else:
-                        emission_p = int(not is_descendant(pi, v, mutation_node))
+                        emission_p = err * d + (1 - err) * (not d)
                     L[v] = z * emission_p
                     if L[v] > max_L:
                         max_L = L[v]
@@ -1184,6 +1225,8 @@ class AncestorMatcher(object):
         k = M - 1
         I = self.tree_sequence_builder.removal_order
         O = self.tree_sequence_builder.insertion_order
+        # Construct the matched haplotype
+        hp = np.zeros(m, np.int8)
         while j >= 0:
             right = edges[I[j]].right
             while edges[O[k]].left == right:
@@ -1195,6 +1238,10 @@ class AncestorMatcher(object):
                 j -= 1
             for l in range(right - 1, max(left - 1, 0), -1):
                 u = output_edge.parent
+                if l in self.tree_sequence_builder.mutations:
+                    if is_descendant(
+                            pi, u, self.tree_sequence_builder.mutations[l][0][0]):
+                        hp[l] = 1
                 L = traceback[l]
                 v = u
                 while v not in L:
@@ -1207,17 +1254,14 @@ class AncestorMatcher(object):
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 assert l > 0
-        # For now we hack in mismatches by seeing if the input haplotype
-        # is 1 and there are no mutations. We should check to see if the chosen
-        # node is a descendent of the mutation node (if it exists).
-        self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
         output_edge.left = 0
+        l = 0
+        if l in self.tree_sequence_builder.mutations:
+            if is_descendant(pi, u, self.tree_sequence_builder.mutations[l][0][0]):
+                hp[l] = 1
 
-        mismatches = []
-        for e in output_edges:
-            for l in range(e.left, e.right):
-                if h[l] == 1 and l not in self.tree_sequence_builder.mutations:
-                    mismatches.append(l)
+        self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
+
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
@@ -1225,4 +1269,4 @@ class AncestorMatcher(object):
             left[j] = e.left
             right[j] = e.right
             parent[j] = e.parent
-        return (left, right, parent), np.array(mismatches, dtype=np.uint32)
+        return (left, right, parent), hp

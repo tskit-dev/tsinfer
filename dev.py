@@ -57,13 +57,15 @@ def tsinfer_dev(
         return
     positions = np.array([site.position for site in ts.sites()])
     S = generate_samples(ts, error_rate)
+    # print(S)
 
     tsp = tsinfer.infer(
-        S, positions, L, 1e-9, 1e-200,
+        S, positions, L, 0.5, error_rate,
         num_threads=num_threads, method=method, log_level=log_level)
-    print(tsp.tables)
-    for t in tsp.trees():
-        print(t.draw(format="unicode"))
+    # print(tsp.tables)
+    # for t in tsp.trees():
+    #     print("tree", t.index)
+    #     print(t.draw(format="unicode"))
 
     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
     for variant in tsp.variants():
@@ -116,4 +118,6 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    tsinfer_dev(4, 2, 1, error_rate=0.0, method="python")
+    for seed in range(1, 1000):
+        print(seed)
+        tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
