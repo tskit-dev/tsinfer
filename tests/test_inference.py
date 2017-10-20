@@ -40,13 +40,13 @@ class TestRoundTrip(unittest.TestCase):
     """
     def verify_data_round_trip(
             self, samples, positions, sequence_length=None, recombination_rate=1e-9,
-            error_rate=None):
+            sample_error=0):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         for method in ["python", "c"]:
             ts = tsinfer.infer(
                 samples=samples, positions=positions, sequence_length=sequence_length,
-                recombination_rate=recombination_rate, error_rate=error_rate,
+                recombination_rate=recombination_rate, sample_error=sample_error,
                 method=method)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
@@ -81,15 +81,61 @@ class TestRoundTrip(unittest.TestCase):
     def test_random_data_high_recombination(self):
         S, positions = get_random_data_example(20, 30)
         # Force recombination to do all the matching.
-        self.verify_data_round_trip(S, positions, recombination_rate=1, error_rate=0)
+        self.verify_data_round_trip(S, positions, recombination_rate=1)
 
-    @unittest.skip("Error handling not supported")
     def test_random_data_no_recombination(self):
         np.random.seed(4)
-        num_random_tests = 100
+        num_random_tests = 10
         for _ in range(num_random_tests):
             S, positions = get_random_data_example(5, 10)
-            self.verify_data_round_trip(S, positions, recombination_rate=0, error_rate=1)
+            self.verify_data_round_trip(
+                S, positions, recombination_rate=1e-10, sample_error=0.1)
+
+
+class TestMutationProperties(unittest.TestCase):
+    """
+    Tests to ensure that mutations have the properties that we expect.
+    """
+
+    def test_no_error(self):
+        num_sites = 10
+        S, positions = get_random_data_example(5, num_sites)
+        for method in ["python", "c"]:
+            ts = tsinfer.infer(
+                samples=S, positions=positions, sequence_length=num_sites,
+                recombination_rate=0.5, sample_error=0, method=method)
+            self.assertEqual(ts.num_sites, num_sites)
+            self.assertEqual(ts.num_mutations, num_sites)
+            for site in ts.sites():
+                self.assertEqual(site.ancestral_state, "0")
+                self.assertEqual(len(site.mutations), 1)
+                mutation = site.mutations[0]
+                self.assertEqual(mutation.derived_state, "1")
+                self.assertEqual(mutation.parent, -1)
+
+    def test_error(self):
+        num_sites = 20
+        S, positions = get_random_data_example(5, num_sites)
+        for method in ["python", "c"]:
+            ts = tsinfer.infer(
+                samples=S, positions=positions, sequence_length=num_sites,
+                recombination_rate=1e-9, sample_error=0.1, method=method)
+            self.assertEqual(ts.num_sites, num_sites)
+            self.assertGreater(ts.num_mutations, num_sites)
+            back_mutation = False
+            recurrent_mutation = False
+            for site in ts.sites():
+                self.assertEqual(site.ancestral_state, "0")
+                for mutation in site.mutations:
+                    if mutation.derived_state == "0":
+                        back_mutation = True
+                        self.assertEqual(mutation.parent, site.mutations[0].id)
+                    else:
+                        self.assertEqual(mutation.parent, -1)
+                        if mutation != site.mutations[0]:
+                            recurrent_mutation = True
+            self.assertTrue(back_mutation)
+            self.assertTrue(recurrent_mutation)
 
 
 class TestThreads(TsinferTestCase):

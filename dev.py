@@ -44,7 +44,8 @@ def generate_samples(ts, error_p):
 
 
 def tsinfer_dev(
-        n, L, seed, num_threads=1, error_rate=0, method="C", log_level="WARNING"):
+        n, L, seed, num_threads=1, error_rate=0, method="C", log_level="WARNING",
+        progress=False):
 
     np.random.seed(seed)
     random.seed(seed)
@@ -61,7 +62,7 @@ def tsinfer_dev(
 
     tsp = tsinfer.infer(
         S, positions, L, 0.5, error_rate,
-        num_threads=num_threads, method=method, log_level=log_level)
+        num_threads=num_threads, method=method, log_level=log_level, progress=progress)
     # print(tsp.tables)
     # for t in tsp.trees():
     #     print("tree", t.index)
@@ -118,6 +119,8 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    for seed in range(1, 1000):
-        print(seed)
-        tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
+    tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
+            log_level="INFO", progress=True)
+    # for seed in range(1, 1000):
+    #     print(seed)
+    #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")

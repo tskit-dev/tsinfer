@@ -510,7 +510,7 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
         /*edgesets */
         "left", "right", "parent", "child",
         /* mutations */
-        "site", "node", NULL};
+        "site", "node", "derived_state", NULL};
     unsigned long num_nodes;
     double time;
     size_t num_edges, num_mutations;
@@ -526,15 +526,17 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
     PyArrayObject *site_array = NULL;
     PyObject *node = NULL;
     PyArrayObject *node_array = NULL;
+    PyObject *derived_state = NULL;
+    PyArrayObject *derived_state_array = NULL;
     npy_intp *shape;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kdOOOOOO", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kdOOOOOOO", kwlist,
             &num_nodes, &time,
             &left, &right, &parent, &child,
-            &site, &node)) {
+            &site, &node, &derived_state)) {
         goto out;
     }
 
@@ -621,6 +623,23 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
         PyErr_SetString(PyExc_ValueError, "node wrong size");
         goto out;
     }
+
+    /* derived_state */
+    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (derived_state_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(derived_state_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(derived_state_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "derived_state wrong size");
+        goto out;
+    }
+
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_update(self->tree_sequence_builder,
             num_nodes, time, num_edges,
@@ -630,7 +649,8 @@ TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *
             (node_id_t *) PyArray_DATA(child_array),
             num_mutations,
             (site_id_t *) PyArray_DATA(site_array),
-            (node_id_t *) PyArray_DATA(node_array));
+            (node_id_t *) PyArray_DATA(node_array),
+            PyArray_DATA(derived_state_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -644,6 +664,7 @@ out:
     Py_XDECREF(child_array);
     Py_XDECREF(site_array);
     Py_XDECREF(node_array);
+    Py_XDECREF(derived_state_array);
     return ret;
 }
 
@@ -832,23 +853,26 @@ static PyObject *
 TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"site", "node", "derived_state", NULL};
+    static char *kwlist[] = {"site", "node", "derived_state", "parent", NULL};
     PyObject *site = NULL;
     PyArrayObject *site_array = NULL;
     PyObject *node = NULL;
     PyArrayObject *node_array = NULL;
     PyObject *derived_state = NULL;
     PyArrayObject *derived_state_array = NULL;
+    PyObject *parent= NULL;
+    PyArrayObject *parent_array = NULL;
     size_t num_mutations;
     npy_intp *shape;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto fail;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!O!O!O!", kwlist,
             &PyArray_Type, &site,
             &PyArray_Type, &node,
-            &PyArray_Type, &derived_state)) {
+            &PyArray_Type, &derived_state,
+            &PyArray_Type, &parent)) {
         goto fail;
     }
     num_mutations = self->tree_sequence_builder->num_mutations;
@@ -897,12 +921,28 @@ TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self, PyObject *args, Py
         PyErr_SetString(PyExc_ValueError, "input derived_state wrong size");
         goto fail;
     }
+    /* parent */
+    parent_array = (PyArrayObject *) PyArray_FROM_OTF(parent, NPY_INT32,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (parent_array == NULL) {
+        goto fail;
+    }
+    if (PyArray_NDIM(parent_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto fail;
+    }
+    shape = PyArray_DIMS(parent_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "input parent wrong size");
+        goto fail;
+    }
 
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_dump_mutations(self->tree_sequence_builder,
         (site_id_t *) PyArray_DATA(site_array),
         (ancestor_id_t *) PyArray_DATA(node_array),
-        (allele_t *) PyArray_DATA(derived_state_array));
+        (allele_t *) PyArray_DATA(derived_state_array),
+        (mutation_id_t *) PyArray_DATA(parent_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -911,11 +951,13 @@ TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self, PyObject *args, Py
     Py_DECREF(site_array);
     Py_DECREF(node_array);
     Py_DECREF(derived_state_array);
+    Py_DECREF(parent_array);
     return Py_BuildValue("");
 fail:
     PyArray_XDECREF_ERR(site_array);
     PyArray_XDECREF_ERR(node_array);
     PyArray_XDECREF_ERR(derived_state_array);
+    PyArray_XDECREF_ERR(parent_array);
     return NULL;
 }
 
@@ -1076,15 +1118,17 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate", NULL};
+    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate",
+        "observation_error", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     double recombination_rate;
+    double observation_error;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!dd", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &recombination_rate)) {
+                &recombination_rate, &observation_error)) {
         goto out;
     }
     self->tree_sequence_builder = tree_sequence_builder;
@@ -1098,7 +1142,8 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
-            self->tree_sequence_builder->tree_sequence_builder, recombination_rate);
+            self->tree_sequence_builder->tree_sequence_builder, recombination_rate,
+            observation_error);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1113,23 +1158,25 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"haplotype", NULL};
+    static char *kwlist[] = {"haplotype", "match", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
+    PyObject *match = NULL;
+    PyArrayObject *match_array = NULL;
     npy_intp *shape;
-    size_t num_edges, num_mismatches;
-    site_id_t *ret_left, *ret_right, *ret_mismatches;
+    size_t num_edges;
+    site_id_t *ret_left, *ret_right;
     node_id_t *ret_parent;
     PyArrayObject *left = NULL;
     PyArrayObject *right = NULL;
     PyArrayObject *parent = NULL;
-    PyArrayObject *mismatches = NULL;
     npy_intp dims[1];
 
     if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &haplotype)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!", kwlist,
+                &haplotype, &PyArray_Type, &match)) {
         goto out;
     }
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
@@ -1146,11 +1193,27 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "Incorrect size for input haplotype.");
         goto out;
     }
+
+    match_array = (PyArrayObject *) PyArray_FROM_OTF(match, NPY_INT8,
+            NPY_ARRAY_INOUT_ARRAY);
+    if (match_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(match_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(match_array);
+    if (shape[0] != self->ancestor_matcher->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "input match wrong size");
+        goto out;
+    }
+
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_find_path(self->ancestor_matcher,
             (allele_t *) PyArray_DATA(haplotype_array),
-            &num_edges, &ret_left, &ret_right, &ret_parent,
-            &num_mismatches, &ret_mismatches);
+            (allele_t *) PyArray_DATA(match_array),
+            &num_edges, &ret_left, &ret_right, &ret_parent);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -1160,19 +1223,16 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     left = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_left);
     right = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_right);
     parent = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_INT32, ret_parent);
-    dims[0] = num_mismatches;
-    mismatches = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32,
-            ret_mismatches);
-    if (left == NULL || right == NULL || parent == NULL || mismatches == NULL) {
+    if (left == NULL || right == NULL || parent == NULL) {
         goto out;
     }
-    ret = Py_BuildValue("(OOO)O", left, right, parent, mismatches);
+    ret = Py_BuildValue("(OOO)", left, right, parent);
 out:
     Py_XDECREF(haplotype_array);
+    Py_XDECREF(match_array);
     Py_XDECREF(left);
     Py_XDECREF(right);
     Py_XDECREF(parent);
-    Py_XDECREF(mismatches);
     return ret;
 }
 

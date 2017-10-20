@@ -114,10 +114,12 @@ output_ts(tree_sequence_builder_t *ts_builder)
     site_id_t *site = malloc(num_mutations * sizeof(site_id_t));
     ancestor_id_t *node = malloc(num_mutations * sizeof(ancestor_id_t));
     allele_t *derived_state = malloc(num_mutations * sizeof(allele_t));
+    mutation_id_t *mutation_parent = malloc(num_mutations * sizeof(mutation_id_t));
 
     if (time == NULL || flags == NULL
             || left == NULL || right == NULL || parent == NULL || children == NULL
-            || site == NULL || node == NULL || derived_state == NULL) {
+            || site == NULL || node == NULL || derived_state == NULL
+            || mutation_parent == NULL) {
         fatal_error("malloc error\n");
     }
     ret = tree_sequence_builder_dump_nodes(ts_builder, flags, time);
@@ -136,11 +138,13 @@ output_ts(tree_sequence_builder_t *ts_builder)
     for (j = 0; j < num_edges; j++) {
         printf("%.3f\t%.3f\t%d\t%d\n", left[j], right[j], parent[j], children[j]);
     }
-    ret = tree_sequence_builder_dump_mutations(ts_builder, site, node, derived_state);
+    ret = tree_sequence_builder_dump_mutations(ts_builder, site, node,
+            derived_state, mutation_parent);
     printf("MUTATIONS\n");
     for (j = 0; j < num_mutations; j++) {
-        printf("%d\t%d\t%d\n", site[j], node[j], derived_state[j]);
+        printf("%d\t%d\t%d\t%d\n", site[j], node[j], derived_state[j], mutation_parent[j]);
     }
+
     free(time);
     free(flags);
     free(left);
@@ -150,6 +154,7 @@ output_ts(tree_sequence_builder_t *ts_builder)
     free(site);
     free(node);
     free(derived_state);
+    free(mutation_parent);
 }
 
 static void
@@ -163,7 +168,7 @@ run_generate(const char *sample_file, int verbose)
     ancestor_builder_t ancestor_builder;
     tree_sequence_builder_t ts_builder;
     ancestor_matcher_t matcher;
-    allele_t *a, *sample;
+    allele_t *a, *sample, *match;
     size_t age;
     int ret;
     /* Buffers for edge output */
@@ -179,10 +184,10 @@ run_generate(const char *sample_file, int verbose)
     size_t total_mutations;
     site_id_t *site_buffer;
     node_id_t *node_buffer;
+    allele_t *derived_state_buffer;
     node_id_t child;
-    site_id_t *mismatches;
-    size_t num_mismatches;
-    int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES;
+    /* int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES; */
+    int flags = 0;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
@@ -197,7 +202,7 @@ run_generate(const char *sample_file, int verbose)
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 1e-8);
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 1e-8, 0.0);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -209,20 +214,22 @@ run_generate(const char *sample_file, int verbose)
 
     age = ancestor_builder.num_frequency_classes + 1;
     ret = tree_sequence_builder_update(&ts_builder, 1, age,
-            0, NULL, NULL, NULL, NULL, 0, NULL, NULL);
+            0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL);
     if (ret != 0) {
         fatal_error("initial update");
     }
     a = malloc(num_sites * sizeof(allele_t));
+    match = malloc(num_sites * sizeof(allele_t));
     left_buffer = malloc(max_edges * sizeof(site_id_t));
     right_buffer = malloc(max_edges * sizeof(site_id_t));
     parent_buffer = malloc(max_edges * sizeof(node_id_t));
     child_buffer = malloc(max_edges * sizeof(node_id_t));
     node_buffer = malloc(max_mutations * sizeof(node_id_t));
+    derived_state_buffer = malloc(max_mutations * sizeof(allele_t));
     site_buffer = malloc(max_mutations * sizeof(site_id_t));
-    if (a == NULL || left_buffer == NULL || right_buffer == NULL
+    if (a == NULL || match == NULL || left_buffer == NULL || right_buffer == NULL
             || parent_buffer == NULL || child_buffer == NULL || node_buffer == NULL
-            || site_buffer == NULL) {
+            || site_buffer == NULL || derived_state_buffer == NULL) {
         fatal_error("alloc");
     }
 
@@ -248,18 +255,19 @@ run_generate(const char *sample_file, int verbose)
                 assert(total_mutations < max_mutations);
                 node_buffer[total_mutations] = child;
                 site_buffer[total_mutations] = focal_sites[l];
+                derived_state_buffer[total_mutations] = 1;
                 total_mutations++;
                 assert(a[focal_sites[l]] == 1);
                 a[focal_sites[l]] = 0;
             }
-
-            ret = ancestor_matcher_find_path(&matcher, a,
-                    &num_edges, &left_output, &right_output, &parent_output,
-                    &num_mismatches, &mismatches);
+            ret = ancestor_matcher_find_path(&matcher, a, match,
+                    &num_edges, &left_output, &right_output, &parent_output);
             if (ret != 0) {
                 fatal_error("find_path error");
             }
-            assert(num_mismatches == 0);
+            for (l = 0; l < num_sites; l++) {
+                assert(a[l] == match[l]);
+            }
             if (total_edges + num_edges > max_edges) {
                 fatal_error("out of edge buffer space\n");
             }
@@ -290,29 +298,45 @@ run_generate(const char *sample_file, int verbose)
         }
         ret = tree_sequence_builder_update(&ts_builder, num_ancestors, age,
                 total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
-                total_mutations, site_buffer, node_buffer);
+                total_mutations, site_buffer, node_buffer, derived_state_buffer);
         if (ret != 0) {
             fatal_error("builder update");
         }
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
+    printf("Done with ancestors\n");
 
     total_edges = 0;
     total_mutations = 0;
     /* Copy samples */
+    matcher.observation_error = 0.001;
     for (j = 0; j < num_samples; j++) {
         sample = haplotypes + j * num_sites;
         child = num_ancestors + j;
-        ret = ancestor_matcher_find_path(&matcher, sample,
-                &num_edges, &left_output, &right_output, &parent_output,
-                &num_mismatches, &mismatches);
+        ret = ancestor_matcher_find_path(&matcher, sample, match,
+                &num_edges, &left_output, &right_output, &parent_output);
         if (ret != 0) {
             fatal_error("find_path error");
         }
-        for (l = 0; l < num_mismatches; l++) {
-            node_buffer[total_mutations] = child;
-            site_buffer[total_mutations] = mismatches[l];
-            total_mutations++;
+        if (verbose > 0) {
+            printf("sample %d:\t", (int) child);
+            for (l = 0; l < num_sites; l++) {
+                printf("%d", sample[l]);
+            }
+            printf("\nmatch = \t");
+            for (l = 0; l < num_sites; l++) {
+                printf("%d", match[l]);
+            }
+            printf("\n");
+        }
+        for (l = 0; l < num_sites; l++) {
+            if (sample[l] != match[l]) {
+                assert(total_mutations < max_mutations);
+                node_buffer[total_mutations] = child;
+                site_buffer[total_mutations] = l;
+                derived_state_buffer[total_mutations] = sample[l];
+                total_mutations++;
+            }
         }
 
         if (total_edges + num_edges > max_edges) {
@@ -333,7 +357,7 @@ run_generate(const char *sample_file, int verbose)
 
     ret = tree_sequence_builder_update(&ts_builder, num_samples, 0,
             total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
-            total_mutations, site_buffer, node_buffer);
+            total_mutations, site_buffer, node_buffer, derived_state_buffer);
     if (ret != 0) {
         fatal_error("builder update");
     }
@@ -346,12 +370,14 @@ run_generate(const char *sample_file, int verbose)
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(a);
+    tsi_safe_free(match);
     tsi_safe_free(left_buffer);
     tsi_safe_free(right_buffer);
     tsi_safe_free(parent_buffer);
     tsi_safe_free(child_buffer);
     tsi_safe_free(node_buffer);
     tsi_safe_free(site_buffer);
+    tsi_safe_free(derived_state_buffer);
 }
 
 

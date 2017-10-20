@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include "block_allocator.h"
 #include "object_heap.h"
@@ -19,6 +20,7 @@ typedef int32_t node_id_t;
 typedef int8_t allele_t;
 /* TODO change site_id_t to int for compatability with msprime. */
 typedef uint32_t site_id_t;
+typedef int32_t mutation_id_t;
 
 typedef struct {
     site_id_t left;
@@ -112,7 +114,6 @@ typedef struct {
     object_heap_t heap;
 } segment_list_t;
 
-
 typedef struct {
     node_id_t index;
     site_id_t position;
@@ -126,16 +127,12 @@ typedef struct _likelihood_list_t {
 } likelihood_list_t;
 
 typedef struct {
-    site_id_t site;
-    node_id_t node;
-} site_mutation_t;
-
-typedef struct {
     int flags;
     double sequence_length;
     size_t num_sites;
     struct {
         double *position;
+        mutation_list_node_t **mutations;
     } sites;
     size_t max_nodes;
     size_t max_edges;
@@ -145,15 +142,16 @@ typedef struct {
     edge_t *edges;
     double *time;
     uint32_t *node_flags;
-    node_id_t *mutations;
     index_sort_t *sort_buffer;
     node_id_t *insertion_order;
     node_id_t *removal_order;
+    block_allocator_t block_allocator;
 } tree_sequence_builder_t;
 
 typedef struct {
     tree_sequence_builder_t *tree_sequence_builder;
     double recombination_rate;
+    double observation_error;
     size_t num_nodes;
     size_t num_sites;
     size_t max_nodes;
@@ -189,11 +187,11 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder,
-        double recombination_rate);
+        double recombination_rate, double observation_error);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
-        size_t *num_output_edges, site_id_t **left_output, site_id_t **right_output,
-        node_id_t **parent_output, size_t *num_mismatches, site_id_t **mismatches);
+        allele_t *matched_haplotype, size_t *num_output_edges,
+        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
@@ -206,13 +204,15 @@ int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
-        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node);
+        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node,
+        allele_t *derived_state);
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
         double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        site_id_t *site, ancestor_id_t *node, allele_t *derived_state);
+        site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
+        mutation_id_t *parent);
 
 void __tsi_safe_free(void **ptr);
 

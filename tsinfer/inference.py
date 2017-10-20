@@ -254,15 +254,16 @@ class InferenceManager(object):
             with self.progress_monitor_lock:
                 self.progress_monitor.update()
 
-    def __find_path_ancestor(self, ancestor, node_id, focal_sites, matcher, results):
+    def __find_path_ancestor(
+            self, ancestor, node_id, focal_sites, matcher, results, match):
         # TODO make this an array natively.
         focal_sites = np.array(focal_sites)
         results.add_mutations(focal_sites, node_id)
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
         ancestor[focal_sites] = 0
-        (left, right, parent), matched_haplotype = matcher.find_path(ancestor)
-        assert np.all(matched_haplotype == ancestor)
+        left, right, parent = matcher.find_path(ancestor, match)
+        assert np.all(match == ancestor)
         results.add_edges(left, right, parent, node_id)
         self.__update_progress()
 
@@ -278,7 +279,7 @@ class InferenceManager(object):
         match_queue = queue.Queue()
         matchers = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate)
+                self.tree_sequence_builder, self.recombination_rate, 0)
             for _ in range(self.num_threads)]
         results = [ResultBuffer() for _ in range(self.num_threads)]
         mean_traceback_size = np.zeros(self.num_threads)
@@ -303,6 +304,7 @@ class InferenceManager(object):
             with self.catch_thread_error():
                 self.logger.info(
                     "Ancestor match thread {} starting".format(thread_index))
+                match = np.zeros(self.num_sites, np.int8)
                 matcher = matchers[thread_index]
                 result_buffer = results[thread_index]
                 while True:
@@ -311,7 +313,7 @@ class InferenceManager(object):
                         break
                     node_id, focal_sites, a = work
                     self.__find_path_ancestor(
-                            a, node_id, focal_sites, matcher, result_buffer)
+                            a, node_id, focal_sites, matcher, result_buffer, match)
                     mean_traceback_size[thread_index] += matcher.mean_traceback_size
                     num_matches[thread_index] += 1
                     match_queue.task_done()
@@ -342,7 +344,8 @@ class InferenceManager(object):
             self.tree_sequence_builder.update(
                 len(ancestor_focal_sites), time,
                 epoch_results.left, epoch_results.right, epoch_results.parent,
-                epoch_results.child, epoch_results.site, epoch_results.node)
+                epoch_results.child, epoch_results.site, epoch_results.node,
+                epoch_results.derived_state)
             mean_memory = np.mean([matcher.total_memory for matcher in matchers])
             self.logger.debug(
                 "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
@@ -365,8 +368,9 @@ class InferenceManager(object):
     def __process_ancestors_single_threaded(self):
         a = np.zeros(self.num_sites, dtype=np.int8)
         matcher = self.ancestor_matcher_class(
-            self.tree_sequence_builder, self.recombination_rate)
+            self.tree_sequence_builder, self.recombination_rate, 0)
         results = ResultBuffer()
+        match = np.zeros(self.num_sites, np.int8)
 
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
@@ -376,7 +380,8 @@ class InferenceManager(object):
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
                 self.ancestor_builder.make_ancestor(focal_sites, a)
-                self.__find_path_ancestor(a, child, focal_sites, matcher, results)
+                self.__find_path_ancestor(
+                    a, child, focal_sites, matcher, results, match)
                 child += 1
             self.tree_sequence_builder.update(
                 len(ancestor_focal_sites), time,
@@ -384,21 +389,21 @@ class InferenceManager(object):
                 results.site, results.node, results.derived_state)
             results.clear()
 
-    def __process_sample(self, sample_index, matcher, results):
+    def __process_sample(self, sample_index, matcher, results, match):
         child = self.sample_ids[sample_index]
         haplotype = self.samples[sample_index]
-        (left, right, parent), matched_haplotype = matcher.find_path(haplotype)
-        diffs = np.where(haplotype != matched_haplotype)[0]
+        left, right, parent = matcher.find_path(haplotype, match)
+        diffs = np.where(haplotype != match)[0]
         derived_state = haplotype[diffs]
         results.add_mutations(diffs, child, derived_state)
         results.add_edges(left, right, parent, child)
         self.__update_progress()
 
-    def __process_samples_threads(self):
+    def __process_samples_threads(self, sample_error):
         results = [ResultBuffer() for _ in range(self.num_threads)]
         matchers = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate, self.error_rate)
+                self.tree_sequence_builder, self.recombination_rate, sample_error)
             for _ in range(self.num_threads)]
         work_queue = queue.Queue()
 
@@ -407,12 +412,14 @@ class InferenceManager(object):
                 self.logger.info("Started sample worker thread {}".format(thread_index))
                 mean_traceback_size = 0
                 num_matches = 0
+                match = np.zeros(self.num_sites, np.int8)
                 while True:
                     sample_index = work_queue.get()
                     if sample_index is None:
                         break
                     self.__process_sample(
-                        sample_index, matchers[thread_index], results[thread_index])
+                        sample_index, matchers[thread_index], results[thread_index],
+                        match)
                     mean_traceback_size += matchers[thread_index].mean_traceback_size
                     num_matches += 1
                     work_queue.task_done()
@@ -445,10 +452,11 @@ class InferenceManager(object):
             results = ResultBuffer(self.num_samples)
             matcher = self.ancestor_matcher_class(
                 self.tree_sequence_builder, self.recombination_rate, sample_error)
+            match = np.zeros(self.num_sites, np.int8)
             for j in range(self.num_samples):
-                self.__process_sample(j, matcher, results)
+                self.__process_sample(j, matcher, results, match)
         else:
-            results = self.__process_samples_threads()
+            results = self.__process_samples_threads(sample_error)
         self.tree_sequence_builder.update(
             self.num_samples, 0,
             results.left, results.right, results.parent, results.child,
@@ -490,7 +498,6 @@ class InferenceManager(object):
         node = np.zeros(tsb.num_mutations, dtype=np.int32)
         parent = np.zeros(tsb.num_mutations, dtype=np.int32)
         derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
-        # TODO add parent to dump_mutations
         tsb.dump_mutations(
             site=site, node=node, derived_state=derived_state, parent=parent)
         derived_state += ord('0')
@@ -1044,7 +1051,7 @@ class TreeSequenceBuilder(object):
                 node[j] = u
                 derived_state[j] = d
                 parent[j] = -1
-                if j != p:
+                if d == 0:
                     parent[j] = p
                 j += 1
 
@@ -1087,7 +1094,7 @@ class AncestorMatcher(object):
         assert u != -1
         return u
 
-    def find_path(self, h):
+    def find_path(self, h, match):
 
         M = len(self.tree_sequence_builder.edges)
         I = self.tree_sequence_builder.insertion_order
@@ -1226,7 +1233,7 @@ class AncestorMatcher(object):
         I = self.tree_sequence_builder.removal_order
         O = self.tree_sequence_builder.insertion_order
         # Construct the matched haplotype
-        hp = np.zeros(m, np.int8)
+        match[:] = 0
         while j >= 0:
             right = edges[I[j]].right
             while edges[O[k]].left == right:
@@ -1241,7 +1248,7 @@ class AncestorMatcher(object):
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
                             pi, u, self.tree_sequence_builder.mutations[l][0][0]):
-                        hp[l] = 1
+                        match[l] = 1
                 L = traceback[l]
                 v = u
                 while v not in L:
@@ -1255,10 +1262,11 @@ class AncestorMatcher(object):
                     output_edges.append(output_edge)
                 assert l > 0
         output_edge.left = 0
+        # TODO this check at zero shouldn't be needed; not done in the C code.
         l = 0
         if l in self.tree_sequence_builder.mutations:
             if is_descendant(pi, u, self.tree_sequence_builder.mutations[l][0][0]):
-                hp[l] = 1
+                match[l] = 1
 
         self.mean_traceback_size = sum(len(t) for t in traceback) / self.num_sites
 
@@ -1269,4 +1277,4 @@ class AncestorMatcher(object):
             left[j] = e.left
             right[j] = e.right
             parent[j] = e.parent
-        return (left, right, parent), hp
+        return left, right, parent

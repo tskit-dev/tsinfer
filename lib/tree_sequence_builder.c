@@ -91,6 +91,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 {
     size_t j;
     edge_t *edge;
+    mutation_list_node_t *u;
 
     fprintf(out, "Tree sequence builder state\n");
     fprintf(out, "flags = %d\n", (int) self->flags);
@@ -126,12 +127,20 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
         fprintf(out, "%d\t%f\n", (int) j, self->time[j]);
     }
     fprintf(out, "mutations = \n");
-    fprintf(out, "site\tnode\n");
+    fprintf(out, "site\t(node, derived_state),...\n");
     for (j = 0; j < self->num_sites; j++) {
-        if (self->mutations[j] != NULL_NODE) {
-            fprintf(out, "%d\t%d\n", (int) j, self->mutations[j]);
+        if (self->sites.mutations[j] != NULL) {
+            fprintf(out, "%d\t", (int) j);
+            for (u = self->sites.mutations[j]; u != NULL; u = u->next) {
+                fprintf(out, "(%d, %d) ", u->node, u->derived_state);
+
+            }
+            fprintf(out, "\n");
         }
     }
+    fprintf(out, "block_allocator = \n");
+    block_allocator_print_state(&self->block_allocator, out);
+
     tree_sequence_builder_check_state(self);
     return 0;
 }
@@ -161,17 +170,22 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
     self->time = malloc(self->max_nodes * sizeof(double));
     self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
-    self->mutations = malloc(self->num_sites * sizeof(node_id_t));
+    self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
     self->sites.position = malloc(self->num_sites * sizeof(double));
     if (self->edges == NULL || self->time == NULL
             || self->insertion_order == NULL || self->removal_order == NULL
-            || self->sort_buffer == NULL || self->mutations == NULL
+            || self->sort_buffer == NULL || self->sites.mutations == NULL
             || self->sites.position == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    memset(self->mutations, 0xff, self->num_sites * sizeof(node_id_t));
     memcpy(self->sites.position, position, self->num_sites * sizeof(double));
+
+    ret = block_allocator_alloc(&self->block_allocator,
+            GSL_MIN(1024, num_sites * sizeof(mutation_list_node_t) / 4));
+    if (ret != 0) {
+        goto out;
+    }
 out:
     return ret;
 }
@@ -185,8 +199,9 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->insertion_order);
     tsi_safe_free(self->removal_order);
     tsi_safe_free(self->sort_buffer);
-    tsi_safe_free(self->mutations);
+    tsi_safe_free(self->sites.mutations);
     tsi_safe_free(self->sites.position);
+    block_allocator_free(&self->block_allocator);
     return 0;
 }
 
@@ -777,11 +792,13 @@ int
 tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
-        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node)
+        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node,
+        allele_t *derived_state)
 {
     int ret = 0;
     size_t j;
     edge_t *e;
+    mutation_list_node_t *list_node, *tail;
 
     for (j = 0; j < num_nodes; j++) {
         ret = tree_sequence_builder_add_node(self, time, true);
@@ -805,6 +822,34 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
         assert(e->parent < (node_id_t) self->num_nodes);
         self->num_edges++;
     }
+
+    for (j = 0; j < num_mutations; j++) {
+        assert(node[j] < (node_id_t) self->num_nodes);
+        assert(node[j] >= 0);
+        assert(site[j] < self->num_sites);
+        assert(derived_state[j] == 0 || derived_state[j] == 1);
+        list_node = block_allocator_get(&self->block_allocator,
+                sizeof(mutation_list_node_t));
+        if (list_node == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        list_node->node = node[j];
+        list_node->derived_state = derived_state[j];
+        list_node->next = NULL;
+        if (self->sites.mutations[site[j]] == NULL) {
+            self->sites.mutations[site[j]] = list_node;
+            assert(list_node->derived_state == 1);
+        } else {
+            tail = self->sites.mutations[site[j]];
+            while (tail->next != NULL) {
+                tail = tail->next;
+            }
+            tail->next = list_node;
+        }
+    }
+    self->num_mutations += num_mutations;
+
     if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) {
         ret = tree_sequence_builder_resolve_shared_recombs(self);
         if (ret != 0) {
@@ -823,14 +868,6 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     if (ret != 0) {
         goto out;
     }
-    for (j = 0; j < num_mutations; j++) {
-        assert(node[j] < (node_id_t) self->num_nodes);
-        assert(node[j] >= 0);
-        assert(site[j] < self->num_sites);
-        assert(self->mutations[site[j]] == NULL_NODE);
-        self->mutations[site[j]] = node[j];
-    }
-    self->num_mutations += num_mutations;
 out:
     return ret;
 }
@@ -888,17 +925,25 @@ tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 
 int
 tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        site_id_t *site, ancestor_id_t *node, allele_t *derived_state)
+        site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
+        mutation_id_t *parent)
 {
     int ret = 0;
     site_id_t l;
-    size_t j = 0;
+    mutation_list_node_t *u;
+    mutation_id_t p;
+    mutation_id_t j = 0;
 
     for (l = 0; l < self->num_sites; l++) {
-        if (self->mutations[l] != NULL_NODE) {
+        p = j;
+        for (u = self->sites.mutations[l]; u != NULL; u = u->next) {
             site[j] = l;
-            node[j] = self->mutations[l];
-            derived_state[j] = 1;
+            node[j] = u->node;
+            derived_state[j] = u->derived_state;
+            parent[j] = -1;
+            if (u->derived_state == 0) {
+                parent[j] = p;
+            }
             j++;
         }
     }

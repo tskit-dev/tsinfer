@@ -118,7 +118,8 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, double recombination_rate)
+        tree_sequence_builder_t *tree_sequence_builder, double recombination_rate,
+        double observation_error)
 {
     int ret = 0;
     size_t j;
@@ -129,6 +130,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->tree_sequence_builder = tree_sequence_builder;
     self->recombination_rate = recombination_rate;
+    self->observation_error = observation_error;
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->max_num_mismatches = self->num_sites; /* Ditto here */
@@ -322,6 +324,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
     int ret = 0;
     double n = (double) self->num_nodes;
     double r = 1 - exp(-self->recombination_rate / n);
+    double err = self->observation_error;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
     double *restrict L = self->likelihood;
@@ -348,11 +351,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
         } else {
             y = recomb_proba;
         }
-        is_descendant = ancestor_matcher_is_descendant(self, u, mutation_node);
+        is_descendant = false;
+        if (mutation_node != NULL_NODE) {
+            is_descendant = ancestor_matcher_is_descendant(self, u, mutation_node);
+        }
         if (state == 1) {
-            emission = (double) is_descendant;
+            emission = (1 - err) * is_descendant + err * (! is_descendant);
         } else {
-            emission = (double) (! is_descendant);
+            emission = err * is_descendant + (1 - err) * (! is_descendant);
         }
         L[u] = y * emission;
         if (L[u] > max_L) {
@@ -407,50 +413,52 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
         allele_t state)
 {
     int ret = 0;
-    node_id_t mutation_node = self->tree_sequence_builder->mutations[site];
+    node_id_t mutation_node = NULL_NODE;
     node_id_t *pi = self->parent;
     double *L = self->likelihood;
     node_id_t u;
 
+    if (self->tree_sequence_builder->sites.mutations[site] != NULL) {
+        mutation_node = self->tree_sequence_builder->sites.mutations[site]->node;
+    }
     /* ancestor_matcher_print_state(self, stdout); */
     /* ancestor_matcher_check_state(self); */
-    if (mutation_node == NULL_NODE) {
-        if (site > 0 &&
-                self->tree_sequence_builder->mutations[site - 1] == NULL_NODE) {
+    if (self->observation_error == 0.0
+                && mutation_node == NULL_NODE
+                && site > 0
+                && self->tree_sequence_builder->sites.mutations[site - 1] == NULL) {
             /* If there are no mutations at this or the last site, then
              * we are guaranteed that the likelihoods are equal. */
             self->traceback[site] = self->traceback[site - 1];
-        } else {
-            ret = ancestor_matcher_store_traceback(self, site);
-            if (ret != 0) {
-                goto out;
-            }
-        }
     } else {
-        /* Insert a new L-value for the mutation node if needed */
-        if (L[mutation_node] == NULL_LIKELIHOOD) {
-            u = mutation_node;
-            while (L[u] == NULL_LIKELIHOOD) {
-                u = pi[u];
-                assert(u != NULL_NODE);
-            }
-            ret = ancestor_matcher_insert_likelihood(self, mutation_node, L[u]);
-            if (ret != 0) {
-                goto out;
+        if (mutation_node != NULL_NODE) {
+            /* Insert a new L-value for the mutation node if needed */
+            if (L[mutation_node] == NULL_LIKELIHOOD) {
+                u = mutation_node;
+                while (L[u] == NULL_LIKELIHOOD) {
+                    u = pi[u];
+                    assert(u != NULL_NODE);
+                }
+                ret = ancestor_matcher_insert_likelihood(self, mutation_node, L[u]);
+                if (ret != 0) {
+                    goto out;
+                }
             }
         }
         ret = ancestor_matcher_store_traceback(self, site);
         if (ret != 0) {
             goto out;
         }
-        ret = ancestor_matcher_update_site_likelihood_values(self, site,
-                mutation_node, state);
-        if (ret != 0) {
-            goto out;
-        }
-        ret = ancestor_matcher_coalesce_likelihoods(self);
-        if (ret != 0) {
-            goto out;
+        if (self->observation_error > 0 || mutation_node != NULL_NODE) {
+            ret = ancestor_matcher_update_site_likelihood_values(self, site,
+                    mutation_node, state);
+            if (ret != 0) {
+                goto out;
+            }
+            ret = ancestor_matcher_coalesce_likelihoods(self);
+            if (ret != 0) {
+                goto out;
+            }
         }
     }
 out:
@@ -485,7 +493,8 @@ out:
 }
 
 static int WARN_UNUSED
-ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
+ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype,
+         allele_t *match)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
@@ -497,6 +506,8 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
     site_id_t left, right;
     avl_node_t *a, *tmp;
     likelihood_list_t *z;
+    mutation_list_node_t *mut_list;
+    bool is_descendant;
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
@@ -522,6 +533,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
     assert(self->output.parent[self->output.size] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
+    memset(match, 0, self->num_sites * sizeof(allele_t));
     j = M - 1;
     k = M - 1;
     I = self->tree_sequence_builder->removal_order;
@@ -550,6 +562,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
             }
             assert(max_likelihood_node != NULL_NODE);
             u = self->output.parent[self->output.size];
+            /* Set the state of the matched haplotype */
+            mut_list = self->tree_sequence_builder->sites.mutations[l];
+            if (mut_list != NULL) {
+                is_descendant = ancestor_matcher_is_descendant(self, u, mut_list->node);
+                if (is_descendant) {
+                    match[l] = 1;
+                }
+            }
             /* Get the likelihood for u */
             while (L[u] == NULL_LIKELIHOOD) {
                 u = pi[u];
@@ -577,24 +597,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, allele_t *haplotype)
     self->output.left[self->output.size] = 0;
     self->output.size++;
 
-    self->num_mismatches = 0;
-    /* For now, naively go through each site. If there is no mutation and
-     * we have a state of 1, then it must be a mismatch. */
-    for (l = 0; l < (int) self->num_sites; l++) {
-        if (haplotype[l] == 1 && self->tree_sequence_builder->mutations[l] == NULL_NODE) {
-            assert(self->num_mismatches < self->max_num_mismatches);
-            self->mismatches[self->num_mismatches] = l;
-            self->num_mismatches++;
-        }
-    }
 /* out: */
     return ret;
 }
 
 int
 ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
-        size_t *num_output_edges, site_id_t **left_output, site_id_t **right_output,
-        node_id_t **parent_output, size_t *num_mismatches, site_id_t **mismatches)
+        allele_t *matched_haplotype, size_t *num_output_edges,
+        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
@@ -663,7 +673,7 @@ ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
             }
         }
     }
-    ret = ancestor_matcher_run_traceback(self, haplotype);
+    ret = ancestor_matcher_run_traceback(self, haplotype, matched_haplotype);
     if (ret != 0) {
         goto out;
     }
@@ -671,8 +681,6 @@ ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
     *right_output = self->output.right;
     *parent_output = self->output.parent;
     *num_output_edges = self->output.size;
-    *num_mismatches = self->num_mismatches;
-    *mismatches = self->mismatches;
 out:
     return ret;
 }
