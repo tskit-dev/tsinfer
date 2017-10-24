@@ -148,7 +148,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         double sequence_length, size_t num_sites, double *position,
-        size_t max_nodes, size_t max_edges, int flags)
+        double *recombination_rate, size_t max_nodes, size_t max_edges, int flags)
 {
     int ret = 0;
     /* TODO put in a check on the number of sites. We currently use an integer
@@ -172,14 +172,17 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
     self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
     self->sites.position = malloc(self->num_sites * sizeof(double));
+    self->sites.recombination_rate = malloc(self->num_sites * sizeof(double));
     if (self->edges == NULL || self->time == NULL
             || self->insertion_order == NULL || self->removal_order == NULL
             || self->sort_buffer == NULL || self->sites.mutations == NULL
-            || self->sites.position == NULL)  {
+            || self->sites.position == NULL || self->sites.recombination_rate == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     memcpy(self->sites.position, position, self->num_sites * sizeof(double));
+    memcpy(self->sites.recombination_rate, recombination_rate,
+            self->num_sites * sizeof(double));
 
     ret = block_allocator_alloc(&self->block_allocator,
             GSL_MIN(1024, num_sites * sizeof(mutation_list_node_t) / 4));
@@ -201,6 +204,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->sort_buffer);
     tsi_safe_free(self->sites.mutations);
     tsi_safe_free(self->sites.position);
+    tsi_safe_free(self->sites.recombination_rate);
     block_allocator_free(&self->block_allocator);
     return 0;
 }

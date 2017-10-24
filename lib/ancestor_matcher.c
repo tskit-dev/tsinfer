@@ -118,8 +118,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, double recombination_rate,
-        double observation_error)
+        tree_sequence_builder_t *tree_sequence_builder, double observation_error)
 {
     int ret = 0;
     size_t j;
@@ -129,7 +128,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     self->tree_sequence_builder = tree_sequence_builder;
-    self->recombination_rate = recombination_rate;
     self->observation_error = observation_error;
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
@@ -323,7 +321,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
 {
     int ret = 0;
     double n = (double) self->num_nodes;
-    double r = 1 - exp(-self->recombination_rate / n);
+    double rho = self->tree_sequence_builder->sites.recombination_rate[site];
+    double r = 1 - exp(-rho / n);
     double err = self->observation_error;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;

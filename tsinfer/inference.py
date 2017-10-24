@@ -528,9 +528,13 @@ def infer(
         samples, positions, sequence_length, recombination_rate, sample_error=0,
         method="C", num_threads=1, progress=False, log_level="WARNING",
         resolve_shared_recombinations=False, resolve_polytomies=False):
+
+    # If the input recombination rate is a single number set this value for all sites.
+    recombination_rate_array = np.zeros(positions.shape[0], dtype=np.float64)
+    recombination_rate_array[:] = recombination_rate
     # Primary entry point.
     manager = InferenceManager(
-        samples, np.array(positions), sequence_length, recombination_rate,
+        samples, np.array(positions), sequence_length, recombination_rate_array,
         num_threads=num_threads, method=method, progress=progress, log_level=log_level,
         resolve_shared_recombinations=resolve_shared_recombinations,
         resolve_polytomies=resolve_polytomies)
@@ -1106,9 +1110,6 @@ class AncestorMatcher(object):
         traceback = [dict(L) for _ in range(m)]
         edges = self.tree_sequence_builder.edges
 
-        r = 1 - np.exp(-self.recombination_rate / n)
-        recomb_proba = r / n
-        no_recomb_proba = 1 - r + r / n
         err = self.error_rate
 
         j = 0
@@ -1149,6 +1150,10 @@ class AncestorMatcher(object):
             # print(L)
             # print(pi)
             for site in range(left, right):
+                r = 1 - np.exp(-self.recombination_rate[site] / n)
+                recomb_proba = r / n
+                no_recomb_proba = 1 - r + r / n
+
                 state = h[site]
                 if site not in self.tree_sequence_builder.mutations:
                     if err == 0:

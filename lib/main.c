@@ -163,6 +163,7 @@ run_generate(const char *sample_file, int verbose)
     size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
     double *positions = NULL;
+    double *recombination_rate = NULL;
     site_id_t *focal_sites;
     size_t num_focal_sites;
     ancestor_builder_t ancestor_builder;
@@ -190,6 +191,13 @@ run_generate(const char *sample_file, int verbose)
     int flags = 0;
 
     read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
+    recombination_rate = malloc(num_sites * sizeof(double));
+    if (recombination_rate == NULL) {
+        fatal_error("malloc error");
+    }
+    for (l = 0; l < num_sites; l++) {
+        recombination_rate[l] = 1e-8;
+    }
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
             positions, haplotypes);
     if (ret != 0) {
@@ -197,12 +205,12 @@ run_generate(const char *sample_file, int verbose)
     }
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
-            num_sites, positions,
+            num_sites, positions, recombination_rate,
             100 * (num_samples + num_ancestors), 65536, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 1e-8, 0.0);
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.0);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -369,6 +377,7 @@ run_generate(const char *sample_file, int verbose)
     ancestor_matcher_free(&matcher);
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
+    tsi_safe_free(recombination_rate);
     tsi_safe_free(a);
     tsi_safe_free(match);
     tsi_safe_free(left_buffer);

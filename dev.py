@@ -5,6 +5,8 @@ import random
 import tsinfer
 import msprime
 
+import h5py
+
 
 def make_errors(v, p):
     """
@@ -42,16 +44,39 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S
 
+def make_input_hdf5(filename, samples, positions, recombination_rate, sequence_length):
+    """
+    Builds a HDF5 file suitable for input into the C interface.
+    """
+    root = h5py.File(filename, "w")
+    root.attrs["format_name"] = b"tsinfer"
+    root.attrs["format_version"] = (0, 1)
+    root.attrs["sequence_length"] = sequence_length
+
+    num_samples, num_sites = samples.shape
+    sites_group = root.create_group("sites")
+    sites_group.create_dataset("position", (num_sites, ), data=positions, dtype=float)
+    sites_group.create_dataset("recombination_rate", (num_sites, ),
+            data=recombination_rate, dtype=float)
+
+    samples_group = root.create_group("samples")
+    samples_group.create_dataset(
+        "haplotypes", (num_samples, num_sites), data=samples, dtype=np.int8)
+    root.close()
 
 def tsinfer_dev(
-        n, L, seed, num_threads=1, error_rate=0, method="C", log_level="WARNING",
+        n, L, seed, num_threads=1, recombination_rate=1e-8,
+        error_rate=0, method="C", log_level="WARNING",
         progress=False):
 
     np.random.seed(seed)
     random.seed(seed)
+    L_megabases = int(L * 10**6)
 
     ts = msprime.simulate(
-            n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
+            n, Ne=10**4, length=L_megabases,
+            recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=seed)
     print("num_sites = ", ts.num_sites)
     if ts.num_sites == 0:
         print("zero sites; skipping")
@@ -60,18 +85,21 @@ def tsinfer_dev(
     S = generate_samples(ts, error_rate)
     # print(S)
 
-    tsp = tsinfer.infer(
-        S, positions, L, 0.5, error_rate,
-        num_threads=num_threads, method=method, log_level=log_level, progress=progress)
-    # print(tsp.tables)
-    # for t in tsp.trees():
-    #     print("tree", t.index)
-    #     print(t.draw(format="unicode"))
+    recombination_rate = np.zeros_like(positions) + recombination_rate
+    hdf5 = make_input_hdf5("tmp.hdf5", S, positions, recombination_rate, L_megabases)
 
-    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-    for variant in tsp.variants():
-        Sp[:, variant.index] = variant.genotypes
-    assert np.all(Sp == S)
+#     tsp = tsinfer.infer(
+#         S, positions, L_megabases, recombination_rate, error_rate,
+#         num_threads=num_threads, method=method, log_level=log_level, progress=progress)
+#     # print(tsp.tables)
+#     # for t in tsp.trees():
+#     #     print("tree", t.index)
+#     #     print(t.draw(format="unicode"))
+
+    # Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    # for variant in tsp.variants():
+    #     Sp[:, variant.index] = variant.genotypes
+    # assert np.all(Sp == S)
 
 
 def analyse_file(filename):
@@ -114,13 +142,15 @@ def analyse_tracebacks(epoch):
         print(k, "\t", v)
 
 
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
-            log_level="INFO", progress=True)
+    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="C")
+    # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
+    #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):
     #     print(seed)
     #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")

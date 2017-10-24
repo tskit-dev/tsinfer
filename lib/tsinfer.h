@@ -132,6 +132,7 @@ typedef struct {
     size_t num_sites;
     struct {
         double *position;
+        double *recombination_rate;
         mutation_list_node_t **mutations;
     } sites;
     size_t max_nodes;
@@ -150,7 +151,7 @@ typedef struct {
 
 typedef struct {
     tree_sequence_builder_t *tree_sequence_builder;
-    double recombination_rate;
+    double *recombination_rate;
     double observation_error;
     size_t num_nodes;
     size_t num_sites;
@@ -187,7 +188,7 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder,
-        double recombination_rate, double observation_error);
+        double observation_error);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
         allele_t *matched_haplotype, size_t *num_output_edges,
@@ -198,7 +199,7 @@ size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         double sequence_length, size_t num_sites, double *position,
-        size_t max_nodes, size_t max_edges, int flags);
+        double *recombination_rate, size_t max_nodes, size_t max_edges, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_update(tree_sequence_builder_t *self,
