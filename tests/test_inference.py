@@ -174,8 +174,9 @@ class TestAncestorStorage(unittest.TestCase):
         for variant in ts.variants():
             samples[:, variant.index] = variant.genotypes
         positions = np.array([site.position for site in ts.sites()])
+        recombination_rate = np.zeros_like(positions) + 1e-8
         manager = tsinfer.InferenceManager(
-            samples, positions, ts.sequence_length, 1e-8,
+            samples, positions, ts.sequence_length, recombination_rate,
             method=method, num_threads=1,
             resolve_polytomies=resolve_polytomies,
             resolve_shared_recombinations=resolve_shared_recombinations)

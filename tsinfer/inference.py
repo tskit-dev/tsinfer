@@ -228,7 +228,8 @@ class InferenceManager(object):
         self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
         self.num_ancestors = self.ancestor_builder.num_ancestors
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.sequence_length, self.positions, 10**6, 10**7,
+            self.sequence_length, self.positions, self.recombination_rate,
+            10**6, 10**7,
             resolve_shared_recombinations=self.resolve_shared_recombinations,
             resolve_polytomies=self.resolve_polytomies)
 
@@ -278,8 +279,7 @@ class InferenceManager(object):
         build_queue = queue.Queue()
         match_queue = queue.Queue()
         matchers = [
-            self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate, 0)
+            self.ancestor_matcher_class(self.tree_sequence_builder, 0)
             for _ in range(self.num_threads)]
         results = [ResultBuffer() for _ in range(self.num_threads)]
         mean_traceback_size = np.zeros(self.num_threads)
@@ -367,8 +367,7 @@ class InferenceManager(object):
 
     def __process_ancestors_single_threaded(self):
         a = np.zeros(self.num_sites, dtype=np.int8)
-        matcher = self.ancestor_matcher_class(
-            self.tree_sequence_builder, self.recombination_rate, 0)
+        matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
         results = ResultBuffer()
         match = np.zeros(self.num_sites, np.int8)
 
@@ -402,8 +401,7 @@ class InferenceManager(object):
     def __process_samples_threads(self, sample_error):
         results = [ResultBuffer() for _ in range(self.num_threads)]
         matchers = [
-            self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate, sample_error)
+            self.ancestor_matcher_class(self.tree_sequence_builder, sample_error)
             for _ in range(self.num_threads)]
         work_queue = queue.Queue()
 
@@ -451,7 +449,7 @@ class InferenceManager(object):
         if self.num_threads == 1:
             results = ResultBuffer(self.num_samples)
             matcher = self.ancestor_matcher_class(
-                self.tree_sequence_builder, self.recombination_rate, sample_error)
+                self.tree_sequence_builder, sample_error)
             match = np.zeros(self.num_sites, np.int8)
             for j in range(self.num_samples):
                 self.__process_sample(j, matcher, results, match)
@@ -528,13 +526,13 @@ def infer(
         samples, positions, sequence_length, recombination_rate, sample_error=0,
         method="C", num_threads=1, progress=False, log_level="WARNING",
         resolve_shared_recombinations=False, resolve_polytomies=False):
-
+    positions_array = np.array(positions)
     # If the input recombination rate is a single number set this value for all sites.
-    recombination_rate_array = np.zeros(positions.shape[0], dtype=np.float64)
+    recombination_rate_array = np.zeros(positions_array.shape[0], dtype=np.float64)
     recombination_rate_array[:] = recombination_rate
     # Primary entry point.
     manager = InferenceManager(
-        samples, np.array(positions), sequence_length, recombination_rate_array,
+        samples, positions_array, sequence_length, recombination_rate_array,
         num_threads=num_threads, method=method, progress=progress, log_level=log_level,
         resolve_shared_recombinations=resolve_shared_recombinations,
         resolve_polytomies=resolve_polytomies)
@@ -681,11 +679,13 @@ def edge_group_equal(edges, group1, group2):
 class TreeSequenceBuilder(object):
 
     def __init__(
-            self, sequence_length, positions, max_nodes, max_edges,
+            self, sequence_length, positions, recombination_rate,
+            max_nodes, max_edges,
             resolve_shared_recombinations=True, resolve_polytomies=True):
         self.num_nodes = 0
         self.sequence_length = sequence_length
         self.positions = positions
+        self.recombination_rate = recombination_rate
         self.num_sites = positions.shape[0]
         self.time = []
         self.flags = []
@@ -1078,9 +1078,8 @@ def is_descendant(pi, u, v):
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, recombination_rate, error_rate=0):
+    def __init__(self, tree_sequence_builder, error_rate=0):
         self.tree_sequence_builder = tree_sequence_builder
-        self.recombination_rate = recombination_rate
         self.error_rate = error_rate
         self.num_sites = tree_sequence_builder.num_sites
         self.positions = tree_sequence_builder.positions
@@ -1109,7 +1108,7 @@ class AncestorMatcher(object):
         L = {u: 1.0 for u in range(n)}
         traceback = [dict(L) for _ in range(m)]
         edges = self.tree_sequence_builder.edges
-
+        recombination_rate = self.tree_sequence_builder.recombination_rate
         err = self.error_rate
 
         j = 0
@@ -1150,7 +1149,7 @@ class AncestorMatcher(object):
             # print(L)
             # print(pi)
             for site in range(left, right):
-                r = 1 - np.exp(-self.recombination_rate[site] / n)
+                r = 1 - np.exp(-recombination_rate[site] / n)
                 recomb_proba = r / n
                 no_recomb_proba = 1 - r + r / n
 
@@ -1187,6 +1186,11 @@ class AncestorMatcher(object):
                 # print("Site ", site, "distance = ", distance)
                 max_L = -1
                 for v in L.keys():
+                    # TODO should we remove this parameter here and include it
+                    # in the recombination rate parameter??? In practise we'll
+                    # probably be working it out from a recombination map, so
+                    # there's no point in complicating this further by rescaling
+                    # it back into physical distance.
                     x = L[v] * no_recomb_proba * distance
                     assert x >= 0
                     y = recomb_proba * distance

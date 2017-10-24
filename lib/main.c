@@ -12,6 +12,8 @@
 #include <regex.h>
 #include "argtable3.h"
 
+#include <hdf5.h>
+
 #include "tsinfer.h"
 
 static void
@@ -27,74 +29,267 @@ fatal_error(const char *msg, ...)
 }
 
 static void
-read_samples(const char *input_file, size_t *r_num_samples, size_t *r_num_sites,
-        allele_t **r_haplotypes, double **r_positions)
+fatal_hdf5_error(const char *msg)
 {
-    char *line = NULL;
-    size_t len = 0;
-    size_t j, k;
-    size_t num_line_samples;
-    size_t num_samples = (size_t) -1;
-    size_t num_sites = 0;
-    const char delimiters[] = " \t";
-    char *token;
-    allele_t *haplotypes = NULL;
-    double *position = NULL;
-    FILE *f = fopen(input_file, "r");
+    fprintf(stderr, "infer: %s", msg);
+    H5Eprint1(stderr);
+    exit(EXIT_FAILURE);
+}
 
-    if (f == NULL) {
-        fatal_error("Cannot open %s: %s", input_file, strerror(errno));
+/* static void */
+/* read_samples(const char *input_file, size_t *r_num_samples, size_t *r_num_sites, */
+/*         allele_t **r_haplotypes, double **r_positions) */
+/* { */
+/*     char *line = NULL; */
+/*     size_t len = 0; */
+/*     size_t j, k; */
+/*     size_t num_line_samples; */
+/*     size_t num_samples = (size_t) -1; */
+/*     size_t num_sites = 0; */
+/*     const char delimiters[] = " \t"; */
+/*     char *token; */
+/*     allele_t *haplotypes = NULL; */
+/*     double *position = NULL; */
+/*     FILE *f = fopen(input_file, "r"); */
+
+/*     if (f == NULL) { */
+/*         fatal_error("Cannot open %s: %s", input_file, strerror(errno)); */
+/*     } */
+/*     while (getline(&line, &len, f) != -1) { */
+/*         /1* read the number of tokens *1/ */
+/*         token = strtok(line, delimiters); */
+/*         if (token == NULL) { */
+/*             fatal_error("File format error"); */
+/*         } */
+/*         token = strtok(NULL, delimiters); */
+/*         if (token == NULL) { */
+/*             fatal_error("File format error"); */
+/*         } */
+/*         num_line_samples = strlen(token) - 1; */
+/*         if (num_samples == (size_t) -1) { */
+/*             num_samples = num_line_samples; */
+/*         } else if (num_samples != num_line_samples) { */
+/*             fatal_error("Bad input: line lengths not equal"); */
+/*         } */
+/*         num_sites++; */
+/*     } */
+/*     if (fseek(f, 0, 0) != 0) { */
+/*         fatal_error("Cannot seek in file"); */
+/*     } */
+
+/*     haplotypes = malloc(num_samples * num_sites * sizeof(allele_t)); */
+/*     position = malloc(num_sites * sizeof(double)); */
+/*     if (haplotypes == NULL || position == NULL) { */
+/*         fatal_error("No memory"); */
+/*     } */
+/*     k = 0; */
+/*     while (getline(&line, &len, f) != -1) { */
+/*         token = strtok(line, delimiters); */
+/*         if (token == NULL) { */
+/*             fatal_error("File format error"); */
+/*         } */
+/*         position[k] = atof(token); */
+/*         token = strtok(NULL, delimiters); */
+/*         if (token == NULL) { */
+/*             fatal_error("File format error"); */
+/*         } */
+/*         for (j = 0; j < num_samples; j++) { */
+/*             haplotypes[j * num_sites + k] = (allele_t) ((int) token[j] - '0'); */
+/*         } */
+/*         k++; */
+/*     } */
+/*     free(line); */
+/*     fclose(f); */
+
+/*     *r_num_samples = num_samples; */
+/*     *r_num_sites = num_sites; */
+/*     *r_haplotypes = haplotypes; */
+/*     *r_positions = position; */
+/* } */
+
+static void
+read_hdf5_dimensions(hid_t file_id, size_t *num_samples, size_t *num_sites)
+{
+    hid_t dataset_id, dataspace_id;
+    herr_t status;
+    htri_t exists;
+    int rank;
+    hsize_t dims[2];
+    const char *name = "/samples/haplotypes";
+
+    exists = H5Lexists(file_id, name, H5P_DEFAULT);
+    if (exists < 0) {
+        fatal_hdf5_error("error reading samples/haplotypes");
     }
-    while (getline(&line, &len, f) != -1) {
-        /* read the number of tokens */
-        token = strtok(line, delimiters);
-        if (token == NULL) {
-            fatal_error("File format error");
-        }
-        token = strtok(NULL, delimiters);
-        if (token == NULL) {
-            fatal_error("File format error");
-        }
-        num_line_samples = strlen(token) - 1;
-        if (num_samples == (size_t) -1) {
-            num_samples = num_line_samples;
-        } else if (num_samples != num_line_samples) {
-            fatal_error("Bad input: line lengths not equal");
-        }
-        num_sites++;
-    }
-    if (fseek(f, 0, 0) != 0) {
-        fatal_error("Cannot seek in file");
+    if (!exists) {
+        fatal_error("cannot find samples/haplotypes");
     }
 
-    haplotypes = malloc(num_samples * num_sites * sizeof(allele_t));
+    dataset_id = H5Dopen(file_id, name, H5P_DEFAULT);
+    if (dataset_id < 0) {
+        fatal_hdf5_error("Reading samples/haplotypes");
+    }
+    dataspace_id = H5Dget_space(dataset_id);
+    if (dataspace_id < 0) {
+        fatal_hdf5_error("Reading samples/haplotypes");
+    }
+    rank = H5Sget_simple_extent_ndims(dataspace_id);
+    if (rank != 2) {
+        fatal_error("samples/haplotypes not 2D");
+    }
+    status = H5Sget_simple_extent_dims(dataspace_id, dims, NULL);
+    if (status < 0) {
+        fatal_hdf5_error("Reading samples/haplotypes");
+    }
+    status = H5Sclose(dataspace_id);
+    if (status < 0) {
+        fatal_hdf5_error("Reading samples/haplotypes");
+    }
+    status = H5Dclose(dataset_id);
+    if (status < 0) {
+        fatal_hdf5_error("Reading samples/haplotypes");
+    }
+    *num_samples = dims[0];
+    *num_sites = dims[1];
+}
+
+static void
+check_hdf5_dimensions(hid_t file_id, size_t num_samples, size_t num_sites)
+{
+    hid_t dataset_id, dataspace_id;
+    herr_t status;
+    int rank;
+    hsize_t dims[2];
+    htri_t exists;
+    struct _dimension_check {
+        const char *name;
+        size_t size;
+    };
+    struct _dimension_check fields[] = {
+        {"/sites/position", num_sites},
+        {"/sites/recombination_rate", num_sites},
+    };
+    size_t num_fields = sizeof(fields) / sizeof(struct _dimension_check);
+    size_t j;
+
+    for (j = 0; j < num_fields; j++) {
+        exists = H5Lexists(file_id, fields[j].name, H5P_DEFAULT);
+        if (exists < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        if (! exists) {
+            fatal_error("Cannot find field '%s'", fields[j].name);
+        }
+        dataset_id = H5Dopen(file_id, fields[j].name, H5P_DEFAULT);
+        if (dataset_id < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        dataspace_id = H5Dget_space(dataset_id);
+        if (dataspace_id < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        rank = H5Sget_simple_extent_ndims(dataspace_id);
+        if (rank != 1) {
+            fatal_error("dimension != 1");
+        }
+        status = H5Sget_simple_extent_dims(dataspace_id, dims, NULL);
+        if (status < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        status = H5Sclose(dataspace_id);
+        if (status < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        status = H5Dclose(dataset_id);
+        if (status < 0) {
+            fatal_hdf5_error("read_dimensions");
+        }
+        if (dims[0] != fields[j].size) {
+            fatal_error("size mismatch for '%s'", fields[j].name);
+        }
+    }
+}
+
+static void
+read_hdf5_data(hid_t file_id, allele_t *haplotypes, double *position,
+        double *recombination_rate)
+{
+    herr_t status;
+    hid_t dataset_id;
+    htri_t exists;
+    struct _hdf5_field_read {
+        const char *name;
+        hid_t type;
+        void *dest;
+    };
+    struct _hdf5_field_read fields[] = {
+        {"/sites/recombination_rate", H5T_NATIVE_DOUBLE, recombination_rate},
+        {"/sites/position", H5T_NATIVE_DOUBLE, position},
+        {"/samples/haplotypes", H5T_NATIVE_CHAR, haplotypes},
+    };
+    size_t num_fields = sizeof(fields) / sizeof(struct _hdf5_field_read);
+    size_t j;
+
+    for (j = 0; j < num_fields; j++) {
+        printf("reading %s\n", fields[j].name);
+        exists = H5Lexists(file_id, fields[j].name, H5P_DEFAULT);
+        if (exists < 0) {
+            fatal_hdf5_error("reading site data");
+        }
+        if (!exists) {
+            fatal_error("field missing");
+        }
+        dataset_id = H5Dopen(file_id, fields[j].name, H5P_DEFAULT);
+        if (dataset_id < 0) {
+            fatal_hdf5_error("reading site data");
+        }
+        status = H5Dread(dataset_id, fields[j].type, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                fields[j].dest);
+        if (status < 0) {
+            fatal_hdf5_error("reading site data");
+        }
+        status = H5Dclose(dataset_id);
+        if (status < 0) {
+            fatal_hdf5_error("reading site data");
+        }
+    }
+}
+
+static void
+read_input(const char *filename, size_t *r_num_samples, size_t *r_num_sites,
+        allele_t **r_haplotypes, double **r_position, double **r_recombination_rate)
+{
+
+    hid_t file_id = -1;
+    herr_t status;
+    size_t num_sites, num_samples;
+    allele_t *haplotypes;
+    double *position, *recombination_rate;
+
+    file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) {
+        fatal_hdf5_error("Opening HDF5 file");
+    }
+    /* TODO read metadata attributes and sequence length */
+    read_hdf5_dimensions(file_id, &num_samples, &num_sites);
+    check_hdf5_dimensions(file_id, num_samples, num_sites);
     position = malloc(num_sites * sizeof(double));
-    if (haplotypes == NULL || position == NULL) {
-        fatal_error("No memory");
+    recombination_rate = malloc(num_sites * sizeof(double));
+    haplotypes = malloc(num_samples * num_sites * sizeof(allele_t));
+    if (position == NULL || recombination_rate == NULL || haplotypes == NULL) {
+        fatal_error("malloc failure");
     }
-    k = 0;
-    while (getline(&line, &len, f) != -1) {
-        token = strtok(line, delimiters);
-        if (token == NULL) {
-            fatal_error("File format error");
-        }
-        position[k] = atof(token);
-        token = strtok(NULL, delimiters);
-        if (token == NULL) {
-            fatal_error("File format error");
-        }
-        for (j = 0; j < num_samples; j++) {
-            haplotypes[j * num_sites + k] = (allele_t) ((int) token[j] - '0');
-        }
-        k++;
+    read_hdf5_data(file_id, haplotypes, position, recombination_rate);
+    status = H5Fclose(file_id);
+    if (status < 0) {
+        fatal_hdf5_error("Closing HDF5 file");
     }
-    free(line);
-    fclose(f);
 
     *r_num_samples = num_samples;
     *r_num_sites = num_sites;
     *r_haplotypes = haplotypes;
-    *r_positions = position;
+    *r_position = position;
+    *r_recombination_rate = recombination_rate;
 }
 
 static void
@@ -158,7 +353,7 @@ output_ts(tree_sequence_builder_t *ts_builder)
 }
 
 static void
-run_generate(const char *sample_file, int verbose)
+run_generate(const char *input_file, int verbose)
 {
     size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
@@ -190,14 +385,8 @@ run_generate(const char *sample_file, int verbose)
     /* int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES; */
     int flags = 0;
 
-    read_samples(sample_file, &num_samples, &num_sites, &haplotypes, &positions);
-    recombination_rate = malloc(num_sites * sizeof(double));
-    if (recombination_rate == NULL) {
-        fatal_error("malloc error");
-    }
-    for (l = 0; l < num_sites; l++) {
-        recombination_rate[l] = 1e-8;
-    }
+    read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
+            &recombination_rate);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
             positions, haplotypes);
     if (ret != 0) {

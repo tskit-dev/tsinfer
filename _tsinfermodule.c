@@ -448,20 +448,24 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     int err;
     PyObject *position = NULL;
     PyArrayObject *position_array = NULL;
+    PyObject *recombination_rate = NULL;
+    PyArrayObject *recombination_rate_array = NULL;
     size_t num_sites;
     double sequence_length;
     unsigned long max_nodes;
     unsigned long max_edges;
     int resolve_shared_recombs = 1;
     int resolve_polytomies = 1;
-    static char *kwlist[] = {"sequence_length", "position", "max_nodes", "max_edges",
+    static char *kwlist[] = {"sequence_length", "position",
+        "recombination_rate", "max_nodes", "max_edges",
         "resolve_shared_recombinations", "resolve_polytomies", NULL};
     int flags = 0;
     npy_intp *shape;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dOkk|ii", kwlist,
-                &sequence_length, &position, &max_nodes, &max_edges,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dOOkk|ii", kwlist,
+                &sequence_length, &position, &recombination_rate,
+                &max_nodes, &max_edges,
                 &resolve_shared_recombs, &resolve_polytomies)) {
         goto out;
     }
@@ -477,6 +481,23 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     }
     shape = PyArray_DIMS(position_array);
     num_sites = shape[0];
+
+    /* recombination_rate */
+    recombination_rate_array = (PyArrayObject *) PyArray_FROM_OTF(recombination_rate, NPY_FLOAT64,
+            NPY_ARRAY_IN_ARRAY);
+    if (recombination_rate_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(recombination_rate_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(recombination_rate_array);
+    if (shape[0] != num_sites) {
+        PyErr_SetString(PyExc_ValueError, "recombation_rate must have same size as position");
+        goto out;
+    }
+
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
     if (self->tree_sequence_builder == NULL) {
         PyErr_NoMemory();
@@ -490,7 +511,9 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     }
 
     err = tree_sequence_builder_alloc(self->tree_sequence_builder,
-            sequence_length, num_sites, (double *) PyArray_DATA(position_array),
+            sequence_length, num_sites,
+            (double *) PyArray_DATA(position_array),
+            (double *) PyArray_DATA(recombination_rate_array),
             max_nodes, max_edges, flags);
     if (err != 0) {
         handle_library_error(err);
@@ -498,6 +521,8 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     }
     ret = 0;
 out:
+    Py_XDECREF(recombination_rate_array);
+    Py_XDECREF(position_array);
     return ret;
 }
 
@@ -1118,17 +1143,16 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate",
+    static char *kwlist[] = {"tree_sequence_builder",
         "observation_error", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
-    double recombination_rate;
     double observation_error;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!dd", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &recombination_rate, &observation_error)) {
+                &observation_error)) {
         goto out;
     }
     self->tree_sequence_builder = tree_sequence_builder;
@@ -1142,8 +1166,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
-            self->tree_sequence_builder->tree_sequence_builder, recombination_rate,
-            observation_error);
+            self->tree_sequence_builder->tree_sequence_builder, observation_error);
     if (err != 0) {
         handle_library_error(err);
         goto out;

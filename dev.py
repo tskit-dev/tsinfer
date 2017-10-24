@@ -86,20 +86,22 @@ def tsinfer_dev(
     # print(S)
 
     recombination_rate = np.zeros_like(positions) + recombination_rate
-    hdf5 = make_input_hdf5("tmp.hdf5", S, positions, recombination_rate, L_megabases)
 
-#     tsp = tsinfer.infer(
-#         S, positions, L_megabases, recombination_rate, error_rate,
-#         num_threads=num_threads, method=method, log_level=log_level, progress=progress)
-#     # print(tsp.tables)
-#     # for t in tsp.trees():
-#     #     print("tree", t.index)
-#     #     print(t.draw(format="unicode"))
+    # hdf5 = make_input_hdf5("tmp.hdf5", S, positions, recombination_rate, L_megabases)
+    # print(S)
 
-    # Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-    # for variant in tsp.variants():
-    #     Sp[:, variant.index] = variant.genotypes
-    # assert np.all(Sp == S)
+    tsp = tsinfer.infer(
+        S, positions, L_megabases, recombination_rate, error_rate,
+        num_threads=num_threads, method=method, log_level=log_level, progress=progress)
+    # print(tsp.tables)
+    # for t in tsp.trees():
+    #     print("tree", t.index)
+    #     print(t.draw(format="unicode"))
+
+    Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
+    for variant in tsp.variants():
+        Sp[:, variant.index] = variant.genotypes
+    assert np.all(Sp == S)
 
 
 def analyse_file(filename):
@@ -148,7 +150,7 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="C")
+    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):

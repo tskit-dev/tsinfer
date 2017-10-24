@@ -1,5 +1,5 @@
 
-CC=gcc
+CC=h5cc
 CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
   -Wno-unused-parameter\
   -Wmissing-prototypes -Wstrict-prototypes \
