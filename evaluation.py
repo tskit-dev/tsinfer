@@ -43,7 +43,6 @@ def generate_samples(ts, error_p):
 
     Rejects any variants that result in a fixed column.
     """
-    print("generating errors at ", error_p)
     S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for variant in ts.variants():
         done = False
@@ -173,7 +172,7 @@ def check_effect_error_param(input_error=0.0):
     nodes = []
     rf_distance = []
     error = []
-    for seed in range(1, 100):
+    for seed in range(1, 10):
         ts_source = msprime.simulate(
             num_samples, length=1*MB, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
             random_seed=seed)
@@ -208,7 +207,75 @@ def check_effect_error_param(input_error=0.0):
         plt.savefig("tmp__NOBACKUP__/error_{}.png".format(input_error))
         plt.clf()
 
+
+def check_variable_recomb():
+    rate = 1e-10
+    Mb = 10**6
+    num_samples = 20
+    seed = 10
+    recomb_map = msprime.RecombinationMap(
+        positions=[0, 1*Mb, 1.1 * Mb, 2 * Mb],
+        rates = [rate, 100 * rate, rate, 0], num_loci=10000)
+    sites = []
+    trees = []
+    edges = []
+    nodes = []
+    rf_distance = []
+    flat_rate = []
+    for seed in range(1, 100):
+        ts_source = msprime.simulate(
+            num_samples, recombination_map=recomb_map, Ne=10**4, mutation_rate=1e-8,
+            random_seed=seed,)
+        print(
+            "sim: n = ", ts_source.num_samples, ", m =", ts_source.num_sites,
+            "num_trees = ", ts_source.num_trees)
+        samples = np.zeros((ts_source.num_samples, ts_source.num_sites), dtype=np.int8)
+        for variant in ts_source.variants():
+            samples[:, variant.index] = variant.genotypes
+        positions = np.array([site.position for site in ts_source.sites()])
+        genetic_positions = np.array([
+            recomb_map.physical_to_genetic(x) for x in positions])
+        recombination_rate = np.zeros(ts_source.num_sites)
+        recombination_rate[1:] = genetic_positions[1:] - genetic_positions[:-1]
+        recombination_rate /= recomb_map.get_num_loci()
+
+        for recomb_rate in [1, recombination_rate]:
+            ts_inferred = tsinfer.infer(
+                samples=samples, positions=positions,
+                sequence_length=ts_source.sequence_length,
+                recombination_rate=recomb_rate, sample_error=0)
+            rf = get_mean_rf_distance(ts_source, ts_inferred)
+            rf_distance.append(get_mean_rf_distance(ts_source, ts_inferred))
+            flat_rate.append(recomb_rate is 1)
+            sites.append(ts_source.num_sites)
+            trees.append(ts_inferred.num_trees / ts_source.num_trees)
+            nodes.append(ts_inferred.num_nodes / ts_source.num_nodes)
+            edges.append(ts_inferred.num_edges / ts_source.num_edges)
+        df = pd.DataFrame(data={
+            "num_samples": num_samples,
+            "sites": sites,
+            "trees": trees,
+            "edges": edges,
+            "nodes": nodes,
+            "rf_distance": rf_distance,
+            "flat_rate": flat_rate})
+            # df.to_csv("tmp__NOBACKUP__/error_{}.csv".format(input_error))
+    plt.figure()
+    fig, axs = plt.subplots(nrows=2, ncols=2)
+    for j, y_value in enumerate(["trees", "nodes", "edges", "rf_distance"]):
+        sns.boxplot(x=df["flat_rate"], y=df[y_value], ax=axs[j // 2, j % 2])
+    plt.suptitle("variable recomb")
+    plt.savefig("tmp__NOBACKUP__/variable_recomb.png")
+    plt.clf()
+
+    # print(ts_source.num_sites)
+    # print(ts_source.num_trees)
+    # for t in ts_source.trees():
+    #     print(t.interval[1] - t.interval[0])
+
+
 if __name__ == "__main__":
     # check_basic_performance()
-    check_effect_error_param(float(sys.argv[1]))
+    # check_effect_error_param(float(sys.argv[1]))
     # plot_basic_performance()
+    check_variable_recomb()
