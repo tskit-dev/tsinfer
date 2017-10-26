@@ -264,9 +264,6 @@ class InferenceManager(object):
             self, ancestor, node_id, focal_sites, matcher, results, match):
         # TODO make this an array natively.
         focal_sites = np.array(focal_sites)
-        unknown = np.where(ancestor == -1)[0]
-        known = np.where(ancestor != -1)[0]
-        ancestor[unknown] = 0
         results.add_mutations(focal_sites, node_id)
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
@@ -285,8 +282,8 @@ class InferenceManager(object):
                     "node_id:": node_id,
                     "focal_sites": focal_sites,
                     "ancestor": ancestor,
-                    "start": known[0],
-                    "end": known[-1] + 1,
+                    # "start": known[0],
+                    # "end": known[-1] + 1,
                     "match": match,
                     "traceback": traceback}
                 pickle.dump(debug, f)
