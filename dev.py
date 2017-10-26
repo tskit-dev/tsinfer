@@ -275,14 +275,14 @@ def examine_ancestor_ts(filename):
 
 if __name__ == "__main__":
 
-    # np.set_printoptions(linewidth=20000)
-    # np.set_printoptions(threshold=20000000)
+    np.set_printoptions(linewidth=20000)
+    np.set_printoptions(threshold=20000000)
 
     # large_profile()
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
-    examine_ancestor_ts(sys.argv[1])
+    # examine_ancestor_ts(sys.argv[1])
 
-    # tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
+    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
