@@ -104,6 +104,7 @@ def tsinfer_dev(
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
     assert np.all(Sp == S)
+    print("DONE")
 
 
 def analyse_file(filename):
@@ -282,7 +283,9 @@ if __name__ == "__main__":
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
-    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
+    for seed in range(1, 10000):
+        print(seed)
+        tsinfer_dev(20, 0.3, seed=seed, error_rate=0.0, method="P")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
