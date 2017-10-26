@@ -1,11 +1,13 @@
 import numpy as np
 import random
+import os
+import h5py
+import sys
 
 
 import tsinfer
 import msprime
 
-import h5py
 
 
 def make_errors(v, p):
@@ -127,30 +129,161 @@ def analyse_file(filename):
     #     if t.index == 10:
     #         break
 
+def large_profile():
+    input_file = "tmp__NOBACKUP__/large-input.hdf5"
+    if not os.path.exists(input_file):
+        n = 10**4
+        L = 50 * 10**6
+        ts = msprime.simulate(
+            n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8)
+        S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
+        for v in ts.variants():
+            S[:, v.index] = v.genotypes
+        positions = np.array([site.position for site in ts.sites()])
+        recombination_rate = np.zeros(ts.num_sites) + 1e-8
+        make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
 
-def analyse_tracebacks(epoch):
-    filename = "tmp__NOBACKUP__/tracebacks/tracebacks{}.pkl".format(epoch)
+    hdf5 = h5py.File(input_file, "r")
+    tsp = tsinfer.infer(
+        samples=hdf5["samples/haplotypes"][:],
+        positions=hdf5["sites/position"][:],
+        recombination_rate=hdf5["sites/recombination_rate"][:],
+        sequence_length=hdf5.attrs["sequence_length"],
+        num_threads=8, log_level="DEBUG", progress=True)
+    # print(tsp.tables)
+    # for t in tsp.trees():
+    #     print("tree", t.index)
+    #     print(t.draw(format="unicode"))
+
+def save_ancestor_ts(
+        n, L, seed, num_threads=1, recombination_rate=1e-8,
+        error_rate=0, method="C", log_level="WARNING"):
+    L_megabases = int(L * 10**6)
+    ts = msprime.simulate(
+            n, Ne=10**4, length=L_megabases,
+            recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=seed)
+    print("num_sites = ", ts.num_sites)
+    positions = np.array([site.position for site in ts.sites()])
+    S = generate_samples(ts, 0)
+    recombination_rate = np.zeros_like(positions) + recombination_rate
+
+    # make_input_hdf5("ancestor_example.hdf5", S, positions, recombination_rate,
+    #         ts.sequence_length)
+
+    manager = tsinfer.InferenceManager(
+        S, positions, ts.sequence_length, recombination_rate,
+        num_threads=num_threads, method=method, progress=True, log_level="INFO",
+        ancestor_traceback_file_pattern="tmp__NOBACKUP__/tracebacks/tb_{}.pkl")
+
+    manager.initialise()
+    manager.process_ancestors()
+    ts = manager.get_tree_sequence()
+    ts.dump("tmp__NOBACKUP__/ancestor_ts-{}.hdf5".format(ts.num_sites))
+
+
+def examine_ancestor_ts(filename):
+    ts = msprime.load(filename)
+    print("num_sites = ", ts.num_sites)
+    print("num_trees = ", ts.num_trees)
+    print("num_edges = ", ts.num_edges)
+
+    # zero_edges = 0
+    # edges = msprime.EdgeTable()
+    # for e in ts.edges():
+    #     if e.parent == 0:
+    #         zero_edges += 1
+    #     else:
+    #         edges.add_row(e.left, e.right, e.parent, e.child)
+    # print("zero_edges = ", zero_edges, zero_edges / ts.num_edges)
+    # t = ts.tables
+    # t.edges = edges
+    # ts = msprime.load_tables(**t.asdict())
+    # print("num_sites = ", ts.num_sites)
+    # print("num_trees = ", ts.num_trees)
+    # print("num_edges = ", ts.num_edges)
+
+    # for t in ts.trees():
+    #     print("Tree:", t.interval)
+    #     print(t.draw(format="unicode"))
+    #     print("=" * 200)
+
     import pickle
+    j = 812
+    filename = "tmp__NOBACKUP__/tracebacks/tb_{}.pkl".format(j)
     with open(filename, "rb") as f:
-        tracebacks = pickle.load(f)
-    max_len = 0
-    for j, L in enumerate(tracebacks):
-        if len(L) > max_len:
-            max_len = len(L)
-            max_index = j
-    # print(j, "\t", L)
-    print("max len = ", max_len)
-    for k, v in tracebacks[max_index].items():
-        print(k, "\t", v)
+        debug = pickle.load(f)
+
+    tracebacks = debug["traceback"]
+    # print("focal = ", debug["focal_sites"])
+    del debug["traceback"]
+    print("debug:", debug)
+    a = debug["ancestor"]
+    lengths = [len(t) for t in tracebacks]
+    import matplotlib as mp
+    # Force matplotlib to not use any Xwindows backend.
+    mp.use('Agg')
+    import matplotlib.pyplot as plt
+
+    plt.clf()
+    plt.plot(lengths)
+    plt.savefig("tracebacks_{}.png".format(j))
+
+#     start = 0
+#     for j, t in enumerate(tracebacks[start:]):
+#         print("TB", j, len(t))
+#         for k, v in t.items():
+#             print("\t", k, "\t", v)
+
+#     site_id = 0
+#     for t in ts.trees():
+#         for site in t.sites():
+#             L = tracebacks[site_id]
+#             site_id += 1
+#         # print("TREE")
+#             print(L)
+#             # for x1 in L.values():
+#             #     for x2 in L.values():
+#             #         print("\t", x1, x2, x1 == x2, sep="\t")
+#             print("SITE = ", site_id)
+#             print("root children = ", len(t.children(t.root)))
+#             for u, v in L.items():
+#                 path = []
+#                 while u != msprime.NULL_NODE:
+#                     path.append(u)
+#                     u = t.parent(u)
+#                     # if u in L and L[u] == v:
+#                     #     print("ERROR", u)
+#                 print(v, path)
+#             print()
+#             node_labels = {u: "{}:{:.2G}".format(u, L[u]) for u in L.keys()}
+#             if site_id == 694:
+#                 print(t.draw(format="unicode", node_label_text=node_labels))
+
+
+    # for j, L in enumerate(tracebacks):
+    #     print(j, L)
+        # if len(L) > max_len:
+        #     max_len = len(L)
+        #     max_index = j
+    # # print(j, "\t", L)
+    # print("max len = ", max_len)
+    # for k, v in tracebacks[max_index].items():
+        # print(k, "\t", v)
 
 
 
 if __name__ == "__main__":
 
-    np.set_printoptions(linewidth=20000)
-    np.set_printoptions(threshold=20000000)
+    # np.set_printoptions(linewidth=20000)
+    # np.set_printoptions(threshold=20000000)
 
-    tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
+    # large_profile()
+    # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
+    examine_ancestor_ts(sys.argv[1])
+
+    # tsinfer_dev(6, 0.1, seed=1, error_rate=0.1, method="P")
+
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):

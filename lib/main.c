@@ -36,77 +36,6 @@ fatal_hdf5_error(const char *msg)
     exit(EXIT_FAILURE);
 }
 
-/* static void */
-/* read_samples(const char *input_file, size_t *r_num_samples, size_t *r_num_sites, */
-/*         allele_t **r_haplotypes, double **r_positions) */
-/* { */
-/*     char *line = NULL; */
-/*     size_t len = 0; */
-/*     size_t j, k; */
-/*     size_t num_line_samples; */
-/*     size_t num_samples = (size_t) -1; */
-/*     size_t num_sites = 0; */
-/*     const char delimiters[] = " \t"; */
-/*     char *token; */
-/*     allele_t *haplotypes = NULL; */
-/*     double *position = NULL; */
-/*     FILE *f = fopen(input_file, "r"); */
-
-/*     if (f == NULL) { */
-/*         fatal_error("Cannot open %s: %s", input_file, strerror(errno)); */
-/*     } */
-/*     while (getline(&line, &len, f) != -1) { */
-/*         /1* read the number of tokens *1/ */
-/*         token = strtok(line, delimiters); */
-/*         if (token == NULL) { */
-/*             fatal_error("File format error"); */
-/*         } */
-/*         token = strtok(NULL, delimiters); */
-/*         if (token == NULL) { */
-/*             fatal_error("File format error"); */
-/*         } */
-/*         num_line_samples = strlen(token) - 1; */
-/*         if (num_samples == (size_t) -1) { */
-/*             num_samples = num_line_samples; */
-/*         } else if (num_samples != num_line_samples) { */
-/*             fatal_error("Bad input: line lengths not equal"); */
-/*         } */
-/*         num_sites++; */
-/*     } */
-/*     if (fseek(f, 0, 0) != 0) { */
-/*         fatal_error("Cannot seek in file"); */
-/*     } */
-
-/*     haplotypes = malloc(num_samples * num_sites * sizeof(allele_t)); */
-/*     position = malloc(num_sites * sizeof(double)); */
-/*     if (haplotypes == NULL || position == NULL) { */
-/*         fatal_error("No memory"); */
-/*     } */
-/*     k = 0; */
-/*     while (getline(&line, &len, f) != -1) { */
-/*         token = strtok(line, delimiters); */
-/*         if (token == NULL) { */
-/*             fatal_error("File format error"); */
-/*         } */
-/*         position[k] = atof(token); */
-/*         token = strtok(NULL, delimiters); */
-/*         if (token == NULL) { */
-/*             fatal_error("File format error"); */
-/*         } */
-/*         for (j = 0; j < num_samples; j++) { */
-/*             haplotypes[j * num_sites + k] = (allele_t) ((int) token[j] - '0'); */
-/*         } */
-/*         k++; */
-/*     } */
-/*     free(line); */
-/*     fclose(f); */
-
-/*     *r_num_samples = num_samples; */
-/*     *r_num_sites = num_sites; */
-/*     *r_haplotypes = haplotypes; */
-/*     *r_positions = position; */
-/* } */
-
 static void
 read_hdf5_dimensions(hid_t file_id, size_t *num_samples, size_t *num_sites)
 {
@@ -231,7 +160,6 @@ read_hdf5_data(hid_t file_id, allele_t *haplotypes, double *position,
     size_t j;
 
     for (j = 0; j < num_fields; j++) {
-        printf("reading %s\n", fields[j].name);
         exists = H5Lexists(file_id, fields[j].name, H5P_DEFAULT);
         if (exists < 0) {
             fatal_hdf5_error("reading site data");
@@ -376,7 +304,7 @@ run_generate(const char *input_file, int verbose)
     node_id_t *parent_buffer, *parent_output;
     node_id_t *child_buffer;
     /* Buffers for mutation output */
-    size_t max_mutations = 1024;
+    size_t max_mutations = 8192;
     size_t total_mutations;
     site_id_t *site_buffer;
     node_id_t *node_buffer;
@@ -501,7 +429,6 @@ run_generate(const char *input_file, int verbose)
         }
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
-    printf("Done with ancestors\n");
 
     total_edges = 0;
     total_mutations = 0;
@@ -610,6 +537,7 @@ main(int argc, char** argv)
         }
     }
     arg_freetable(argtable1, sizeof(argtable1) / sizeof(argtable1[0]));
+
 
     return exitcode;
 }

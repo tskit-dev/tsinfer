@@ -9,6 +9,7 @@ import queue
 import threading
 import _thread
 import traceback
+import pickle
 
 import numpy as np
 import tqdm
@@ -178,7 +179,8 @@ class InferenceManager(object):
     def __init__(
             self, samples, positions, sequence_length, recombination_rate,
             num_threads=1, method="C", progress=False, log_level="WARNING",
-            resolve_shared_recombinations=False, resolve_polytomies=False):
+            resolve_shared_recombinations=False, resolve_polytomies=False,
+            ancestor_traceback_file_pattern=None):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
@@ -189,6 +191,9 @@ class InferenceManager(object):
         self.sequence_length = sequence_length
         self.recombination_rate = recombination_rate
         self.num_threads = num_threads
+        # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
+        # the tracebacks for each node ID and other debugging information.
+        self.ancestor_traceback_file_pattern = ancestor_traceback_file_pattern
         # Set up logging.
         daiquiri.setup(level=log_level)
         self.logger = daiquiri.getLogger()
@@ -259,6 +264,9 @@ class InferenceManager(object):
             self, ancestor, node_id, focal_sites, matcher, results, match):
         # TODO make this an array natively.
         focal_sites = np.array(focal_sites)
+        unknown = np.where(ancestor == -1)[0]
+        known = np.where(ancestor != -1)[0]
+        ancestor[unknown] = 0
         results.add_mutations(focal_sites, node_id)
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
@@ -267,6 +275,23 @@ class InferenceManager(object):
         assert np.all(match == ancestor)
         results.add_edges(left, right, parent, node_id)
         self.__update_progress()
+
+        if self.ancestor_traceback_file_pattern is not None:
+            # Write out the traceback debug.
+            filename = self.ancestor_traceback_file_pattern.format(node_id)
+            traceback = [matcher.get_traceback(l) for l in range(self.num_sites)]
+            with open(filename, "wb") as f:
+                debug = {
+                    "node_id:": node_id,
+                    "focal_sites": focal_sites,
+                    "ancestor": ancestor,
+                    "start": known[0],
+                    "end": known[-1] + 1,
+                    "match": match,
+                    "traceback": traceback}
+                pickle.dump(debug, f)
+                self.logger.debug(
+                    "Dumped ancestor traceback debug to {}".format(filename))
 
     def process_ancestors(self):
         self.logger.info("Copying {} ancestors".format(self.num_ancestors))
@@ -338,6 +363,9 @@ class InferenceManager(object):
                 build_queue.put((child, focal_sites))
                 child += 1
             # Wait until the build_queue and match queue are both empty.
+            # TODO Note that these calls to queue.join prevent errors that happen in the
+            # worker process from propagating back here. Might be better to use some
+            # other way of handling threading sync.
             build_queue.join()
             match_queue.join()
             epoch_results = ResultBuffer.combine(results)

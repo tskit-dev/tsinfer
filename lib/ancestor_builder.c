@@ -315,7 +315,8 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     /* printf("\n"); */
 
     /* Set any unknown values to the ancestral state */
-    memset(ancestor, 0, num_sites * sizeof(allele_t));
+    memset(ancestor, 0xff, num_sites * sizeof(allele_t));
+
     /* Fill in the sites within the bounds of the focal sites */
     ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples,
             consistent_samples_mem, &num_consistent_samples);

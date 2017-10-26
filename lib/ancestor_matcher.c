@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include <gsl/gsl_math.h>
+
 /* TODO move this into a general utilities file. */
 void
 __tsi_safe_free(void **ptr) {
@@ -26,12 +28,19 @@ cmp_node_id(const void *a, const void *b) {
     return (*ia > *ib) - (*ia < *ib);
 }
 
+static bool
+approximately_equal(double a, double b)
+{
+    double epsilon = 1e-9;
+    bool ret = fabs(a - b) <= ( (fabs(a) < fabs(b) ? fabs(b) : fabs(a)) * epsilon);
+    return ret;
+}
+
 /* Returns true if x is approximately equal to one. */
 static bool
 approximately_one(double x)
 {
-    double eps = 1e-9;
-    return fabs(x - 1.0) < eps;
+    return approximately_equal(x, 1.0);
 }
 
 static void
@@ -395,7 +404,7 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self)
                 v = self->parent[v];
                 assert(v != NULL_NODE);
             }
-            if (self->likelihood[u] == self->likelihood[v]) {
+            if (approximately_equal(self->likelihood[u], self->likelihood[v])) {
                 /* Delete this likelihood value */
                 avl_unlink_node(&self->likelihood_nodes, a);
                 ancestor_matcher_free_avl_node(self, a);
@@ -426,9 +435,10 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
                 && mutation_node == NULL_NODE
                 && site > 0
                 && self->tree_sequence_builder->sites.mutations[site - 1] == NULL) {
-            /* If there are no mutations at this or the last site, then
-             * we are guaranteed that the likelihoods are equal. */
-            self->traceback[site] = self->traceback[site - 1];
+        /* If there are no mutations at this or the last site, then
+         * we are guaranteed that the likelihoods are equal. */
+        self->traceback[site] = self->traceback[site - 1];
+        self->total_traceback_size += avl_count(&self->likelihood_nodes);
     } else {
         if (mutation_node != NULL_NODE) {
             /* Insert a new L-value for the mutation node if needed */
