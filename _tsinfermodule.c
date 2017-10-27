@@ -208,6 +208,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     PyArrayObject *focal_sites_array = NULL;
     size_t num_focal_sites;
     size_t num_sites;
+    site_id_t start, end;
     npy_intp *shape;
 
     if (AncestorBuilder_check_state(self) != 0) {
@@ -250,7 +251,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_make_ancestor(self->builder, num_focal_sites,
         (uint32_t *) PyArray_DATA(focal_sites_array),
-        (int8_t *) PyArray_DATA(ancestor_array));
+        &start, &end, (int8_t *) PyArray_DATA(ancestor_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -258,7 +259,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     }
     Py_DECREF(focal_sites_array);
     Py_DECREF(ancestor_array);
-    return Py_BuildValue("");
+    return Py_BuildValue("ii", start, end);
 fail:
     Py_XDECREF(focal_sites_array);
     PyArray_XDECREF_ERR(ancestor_array);
@@ -1181,13 +1182,14 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"haplotype", "match", NULL};
+    static char *kwlist[] = {"haplotype", "start", "end", "match", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     PyObject *match = NULL;
     PyArrayObject *match_array = NULL;
     npy_intp *shape;
     size_t num_edges;
+    int start, end;
     site_id_t *ret_left, *ret_right;
     node_id_t *ret_parent;
     PyArrayObject *left = NULL;
@@ -1198,8 +1200,8 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!", kwlist,
-                &haplotype, &PyArray_Type, &match)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OiiO!", kwlist,
+                &haplotype, &start, &end, &PyArray_Type, &match)) {
         goto out;
     }
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
@@ -1234,7 +1236,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_find_path(self->ancestor_matcher,
-            (allele_t *) PyArray_DATA(haplotype_array),
+            (site_id_t) start, (site_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
             (allele_t *) PyArray_DATA(match_array),
             &num_edges, &ret_left, &ret_right, &ret_parent);
     Py_END_ALLOW_THREADS

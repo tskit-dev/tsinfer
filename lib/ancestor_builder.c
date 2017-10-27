@@ -285,11 +285,12 @@ ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t foca
 /* Build the ancestors for sites in the specified focal sites */
 int
 ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
-        site_id_t *focal_sites, allele_t *ancestor)
+        site_id_t *focal_sites, site_id_t *ret_start, site_id_t *ret_end,
+        allele_t *ancestor)
 {
     int ret = 0;
     int64_t l;
-    site_id_t focal_site;
+    site_id_t focal_site, start, end;
     size_t j, k;
     size_t num_sites = self->num_sites;
     size_t num_consistent_samples;
@@ -314,8 +315,8 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     }
     /* printf("\n"); */
 
-    /* Set any unknown values to the ancestral state */
-    memset(ancestor, 0, num_sites * sizeof(allele_t));
+    /* Set any unknown values to -1 */
+    memset(ancestor, 0xff, num_sites * sizeof(allele_t));
 
     /* Fill in the sites within the bounds of the focal sites */
     ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples,
@@ -340,6 +341,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
         /* printf("LEFT: l = %d, count = %d\n", (int) l, HASH_COUNT(consistent_samples)); */
         ancestor_builder_make_site(self, focal_site, l, true, &consistent_samples, ancestor);
     }
+    start = l + 1;
     HASH_CLEAR(hh, consistent_samples);
 
     /* Work rightwards from the last focal site */
@@ -351,7 +353,10 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
         /* printf("RIGHT: l = %d, count = %d\n", (int) l, HASH_COUNT(consistent_samples)); */
         ancestor_builder_make_site(self, focal_site, l, true, &consistent_samples, ancestor);
     }
+    end = l;
     HASH_CLEAR(hh, consistent_samples);
+    *ret_start = start;
+    *ret_end = end;
 out:
     tsi_safe_free(consistent_samples_mem);
     return ret;

@@ -1300,6 +1300,15 @@ class AncestorMatcher(object):
     def is_nonzero_root(self, u):
         return u != 0 and self.parent[u] == -1 and self.left_child[u] == -1
 
+    def approximately_equal(self, a, b):
+        # Based on Python is_close, https://www.python.org/dev/peps/pep-0485/
+        rel_tol=1e-9
+        abs_tol=0.0
+        return abs(a-b) <= max( rel_tol * max(abs(a), abs(b)), abs_tol )
+
+    def approximately_one(self, a):
+        return self.approximately_equal(a, 1.0)
+
     def find_path(self, h, start, end, match):
 
         M = len(self.tree_sequence_builder.edges)
@@ -1374,13 +1383,20 @@ class AncestorMatcher(object):
             # print("start = ", start)
             # print("end = ", end)
 
+            normalisation_required = False
             for l in range(remove_start, k):
                 edge = edges[O[l]]
                 if self.is_nonzero_root(edge.child):
                     # print("REMOVING ROOT", edge.child, self.likelihood[edge.child])
+                    if self.approximately_one(self.likelihood[edge.child]):
+                        normalisation_required = True
                     self.likelihood[edge.child] = -2
                     if edge.child in self.likelihood_nodes:
                         self.likelihood_nodes.remove(edge.child)
+            if normalisation_required:
+                max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
+                for u in self.likelihood_nodes:
+                    self.likelihood[u] /= max_L
 
             self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
@@ -1468,9 +1484,7 @@ class AncestorMatcher(object):
             # print("tree:", left, right, "j = ", j, "k = ", k)
 
             assert left < right
-            for l in range(right - 1, left - 1, -1):
-                if l < start or l >= end:
-                    continue
+            for l in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
@@ -1484,8 +1498,7 @@ class AncestorMatcher(object):
                     v = self.parent[v]
                     assert v != -1
                 x = L[v]
-                # TODO check this approximately!!
-                if x != 1.0:
+                if not self.approximately_one(x):
                     output_edge.left = l
                     u = self.get_max_likelihood_traceback_node(L)
                     output_edge = Edge(right=l, parent=u)
@@ -1503,6 +1516,10 @@ class AncestorMatcher(object):
             # print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
+            # TODO this does happen in the C code, so if it ever happends in a Python
+            # instance we need to pop the last edge off the list. Or, see why we're
+            # generating it in the first place.
+            assert e.left < e.right
             left[j] = e.left
             right[j] = e.right
             parent[j] = e.parent

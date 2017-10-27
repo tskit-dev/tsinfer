@@ -7,8 +7,8 @@
 #include "object_heap.h"
 #include "avl.h"
 
-/* TODO change to TSI_NULL_* */
 #define NULL_LIKELIHOOD (-1)
+#define NONZERO_ROOT_LIKELIHOOD (-2)
 #define NULL_NODE (-1)
 
 #define TSI_RESOLVE_SHARED_RECOMBS  1
@@ -156,7 +156,12 @@ typedef struct {
     size_t num_nodes;
     size_t num_sites;
     size_t max_nodes;
+    /* The quintuply linked tree */
     node_id_t *parent;
+    node_id_t *left_child;
+    node_id_t *right_child;
+    node_id_t *left_sib;
+    node_id_t *right_sib;
     double *likelihood;
     avl_tree_t likelihood_nodes;
     likelihood_list_t **traceback;
@@ -178,19 +183,20 @@ typedef struct {
     site_id_t *mismatches;
 } ancestor_matcher_t;
 
-/* New API */
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
         size_t num_sites, double *positions, allele_t *haplotypes);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
-        size_t num_focal_sites, site_id_t *focal_sites, allele_t *haplotype);
+        size_t num_focal_sites, site_id_t *focal_sites,
+        site_id_t *start, site_id_t *end, allele_t *haplotype);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder,
         double observation_error);
 int ancestor_matcher_free(ancestor_matcher_t *self);
-int ancestor_matcher_find_path(ancestor_matcher_t *self, allele_t *haplotype,
+int ancestor_matcher_find_path(ancestor_matcher_t *self,
+        site_id_t start, site_id_t end, allele_t *haplotype,
         allele_t *matched_haplotype, size_t *num_output_edges,
         site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);

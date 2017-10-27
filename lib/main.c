@@ -287,7 +287,7 @@ run_generate(const char *input_file, int verbose)
     allele_t *haplotypes = NULL;
     double *positions = NULL;
     double *recombination_rate = NULL;
-    site_id_t *focal_sites;
+    site_id_t *focal_sites, start, end;
     size_t num_focal_sites;
     ancestor_builder_t ancestor_builder;
     tree_sequence_builder_t ts_builder;
@@ -372,7 +372,7 @@ run_generate(const char *input_file, int verbose)
             focal_sites = ancestor_builder.frequency_classes[j].ancestor_focal_sites[k];
             num_focal_sites = ancestor_builder.frequency_classes[j].num_ancestor_focal_sites[k];
             ret = ancestor_builder_make_ancestor(&ancestor_builder, num_focal_sites,
-                    focal_sites, a);
+                    focal_sites, &start, &end, a);
             if (ret != 0) {
                 fatal_error("Error in make ancestor");
             }
@@ -385,12 +385,15 @@ run_generate(const char *input_file, int verbose)
                 assert(a[focal_sites[l]] == 1);
                 a[focal_sites[l]] = 0;
             }
-            ret = ancestor_matcher_find_path(&matcher, a, match,
+            ret = ancestor_matcher_find_path(&matcher, start, end, a, match,
                     &num_edges, &left_output, &right_output, &parent_output);
             if (ret != 0) {
                 fatal_error("find_path error");
             }
             for (l = 0; l < num_sites; l++) {
+                if (a[l] != match[l]) {
+                    printf("Mismatch at %d : %d %d \n", (int) l, a[l], match[l]);
+                }
                 assert(a[l] == match[l]);
             }
             if (total_edges + num_edges > max_edges) {
@@ -408,16 +411,21 @@ run_generate(const char *input_file, int verbose)
             if (verbose > 0) {
                 printf("ancestor %d:\t", (int) child);
                 for (l = 0; l < num_sites; l++) {
-                    printf("%d", a[l]);
+                    if (a[l] == -1) {
+                        assert(l < start || l >= end);
+                        printf("*");
+                    } else {
+                        assert(l >= start && l < end);
+                        printf("%d", a[l]);
+                    }
                 }
                 printf("\n");
-                printf("\tnum_focal=%d", (int) num_focal_sites);
-                printf("\tedges = (%d):: \t", (int) num_edges);
+                printf("\tnum_focal=%d, start=%d, end=%d", (int) num_focal_sites, start, end);
+                printf("\tedges = (%d):: \n", (int) num_edges);
                 for (l = 0; l < num_edges; l++) {
-                    printf("(%d, %d, %d, %d), ", left_output[l], right_output[l],
+                    printf("\t(%d, %d, %d, %d)\n", left_output[l], right_output[l],
                             parent_output[l], child);
                 }
-                printf("\n");
             }
             child++;
         }
@@ -437,7 +445,7 @@ run_generate(const char *input_file, int verbose)
     for (j = 0; j < num_samples; j++) {
         sample = haplotypes + j * num_sites;
         child = num_ancestors + j;
-        ret = ancestor_matcher_find_path(&matcher, sample, match,
+        ret = ancestor_matcher_find_path(&matcher, 0, num_sites, sample, match,
                 &num_edges, &left_output, &right_output, &parent_output);
         if (ret != 0) {
             fatal_error("find_path error");

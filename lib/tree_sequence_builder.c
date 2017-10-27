@@ -855,12 +855,14 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     self->num_mutations += num_mutations;
 
     if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) {
+        assert(false); // Disabled this for now as it's not been checked with new code
         ret = tree_sequence_builder_resolve_shared_recombs(self);
         if (ret != 0) {
             goto out;
         }
     }
     if (self->flags & TSI_RESOLVE_POLYTOMIES) {
+        assert(false); // Disabled this for now as it's not been checked with new code
         if (self->num_edges > 1) {
             ret = tree_sequence_builder_resolve_polytomies(self);
             if (ret != 0) {
