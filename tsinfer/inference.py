@@ -327,8 +327,8 @@ class InferenceManager(object):
                     if work is None:
                         break
                     node_id, focal_sites = work
-                    self.ancestor_builder.make_ancestor(focal_sites, a)
-                    match_queue.put((node_id, focal_sites, a.copy()))
+                    start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+                    match_queue.put((node_id, focal_sites, start, end, a.copy()))
                     build_queue.task_done()
                 build_queue.task_done()
                 self.logger.info("Ancestor build worker thread exiting")
@@ -344,9 +344,10 @@ class InferenceManager(object):
                     work = match_queue.get()
                     if work is None:
                         break
-                    node_id, focal_sites, a = work
+                    node_id, focal_sites, start, end, a = work
                     self.__find_path_ancestor(
-                            a, node_id, focal_sites, matcher, result_buffer, match)
+                            a, start, end, node_id, focal_sites, matcher,
+                            result_buffer, match)
                     mean_traceback_size[thread_index] += matcher.mean_traceback_size
                     num_matches[thread_index] += 1
                     match_queue.task_done()

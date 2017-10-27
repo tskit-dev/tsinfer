@@ -794,7 +794,7 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
     /* printf("initial tree %d-%d\n", left, right); */
     /* printf("j = %d k = %d\n", j, k); */
     /* ancestor_matcher_print_state(self, stdout); */
-    ancestor_matcher_check_state(self);
+    /* ancestor_matcher_check_state(self); */
 
     remove_start = k;
     while (left < end) {
@@ -820,7 +820,7 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
             ancestor_matcher_renormalise_likelihoods(self);
         }
         /* ancestor_matcher_print_state(self, stdout); */
-        ancestor_matcher_check_state(self);
+        /* ancestor_matcher_check_state(self); */
         for (site = GSL_MAX(left, start); site < GSL_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site]);
             if (ret != 0) {

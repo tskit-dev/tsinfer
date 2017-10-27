@@ -133,8 +133,8 @@ def analyse_file(filename):
 def large_profile():
     input_file = "tmp__NOBACKUP__/large-input.hdf5"
     if not os.path.exists(input_file):
-        n = 10**4
-        L = 50 * 10**6
+        n = 10**3
+        L = 5 * 10**6
         ts = msprime.simulate(
             n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8)
         S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
@@ -150,7 +150,8 @@ def large_profile():
         positions=hdf5["sites/position"][:],
         recombination_rate=hdf5["sites/recombination_rate"][:],
         sequence_length=hdf5.attrs["sequence_length"],
-        num_threads=8, log_level="DEBUG", progress=True)
+        num_threads=8, log_level="INFO", progress=True)
+    print("print edge ratio:", tsp.num_edges / ts.num_edges)
     # print(tsp.tables)
     # for t in tsp.trees():
     #     print("tree", t.index)
@@ -210,7 +211,7 @@ def examine_ancestor_ts(filename):
     #     print("=" * 200)
 
     import pickle
-    j = 812
+    j = 960
     filename = "tmp__NOBACKUP__/tracebacks/tb_{}.pkl".format(j)
     with open(filename, "rb") as f:
         debug = pickle.load(f)
@@ -279,15 +280,15 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # large_profile()
+    large_profile()
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
-    # tsinfer_dev(20, 0.3, seed=63, error_rate=0.0, method="C")
+    # tsinfer_dev(20, 0.3, seed=63, error_rate=0.0, num_threads=2, method="C")
 
-    for seed in range(1, 10000):
-        print(seed)
-        tsinfer_dev(100, 1, seed=seed, error_rate=0.0, method="C")
+    # for seed in range(1, 10000):
+    #     print(seed)
+    #     tsinfer_dev(100, 1, seed=seed, num_threads=2, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

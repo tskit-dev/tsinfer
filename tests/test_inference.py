@@ -205,11 +205,14 @@ class TestAncestorStorage(unittest.TestCase):
     def test_small_case(self):
         self.verify_small_case(False, False)
 
+    @unittest.skip("resolving disabled")
     def test_small_case_resolve_polytomies(self):
         self.verify_small_case(True, False)
 
+    @unittest.skip("resolving disabled")
     def test_small_case_resolve_shared_recom(self):
         self.verify_small_case(False, True)
 
+    @unittest.skip("resolving disabled")
     def test_small_case_resolve_all(self):
         self.verify_small_case(True, True)
