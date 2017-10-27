@@ -17,6 +17,15 @@ import humanize
 import daiquiri
 import msprime
 
+# prctl is an optional extra; it allows us assign meaninful names to threads
+# for debugging.
+_prctl_available = False
+try:
+    import prctl
+    _prctl_available = True
+except ImportError:
+    pass
+
 import _tsinfer
 
 
@@ -309,7 +318,6 @@ class InferenceManager(object):
             self.__process_ancestors_multi_threaded()
 
     def __process_ancestors_multi_threaded(self):
-        build_queue = queue.Queue()
         match_queue = queue.Queue()
         matchers = [
             self.ancestor_matcher_class(self.tree_sequence_builder, 0)
@@ -318,22 +326,9 @@ class InferenceManager(object):
         mean_traceback_size = np.zeros(self.num_threads)
         num_matches = np.zeros(self.num_threads)
 
-        def build_worker():
-            with self.catch_thread_error():
-                self.logger.info("Build worker thread starting")
-                a = np.zeros(self.num_sites, dtype=np.int8)
-                while True:
-                    work = build_queue.get()
-                    if work is None:
-                        break
-                    node_id, focal_sites = work
-                    start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
-                    match_queue.put((node_id, focal_sites, start, end, a.copy()))
-                    build_queue.task_done()
-                build_queue.task_done()
-                self.logger.info("Ancestor build worker thread exiting")
-
         def match_worker(thread_index):
+            if _prctl_available:
+                prctl.set_name("match-worker-{}".format(thread_index))
             with self.catch_thread_error():
                 self.logger.info(
                     "Ancestor match thread {} starting".format(thread_index))
@@ -354,14 +349,13 @@ class InferenceManager(object):
                 match_queue.task_done()
                 self.logger.info("Ancestor match thread {} exiting".format(thread_index))
 
-        build_thread = threading.Thread(target=build_worker, daemon=True)
-        build_thread.start()
         match_threads = [
             threading.Thread(target=match_worker, args=(j,), daemon=True)
             for j in range(self.num_threads)]
         for j in range(self.num_threads):
             match_threads[j].start()
 
+        a = np.zeros(self.num_sites, dtype=np.int8)
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
             ancestor_focal_sites = self.epoch_ancestors[epoch]
@@ -369,13 +363,13 @@ class InferenceManager(object):
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
-                build_queue.put((child, focal_sites))
+                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+                match_queue.put((child, focal_sites, start, end, a.copy()))
                 child += 1
-            # Wait until the build_queue and match queue are both empty.
+            # Wait until the match_queue is empty.
             # TODO Note that these calls to queue.join prevent errors that happen in the
             # worker process from propagating back here. Might be better to use some
             # other way of handling threading sync.
-            build_queue.join()
             match_queue.join()
             epoch_results = ResultBuffer.combine(results)
             self.tree_sequence_builder.update(
@@ -396,7 +390,6 @@ class InferenceManager(object):
                 results[j].clear()
 
         # Signal to the workers to quit and clean up.
-        build_queue.put(None)
         for j in range(self.num_threads):
             match_queue.put(None)
         for j in range(self.num_threads):
@@ -411,7 +404,7 @@ class InferenceManager(object):
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
             ancestor_focal_sites = self.epoch_ancestors[epoch]
-            self.logger.info("Epoch {}; time = {}; {} ancestors to process".format(
+            self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
@@ -428,17 +421,6 @@ class InferenceManager(object):
     def __process_sample(self, sample_index, matcher, results, match):
         child = self.sample_ids[sample_index]
         haplotype = self.samples[sample_index]
-
-        # print("FIND PATH FOR SAMPLE", child)
-        # ts = self.get_tree_sequence()
-        # print("TREE SEQUENCE")
-        # # print(ts.tables)
-        # for t in ts.trees():
-        #     sites = list(t.sites())
-        #     print("left = ", sites[0].index, "right = ", sites[-1].index + 1)
-        #     print(t.draw(format="unicode"))
-        #     print("=================================")
-
         left, right, parent = matcher.find_path(haplotype, 0, self.num_sites, match)
         diffs = np.where(haplotype != match)[0]
         derived_state = haplotype[diffs]
@@ -454,6 +436,8 @@ class InferenceManager(object):
         work_queue = queue.Queue()
 
         def worker(thread_index):
+            if _prctl_available:
+                prctl.set_name("match-worker-{}".format(thread_index))
             with self.catch_thread_error():
                 self.logger.info("Started sample worker thread {}".format(thread_index))
                 mean_traceback_size = 0
