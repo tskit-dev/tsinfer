@@ -136,16 +136,17 @@ def build_profile_inputs(num_megabases):
     ts = msprime.simulate(
         n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
         random_seed=10)
+    input_file = "tmp__NOBACKUP__/large-input-source-n=10k-m={}.hdf5".format(num_megabases)
+    ts.dump(input_file)
     S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for v in ts.variants():
         S[:, v.index] = v.genotypes
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/large-input-n=10k-m={}.hdf5".format(ts.num_sites)
+    input_file = "tmp__NOBACKUP__/large-input-n=10k-m={}.hdf5".format(num_megabases)
     make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
 
-
-def large_profile(input_file, num_threads=2):
+def large_profile(input_file, output_file, num_threads=2):
     hdf5 = h5py.File(input_file, "r")
     tsp = tsinfer.infer(
         samples=hdf5["samples/haplotypes"][:],
@@ -153,7 +154,8 @@ def large_profile(input_file, num_threads=2):
         recombination_rate=hdf5["sites/recombination_rate"][:],
         sequence_length=hdf5.attrs["sequence_length"],
         num_threads=num_threads, log_level="INFO", progress=True)
-    print("print edge ratio:", tsp.num_edges / ts.num_edges)
+    tsp.dump(output_file)
+
     # print(tsp.tables)
     # for t in tsp.trees():
     #     print("tree", t.index)
@@ -282,8 +284,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # build_profile_inputs()
-    large_profile(sys.argv[1])
+    # build_profile_inputs(100)
+
+    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]))
+
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
