@@ -132,17 +132,19 @@ def analyse_file(filename):
 
 def large_profile():
     input_file = "tmp__NOBACKUP__/large-input.hdf5"
-    if not os.path.exists(input_file):
-        n = 10**3
-        L = 5 * 10**6
-        ts = msprime.simulate(
-            n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8)
-        S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
-        for v in ts.variants():
-            S[:, v.index] = v.genotypes
-        positions = np.array([site.position for site in ts.sites()])
-        recombination_rate = np.zeros(ts.num_sites) + 1e-8
-        make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
+    # if not os.path.exists(input_file):
+
+    n = 10**3
+    L = 5 * 10**6
+    ts = msprime.simulate(
+        n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
+        random_seed=10)
+    S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
+    for v in ts.variants():
+        S[:, v.index] = v.genotypes
+    positions = np.array([site.position for site in ts.sites()])
+    recombination_rate = np.zeros(ts.num_sites) + 1e-8
+    make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
 
     hdf5 = h5py.File(input_file, "r")
     tsp = tsinfer.infer(
