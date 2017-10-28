@@ -1395,14 +1395,14 @@ class AncestorMatcher(object):
                 edge = edges[O[k]]
                 self.remove_edge(edge)
                 k += 1
-                if self.likelihood[edge.child] == -1:
-                    # If the child has an L value, traverse upwards until we
-                    # find it the parent that carries it.
-                    u = edge.parent
-                    while self.likelihood[u] == -1:
-                        u = self.parent[u]
-                    self.likelihood[edge.child] = self.likelihood[u]
-                    self.likelihood_nodes.add(edge.child)
+                # if self.likelihood[edge.child] == -1:
+                #     # If the child has an L value, traverse upwards until we
+                #     # find it the parent that carries it.
+                #     u = edge.parent
+                #     while self.likelihood[u] == -1:
+                #         u = self.parent[u]
+                #     self.likelihood[edge.child] = self.likelihood[u]
+                #     self.likelihood_nodes.add(edge.child)
 
             left = right
             while j < M and edges[I[j]].left == left:

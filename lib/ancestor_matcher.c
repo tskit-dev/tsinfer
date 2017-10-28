@@ -834,18 +834,18 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
             edge = edges[O[k]];
             ancestor_matcher_remove_edge(self, edge);
             k++;
-            if (L[edge.child] == NULL_LIKELIHOOD) {
-                /* Traverse upwards until we find and L value for the child. */
-                u = edge.parent;
-                while (L[u] == NULL_LIKELIHOOD) {
-                    u = self->parent[u];
-                    /* assert(u != NULL_NODE); */
-                }
-                ret = ancestor_matcher_insert_likelihood(self, edge.child, L[u]);
-                if (ret != 0) {
-                    goto out;
-                }
-            }
+/*             if (L[edge.child] == NULL_LIKELIHOOD) { */
+/*                 /1* Traverse upwards until we find and L value for the child. *1/ */
+/*                 u = edge.parent; */
+/*                 while (L[u] == NULL_LIKELIHOOD) { */
+/*                     u = self->parent[u]; */
+/*                     /1* assert(u != NULL_NODE); *1/ */
+/*                 } */
+/*                 ret = ancestor_matcher_insert_likelihood(self, edge.child, L[u]); */
+/*                 if (ret != 0) { */
+/*                     goto out; */
+/*                 } */
+/*             } */
         }
         left = right;
         /* printf("Inserting for j = %d and left = %d (%d)\n", (int) j, (int) left, */

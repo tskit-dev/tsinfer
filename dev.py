@@ -153,7 +153,7 @@ def large_profile(input_file, output_file, num_threads=2):
         positions=hdf5["sites/position"][:],
         recombination_rate=hdf5["sites/recombination_rate"][:],
         sequence_length=hdf5.attrs["sequence_length"],
-        num_threads=num_threads, log_level="INFO", progress=True)
+        num_threads=num_threads, log_level="DEBUG", progress=True)
     tsp.dump(output_file)
 
     # print(tsp.tables)
@@ -286,12 +286,12 @@ if __name__ == "__main__":
 
     # build_profile_inputs(100)
 
-    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]))
+    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]), num_threads=16)
 
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
-    # tsinfer_dev(20, 0.3, seed=63, error_rate=0.0, num_threads=2, method="C")
+    # tsinfer_dev(20, 0.3, seed=63, error_rate=0.0, num_threads=1, method="C")
 
     # for seed in range(1, 10000):
     #     print(seed)
