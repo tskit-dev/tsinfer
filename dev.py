@@ -146,14 +146,14 @@ def build_profile_inputs(num_megabases):
     input_file = "tmp__NOBACKUP__/large-input-n=10k-m={}.hdf5".format(num_megabases)
     make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
 
-def large_profile(input_file, output_file, num_threads=2):
+def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
     hdf5 = h5py.File(input_file, "r")
     tsp = tsinfer.infer(
         samples=hdf5["samples/haplotypes"][:],
         positions=hdf5["sites/position"][:],
         recombination_rate=hdf5["sites/recombination_rate"][:],
         sequence_length=hdf5.attrs["sequence_length"],
-        num_threads=num_threads, log_level="DEBUG", progress=True)
+        num_threads=num_threads, log_level=log_level, progress=True)
     tsp.dump(output_file)
 
     # print(tsp.tables)
@@ -286,15 +286,16 @@ if __name__ == "__main__":
 
     # build_profile_inputs(100)
 
-    # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]), num_threads=16)
+    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
+            num_threads=40, log_level="DEBUG")
 
     # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
-    tsinfer_dev(20, 0.2, seed=9, num_threads=1, error_rate=0.0, method="C")
+    # tsinfer_dev(20, 0.2, seed=9, num_threads=1, error_rate=0.0, method="P")
     # for seed in range(1, 10000):
     #     print(seed)
-    #     tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
+    #     tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

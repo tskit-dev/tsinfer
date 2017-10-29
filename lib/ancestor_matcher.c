@@ -44,9 +44,10 @@ approximately_one(double x)
 }
 
 static inline bool
-ancestor_matcher_is_nonzero_root(ancestor_matcher_t *self, node_id_t u)
+ancestor_matcher_is_nonzero_root(ancestor_matcher_t *self, node_id_t u,
+        node_id_t *restrict parent)
 {
-    return u != 0 && self->parent[u] == NULL_NODE && self->left_child[u] == NULL_NODE;
+    return u != 0 && parent[u] == NULL_NODE && self->left_child[u] == NULL_NODE;
 }
 
 static void
@@ -71,7 +72,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
         if (self->likelihood[u] >= 0) {
             num_likelihoods++;
         }
-        if (ancestor_matcher_is_nonzero_root(self, u)) {
+        if (ancestor_matcher_is_nonzero_root(self, u, self->parent)) {
             assert(self->likelihood[u] == NONZERO_ROOT_LIKELIHOOD);
         } else {
             assert(self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD);
@@ -246,51 +247,49 @@ out:
 }
 
 static int
-ancestor_matcher_insert_likelihood(ancestor_matcher_t *self, node_id_t node,
-        double likelihood)
+ancestor_matcher_insert_likelihood_node(ancestor_matcher_t *self, node_id_t node)
 {
     int ret = 0;
     avl_node_t *avl_node;
 
-    assert(likelihood >= 0);
     avl_node = ancestor_matcher_alloc_avl_node(self, node);
     if (avl_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     avl_node = avl_insert_node(&self->likelihood_nodes, avl_node);
-    assert(self->likelihood[node] == NULL_LIKELIHOOD
-            || self->likelihood[node] == NONZERO_ROOT_LIKELIHOOD);
+    /* assert(self->likelihood[node] == NULL_LIKELIHOOD */
+    /*         || self->likelihood[node] == NONZERO_ROOT_LIKELIHOOD); */
     assert(avl_node != NULL);
-    self->likelihood[node] = likelihood;
 out:
     return ret;
 }
 
 static int
-ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, node_id_t node)
+ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, node_id_t node,
+        double *restrict L)
 {
     avl_node_t *avl_node;
 
     avl_node = avl_search(&self->likelihood_nodes, &node);
-    assert(self->likelihood[node] != NULL_LIKELIHOOD);
+    assert(L[node] != NULL_LIKELIHOOD);
     assert(avl_node != NULL);
     avl_unlink_node(&self->likelihood_nodes, avl_node);
     ancestor_matcher_free_avl_node(self, avl_node);
-    self->likelihood[node] = NULL_LIKELIHOOD;
+    L[node] = NULL_LIKELIHOOD;
     return 0;
 }
 
 /* Store the current state of the likelihood tree in the traceback.
  */
 static int WARN_UNUSED
-ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id)
+ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id,
+        double *restrict L)
 {
     int ret = 0;
     avl_node_t *restrict a;
     node_id_t u;
     likelihood_list_t *restrict list_node;
-    double *restrict L = self->likelihood;
     likelihood_list_t **restrict T = self->traceback;
     bool match, loop_completed;
 
@@ -338,20 +337,19 @@ out:
  * path from u to root. Returns false in all other situations, including
  * error conditions. */
 static inline bool
-ancestor_matcher_is_descendant(ancestor_matcher_t *self, node_id_t u,
-        node_id_t v)
+is_descendant(const node_id_t u, const node_id_t v, node_id_t *restrict parent)
 {
-    node_id_t *restrict pi = self->parent;
-
-    while (u != NULL_NODE && u != v) {
-        u = pi[u];
+    node_id_t w = u;
+    while (w != NULL_NODE && w != v) {
+        w = parent[w];
     }
-    return u == v;
+    return w == v;
 }
 
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id_t site,
-        node_id_t mutation_node, char state)
+        node_id_t mutation_node, char state,
+        node_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
     double n = (double) self->num_nodes;
@@ -360,9 +358,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
     double err = self->observation_error;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
-    double *restrict L = self->likelihood;
     double x, y, max_L, emission;
-    bool is_descendant;
+    bool descendant;
     node_id_t u;
     avl_node_t *a;
     double distance = 1;
@@ -384,14 +381,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
         } else {
             y = recomb_proba;
         }
-        is_descendant = false;
+        descendant = false;
         if (mutation_node != NULL_NODE) {
-            is_descendant = ancestor_matcher_is_descendant(self, u, mutation_node);
+            descendant = is_descendant(u, mutation_node, parent);
         }
         if (state == 1) {
-            emission = (1 - err) * is_descendant + err * (! is_descendant);
+            emission = (1 - err) * descendant + err * (! descendant);
         } else {
-            emission = err * is_descendant + (1 - err) * (! is_descendant);
+            emission = err * descendant + (1 - err) * (! descendant);
         }
         L[u] = y * emission;
         if (L[u] > max_L) {
@@ -410,7 +407,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
 }
 
 static int WARN_UNUSED
-ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self)
+ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
+        node_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
     avl_node_t *a, *tmp;
@@ -420,20 +418,20 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self)
     while (a != NULL) {
         tmp = a->next;
         u = *((node_id_t *) a->item);
-        if (self->parent[u] != NULL_NODE) {
+        if (parent[u] != NULL_NODE) {
             /* If we can find an equal L value higher in the tree, delete
              * this one.
              */
-            v = self->parent[u];
-            while (self->likelihood[v] == NULL_LIKELIHOOD) {
-                v = self->parent[v];
+            v = parent[u];
+            while (L[v] == NULL_LIKELIHOOD) {
+                v = parent[v];
                 assert(v != NULL_NODE);
             }
-            if (approximately_equal(self->likelihood[u], self->likelihood[v])) {
+            if (approximately_equal(L[u], L[v])) {
                 /* Delete this likelihood value */
                 avl_unlink_node(&self->likelihood_nodes, a);
                 ancestor_matcher_free_avl_node(self, a);
-                self->likelihood[u] = NULL_LIKELIHOOD;
+                L[u] = NULL_LIKELIHOOD;
             }
         }
         a = tmp;
@@ -443,12 +441,10 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self)
 
 static int
 ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
-        allele_t state)
+        allele_t state, node_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
     node_id_t mutation_node = NULL_NODE;
-    node_id_t *pi = self->parent;
-    double *L = self->likelihood;
     node_id_t u;
 
     if (self->tree_sequence_builder->sites.mutations[site] != NULL) {
@@ -472,26 +468,27 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, site_id_t site,
             if (L[mutation_node] == NULL_LIKELIHOOD) {
                 u = mutation_node;
                 while (L[u] == NULL_LIKELIHOOD) {
-                    u = pi[u];
+                    u = parent[u];
                     assert(u != NULL_NODE);
                 }
-                ret = ancestor_matcher_insert_likelihood(self, mutation_node, L[u]);
+                L[mutation_node] = L[u];
+                ret = ancestor_matcher_insert_likelihood_node(self, mutation_node);
                 if (ret != 0) {
                     goto out;
                 }
             }
         }
-        ret = ancestor_matcher_store_traceback(self, site);
+        ret = ancestor_matcher_store_traceback(self, site, L);
         if (ret != 0) {
             goto out;
         }
         if (self->observation_error > 0 || mutation_node != NULL_NODE) {
             ret = ancestor_matcher_update_site_likelihood_values(self, site,
-                    mutation_node, state);
+                    mutation_node, state, parent, L);
             if (ret != 0) {
                 goto out;
             }
-            ret = ancestor_matcher_coalesce_likelihoods(self);
+            ret = ancestor_matcher_coalesce_likelihoods(self, parent, L);
             if (ret != 0) {
                 goto out;
             }
@@ -539,7 +536,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
     int j, k, l;
-    node_id_t *restrict pi = self->parent;
+    node_id_t *restrict parent = self->parent;
     double *restrict L = self->likelihood;
     edge_t *edges = self->tree_sequence_builder->edges;
     node_id_t *I, *O, u, max_likelihood_node;
@@ -547,7 +544,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     avl_node_t *a, *tmp;
     likelihood_list_t *z;
     mutation_list_node_t *mut_list;
-    bool is_descendant;
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
@@ -574,7 +570,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 
     /* Now go through the trees in reverse and run the traceback */
     memset(match, 0xff, self->num_sites * sizeof(allele_t));
-    memset(pi, 0xff, self->num_nodes * sizeof(node_id_t));
+    memset(parent, 0xff, self->num_nodes * sizeof(node_id_t));
     j = M - 1;
     k = M - 1;
     I = self->tree_sequence_builder->removal_order;
@@ -583,11 +579,11 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 
     while (pos > start) {
         while (k >= 0 && edges[O[k]].left == pos) {
-            pi[edges[O[k]].child] = NULL_NODE;
+            parent[edges[O[k]].child] = NULL_NODE;
             k--;
         }
         while (j >= 0 && edges[I[j]].right == pos) {
-            pi[edges[I[j]].child] = edges[I[j]].parent;
+            parent[edges[I[j]].child] = edges[I[j]].parent;
             j--;
         }
         right = pos;
@@ -619,14 +615,13 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
             /* Set the state of the matched haplotype */
             mut_list = self->tree_sequence_builder->sites.mutations[l];
             if (mut_list != NULL) {
-                is_descendant = ancestor_matcher_is_descendant(self, u, mut_list->node);
-                if (is_descendant) {
+                if (is_descendant(u, mut_list->node, parent)) {
                     match[l] = 1;
                 }
             }
             /* Get the likelihood for u */
             while (L[u] == NULL_LIKELIHOOD) {
-                u = pi[u];
+                u = parent[u];
                 assert(u != NULL_NODE);
             }
             if (!approximately_one(L[u])) {
@@ -659,7 +654,8 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 }
 
 static inline void
-ancestor_matcher_remove_edge(ancestor_matcher_t *self, edge_t edge)
+ancestor_matcher_remove_edge(ancestor_matcher_t *self, edge_t edge,
+        node_id_t *restrict parent)
 {
     node_id_t p = edge.parent;
     node_id_t c = edge.child;
@@ -677,20 +673,21 @@ ancestor_matcher_remove_edge(ancestor_matcher_t *self, edge_t edge)
     } else {
         self->left_sib[rsib] = lsib;
     }
-    self->parent[c] = NULL_NODE;
+    parent[c] = NULL_NODE;
     self->left_sib[c] = NULL_NODE;
     self->right_sib[c] = NULL_NODE;
 }
 
 static inline void
-ancestor_matcher_insert_edge(ancestor_matcher_t *self, edge_t edge)
+ancestor_matcher_insert_edge(ancestor_matcher_t *self, edge_t edge,
+        node_id_t *restrict parent)
 {
     node_id_t p = edge.parent;
     node_id_t c = edge.child;
     node_id_t u = self->right_child[p];
     /* printf("INSERT EDGE %d -> %d\n", edge.child, edge.parent); */
 
-    self->parent[c] = p;
+    parent[c] = p;
     if (u == NULL_NODE) {
         self->left_child[p] = c;
         self->left_sib[c] = NULL_NODE;
@@ -705,11 +702,10 @@ ancestor_matcher_insert_edge(ancestor_matcher_t *self, edge_t edge)
 
 /* After we have removed a 1.0 valued node, we must renormalise the likelihoods */
 static void
-ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self)
+ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restrict L)
 {
     avl_node_t *a;
     double max_L = -1;
-    double *restrict L = self->likelihood;
     node_id_t u;
 
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
@@ -723,11 +719,9 @@ ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self)
     }
 }
 
-int
-ancestor_matcher_find_path(ancestor_matcher_t *self,
-        site_id_t start, site_id_t end, allele_t *haplotype,
-        allele_t *matched_haplotype, size_t *num_output_edges,
-        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output)
+static int
+ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
+        site_id_t end, allele_t *haplotype)
 {
     int ret = 0;
     int M = self->tree_sequence_builder->num_edges;
@@ -735,34 +729,32 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
     site_id_t site;
     edge_t edge;
     node_id_t u;
-    /* Can't use restrict here for L because we access it in the functions called
-     * from here. */
-    double *L = self->likelihood;
-    edge_t *edges = self->tree_sequence_builder->edges;
-    node_id_t *I, *O;
+    /* Use the restrict keyword here to try to improve cache use. We must be
+     * to ensure that all references to this memory for the duration of this
+     * function is through these variables.
+     */
+    double *restrict L = self->likelihood;
+    node_id_t *restrict parent = self->parent;
+    edge_t *restrict edges = self->tree_sequence_builder->edges;
+    node_id_t *restrict I = self->tree_sequence_builder->insertion_order;
+    node_id_t *restrict O = self->tree_sequence_builder->removal_order;
     site_id_t pos, left, right;
     bool renormalise_required;
 
-    ret = ancestor_matcher_reset(self);
-    if (ret != 0) {
-        goto out;
-    }
     /* Load the tree for start */
     j = 0;
     k = 0;
     left = 0;
     pos = 0;
     right = self->num_sites;
-    I = self->tree_sequence_builder->insertion_order;
-    O = self->tree_sequence_builder->removal_order;
 
     while (j < M && k < M && edges[I[j]].left <= start) {
         while (k < M && edges[O[k]].right == pos) {
-            ancestor_matcher_remove_edge(self, edges[O[k]]);
+            ancestor_matcher_remove_edge(self, edges[O[k]], parent);
             k++;
         }
         while (j < M && edges[I[j]].left == pos) {
-            ancestor_matcher_insert_edge(self, edges[I[j]]);
+            ancestor_matcher_insert_edge(self, edges[I[j]], parent);
             j++;
         }
         left = pos;
@@ -779,12 +771,13 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
     /* Insert the initial likelihoods. Zero is the root, and it has likelihood
      * one. All non-zero roots are marked with a special value so we can
      * identify them when the enter the tree */
-    ret = ancestor_matcher_insert_likelihood(self, 0, 1.0);
+    L[0] = 1.0;
+    ret = ancestor_matcher_insert_likelihood_node(self, 0);
     if (ret != 0) {
         goto out;
     }
     for (u = 1; u < (node_id_t) self->num_nodes; u++) {
-        if (self->parent[u] != NULL_NODE) {
+        if (parent[u] != NULL_NODE) {
             L[u] = NULL_LIKELIHOOD;
         } else {
             L[u] = NONZERO_ROOT_LIKELIHOOD;
@@ -806,23 +799,24 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
         renormalise_required = false;
         for (l = remove_start; l < k; l++) {
             edge = edges[O[l]];
-            if (ancestor_matcher_is_nonzero_root(self, edge.child)) {
+            if (ancestor_matcher_is_nonzero_root(self, edge.child, parent)) {
                 if (approximately_one(L[edge.child])) {
                     renormalise_required = true;
                 }
                 if (L[edge.child] != NULL_LIKELIHOOD) {
-                    ancestor_matcher_delete_likelihood(self, edge.child);
+                    ancestor_matcher_delete_likelihood(self, edge.child, L);
                 }
                 L[edge.child] = NONZERO_ROOT_LIKELIHOOD;
             }
         }
         if (renormalise_required) {
-            ancestor_matcher_renormalise_likelihoods(self);
+            ancestor_matcher_renormalise_likelihoods(self, L);
         }
         /* ancestor_matcher_print_state(self, stdout); */
         /* ancestor_matcher_check_state(self); */
         for (site = GSL_MAX(left, start); site < GSL_MIN(right, end); site++) {
-            ret = ancestor_matcher_update_site_state(self, site, haplotype[site]);
+            ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
+                    parent, L);
             if (ret != 0) {
                 goto out;
             }
@@ -832,16 +826,17 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
         remove_start = k;
         while (k < M  && edges[O[k]].right == right) {
             edge = edges[O[k]];
-            ancestor_matcher_remove_edge(self, edge);
+            ancestor_matcher_remove_edge(self, edge, parent);
             k++;
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 /* Traverse upwards until we find and L value for the child. */
                 u = edge.parent;
                 while (L[u] == NULL_LIKELIHOOD) {
-                    u = self->parent[u];
+                    u = parent[u];
                     /* assert(u != NULL_NODE); */
                 }
-                ret = ancestor_matcher_insert_likelihood(self, edge.child, L[u]);
+                L[edge.child] = L[u];
+                ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
                 if (ret != 0) {
                     goto out;
                 }
@@ -852,19 +847,21 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
         /*         edges[I[j]].left); */
         while (j < M && edges[I[j]].left == left) {
             edge = edges[I[j]];
-            ancestor_matcher_insert_edge(self, edge);
+            ancestor_matcher_insert_edge(self, edge, parent);
             j++;
             /* Insert zero likelihoods for any nonzero roots that have entered
              * the tree. Note we don't bother trying to compress the tree here
              * because this will be done for the next site anyway. */
             if (L[edge.parent] == NONZERO_ROOT_LIKELIHOOD) {
-                ret = ancestor_matcher_insert_likelihood(self, edge.parent, 0);
+                L[edge.parent] = 0;
+                ret = ancestor_matcher_insert_likelihood_node(self, edge.parent);
                 if (ret != 0) {
                     goto out;
                 }
             }
             if (L[edge.child] == NONZERO_ROOT_LIKELIHOOD) {
-                ret = ancestor_matcher_insert_likelihood(self, edge.child, 0);
+                L[edge.child] = 0;
+                ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
                 if (ret != 0) {
                     goto out;
                 }
@@ -878,7 +875,27 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
             right = GSL_MIN(right, edges[O[k]].right);
         }
     }
+out:
+    return ret;
+}
 
+
+int
+ancestor_matcher_find_path(ancestor_matcher_t *self,
+        site_id_t start, site_id_t end, allele_t *haplotype,
+        allele_t *matched_haplotype, size_t *num_output_edges,
+        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output)
+{
+    int ret = 0;
+
+    ret = ancestor_matcher_reset(self);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = ancestor_matcher_run_forwards_match(self, start, end, haplotype);
+    if (ret != 0) {
+        goto out;
+    }
     ret = ancestor_matcher_run_traceback(self, start, end, haplotype,
             matched_haplotype);
     if (ret != 0) {

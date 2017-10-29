@@ -223,4 +223,9 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
 
 void __tsi_safe_free(void **ptr);
 
-#define tsi_safe_free(pointer) __tsi_safe_free((void **) &(pointer))
+#define tsi_safe_free(pointer) \
+do {\
+    if (pointer != NULL) {\
+        free(pointer);\
+    }\
+} while (0)
