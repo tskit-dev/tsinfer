@@ -792,6 +792,41 @@ out:
     return ret;
 }
 
+static int WARN_UNUSED
+tree_sequence_builder_expand_edges(tree_sequence_builder_t *self)
+{
+    int ret = 0;
+    void *tmp;
+
+    self->max_edges *= 2;
+    tmp = realloc(self->edges, self->max_edges * sizeof(edge_t));
+    if (tmp == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    self->edges = tmp;
+    tmp = realloc(self->sort_buffer, self->max_edges * sizeof(index_sort_t));
+    if (tmp == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    self->sort_buffer = tmp;
+    tmp = realloc(self->insertion_order, self->max_edges * sizeof(node_id_t));
+    if (tmp == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    self->insertion_order = tmp;
+    tmp = realloc(self->removal_order, self->max_edges * sizeof(node_id_t));
+    if (tmp == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    self->removal_order = tmp;
+out:
+    return ret;
+}
+
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
@@ -813,6 +848,12 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     /* We assume that the edges are given in reverse order, so we insert them this
      * way around to get closer to sortedness */
     for (j = 0; j < num_edges; j++) {
+        if (self->num_edges == self->max_edges) {
+            ret = tree_sequence_builder_expand_edges(self);
+            if (ret != 0) {
+                goto out;
+            }
+        }
         assert(self->num_edges < self->max_edges);
         e = self->edges + self->num_edges;
         e->left = left[j];

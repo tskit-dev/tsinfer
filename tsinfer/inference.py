@@ -241,9 +241,14 @@ class InferenceManager(object):
                 self.num_samples, self.num_sites))
         self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
         self.num_ancestors = self.ancestor_builder.num_ancestors
+        # Allocate 64K edges initially. This will double as needed and will quickly be
+        # big enough even for very large instances.
+        max_edges = 64 * 1024
+        # This is a safe maximum until we start doing resolution.
+        max_nodes = self.num_samples + self.num_sites
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
-            10**6, 10**7,
+            max_nodes=max_nodes, max_edges=max_edges,
             resolve_shared_recombinations=self.resolve_shared_recombinations,
             resolve_polytomies=self.resolve_polytomies)
 

@@ -323,7 +323,7 @@ run_generate(const char *input_file, int verbose)
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
             num_sites, positions, recombination_rate,
-            100 * (num_samples + num_ancestors), 65536, flags);
+            100 * (num_samples + num_ancestors), 10, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
