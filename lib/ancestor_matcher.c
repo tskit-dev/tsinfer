@@ -10,17 +10,6 @@
 
 #include <gsl/gsl_math.h>
 
-/* TODO move this into a general utilities file. */
-void
-__tsi_safe_free(void **ptr) {
-    if (ptr != NULL) {
-        if (*ptr != NULL) {
-            free(*ptr);
-            *ptr = NULL;
-        }
-    }
-}
-
 static int
 cmp_node_id(const void *a, const void *b) {
     const node_id_t *ia = (const node_id_t *) a;
@@ -29,16 +18,16 @@ cmp_node_id(const void *a, const void *b) {
 }
 
 static bool
-approximately_equal(double a, double b)
+approximately_equal(const double a, const double b)
 {
-    double epsilon = 1e-9;
+    const double epsilon = 1e-9;
     bool ret = fabs(a - b) <= ( (fabs(a) < fabs(b) ? fabs(b) : fabs(a)) * epsilon);
     return ret;
 }
 
 /* Returns true if x is approximately equal to one. */
 static bool
-approximately_one(double x)
+approximately_one(const double x)
 {
     return approximately_equal(x, 1.0);
 }
@@ -258,8 +247,6 @@ ancestor_matcher_insert_likelihood_node(ancestor_matcher_t *self, node_id_t node
         goto out;
     }
     avl_node = avl_insert_node(&self->likelihood_nodes, avl_node);
-    /* assert(self->likelihood[node] == NULL_LIKELIHOOD */
-    /*         || self->likelihood[node] == NONZERO_ROOT_LIKELIHOOD); */
     assert(avl_node != NULL);
 out:
     return ret;
@@ -283,12 +270,12 @@ ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const node_id_t nod
 /* Store the current state of the likelihood tree in the traceback.
  */
 static int WARN_UNUSED
-ancestor_matcher_store_traceback(ancestor_matcher_t *self, site_id_t site_id,
+ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_id,
         const double *restrict L)
 {
     int ret = 0;
-    avl_node_t *restrict a;
     node_id_t u;
+    avl_node_t *restrict a;
     likelihood_list_t *restrict list_node;
     likelihood_list_t **restrict T = self->traceback;
     bool match, loop_completed;
@@ -353,21 +340,22 @@ is_descendant(const node_id_t u, const node_id_t v, const node_id_t *restrict pa
 }
 
 static int WARN_UNUSED
-ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id_t site,
-        node_id_t mutation_node, char state,
+ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
+        const site_id_t site, const node_id_t mutation_node, const char state,
         const node_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
-    double n = (double) self->num_nodes;
-    double rho = self->tree_sequence_builder->sites.recombination_rate[site];
-    double r = 1 - exp(-rho / n);
-    double err = self->observation_error;
+    const double n = (double) self->num_nodes;
+    const double rho = self->tree_sequence_builder->sites.recombination_rate[site];
+    const double r = 1 - exp(-rho / n);
+    const double err = self->observation_error;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
     double x, y, max_L, emission;
+    avl_node_t *restrict head = self->likelihood_nodes.head;
+    avl_node_t *restrict a;
     bool descendant;
     node_id_t u;
-    avl_node_t *a;
     double distance = 1;
 
     if (site > 0) {
@@ -378,7 +366,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
     no_recomb_proba *= distance;
 
     max_L = -1;
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+    for (a = head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
         x = L[u] * no_recomb_proba;
         assert(x >= 0);
@@ -405,7 +393,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self, site_id
     }
     assert(max_L > 0);
     /* Normalise */
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
+    for (a = head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
         L[u] /= max_L;
     }
@@ -544,11 +532,13 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     int j, k, l;
     node_id_t *restrict parent = self->parent;
     double *restrict L = self->likelihood;
-    edge_t *edges = self->tree_sequence_builder->edges;
-    node_id_t *I, *O, u, max_likelihood_node;
+    const edge_t *restrict edges = self->tree_sequence_builder->edges;
+    const node_id_t *restrict I = self->tree_sequence_builder->removal_order;
+    const node_id_t *restrict O = self->tree_sequence_builder->insertion_order;
+    node_id_t u, max_likelihood_node;
     site_id_t left, right, pos;
     avl_node_t *a, *tmp;
-    likelihood_list_t *z;
+    likelihood_list_t *restrict z;
     mutation_list_node_t *mut_list;
 
     /* Prepare for the traceback and get the memory ready for recording
@@ -579,8 +569,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     memset(parent, 0xff, self->num_nodes * sizeof(node_id_t));
     j = M - 1;
     k = M - 1;
-    I = self->tree_sequence_builder->removal_order;
-    O = self->tree_sequence_builder->insertion_order;
     pos = self->num_sites;
 
     while (pos > start) {

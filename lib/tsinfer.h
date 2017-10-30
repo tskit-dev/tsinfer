@@ -221,8 +221,6 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
         mutation_id_t *parent);
 
-void __tsi_safe_free(void **ptr);
-
 #define tsi_safe_free(pointer) \
 do {\
     if (pointer != NULL) {\
