@@ -13,12 +13,23 @@
 
 
 static int
-cmp_index_sort(const void *a, const void *b) {
-    const index_sort_t *ca = (const index_sort_t *) a;
-    const index_sort_t *cb = (const index_sort_t *) b;
-    int ret = (ca->position > cb->position) - (ca->position < cb->position);
+cmp_edge_insertion(const void *a, const void *b) {
+    const edge_sort_t *ca = (const edge_sort_t *) a;
+    const edge_sort_t *cb = (const edge_sort_t *) b;
+    int ret = (ca->left > cb->left) - (ca->left < cb->left);
     if (ret == 0) {
         ret = (ca->time > cb->time) - (ca->time < cb->time);
+    }
+    return ret;
+}
+
+static int
+cmp_edge_removal(const void *a, const void *b) {
+    const edge_sort_t *ca = (const edge_sort_t *) a;
+    const edge_sort_t *cb = (const edge_sort_t *) b;
+    int ret = (ca->right > cb->right) - (ca->right < cb->right);
+    if (ret == 0) {
+        ret = (ca->time < cb->time) - (ca->time > cb->time);
     }
     return ret;
 }
@@ -105,21 +116,9 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     fprintf(out, "left\tright\tparent\tchild\n");
     for (j = 0; j < self->num_edges; j++) {
         edge = self->edges + j;
-        fprintf(out, "%d\t%d\t%d\t%d\t\t%d\t%d\n",
+        fprintf(out, "%d\t%d\t%d\t%d\t\t%d\n",
                 edge->left, edge->right, edge->parent, edge->child,
-                self->insertion_order[j], self->removal_order[j]);
-    }
-    fprintf(out, "Insertion order\n");
-    for (j = 0; j < self->num_edges; j++) {
-        edge = self->edges + self->insertion_order[j];
-        fprintf(out, "%d\t%d\t%d\t%d\n",
-                edge->left, edge->right, edge->parent, edge->child);
-    }
-    fprintf(out, "Removal order\n");
-    for (j = 0; j < self->num_edges; j++) {
-        edge = self->edges + self->removal_order[j];
-        fprintf(out, "%d\t%d\t%d\t%d\n",
-                edge->left, edge->right, edge->parent, edge->child);
+                self->removal_order[j]);
     }
     fprintf(out, "nodes = \n");
     fprintf(out, "id\ttime\n");
@@ -165,16 +164,14 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->num_edges = 0;
 
     self->edges = malloc(self->max_edges * sizeof(edge_t));
-    self->sort_buffer = malloc(self->max_edges * sizeof(index_sort_t));
-    self->insertion_order = malloc(self->max_edges * sizeof(node_id_t));
+    self->sort_buffer = malloc(self->max_edges * sizeof(edge_sort_t));
     self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
     self->time = malloc(self->max_nodes * sizeof(double));
     self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
     self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
     self->sites.position = malloc(self->num_sites * sizeof(double));
     self->sites.recombination_rate = malloc(self->num_sites * sizeof(double));
-    if (self->edges == NULL || self->time == NULL
-            || self->insertion_order == NULL || self->removal_order == NULL
+    if (self->edges == NULL || self->time == NULL || self->removal_order == NULL
             || self->sort_buffer == NULL || self->sites.mutations == NULL
             || self->sites.position == NULL || self->sites.recombination_rate == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
@@ -199,7 +196,6 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->edges);
     tsi_safe_free(self->time);
     tsi_safe_free(self->node_flags);
-    tsi_safe_free(self->insertion_order);
     tsi_safe_free(self->removal_order);
     tsi_safe_free(self->sort_buffer);
     tsi_safe_free(self->sites.mutations);
@@ -260,31 +256,40 @@ tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
     int ret = 0;
     size_t j;
     node_id_t u;
-    index_sort_t *sort_buff = self->sort_buffer;
+    edge_sort_t *sort_buff = self->sort_buffer;
 
     /* sort by left and increasing time to give us the order in which
      * records should be inserted */
     for (j = 0; j < self->num_edges; j++) {
-        sort_buff[j].index = (node_id_t ) j;
-        sort_buff[j].position = self->edges[j].left;
+        sort_buff[j].left = self->edges[j].left;
+        sort_buff[j].right = self->edges[j].right;
+        sort_buff[j].parent = self->edges[j].parent;
+        sort_buff[j].child = self->edges[j].child;
         u = self->edges[j].parent;
         assert(u < (node_id_t) self->num_nodes);
         sort_buff[j].time = self->time[u];
     }
-    qsort(sort_buff, self->num_edges, sizeof(index_sort_t), cmp_index_sort);
+    qsort(sort_buff, self->num_edges, sizeof(edge_sort_t), cmp_edge_insertion);
     for (j = 0; j < self->num_edges; j++) {
-        self->insertion_order[j] = sort_buff[j].index;
+        self->edges[j].left = sort_buff[j].left;
+        self->edges[j].right = sort_buff[j].right;
+        self->edges[j].parent = sort_buff[j].parent;
+        self->edges[j].child = sort_buff[j].child;
     }
     /* sort by right and decreasing time to give us the order in which
      * records should be removed. */
     for (j = 0; j < self->num_edges; j++) {
-        sort_buff[j].index = (node_id_t ) j;
-        sort_buff[j].position = self->edges[j].right;
+        sort_buff[j].index = j;
+        sort_buff[j].left = self->edges[j].left;
+        sort_buff[j].right = self->edges[j].right;
+        sort_buff[j].parent = self->edges[j].parent;
+        sort_buff[j].child = self->edges[j].child;
         u = self->edges[j].parent;
         assert(u < (node_id_t) self->num_nodes);
-        sort_buff[j].time = -1 * self->time[u];
+        sort_buff[j].time = self->time[u];
     }
-    qsort(sort_buff, self->num_edges, sizeof(index_sort_t), cmp_index_sort);
+
+    qsort(sort_buff, self->num_edges, sizeof(edge_sort_t), cmp_edge_removal);
     for (j = 0; j < self->num_edges; j++) {
         self->removal_order[j] = sort_buff[j].index;
     }
@@ -805,18 +810,12 @@ tree_sequence_builder_expand_edges(tree_sequence_builder_t *self)
         goto out;
     }
     self->edges = tmp;
-    tmp = realloc(self->sort_buffer, self->max_edges * sizeof(index_sort_t));
+    tmp = realloc(self->sort_buffer, self->max_edges * sizeof(edge_sort_t));
     if (tmp == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     self->sort_buffer = tmp;
-    tmp = realloc(self->insertion_order, self->max_edges * sizeof(node_id_t));
-    if (tmp == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    self->insertion_order = tmp;
     tmp = realloc(self->removal_order, self->max_edges * sizeof(node_id_t));
     if (tmp == NULL) {
         ret = TSI_ERR_NO_MEMORY;

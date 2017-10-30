@@ -768,6 +768,7 @@ class TreeSequenceBuilder(object):
         edges.set_columns(left=left, right=right, parent=parent, child=child)
         print("edges = ")
         print(edges)
+        print("Removal order = ", self.removal_order)
 
         if nodes.num_rows > 1:
             msprime.sort_tables(nodes, edges)
@@ -1061,10 +1062,8 @@ class TreeSequenceBuilder(object):
             self._replace_recombinations()
 
         # Index the edges
+        self.edges.sort(key=lambda e: (e.left, self.time[e.parent]))
         M = len(self.edges)
-        self.insertion_order = sorted(
-            range(M), key=lambda j: (
-                self.edges[j].left, self.time[self.edges[j].parent]))
         self.removal_order = sorted(
             range(M), key=lambda j: (
                 self.edges[j].right, -self.time[self.edges[j].parent]))
@@ -1305,7 +1304,6 @@ class AncestorMatcher(object):
     def find_path(self, h, start, end, match):
 
         M = len(self.tree_sequence_builder.edges)
-        I = self.tree_sequence_builder.insertion_order
         O = self.tree_sequence_builder.removal_order
         n = self.tree_sequence_builder.num_nodes
         m = self.tree_sequence_builder.num_sites
@@ -1325,18 +1323,18 @@ class AncestorMatcher(object):
         left = 0
         pos = 0
         right = m
-        while j < M and k < M and edges[I[j]].left <= start:
+        while j < M and k < M and edges[j].left <= start:
             # print("top of init loop:", left, right)
             while edges[O[k]].right == pos:
                 self.remove_edge(edges[O[k]])
                 k += 1
-            while j < M and edges[I[j]].left == pos:
-                self.insert_edge(edges[I[j]])
+            while j < M and edges[j].left == pos:
+                self.insert_edge(edges[j])
                 j += 1
             left = pos
             right = m
             if j < M:
-                right = min(right, edges[I[j]].left)
+                right = min(right, edges[j].left)
             if k < M:
                 right = min(right, edges[O[k]].right)
             pos = right
@@ -1413,8 +1411,8 @@ class AncestorMatcher(object):
                     self.likelihood_nodes.add(edge.child)
 
             left = right
-            while j < M and edges[I[j]].left == left:
-                edge = edges[I[j]]
+            while j < M and edges[j].left == left:
+                edge = edges[j]
                 self.insert_edge(edge)
                 j += 1
                 # There's no point in compressing the likelihood tree here as we'll be
@@ -1425,7 +1423,7 @@ class AncestorMatcher(object):
                         self.likelihood_nodes.add(u)
             right = m
             if j < M:
-                right = min(right, edges[I[j]].left)
+                right = min(right, edges[j].left)
 
             if k < M:
                 right = min(right, edges[O[k]].right)
@@ -1439,10 +1437,7 @@ class AncestorMatcher(object):
     def run_traceback(self, start, end, match):
 
         M = len(self.tree_sequence_builder.edges)
-        I = self.tree_sequence_builder.insertion_order
-        O = self.tree_sequence_builder.removal_order
         edges = self.tree_sequence_builder.edges
-
         u = self.get_max_likelihood_node()
         output_edge = Edge(right=end, parent=u)
         output_edges = [output_edge]
@@ -1451,7 +1446,6 @@ class AncestorMatcher(object):
         j = M - 1
         k = M - 1
         I = self.tree_sequence_builder.removal_order
-        O = self.tree_sequence_builder.insertion_order
         # Construct the matched haplotype
         match[:] = 0
         match[:start] = -1
@@ -1461,8 +1455,8 @@ class AncestorMatcher(object):
         pos = self.tree_sequence_builder.num_sites
         while pos > start:
             # print("Top of loop: pos = ", pos)
-            while k >= 0 and edges[O[k]].left == pos:
-                self.parent[edges[O[k]].child] = -1
+            while k >= 0 and edges[k].left == pos:
+                self.parent[edges[k].child] = -1
                 k -= 1
             while j >= 0 and edges[I[j]].right == pos:
                 self.parent[edges[I[j]].child] = edges[I[j]].parent
@@ -1470,7 +1464,7 @@ class AncestorMatcher(object):
             right = pos
             left = 0
             if k >= 0:
-                left = max(left, edges[O[k]].left)
+                left = max(left, edges[k].left)
             if j >= 0:
                 left = max(left, edges[I[j]].right)
             pos = left

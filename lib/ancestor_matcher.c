@@ -532,7 +532,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     double *restrict L = self->likelihood;
     const edge_t *restrict edges = self->tree_sequence_builder->edges;
     const node_id_t *restrict I = self->tree_sequence_builder->removal_order;
-    const node_id_t *restrict O = self->tree_sequence_builder->insertion_order;
     node_id_t u, max_likelihood_node;
     site_id_t left, right, pos;
     avl_node_t *a, *tmp;
@@ -570,8 +569,8 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     pos = self->num_sites;
 
     while (pos > start) {
-        while (k >= 0 && edges[O[k]].left == pos) {
-            parent[edges[O[k]].child] = NULL_NODE;
+        while (k >= 0 && edges[k].left == pos) {
+            parent[edges[k].child] = NULL_NODE;
             k--;
         }
         while (j >= 0 && edges[I[j]].right == pos) {
@@ -581,7 +580,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         right = pos;
         left = 0;
         if (k >= 0) {
-            left = GSL_MAX(left, edges[O[k]].left);
+            left = GSL_MAX(left, edges[k].left);
         }
         if (j >= 0) {
             left = GSL_MAX(left, edges[I[j]].right);
@@ -734,7 +733,6 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     node_id_t *restrict left_sib = self->left_sib;
     node_id_t *restrict right_sib = self->right_sib;
     const edge_t *restrict edges = self->tree_sequence_builder->edges;
-    const node_id_t *restrict I = self->tree_sequence_builder->insertion_order;
     const node_id_t *restrict O = self->tree_sequence_builder->removal_order;
     site_id_t pos, left, right;
     bool renormalise_required;
@@ -746,19 +744,19 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     pos = 0;
     right = self->num_sites;
 
-    while (j < M && k < M && edges[I[j]].left <= start) {
+    while (j < M && k < M && edges[j].left <= start) {
         while (k < M && edges[O[k]].right == pos) {
             remove_edge(edges[O[k]], parent, left_child, right_child, left_sib, right_sib);
             k++;
         }
-        while (j < M && edges[I[j]].left == pos) {
-            insert_edge(edges[I[j]], parent, left_child, right_child, left_sib, right_sib);
+        while (j < M && edges[j].left == pos) {
+            insert_edge(edges[j], parent, left_child, right_child, left_sib, right_sib);
             j++;
         }
         left = pos;
         right = self->num_sites;
         if (j < M) {
-            right = GSL_MIN(right, edges[I[j]].left);
+            right = GSL_MIN(right, edges[j].left);
         }
         if (k < M) {
             right = GSL_MIN(right, edges[O[k]].right);
@@ -843,8 +841,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         left = right;
         /* printf("Inserting for j = %d and left = %d (%d)\n", (int) j, (int) left, */
         /*         edges[I[j]].left); */
-        while (j < M && edges[I[j]].left == left) {
-            edge = edges[I[j]];
+        while (j < M && edges[j].left == left) {
+            edge = edges[j];
             insert_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             j++;
             /* Insert zero likelihoods for any nonzero roots that have entered
@@ -867,7 +865,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         }
         right = self->num_sites;
         if (j < M) {
-            right = GSL_MIN(right, edges[I[j]].left);
+            right = GSL_MIN(right, edges[j].left);
         }
         if (k < M) {
             right = GSL_MIN(right, edges[O[k]].right);

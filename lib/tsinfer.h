@@ -115,10 +115,13 @@ typedef struct {
 } segment_list_t;
 
 typedef struct {
+    site_id_t left;
+    site_id_t right;
+    site_id_t parent;
+    site_id_t child;
     node_id_t index;
-    site_id_t position;
     double time;
-} index_sort_t;
+} edge_sort_t;
 
 typedef struct _likelihood_list_t {
     node_id_t node;
@@ -135,16 +138,16 @@ typedef struct {
         double *recombination_rate;
         mutation_list_node_t **mutations;
     } sites;
+    /* TODO add nodes struct */
+    double *time;
+    uint32_t *node_flags;
     size_t max_nodes;
     size_t max_edges;
     size_t num_nodes;
     size_t num_edges;
     size_t num_mutations;
     edge_t *edges;
-    double *time;
-    uint32_t *node_flags;
-    index_sort_t *sort_buffer;
-    node_id_t *insertion_order;
+    edge_sort_t *sort_buffer;
     node_id_t *removal_order;
     block_allocator_t block_allocator;
 } tree_sequence_builder_t;
