@@ -1100,12 +1100,15 @@ def is_descendant(pi, u, v):
     """
     ret = False
     if v != -1:
-        # print("IS_DESCENDENT(", u, v, ")")
-        while u != v and u != msprime.NULL_NODE:
+        w = u
+        while w != v and w != msprime.NULL_NODE:
             # print("\t", u)
-            u = pi[u]
+            w = pi[w]
         # print("END, ", u, v)
-        ret = u == v
+        ret = w == v
+    if u < v:
+        assert not ret
+    # print("IS_DESCENDENT(", u, v, ") = ", ret)
     return ret
 
 

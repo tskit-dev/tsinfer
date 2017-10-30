@@ -338,11 +338,17 @@ out:
 static inline bool
 is_descendant(const node_id_t u, const node_id_t v, node_id_t *restrict parent)
 {
+    bool ret = false;
     node_id_t w = u;
-    while (w != NULL_NODE && w != v) {
-        w = parent[w];
+    /* Because we allocate node IDs in nondecreasing order forwards in time,
+     * if the node ID is of u is less than v it cannot be a descendant of v */
+    if (u >= v) {
+        while (w != NULL_NODE && w != v) {
+            w = parent[w];
+        }
+        ret = w == v;
     }
-    return w == v;
+    return ret;
 }
 
 static int WARN_UNUSED
