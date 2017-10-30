@@ -44,10 +44,9 @@ approximately_one(double x)
 }
 
 static inline bool
-ancestor_matcher_is_nonzero_root(ancestor_matcher_t *self, node_id_t u,
-        node_id_t *restrict parent)
+is_nonzero_root(node_id_t u, node_id_t *restrict parent, node_id_t *restrict left_child)
 {
-    return u != 0 && parent[u] == NULL_NODE && self->left_child[u] == NULL_NODE;
+    return u != 0 && parent[u] == NULL_NODE && left_child[u] == NULL_NODE;
 }
 
 static void
@@ -72,7 +71,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
         if (self->likelihood[u] >= 0) {
             num_likelihoods++;
         }
-        if (ancestor_matcher_is_nonzero_root(self, u, self->parent)) {
+        if (is_nonzero_root(u, self->parent, self->left_child)) {
             assert(self->likelihood[u] == NONZERO_ROOT_LIKELIHOOD);
         } else {
             assert(self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD);
@@ -654,50 +653,52 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 }
 
 static inline void
-ancestor_matcher_remove_edge(ancestor_matcher_t *self, edge_t edge,
-        node_id_t *restrict parent)
+remove_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_child,
+        node_id_t *restrict right_child, node_id_t *restrict left_sib,
+        node_id_t *restrict right_sib)
 {
     node_id_t p = edge.parent;
     node_id_t c = edge.child;
-    node_id_t lsib = self->left_sib[c];
-    node_id_t rsib = self->right_sib[c];
+    node_id_t lsib = left_sib[c];
+    node_id_t rsib = right_sib[c];
 
     /* printf("REMOVE EDGE %d -> %d\n", edge.child, edge.parent); */
     if (lsib == NULL_NODE) {
-        self->left_child[p] = rsib;
+        left_child[p] = rsib;
     } else {
-        self->right_sib[lsib] = rsib;
+        right_sib[lsib] = rsib;
     }
     if (rsib == NULL_NODE) {
-        self->right_child[p] = lsib;
+        right_child[p] = lsib;
     } else {
-        self->left_sib[rsib] = lsib;
+        left_sib[rsib] = lsib;
     }
     parent[c] = NULL_NODE;
-    self->left_sib[c] = NULL_NODE;
-    self->right_sib[c] = NULL_NODE;
+    left_sib[c] = NULL_NODE;
+    right_sib[c] = NULL_NODE;
 }
 
 static inline void
-ancestor_matcher_insert_edge(ancestor_matcher_t *self, edge_t edge,
-        node_id_t *restrict parent)
+insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_child,
+        node_id_t *restrict right_child, node_id_t *restrict left_sib,
+        node_id_t *restrict right_sib)
 {
     node_id_t p = edge.parent;
     node_id_t c = edge.child;
-    node_id_t u = self->right_child[p];
+    node_id_t u = right_child[p];
     /* printf("INSERT EDGE %d -> %d\n", edge.child, edge.parent); */
 
     parent[c] = p;
     if (u == NULL_NODE) {
-        self->left_child[p] = c;
-        self->left_sib[c] = NULL_NODE;
-        self->right_sib[c] =NULL_NODE;
+        left_child[p] = c;
+        left_sib[c] = NULL_NODE;
+        right_sib[c] =NULL_NODE;
     } else {
-        self->right_sib[u] = c;
-        self->left_sib[c] = u;
-        self->right_sib[c] = NULL_NODE;
+        right_sib[u] = c;
+        left_sib[c] = u;
+        right_sib[c] = NULL_NODE;
     }
-    self->right_child[p] = c;
+    right_child[p] = c;
 }
 
 /* After we have removed a 1.0 valued node, we must renormalise the likelihoods */
@@ -729,12 +730,16 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     site_id_t site;
     edge_t edge;
     node_id_t u;
-    /* Use the restrict keyword here to try to improve cache use. We must be
-     * to ensure that all references to this memory for the duration of this
-     * function is through these variables.
+    /* Use the restrict keyword here to try to improve performance by avoiding
+     * unecessary loads. We must be very careful to to ensure that all references
+     * to this memory for the duration of this function is through these variables.
      */
     double *restrict L = self->likelihood;
     node_id_t *restrict parent = self->parent;
+    node_id_t *restrict left_child = self->left_child;
+    node_id_t *restrict right_child = self->right_child;
+    node_id_t *restrict left_sib = self->left_sib;
+    node_id_t *restrict right_sib = self->right_sib;
     edge_t *restrict edges = self->tree_sequence_builder->edges;
     node_id_t *restrict I = self->tree_sequence_builder->insertion_order;
     node_id_t *restrict O = self->tree_sequence_builder->removal_order;
@@ -750,11 +755,11 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
 
     while (j < M && k < M && edges[I[j]].left <= start) {
         while (k < M && edges[O[k]].right == pos) {
-            ancestor_matcher_remove_edge(self, edges[O[k]], parent);
+            remove_edge(edges[O[k]], parent, left_child, right_child, left_sib, right_sib);
             k++;
         }
         while (j < M && edges[I[j]].left == pos) {
-            ancestor_matcher_insert_edge(self, edges[I[j]], parent);
+            insert_edge(edges[I[j]], parent, left_child, right_child, left_sib, right_sib);
             j++;
         }
         left = pos;
@@ -799,7 +804,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         renormalise_required = false;
         for (l = remove_start; l < k; l++) {
             edge = edges[O[l]];
-            if (ancestor_matcher_is_nonzero_root(self, edge.child, parent)) {
+            if (is_nonzero_root(edge.child, parent, left_child)) {
                 if (approximately_one(L[edge.child])) {
                     renormalise_required = true;
                 }
@@ -826,7 +831,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         remove_start = k;
         while (k < M  && edges[O[k]].right == right) {
             edge = edges[O[k]];
-            ancestor_matcher_remove_edge(self, edge, parent);
+            remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             k++;
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 /* Traverse upwards until we find and L value for the child. */
@@ -847,7 +852,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         /*         edges[I[j]].left); */
         while (j < M && edges[I[j]].left == left) {
             edge = edges[I[j]];
-            ancestor_matcher_insert_edge(self, edge, parent);
+            insert_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             j++;
             /* Insert zero likelihoods for any nonzero roots that have entered
              * the tree. Note we don't bother trying to compress the tree here
