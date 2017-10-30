@@ -721,7 +721,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     int j, k, l, remove_start;
     site_id_t site;
     edge_t edge;
-    node_id_t u;
+    node_id_t u, last_parent;
+    double L_child = 0;
     /* Use the restrict keyword here to try to improve performance by avoiding
      * unecessary loads. We must be very careful to to ensure that all references
      * to this memory for the duration of this function is through these variables.
@@ -820,18 +821,26 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
 
         /* Move on to the next tree */
         remove_start = k;
+        last_parent = NULL_NODE;
         while (k < M  && edges[O[k]].right == right) {
             edge = edges[O[k]];
             remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             k++;
             if (L[edge.child] == NULL_LIKELIHOOD) {
-                /* Traverse upwards until we find and L value for the child. */
-                u = edge.parent;
-                while (L[u] == NULL_LIKELIHOOD) {
-                    u = parent[u];
-                    /* assert(u != NULL_NODE); */
+                if (edge.parent != last_parent) {
+                    /* Traverse upwards until we find and L value for the child.
+                     * We avoid the cost of repeated rootward traversals for edges
+                     * with the same parent (which should be adjacent) by caching
+                     * the L value that we find. */
+                    u = edge.parent;
+                    while (L[u] == NULL_LIKELIHOOD) {
+                        u = parent[u];
+                        /* assert(u != NULL_NODE); */
+                    }
+                    L_child = L[u];
+                    last_parent = edge.parent;
                 }
-                L[edge.child] = L[u];
+                L[edge.child] = L_child;
                 ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
                 if (ret != 0) {
                     goto out;

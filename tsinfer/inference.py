@@ -1397,19 +1397,24 @@ class AncestorMatcher(object):
             # UPDATE TREE
             # print("UPDATE TREE", left, right)
             remove_start = k
+            last_parent = -1
             while k < M and edges[O[k]].right == right:
                 edge = edges[O[k]]
                 self.remove_edge(edge)
                 k += 1
                 if self.likelihood[edge.child] == -1:
-                    # If the child has an L value, traverse upwards until we
-                    # find the parent that carries it.
-                    u = edge.parent
-                    while self.likelihood[u] == -1:
-                        u = self.parent[u]
-                    self.likelihood[edge.child] = self.likelihood[u]
+                    if edge.parent != last_parent:
+                        # If the child has an L value, traverse upwards until we
+                        # find the parent that carries it. We avoid repeated upward
+                        # traversals for edges that have the same parent by caching
+                        # the L value that we find.
+                        u = edge.parent
+                        while self.likelihood[u] == -1:
+                            u = self.parent[u]
+                        L_child = self.likelihood[u]
+                        last_parent = edge.parent
+                    self.likelihood[edge.child] = L_child
                     self.likelihood_nodes.add(edge.child)
-
             left = right
             while j < M and edges[j].left == left:
                 edge = edges[j]
