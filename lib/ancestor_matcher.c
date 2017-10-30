@@ -446,12 +446,10 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
     }
     /* ancestor_matcher_print_state(self, stdout); */
     /* ancestor_matcher_check_state(self); */
-    /* FIXME: disabling this optimisation for now */
-    if (false) {
-    /* if (self->observation_error == 0.0 */
-    /*             && mutation_node == NULL_NODE */
-    /*             && site > 0 */
-    /*             && self->tree_sequence_builder->sites.mutations[site - 1] == NULL) { */
+    if (self->observation_error == 0.0
+                && mutation_node == NULL_NODE
+                && site > 0
+                && self->tree_sequence_builder->sites.mutations[site - 1] == NULL) {
         /* If there are no mutations at this or the last site, then
          * we are guaranteed that the likelihoods are equal. */
         self->traceback[site] = self->traceback[site - 1];
