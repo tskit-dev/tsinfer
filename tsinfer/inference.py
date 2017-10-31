@@ -26,6 +26,13 @@ try:
 except ImportError:
     pass
 
+_numa_available = False
+try:
+    import numa
+    _numa_available = True
+except ImportError:
+    pass
+
 import _tsinfer
 
 
@@ -282,18 +289,7 @@ class InferenceManager(object):
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
         ancestor[focal_sites] = 0
-        # print("FIND PATH FOR", node_id)
-        # ts = self.get_tree_sequence()
-        # print("TREE SEQUENCE")
-        # # print(ts.tables)
-        # for t in ts.trees():
-        #     sites = list(t.sites())
-        #     print("left = ", sites[0].index, "right = ", sites[-1].index + 1)
-        #     print(t.draw(format="unicode"))
-        #     print("=================================")
         left, right, parent = matcher.find_path(ancestor, start, end, match)
-        # print("ancestor = ", ancestor)
-        # print("match    = ", match)
         assert np.all(match == ancestor)
         results.add_edges(left, right, parent, node_id)
         self.__update_progress()
@@ -324,21 +320,24 @@ class InferenceManager(object):
 
     def __process_ancestors_multi_threaded(self):
         match_queue = queue.Queue()
-        matchers = [
-            self.ancestor_matcher_class(self.tree_sequence_builder, 0)
-            for _ in range(self.num_threads)]
         results = [ResultBuffer() for _ in range(self.num_threads)]
+        matcher_memory = np.zeros(self.num_threads)
         mean_traceback_size = np.zeros(self.num_threads)
         num_matches = np.zeros(self.num_threads)
 
         def match_worker(thread_index):
-            if _prctl_available:
-                prctl.set_name("match-worker-{}".format(thread_index))
             with self.catch_thread_error():
                 self.logger.info(
                     "Ancestor match thread {} starting".format(thread_index))
+                if _prctl_available:
+                    prctl.set_name("ancestor-worker-{}".format(thread_index))
+                if _numa_available and numa.available():
+                    numa.set_localalloc()
+                    self.logger.debug(
+                        "Set NUMA local allocation policy on thread {}."
+                        .format(thread_index))
                 match = np.zeros(self.num_sites, np.int8)
-                matcher = matchers[thread_index]
+                matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
                 result_buffer = results[thread_index]
                 while True:
                     work = match_queue.get()
@@ -350,6 +349,7 @@ class InferenceManager(object):
                             result_buffer, match)
                     mean_traceback_size[thread_index] += matcher.mean_traceback_size
                     num_matches[thread_index] += 1
+                    matcher_memory[thread_index] = matcher.total_memory
                     match_queue.task_done()
                 match_queue.task_done()
                 self.logger.info("Ancestor match thread {} exiting".format(thread_index))
@@ -382,7 +382,7 @@ class InferenceManager(object):
                 epoch_results.left, epoch_results.right, epoch_results.parent,
                 epoch_results.child, epoch_results.site, epoch_results.node,
                 epoch_results.derived_state)
-            mean_memory = np.mean([matcher.total_memory for matcher in matchers])
+            mean_memory = np.mean(matcher_memory)
             self.logger.debug(
                 "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
                 "mean_matcher_mem={}".format(
@@ -441,10 +441,15 @@ class InferenceManager(object):
         work_queue = queue.Queue()
 
         def worker(thread_index):
-            if _prctl_available:
-                prctl.set_name("match-worker-{}".format(thread_index))
             with self.catch_thread_error():
                 self.logger.info("Started sample worker thread {}".format(thread_index))
+                if _prctl_available:
+                    prctl.set_name("sample-worker-{}".format(thread_index))
+                if _numa_available and numa.available():
+                    numa.set_localalloc()
+                    self.logger.debug(
+                        "Set NUMA local allocation policy on thread {}.".format(
+                            thread_index))
                 mean_traceback_size = 0
                 num_matches = 0
                 match = np.zeros(self.num_sites, np.int8)
