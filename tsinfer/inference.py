@@ -1265,17 +1265,40 @@ class AncestorMatcher(object):
                 v = self.parent[v]
         assert np.all(path_cache == -1)
 
-        # Compress
+        self.compress_likelihoods()
+
+    def compress_likelihoods(self):
+        L_cache = np.zeros_like(self.likelihood) - 1
+        cached_paths = []
         for u in set(self.likelihood_nodes):
-            if self.parent[u] != -1:
-                # Traverse upwards until we find another L value
-                v = self.parent[u]
-                while self.likelihood[v] == -1:
+            # We need to find the likelihood of the parent of u. If this is
+            # the same as u, we can delete it.
+            p = self.parent[u]
+            if p != -1:
+                cached_paths.append(p)
+                v = p
+                while self.likelihood[v] == -1 and L_cache[v] == -1:
                     v = self.parent[v]
-                if self.likelihood[u] == self.likelihood[v]:
+                L_p = L_cache[v]
+                if L_p == -1:
+                    L_p = self.likelihood[v]
+                # Fill in the L cache
+                v = p
+                while self.likelihood[v] == -1 and L_cache[v] == -1:
+                    L_cache[v] = L_p
+                    v = self.parent[v]
+
+                if self.likelihood[u] == L_p:
                     # Delete u from the map
                     self.likelihood[u] = -1
                     self.likelihood_nodes.remove(u)
+        # Reset the L cache
+        for u in cached_paths:
+            v = u
+            while v != -1 and L_cache[v] != -1:
+                L_cache[v] = -1
+                v = self.parent[v]
+        assert np.all(L_cache == -1)
 
     def remove_edge(self, edge):
         p = edge.parent

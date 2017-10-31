@@ -151,6 +151,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
     self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
+    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(node_id_t));
     self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
     self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
@@ -161,9 +162,9 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
             || self->left_child == NULL || self->right_child == NULL
             || self->left_sib == NULL || self->right_sib == NULL
             || self->likelihood == NULL || self->likelihood_cache == NULL
-            || self->traceback == NULL || self->output.left == NULL
-            || self->output.right == NULL || self->output.parent == NULL
-            || self->mismatches == NULL) {
+            || self->likelihood_nodes_tmp == NULL || self->traceback == NULL
+            || self->output.left == NULL || self->output.right == NULL
+            || self->output.parent == NULL || self->mismatches == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -194,6 +195,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->right_sib);
     tsi_safe_free(self->likelihood);
     tsi_safe_free(self->likelihood_cache);
+    tsi_safe_free(self->likelihood_nodes_tmp);
     tsi_safe_free(self->path_cache);
     tsi_safe_free(self->traceback);
     tsi_safe_free(self->output.left);
@@ -433,26 +435,41 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
 static int WARN_UNUSED
 ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
-        const node_id_t *restrict parent, double *restrict L)
+        const node_id_t *restrict parent, double *restrict L, double *restrict L_cache)
 {
     int ret = 0;
+    double L_p;
     avl_node_t *a, *tmp;
-    node_id_t u, v;
+    node_id_t u, v, p, j, num_cached_paths;
+    node_id_t *restrict cached_paths = self->likelihood_nodes_tmp;
 
+    num_cached_paths = 0;
     a = self->likelihood_nodes.head;
     while (a != NULL) {
         tmp = a->next;
         u = *((node_id_t *) a->item);
-        if (parent[u] != NULL_NODE) {
-            /* If we can find an equal L value higher in the tree, delete
-             * this one.
-             */
-            v = parent[u];
-            while (L[v] == NULL_LIKELIHOOD) {
+        p = parent[u];
+
+        if (p != NULL_NODE) {
+            cached_paths[num_cached_paths] = p;
+            num_cached_paths++;
+            v = p;
+            while (L[v] == NULL_LIKELIHOOD && L_cache[v] == CACHE_UNSET) {
                 v = parent[v];
-                /* assert(v != NULL_NODE); */
             }
-            if (approximately_equal(L[u], L[v])) {
+            L_p = L_cache[v];
+            if (L_p == CACHE_UNSET) {
+                L_p = L[v];
+            }
+            /* Fill in the L cache */
+            v = p;
+            while (L[v] == NULL_LIKELIHOOD && L_cache[v] == CACHE_UNSET) {
+                L_cache[v] = L_p;
+                v = parent[v];
+            }
+            /* If the likelihood for the parent is equal to the child we can
+             * delete the child likelihood */
+            if (approximately_equal(L[u], L_p)) {
                 /* Delete this likelihood value */
                 avl_unlink_node(&self->likelihood_nodes, a);
                 ancestor_matcher_free_avl_node(self, a);
@@ -461,12 +478,24 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
         }
         a = tmp;
     }
+    /* Reset the L cache */
+    for (j = 0; j < num_cached_paths; j++) {
+        v = cached_paths[j];
+        while (v != NULL_NODE && L_cache[v] != CACHE_UNSET) {
+            L_cache[v] = CACHE_UNSET;
+            v = parent[v];
+        }
+    }
+    /* for (j = 0; j < (int) self->tree_sequence_builder->num_nodes; j++) { */
+    /*     assert(L_cache[j] == CACHE_UNSET); */
+    /* } */
     return ret;
 }
 
 static int
 ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t site,
-        const allele_t state, node_id_t *restrict parent, double *restrict L)
+        const allele_t state, node_id_t *restrict parent, double *restrict L,
+        double *restrict L_cache)
 {
     int ret = 0;
     node_id_t mutation_node = NULL_NODE;
@@ -511,7 +540,7 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
             if (ret != 0) {
                 goto out;
             }
-            ret = ancestor_matcher_coalesce_likelihoods(self, parent, L);
+            ret = ancestor_matcher_coalesce_likelihoods(self, parent, L, L_cache);
             if (ret != 0) {
                 goto out;
             }
@@ -849,7 +878,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         /* ancestor_matcher_check_state(self); */
         for (site = GSL_MAX(left, start); site < GSL_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
-                    parent, L);
+                    parent, L, L_cache);
             if (ret != 0) {
                 goto out;
             }

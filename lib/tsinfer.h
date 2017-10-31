@@ -10,6 +10,7 @@
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
 #define NULL_NODE (-1)
+#define CACHE_UNSET (-1)
 
 #define TSI_RESOLVE_SHARED_RECOMBS  1
 #define TSI_RESOLVE_POLYTOMIES      2
@@ -168,6 +169,7 @@ typedef struct {
     double *likelihood;
     double *likelihood_cache;
     int8_t *path_cache;
+    node_id_t *likelihood_nodes_tmp;
     avl_tree_t likelihood_nodes;
     likelihood_list_t **traceback;
     object_heap_t avl_node_heap;
