@@ -151,6 +151,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
     self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
+    self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
     self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
@@ -193,6 +194,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->right_sib);
     tsi_safe_free(self->likelihood);
     tsi_safe_free(self->likelihood_cache);
+    tsi_safe_free(self->path_cache);
     tsi_safe_free(self->traceback);
     tsi_safe_free(self->output.left);
     tsi_safe_free(self->output.right);
@@ -325,13 +327,16 @@ is_descendant(const node_id_t u, const node_id_t v, const node_id_t *restrict pa
 {
     bool ret = false;
     node_id_t w = u;
-    /* Because we allocate node IDs in nondecreasing order forwards in time,
-     * if the node ID is of u is less than v it cannot be a descendant of v */
-    if (u >= v) {
-        while (w != NULL_NODE && w != v) {
-            w = parent[w];
+
+    if (v != NULL_NODE) {
+        /* Because we allocate node IDs in nondecreasing order forwards in time,
+         * if the node ID is of u is less than v it cannot be a descendant of v */
+        if (u >= v) {
+            while (w != NULL_NODE && w != v) {
+                w = parent[w];
+            }
+            ret = w == v;
         }
-        ret = w == v;
     }
     return ret;
 }
@@ -351,8 +356,9 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     double x, y, max_L, emission;
     avl_node_t *restrict head = self->likelihood_nodes.head;
     avl_node_t *restrict a;
+    int8_t *restrict path_cache = self->path_cache;
     bool descendant;
-    node_id_t u;
+    node_id_t u, v;
     double distance = 1;
 
     if (site > 0) {
@@ -363,18 +369,41 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     no_recomb_proba *= distance;
 
     max_L = -1;
+    /* printf("likelihoods for node=%d, n=%d\n", mutation_node, avl_count(&self->likelihood_nodes)); */
     for (a = head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
+        /* Determine if the node this likelihood is associated with is a descendant
+         * of the mutation node. To avoid the cost of repeatedly traversing up the
+         * tree, we keep a cache of the paths that we have already traversed. When
+         * we meet one of these paths we can immediately finish.
+         */
+        descendant = false;
+        if (mutation_node != NULL_NODE) {
+            v = u;
+            while (v != NULL_NODE && v != mutation_node && path_cache[v] == -1) {
+                v = parent[v];
+            }
+            if (v != NULL_NODE && path_cache[v] != -1) {
+                descendant = (bool) path_cache[v];
+            } else {
+                descendant = v == mutation_node;
+            }
+            /* Insert this path into the cache */
+            v = u;
+            while (v != NULL_NODE && v != mutation_node && path_cache[v] == -1) {
+                path_cache[v] = descendant;
+                v = parent[v];
+            }
+        }
+
+        /* assert(descendant == is_descendant(u, mutation_node, parent)); */
+
         x = L[u] * no_recomb_proba;
         assert(x >= 0);
         if (x > recomb_proba) {
             y = x;
         } else {
             y = recomb_proba;
-        }
-        descendant = false;
-        if (mutation_node != NULL_NODE) {
-            descendant = is_descendant(u, mutation_node, parent);
         }
         if (state == 1) {
             emission = (1 - err) * descendant + err * (! descendant);
@@ -389,10 +418,15 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         /*         mutation_node, u, x, y, emission); */
     }
     assert(max_L > 0);
-    /* Normalise */
+    /* Normalise and reset the path cache. */
     for (a = head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
         L[u] /= max_L;
+        v = u;
+        while (v != NULL_NODE && path_cache[v] != -1) {
+            path_cache[v] = -1;
+            v = parent[v];
+        }
     }
     return ret;
 }
@@ -508,6 +542,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
 
     assert(avl_count(&self->likelihood_nodes) == 0);
     memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t *));
+    memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));
     ret = block_allocator_reset(&self->likelihood_list_allocator);
     if (ret != 0) {
         goto out;

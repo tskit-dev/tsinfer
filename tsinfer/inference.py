@@ -1105,10 +1105,11 @@ def is_descendant(pi, u, v):
     ret = False
     if v != -1:
         w = u
+        path = []
         while w != v and w != msprime.NULL_NODE:
-            # print("\t", u)
+            path.append(w)
             w = pi[w]
-        # print("END, ", u, v)
+        # print("DESC:",v, u, path)
         ret = w == v
     if u < v:
         assert not ret
@@ -1215,33 +1216,54 @@ class AncestorMatcher(object):
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
         max_L = -1
-        for v in self.likelihood_nodes:
+        # print("Computing likelihoods for ", mutation_node)
+        path_cache = np.zeros(n, dtype=np.int8) - 1
+        for u in self.likelihood_nodes:
+            v = u
+            while v != -1 and v != mutation_node and path_cache[v] == -1:
+                v = self.parent[v]
+            d = False
+            if v != -1 and path_cache[v] != -1:
+                d = path_cache[v]
+            else:
+                d = v == mutation_node
+            assert d == is_descendant(self.parent, u, mutation_node)
+            # Insert this path into the cache.
+            v = u
+            while v != -1 and v != mutation_node and path_cache[v] == -1:
+                path_cache[v] = d
+                v = self.parent[v]
+
             # TODO should we remove this parameter here and include it
             # in the recombination rate parameter??? In practise we'll
             # probably be working it out from a recombination map, so
             # there's no point in complicating this further by rescaling
             # it back into physical distance.
-            x = self.likelihood[v] * no_recomb_proba * distance
+            x = self.likelihood[u] * no_recomb_proba * distance
             assert x >= 0
             y = recomb_proba * distance
             if x > y:
                 z = x
             else:
                 z = y
-            d = is_descendant(self.parent, v, mutation_node)
             if state == 1:
                 emission_p = (1 - err) * d + err * (not d)
             else:
                 emission_p = err * d + (1 - err) * (not d)
             # print("setting ", v, z, emission_p, mutation_node)
-            self.likelihood[v] = z * emission_p
-            if self.likelihood[v] > max_L:
-                max_L = self.likelihood[v]
+            self.likelihood[u] = z * emission_p
+            if self.likelihood[u] > max_L:
+                max_L = self.likelihood[u]
         assert max_L > 0
 
-        # Normalise
-        for v in self.likelihood_nodes:
-            self.likelihood[v] /= max_L
+        # Normalise and reset the path cache
+        for u in self.likelihood_nodes:
+            self.likelihood[u] /= max_L
+            v = u
+            while v != -1 and path_cache[v] != -1:
+                path_cache[v] = -1
+                v = self.parent[v]
+        assert np.all(path_cache == -1)
 
         # Compress
         for u in set(self.likelihood_nodes):
