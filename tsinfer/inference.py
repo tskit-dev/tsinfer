@@ -1316,6 +1316,7 @@ class AncestorMatcher(object):
         self.traceback = [{} for _ in range(m)]
         self.likelihood = np.zeros(n) - 2
         self.likelihood_nodes = set()
+        L_cache = np.zeros_like(self.likelihood) - 1
 
         # print("MATCH: start=", start, "end = ", end)
         j = 0
@@ -1338,8 +1339,6 @@ class AncestorMatcher(object):
             if k < M:
                 right = min(right, edges[O[k]].right)
             pos = right
-
-        # print("exit init loop: left = ", left, "right = ", right)
         assert left < right
 
         self.likelihood_nodes.add(0)
@@ -1347,33 +1346,12 @@ class AncestorMatcher(object):
         for u in range(n):
             if self.parent[u] != -1:
                 self.likelihood[u] = -1
-        # print("First tree:", left, right)
-        # print("parent = ", self.parent)
-        # print("lchild = ", self.left_child)
-        # print("rchild = ", self.right_child)
-        # print("lsib   = ", self.left_sib)
-        # print("rsig   = ", self.right_sib)
-        # print("L = ", self.likelihood)
-        # print("likelihood_nodes = ", self.likelihood_nodes)
 
         remove_start = k
-
         while left < end:
             assert left < right
 
             # print("START OF TREE LOOP", left, right)
-            # print("left = ", left)
-            # print("right = ", right)
-            # print("L = ", self.likelihood)
-            # print("likelihood_nodes = ", self.likelihood_nodes)
-            # print("parent = ", self.parent)
-            # print("lchild = ", self.left_child)
-            # print("rchild = ", self.right_child)
-            # print("lsib   = ", self.left_sib)
-            # print("rsig   = ", self.right_sib)
-            # print("start = ", start)
-            # print("end = ", end)
-
             normalisation_required = False
             for l in range(remove_start, k):
                 edge = edges[O[l]]
@@ -1394,7 +1372,6 @@ class AncestorMatcher(object):
                 # print("UPDATE site", site)
                 self.update_site(site, h[site])
 
-            # UPDATE TREE
             # print("UPDATE TREE", left, right)
             remove_start = k
             last_parent = -1
@@ -1403,18 +1380,31 @@ class AncestorMatcher(object):
                 self.remove_edge(edge)
                 k += 1
                 if self.likelihood[edge.child] == -1:
-                    if edge.parent != last_parent:
-                        # If the child has an L value, traverse upwards until we
-                        # find the parent that carries it. We avoid repeated upward
-                        # traversals for edges that have the same parent by caching
-                        # the L value that we find.
-                        u = edge.parent
-                        while self.likelihood[u] == -1:
-                            u = self.parent[u]
+                    # If the child has an L value, traverse upwards until we
+                    # find the parent that carries it. To avoid repeated traversals
+                    # along the same path we make a cache of the L values.
+                    u = edge.parent
+                    while self.likelihood[u] == -1 and L_cache[u] == -1:
+                        u = self.parent[u]
+                    L_child = L_cache[u]
+                    if L_child == -1:
                         L_child = self.likelihood[u]
-                        last_parent = edge.parent
+                    # Fill in the L_cache
+                    u = edge.parent
+                    while self.likelihood[u] == -1 and L_cache[u] == -1:
+                        L_cache[u] = L_child
+                        u = self.parent[u]
                     self.likelihood[edge.child] = L_child
                     self.likelihood_nodes.add(edge.child)
+            # Clear the L cache
+            for l in range(remove_start, k):
+                edge = edges[O[l]]
+                u = edge.parent
+                while L_cache[u] != -1:
+                    L_cache[u] = -1
+                    u = self.parent[u]
+            assert np.all(L_cache == -1)
+
             left = right
             while j < M and edges[j].left == left:
                 edge = edges[j]

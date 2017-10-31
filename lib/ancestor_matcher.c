@@ -133,7 +133,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder, double observation_error)
 {
     int ret = 0;
-    size_t j;
     /* TODO make these input parameters. */
     size_t avl_node_block_size = 8192;
     size_t likelihood_list_block_size = 64 * 1024 * 1024;
@@ -151,6 +150,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->left_sib = malloc(self->max_nodes * sizeof(node_id_t));
     self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
+    self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
     self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
@@ -159,9 +159,10 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     if (self->parent == NULL
             || self->left_child == NULL || self->right_child == NULL
             || self->left_sib == NULL || self->right_sib == NULL
-            || self->likelihood == NULL || self->traceback == NULL
-            || self->output.left == NULL || self->output.right == NULL
-            || self->output.parent == NULL || self->mismatches == NULL) {
+            || self->likelihood == NULL || self->likelihood_cache == NULL
+            || self->traceback == NULL || self->output.left == NULL
+            || self->output.right == NULL || self->output.parent == NULL
+            || self->mismatches == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -178,11 +179,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     if (ret != 0) {
         goto out;
     }
-    /* Initialise the likelihoods and tree. */
-    for (j = 0; j < self->max_nodes; j++) {
-        self->likelihood[j] = NULL_LIKELIHOOD;
-        self->parent[j] = NULL_NODE;
-    }
 out:
     return ret;
 }
@@ -196,6 +192,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->left_sib);
     tsi_safe_free(self->right_sib);
     tsi_safe_free(self->likelihood);
+    tsi_safe_free(self->likelihood_cache);
     tsi_safe_free(self->traceback);
     tsi_safe_free(self->output.left);
     tsi_safe_free(self->output.right);
@@ -654,7 +651,7 @@ remove_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
     node_id_t lsib = left_sib[c];
     node_id_t rsib = right_sib[c];
 
-    /* printf("REMOVE EDGE %d -> %d\n", edge.child, edge.parent); */
+    /* printf("REMOVE EDGE %d\t%d\t%d\t%d\n", edge.left, edge.right, edge.parent, edge.child); */
     if (lsib == NULL_NODE) {
         left_child[p] = rsib;
     } else {
@@ -678,7 +675,7 @@ insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
     node_id_t p = edge.parent;
     node_id_t c = edge.child;
     node_id_t u = right_child[p];
-    /* printf("INSERT EDGE %d -> %d\n", edge.child, edge.parent); */
+    /* printf("INSERT EDGE %d\t%d\t%d\t%d\n", edge.left, edge.right, edge.parent, edge.child); */
 
     parent[c] = p;
     if (u == NULL_NODE) {
@@ -721,13 +718,14 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     int j, k, l, remove_start;
     site_id_t site;
     edge_t edge;
-    node_id_t u, last_parent;
+    node_id_t u;
     double L_child = 0;
     /* Use the restrict keyword here to try to improve performance by avoiding
      * unecessary loads. We must be very careful to to ensure that all references
      * to this memory for the duration of this function is through these variables.
      */
     double *restrict L = self->likelihood;
+    double *restrict L_cache = self->likelihood_cache;
     node_id_t *restrict parent = self->parent;
     node_id_t *restrict left_child = self->left_child;
     node_id_t *restrict right_child = self->right_child;
@@ -745,6 +743,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     pos = 0;
     right = self->num_sites;
 
+    /* printf("FILLING FIRST TREE\n"); */
     while (j < M && k < M && edges[j].left <= start) {
         while (k < M && edges[O[k]].right == pos) {
             remove_edge(edges[O[k]], parent, left_child, right_child, left_sib, right_sib);
@@ -769,11 +768,13 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
      * one. All non-zero roots are marked with a special value so we can
      * identify them when the enter the tree */
     L[0] = 1.0;
+    L_cache[0] = NULL_LIKELIHOOD;
     ret = ancestor_matcher_insert_likelihood_node(self, 0);
     if (ret != 0) {
         goto out;
     }
     for (u = 1; u < (node_id_t) self->num_nodes; u++) {
+        L_cache[u] = NULL_LIKELIHOOD;
         if (parent[u] != NULL_NODE) {
             L[u] = NULL_LIKELIHOOD;
         } else {
@@ -821,25 +822,33 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
 
         /* Move on to the next tree */
         remove_start = k;
-        last_parent = NULL_NODE;
         while (k < M  && edges[O[k]].right == right) {
             edge = edges[O[k]];
             remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             k++;
             if (L[edge.child] == NULL_LIKELIHOOD) {
-                if (edge.parent != last_parent) {
-                    /* Traverse upwards until we find and L value for the child.
-                     * We avoid the cost of repeated rootward traversals for edges
-                     * with the same parent (which should be adjacent) by caching
-                     * the L value that we find. */
-                    u = edge.parent;
-                    while (L[u] == NULL_LIKELIHOOD) {
-                        u = parent[u];
-                        /* assert(u != NULL_NODE); */
-                    }
-                    L_child = L[u];
-                    last_parent = edge.parent;
+                u = edge.parent;
+                /* printf("TRAVERSE:"); */
+                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == NULL_LIKELIHOOD) {
+                    /* printf("%d ", u); */
+                    u = parent[u];
                 }
+                /* printf("\n"); */
+                L_child = L_cache[u];
+                if (L_child == NULL_LIKELIHOOD) {
+                    /* printf("cache miss\n"); */
+                    L_child = L[u];
+                }
+                assert(L_child >= 0);
+                u = edge.parent;
+                /* Fill in the cache by traversing back upwards */
+                /* printf("Filling cache"); */
+                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == NULL_LIKELIHOOD) {
+                    /* printf("%d ", u); */
+                    L_cache[u] = L_child;
+                    u = parent[u];
+                }
+                /* printf("\n"); */
                 L[edge.child] = L_child;
                 ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
                 if (ret != 0) {
@@ -847,6 +856,16 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 }
             }
         }
+        /* reset the L cache */
+        for (l = remove_start; l < k; l++) {
+            edge = edges[O[l]];
+            u = edge.parent;
+            while (L_cache[u] != NULL_LIKELIHOOD) {
+                L_cache[u] = NULL_LIKELIHOOD;
+                u = parent[u];
+            }
+        }
+
         left = right;
         /* printf("Inserting for j = %d and left = %d (%d)\n", (int) j, (int) left, */
         /*         edges[I[j]].left); */

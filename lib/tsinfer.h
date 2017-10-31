@@ -166,6 +166,7 @@ typedef struct {
     node_id_t *left_sib;
     node_id_t *right_sib;
     double *likelihood;
+    double *likelihood_cache;
     avl_tree_t likelihood_nodes;
     likelihood_list_t **traceback;
     object_heap_t avl_node_heap;

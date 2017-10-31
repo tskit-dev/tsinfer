@@ -19,6 +19,12 @@ cmp_edge_insertion(const void *a, const void *b) {
     int ret = (ca->left > cb->left) - (ca->left < cb->left);
     if (ret == 0) {
         ret = (ca->time > cb->time) - (ca->time < cb->time);
+        if (ret == 0) {
+            ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
+            if (ret == 0) {
+                ret = (ca->child > cb->child) - (ca->child < cb->child);
+            }
+        }
     }
     return ret;
 }
@@ -30,6 +36,12 @@ cmp_edge_removal(const void *a, const void *b) {
     int ret = (ca->right > cb->right) - (ca->right < cb->right);
     if (ret == 0) {
         ret = (ca->time < cb->time) - (ca->time > cb->time);
+        if (ret == 0) {
+            ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
+            if (ret == 0) {
+                ret = (ca->child > cb->child) - (ca->child < cb->child);
+            }
+        }
     }
     return ret;
 }

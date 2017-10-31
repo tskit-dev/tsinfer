@@ -179,8 +179,8 @@ def save_ancestor_ts(
 
     manager = tsinfer.InferenceManager(
         S, positions, ts.sequence_length, recombination_rate,
-        num_threads=num_threads, method=method, progress=True, log_level="INFO",
-        ancestor_traceback_file_pattern="tmp__NOBACKUP__/tracebacks/tb_{}.pkl")
+        num_threads=num_threads, method=method, progress=True, log_level="INFO")
+        # ancestor_traceback_file_pattern="tmp__NOBACKUP__/tracebacks/tb_{}.pkl")
 
     manager.initialise()
     manager.process_ancestors()
@@ -193,6 +193,15 @@ def examine_ancestor_ts(filename):
     print("num_sites = ", ts.num_sites)
     print("num_trees = ", ts.num_trees)
     print("num_edges = ", ts.num_edges)
+
+    for (left, right), edges_in, edges_out in ts.edge_diffs():
+        print("NEW TREE: {:.2f}".format(right - left), len(edges_in), len(edges_out), sep="\t")
+        print("OUT")
+        for e in edges_out:
+            print("\t", e.parent, e.child)
+        print("IN")
+        for e in edges_in:
+            print("\t", e.parent, e.child)
 
     # zero_edges = 0
     # edges = msprime.EdgeTable()
@@ -214,26 +223,26 @@ def examine_ancestor_ts(filename):
     #     print(t.draw(format="unicode"))
     #     print("=" * 200)
 
-    import pickle
-    j = 960
-    filename = "tmp__NOBACKUP__/tracebacks/tb_{}.pkl".format(j)
-    with open(filename, "rb") as f:
-        debug = pickle.load(f)
+    # import pickle
+    # j = 960
+    # filename = "tmp__NOBACKUP__/tracebacks/tb_{}.pkl".format(j)
+    # with open(filename, "rb") as f:
+    #     debug = pickle.load(f)
 
-    tracebacks = debug["traceback"]
-    # print("focal = ", debug["focal_sites"])
-    del debug["traceback"]
-    print("debug:", debug)
-    a = debug["ancestor"]
-    lengths = [len(t) for t in tracebacks]
-    import matplotlib as mp
-    # Force matplotlib to not use any Xwindows backend.
-    mp.use('Agg')
-    import matplotlib.pyplot as plt
+    # tracebacks = debug["traceback"]
+    # # print("focal = ", debug["focal_sites"])
+    # del debug["traceback"]
+    # print("debug:", debug)
+    # a = debug["ancestor"]
+    # lengths = [len(t) for t in tracebacks]
+    # import matplotlib as mp
+    # # Force matplotlib to not use any Xwindows backend.
+    # mp.use('Agg')
+    # import matplotlib.pyplot as plt
 
-    plt.clf()
-    plt.plot(lengths)
-    plt.savefig("tracebacks_{}.png".format(j))
+    # plt.clf()
+    # plt.plot(lengths)
+    # plt.savefig("tracebacks_{}.png".format(j))
 
 #     start = 0
 #     for j, t in enumerate(tracebacks[start:]):
@@ -289,12 +298,13 @@ if __name__ == "__main__":
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
     #         num_threads=40, log_level="DEBUG")
 
-    # save_ancestor_ts(100, 1, 1, recombination_rate=1, num_threads=2)
+    # save_ancestor_ts(100, 10, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
     # tsinfer_dev(20, 0.2, seed=9, num_threads=1, error_rate=0.0, method="P")
     for seed in range(1, 10000):
         print(seed)
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
         tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",

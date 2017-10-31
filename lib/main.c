@@ -365,6 +365,7 @@ run_generate(const char *input_file, int verbose)
             printf("Generating for frequency class %d: age = %d num_ancestors = %d\n",
                     (int) j, (int) age, (int) num_ancestors);
         }
+        /* printf("AGE = %d\n", (int) age); */
         total_edges = 0;
         total_mutations = 0;
         child = ts_builder.num_nodes;
