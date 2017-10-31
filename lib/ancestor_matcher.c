@@ -382,17 +382,17 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         descendant = false;
         if (mutation_node != NULL_NODE) {
             v = u;
-            while (v != NULL_NODE && v != mutation_node && path_cache[v] == -1) {
+            while (v != NULL_NODE && v != mutation_node && path_cache[v] == CACHE_UNSET) {
                 v = parent[v];
             }
-            if (v != NULL_NODE && path_cache[v] != -1) {
+            if (v != NULL_NODE && path_cache[v] != CACHE_UNSET) {
                 descendant = (bool) path_cache[v];
             } else {
                 descendant = v == mutation_node;
             }
             /* Insert this path into the cache */
             v = u;
-            while (v != NULL_NODE && v != mutation_node && path_cache[v] == -1) {
+            while (v != NULL_NODE && v != mutation_node && path_cache[v] == CACHE_UNSET) {
                 path_cache[v] = descendant;
                 v = parent[v];
             }
@@ -425,8 +425,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         u = *((node_id_t *) a->item);
         L[u] /= max_L;
         v = u;
-        while (v != NULL_NODE && path_cache[v] != -1) {
-            path_cache[v] = -1;
+        while (v != NULL_NODE && path_cache[v] != CACHE_UNSET) {
+            path_cache[v] = CACHE_UNSET;
             v = parent[v];
         }
     }
@@ -832,13 +832,13 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
      * one. All non-zero roots are marked with a special value so we can
      * identify them when the enter the tree */
     L[0] = 1.0;
-    L_cache[0] = NULL_LIKELIHOOD;
+    L_cache[0] = CACHE_UNSET;
     ret = ancestor_matcher_insert_likelihood_node(self, 0);
     if (ret != 0) {
         goto out;
     }
     for (u = 1; u < (node_id_t) self->num_nodes; u++) {
-        L_cache[u] = NULL_LIKELIHOOD;
+        L_cache[u] = CACHE_UNSET;
         if (parent[u] != NULL_NODE) {
             L[u] = NULL_LIKELIHOOD;
         } else {
@@ -893,13 +893,13 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 u = edge.parent;
                 /* printf("TRAVERSE:"); */
-                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == NULL_LIKELIHOOD) {
+                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == CACHE_UNSET) {
                     /* printf("%d ", u); */
                     u = parent[u];
                 }
                 /* printf("\n"); */
                 L_child = L_cache[u];
-                if (L_child == NULL_LIKELIHOOD) {
+                if (L_child == CACHE_UNSET) {
                     /* printf("cache miss\n"); */
                     L_child = L[u];
                 }
@@ -907,7 +907,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 u = edge.parent;
                 /* Fill in the cache by traversing back upwards */
                 /* printf("Filling cache"); */
-                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == NULL_LIKELIHOOD) {
+                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == CACHE_UNSET) {
                     /* printf("%d ", u); */
                     L_cache[u] = L_child;
                     u = parent[u];
@@ -924,8 +924,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         for (l = remove_start; l < k; l++) {
             edge = edges[O[l]];
             u = edge.parent;
-            while (L_cache[u] != NULL_LIKELIHOOD) {
-                L_cache[u] = NULL_LIKELIHOOD;
+            while (L_cache[u] != CACHE_UNSET) {
+                L_cache[u] = CACHE_UNSET;
                 u = parent[u];
             }
         }
