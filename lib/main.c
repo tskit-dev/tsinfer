@@ -495,7 +495,7 @@ run_generate(const char *input_file, int verbose)
         fatal_error("builder update");
     }
 
-    if (0) {
+    if (1) {
         output_ts(&ts_builder);
     }
 

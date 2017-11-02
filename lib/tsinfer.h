@@ -123,10 +123,10 @@ typedef struct {
     double time;
 } edge_sort_t;
 
-typedef struct _likelihood_list_t {
-    node_id_t node;
-    double likelihood;
-    struct _likelihood_list_t *next;
+typedef struct {
+    int32_t size;
+    node_id_t *node;
+    double *likelihood;
 } likelihood_list_t;
 
 typedef struct {
@@ -171,7 +171,7 @@ typedef struct {
     int num_likelihood_nodes;
     node_id_t *likelihood_nodes_tmp;
     node_id_t *likelihood_nodes;
-    likelihood_list_t **traceback;
+    likelihood_list_t *traceback;
     block_allocator_t likelihood_list_allocator;
     size_t total_traceback_size;
     /* Some better nameing is needed here. The 'output' struct here
