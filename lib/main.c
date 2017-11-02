@@ -298,7 +298,7 @@ run_generate(const char *input_file, int verbose)
     /* Buffers for edge output */
     size_t total_edges;
     size_t num_edges;
-    size_t max_edges = 1024;
+    size_t max_edges = 1024 * 1024;
     site_id_t *left_buffer, *left_output;
     site_id_t *right_buffer, *right_output;
     node_id_t *parent_buffer, *parent_output;
@@ -495,7 +495,10 @@ run_generate(const char *input_file, int verbose)
         fatal_error("builder update");
     }
 
-    output_ts(&ts_builder);
+    if (1) {
+        output_ts(&ts_builder);
+    }
+
 
     ancestor_builder_free(&ancestor_builder);
     tree_sequence_builder_free(&ts_builder);

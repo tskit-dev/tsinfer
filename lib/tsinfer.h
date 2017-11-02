@@ -5,7 +5,6 @@
 
 #include "block_allocator.h"
 #include "object_heap.h"
-#include "avl.h"
 
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
@@ -169,10 +168,10 @@ typedef struct {
     double *likelihood;
     double *likelihood_cache;
     int8_t *path_cache;
+    int num_likelihood_nodes;
     node_id_t *likelihood_nodes_tmp;
-    avl_tree_t likelihood_nodes;
+    node_id_t *likelihood_nodes;
     likelihood_list_t **traceback;
-    object_heap_t avl_node_heap;
     block_allocator_t likelihood_list_allocator;
     size_t total_traceback_size;
     /* Some better nameing is needed here. The 'output' struct here

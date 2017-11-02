@@ -1209,7 +1209,7 @@ class AncestorMatcher(object):
                 while self.likelihood[u] == -1:
                     u = self.parent[u]
                 self.likelihood[mutation_node] = self.likelihood[u]
-                self.likelihood_nodes.add(mutation_node)
+                self.likelihood_nodes.append(mutation_node)
 
 
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
@@ -1275,7 +1275,9 @@ class AncestorMatcher(object):
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1
         cached_paths = []
-        for u in set(self.likelihood_nodes):
+        old_likelihood_nodes = list(self.likelihood_nodes)
+        self.likelihood_nodes.clear()
+        for u in old_likelihood_nodes:
             # We need to find the likelihood of the parent of u. If this is
             # the same as u, we can delete it.
             p = self.parent[u]
@@ -1296,7 +1298,8 @@ class AncestorMatcher(object):
                 if self.likelihood[u] == L_p:
                     # Delete u from the map
                     self.likelihood[u] = -1
-                    self.likelihood_nodes.remove(u)
+            if self.likelihood[u] >= 0:
+                self.likelihood_nodes.append(u)
         # Reset the L cache
         for u in cached_paths:
             v = u
@@ -1365,7 +1368,7 @@ class AncestorMatcher(object):
         self.right_sib = np.zeros(n, dtype=int) - 1
         self.traceback = [{} for _ in range(m)]
         self.likelihood = np.zeros(n) - 2
-        self.likelihood_nodes = set()
+        self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
         # print("MATCH: start=", start, "end = ", end)
@@ -1391,7 +1394,7 @@ class AncestorMatcher(object):
             pos = right
         assert left < right
 
-        self.likelihood_nodes.add(0)
+        self.likelihood_nodes.append(0)
         self.likelihood[0] = 1
         for u in range(n):
             if self.parent[u] != -1:
@@ -1445,7 +1448,7 @@ class AncestorMatcher(object):
                         L_cache[u] = L_child
                         u = self.parent[u]
                     self.likelihood[edge.child] = L_child
-                    self.likelihood_nodes.add(edge.child)
+                    self.likelihood_nodes.append(edge.child)
             # Clear the L cache
             for l in range(remove_start, k):
                 edge = edges[O[l]]
@@ -1465,7 +1468,7 @@ class AncestorMatcher(object):
                 for u in [edge.parent, edge.child]:
                     if self.likelihood[u] == -2:
                         self.likelihood[u] = 0
-                        self.likelihood_nodes.add(u)
+                        self.likelihood_nodes.append(u)
             right = m
             if j < M:
                 right = min(right, edges[j].left)

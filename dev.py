@@ -131,19 +131,20 @@ def analyse_file(filename):
     #         break
 
 def build_profile_inputs(num_megabases):
-    n = 10**4
+    n = 10**3
     L = num_megabases * 10**6
     ts = msprime.simulate(
         n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
         random_seed=10)
-    input_file = "tmp__NOBACKUP__/large-input-source-n=10k-m={}.hdf5".format(num_megabases)
+    input_file = "tmp__NOBACKUP__/large-input-source-n={}-m={}.hdf5".format(
+            n, num_megabases)
     ts.dump(input_file)
     S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for v in ts.variants():
         S[:, v.index] = v.genotypes
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/large-input-n=10k-m={}.hdf5".format(num_megabases)
+    input_file = "tmp__NOBACKUP__/large-input-n={}-m={}.hdf5".format(n, num_megabases)
     make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
 
 def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
@@ -293,10 +294,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # build_profile_inputs(100)
+    # build_profile_inputs(1)
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
-    #         num_threads=40, log_level="DEBUG")
+    #         num_threads=8, log_level="INFO")
 
     # save_ancestor_ts(100, 10, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])

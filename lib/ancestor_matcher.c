@@ -8,13 +8,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-static int
-cmp_node_id(const void *a, const void *b) {
-    const node_id_t *ia = (const node_id_t *) a;
-    const node_id_t *ib = (const node_id_t *) b;
-    return (*ia > *ib) - (*ia < *ib);
-}
-
 static bool
 approximately_equal(const double a, const double b)
 {
@@ -40,16 +33,15 @@ is_nonzero_root(const node_id_t u, const node_id_t *restrict parent,
 static void
 ancestor_matcher_check_state(ancestor_matcher_t *self)
 {
-    size_t num_likelihoods;
-    avl_node_t *a;
-    size_t j;
+    int num_likelihoods;
+    int j;
     node_id_t u;
     double x;
     likelihood_list_t *z;
 
     /* Check the properties of the likelihood map */
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
+    for (j = 0; j < self->num_likelihood_nodes; j++) {
+        u = self->likelihood_nodes[j];
         x = self->likelihood[u];
         assert(x >= 0);
     }
@@ -65,11 +57,9 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
             assert(self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD);
         }
     }
-    assert(num_likelihoods == avl_count(&self->likelihood_nodes));
-    assert(avl_count(&self->likelihood_nodes) ==
-            object_heap_get_num_allocated(&self->avl_node_heap));
+    assert(num_likelihoods == self->num_likelihood_nodes);
 
-    for (j = 0; j < self->num_sites; j++) {
+    for (j = 0; j < (int) self->num_sites; j++) {
         z = self->traceback[j];
         if (z != NULL) {
             /* There must be at least one node with likelihood == 1. */
@@ -88,29 +78,28 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
 int
 ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
-    size_t j;
+    int j;
     likelihood_list_t *l;
-    avl_node_t *a;
     node_id_t u;
 
     fprintf(out, "Ancestor matcher state\n");
     tree_sequence_builder_print_state(self->tree_sequence_builder, out);
     fprintf(out, "tree = \n");
     fprintf(out, "id\tparent\tlchild\trchild\tlsib\trsib\tlikelihood\n");
-    for (j = 0; j < self->num_nodes; j++) {
+    for (j = 0; j < (int) self->num_nodes; j++) {
         fprintf(out, "%d\t%d\t%d\t%d\t%d\t%d\t%g\n", (int) j, self->parent[j],
                 self->left_child[j], self->right_child[j], self->left_sib[j],
                 self->right_sib[j], self->likelihood[j]);
     }
     fprintf(out, "likelihood nodes\n");
     /* Check the properties of the likelihood map */
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
+    for (j = 0; j < self->num_likelihood_nodes; j++) {
+        u = self->likelihood_nodes[j];
         printf("%d -> %g\n", u, self->likelihood[u]);
     }
 
     fprintf(out, "traceback\n");
-    for (j = 0; j < self->num_sites; j++) {
+    for (j = 0; j < (int) self->num_sites; j++) {
         if (self->traceback[j] != NULL) {
             fprintf(out, "\t%d\t", (int) j);
             for (l = self->traceback[j]; l != NULL; l = l->next) {
@@ -119,7 +108,6 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
             fprintf(out, "\n");
         }
     }
-    object_heap_print_state(&self->avl_node_heap, out);
     block_allocator_print_state(&self->likelihood_list_allocator, out);
 
     ancestor_matcher_check_state(self);
@@ -132,7 +120,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
 {
     int ret = 0;
     /* TODO make these input parameters. */
-    size_t avl_node_block_size = 8192;
     size_t likelihood_list_block_size = 64 * 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
@@ -149,6 +136,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood = malloc(self->max_nodes * sizeof(double));
     self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
+    self->likelihood_nodes = malloc(self->max_nodes * sizeof(node_id_t));
     self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(node_id_t));
     self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t *));
@@ -160,20 +148,13 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
             || self->left_child == NULL || self->right_child == NULL
             || self->left_sib == NULL || self->right_sib == NULL
             || self->likelihood == NULL || self->likelihood_cache == NULL
+            || self->likelihood_nodes == NULL
             || self->likelihood_nodes_tmp == NULL || self->traceback == NULL
             || self->output.left == NULL || self->output.right == NULL
             || self->output.parent == NULL || self->mismatches == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    /* The AVL node heap stores the avl node and the node_id_t payload in
-     * adjacent memory. */
-    ret = object_heap_init(&self->avl_node_heap,
-            sizeof(avl_node_t) + sizeof(node_id_t), avl_node_block_size, NULL);
-    if (ret != 0) {
-        goto out;
-    }
-    avl_init_tree(&self->likelihood_nodes, cmp_node_id, NULL);
     ret = block_allocator_alloc(&self->likelihood_list_allocator,
             likelihood_list_block_size);
     if (ret != 0) {
@@ -193,6 +174,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->right_sib);
     tsi_safe_free(self->likelihood);
     tsi_safe_free(self->likelihood_cache);
+    tsi_safe_free(self->likelihood_nodes);
     tsi_safe_free(self->likelihood_nodes_tmp);
     tsi_safe_free(self->path_cache);
     tsi_safe_free(self->traceback);
@@ -200,68 +182,27 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->output.right);
     tsi_safe_free(self->output.parent);
     tsi_safe_free(self->mismatches);
-    object_heap_free(&self->avl_node_heap);
     block_allocator_free(&self->likelihood_list_allocator);
     return 0;
-}
-
-static inline void
-ancestor_matcher_free_avl_node(ancestor_matcher_t *self, avl_node_t *node)
-{
-    object_heap_free_object(&self->avl_node_heap, node);
-}
-
-static inline avl_node_t * WARN_UNUSED
-ancestor_matcher_alloc_avl_node(ancestor_matcher_t *self, node_id_t node)
-{
-    avl_node_t *ret = NULL;
-    node_id_t *payload;
-
-    if (object_heap_empty(&self->avl_node_heap)) {
-        if (object_heap_expand(&self->avl_node_heap) != 0) {
-            goto out;
-        }
-    }
-    ret = (avl_node_t *) object_heap_alloc_object(&self->avl_node_heap);
-    if (ret == NULL) {
-        goto out;
-    }
-    /* We store the node_id_t value after the avl_node */
-    payload = (node_id_t *) (ret + 1);
-    *payload = node;
-    avl_init_node(ret, payload);
-out:
-    return ret;
-}
-
-static int
-ancestor_matcher_insert_likelihood_node(ancestor_matcher_t *self, node_id_t node)
-{
-    int ret = 0;
-    avl_node_t *avl_node;
-
-    avl_node = ancestor_matcher_alloc_avl_node(self, node);
-    if (avl_node == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    avl_node = avl_insert_node(&self->likelihood_nodes, avl_node);
-    assert(avl_node != NULL);
-out:
-    return ret;
 }
 
 static int
 ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const node_id_t node,
         double *restrict L)
 {
-    avl_node_t *avl_node;
+    /* Remove the specified node from the list of nodes */
+    int j, k;
+    node_id_t *restrict L_nodes = self->likelihood_nodes;
 
-    avl_node = avl_search(&self->likelihood_nodes, &node);
-    assert(L[node] != NULL_LIKELIHOOD);
-    assert(avl_node != NULL);
-    avl_unlink_node(&self->likelihood_nodes, avl_node);
-    ancestor_matcher_free_avl_node(self, avl_node);
+    k = 0;
+    for (j = 0; j < self->num_likelihood_nodes; j++) {
+        L_nodes[k] = L_nodes[j];
+        if (L_nodes[j] != node) {
+            k++;
+        }
+    }
+    assert(self->num_likelihood_nodes == k + 1);
+    self->num_likelihood_nodes = k;
     L[node] = NULL_LIKELIHOOD;
     return 0;
 }
@@ -274,7 +215,7 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
 {
     int ret = 0;
     node_id_t u;
-    avl_node_t *restrict a;
+    int j;
     likelihood_list_t *restrict list_node;
     likelihood_list_t **restrict T = self->traceback;
     bool match, loop_completed;
@@ -285,8 +226,8 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
     if (site_id > 0) {
         loop_completed = true;
         list_node = T[site_id - 1];
-        for (a = self->likelihood_nodes.tail; a != NULL; a = a->prev) {
-            u = *((node_id_t *) a->item);
+        for (j = self->num_likelihood_nodes - 1; j >= 0; j--) {
+            u = self->likelihood_nodes[j];
             if (list_node == NULL || list_node->node != u || list_node->likelihood != L[u]) {
                 loop_completed = false;
                 break;
@@ -300,13 +241,13 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
     } else {
         /* Allocate the entire list at once to save some overhead */
         list_node = block_allocator_get(&self->likelihood_list_allocator,
-                avl_count(&self->likelihood_nodes) * sizeof(likelihood_list_t));
+                self->num_likelihood_nodes * sizeof(likelihood_list_t));
         if (list_node == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
         }
-        for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-            u = *((node_id_t *) a->item);
+        for (j = 0; j < self->num_likelihood_nodes; j++) {
+            u = self->likelihood_nodes[j];
             list_node->node = u;
             list_node->likelihood = L[u];
             list_node->next = T[site_id];
@@ -314,7 +255,7 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
             list_node++;
         }
     }
-    self->total_traceback_size += avl_count(&self->likelihood_nodes);
+    self->total_traceback_size += self->num_likelihood_nodes;
 out:
     return ret;
 }
@@ -351,12 +292,13 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     const double rho = self->tree_sequence_builder->sites.recombination_rate[site];
     const double r = 1 - exp(-rho / n);
     const double err = self->observation_error;
+    const int num_likelihood_nodes = self->num_likelihood_nodes;
+    const node_id_t *restrict L_nodes = self->likelihood_nodes;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
-    double x, y, max_L, emission;
-    avl_node_t *restrict head = self->likelihood_nodes.head;
-    avl_node_t *restrict a;
+    double x, y, max_L, max_L_inv, emission;
     int8_t *restrict path_cache = self->path_cache;
+    int j;
     bool descendant;
     node_id_t u, v;
     double distance = 1;
@@ -369,9 +311,9 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     no_recomb_proba *= distance;
 
     max_L = -1;
-    /* printf("likelihoods for node=%d, n=%d\n", mutation_node, avl_count(&self->likelihood_nodes)); */
-    for (a = head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
+    /* printf("likelihoods for node=%d, n=%d\n", mutation_node, self->num_likelihood_nodes); */
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
         /* Determine if the node this likelihood is associated with is a descendant
          * of the mutation node. To avoid the cost of repeatedly traversing up the
          * tree, we keep a cache of the paths that we have already traversed. When
@@ -418,10 +360,11 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         /*         mutation_node, u, x, y, emission); */
     }
     assert(max_L > 0);
+    max_L_inv = 1.0 / max_L;
     /* Normalise and reset the path cache. */
-    for (a = head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
-        L[u] /= max_L;
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
+        L[u] *= max_L_inv;
         v = u;
         while (v != NULL_NODE && path_cache[v] != CACHE_UNSET) {
             path_cache[v] = CACHE_UNSET;
@@ -437,17 +380,17 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
 {
     int ret = 0;
     double L_p;
-    avl_node_t *a, *tmp;
-    node_id_t u, v, p, j, num_cached_paths;
+    node_id_t u, v, p;
     node_id_t *restrict cached_paths = self->likelihood_nodes_tmp;
+    const int old_num_likelihood_nodes = self->num_likelihood_nodes;
+    node_id_t *restrict L_nodes = self->likelihood_nodes;
+    int j, num_cached_paths, num_likelihood_nodes;
 
     num_cached_paths = 0;
-    a = self->likelihood_nodes.head;
-    while (a != NULL) {
-        tmp = a->next;
-        u = *((node_id_t *) a->item);
+    num_likelihood_nodes = 0;
+    for (j = 0; j < old_num_likelihood_nodes; j++) {
+        u = L_nodes[j];
         p = parent[u];
-
         if (p != NULL_NODE) {
             cached_paths[num_cached_paths] = p;
             num_cached_paths++;
@@ -468,14 +411,17 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
             /* If the likelihood for the parent is equal to the child we can
              * delete the child likelihood */
             if (approximately_equal(L[u], L_p)) {
-                /* Delete this likelihood value */
-                avl_unlink_node(&self->likelihood_nodes, a);
-                ancestor_matcher_free_avl_node(self, a);
                 L[u] = NULL_LIKELIHOOD;
             }
         }
-        a = tmp;
+        if (L[u] >= 0) {
+            L_nodes[num_likelihood_nodes] = L_nodes[j];
+            num_likelihood_nodes++;
+        }
     }
+    assert(num_likelihood_nodes > 0);
+
+    self->num_likelihood_nodes = num_likelihood_nodes;
     /* Reset the L cache */
     for (j = 0; j < num_cached_paths; j++) {
         v = cached_paths[j];
@@ -511,7 +457,7 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
         /* If there are no mutations at this or the last site, then
          * we are guaranteed that the likelihoods are equal. */
         self->traceback[site] = self->traceback[site - 1];
-        self->total_traceback_size += avl_count(&self->likelihood_nodes);
+        self->total_traceback_size += self->num_likelihood_nodes;
     } else {
         if (mutation_node != NULL_NODE) {
             /* Insert a new L-value for the mutation node if needed */
@@ -522,10 +468,8 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
                     assert(u != NULL_NODE);
                 }
                 L[mutation_node] = L[u];
-                ret = ancestor_matcher_insert_likelihood_node(self, mutation_node);
-                if (ret != 0) {
-                    goto out;
-                }
+                self->likelihood_nodes[self->num_likelihood_nodes] = mutation_node;
+                self->num_likelihood_nodes++;
             }
         }
         ret = ancestor_matcher_store_traceback(self, site, L);
@@ -567,7 +511,6 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     assert(self->max_nodes == self->tree_sequence_builder->max_nodes);
     self->num_nodes = self->tree_sequence_builder->num_nodes;
 
-    assert(avl_count(&self->likelihood_nodes) == 0);
     memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t *));
     memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));
     ret = block_allocator_reset(&self->likelihood_list_allocator);
@@ -575,6 +518,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
         goto out;
     }
     self->total_traceback_size = 0;
+    self->num_likelihood_nodes = 0;
     ancestor_matcher_reset_tree(self);
 out:
     return ret;
@@ -593,7 +537,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     const node_id_t *restrict I = self->tree_sequence_builder->removal_order;
     node_id_t u, max_likelihood_node;
     site_id_t left, right, pos;
-    avl_node_t *a, *tmp;
     likelihood_list_t *restrict z;
     mutation_list_node_t *mut_list;
 
@@ -606,18 +549,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     /* Process the final likelihoods and find the maximum value. Reset
      * the likelihood values so that we can reused the buffer during
      * traceback. */
-    a = self->likelihood_nodes.head;
-    while (a != NULL) {
-        tmp = a->next;
-        u = *((node_id_t *) a->item);
+    for (j = 0; j < self->num_likelihood_nodes; j++) {
+        u = self->likelihood_nodes[j];
         if (approximately_one(L[u])) {
             self->output.parent[self->output.size] = u;
         }
         L[u] = NULL_LIKELIHOOD;
-        ancestor_matcher_free_avl_node(self, a);
-        a = tmp;
     }
-    avl_clear_tree(&self->likelihood_nodes);
+    self->num_likelihood_nodes = 0;
     assert(self->output.parent[self->output.size] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
@@ -756,17 +695,19 @@ insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
 static void
 ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restrict L)
 {
-    avl_node_t *restrict a;
     double max_L = -1;
+    const int num_likelihood_nodes = self->num_likelihood_nodes;
+    node_id_t *restrict L_nodes = self->likelihood_nodes;
     node_id_t u;
+    int j;
 
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
         max_L = TSI_MAX(max_L,  L[u]);
     }
     assert(max_L > 0);
-    for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
-        u = *((node_id_t *) a->item);
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
         L[u] /= max_L;
     }
 }
@@ -831,10 +772,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
      * identify them when the enter the tree */
     L[0] = 1.0;
     L_cache[0] = CACHE_UNSET;
-    ret = ancestor_matcher_insert_likelihood_node(self, 0);
-    if (ret != 0) {
-        goto out;
-    }
+    self->likelihood_nodes[0] = 0;
+    self->num_likelihood_nodes = 1;
     for (u = 1; u < (node_id_t) self->num_nodes; u++) {
         L_cache[u] = CACHE_UNSET;
         if (parent[u] != NULL_NODE) {
@@ -912,10 +851,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 }
                 /* printf("\n"); */
                 L[edge.child] = L_child;
-                ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
-                if (ret != 0) {
-                    goto out;
-                }
+                self->likelihood_nodes[self->num_likelihood_nodes] = edge.child;
+                self->num_likelihood_nodes++;
             }
         }
         /* reset the L cache */
@@ -940,17 +877,13 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
              * because this will be done for the next site anyway. */
             if (L[edge.parent] == NONZERO_ROOT_LIKELIHOOD) {
                 L[edge.parent] = 0;
-                ret = ancestor_matcher_insert_likelihood_node(self, edge.parent);
-                if (ret != 0) {
-                    goto out;
-                }
+                self->likelihood_nodes[self->num_likelihood_nodes] = edge.parent;
+                self->num_likelihood_nodes++;
             }
             if (L[edge.child] == NONZERO_ROOT_LIKELIHOOD) {
                 L[edge.child] = 0;
-                ret = ancestor_matcher_insert_likelihood_node(self, edge.child);
-                if (ret != 0) {
-                    goto out;
-                }
+                self->likelihood_nodes[self->num_likelihood_nodes] = edge.child;
+                self->num_likelihood_nodes++;
             }
         }
         right = self->num_sites;
