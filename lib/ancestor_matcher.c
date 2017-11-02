@@ -322,17 +322,21 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         descendant = false;
         if (mutation_node != NULL_NODE) {
             v = u;
-            while (v != NULL_NODE && v != mutation_node && path_cache[v] == CACHE_UNSET) {
+            while (likely(v != NULL_NODE)
+                    && likely(v != mutation_node)
+                    && likely(path_cache[v] == CACHE_UNSET)) {
                 v = parent[v];
             }
-            if (v != NULL_NODE && path_cache[v] != CACHE_UNSET) {
+            if (likely(v != NULL_NODE) && likely(path_cache[v] != CACHE_UNSET)) {
                 descendant = (bool) path_cache[v];
             } else {
                 descendant = v == mutation_node;
             }
             /* Insert this path into the cache */
             v = u;
-            while (v != NULL_NODE && v != mutation_node && path_cache[v] == CACHE_UNSET) {
+            while (likely(v != NULL_NODE)
+                    && likely(v != mutation_node)
+                    && likely(path_cache[v] == CACHE_UNSET)) {
                 path_cache[v] = descendant;
                 v = parent[v];
             }
@@ -366,7 +370,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         u = L_nodes[j];
         L[u] *= max_L_inv;
         v = u;
-        while (v != NULL_NODE && path_cache[v] != CACHE_UNSET) {
+        while (likely(v != NULL_NODE) && likely(path_cache[v] != CACHE_UNSET)) {
             path_cache[v] = CACHE_UNSET;
             v = parent[v];
         }
@@ -395,16 +399,16 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
             cached_paths[num_cached_paths] = p;
             num_cached_paths++;
             v = p;
-            while (L[v] == NULL_LIKELIHOOD && L_cache[v] == CACHE_UNSET) {
+            while (likely(L[v] == NULL_LIKELIHOOD) && likely(L_cache[v] == CACHE_UNSET)) {
                 v = parent[v];
             }
             L_p = L_cache[v];
-            if (L_p == CACHE_UNSET) {
+            if (unlikely(L_p == CACHE_UNSET)) {
                 L_p = L[v];
             }
             /* Fill in the L cache */
             v = p;
-            while (L[v] == NULL_LIKELIHOOD && L_cache[v] == CACHE_UNSET) {
+            while (likely(L[v] == NULL_LIKELIHOOD) && likely(L_cache[v] == CACHE_UNSET)) {
                 L_cache[v] = L_p;
                 v = parent[v];
             }
@@ -425,14 +429,11 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
     /* Reset the L cache */
     for (j = 0; j < num_cached_paths; j++) {
         v = cached_paths[j];
-        while (v != NULL_NODE && L_cache[v] != CACHE_UNSET) {
+        while (likely(v != NULL_NODE) && likely(L_cache[v] != CACHE_UNSET)) {
             L_cache[v] = CACHE_UNSET;
             v = parent[v];
         }
     }
-    /* for (j = 0; j < (int) self->tree_sequence_builder->num_nodes; j++) { */
-    /*     assert(L_cache[j] == CACHE_UNSET); */
-    /* } */
     return ret;
 }
 
@@ -798,7 +799,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         renormalise_required = false;
         for (l = remove_start; l < k; l++) {
             edge = edges[O[l]];
-            if (is_nonzero_root(edge.child, parent, left_child)) {
+            if (unlikely(is_nonzero_root(edge.child, parent, left_child))) {
                 if (approximately_one(L[edge.child])) {
                     renormalise_required = true;
                 }
@@ -808,9 +809,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 L[edge.child] = NONZERO_ROOT_LIKELIHOOD;
             }
         }
-        if (renormalise_required) {
+        if (unlikely(renormalise_required)) {
             ancestor_matcher_renormalise_likelihoods(self, L);
         }
+
         /* ancestor_matcher_print_state(self, stdout); */
         /* ancestor_matcher_check_state(self); */
         for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
@@ -829,22 +831,20 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             k++;
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 u = edge.parent;
-                /* printf("TRAVERSE:"); */
-                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == CACHE_UNSET) {
-                    /* printf("%d ", u); */
+                while (likely(L[u] == NULL_LIKELIHOOD)
+                        && likely(L_cache[u] == CACHE_UNSET)) {
                     u = parent[u];
                 }
-                /* printf("\n"); */
                 L_child = L_cache[u];
-                if (L_child == CACHE_UNSET) {
-                    /* printf("cache miss\n"); */
+                if (unlikely(L_child == CACHE_UNSET)) {
                     L_child = L[u];
                 }
                 assert(L_child >= 0);
                 u = edge.parent;
                 /* Fill in the cache by traversing back upwards */
                 /* printf("Filling cache"); */
-                while (L[u] == NULL_LIKELIHOOD && L_cache[u] == CACHE_UNSET) {
+                while (likely(L[u] == NULL_LIKELIHOOD)
+                        && likely(L_cache[u] == CACHE_UNSET)) {
                     /* printf("%d ", u); */
                     L_cache[u] = L_child;
                     u = parent[u];
@@ -859,7 +859,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         for (l = remove_start; l < k; l++) {
             edge = edges[O[l]];
             u = edge.parent;
-            while (L_cache[u] != CACHE_UNSET) {
+            while (likely(L_cache[u] != CACHE_UNSET)) {
                 L_cache[u] = CACHE_UNSET;
                 u = parent[u];
             }
@@ -875,12 +875,12 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             /* Insert zero likelihoods for any nonzero roots that have entered
              * the tree. Note we don't bother trying to compress the tree here
              * because this will be done for the next site anyway. */
-            if (L[edge.parent] == NONZERO_ROOT_LIKELIHOOD) {
+            if (unlikely(L[edge.parent] == NONZERO_ROOT_LIKELIHOOD)) {
                 L[edge.parent] = 0;
                 self->likelihood_nodes[self->num_likelihood_nodes] = edge.parent;
                 self->num_likelihood_nodes++;
             }
-            if (L[edge.child] == NONZERO_ROOT_LIKELIHOOD) {
+            if (unlikely(L[edge.child] == NONZERO_ROOT_LIKELIHOOD)) {
                 L[edge.child] = 0;
                 self->likelihood_nodes[self->num_likelihood_nodes] = edge.child;
                 self->num_likelihood_nodes++;

@@ -236,3 +236,6 @@ do {\
 
 #define TSI_MAX(a,b) ((a) > (b) ? (a) : (b))
 #define TSI_MIN(a,b) ((a) < (b) ? (a) : (b))
+
+#define unlikely(expr) __builtin_expect (!!(expr), 0)
+#define likely(expr) __builtin_expect (!!(expr), 1)
