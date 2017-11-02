@@ -234,3 +234,6 @@ do {\
         free(pointer);\
     }\
 } while (0)
+
+#define TSI_MAX(a,b) ((a) > (b) ? (a) : (b))
+#define TSI_MIN(a,b) ((a) < (b) ? (a) : (b))

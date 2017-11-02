@@ -6,9 +6,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-/* TODO remove */
-#include <gsl/gsl_math.h>
-
 #include "avl.h"
 
 
@@ -194,7 +191,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
             self->num_sites * sizeof(double));
 
     ret = block_allocator_alloc(&self->block_allocator,
-            GSL_MIN(1024, num_sites * sizeof(mutation_list_node_t) / 4));
+            TSI_MIN(1024, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
     }
@@ -620,13 +617,13 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
             /* The parents from the first path */
             parent_time = self->time[0] + 1;
             for (l = path.start; l < path.end; l++) {
-                 parent_time = GSL_MIN(parent_time, self->time[active[l].parent]);
+                 parent_time = TSI_MIN(parent_time, self->time[active[l].parent]);
             }
             /* Get the chilren time from the first edge in each path. */
             children_time = -1;
             for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
                 path = paths[shared_recombinations[j][k]];
-                children_time = GSL_MAX(children_time, self->time[active[path.start].child]);
+                children_time = TSI_MAX(children_time, self->time[active[path.start].child]);
             }
             new_time = children_time + (parent_time - children_time) / 2;
             new_node = tree_sequence_builder_add_node(self, new_time, false);
@@ -779,7 +776,7 @@ tree_sequence_builder_resolve_polytomies(tree_sequence_builder_t *self)
         parent_time = self->time[parent];
         children_time = -1;
         for (j = groups[g].start; j < groups[g].end; j++) {
-            children_time = GSL_MAX(children_time, self->time[edges[j].child]);
+            children_time = TSI_MAX(children_time, self->time[edges[j].child]);
         }
         new_time = children_time + (parent_time - children_time) / 2;
         new_node = tree_sequence_builder_add_node(self, new_time, false);

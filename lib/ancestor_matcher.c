@@ -8,8 +8,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include <gsl/gsl_math.h>
-
 static int
 cmp_node_id(const void *a, const void *b) {
     const node_id_t *ia = (const node_id_t *) a;
@@ -641,10 +639,10 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         right = pos;
         left = 0;
         if (k >= 0) {
-            left = GSL_MAX(left, edges[k].left);
+            left = TSI_MAX(left, edges[k].left);
         }
         if (j >= 0) {
-            left = GSL_MAX(left, edges[I[j]].right);
+            left = TSI_MAX(left, edges[I[j]].right);
         }
         pos = left;
 
@@ -652,7 +650,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 
         /* # print("left = ", left, "right = ", right) */
         /* printf("left = %d right = %d\n", left, right); */
-        for (l = GSL_MIN(right, end) - 1; l >= (int) GSL_MAX(left, start); l--) {
+        for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
             match[l] = 0;
             /* Reset the likelihood values for this locus from the traceback */
             max_likelihood_node = NULL_NODE;
@@ -764,7 +762,7 @@ ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restr
 
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
         u = *((node_id_t *) a->item);
-        max_L = GSL_MAX(max_L,  L[u]);
+        max_L = TSI_MAX(max_L,  L[u]);
     }
     assert(max_L > 0);
     for (a = self->likelihood_nodes.head; a != NULL; a = a->next) {
@@ -820,10 +818,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         left = pos;
         right = self->num_sites;
         if (j < M) {
-            right = GSL_MIN(right, edges[j].left);
+            right = TSI_MIN(right, edges[j].left);
         }
         if (k < M) {
-            right = GSL_MIN(right, edges[O[k]].right);
+            right = TSI_MIN(right, edges[O[k]].right);
         }
         pos = right;
     }
@@ -876,7 +874,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         }
         /* ancestor_matcher_print_state(self, stdout); */
         /* ancestor_matcher_check_state(self); */
-        for (site = GSL_MAX(left, start); site < GSL_MIN(right, end); site++) {
+        for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
                     parent, L, L_cache);
             if (ret != 0) {
@@ -957,10 +955,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         }
         right = self->num_sites;
         if (j < M) {
-            right = GSL_MIN(right, edges[j].left);
+            right = TSI_MIN(right, edges[j].left);
         }
         if (k < M) {
-            right = GSL_MIN(right, edges[O[k]].right);
+            right = TSI_MIN(right, edges[O[k]].right);
         }
     }
 out:
