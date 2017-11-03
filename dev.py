@@ -131,11 +131,13 @@ def analyse_file(filename):
     #         break
 
 def build_profile_inputs(num_megabases):
-    n = 10**3
+    n = 10**5
     L = num_megabases * 10**6
     ts = msprime.simulate(
         n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
         random_seed=10)
+    print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
+            "num_trees =", ts.num_trees)
     input_file = "tmp__NOBACKUP__/large-input-source-n={}-m={}.hdf5".format(
             n, num_megabases)
     ts.dump(input_file)
@@ -287,6 +289,15 @@ def examine_ancestor_ts(filename):
     # for k, v in tracebacks[max_index].items():
         # print(k, "\t", v)
 
+def verify(file1, file2):
+    ts1 = msprime.load(file1)
+    ts2 = msprime.load(file2)
+    assert ts1.num_samples == ts2.num_samples
+    assert ts1.num_sites == ts2.num_sites
+
+    for v1, v2 in zip(ts1.variants(), ts2.variants()):
+        assert v1.position == v2.position
+        assert np.array_equal(v1.genotypes, v2.genotypes)
 
 
 if __name__ == "__main__":
@@ -294,10 +305,13 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # build_profile_inputs(1)
+    # verify(sys.argv[1], sys.argv[2])
+
+    # build_profile_inputs(10)
+    # build_profile_inputs(100)
 
     large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
-            num_threads=8, log_level="INFO")
+            num_threads=40, log_level="DEBUG")
 
     # save_ancestor_ts(100, 10, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
