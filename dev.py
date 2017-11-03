@@ -296,17 +296,17 @@ if __name__ == "__main__":
 
     # build_profile_inputs(1)
 
-    # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
-    #         num_threads=8, log_level="INFO")
+    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
+            num_threads=8, log_level="INFO")
 
     # save_ancestor_ts(100, 10, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
     # tsinfer_dev(20, 0.2, seed=9, num_threads=1, error_rate=0.0, method="P")
-    for seed in range(1, 10000):
-        print(seed)
-        # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
-        tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
+    # for seed in range(1, 10000):
+    #     print(seed)
+    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
+    #     tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
