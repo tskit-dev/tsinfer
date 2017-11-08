@@ -17,6 +17,8 @@ import humanize
 import daiquiri
 import msprime
 
+import _tsinfer
+
 # prctl is an optional extra; it allows us assign meaninful names to threads
 # for debugging.
 _prctl_available = False
@@ -32,8 +34,6 @@ try:
     _numa_available = True
 except ImportError:
     pass
-
-import _tsinfer
 
 
 class ResultBuffer(object):
@@ -195,15 +195,12 @@ class InferenceManager(object):
     def __init__(
             self, samples, positions, sequence_length, recombination_rate,
             num_threads=1, method="C", progress=False, log_level="WARNING",
-            resolve_shared_recombinations=False, resolve_polytomies=False,
             ancestor_traceback_file_pattern=None):
         self.samples = samples
         self.num_samples = samples.shape[0]
         self.num_sites = samples.shape[1]
         assert self.num_sites == positions.shape[0]
         self.positions = positions
-        self.resolve_shared_recombinations = resolve_shared_recombinations
-        self.resolve_polytomies = resolve_polytomies
         self.sequence_length = sequence_length
         self.recombination_rate = recombination_rate
         self.num_threads = num_threads
@@ -255,9 +252,7 @@ class InferenceManager(object):
         max_nodes = self.num_samples + self.num_sites
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
-            max_nodes=max_nodes, max_edges=max_edges,
-            resolve_shared_recombinations=self.resolve_shared_recombinations,
-            resolve_polytomies=self.resolve_polytomies)
+            max_nodes=max_nodes, max_edges=max_edges)
 
         frequency_classes = self.ancestor_builder.get_frequency_classes()
         # TODO change the builder API here to just return the list of focal sites.
@@ -413,7 +408,7 @@ class InferenceManager(object):
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
-                start, end  = self.ancestor_builder.make_ancestor(focal_sites, a)
+                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
                 self.__find_path_ancestor(
                     a, start, end, child, focal_sites, matcher, results, match)
                 child += 1
@@ -505,36 +500,12 @@ class InferenceManager(object):
     def finalise(self):
         self.logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence()
-        # print("BEFORE")
-        # print(ts.tables.edges)
-        # for t in ts.trees():
-        #     print(t.interval)
-        #     print(t.draw(format="unicode"))
-        # # ts_simplified = ts.simplify(
-        # #     samples=self.sample_ids, filter_zero_mutation_sites=False)
-        # ts_simplified, node_map = ts.simplify(
-        #     samples=self.sample_ids, filter_zero_mutation_sites=False, map_nodes=True)
-        # print("AFTER")
-        # print(ts_simplified.tables.edges)
-        # node_labels = {}
-        # for j, k in enumerate(node_map):
-        #     node_labels[k] = str(j)
-        #     print(j, "-> ", k)
-        # for t in ts_simplified.trees():
-        #     print(t.interval)
-        #     print(t.draw(format="unicode", node_label_text=node_labels))
-        # print("pre-simplify = ", ts.num_edges, "after simplify = ", ts_simplified.num_edges)
-        # return ts_simplified
-
-        tables = ts.dump_tables()
-        nodes = tables.nodes
-        flags = nodes.flags[:]
-        samples = nodes.time == 0.0
-        flags[:] = 0
-        flags[samples] = 1
-        nodes.set_columns(time=nodes.time, flags=flags)
-        ts = msprime.load_tables(**tables.asdict())
-        return ts
+        ts_simplified = ts.simplify(
+            samples=self.sample_ids, filter_zero_mutation_sites=False)
+        self.logger.debug("simplified from ({}, {}) to ({}, {}) nodes and edges".format(
+            ts.num_nodes, ts.num_edges, ts_simplified.num_nodes,
+            ts_simplified.num_edges))
+        return ts_simplified
 
     def get_tree_sequence(self):
         """
@@ -595,8 +566,7 @@ class InferenceManager(object):
 
 def infer(
         samples, positions, sequence_length, recombination_rate, sample_error=0,
-        method="C", num_threads=1, progress=False, log_level="WARNING",
-        resolve_shared_recombinations=False, resolve_polytomies=False):
+        method="C", num_threads=1, progress=False, log_level="WARNING"):
     positions_array = np.array(positions)
     # If the input recombination rate is a single number set this value for all sites.
     recombination_rate_array = np.zeros(positions_array.shape[0], dtype=np.float64)
@@ -604,9 +574,7 @@ def infer(
     # Primary entry point.
     manager = InferenceManager(
         samples, positions_array, sequence_length, recombination_rate_array,
-        num_threads=num_threads, method=method, progress=progress, log_level=log_level,
-        resolve_shared_recombinations=resolve_shared_recombinations,
-        resolve_polytomies=resolve_polytomies)
+        num_threads=num_threads, method=method, progress=progress, log_level=log_level)
     manager.initialise()
     manager.process_ancestors()
     manager.process_samples(sample_error)
@@ -755,8 +723,7 @@ class TreeSequenceBuilder(object):
 
     def __init__(
             self, sequence_length, positions, recombination_rate,
-            max_nodes, max_edges,
-            resolve_shared_recombinations=True, resolve_polytomies=True):
+            max_nodes, max_edges):
         self.num_nodes = 0
         self.sequence_length = sequence_length
         self.positions = positions
@@ -767,8 +734,6 @@ class TreeSequenceBuilder(object):
         self.mutations = collections.defaultdict(list)
         self.edges = []
         self.mean_traceback_size = 0
-        self.resolve_shared_recombinations = resolve_shared_recombinations
-        self.resolve_polytomies = resolve_polytomies
 
     def add_node(self, time, is_sample=True):
         self.num_nodes += 1
@@ -814,266 +779,6 @@ class TreeSequenceBuilder(object):
             print("edges = ")
             print(edges)
 
-    def _replace_recombinations(self):
-        # print("START!!")
-        # First filter out all edges covering the full interval
-        output_edges = []
-        active = self.edges
-        filtered = []
-        for j in range(len(active)):
-            condition = not (active[j].left == 0 and active[j].right == self.num_sites)
-            if condition:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-        active = filtered
-        if len(active) > 0:
-            # Now sort by (l, r, p, c) to group together all identical (l, r, p) values.
-            active.sort(key=lambda e: (e.left, e.right, e.parent, e.child))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].left == active[j + 1].left and
-                    active[j].right == active[j + 1].right and
-                    active[j].parent == active[j + 1].parent)
-                if prev_cond or next_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = filtered
-
-        if len(active) > 0:
-            # Now sort by (child, left, right) to group together all contiguous
-            active.sort(key=lambda x: (x.child, x.left, x.right))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].right == active[j + 1].left and
-                    active[j].child == active[j + 1].child)
-                if next_cond or prev_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = list(filtered)
-        if len(active) > 0:
-            # We sort by left, right, parent again to find identical edges.
-            # Remove any that there is only one of.
-            active.sort(key=lambda x: (x.left, x.right, x.parent, x.child))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].left == active[j + 1].left and
-                    active[j].right == active[j + 1].right and
-                    active[j].parent == active[j + 1].parent)
-                if next_cond or prev_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = filtered
-
-        if len(active) > 0:
-            assert len(active) + len(output_edges) == len(self.edges)
-            active.sort(key=lambda x: (x.child, x.left, x.right, x.parent))
-            used = [True for _ in active]
-
-            group_start = 0
-            groups = []
-            for j in range(1, len(active)):
-                condition = (
-                    active[j - 1].right != active[j].left or
-                    active[j - 1].child != active[j].child)
-                if condition:
-                    if j - group_start > 1:
-                        groups.append((group_start, j))
-                    group_start = j
-            j = len(active)
-            if j - group_start > 1:
-                groups.append((group_start, j))
-
-            shared_recombinations = []
-            match_found = [False for _ in groups]
-            for j in range(len(groups)):
-                # print("Finding matches for group", j, "match_found = ", match_found)
-                matches = []
-                if not match_found[j]:
-                    for k in range(j + 1, len(groups)):
-                        # Compare this group to the others.
-                        if not match_found[k] and edge_group_equal(
-                                active, groups[j], groups[k]):
-                            matches.append(k)
-                            match_found[k] = True
-                if len(matches) > 0:
-                    match_found[j] = True
-                    shared_recombinations.append([j] + matches)
-                # print("Got", matches, match_found[j])
-
-            if len(shared_recombinations) > 0:
-                # print("Shared recombinations = ", shared_recombinations)
-                index_set = set()
-                for group_index_list in shared_recombinations:
-                    for index in group_index_list:
-                        assert index not in index_set
-                        index_set.add(index)
-                for group_index_list in shared_recombinations:
-                    # print("Shared recombination for group:", group_index_list)
-                    left_set = set()
-                    right_set = set()
-                    parent_set = set()
-                    for group_index in group_index_list:
-                        start, end = groups[group_index]
-                        left_set.add(tuple([active[j].left for j in range(start, end)]))
-                        right_set.add(
-                            tuple([active[j].right for j in range(start, end)]))
-                        parent_set.add(
-                            tuple([active[j].parent for j in range(start, end)]))
-                        children = set(active[j].child for j in range(start, end))
-                        assert len(children) == 1
-                        for j in range(start, end - 1):
-                            assert active[j].right == active[j + 1].left
-                        # for j in range(start, end):
-                        #     print("\t", active[j])
-                        # print()
-                    assert len(left_set) == 1
-                    assert len(right_set) == 1
-                    assert len(parent_set) == 1
-
-                    # Mark the edges in these group as unused.
-                    for group_index in group_index_list:
-                        start, end = groups[group_index]
-                        for j in range(start, end):
-                            used[j] = False
-
-                    parent_time = 1e200
-                    # Get the parents from the first group.
-                    start, end = groups[group_index_list[0]]
-                    for j in range(start, end):
-                        parent_time = min(parent_time, self.time[active[j].parent])
-                    # Get the children from the first record in each group.
-                    children_time = -1
-                    for group_index in group_index_list:
-                        j = groups[group_index][0]
-                        children_time = max(children_time, self.time[active[j].child])
-                    new_time = children_time + (parent_time - children_time) / 2
-                    new_node = self.add_node(new_time, is_sample=False)
-                    # print("adding node ", new_node, "@time", new_time)
-                    # For each segment add a new edge with the new node as child.
-                    start, end = groups[group_index_list[0]]
-                    for j in range(start, end):
-                        output_edges.append(Edge(
-                            active[j].left, active[j].right, active[j].parent, new_node))
-                        # print("s add", output_edges[-1])
-                    left = active[start].left
-                    right = active[end - 1].right
-                    # For each group, add a new segment covering the full interval.
-                    for group_index in group_index_list:
-                        start, end = groups[group_index]
-                        j = groups[group_index][0]
-                        output_edges.append(Edge(left, right, new_node, active[j].child))
-                        # print("g add", output_edges[-1])
-
-                    # print("Done\n")
-
-                # print("Setting edges to ", len(output_edges), "new edges")
-                for j in range(len(active)):
-                    if used[j]:
-                        output_edges.append(active[j])
-                    # else:
-                        # print("Filtering out", active[j])
-                # print("BEFORE")
-                # for e in self.edges:
-                #     print("\t", e)
-
-                # self.replaces_done += 1
-                self.edges = output_edges
-                # print("AFTER")
-                # for e in self.edges:
-                #     print("\t", e)
-
-    def insert_polytomy_ancestor(self, edges):
-        """
-        Insert a new ancestor for the specified edges and update the parents
-        to point to this new ancestor.
-        """
-        # print("BREAKING POLYTOMY FOR")
-        children_time = max(self.time[e.child] for e in edges)
-        parent_time = self.time[edges[0].parent]
-        time = children_time + (parent_time - children_time) / 2
-        new_node = self.add_node(time, is_sample=False)
-        e = edges[0]
-        # Add the new edge.
-        self.edges.append(Edge(0, self.num_sites, e.parent, new_node))
-        # Update the edges to point to this new node.
-        for e in edges:
-            # print("\t", e)
-            e.parent = new_node
-
-    def _resolve_polytomies(self):
-        # Gather all the egdes pointing to a given parent.
-        active = list(self.edges)
-        active.sort(key=lambda e: (e.parent, e.left, e.right, e.child))
-        parent_count = [0 for _ in range(self.num_nodes)]
-        # print("ACTIVE")
-        for e in active:
-            parent_count[e.parent] += 1
-            # print(e.left, e.right, e.parent, e.child, sep="\t")
-
-        group_start = 0
-        groups = []
-        for j in range(1, len(active)):
-            condition = (
-                active[j - 1].left != active[j].left or
-                active[j - 1].right != active[j].right or
-                active[j - 1].parent != active[j].parent)
-            if condition:
-                size = j - group_start
-                if size > 1 and size != parent_count[active[j - 1].parent]:
-                    groups.append((group_start, j))
-                group_start = j
-        j = len(active)
-        size = j - group_start
-        if size > 1 and size != parent_count[active[j - 1].parent]:
-            groups.append((group_start, j))
-
-        for start, end in groups:
-            # print("BREAKING POLYTOMY FOR group:", start, end)
-            # for j in range(start, end):
-            #     print("\t", active[j])
-
-            parent = active[start].parent
-            children_time = max(self.time[active[j].child] for j in range(start, end))
-            parent_time = self.time[parent]
-            time = children_time + (parent_time - children_time) / 2
-            new_node = self.add_node(time, is_sample=False)
-
-            # Update the edges to point to this new node.
-            for j in range(start, end):
-                active[j].parent = new_node
-            # Add the new edge.
-            active.append(Edge(0, self.num_sites, parent, new_node))
-
-        self.edges = active
-
     def update(
             self, num_nodes, time, left, right, parent, child, site, node,
             derived_state):
@@ -1085,14 +790,6 @@ class TreeSequenceBuilder(object):
         # print("update at time ", time, "num_edges = ", len(self.edges))
         for s, u, d in zip(site, node, derived_state):
             self.mutations[s].append((u, d))
-
-        if self.resolve_polytomies:
-            self._resolve_polytomies()
-
-        # print("replaces_done = ", self.replaces_done)
-        # if self.replaces_done < 2:
-        if self.resolve_shared_recombinations:
-            self._replace_recombinations()
 
         # Index the edges
         self.edges.sort(key=lambda e: (e.left, self.time[e.parent]))
@@ -1157,8 +854,6 @@ class AncestorMatcher(object):
         self.error_rate = error_rate
         self.num_sites = tree_sequence_builder.num_sites
         self.positions = tree_sequence_builder.positions
-        n = self.tree_sequence_builder.num_nodes
-        m = self.tree_sequence_builder.num_sites
         self.parent = None
         self.left_child = None
         self.right_sib = None
@@ -1238,7 +933,6 @@ class AncestorMatcher(object):
                     u = self.parent[u]
                 self.likelihood[mutation_node] = self.likelihood[u]
                 self.likelihood_nodes.append(mutation_node)
-
 
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
         self.store_traceback(site)
@@ -1358,8 +1052,6 @@ class AncestorMatcher(object):
         c = edge.child
         self.parent[c] = p
         u = self.right_child[p]
-        lsib = self.left_sib[c]
-        rsib = self.right_sib[c]
         if u == msprime.NULL_NODE:
             self.left_child[p] = c
             self.left_sib[c] = msprime.NULL_NODE
@@ -1375,9 +1067,9 @@ class AncestorMatcher(object):
 
     def approximately_equal(self, a, b):
         # Based on Python is_close, https://www.python.org/dev/peps/pep-0485/
-        rel_tol=1e-9
-        abs_tol=0.0
-        return abs(a-b) <= max( rel_tol * max(abs(a), abs(b)), abs_tol )
+        rel_tol = 1e-9
+        abs_tol = 0.0
+        return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
     def approximately_one(self, a):
         return self.approximately_equal(a, 1.0)
@@ -1391,7 +1083,7 @@ class AncestorMatcher(object):
         edges = self.tree_sequence_builder.edges
         self.parent = np.zeros(n, dtype=int) - 1
         self.left_child = np.zeros(n, dtype=int) - 1
-        self.right_child= np.zeros(n, dtype=int) - 1
+        self.right_child = np.zeros(n, dtype=int) - 1
         self.left_sib = np.zeros(n, dtype=int) - 1
         self.right_sib = np.zeros(n, dtype=int) - 1
         self.traceback = [{} for _ in range(m)]
@@ -1456,7 +1148,6 @@ class AncestorMatcher(object):
 
             # print("UPDATE TREE", left, right)
             remove_start = k
-            last_parent = -1
             while k < M and edges[O[k]].right == right:
                 edge = edges[O[k]]
                 self.remove_edge(edge)
@@ -1505,7 +1196,7 @@ class AncestorMatcher(object):
             if k < M:
                 right = min(right, edges[O[k]].right)
 
-   # print("LIKELIHOODS")
+        # print("LIKELIHOODS")
         # for l in range(self.num_sites):
         #     print("\t", l, traceback[l])
 
@@ -1552,7 +1243,8 @@ class AncestorMatcher(object):
                 u = output_edge.parent
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
-                            self.parent, u, self.tree_sequence_builder.mutations[l][0][0]):
+                            self.parent, u,
+                            self.tree_sequence_builder.mutations[l][0][0]):
                         match[l] = 1
                 L = self.traceback[l]
                 # print("TB", l, L)

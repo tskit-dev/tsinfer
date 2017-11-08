@@ -310,9 +310,7 @@ run_generate(const char *input_file, int verbose)
     node_id_t *node_buffer;
     allele_t *derived_state_buffer;
     node_id_t child;
-    /* int flags = TSI_RESOLVE_SHARED_RECOMBS|TSI_RESOLVE_POLYTOMIES; */
-    int flags = TSI_RESOLVE_SHARED_RECOMBS;
-    /* int flags = 0; */
+    int flags = 0;
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);

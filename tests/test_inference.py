@@ -166,10 +166,7 @@ class TestAncestorStorage(unittest.TestCase):
     # TODO clean up this verification method and figure out a better API
     # for specifying the classes to use.
 
-    def verify_ancestor_storage(
-            self, ts, method="C", resolve_polytomies=False,
-            resolve_shared_recombinations=False):
-
+    def verify_ancestor_storage( self, ts, method="C"):
         samples = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
         for variant in ts.variants():
             samples[:, variant.index] = variant.genotypes
@@ -177,9 +174,7 @@ class TestAncestorStorage(unittest.TestCase):
         recombination_rate = np.zeros_like(positions) + 1e-8
         manager = tsinfer.InferenceManager(
             samples, positions, ts.sequence_length, recombination_rate,
-            method=method, num_threads=1,
-            resolve_polytomies=resolve_polytomies,
-            resolve_shared_recombinations=resolve_shared_recombinations)
+            method=method, num_threads=1)
         manager.initialise()
         manager.process_ancestors()
         ts_new = manager.get_tree_sequence()
@@ -192,27 +187,9 @@ class TestAncestorStorage(unittest.TestCase):
             B[:, v.index] = v.genotypes
         self.assertTrue(np.array_equal(A, B))
 
-    def verify_small_case(
-            self, resolve_polytomies=False, resolve_shared_recombinations=False):
+    def test_small_case(self):
         ts = msprime.simulate(
             20, length=10, recombination_rate=1, mutation_rate=0.1, random_seed=1)
         assert ts.num_sites < 50
         for method in ["C", "Python"]:
-            self.verify_ancestor_storage(
-                ts, method=method, resolve_polytomies=resolve_polytomies,
-                resolve_shared_recombinations=resolve_shared_recombinations)
-
-    def test_small_case(self):
-        self.verify_small_case(False, False)
-
-    @unittest.skip("resolving disabled")
-    def test_small_case_resolve_polytomies(self):
-        self.verify_small_case(True, False)
-
-    @unittest.skip("resolving disabled")
-    def test_small_case_resolve_shared_recom(self):
-        self.verify_small_case(False, True)
-
-    @unittest.skip("resolving disabled")
-    def test_small_case_resolve_all(self):
-        self.verify_small_case(True, True)
+            self.verify_ancestor_storage(ts, method=method)
