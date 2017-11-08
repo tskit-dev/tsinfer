@@ -606,7 +606,9 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     assert(self->output.parent[self->output.size] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
-    memset(match, 0xff, self->num_sites * sizeof(allele_t));
+    memset(match, 0, self->num_sites * sizeof(allele_t));
+    memset(match, 0xff, start * sizeof(allele_t));
+    memset(match + end , 0xff, (self->num_sites - end) * sizeof(allele_t));
     memset(parent, 0xff, self->num_nodes * sizeof(node_id_t));
     j = M - 1;
     k = M - 1;

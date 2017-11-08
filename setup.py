@@ -33,11 +33,11 @@ setup(
     author="Jerome Kelleher",
     author_email="jerome.kelleher@well.ox.ac.uk",
     url="http://pypi.python.org/pypi/tsinfer",
-    # entry_points={
-    #     'console_scripts': [
-    #         'htsget=htsget.cli:htsget_main',
-    #     ]
-    # },
+    entry_points={
+        'console_scripts': [
+            'tsinfer=tsinfer.cli:tsinfer_main',
+        ]
+    },
     install_requires=[],
     ext_modules=[_tsinfer_module],
     keywords=[],

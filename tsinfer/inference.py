@@ -12,6 +12,7 @@ import traceback
 import pickle
 
 import numpy as np
+import h5py
 import tqdm
 import humanize
 import daiquiri
@@ -34,6 +35,136 @@ try:
     _numa_available = True
 except ImportError:
     pass
+
+FORMAT_NAME_KEY = "format_name"
+FORMAT_VERSION_KEY = "format_version"
+
+@contextlib.contextmanager
+def open_input(path):
+    """
+    Loads an input HDF5 file from the specified path and returns the corresponding
+    h5py file.
+    """
+    with h5py.File(path, "r") as root:
+        try:
+            format_name = root.attrs[FORMAT_NAME_KEY]
+        except KeyError:
+            raise ValueError("HDF5 file not in tsinfer format: format_name missing")
+        if format_name != "tsinfer-input":
+            raise ValueError(
+                "File must be in tsinfer input format: format '{}' not valid".format(
+                    format_name))
+        # TODO check format version
+        # Also check basic integrity like the shapes of the various arrays.
+        yield root
+
+@contextlib.contextmanager
+def open_ancestors(path):
+    """
+    Loads an ancestors HDF5 file from the specified path and returns the corresponding
+    h5py file.
+    """
+    with h5py.File(path, "r") as root:
+        try:
+            format_name = root.attrs[FORMAT_NAME_KEY]
+        except KeyError:
+            raise ValueError("HDF5 file not in tsinfer format: format_name missing")
+        if format_name != "tsinfer-ancestors":
+            raise ValueError(
+                "File must be in tsinfer ancestor format: format '{}' not valid".format(
+                    format_name))
+        # TODO check format version
+        # Also check basic integrity like the shapes of the various arrays.
+        yield root
+
+
+
+def write_version_attrs(hdf5_file, format_name, format_version):
+    """
+    Writes the version attributes for the specified HDF5 file.
+    """
+    hdf5_file.attrs[FORMAT_NAME_KEY] = format_name
+    hdf5_file.attrs[FORMAT_VERSION_KEY] = format_version
+
+
+def build_ancestors(input_hdf5, output_hdf5, method="C"):
+    # TODO For some reason we need to take a copy here or we don't get the
+    # correct results in C. Not sure why this is.
+    samples = input_hdf5["samples/haplotypes"][:]
+    position = input_hdf5["sites/position"]
+    if method == "P":
+        ancestor_builder = AncestorBuilder(samples, position)
+    else:
+        ancestor_builder = _tsinfer.AncestorBuilder(samples, position)
+
+    num_samples, num_sites = samples.shape
+    num_ancestors = ancestor_builder.num_ancestors
+
+    # Initialise the output file format.
+    write_version_attrs(output_hdf5, "tsinfer-ancestors", (0, 1))
+    ancestors_group = output_hdf5.create_group("ancestors")
+    haplotypes = ancestors_group.create_dataset(
+            "haplotypes", (num_ancestors, num_sites), dtype=np.int8)
+
+    frequency_classes = ancestor_builder.get_frequency_classes()
+    # TODO change the builder API here to just return the list of focal sites.
+    # We really don't care about the actual frequency here.
+    num_epochs = len(frequency_classes)
+    epoch_ancestors = [None for _ in range(num_epochs)]
+    epoch_time = [0 for _ in range(num_epochs)]
+    total_num_focal_sites = 0
+    for j, fc in enumerate(frequency_classes):
+        epoch_time[j] = num_epochs - j
+        epoch_ancestors[j] = fc[1]
+        for focal_sites in epoch_ancestors[j]:
+            total_num_focal_sites += len(focal_sites)
+
+    a = np.zeros(num_sites, dtype=np.int8)
+    time = np.zeros(num_ancestors, dtype=np.int32)
+    start = np.zeros(num_ancestors, dtype=np.int32)
+    end = np.zeros(num_ancestors, dtype=np.int32)
+    num_focal_sites = np.zeros(num_ancestors, dtype=np.uint32)
+    focal_sites = np.zeros(total_num_focal_sites, dtype=np.int32)
+    time[0] = num_epochs + 1
+    haplotypes[0] = a
+    offset = 0
+    j = 1
+    for epoch in range(num_epochs):
+        ancestor_focal_sites = epoch_ancestors[epoch]
+        # self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+        #     epoch, time, len(ancestor_focal_sites)))
+        for ancestor_focal_sites in epoch_ancestors[epoch]:
+            s, e = ancestor_builder.make_ancestor(ancestor_focal_sites, a)
+            assert j < num_ancestors
+            start[j] = s
+            end[j] = e
+            time[j] = epoch_time[epoch]
+            haplotypes[j] = a
+            n = len(ancestor_focal_sites)
+            num_focal_sites[j] = n
+            focal_sites[offset: offset + n] = ancestor_focal_sites
+            offset += n
+            j += 1
+
+    ancestors_group.create_dataset("time", (num_ancestors,), data=time)
+    ancestors_group.create_dataset("start", (num_ancestors,), data=start)
+    ancestors_group.create_dataset("end", (num_ancestors,), data=end)
+    ancestors_group.create_dataset(
+        "num_focal_sites", (num_ancestors,), data=num_focal_sites)
+    ancestors_group.create_dataset(
+        "focal_sites", (total_num_focal_sites,), data=focal_sites)
+
+
+def copy_ancestors(input_hdf5, ancestors_hdf5, method="C"):
+    """
+    Runs the copying process of the specified input and ancestors and returns
+    the resulting tree sequence.
+    """
+    manager = InferenceManager(input_hdf5, ancestors_hdf5, method=method)
+    manager.copy_ancestors()
+    return manager.get_tree_sequence()
+
+
 
 
 class ResultBuffer(object):
@@ -193,16 +324,20 @@ class ResultBuffer(object):
 class InferenceManager(object):
 
     def __init__(
-            self, samples, positions, sequence_length, recombination_rate,
-            num_threads=1, method="C", progress=False, log_level="WARNING",
+            self, input_hdf5, ancestors_hdf5, num_threads=1, method="C",
+            progress=False, log_level="WARNING",
             ancestor_traceback_file_pattern=None):
-        self.samples = samples
-        self.num_samples = samples.shape[0]
-        self.num_sites = samples.shape[1]
-        assert self.num_sites == positions.shape[0]
-        self.positions = positions
-        self.sequence_length = sequence_length
-        self.recombination_rate = recombination_rate
+        self.ancestors_hdf5 = ancestors_hdf5
+        self.input_hdf5 = input_hdf5
+
+        samples_group = input_hdf5["samples"]
+        sites_group = input_hdf5["sites"]
+        haplotypes = samples_group["haplotypes"]
+        self.sequence_length = input_hdf5.attrs["sequence_length"]
+        self.num_samples = haplotypes.shape[0]
+        self.num_sites = haplotypes.shape[1]
+        self.positions = sites_group["position"][:]
+        self.recombination_rate = sites_group["recombination_rate"][:]
         self.num_threads = num_threads
         # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
         # the tracebacks for each node ID and other debugging information.
@@ -213,14 +348,11 @@ class InferenceManager(object):
         self.progress = progress
         self.progress_monitor_lock = None
 
-        self.ancestor_builder_class = AncestorBuilder
         self.tree_sequence_builder_class = TreeSequenceBuilder
         self.ancestor_matcher_class = AncestorMatcher
         if method == "C":
-            self.ancestor_builder_class = _tsinfer.AncestorBuilder
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
-        self.ancestor_builder = None
         self.tree_sequence_builder = None
         self.sample_ids = None
 
@@ -238,12 +370,69 @@ class InferenceManager(object):
             self.logger.critical(traceback.format_exc())
             _thread.interrupt_main()
 
+    def copy_ancestors(self):
+        ancestors_group = self.ancestors_hdf5["ancestors"]
+        haplotypes = ancestors_group["haplotypes"]
+        time = ancestors_group["time"][:]
+        start = ancestors_group["start"][:]
+        end = ancestors_group["end"][:]
+        num_focal_sites = ancestors_group["num_focal_sites"][:]
+        focal_sites = ancestors_group["focal_sites"][:]
+        focal_sites_offset = np.roll(np.cumsum(num_focal_sites), 1)
+        focal_sites_offset[0] = 0
+        num_ancestors = time.shape[0]
+
+        # Allocate 64K edges initially. This will double as needed and will quickly be
+        # big enough even for very large instances.
+        max_edges = 64 * 1024
+        # This is a safe maximum
+        max_nodes = self.num_samples + self.num_sites
+        self.tree_sequence_builder = self.tree_sequence_builder_class(
+            self.sequence_length, self.positions, self.recombination_rate,
+            max_nodes=max_nodes, max_edges=max_edges)
+        self.tree_sequence_builder.update(1, time[0], [], [], [], [], [], [], [])
+
+        a = np.zeros(self.num_sites, dtype=np.int8)
+        matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
+        results = ResultBuffer()
+        match = np.zeros(self.num_sites, np.int8)
+
+        current_time = time[0]
+        child = 0
+        num_ancestors_in_epoch = 0
+
+        for j in range(1, num_ancestors):
+
+            if time[j] != current_time:
+                self.tree_sequence_builder.update(
+                    num_ancestors_in_epoch, current_time,
+                    results.left, results.right, results.parent, results.child,
+                    results.site, results.node, results.derived_state)
+                results.clear()
+                child = self.tree_sequence_builder.num_nodes
+                num_ancestors_in_epoch = 0
+                current_time = time[j]
+
+            num_ancestors_in_epoch += 1
+            a = haplotypes[j]
+            focal = focal_sites[
+                focal_sites_offset[j]: focal_sites_offset[j] + num_focal_sites[j]]
+            self.__find_path_ancestor(
+                a, start[j], end[j], child, focal, matcher, results, match)
+            child += 1
+
+        self.tree_sequence_builder.update(
+            num_ancestors_in_epoch, current_time,
+            results.left, results.right, results.parent, results.child,
+            results.site, results.node, results.derived_state)
+
+
     def initialise(self):
         # This is slow, so we should figure out a way to report progress on it.
-        self.logger.info(
-            "Initialising ancestor builder for {} samples and {} sites".format(
-                self.num_samples, self.num_sites))
-        self.ancestor_builder = self.ancestor_builder_class(self.samples, self.positions)
+        # self.logger.info(
+        #     "Initialising ancestor builder for {} samples and {} sites".format(
+        #         self.num_samples, self.num_sites))
+
         self.num_ancestors = self.ancestor_builder.num_ancestors
         # Allocate 64K edges initially. This will double as needed and will quickly be
         # big enough even for very large instances.
@@ -278,8 +467,6 @@ class InferenceManager(object):
 
     def __find_path_ancestor(
             self, ancestor, start, end, node_id, focal_sites, matcher, results, match):
-        # TODO make this an array natively.
-        focal_sites = np.array(focal_sites)
         results.add_mutations(focal_sites, node_id)
         # TODO change the ancestor builder so that we don't need to do this.
         assert np.all(ancestor[focal_sites] == 1)
