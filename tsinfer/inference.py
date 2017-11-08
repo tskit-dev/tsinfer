@@ -505,8 +505,36 @@ class InferenceManager(object):
     def finalise(self):
         self.logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence()
-        return ts.simplify(
-            samples=self.sample_ids, filter_zero_mutation_sites=False)
+        # print("BEFORE")
+        # print(ts.tables.edges)
+        # for t in ts.trees():
+        #     print(t.interval)
+        #     print(t.draw(format="unicode"))
+        # # ts_simplified = ts.simplify(
+        # #     samples=self.sample_ids, filter_zero_mutation_sites=False)
+        # ts_simplified, node_map = ts.simplify(
+        #     samples=self.sample_ids, filter_zero_mutation_sites=False, map_nodes=True)
+        # print("AFTER")
+        # print(ts_simplified.tables.edges)
+        # node_labels = {}
+        # for j, k in enumerate(node_map):
+        #     node_labels[k] = str(j)
+        #     print(j, "-> ", k)
+        # for t in ts_simplified.trees():
+        #     print(t.interval)
+        #     print(t.draw(format="unicode", node_label_text=node_labels))
+        # print("pre-simplify = ", ts.num_edges, "after simplify = ", ts_simplified.num_edges)
+        # return ts_simplified
+
+        tables = ts.dump_tables()
+        nodes = tables.nodes
+        flags = nodes.flags[:]
+        samples = nodes.time == 0.0
+        flags[:] = 0
+        flags[samples] = 1
+        nodes.set_columns(time=nodes.time, flags=flags)
+        ts = msprime.load_tables(**tables.asdict())
+        return ts
 
     def get_tree_sequence(self):
         """
@@ -606,6 +634,10 @@ class Edge(object):
         self.right = right
         self.parent = parent
         self.child = child
+
+    def __str__(self):
+        return "Edge(left={}, right={}, parent={}, child={})".format(
+            self.left, self.right, self.parent, self.child)
 
 
 class Site(object):
@@ -953,14 +985,9 @@ class TreeSequenceBuilder(object):
                         # print("s add", output_edges[-1])
                     left = active[start].left
                     right = active[end - 1].right
-                    if left != 0:
-                        output_edges.append(Edge(0, left, 0, new_node))
-                        # print("X add", output_edges[-1])
-                    if right != self.num_sites:
-                        output_edges.append(Edge(right, self.num_sites, 0, new_node))
-                        # print("Y add", output_edges[-1])
                     # For each group, add a new segment covering the full interval.
                     for group_index in group_index_list:
+                        start, end = groups[group_index]
                         j = groups[group_index][0]
                         output_edges.append(Edge(left, right, new_node, active[j].child))
                         # print("g add", output_edges[-1])
@@ -972,7 +999,7 @@ class TreeSequenceBuilder(object):
                     if used[j]:
                         output_edges.append(active[j])
                     # else:
-                    #     print("Filtering out", active[j])
+                        # print("Filtering out", active[j])
                 # print("BEFORE")
                 # for e in self.edges:
                 #     print("\t", e)
@@ -1055,6 +1082,7 @@ class TreeSequenceBuilder(object):
         for l, r, p, c in zip(left, right, parent, child):
             self.edges.append(Edge(l, r, p, c))
 
+        # print("update at time ", time, "num_edges = ", len(self.edges))
         for s, u, d in zip(site, node, derived_state):
             self.mutations[s].append((u, d))
 
@@ -1408,13 +1436,14 @@ class AncestorMatcher(object):
             normalisation_required = False
             for l in range(remove_start, k):
                 edge = edges[O[l]]
-                if self.is_nonzero_root(edge.child):
-                    # print("REMOVING ROOT", edge.child, self.likelihood[edge.child])
-                    if self.approximately_one(self.likelihood[edge.child]):
-                        normalisation_required = True
-                    self.likelihood[edge.child] = -2
-                    if edge.child in self.likelihood_nodes:
-                        self.likelihood_nodes.remove(edge.child)
+                for u in [edge.parent, edge.child]:
+                    if self.is_nonzero_root(u):
+                        # print("REMOVING ROOT", edge.child, self.likelihood[edge.child])
+                        if self.approximately_one(self.likelihood[u]):
+                            normalisation_required = True
+                        self.likelihood[u] = -2
+                        if u in self.likelihood_nodes:
+                            self.likelihood_nodes.remove(u)
             if normalisation_required:
                 max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
                 for u in self.likelihood_nodes:

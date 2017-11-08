@@ -32,6 +32,7 @@ is_nonzero_root(const node_id_t u, const node_id_t *restrict parent,
 
 static void
 ancestor_matcher_check_state(ancestor_matcher_t *self)
+
 {
     int num_likelihoods;
     int j, k;
@@ -51,6 +52,9 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
             num_likelihoods++;
         }
         if (is_nonzero_root(u, self->parent, self->left_child)) {
+            if (self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD) {
+                printf("error: u = %d L = %f\n", u, self->likelihood[u]);
+            }
             assert(self->likelihood[u] == NONZERO_ROOT_LIKELIHOOD);
         } else {
             assert(self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD);
@@ -832,10 +836,19 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 if (approximately_one(L[edge.child])) {
                     renormalise_required = true;
                 }
-                if (L[edge.child] != NULL_LIKELIHOOD) {
+                if (L[edge.child] >= 0 ) {
                     ancestor_matcher_delete_likelihood(self, edge.child, L);
                 }
                 L[edge.child] = NONZERO_ROOT_LIKELIHOOD;
+            }
+            if (unlikely(is_nonzero_root(edge.parent, parent, left_child))) {
+                if (approximately_one(L[edge.parent])) {
+                    renormalise_required = true;
+                }
+                if (L[edge.parent] >= 0) {
+                    ancestor_matcher_delete_likelihood(self, edge.parent, L);
+                }
+                L[edge.parent] = NONZERO_ROOT_LIKELIHOOD;
             }
         }
         if (unlikely(renormalise_required)) {
@@ -858,6 +871,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             edge = edges[O[k]];
             remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             k++;
+            assert(L[edge.parent] != NONZERO_ROOT_LIKELIHOOD);
+            assert(L[edge.child] != NONZERO_ROOT_LIKELIHOOD);
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 u = edge.parent;
                 while (likely(L[u] == NULL_LIKELIHOOD)

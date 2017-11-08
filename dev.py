@@ -3,6 +3,7 @@ import random
 import os
 import h5py
 import sys
+import pandas as pd
 
 
 import tsinfer
@@ -68,8 +69,9 @@ def make_input_hdf5(filename, samples, positions, recombination_rate, sequence_l
 
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
+        resolve_shared_recombinations=True,
         error_rate=0, method="C", log_level="WARNING",
-        progress=False):
+        save_input=None, debug=True, progress=False):
 
     np.random.seed(seed)
     random.seed(seed)
@@ -79,22 +81,23 @@ def tsinfer_dev(
             n, Ne=10**4, length=L_megabases,
             recombination_rate=1e-8, mutation_rate=1e-8,
             random_seed=seed)
-    print("num_sites = ", ts.num_sites)
-    if ts.num_sites == 0:
-        print("zero sites; skipping")
-        return
+    if debug:
+        print("num_sites = ", ts.num_sites)
+    assert ts.num_sites > 0
     positions = np.array([site.position for site in ts.sites()])
     S = generate_samples(ts, error_rate)
     # print(S)
 
     recombination_rate = np.zeros_like(positions) + recombination_rate
 
-    # hdf5 = make_input_hdf5("tmp.hdf5", S, positions, recombination_rate, L_megabases)
+    if save_input is not None:
+        hdf5 = make_input_hdf5(save_input, S, positions, recombination_rate, L_megabases)
     # print(S)
 
     tsp = tsinfer.infer(
         S, positions, L_megabases, recombination_rate, error_rate,
-        num_threads=num_threads, method=method, log_level=log_level, progress=progress)
+        num_threads=num_threads, method=method, log_level=log_level, progress=progress,
+        resolve_shared_recombinations=resolve_shared_recombinations)
     # print(tsp.tables)
     # for t in tsp.trees():
     #     print("tree", t.index)
@@ -104,7 +107,7 @@ def tsinfer_dev(
     for variant in tsp.variants():
         Sp[:, variant.index] = variant.genotypes
     assert np.all(Sp == S)
-    print("DONE")
+    return tsp
 
 
 def analyse_file(filename):
@@ -166,7 +169,8 @@ def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
 
 def save_ancestor_ts(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
-        error_rate=0, method="C", log_level="WARNING"):
+        resolve_shared_recombinations=False,
+        progress=False, error_rate=0, method="C", log_level="WARNING"):
     L_megabases = int(L * 10**6)
     ts = msprime.simulate(
             n, Ne=10**4, length=L_megabases,
@@ -182,13 +186,42 @@ def save_ancestor_ts(
 
     manager = tsinfer.InferenceManager(
         S, positions, ts.sequence_length, recombination_rate,
-        num_threads=num_threads, method=method, progress=True, log_level="INFO")
+        num_threads=num_threads, method=method, progress=progress, log_level=log_level,
+        resolve_shared_recombinations=resolve_shared_recombinations)
         # ancestor_traceback_file_pattern="tmp__NOBACKUP__/tracebacks/tb_{}.pkl")
 
     manager.initialise()
     manager.process_ancestors()
-    ts = manager.get_tree_sequence()
-    ts.dump("tmp__NOBACKUP__/ancestor_ts-{}.hdf5".format(ts.num_sites))
+    ts_new = manager.get_tree_sequence()
+
+    A = manager.ancestors()
+    # Need to reset the unknown values to be zeros.
+    A[A == -1] = 0
+    B = np.zeros((manager.num_ancestors, manager.num_sites), dtype=np.int8)
+    for v in ts_new.variants():
+        B[:, v.index] = v.genotypes
+    assert np.array_equal(A, B)
+    print(ts_new.tables)
+    # ts.dump("tmp__NOBACKUP__/ancestor_ts-{}.hdf5".format(ts.num_sites))
+    for t in ts_new.trees():
+        print(t.interval)
+        print(t.draw(format="unicode"))
+    new_nodes = [j for j, node in enumerate(ts_new.nodes()) if node.flags == 0]
+    print(new_nodes)
+    for e in ts_new.edges():
+        if e.child in new_nodes or e.parent in new_nodes:
+            print("{:.0f}\t{:.0f}".format(e.left, e.right), e.parent, e.child, sep="\t")
+
+    nodes = ts_new.tables.nodes
+    nodes.set_columns(flags=np.ones_like(nodes.flags), time=nodes.time)
+    print(nodes)
+    t = ts_new.tables
+    tsp = msprime.load_tables(
+            nodes=nodes, edges=t.edges,  sites=t.sites, mutations=t.mutations)
+    print(tsp.tables)
+    for j, h in enumerate(tsp.haplotypes()):
+        print(j, "\t",h)
+
 
 
 def examine_ancestor_ts(filename):
@@ -300,6 +333,134 @@ def verify(file1, file2):
         assert np.array_equal(v1.genotypes, v2.genotypes)
 
 
+def evaluate_shared_recombinations(n, L, method="C"):
+    N = 10
+    num_threads = 10
+    simplify_0_shared_recombs_0 = np.zeros(N)
+    simplify_0_shared_recombs_1 = np.zeros(N)
+    simplify_1_shared_recombs_0 = np.zeros(N)
+    simplify_1_shared_recombs_1 = np.zeros(N)
+    for j in range(N):
+        seed = j + 1
+        ts = tsinfer_dev(n, L, seed, method=method,
+                resolve_shared_recombinations=False, debug=False, num_threads=num_threads,
+                save_input="tmp__NOBACKUP__/shared_recomb_input.hdf5")
+        simplify_0_shared_recombs_0[j] = ts.num_edges
+        ts = ts.simplify()
+        simplify_1_shared_recombs_0[j] = ts.num_edges
+        ts = tsinfer_dev(n, L, seed, method=method,
+                resolve_shared_recombinations=True, debug=False, num_threads=num_threads)
+        simplify_0_shared_recombs_1[j] = ts.num_edges
+        ts = ts.simplify()
+        simplify_1_shared_recombs_1[j] = ts.num_edges
+    return [
+        {
+            "n": n, "L": L, "simplify": False, "shared_recombinations":False,
+            "edges": np.mean(simplify_0_shared_recombs_0)
+        }, {
+            "n": n, "L": L, "simplify": True, "shared_recombinations":False,
+            "edges": np.mean(simplify_1_shared_recombs_0)
+        }, {
+            "n": n, "L": L, "simplify": False, "shared_recombinations":True,
+            "edges": np.mean(simplify_0_shared_recombs_1)
+        }, {
+            "n": n, "L": L, "simplify": True, "shared_recombinations":True,
+            "edges": np.mean(simplify_1_shared_recombs_1)
+        }]
+
+def get_mean_degree(ts):
+    total_children = 0
+    num_edgesets = 0
+    for e in ts.edgesets():
+        total_children += len(e.children)
+        num_edgesets += 1
+    return total_children / num_edgesets
+
+def evaluate_node_degree(n, L, method="C"):
+    N = 2
+    num_threads = 10
+    shared_recombs_0 = np.zeros(N)
+    shared_recombs_1 = np.zeros(N)
+    for j in range(N):
+        seed = j + 1
+        ts = tsinfer_dev(n, L, seed, method=method,
+                resolve_shared_recombinations=False, debug=False, num_threads=num_threads)
+        ts = ts.simplify()
+        shared_recombs_0[j] = get_mean_degree(ts)
+        ts = tsinfer_dev(n, L, seed, method=method,
+                resolve_shared_recombinations=True, debug=False, num_threads=num_threads)
+        ts = ts.simplify()
+        shared_recombs_1[j] = get_mean_degree(ts)
+
+    return [
+        {
+            "n": n, "L": L, "shared_recombinations":False,
+            "degree": np.mean(shared_recombs_0)
+        }, {
+            "n": n, "L": L, "shared_recombinations":True,
+            "degree": np.mean(shared_recombs_1)
+    }]
+
+
+def run_simplify_edges():
+    data = []
+    datafile = "tmp__NOBACKUP__/edges.csv"
+    for n in [10, 100, 1000]:
+        for L in [0.1, 1.0, 10]:
+            data += evaluate_shared_recombinations(n, L)
+            df = pd.DataFrame(data)
+            print(df)
+            df.to_csv(datafile)
+
+def run_check_node_degree():
+    data = []
+    datafile = "tmp__NOBACKUP__/degree.csv"
+    for n in [10, 100, 1000]:
+        for L in [0.1, 1.0, 10]:
+            data += evaluate_node_degree(n, L)
+            df = pd.DataFrame(data)
+            print(df)
+            df.to_csv(datafile)
+
+
+def plot_simplify_edges():
+
+    import matplotlib as mp
+    # Force matplotlib to not use any Xwindows backend.
+    mp.use('Agg')
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    datafile = "tmp__NOBACKUP__/edges.csv"
+    df = pd.read_csv(datafile)
+    for n in [10, 100, 1000]:
+    # for n in [10, 100]:
+        dfn = df[df.n == n]
+        print("N = ", n)
+
+        plt.clf()
+        # g = sns.factorplot(x="L", y="edges", hue="simplify", col="shared_recombinations",
+        #         data=dfn, kind="bar")
+        # g.fig.get_axes()[0].set_yscale('log')
+
+        sub_no = dfn[np.logical_and(dfn.shared_recombinations == False, dfn.simplify == True)]
+        sub_yes = dfn[np.logical_and(dfn.shared_recombinations == True, dfn.simplify == True)]
+        ratio = np.array(sub_no.edges) / np.array(sub_yes.edges)
+        plt.semilogx(sub_no.L, ratio, label="simplify")
+
+        sub_no = dfn[np.logical_and(dfn.shared_recombinations == False, dfn.simplify == False)]
+        sub_yes = dfn[np.logical_and(dfn.shared_recombinations == True, dfn.simplify == False)]
+        ratio = np.array(sub_no.edges) / np.array(sub_yes.edges)
+        plt.semilogx(sub_no.L, ratio, label="no simplify")
+
+        sub = dfn[np.logical_and(dfn.shared_recombinations == True, dfn.simplify == False)]
+
+        plt.legend()
+        plt.ylabel("# with resolution / # without resolution")
+        plt.savefig("edges-{}.png".format(n))
+
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -310,17 +471,30 @@ if __name__ == "__main__":
     # build_profile_inputs(10)
     # build_profile_inputs(100)
 
-    large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
-            num_threads=40, log_level="DEBUG")
+    # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
+    #         num_threads=40, log_level="DEBUG")
 
     # save_ancestor_ts(100, 10, 1, recombination_rate=1, num_threads=2)
     # examine_ancestor_ts(sys.argv[1])
 
-    # tsinfer_dev(20, 0.2, seed=9, num_threads=1, error_rate=0.0, method="P")
+    # run_simplify_edges()
+    # plot_simplify_edges()
+
+    run_check_node_degree()
+
+    # evaluate_shared_recombinations(10, 0.4, method="C")
+    # evaluate_shared_recombinations(10, 0.1, method="P")
+
+    # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
+    #         resolve_shared_recombinations=False)
+    # tsinfer_dev(5, 0.1, seed=7, num_threads=1, error_rate=0.0, method="P",
+    #         resolve_shared_recombinations=False)
     # for seed in range(1, 10000):
     #     print(seed)
-    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
-    #     tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
+    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P",
+    #     #         resolve_shared_recombinations=True)
+    #     tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C",
+    #             resolve_shared_recombinations=True)
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

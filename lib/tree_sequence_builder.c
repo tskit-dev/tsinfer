@@ -635,14 +635,14 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
             /* For each edge in the path, add a new edge with the new node as the
              * child. If there are overhangs on either side of this interval we
              * insert edges pointing the new node to 0. */
-            if (left != 0) {
-                assert(num_output < max_edges);
-                output[num_output].left = 0;
-                output[num_output].right = left;
-                output[num_output].parent = 0;
-                output[num_output].child = new_node;
-                num_output++;
-            }
+            /* if (left != 0) { */
+            /*     assert(num_output < max_edges); */
+            /*     output[num_output].left = 0; */
+            /*     output[num_output].right = left; */
+            /*     output[num_output].parent = 0; */
+            /*     output[num_output].child = new_node; */
+            /*     num_output++; */
+            /* } */
             path = paths[shared_recombinations[j][0]];
             for (l = path.start; l < path.end; l++) {
                 assert(num_output < max_edges);
@@ -655,14 +655,14 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 /*         output[num_output].parent, output[num_output].child); */
                 num_output++;
             }
-            if (right != self->num_sites) {
-                assert(num_output < max_edges);
-                output[num_output].left = right;
-                output[num_output].right = self->num_sites;
-                output[num_output].parent = 0;
-                output[num_output].child = new_node;
-                num_output++;
-            }
+            /* if (right != self->num_sites) { */
+            /*     assert(num_output < max_edges); */
+            /*     output[num_output].left = right; */
+            /*     output[num_output].right = self->num_sites; */
+            /*     output[num_output].parent = 0; */
+            /*     output[num_output].child = new_node; */
+            /*     num_output++; */
+            /* } */
             /* For each child add a new edge covering the whole interval */
             for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
                 path = paths[shared_recombinations[j][k]];
@@ -904,7 +904,6 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     self->num_mutations += num_mutations;
 
     if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) {
-        assert(false); // Disabled this for now as it's not been checked with new code
         ret = tree_sequence_builder_resolve_shared_recombs(self);
         if (ret != 0) {
             goto out;
