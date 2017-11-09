@@ -97,17 +97,26 @@ def tsinfer_dev(
     # ancestors_hdf5 = h5py.File(ancestors_file, "w")
     ancestors_hdf5 = h5py.File("/other", "w", driver="core", backing_store=False)
 
-    tsinfer.build_ancestors(input_hdf5, ancestors_hdf5, method=method)
-    ts = tsinfer.copy_ancestors(input_hdf5, ancestors_hdf5, method=method)
+    tsinfer.build_ancestors(input_hdf5, ancestors_hdf5, method=method, chunk_size=16)
+    ts = tsinfer.match_ancestors(
+        input_hdf5, ancestors_hdf5, method=method, num_threads=num_threads)
+    assert ts.sequence_length == L_megabases
+
     # print(ts)
     # print(ts.tables)
+    # for t in ts.trees():
+    #     print("INTERVAL", t.interval)
+    #     print(t.draw(format="unicode"))
+    # for interval, e_out, e_in in ts.edge_diffs():
+    #     print(interval, e_out)
     A = ancestors_hdf5["ancestors/haplotypes"][:]
     A[A == -1] = 0
     for v in ts.variants():
-        assert np.array_equal(v.genotypes, A[:, v.index])
+        # print(v.index)
         # print(A[:,v.index])
         # print(v.genotypes)
         # print()
+        assert np.array_equal(v.genotypes, A[:, v.index])
     print("Verified haplotypes")
     input_hdf5.close()
     ancestors_hdf5.close()
@@ -150,8 +159,7 @@ def analyse_file(filename):
     #     if t.index == 10:
     #         break
 
-def build_profile_inputs(num_megabases):
-    n = 10**5
+def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
     ts = msprime.simulate(
         n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
@@ -163,11 +171,14 @@ def build_profile_inputs(num_megabases):
     ts.dump(input_file)
     S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
     for v in ts.variants():
-        S[:, v.index] = v.genotypes
+        S[:, v.index] = v.genotypes.view(np.int8)
+    print("Built variant matrix: {:.2f} MiB".format(S.nbytes / (1024 * 1024)))
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/large-input-n={}-m={}.hdf5".format(n, num_megabases)
-    make_input_hdf5(input_file, S, positions, recombination_rate, ts.sequence_length)
+    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.tsin".format(n, num_megabases)
+    with h5py.File(input_file, "w") as input_hdf5:
+        make_input_hdf5(input_hdf5, S, positions, recombination_rate, ts.sequence_length)
+    print("Wrote", input_file)
 
 def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
     hdf5 = h5py.File(input_file, "r")
@@ -357,7 +368,9 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    # build_profile_inputs(10)
+    # build_profile_inputs(10, 1)
+    # build_profile_inputs(10**5, 100)
+    # build_profile_inputs(1000, 100)
     # build_profile_inputs(100)
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
@@ -371,10 +384,12 @@ if __name__ == "__main__":
 
     # tsinfer_dev(11, 0.1, seed=7, num_threads=1, error_rate=0.0, method="C")
 
+    # tsinfer_dev(4, 0.2, seed=84, num_threads=1, error_rate=0.0, method="P")
+
     for seed in range(1, 10000):
         print(seed)
-        tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
-        # tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=1, error_rate=0.0, method="P")
+        tsinfer_dev(20, 2, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
