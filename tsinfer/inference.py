@@ -7,6 +7,7 @@ import contextlib
 import collections
 import queue
 import threading
+import time
 import _thread
 import traceback
 import pickle
@@ -160,7 +161,7 @@ def build_ancestors(
             j += 1
             if j % chunk_size == 0:
                 # Flush this chunk to disk
-                print("Flushing", j - chunk_size, j)
+                # print("Flushing", j - chunk_size, j)
                 haplotypes[j - chunk_size: j] = H
             if progress:
                 progress_monitor.update()
@@ -181,14 +182,16 @@ def build_ancestors(
 
 
 def match_ancestors(
-        input_hdf5, ancestors_hdf5, method="C", progress=False, num_threads=0):
+        input_hdf5, ancestors_hdf5, method="C", progress=False, num_threads=0,
+        log_level="WARN"):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
     """
+    # TODO remove the log_level argument here.
     manager = InferenceManager(
         input_hdf5, ancestors_hdf5, method=method, progress=progress,
-        num_threads=num_threads) # , log_level="DEBUG")
+        num_threads=num_threads, log_level=log_level)
     manager.match_ancestors()
     return manager.get_tree_sequence()
 
@@ -398,15 +401,37 @@ class InferenceManager(object):
 
     def match_ancestors(self):
         ancestors_group = self.ancestors_hdf5["ancestors"]
-        haplotypes = ancestors_group["haplotypes"]
-        time = ancestors_group["time"][:]
+        haplotypes_ds = ancestors_group["haplotypes"]
+
+        epoch = ancestors_group["time"][:]
         start = ancestors_group["start"][:]
         end = ancestors_group["end"][:]
         num_focal_sites = ancestors_group["num_focal_sites"][:]
         focal_sites = ancestors_group["focal_sites"][:]
         focal_sites_offset = np.roll(np.cumsum(num_focal_sites), 1)
         focal_sites_offset[0] = 0
-        num_ancestors = time.shape[0]
+        num_ancestors = epoch.shape[0]
+
+        def haplotypes_iter():
+            chunk_size = haplotypes_ds.chunks[0]
+            assert haplotypes_ds.chunks[1] == self.num_sites
+            num_chunks = num_ancestors // chunk_size
+            offset = 0
+            for k in range(num_chunks):
+                before = time.process_time()
+                A = haplotypes_ds[offset: offset + chunk_size][:]
+                duration = time.process_time() - before
+                self.logger.debug("Decompressed chunk {} of {} in {:.2f}s".format(
+                    k, num_chunks, duration))
+                offset += chunk_size
+                for a in A:
+                    yield a
+            if offset != num_ancestors:
+                A = haplotypes_ds[offset:][:]
+                for a in A:
+                    yield a
+
+        haplotypes = haplotypes_iter()
 
         if self.progress:
             self.progress_monitor = tqdm.tqdm(total=num_ancestors)
@@ -420,20 +445,21 @@ class InferenceManager(object):
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
             max_nodes=max_nodes, max_edges=max_edges)
-        self.tree_sequence_builder.update(1, time[0], [], [], [], [], [], [], [])
+        self.tree_sequence_builder.update(1, epoch[0], [], [], [], [], [], [], [])
+        a = next(haplotypes)
+        assert np.all(a == 0)
 
         if self.num_threads <= 0:
 
-            a = np.zeros(self.num_sites, dtype=np.int8)
             matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
             results = ResultBuffer()
             match = np.zeros(self.num_sites, np.int8)
 
-            current_time = time[0]
+            current_time = epoch[0]
             child = 0
             num_ancestors_in_epoch = 0
             for j in range(1, num_ancestors):
-                if time[j] != current_time:
+                if epoch[j] != current_time:
                     # print("Flushing at time ", current_time)
                     self.tree_sequence_builder.update(
                         num_ancestors_in_epoch, current_time,
@@ -441,10 +467,10 @@ class InferenceManager(object):
                         results.site, results.node, results.derived_state)
                     results.clear()
                     num_ancestors_in_epoch = 0
-                    current_time = time[j]
+                    current_time = epoch[j]
 
                 num_ancestors_in_epoch += 1
-                a = haplotypes[j]
+                a = next(haplotypes)
                 focal = focal_sites[
                     focal_sites_offset[j]: focal_sites_offset[j] + num_focal_sites[j]]
                 assert len(focal) > 0
@@ -500,9 +526,9 @@ class InferenceManager(object):
                 match_threads[j].start()
 
             num_ancestors_in_epoch = 0
-            current_time = time[1]
+            current_time = epoch[1]
             for j in range(1, num_ancestors):
-                if time[j] != current_time:
+                if epoch[j] != current_time:
                     # Wait until the match_queue is empty.
                     # TODO Note that these calls to queue.join prevent errors that happen in the
                     # worker process from propagating back here. Might be better to use some
@@ -527,10 +553,10 @@ class InferenceManager(object):
                     for k in range(self.num_threads):
                         results[k].clear()
                     num_ancestors_in_epoch = 0
-                    current_time = time[j]
+                    current_time = epoch[j]
 
                 num_ancestors_in_epoch += 1
-                a = haplotypes[j][:]
+                a = next(haplotypes)
                 focal = focal_sites[
                     focal_sites_offset[j]: focal_sites_offset[j] + num_focal_sites[j]]
                 assert len(focal) > 0
