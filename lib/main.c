@@ -285,6 +285,7 @@ run_generate(const char *input_file, int verbose)
 {
     size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
+    allele_t *genotypes = NULL;
     double *positions = NULL;
     double *recombination_rate = NULL;
     site_id_t *focal_sites, start, end;
@@ -305,7 +306,7 @@ run_generate(const char *input_file, int verbose)
     node_id_t *child_buffer;
     /* Buffers for mutation output */
     size_t max_mutations = 8192;
-    size_t total_mutations;
+    size_t total_mutations, frequency;
     site_id_t *site_buffer;
     node_id_t *node_buffer;
     allele_t *derived_state_buffer;
@@ -314,11 +315,29 @@ run_generate(const char *input_file, int verbose)
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
-    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
-            positions, haplotypes);
+    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
+    genotypes = malloc(num_sites * sizeof(allele_t));
+    if (genotypes == NULL) {
+        fatal_error("Error allocing genotypes");
+    }
+
+    for (l = 0; l < num_sites; l++) {
+        /* Copy in the genotypes for this sites */
+        frequency = 0;
+        for (j = 0; j < num_samples; j++) {
+            genotypes[j] = haplotypes[j * num_samples + l];
+            frequency += genotypes[j];
+        }
+        ret = ancestor_builder_add_site(&ancestor_builder, l, frequency, genotypes);
+        if (ret != 0) {
+            fatal_error("Add site error");
+        }
+    }
+    exit(0);
+
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
             num_sites, positions, recombination_rate,
@@ -502,6 +521,7 @@ run_generate(const char *input_file, int verbose)
     ancestor_builder_free(&ancestor_builder);
     tree_sequence_builder_free(&ts_builder);
     ancestor_matcher_free(&matcher);
+    tsi_safe_free(genotypes);
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(recombination_rate);

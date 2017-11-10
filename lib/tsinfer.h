@@ -43,8 +43,8 @@ typedef struct _segment_t {
 
 typedef struct {
     site_id_t id;
-    double position;
     size_t frequency;
+    allele_t *genotypes;
 } site_t;
 
 typedef struct {
@@ -186,10 +186,11 @@ typedef struct {
     site_id_t *mismatches;
 } ancestor_matcher_t;
 
-int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
-        size_t num_sites, double *positions, allele_t *haplotypes);
+int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_sites);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
+int ancestor_builder_add_site(ancestor_builder_t *self, site_id_t site,
+        size_t frequency, allele_t *genotypes);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
         size_t num_focal_sites, site_id_t *focal_sites,
         site_id_t *start, site_id_t *end, allele_t *haplotype);

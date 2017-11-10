@@ -14,124 +14,122 @@ typedef struct {
     size_t num_samples;
 } site_equality_t;
 
-static int
-cmp_site_by_frequency(const void *a, const void *b) {
-    const site_t *ia = *(site_t * const *) a;
-    const site_t *ib = *(site_t * const *) b;
-    int ret = (ia->frequency < ib->frequency) - (ia->frequency > ib->frequency);
-    if (ret == 0) {
-        ret = (ia->position > ib->position) - (ia->position < ib->position);
-    }
-    return ret;
-}
+/* static int */
+/* cmp_site_by_frequency(const void *a, const void *b) { */
+/*     const site_t *ia = *(site_t * const *) a; */
+/*     const site_t *ib = *(site_t * const *) b; */
+/*     int ret = (ia->frequency < ib->frequency) - (ia->frequency > ib->frequency); */
+/*     if (ret == 0) { */
+/*         ret = (ia->position > ib->position) - (ia->position < ib->position); */
+/*     } */
+/*     return ret; */
+/* } */
 
-static int
-cmp_site_equality(const void *a, const void *b) {
-    const site_equality_t *ia = (site_equality_t const *) a;
-    const site_equality_t *ib = (site_equality_t const *) b;
-    int ret = memcmp(ia->state, ib->state, ia->num_samples * sizeof(allele_t));
-    if (ret == 0) {
-        /* break ties by site_id */
-        ret = (ia->id > ib->id) - (ia->id < ib->id);
-    }
-    return ret;
-}
+/* static int */
+/* cmp_site_equality(const void *a, const void *b) { */
+/*     const site_equality_t *ia = (site_equality_t const *) a; */
+/*     const site_equality_t *ib = (site_equality_t const *) b; */
+/*     int ret = memcmp(ia->state, ib->state, ia->num_samples * sizeof(allele_t)); */
+/*     if (ret == 0) { */
+/*         /1* break ties by site_id *1/ */
+/*         ret = (ia->id > ib->id) - (ia->id < ib->id); */
+/*     } */
+/*     return ret; */
+/* } */
 
 
-static int
-ancestor_builder_compute_focal_sites(ancestor_builder_t *self,
-        frequency_class_t *frequency_class)
-{
-    int ret = 0;
-    size_t j, k, site_id;
-    site_id_t first_site;
-    allele_t *sites = NULL;
-    allele_t *site;
-    site_equality_t *ordered_sites = NULL;
+/* static int */
+/* ancestor_builder_compute_focal_sites(ancestor_builder_t *self, */
+/*         frequency_class_t *frequency_class) */
+/* { */
+/*     int ret = 0; */
+/*     size_t j, k, site_id; */
+/*     site_id_t first_site; */
+/*     allele_t *sites = NULL; */
+/*     allele_t *site; */
+/*     site_equality_t *ordered_sites = NULL; */
 
-    sites = malloc(frequency_class->num_sites * self->num_samples * sizeof(allele_t));
-    ordered_sites = malloc(frequency_class->num_sites * sizeof(site_equality_t));
-    /* Note that this is slightly inefficient use of memory here on average,
-     * as we always allocate enough space to allow for each site to be a unique
-     * ancestor. The total wastage is likely quite small though */
-    frequency_class->ancestor_focal_sites = malloc(
-            frequency_class->num_sites * sizeof(site_id_t *));
-    frequency_class->num_ancestor_focal_sites = malloc(
-            frequency_class->num_sites * sizeof(size_t));
-    frequency_class->ancestor_focal_site_mem = malloc(
-            frequency_class->num_sites * sizeof(site_id_t));
-    if (sites == NULL || ordered_sites == NULL
-            || frequency_class->ancestor_focal_sites == NULL
-            || frequency_class->num_ancestor_focal_sites == NULL
-            || frequency_class->ancestor_focal_site_mem == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
+/*     sites = malloc(frequency_class->num_sites * self->num_samples * sizeof(allele_t)); */
+/*     ordered_sites = malloc(frequency_class->num_sites * sizeof(site_equality_t)); */
+/*     /1* Note that this is slightly inefficient use of memory here on average, */
+/*      * as we always allocate enough space to allow for each site to be a unique */
+/*      * ancestor. The total wastage is likely quite small though *1/ */
+/*     frequency_class->ancestor_focal_sites = malloc( */
+/*             frequency_class->num_sites * sizeof(site_id_t *)); */
+/*     frequency_class->num_ancestor_focal_sites = malloc( */
+/*             frequency_class->num_sites * sizeof(size_t)); */
+/*     frequency_class->ancestor_focal_site_mem = malloc( */
+/*             frequency_class->num_sites * sizeof(site_id_t)); */
+/*     if (sites == NULL || ordered_sites == NULL */
+/*             || frequency_class->ancestor_focal_sites == NULL */
+/*             || frequency_class->num_ancestor_focal_sites == NULL */
+/*             || frequency_class->ancestor_focal_site_mem == NULL) { */
+/*         ret = TSI_ERR_NO_MEMORY; */
+/*         goto out; */
+/*     } */
 
-    /* printf("FREQ CLASS %d\n", (int) frequency_class->frequency); */
-    for (j = 0; j < frequency_class->num_sites; j++) {
-        site_id = frequency_class->sites[j]->id;
-        site = sites + j * self->num_samples;
-        ordered_sites[j].id = site_id;
-        ordered_sites[j].state = site;
-        ordered_sites[j].num_samples = self->num_samples;
-        for (k = 0; k < self->num_samples; k++) {
-            site[k] = self->haplotypes[k * self->num_sites + site_id];
-        }
-
-        /* printf("\tsite=%d\t", (int) site_id); */
-        /* for (k = 0; k < self->num_samples; k++) { */
-        /*     printf("%d", site[k]); */
-        /* } */
-        /* printf("\n"); */
-    }
-    /* NOTE: we should really be doing this by using a hash table using the
-     * site states as keys. Only using this sorting algorighm because I couldn't
-     * get this to work quickly with uthash */
-    qsort(ordered_sites, frequency_class->num_sites, sizeof(site_equality_t),
-            cmp_site_equality);
-
-    /* printf("DONE\n"); */
-    frequency_class->num_ancestors = 0;
-    first_site = 0;
-    frequency_class->ancestor_focal_site_mem[0] = ordered_sites[0].id;
-    frequency_class->ancestor_focal_sites[0] = frequency_class->ancestor_focal_site_mem;
-    frequency_class->num_ancestor_focal_sites[0] = 0;
-    for (j = 1; j < frequency_class->num_sites; j++) {
-        frequency_class->ancestor_focal_site_mem[j] = ordered_sites[j].id;
-        frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors]++;
-        if (memcmp(ordered_sites[first_site].state, ordered_sites[j].state,
-                    self->num_samples * sizeof(allele_t)) != 0) {
-            first_site = j;
-            frequency_class->num_ancestors++;
-            frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors] = 0;
-            frequency_class->ancestor_focal_sites[frequency_class->num_ancestors] =
-                frequency_class->ancestor_focal_site_mem + j;
-            /* printf("BREAK\n"); */
-        }
-
-/*         printf("\tsite=%d\t", (int) ordered_sites[j].id); */
-/*         site = ordered_sites[j].state; */
+/*     /1* printf("FREQ CLASS %d\n", (int) frequency_class->frequency); *1/ */
+/*     for (j = 0; j < frequency_class->num_sites; j++) { */
+/*         site_id = frequency_class->sites[j]->id; */
+/*         site = sites + j * self->num_samples; */
+/*         ordered_sites[j].id = site_id; */
+/*         ordered_sites[j].state = site; */
+/*         ordered_sites[j].num_samples = self->num_samples; */
 /*         for (k = 0; k < self->num_samples; k++) { */
-/*             printf("%d", site[k]); */
+/*             site[k] = self->haplotypes[k * self->num_sites + site_id]; */
 /*         } */
-/*         printf("\n"); */
 
-    }
-    frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors]++;
-    frequency_class->num_ancestors++;
-out:
-    tsi_safe_free(sites);
-    tsi_safe_free(ordered_sites);
-    return ret;
-}
+/*         /1* printf("\tsite=%d\t", (int) site_id); *1/ */
+/*         /1* for (k = 0; k < self->num_samples; k++) { *1/ */
+/*         /1*     printf("%d", site[k]); *1/ */
+/*         /1* } *1/ */
+/*         /1* printf("\n"); *1/ */
+/*     } */
+/*     /1* NOTE: we should really be doing this by using a hash table using the */
+/*      * site states as keys. Only using this sorting algorighm because I couldn't */
+/*      * get this to work quickly with uthash *1/ */
+/*     qsort(ordered_sites, frequency_class->num_sites, sizeof(site_equality_t), */
+/*             cmp_site_equality); */
+
+/*     /1* printf("DONE\n"); *1/ */
+/*     frequency_class->num_ancestors = 0; */
+/*     first_site = 0; */
+/*     frequency_class->ancestor_focal_site_mem[0] = ordered_sites[0].id; */
+/*     frequency_class->ancestor_focal_sites[0] = frequency_class->ancestor_focal_site_mem; */
+/*     frequency_class->num_ancestor_focal_sites[0] = 0; */
+/*     for (j = 1; j < frequency_class->num_sites; j++) { */
+/*         frequency_class->ancestor_focal_site_mem[j] = ordered_sites[j].id; */
+/*         frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors]++; */
+/*         if (memcmp(ordered_sites[first_site].state, ordered_sites[j].state, */
+/*                     self->num_samples * sizeof(allele_t)) != 0) { */
+/*             first_site = j; */
+/*             frequency_class->num_ancestors++; */
+/*             frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors] = 0; */
+/*             frequency_class->ancestor_focal_sites[frequency_class->num_ancestors] = */
+/*                 frequency_class->ancestor_focal_site_mem + j; */
+/*             /1* printf("BREAK\n"); *1/ */
+/*         } */
+
+/* /1*         printf("\tsite=%d\t", (int) ordered_sites[j].id); *1/ */
+/* /1*         site = ordered_sites[j].state; *1/ */
+/* /1*         for (k = 0; k < self->num_samples; k++) { *1/ */
+/* /1*             printf("%d", site[k]); *1/ */
+/* /1*         } *1/ */
+/* /1*         printf("\n"); *1/ */
+
+/*     } */
+/*     frequency_class->num_ancestor_focal_sites[frequency_class->num_ancestors]++; */
+/*     frequency_class->num_ancestors++; */
+/* out: */
+/*     tsi_safe_free(sites); */
+/*     tsi_safe_free(ordered_sites); */
+/*     return ret; */
+/* } */
 
 int
-ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
-        size_t num_sites, double *positions, allele_t *haplotypes)
+ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_sites)
 {
     int ret = 0;
-    size_t j, k, l, frequency;
     // TODO error checking
     //
     assert(num_samples > 1);
@@ -140,68 +138,65 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     memset(self, 0, sizeof(ancestor_builder_t));
     self->num_samples = num_samples;
     self->num_sites = num_sites;
-    self->haplotypes = haplotypes;
     self->sites = calloc(num_sites, sizeof(site_t));
-    self->sorted_sites = malloc(num_sites * sizeof(site_t *));
-
-    if (self->sites == NULL || self->sorted_sites == NULL) {
+    if (self->sites == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
 
-    for (l = 0; l < self->num_sites; l++) {
-        self->sites[l].id = (site_id_t) l;
-        self->sites[l].position = positions[l];
-        self->sites[l].frequency = 0;
-        self->sorted_sites[l] = self->sites + l;
-    }
-    /* Compute the site frequency */
-    for (j = 0; j < self->num_samples; j++) {
-        for (l = 0; l < self->num_sites; l++) {
-            self->sites[l].frequency += (size_t) (
-                    self->haplotypes[j * self->num_sites + l] == 1);
-        }
-    }
-    qsort(self->sorted_sites, self->num_sites, sizeof(site_t *), cmp_site_by_frequency);
+/*     for (l = 0; l < self->num_sites; l++) { */
+/*         self->sites[l].id = (site_id_t) l; */
+/*         self->sites[l].position = positions[l]; */
+/*         self->sites[l].frequency = 0; */
+/*         self->sorted_sites[l] = self->sites + l; */
+/*     } */
+/*     /1* Compute the site frequency *1/ */
+/*     for (j = 0; j < self->num_samples; j++) { */
+/*         for (l = 0; l < self->num_sites; l++) { */
+/*             self->sites[l].frequency += (size_t) ( */
+/*                     self->haplotypes[j * self->num_sites + l] == 1); */
+/*         } */
+/*     } */
+/*     qsort(self->sorted_sites, self->num_sites, sizeof(site_t *), cmp_site_by_frequency); */
 
-    /* compute the number of frequency classes */
-    self->num_frequency_classes = 0;
-    frequency = self->num_samples + 1;
-    for (j = 0; j < self->num_sites && self->sorted_sites[j]->frequency > 1; j++) {
-        if (self->sorted_sites[j]->frequency != frequency) {
-            frequency = self->sorted_sites[j]->frequency;
-            self->num_frequency_classes++;
-        }
-    }
-    self->frequency_classes = calloc(self->num_frequency_classes, sizeof(frequency_class_t));
-    if (self->frequency_classes == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-    frequency = self->num_samples + 1;
-    k = SIZE_MAX;
-    for (j = 0; j < self->num_sites && self->sorted_sites[j]->frequency > 1; j++) {
-        if (self->sorted_sites[j]->frequency != frequency) {
-            k++;
-            frequency = self->sorted_sites[j]->frequency;
-            self->frequency_classes[k].num_sites = 1;
-            self->frequency_classes[k].sites = self->sorted_sites + j;
-            self->frequency_classes[k].frequency = frequency;
-        } else {
-            self->frequency_classes[k].num_sites++;
-        }
-    }
-    for (j = 0; j < self->num_frequency_classes; j++) {
-        ret = ancestor_builder_compute_focal_sites(self, self->frequency_classes + j);
-        if (ret != 0) {
-            goto out;
-        }
-    }
-    /* Compute the number of ancestors */
-    self->num_ancestors = 1;
-    for (j = 0; j < self->num_frequency_classes; j++) {
-        self->num_ancestors += self->frequency_classes[j].num_ancestors;
-    }
+/*     /1* compute the number of frequency classes *1/ */
+/*     self->num_frequency_classes = 0; */
+/*     frequency = self->num_samples + 1; */
+/*     for (j = 0; j < self->num_sites && self->sorted_sites[j]->frequency > 1; j++) { */
+/*         if (self->sorted_sites[j]->frequency != frequency) { */
+/*             frequency = self->sorted_sites[j]->frequency; */
+/*             self->num_frequency_classes++; */
+/*         } */
+/*     } */
+/*     self->frequency_classes = calloc(self->num_frequency_classes, sizeof(frequency_class_t)); */
+/*     if (self->frequency_classes == NULL) { */
+/*         ret = TSI_ERR_NO_MEMORY; */
+/*         goto out; */
+/*     } */
+/*     frequency = self->num_samples + 1; */
+/*     k = SIZE_MAX; */
+/*     for (j = 0; j < self->num_sites && self->sorted_sites[j]->frequency > 1; j++) { */
+/*         if (self->sorted_sites[j]->frequency != frequency) { */
+/*             k++; */
+/*             frequency = self->sorted_sites[j]->frequency; */
+/*             self->frequency_classes[k].num_sites = 1; */
+/*             self->frequency_classes[k].sites = self->sorted_sites + j; */
+/*             self->frequency_classes[k].frequency = frequency; */
+/*         } else { */
+/*             self->frequency_classes[k].num_sites++; */
+/*         } */
+/*     } */
+/*     for (j = 0; j < self->num_frequency_classes; j++) { */
+/*         ret = ancestor_builder_compute_focal_sites(self, self->frequency_classes + j); */
+/*         if (ret != 0) { */
+/*             goto out; */
+/*         } */
+/*     } */
+/*     /1* Compute the number of ancestors *1/ */
+/*     self->num_ancestors = 1; */
+/*     for (j = 0; j < self->num_frequency_classes; j++) { */
+/*         self->num_ancestors += self->frequency_classes[j].num_ancestors; */
+/*     } */
 out:
     return ret;
 }
@@ -210,6 +205,10 @@ int
 ancestor_builder_free(ancestor_builder_t *self)
 {
     size_t j;
+
+    for (j = 0; j < self->num_sites; j++) {
+        tsi_safe_free(self->sites[j].genotypes);
+    }
 
     for (j = 0; j < self->num_frequency_classes; j++) {
         tsi_safe_free(self->frequency_classes[j].ancestor_focal_sites);
@@ -395,6 +394,31 @@ ancestor_builder_check_state(ancestor_builder_t *self)
     }
 }
 
+
+int WARN_UNUSED
+ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequency,
+        allele_t *genotypes)
+{
+    int ret = 0;
+    site_t *site;
+
+    assert(l > 0 && l < (site_id_t) self->num_sites);
+    site = &self->sites[l];
+    printf("Add site %d with freq %d\n", l, (int) frequency);
+    if (frequency > 1) {
+        site->genotypes = malloc(self->num_samples * sizeof(allele_t));
+        if (site->genotypes == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        memcpy(site->genotypes, genotypes, self->num_samples * sizeof(allele_t));
+    }
+
+
+out:
+    return ret;
+}
+
 int
 ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
 {
@@ -416,8 +440,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     }
     fprintf(out, "Sites:\n");
     for (j = 0; j < self->num_sites; j++) {
-        fprintf(out, "\t%d\t%f\t%d\n", self->sites[j].id, self->sites[j].position,
-                (int) self->sites[j].frequency);
+        fprintf(out, "\t%d\t%d\n", self->sites[j].id, (int) self->sites[j].frequency);
     }
     fprintf(out, "Frequency classes\n");
     for (j = 0; j < self->num_frequency_classes; j++) {
