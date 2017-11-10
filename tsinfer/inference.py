@@ -95,18 +95,28 @@ def build_ancestors(
     # correct results in C. Not sure why this is.
     samples = input_hdf5["samples/haplotypes"][:]
     position = input_hdf5["sites/position"]
-    if method == "P":
-        ancestor_builder = AncestorBuilder(samples, position)
-    else:
-        ancestor_builder = _tsinfer.AncestorBuilder(samples, position)
+    # if method == "P":
+    #     ancestor_builder = AncestorBuilder(samples, position)
+    # else:
+    #     ancestor_builder = _tsinfer.AncestorBuilder(samples, position)
 
     num_samples, num_sites = samples.shape
-    num_ancestors = ancestor_builder.num_ancestors
+
+    ancestor_builder = AncestorBuilder(num_samples, num_sites)
+    progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
+    for j in range(num_sites):
+        v = samples[:, j][:]
+        ancestor_builder.add_site(j, np.sum(v), v)
+        progress_monitor.update()
+    progress_monitor.close()
+
+    descriptors = ancestor_builder.ancestor_descriptors()
+    num_ancestors = 1 + len(descriptors)
+    total_num_focal_sites = sum(len(d[1]) for d in descriptors)
 
     # Initialise the output file format.
     write_version_attrs(output_hdf5, "tsinfer-ancestors", (0, 1))
     ancestors_group = output_hdf5.create_group("ancestors")
-
     chunk_size = min(chunk_size, num_ancestors)
     haplotypes = ancestors_group.create_dataset(
             "haplotypes", (num_ancestors, num_sites), dtype=np.int8,
@@ -114,57 +124,34 @@ def build_ancestors(
     # Local buffer for the chunks before we flush them to the HDF5 dataset.
     H = np.empty((chunk_size, num_sites))
 
-    frequency_classes = ancestor_builder.get_frequency_classes()
-    # TODO change the builder API here to just return the list of focal sites.
-    # We really don't care about the actual frequency here.
-    num_epochs = len(frequency_classes)
-    epoch_ancestors = [None for _ in range(num_epochs)]
-    epoch_time = [0 for _ in range(num_epochs)]
-    total_num_focal_sites = 0
-    for j, fc in enumerate(frequency_classes):
-        epoch_time[j] = num_epochs - j
-        epoch_ancestors[j] = fc[1]
-        for focal_sites in epoch_ancestors[j]:
-            total_num_focal_sites += len(focal_sites)
-
-
-    progress_monitor = None
-    if progress:
-        progress_monitor = tqdm.tqdm(total=num_ancestors)
-
     a = np.zeros(num_sites, dtype=np.int8)
     time = np.zeros(num_ancestors, dtype=np.int32)
     start = np.zeros(num_ancestors, dtype=np.int32)
     end = np.zeros(num_ancestors, dtype=np.int32)
     num_focal_sites = np.zeros(num_ancestors, dtype=np.uint32)
     focal_sites = np.zeros(total_num_focal_sites, dtype=np.int32)
-    time[0] = num_epochs + 1
+    time[0] = descriptors[0][0] + 1
     H[0] = a
     offset = 0
     j = 1
-    for epoch in range(num_epochs):
-        ancestor_focal_sites = epoch_ancestors[epoch]
-        # self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
-        #     epoch, time, len(ancestor_focal_sites)))
-        for ancestor_focal_sites in epoch_ancestors[epoch]:
-            s, e = ancestor_builder.make_ancestor(ancestor_focal_sites, a)
-            # print(j, s, e, ancestor_focal_sites)
-            assert j < num_ancestors
-            start[j] = s
-            end[j] = e
-            time[j] = epoch_time[epoch]
-            H[j % chunk_size] = a
-            n = len(ancestor_focal_sites)
-            num_focal_sites[j] = n
-            focal_sites[offset: offset + n] = ancestor_focal_sites
-            offset += n
-            j += 1
-            if j % chunk_size == 0:
-                # Flush this chunk to disk
-                # print("Flushing", j - chunk_size, j)
-                haplotypes[j - chunk_size: j] = H
-            if progress:
-                progress_monitor.update()
+    progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
+    for freq, ancestor_focal_sites in descriptors:
+        s, e = ancestor_builder.make_ancestor(ancestor_focal_sites, a)
+        assert j < num_ancestors
+        start[j] = s
+        end[j] = e
+        time[j] = freq
+        H[j % chunk_size] = a
+        n = len(ancestor_focal_sites)
+        num_focal_sites[j] = n
+        focal_sites[offset: offset + n] = ancestor_focal_sites
+        offset += n
+        j += 1
+        if j % chunk_size == 0:
+            # Flush this chunk to disk
+            # print("Flushing", j - chunk_size, j)
+            haplotypes[j - chunk_size: j] = H
+        progress_monitor.update()
 
     last_chunk = num_ancestors % chunk_size
     if last_chunk != 0:
@@ -1002,80 +989,99 @@ class Edge(object):
 
 
 class Site(object):
-    def __init__(self, id, frequency):
+    def __init__(self, id, frequency, genotypes):
         self.id = id
         self.frequency = frequency
+        self.genotypes = genotypes
 
 
 class AncestorBuilder(object):
     """
     Builds inferred ancestors.
     """
-    def __init__(self, S, positions):
-        self.haplotypes = S
-        self.num_samples = S.shape[0]
-        self.num_sites = S.shape[1]
+    def __init__(self, num_samples, num_sites):
+        self.num_samples = num_samples
+        self.num_sites = num_sites
         self.sites = [None for j in range(self.num_sites)]
-        self.sorted_sites = [None for j in range(self.num_sites)]
-        for j in range(self.num_sites):
-            self.sites[j] = Site(j, np.sum(S[:, j]))
-            self.sorted_sites[j] = Site(j, np.sum(S[:, j]))
-        self.sorted_sites.sort(key=lambda x: (-x.frequency, x.id))
-        frequency_sites = collections.defaultdict(list)
-        for site in self.sorted_sites:
-            if site.frequency > 1:
-                frequency_sites[site.frequency].append(site)
-        # Group together identical sites within a frequency class
-        self.frequency_classes = {}
-        self.num_ancestors = 1
-        for frequency, sites in frequency_sites.items():
-            patterns = collections.defaultdict(list)
-            for site in sites:
-                state = tuple(self.haplotypes[:, site.id])
-                patterns[state].append(site.id)
-            self.frequency_classes[frequency] = list(patterns.values())
-            self.num_ancestors += len(self.frequency_classes[frequency])
+        self.frequency_map = collections.defaultdict(dict)
 
-    def get_frequency_classes(self):
+    def add_site(self, site_id, frequency, genotypes):
+        """
+        Adds a new site at the specified ID and allele pattern to the builder.
+        """
+        self.sites[site_id] = Site(site_id, frequency, genotypes)
+        if frequency > 1:
+            pattern_map = self.frequency_map[frequency]
+            # Each unique pattern gets added to the list
+            key = genotypes.tobytes()
+            if key not in pattern_map:
+                pattern_map[key] = []
+            pattern_map[key].append(site_id)
+        else:
+            # Save some memory as we'll never look at these
+            self.sites[site_id].genotypes = None
+
+    def print_state(self):
+        print("Ancestor builder")
+        print("Sites = ")
+        for j in range(self.num_sites):
+            site = self.sites[j]
+            print(site.frequency, "\t", site.genotypes)
+        print("Frequency map")
+        frequencies = sorted(self.frequency_map.keys())
+        for f in frequencies:
+            pattern_map = self.frequency_map[f]
+            print("f = ", f, "with ", len(pattern_map), "patterns")
+            for pattern, sites in pattern_map.items():
+                print("\t", pattern, ":", sites)
+
+    def ancestor_descriptors(self):
+        """
+        Returns a list of (frequency, focal_sites) tuples describing the
+        ancestors in reverse order of frequency.
+        """
         ret = []
-        for frequency in reversed(sorted(self.frequency_classes.keys())):
-            ret.append((frequency, self.frequency_classes[frequency]))
+        frequencies = reversed(sorted(self.frequency_map.keys()))
+        for frequency in frequencies:
+            for focal_sites in self.frequency_map[frequency].values():
+                ret.append((frequency, focal_sites))
         return ret
 
+
     def __build_ancestor_sites(self, focal_site, sites, a):
-        S = self.haplotypes
         samples = set()
+        g = self.sites[focal_site].genotypes
         for j in range(self.num_samples):
-            if S[j, focal_site.id] == 1:
+            if g[j] == 1:
                 samples.add(j)
         for l in sites:
             a[l] = 0
-            if self.sites[l].frequency > focal_site.frequency:
+            if self.sites[l].frequency > self.sites[focal_site].frequency:
                 # print("\texamining:", self.sites[l])
                 # print("\tsamples = ", samples)
                 num_ones = 0
                 num_zeros = 0
                 for j in samples:
-                    if S[j, l] == 1:
+                    if self.sites[l].genotypes[j] == 1:
                         num_ones += 1
                     else:
                         num_zeros += 1
                 # TODO choose a branch uniformly if we have equality.
                 if num_ones >= num_zeros:
                     a[l] = 1
-                    samples = set(j for j in samples if S[j, l] == 1)
+                    samples = set(j for j in samples if self.sites[l].genotypes[j] == 1)
                 else:
-                    samples = set(j for j in samples if S[j, l] == 0)
+                    samples = set(j for j in samples if self.sites[l].genotypes[j] == 0)
             if len(samples) == 1:
                 # print("BREAK")
                 break
 
     def make_ancestor(self, focal_sites, a):
         a[:] = -1
-        focal_site = self.sites[focal_sites[0]]
+        focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
         self.__build_ancestor_sites(focal_site, sites, a)
-        focal_site = self.sites[focal_sites[-1]]
+        focal_site = focal_sites[-1]
         sites = range(focal_sites[0] - 1, -1, -1)
         self.__build_ancestor_sites(focal_site, sites, a)
         for j in range(focal_sites[0], focal_sites[-1] + 1):
@@ -1087,29 +1093,6 @@ class AncestorBuilder(object):
         start = known[0]
         end = known[-1] + 1
         return start, end
-
-
-def edge_group_equal(edges, group1, group2):
-    """
-    Returns true if the specified subsets of the list of edges are considered
-    equal in terms of a shared recombination.
-    """
-    s1, e1 = group1
-    s2, e2 = group2
-    ret = False
-    if (e1 - s1) == (e2 - s2):
-        ret = True
-        for j in range(e1 - s1):
-            edge1 = edges[s1 + j]
-            edge2 = edges[s2 + j]
-            condition = (
-                edge1.left != edge2.left or
-                edge1.right != edge2.right or
-                edge1.parent != edge2.parent)
-            if condition:
-                ret = False
-                break
-    return ret
 
 
 class TreeSequenceBuilder(object):

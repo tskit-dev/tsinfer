@@ -25,7 +25,7 @@ def run_build_ancestors(args):
             h5py.File(ancestors_path, "w") as ancestors_hdf5:
         tsinfer.build_ancestors(
             input_hdf5, ancestors_hdf5, progress=args.progress,
-            compression=args.compression)
+            compression=args.compression, method="P")
 
 
 def run_match_ancestors(args):
