@@ -412,30 +412,34 @@ class InferenceManager(object):
         focal_sites_offset[0] = 0
         num_ancestors = epoch.shape[0]
 
+        progress_monitor = tqdm.tqdm(
+            total=num_ancestors, disable=not self.progress, smoothing=0.1)
+
         def haplotypes_iter():
             chunk_size = haplotypes_ds.chunks[0]
             assert haplotypes_ds.chunks[1] == self.num_sites
             num_chunks = num_ancestors // chunk_size
             offset = 0
             for k in range(num_chunks):
-                before = time.process_time()
+                before = time.perf_counter()
                 A = haplotypes_ds[offset: offset + chunk_size][:]
-                duration = time.process_time() - before
+                duration = time.perf_counter() - before
                 self.logger.debug("Decompressed chunk {} of {} in {:.2f}s".format(
                     k, num_chunks, duration))
                 offset += chunk_size
                 for a in A:
+                    # This is probably not the right place to do this as we'll have a
+                    # long pause at the end when we're flushing the queue.
+                    progress_monitor.update()
                     yield a
             if offset != num_ancestors:
                 A = haplotypes_ds[offset:][:]
                 for a in A:
+                    progress_monitor.update()
                     yield a
 
         haplotypes = haplotypes_iter()
 
-        if self.progress:
-            self.progress_monitor = tqdm.tqdm(total=num_ancestors)
-            self.progress_monitor_lock = threading.Lock()
 
         # Allocate 64K edges initially. This will double as needed and will quickly be
         # big enough even for very large instances.
@@ -484,7 +488,8 @@ class InferenceManager(object):
                 results.site, results.node, results.derived_state)
         else:
 
-            match_queue = queue.Queue()
+            queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
+            match_queue = queue.Queue(queue_depth)
             results = [ResultBuffer() for _ in range(self.num_threads)]
             matcher_memory = np.zeros(self.num_threads)
             mean_traceback_size = np.zeros(self.num_threads)
@@ -624,43 +629,45 @@ class InferenceManager(object):
 
 
 
-    def initialise(self):
-        # This is slow, so we should figure out a way to report progress on it.
-        # self.logger.info(
-        #     "Initialising ancestor builder for {} samples and {} sites".format(
-        #         self.num_samples, self.num_sites))
+    # def initialise(self):
+    #     # This is slow, so we should figure out a way to report progress on it.
+    #     # self.logger.info(
+    #     #     "Initialising ancestor builder for {} samples and {} sites".format(
+    #     #         self.num_samples, self.num_sites))
 
-        self.num_ancestors = self.ancestor_builder.num_ancestors
-        # Allocate 64K edges initially. This will double as needed and will quickly be
-        # big enough even for very large instances.
-        max_edges = 64 * 1024
-        # This is a safe maximum until we start doing resolution.
-        max_nodes = self.num_samples + self.num_sites
-        self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.sequence_length, self.positions, self.recombination_rate,
-            max_nodes=max_nodes, max_edges=max_edges)
+    #     self.num_ancestors = self.ancestor_builder.num_ancestors
+    #     # Allocate 64K edges initially. This will double as needed and will quickly be
+    #     # big enough even for very large instances.
+    #     max_edges = 64 * 1024
+    #     # This is a safe maximum until we start doing resolution.
+    #     max_nodes = self.num_samples + self.num_sites
+    #     self.tree_sequence_builder = self.tree_sequence_builder_class(
+    #         self.sequence_length, self.positions, self.recombination_rate,
+    #         max_nodes=max_nodes, max_edges=max_edges)
 
-        frequency_classes = self.ancestor_builder.get_frequency_classes()
-        # TODO change the builder API here to just return the list of focal sites.
-        # We really don't care about the actual frequency here.
-        self.num_epochs = len(frequency_classes)
-        self.epoch_ancestors = [None for _ in range(self.num_epochs)]
-        self.epoch_time = [0 for _ in range(self.num_epochs)]
-        for j, fc in enumerate(frequency_classes):
-            self.epoch_time[j] = self.num_epochs - j
-            self.epoch_ancestors[j] = fc[1]
-        root_time = self.num_epochs + 1
-        self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [], [])
+    #     frequency_classes = self.ancestor_builder.get_frequency_classes()
+    #     # TODO change the builder API here to just return the list of focal sites.
+    #     # We really don't care about the actual frequency here.
+    #     self.num_epochs = len(frequency_classes)
+    #     self.epoch_ancestors = [None for _ in range(self.num_epochs)]
+    #     self.epoch_time = [0 for _ in range(self.num_epochs)]
+    #     for j, fc in enumerate(frequency_classes):
+    #         self.epoch_time[j] = self.num_epochs - j
+    #         self.epoch_ancestors[j] = fc[1]
+    #     root_time = self.num_epochs + 1
+    #     self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [], [])
 
-        if self.progress:
-            total = self.num_samples + self.num_ancestors - 1
-            self.progress_monitor = tqdm.tqdm(total=total)
-            self.progress_monitor_lock = threading.Lock()
+    #     if self.progress:
+    #         total = self.num_samples + self.num_ancestors - 1
+    #         self.progress_monitor = tqdm.tqdm(total=total, smoothing=0.01)
+    #         self.progress_monitor_lock = threading.Lock()
 
-    def __update_progress(self):
-        if self.progress:
-            with self.progress_monitor_lock:
-                self.progress_monitor.update()
+    # def __update_progress(self):
+    #     with self.progress_monitor_lock:
+    #         # TODO it would be nice to show the progress through the current epoch.
+    #         # We want to show epoch=1/{1234} ancestor=100/123. This way we can see
+    #         # how we're doing withouth the verbose DEBUG messages.
+    #         self.progress_monitor.update()
 
     def __find_path_ancestor(
             self, ancestor, start, end, node_id, focal_sites, matcher, results, match):
@@ -674,7 +681,6 @@ class InferenceManager(object):
         left, right, parent = matcher.find_path(ancestor, start, end, match)
         assert np.all(match == ancestor)
         results.add_edges(left, right, parent, node_id)
-        self.__update_progress()
 
         if self.ancestor_traceback_file_pattern is not None:
             # Write out the traceback debug.
