@@ -301,7 +301,8 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
     for (j = 0; j < num_mutations; j++) {
         assert(node[j] < (node_id_t) self->num_nodes);
         assert(node[j] >= 0);
-        assert(site[j] < self->num_sites);
+        assert(site[j] < (site_id_t) self->num_sites);
+        assert(site[j] >= 0);
         assert(derived_state[j] == 0 || derived_state[j] == 1);
         list_node = block_allocator_get(&self->block_allocator,
                 sizeof(mutation_list_node_t));
@@ -357,9 +358,9 @@ tree_sequence_builder_translate_coord(tree_sequence_builder_t *self, site_id_t c
 
     if (coord == 0) {
         ret = 0;
-    } else if (coord == self->num_sites) {
+    } else if (coord == (site_id_t) self->num_sites) {
         ret = self->sequence_length;
-    } else if (coord < self->num_sites) {
+    } else if (coord < (site_id_t) self->num_sites) {
         ret = self->sites.position[coord];
     }
     assert(ret != -1);
@@ -395,7 +396,7 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
     mutation_id_t p;
     mutation_id_t j = 0;
 
-    for (l = 0; l < self->num_sites; l++) {
+    for (l = 0; l < (site_id_t) self->num_sites; l++) {
         p = j;
         for (u = self->sites.mutations[l]; u != NULL; u = u->next) {
             site[j] = l;

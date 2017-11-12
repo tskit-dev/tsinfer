@@ -41,31 +41,31 @@ handle_library_error(int err)
     PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
 }
 
-/* TODO change this to return a numpy array. */
-static PyObject *
-convert_site_id_list(site_id_t *sites, size_t num_sites)
-{
-    PyObject *ret = NULL;
-    PyObject *t;
-    PyObject *py_int;
-    size_t j;
+/* /1* TODO change this to return a numpy array. *1/ */
+/* static PyObject * */
+/* convert_site_id_list(site_id_t *sites, size_t num_sites) */
+/* { */
+/*     PyObject *ret = NULL; */
+/*     PyObject *t; */
+/*     PyObject *py_int; */
+/*     size_t j; */
 
-    t = PyTuple_New(num_sites);
-    if (t == NULL) {
-        goto out;
-    }
-    for (j = 0; j < num_sites; j++) {
-        py_int = Py_BuildValue("k", (unsigned long) sites[j]);
-        if (py_int == NULL) {
-            Py_DECREF(t);
-            goto out;
-        }
-        PyTuple_SET_ITEM(t, j, py_int);
-    }
-    ret = t;
-out:
-    return ret;
-}
+/*     t = PyTuple_New(num_sites); */
+/*     if (t == NULL) { */
+/*         goto out; */
+/*     } */
+/*     for (j = 0; j < num_sites; j++) { */
+/*         py_int = Py_BuildValue("k", (unsigned long) sites[j]); */
+/*         if (py_int == NULL) { */
+/*             Py_DECREF(t); */
+/*             goto out; */
+/*         } */
+/*         PyTuple_SET_ITEM(t, j, py_int); */
+/*     } */
+/*     ret = t; */
+/* out: */
+/*     return ret; */
+/* } */
 
 /* static PyObject * */
 /* convert_segment_list(segment_list_t *list) */
@@ -128,73 +128,75 @@ AncestorBuilder_dealloc(AncestorBuilder* self)
 static int
 AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
+    int ret = -1;
     int err;
-    static char *kwlist[] = {"samples", "position", NULL};
-    size_t num_samples, num_sites;
-    PyObject *samples = NULL;
-    PyArrayObject *samples_array = NULL;
-    PyObject *position = NULL;
-    PyArrayObject *position_array = NULL;
-    npy_intp *shape;
+    static char *kwlist[] = {"num_samples", "num_sites", NULL};
+    int num_samples, num_sites;
 
     self->builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO", kwlist, &samples, &position)) {
-        goto fail;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii", kwlist, &num_samples, &num_sites)) {
+        goto out;
     }
-    samples_array = (PyArrayObject *) PyArray_FROM_OTF(samples, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (samples_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(samples_array) != 2) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 2");
-        goto fail;
-    }
-    shape = PyArray_DIMS(samples_array);
-    num_samples = shape[0];
-    num_sites = shape[1];
-    if (num_samples < 2) {
-        PyErr_SetString(PyExc_ValueError, "Need > 2 samples");
-        goto fail;
-    }
-    if (num_sites < 1) {
-        PyErr_SetString(PyExc_ValueError, "Must have > 0 sites");
-        goto fail;
-    }
-    position_array = (PyArrayObject *) PyArray_FROM_OTF(position, NPY_FLOAT64,
-            NPY_ARRAY_IN_ARRAY);
-    if (position_array == NULL) {
-        goto fail;
-    }
-    if (PyArray_NDIM(position_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
-    }
-    shape = PyArray_DIMS(position_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "position num sites mismatch");
-        goto fail;
-    }
-
     self->builder = PyMem_Malloc(sizeof(ancestor_builder_t));
     if (self->builder == NULL) {
         PyErr_NoMemory();
-        goto fail;
+        goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_alloc(self->builder, num_samples, num_sites,
-            (double *) PyArray_DATA(position_array),
-            (int8_t *) PyArray_DATA(samples_array));
+    err = ancestor_builder_alloc(self->builder, num_samples, num_sites);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
-        goto fail;
+        goto out;
     }
-    Py_DECREF(samples_array);
-    return 0;
-fail:
-    PyArray_XDECREF_ERR(samples_array);
-    return -1;
+    ret = 0;
+out:
+    return ret;
+}
+
+static PyObject *
+AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    static char *kwlist[] = {"site_id", "frequency", "genotypes", NULL};
+    int site_id;
+    unsigned long frequency;
+    PyObject *genotypes = NULL;
+    PyArrayObject *genotypes_array = NULL;
+    npy_intp *shape;
+
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ikO!", kwlist,
+            &site_id, &frequency, &PyArray_Type, &genotypes)) {
+        goto out;
+    }
+    genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (genotypes_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(genotypes_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(genotypes_array);
+    if (shape[0] != self->builder->num_samples) {
+        PyErr_SetString(PyExc_ValueError, "genotypes array wrong size.");
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id,
+        (size_t) frequency, (allele_t *) PyArray_DATA(genotypes_array));
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+out:
+    Py_XDECREF(genotypes_array);
+    return Py_BuildValue("");
 }
 
 static PyObject *
@@ -219,7 +221,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         goto fail;
     }
     num_sites = self->builder->num_sites;
-    focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_UINT32,
+    focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_INT32,
             NPY_ARRAY_IN_ARRAY);
     if (focal_sites_array == NULL) {
         goto fail;
@@ -250,7 +252,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_make_ancestor(self->builder, num_focal_sites,
-        (uint32_t *) PyArray_DATA(focal_sites_array),
+        (int32_t *) PyArray_DATA(focal_sites_array),
         &start, &end, (int8_t *) PyArray_DATA(ancestor_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
@@ -267,66 +269,59 @@ fail:
 }
 
 static PyObject *
-convert_ancestor_focal_sites(frequency_class_t *class)
+AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
 {
     PyObject *ret = NULL;
-    PyObject *py_ancestor_list = NULL;
-    PyObject *py_ancestor = NULL;
-    size_t j;
-
-    py_ancestor_list = PyTuple_New(class->num_ancestors);
-    if (py_ancestor_list == NULL) {
-        goto out;
-    }
-    for (j = 0; j < class->num_ancestors; j++) {
-        py_ancestor = convert_site_id_list(
-                class->ancestor_focal_sites[j], class->num_ancestor_focal_sites[j]);
-        if (py_ancestor == NULL) {
-            Py_DECREF(py_ancestor_list);
-            goto out;
-        }
-        PyTuple_SET_ITEM(py_ancestor_list, j, py_ancestor);
-    }
-    ret = py_ancestor_list;
-out:
-    return ret;
-}
-
-static PyObject *
-AncestorBuilder_get_frequency_classes(AncestorBuilder *self)
-{
-    PyObject *ret = NULL;
-    PyObject *py_classes = NULL;
-    PyObject *py_class = NULL;
-    PyObject *py_sites_lists = NULL;
-    frequency_class_t *class;
-    size_t j;
+    PyObject *descriptors = NULL;
+    PyObject *descriptor = NULL;
+    PyArrayObject *site_array = NULL;
+    int32_t *site_array_data;
+    avl_node_t *a;
+    pattern_map_t *map_elem;
+    site_list_t *s;
+    size_t j, f, k;
+    npy_intp dims;
 
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
 
-    py_classes = PyTuple_New(self->builder->num_frequency_classes);
-    if (py_classes == NULL) {
+    descriptors = PyTuple_New(self->builder->num_ancestors);
+    if (descriptors == NULL) {
         goto out;
     }
-    for (j = 0; j < self->builder->num_frequency_classes; j++) {
-        class = self->builder->frequency_classes + j;
-        py_sites_lists = convert_ancestor_focal_sites(class);
-        if (py_sites_lists == NULL) {
-            Py_DECREF(py_classes);
-            goto out;
+    j = 0;
+    /* It's not great that we're breaking encapsulation here and looking
+     * directly in to the builder's data structures. However, it's quite an
+     * awkward set of data to communicate, so it seems OK. */
+    for (f = self->builder->num_samples - 1; f > 0; f--) {
+        for (a = self->builder->frequency_map[f].head; a != NULL; a = a->next) {
+            map_elem = (pattern_map_t *) a->item;
+            dims = map_elem->num_sites;
+            site_array = (PyArrayObject *) PyArray_SimpleNew(1, &dims, NPY_INT32);
+            if (site_array == NULL) {
+                goto out;
+            }
+            site_array_data = (int32_t *) PyArray_DATA(site_array);
+            /* The elements are listed backwards, so reverse them */
+            k = map_elem->num_sites - 1;
+            for (s = map_elem->sites; s != NULL; s = s->next) {
+                site_array_data[k] = (int32_t) s->site;
+                k--;
+            }
+            descriptor = Py_BuildValue("kO", (unsigned long) f, site_array);
+            if (descriptor == NULL) {
+                Py_DECREF(site_array);
+                goto out;
+            }
+            PyTuple_SET_ITEM(descriptors, j, descriptor);
+            j++;
         }
-        py_class = Py_BuildValue("kO", (unsigned long) class->frequency, py_sites_lists);
-        if (py_class == NULL) {
-            Py_DECREF(py_sites_lists);
-            Py_DECREF(py_classes);
-            goto out;
-        }
-        PyTuple_SET_ITEM(py_classes, j, py_class);
     }
-    ret = py_classes;
+    ret = descriptors;
+    descriptors = NULL;
 out:
+    Py_XDECREF(descriptors);
     return ret;
 }
 
@@ -367,12 +362,15 @@ static PyGetSetDef AncestorBuilder_getsetters[] = {
 };
 
 static PyMethodDef AncestorBuilder_methods[] = {
+    {"add_site", (PyCFunction) AncestorBuilder_add_site,
+        METH_VARARGS|METH_KEYWORDS,
+        "Adds the specified site to this ancestor builder."},
     {"make_ancestor", (PyCFunction) AncestorBuilder_make_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Makes the specified ancestor."},
-    {"get_frequency_classes", (PyCFunction) AncestorBuilder_get_frequency_classes,
+    {"ancestor_descriptors", (PyCFunction) AncestorBuilder_ancestor_descriptors,
         METH_NOARGS,
-        "Returns a list of (frequency, sites) tuples"},
+        "Returns a list of ancestor (frequency, focal_sites) tuples."},
     {NULL}  /* Sentinel */
 };
 

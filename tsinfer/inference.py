@@ -95,18 +95,18 @@ def build_ancestors(
     # correct results in C. Not sure why this is.
     samples = input_hdf5["samples/haplotypes"][:]
     position = input_hdf5["sites/position"]
-    # if method == "P":
-    #     ancestor_builder = AncestorBuilder(samples, position)
-    # else:
-    #     ancestor_builder = _tsinfer.AncestorBuilder(samples, position)
 
     num_samples, num_sites = samples.shape
 
-    ancestor_builder = AncestorBuilder(num_samples, num_sites)
+    if method == "P":
+        ancestor_builder = AncestorBuilder(num_samples, num_sites)
+    else:
+        ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
+
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     for j in range(num_sites):
         v = samples[:, j][:]
-        ancestor_builder.add_site(j, np.sum(v), v)
+        ancestor_builder.add_site(j, int(np.sum(v)), v)
         progress_monitor.update()
     progress_monitor.close()
 

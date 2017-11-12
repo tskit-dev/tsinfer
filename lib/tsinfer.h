@@ -17,8 +17,7 @@
 typedef int32_t ancestor_id_t;
 typedef int32_t node_id_t;
 typedef int8_t allele_t;
-/* TODO change site_id_t to int for compatability with msprime. */
-typedef uint32_t site_id_t;
+typedef int32_t site_id_t;
 typedef int32_t mutation_id_t;
 
 typedef struct {

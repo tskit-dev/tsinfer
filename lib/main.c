@@ -283,13 +283,13 @@ output_ts(tree_sequence_builder_t *ts_builder)
 static void
 run_generate(const char *input_file, int verbose)
 {
-    size_t num_samples, num_sites, j, k, l, num_ancestors;
+    size_t num_samples, num_sites, j, k, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *genotypes = NULL;
     site_id_t *focal_sites = NULL;
     double *positions = NULL;
     double *recombination_rate = NULL;
-    site_id_t start, end;
+    site_id_t l, start, end;
     size_t num_focal_sites;
     ancestor_builder_t ancestor_builder;
     tree_sequence_builder_t ts_builder;
@@ -329,7 +329,7 @@ run_generate(const char *input_file, int verbose)
         fatal_error("Error allocing genotypes");
     }
 
-    for (l = 0; l < num_sites; l++) {
+    for (l = 0; l < (site_id_t) num_sites; l++) {
         /* Copy in the genotypes for this sites */
         frequency = 0;
         for (j = 0; j < num_samples; j++) {
@@ -410,7 +410,7 @@ run_generate(const char *input_file, int verbose)
             if (ret != 0) {
                 fatal_error("Error in make ancestor");
             }
-            for (l = 0; l < num_focal_sites; l++) {
+            for (l = 0; l < (site_id_t) num_focal_sites; l++) {
                 assert(total_mutations < max_mutations);
                 node_buffer[total_mutations] = child;
                 site_buffer[total_mutations] = focal_sites[l];
@@ -424,7 +424,7 @@ run_generate(const char *input_file, int verbose)
             if (ret != 0) {
                 fatal_error("find_path error");
             }
-            for (l = 0; l < num_sites; l++) {
+            for (l = 0; l < (site_id_t) num_sites; l++) {
                 if (a[l] != match[l]) {
                     printf("Mismatch at %d : %d %d \n", (int) l, a[l], match[l]);
                 }
@@ -437,14 +437,14 @@ run_generate(const char *input_file, int verbose)
             memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
             memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
             /* Update the child buffer */
-            for (l = 0; l < num_edges; l++) {
+            for (l = 0; l < (int) num_edges; l++) {
                 child_buffer[total_edges + l] = child;
             }
             total_edges += num_edges;
 
             if (verbose > 0) {
                 printf("ancestor %d:\t", (int) child);
-                for (l = 0; l < num_sites; l++) {
+                for (l = 0; l < (site_id_t) num_sites; l++) {
                     if (a[l] == -1) {
                         assert(l < start || l >= end);
                         printf("*");
@@ -456,7 +456,7 @@ run_generate(const char *input_file, int verbose)
                 printf("\n");
                 printf("\tnum_focal=%d, start=%d, end=%d", (int) num_focal_sites, start, end);
                 printf("\tedges = (%d):: \n", (int) num_edges);
-                for (l = 0; l < num_edges; l++) {
+                for (l = 0; l < (int) num_edges; l++) {
                     printf("\t(%d, %d, %d, %d)\n", left_output[l], right_output[l],
                             parent_output[l], child);
                 }
@@ -486,16 +486,16 @@ run_generate(const char *input_file, int verbose)
         }
         if (verbose > 0) {
             printf("sample %d:\t", (int) child);
-            for (l = 0; l < num_sites; l++) {
+            for (l = 0; l < (site_id_t) num_sites; l++) {
                 printf("%d", sample[l]);
             }
             printf("\nmatch = \t");
-            for (l = 0; l < num_sites; l++) {
+            for (l = 0; l < (site_id_t) num_sites; l++) {
                 printf("%d", match[l]);
             }
             printf("\n");
         }
-        for (l = 0; l < num_sites; l++) {
+        for (l = 0; l < (site_id_t) num_sites; l++) {
             if (sample[l] != match[l]) {
                 assert(total_mutations < max_mutations);
                 node_buffer[total_mutations] = child;
@@ -512,7 +512,7 @@ run_generate(const char *input_file, int verbose)
         memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
         memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
         /* Update the child buffer */
-        for (l = 0; l < num_edges; l++) {
+        for (l = 0; l < (int) num_edges; l++) {
             child_buffer[total_edges + l] = child;
         }
         total_edges += num_edges;

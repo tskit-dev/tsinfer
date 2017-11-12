@@ -136,7 +136,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     int ret = 0;
     int64_t l;
     site_id_t focal_site, start, end;
-    size_t j, k;
+    site_id_t j, k;
     size_t num_sites = self->num_sites;
     size_t num_consistent_samples;
     ancestor_id_hash_t *consistent_samples = NULL;
@@ -150,9 +150,9 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     // TODO proper error checking.
     assert(num_focal_sites > 0);
     /* printf("FOCAL SITES (%d)", (int) num_focal_sites); */
-    for (j = 0; j < num_focal_sites; j++) {
+    for (j = 0; j < (site_id_t) num_focal_sites; j++) {
         /* printf("%d, ", focal_sites[j]); */
-        assert(focal_sites[j] < self->num_sites);
+        assert(focal_sites[j] < (site_id_t) self->num_sites);
         assert(self->sites[focal_sites[j]].frequency > 1);
         if (j > 0) {
             assert(focal_sites[j - 1] < focal_sites[j]);
@@ -167,7 +167,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples,
             consistent_samples_mem, &num_consistent_samples);
     ancestor[focal_sites[0]] = 1;
-    for (j = 1; j < num_focal_sites; j++) {
+    for (j = 1; j < (site_id_t) num_focal_sites; j++) {
         for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) {
             ancestor_builder_make_site(self, focal_sites[j], k, false,
                     &consistent_samples, ancestor);

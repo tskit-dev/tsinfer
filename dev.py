@@ -388,8 +388,8 @@ if __name__ == "__main__":
 
     for seed in range(1, 10000):
         print(seed)
-        tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-        # tsinfer_dev(20, 2, seed=seed, num_threads=0, error_rate=0.0, method="C")
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+        tsinfer_dev(20, 2, seed=seed, num_threads=0, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
