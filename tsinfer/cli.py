@@ -5,8 +5,10 @@ Command line interfaces to tsinfer.
 import argparse
 import sys
 import os.path
+import shutil
 
 import h5py
+import zarr
 import daiquiri
 
 import tsinfer
@@ -32,11 +34,26 @@ def run_build_ancestors(args):
     if args.compression == "none":
         args.compression = None
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-    with tsinfer.open_input(args.input) as input_hdf5, \
-            h5py.File(ancestors_path, "w") as ancestors_hdf5:
-        tsinfer.build_ancestors(
-            input_hdf5, ancestors_hdf5, progress=args.progress,
-            compression=args.compression)
+    if os.path.exists(ancestors_path):
+        # TODO add error and only do this on --force
+        # shutil.rmtree(ancestors_path)
+        os.unlink(ancestors_path)
+    # with tsinfer.open_input(args.input) as input_hdf5, \
+    #         h5py.File(ancestors_path, "w") as ancestors_hdf5:
+    # input_container = zarr.DirectoryStore(args.input)
+    # ancestors_container = zarr.DirectoryStore(ancestors_path)
+    input_container = zarr.ZipStore(args.input)
+    ancestors_container = zarr.ZipStore(ancestors_path)
+
+    input_root = zarr.open_group(store=input_container)
+    ancestors_root = zarr.group(store=ancestors_container, overwrite=True)
+
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, progress=args.progress,
+        compression=args.compression)
+
+    input_container.close()
+    ancestors_container.close()
 
 
 def run_match_ancestors(args):

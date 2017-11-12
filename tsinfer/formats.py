@@ -11,6 +11,7 @@ import queue
 
 import numpy as np
 import h5py
+import zarr
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +160,13 @@ class InputFile(Hdf5File):
 
         variants_group = input_hdf5.create_group("variants")
         variants_group.create_dataset(
-            "position", (num_sites,), data=position, dtype=np.float64,
+            "position", shape=(num_sites,), data=position, dtype=np.float64,
             compression=compression)
         variants_group.create_dataset(
-            "recombination_rate", (num_sites,), data=recombination_rate, dtype=np.float64,
-            compression=compression)
+            "recombination_rate", shape=(num_sites,), data=recombination_rate,
+            dtype=np.float64, compression=compression)
         variants_group.create_dataset(
-            "genotypes", (num_sites, num_samples), data=genotypes,
+            "genotypes", shape=(num_sites, num_samples), data=genotypes,
             chunks=(min(chunk_size, num_sites), min(chunk_size, num_samples)),
             dtype=np.uint8, compression=compression)
 
@@ -217,18 +218,19 @@ class AncestorFile(Hdf5File):
         # Create the datasets.
         ancestors_group = self.hdf5_file.create_group("ancestors")
         self.haplotypes = ancestors_group.create_dataset(
-            "haplotypes", (num_ancestors, self.num_sites), dtype=np.int8,
+            "haplotypes", shape=(num_ancestors, self.num_sites), dtype=np.int8,
             chunks=(self.chunk_size, self.num_sites), compression=compression)
         self.time = ancestors_group.create_dataset(
-            "time", (num_ancestors,), compression=compression, dtype=np.int32)
+            "time", shape=(num_ancestors,), compression=compression, dtype=np.int32)
         self.start = ancestors_group.create_dataset(
-            "start", (num_ancestors,), compression=compression, dtype=np.int32)
+            "start", shape=(num_ancestors,), compression=compression, dtype=np.int32)
         self.end = ancestors_group.create_dataset(
-            "end", (num_ancestors,), compression=compression, dtype=np.int32)
+            "end", shape=(num_ancestors,), compression=compression, dtype=np.int32)
         self.num_focal_sites = ancestors_group.create_dataset(
-            "num_focal_sites", (num_ancestors,), compression=compression, dtype=np.int32)
+            "num_focal_sites", shape=(num_ancestors,), compression=compression,
+            dtype=np.int32)
         self.focal_sites = ancestors_group.create_dataset(
-            "focal_sites", (total_num_focal_sites,), compression=compression,
+            "focal_sites", shape=(total_num_focal_sites,), compression=compression,
             dtype=np.int32)
 
         # Create the data buffers.
@@ -291,6 +293,7 @@ class AncestorFile(Hdf5File):
         if j % self.chunk_size == 0:
             start = j - self.chunk_size
             end = j
+            print("flush", start, end)
             logger.info("Pushing chunk {} onto queue, depth={}".format(
                 j // self.chunk_size, self.__flush_queue.qsize()))
             self.__flush_queue.put((start, end, self.__haplotypes_buffer.copy()))
@@ -302,10 +305,12 @@ class AncestorFile(Hdf5File):
         assert self.num_ancestors == self.__ancestor_id
         last_chunk = self.num_ancestors % self.chunk_size
         if last_chunk != 0:
-            start = -last_chunk
-            end = -1
-            self.__flush_queue.put(
-                (start, end, self.__haplotypes_buffer[:last_chunk]))
+            start = self.num_ancestors - last_chunk
+            end = self.num_ancestors
+            H = self.__haplotypes_buffer[:last_chunk]
+            logger.info("Pushing final chunk of size {} onto queue, depth={}".format(
+                last_chunk, self.__flush_queue.qsize()))
+            self.__flush_queue.put((start, end, H))
         self.__flush_queue.put(None)
         self.__flush_queue.join()
         self.time[:] = self.__time_buffer

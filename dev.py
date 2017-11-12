@@ -2,6 +2,7 @@ import numpy as np
 import random
 import os
 import h5py
+import zarr
 import sys
 import pandas as pd
 
@@ -158,13 +159,17 @@ def build_profile_inputs(n, num_megabases):
     print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.tsinf".format(n, num_megabases)
-    with h5py.File(input_file, "w") as input_hdf5:
-        tsinfer.InputFile.build(
-            input_hdf5, genotypes=V, position=positions,
-            recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
-            compression="gzip")
-        f = tsinfer.InputFile(input_hdf5)
+    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.zarr.tsinf".format(n, num_megabases)
+    # with h5py.File(input_file, "w") as input_hdf5:
+    # with zarr.ZipStore(input_file) as input_hdf5:
+    # input_hdf5 = zarr.DirectoryStore(input_file)
+    input_hdf5 = zarr.ZipStore(input_file)
+    root = zarr.group(store=input_hdf5, overwrite=True)
+    tsinfer.InputFile.build(
+        root, genotypes=V, position=positions,
+        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
+        compression="gzip")
+    # input_hdf5.close()
     print("Wrote", input_file)
 
 
