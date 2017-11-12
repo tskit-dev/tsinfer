@@ -41,62 +41,6 @@ handle_library_error(int err)
     PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
 }
 
-/* /1* TODO change this to return a numpy array. *1/ */
-/* static PyObject * */
-/* convert_site_id_list(site_id_t *sites, size_t num_sites) */
-/* { */
-/*     PyObject *ret = NULL; */
-/*     PyObject *t; */
-/*     PyObject *py_int; */
-/*     size_t j; */
-
-/*     t = PyTuple_New(num_sites); */
-/*     if (t == NULL) { */
-/*         goto out; */
-/*     } */
-/*     for (j = 0; j < num_sites; j++) { */
-/*         py_int = Py_BuildValue("k", (unsigned long) sites[j]); */
-/*         if (py_int == NULL) { */
-/*             Py_DECREF(t); */
-/*             goto out; */
-/*         } */
-/*         PyTuple_SET_ITEM(t, j, py_int); */
-/*     } */
-/*     ret = t; */
-/* out: */
-/*     return ret; */
-/* } */
-
-/* static PyObject * */
-/* convert_segment_list(segment_list_t *list) */
-/* { */
-/*     PyObject *ret = NULL; */
-/*     PyObject *t; */
-/*     PyObject *py_int; */
-/*     size_t j; */
-/*     segment_list_node_t *u; */
-
-/*     t = PyTuple_New(list->length); */
-/*     if (t == NULL) { */
-/*         goto out; */
-/*     } */
-/*     j = 0; */
-/*     for (u = list->head; u != NULL; u = u->next) { */
-/*         py_int = Py_BuildValue("(k,k)", (unsigned long) u->start, */
-/*                 (unsigned long) u->end); */
-/*         if (py_int == NULL) { */
-/*             Py_DECREF(t); */
-/*             goto out; */
-/*         } */
-/*         PyTuple_SET_ITEM(t, j, py_int); */
-/*         j++; */
-/*     } */
-/*     ret = t; */
-/* out: */
-/*     return ret; */
-/* } */
-
-
 
 /*===================================================================
  * AncestorBuilder
@@ -172,7 +116,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
             &site_id, &frequency, &PyArray_Type, &genotypes)) {
         goto out;
     }
-    genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
+    genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_UINT8,
             NPY_ARRAY_IN_ARRAY);
     if (genotypes_array == NULL) {
         goto out;

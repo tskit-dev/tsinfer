@@ -47,24 +47,6 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S
 
-def make_input_hdf5(input_hdf5, samples, positions, recombination_rate, sequence_length):
-    """
-    Builds a HDF5 file suitable for input into the C interface.
-    """
-    input_hdf5.attrs["format_name"] = "tsinfer-input"
-    input_hdf5.attrs["format_version"] = (0, 1)
-    input_hdf5.attrs["sequence_length"] = sequence_length
-
-    num_samples, num_sites = samples.shape
-    sites_group = input_hdf5.create_group("sites")
-    sites_group.create_dataset("position", (num_sites, ), data=positions, dtype=float)
-    sites_group.create_dataset("recombination_rate", (num_sites, ),
-            data=recombination_rate, dtype=float)
-
-    samples_group = input_hdf5.create_group("samples")
-    samples_group.create_dataset(
-        "haplotypes", (num_samples, num_sites), data=samples, dtype=np.int8)
-
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, method="C", log_level="WARNING",
@@ -169,16 +151,22 @@ def build_profile_inputs(n, num_megabases):
     input_file = "tmp__NOBACKUP__/large-input-source-n={}-m={}.hdf5".format(
             n, num_megabases)
     ts.dump(input_file)
-    S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
-    for v in ts.variants():
-        S[:, v.index] = v.genotypes.view(np.int8)
-    print("Built variant matrix: {:.2f} MiB".format(S.nbytes / (1024 * 1024)))
+    V = ts.genotype_matrix()
+    # V = np.zeros((ts.num_sites, ts.sample_size), dtype=np.uint8)
+    # for v in ts.variants():
+    #     V[v.index:] = v.genotypes
+    print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.tsin".format(n, num_megabases)
+    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.tsinf".format(n, num_megabases)
     with h5py.File(input_file, "w") as input_hdf5:
-        make_input_hdf5(input_hdf5, S, positions, recombination_rate, ts.sequence_length)
+        tsinfer.InputFile.build(
+            input_hdf5, genotypes=V, position=positions,
+            recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
+            compression="gzip")
+        f = tsinfer.InputFile(input_hdf5)
     print("Wrote", input_file)
+
 
 def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
     hdf5 = h5py.File(input_file, "r")
@@ -368,9 +356,11 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    # build_profile_inputs(10, 1)
-    # build_profile_inputs(10**5, 100)
-    # build_profile_inputs(1000, 100)
+    build_profile_inputs(10, 1)
+
+    build_profile_inputs(1000, 100)
+    build_profile_inputs(10**4, 100)
+    build_profile_inputs(10**5, 100)
     # build_profile_inputs(100)
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
@@ -386,10 +376,10 @@ if __name__ == "__main__":
 
     # tsinfer_dev(4, 0.2, seed=84, num_threads=0, error_rate=0.0, method="P")
 
-    for seed in range(1, 10000):
-        print(seed)
-        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-        tsinfer_dev(20, 2, seed=seed, num_threads=0, error_rate=0.0, method="C")
+    # for seed in range(1, 10000):
+    #     print(seed)
+    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+    #     tsinfer_dev(20, 2, seed=seed, num_threads=0, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

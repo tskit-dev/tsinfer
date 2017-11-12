@@ -7,6 +7,7 @@ import sys
 import os.path
 
 import h5py
+import daiquiri
 
 import tsinfer
 
@@ -17,7 +18,17 @@ def get_ancestors_path(path, input_path):
     return path
 
 
+def setup_logging(verbosity):
+    log_level = "WARN"
+    if verbosity > 0:
+        log_level = "INFO"
+    if verbosity > 1:
+        log_level = "DEBUG"
+    daiquiri.setup(level=log_level)
+
+
 def run_build_ancestors(args):
+    setup_logging(args.verbosity)
     if args.compression == "none":
         args.compression = None
     ancestors_path = get_ancestors_path(args.ancestors, args.input)

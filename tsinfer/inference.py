@@ -11,15 +11,17 @@ import time
 import _thread
 import traceback
 import pickle
+import logging
 
 import numpy as np
-import h5py
 import tqdm
 import humanize
-import daiquiri
 import msprime
 
 import _tsinfer
+import tsinfer.formats as formats
+
+logger = logging.getLogger(__name__)
 
 # prctl is an optional extra; it allows us assign meaninful names to threads
 # for debugging.
@@ -37,135 +39,55 @@ try:
 except ImportError:
     pass
 
-FORMAT_NAME_KEY = "format_name"
-FORMAT_VERSION_KEY = "format_version"
-
-@contextlib.contextmanager
-def open_input(path):
-    """
-    Loads an input HDF5 file from the specified path and returns the corresponding
-    h5py file.
-    """
-    with h5py.File(path, "r") as root:
-        try:
-            format_name = root.attrs[FORMAT_NAME_KEY]
-        except KeyError:
-            raise ValueError("HDF5 file not in tsinfer format: format_name missing")
-        if format_name != "tsinfer-input":
-            raise ValueError(
-                "File must be in tsinfer input format: format '{}' not valid".format(
-                    format_name))
-        # TODO check format version
-        # Also check basic integrity like the shapes of the various arrays.
-        yield root
-
-
-@contextlib.contextmanager
-def open_ancestors(path):
-    """
-    Loads an ancestors HDF5 file from the specified path and returns the corresponding
-    h5py file.
-    """
-    with h5py.File(path, "r") as root:
-        try:
-            format_name = root.attrs[FORMAT_NAME_KEY]
-        except KeyError:
-            raise ValueError("HDF5 file not in tsinfer format: format_name missing")
-        if format_name != "tsinfer-ancestors":
-            raise ValueError(
-                "File must be in tsinfer ancestor format: format '{}' not valid".format(
-                    format_name))
-        # TODO check format version
-        # Also check basic integrity like the shapes of the various arrays.
-        yield root
-
-
-def write_version_attrs(hdf5_file, format_name, format_version):
-    """
-    Writes the version attributes for the specified HDF5 file.
-    """
-    hdf5_file.attrs[FORMAT_NAME_KEY] = format_name
-    hdf5_file.attrs[FORMAT_VERSION_KEY] = format_version
-
 
 def build_ancestors(
-        input_hdf5, output_hdf5, progress=False, method="C", compression=None,
-        chunk_size=1024):
-    # TODO For some reason we need to take a copy here or we don't get the
-    # correct results in C. Not sure why this is.
-    samples = input_hdf5["samples/haplotypes"][:]
-    position = input_hdf5["sites/position"]
+        input_hdf5, ancestor_hdf5, progress=False, method="C", compression=None,
+        chunk_size=None):
 
-    num_samples, num_sites = samples.shape
+    input_file = formats.InputFile(input_hdf5)
+    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
 
+    num_sites = input_file.num_sites
+    num_samples = input_file.num_samples
     if method == "P":
+        logger.debug("Using Python AncestorBuilder implementation")
         ancestor_builder = AncestorBuilder(num_samples, num_sites)
     else:
+        logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
-    for j in range(num_sites):
-        v = samples[:, j][:]
+    logger.info("Starting site addition")
+    for j, v in enumerate(input_file.site_genotypes()):
         ancestor_builder.add_site(j, int(np.sum(v)), v)
         progress_monitor.update()
     progress_monitor.close()
+    logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
     num_ancestors = 1 + len(descriptors)
     total_num_focal_sites = sum(len(d[1]) for d in descriptors)
-
-    # Initialise the output file format.
-    write_version_attrs(output_hdf5, "tsinfer-ancestors", (0, 1))
-    ancestors_group = output_hdf5.create_group("ancestors")
-    chunk_size = min(chunk_size, num_ancestors)
-    haplotypes = ancestors_group.create_dataset(
-            "haplotypes", (num_ancestors, num_sites), dtype=np.int8,
-            chunks=(chunk_size, num_sites), compression=compression)
-    # Local buffer for the chunks before we flush them to the HDF5 dataset.
-    H = np.empty((chunk_size, num_sites))
+    oldest_time = descriptors[0][0] + 1
+    ancestor_file.initialise(
+        num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
+        compression=compression)
 
     a = np.zeros(num_sites, dtype=np.int8)
-    time = np.zeros(num_ancestors, dtype=np.int32)
-    start = np.zeros(num_ancestors, dtype=np.int32)
-    end = np.zeros(num_ancestors, dtype=np.int32)
-    num_focal_sites = np.zeros(num_ancestors, dtype=np.uint32)
-    focal_sites = np.zeros(total_num_focal_sites, dtype=np.int32)
-    time[0] = descriptors[0][0] + 1
-    H[0] = a
-    offset = 0
-    j = 1
     progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
-    for freq, ancestor_focal_sites in descriptors:
-        s, e = ancestor_builder.make_ancestor(ancestor_focal_sites, a)
-        assert j < num_ancestors
-        start[j] = s
-        end[j] = e
-        time[j] = freq
-        H[j % chunk_size] = a
-        n = len(ancestor_focal_sites)
-        num_focal_sites[j] = n
-        focal_sites[offset: offset + n] = ancestor_focal_sites
-        offset += n
-        j += 1
-        if j % chunk_size == 0:
-            # Flush this chunk to disk
-            # print("Flushing", j - chunk_size, j)
-            haplotypes[j - chunk_size: j] = H
+    for freq, focal_sites in descriptors:
+        before = time.perf_counter()
+        s, e = ancestor_builder.make_ancestor(focal_sites, a)
+        duration = time.perf_counter() - before
+        logger.debug(
+            "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
+                focal_sites.shape[0], e - s, duration))
+        ancestor_file.add_ancestor(
+            start=s, end=e, ancestor_time=freq, focal_sites=focal_sites,
+            haplotype=a)
         progress_monitor.update()
-
-    last_chunk = num_ancestors % chunk_size
-    if last_chunk != 0:
-        print("last flush: ", last_chunk)
-        print("num_ancestors  ", num_ancestors)
-        haplotypes[-last_chunk:] = H[:last_chunk]
-
-    ancestors_group.create_dataset("time", (num_ancestors,), data=time)
-    ancestors_group.create_dataset("start", (num_ancestors,), data=start)
-    ancestors_group.create_dataset("end", (num_ancestors,), data=end)
-    ancestors_group.create_dataset(
-        "num_focal_sites", (num_ancestors,), data=num_focal_sites)
-    ancestors_group.create_dataset(
-        "focal_sites", (total_num_focal_sites,), data=focal_sites)
+    ancestor_file.finalise()
+    progress_monitor.close()
+    logger.info("Finished building ancestors")
 
 
 def match_ancestors(
@@ -359,8 +281,6 @@ class InferenceManager(object):
         # the tracebacks for each node ID and other debugging information.
         self.ancestor_traceback_file_pattern = ancestor_traceback_file_pattern
         # Set up logging.
-        daiquiri.setup(level=log_level)
-        self.logger = daiquiri.getLogger()
         self.progress = progress
         self.progress_monitor_lock = None
 
@@ -382,8 +302,8 @@ class InferenceManager(object):
         try:
             yield
         except Exception:
-            self.logger.critical("Exception occured in thread; exiting")
-            self.logger.critical(traceback.format_exc())
+            logger.critical("Exception occured in thread; exiting")
+            logger.critical(traceback.format_exc())
             _thread.interrupt_main()
 
     def match_ancestors(self):
@@ -411,7 +331,7 @@ class InferenceManager(object):
                 before = time.perf_counter()
                 A = haplotypes_ds[offset: offset + chunk_size][:]
                 duration = time.perf_counter() - before
-                self.logger.debug("Decompressed chunk {} of {} in {:.2f}s".format(
+                logger.debug("Decompressed chunk {} of {} in {:.2f}s".format(
                     k, num_chunks, duration))
                 offset += chunk_size
                 for a in A:
@@ -426,7 +346,6 @@ class InferenceManager(object):
                     yield a
 
         haplotypes = haplotypes_iter()
-
 
         # Allocate 64K edges initially. This will double as needed and will quickly be
         # big enough even for very large instances.
@@ -447,7 +366,6 @@ class InferenceManager(object):
             match = np.zeros(self.num_sites, np.int8)
 
             current_time = epoch[0]
-            child = 0
             num_ancestors_in_epoch = 0
             for j in range(1, num_ancestors):
                 if epoch[j] != current_time:
@@ -484,13 +402,13 @@ class InferenceManager(object):
 
             def match_worker(thread_index):
                 with self.catch_thread_error():
-                    self.logger.info(
+                    logger.info(
                         "Ancestor match thread {} starting".format(thread_index))
                     if _prctl_available:
                         prctl.set_name("ancestor-worker-{}".format(thread_index))
                     if _numa_available and numa.available():
                         numa.set_localalloc()
-                        self.logger.debug(
+                        logger.debug(
                             "Set NUMA local allocation policy on thread {}."
                             .format(thread_index))
                     match = np.zeros(self.num_sites, np.int8)
@@ -509,7 +427,7 @@ class InferenceManager(object):
                         matcher_memory[thread_index] = matcher.total_memory
                         match_queue.task_done()
                     match_queue.task_done()
-                    self.logger.info("Ancestor match thread {} exiting".format(thread_index))
+                    logger.info("Ancestor match thread {} exiting".format(thread_index))
 
             match_threads = [
                 threading.Thread(target=match_worker, args=(j,), daemon=True)
@@ -533,7 +451,7 @@ class InferenceManager(object):
                         epoch_results.child, epoch_results.site, epoch_results.node,
                         epoch_results.derived_state)
                     mean_memory = np.mean(matcher_memory)
-                    self.logger.debug(
+                    logger.debug(
                         "Finished epoch {} with {} ancestors; mean_tb_size={:.2f} edges={}; "
                         "mean_matcher_mem={}".format(
                             current_time, num_ancestors_in_epoch,
@@ -566,7 +484,7 @@ class InferenceManager(object):
                 epoch_results.child, epoch_results.site, epoch_results.node,
                 epoch_results.derived_state)
             mean_memory = np.mean(matcher_memory)
-            self.logger.debug(
+            logger.debug(
                 "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
                 "mean_matcher_mem={}".format(
                     current_time, np.sum(mean_traceback_size) / np.sum(num_matches),
@@ -608,11 +526,11 @@ class InferenceManager(object):
                     "match": match,
                     "traceback": traceback}
                 pickle.dump(debug, f)
-                self.logger.debug(
+                logger.debug(
                     "Dumped ancestor traceback debug to {}".format(filename))
 
     def process_ancestors(self):
-        self.logger.info("Copying {} ancestors".format(self.num_ancestors))
+        logger.info("Copying {} ancestors".format(self.num_ancestors))
         if self.num_threads == 1:
             self.__process_ancestors_single_threaded()
         else:
@@ -627,13 +545,13 @@ class InferenceManager(object):
 
         def match_worker(thread_index):
             with self.catch_thread_error():
-                self.logger.info(
+                logger.info(
                     "Ancestor match thread {} starting".format(thread_index))
                 if _prctl_available:
                     prctl.set_name("ancestor-worker-{}".format(thread_index))
                 if _numa_available and numa.available():
                     numa.set_localalloc()
-                    self.logger.debug(
+                    logger.debug(
                         "Set NUMA local allocation policy on thread {}."
                         .format(thread_index))
                 match = np.zeros(self.num_sites, np.int8)
@@ -652,7 +570,7 @@ class InferenceManager(object):
                     matcher_memory[thread_index] = matcher.total_memory
                     match_queue.task_done()
                 match_queue.task_done()
-                self.logger.info("Ancestor match thread {} exiting".format(thread_index))
+                logger.info("Ancestor match thread {} exiting".format(thread_index))
 
         match_threads = [
             threading.Thread(target=match_worker, args=(j,), daemon=True)
@@ -664,7 +582,7 @@ class InferenceManager(object):
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
             ancestor_focal_sites = self.epoch_ancestors[epoch]
-            self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+            logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
@@ -683,7 +601,7 @@ class InferenceManager(object):
                 epoch_results.child, epoch_results.site, epoch_results.node,
                 epoch_results.derived_state)
             mean_memory = np.mean(matcher_memory)
-            self.logger.debug(
+            logger.debug(
                 "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
                 "mean_matcher_mem={}".format(
                     epoch, np.sum(mean_traceback_size) / np.sum(num_matches),
@@ -709,7 +627,7 @@ class InferenceManager(object):
         for epoch in range(self.num_epochs):
             time = self.epoch_time[epoch]
             ancestor_focal_sites = self.epoch_ancestors[epoch]
-            self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+            logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
                 epoch, time, len(ancestor_focal_sites)))
             child = self.tree_sequence_builder.num_nodes
             for focal_sites in ancestor_focal_sites:
@@ -742,12 +660,12 @@ class InferenceManager(object):
 
         def worker(thread_index):
             with self.catch_thread_error():
-                self.logger.info("Started sample worker thread {}".format(thread_index))
+                logger.info("Started sample worker thread {}".format(thread_index))
                 if _prctl_available:
                     prctl.set_name("sample-worker-{}".format(thread_index))
                 if _numa_available and numa.available():
                     numa.set_localalloc()
-                    self.logger.debug(
+                    logger.debug(
                         "Set NUMA local allocation policy on thread {}.".format(
                             thread_index))
                 mean_traceback_size = 0
@@ -765,7 +683,7 @@ class InferenceManager(object):
                     work_queue.task_done()
                 if num_matches > 0:
                     mean_traceback_size /= num_matches
-                self.logger.info(
+                logger.info(
                     "Thread {} done: mean_tb_size={:.2f}; total_edges={}".format(
                         thread_index, mean_traceback_size,
                         results[thread_index].num_edges))
@@ -785,7 +703,7 @@ class InferenceManager(object):
         return ResultBuffer.combine(results)
 
     def process_samples(self, sample_error=0.0):
-        self.logger.info("Processing {} samples".format(self.num_samples))
+        logger.info("Processing {} samples".format(self.num_samples))
         self.sample_ids = self.tree_sequence_builder.num_nodes + np.arange(
                 self.num_samples, dtype=np.int32)
         if self.num_threads == 1:
@@ -803,11 +721,11 @@ class InferenceManager(object):
             results.site, results.node, results.derived_state)
 
     def finalise(self):
-        self.logger.info("Finalising tree sequence")
+        logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence()
         ts_simplified = ts.simplify(
             samples=self.sample_ids, filter_zero_mutation_sites=False)
-        self.logger.debug("simplified from ({}, {}) to ({}, {}) nodes and edges".format(
+        logger.debug("simplified from ({}, {}) to ({}, {}) nodes and edges".format(
             ts.num_nodes, ts.num_edges, ts_simplified.num_nodes,
             ts_simplified.num_edges))
         return ts_simplified
