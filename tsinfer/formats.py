@@ -74,6 +74,8 @@ def open_ancestors(path):
         # Also check basic integrity like the shapes of the various arrays.
         yield root
 
+
+# TODO change this to Container.
 class Hdf5File(object):
     """
     Superclass of all input and intermediate formats used by tsinfer.
@@ -133,9 +135,28 @@ class InputFile(Hdf5File):
         """
         Returns an iterator over the genotypes in site-by-site order.
         """
-        V = self.genotypes[:]
-        for v in V:
-            yield v
+        chunk_size = self.genotypes.chunks[0]
+        num_sites = self.genotypes.shape[0]
+        num_chunks = num_sites // chunk_size
+        logger.info("Loading genotypes for {} sites in {} chunks".format(
+            num_sites, num_chunks))
+        j = 0
+        for chunk in range(num_chunks):
+            before = time.perf_counter()
+            V = self.genotypes[j: j + chunk_size][:]
+            duration = time.perf_counter() - before
+            logger.info("Loaded genotype chunk in {:.2f} seconds".format(duration))
+            j += chunk_size
+            for v in V:
+                yield v
+        last_chunk = num_sites % chunk_size
+        if last_chunk != 0:
+            before = time.perf_counter()
+            V = self.genotypes[-last_chunk:]
+            duration = time.perf_counter() - before
+            logger.info("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            for v in V:
+                yield v
 
     @classmethod
     def build(
@@ -293,7 +314,6 @@ class AncestorFile(Hdf5File):
         if j % self.chunk_size == 0:
             start = j - self.chunk_size
             end = j
-            print("flush", start, end)
             logger.info("Pushing chunk {} onto queue, depth={}".format(
                 j // self.chunk_size, self.__flush_queue.qsize()))
             self.__flush_queue.put((start, end, self.__haplotypes_buffer.copy()))
