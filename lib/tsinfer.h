@@ -5,6 +5,8 @@
 
 #include "block_allocator.h"
 #include "object_heap.h"
+#include "avl.h"
+
 
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
@@ -42,20 +44,9 @@ typedef struct _segment_t {
 } segment_t;
 
 typedef struct {
-    site_id_t id;
     size_t frequency;
     allele_t *genotypes;
 } site_t;
-
-typedef struct {
-    size_t frequency;
-    size_t num_sites;
-    site_t **sites;
-    size_t num_ancestors;
-    site_id_t **ancestor_focal_sites;
-    size_t *num_ancestor_focal_sites;
-    site_id_t *ancestor_focal_site_mem;
-} frequency_class_t;
 
 typedef struct {
     ancestor_id_t *start;
@@ -64,15 +55,27 @@ typedef struct {
     double position;
 } site_state_t;
 
+typedef struct _site_list_t {
+    site_id_t site;
+    struct _site_list_t *next;
+} site_list_t;
+
+typedef struct {
+    allele_t *genotypes;
+    size_t num_samples;
+    size_t num_sites;
+    site_list_t *sites;
+} pattern_map_t;
+
 typedef struct {
     size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
-    size_t num_frequency_classes;
-    allele_t *haplotypes;
     site_t *sites;
-    site_t **sorted_sites;
-    frequency_class_t *frequency_classes;
+    /* frequency_map[f] is an AVL tree mapping unique genotypes to the sites that
+     * the occur at. Each of these sites has frequency f. */
+    avl_tree_t *frequency_map;
+    block_allocator_t allocator;
 } ancestor_builder_t;
 
 typedef struct _mutation_list_node_t {

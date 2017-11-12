@@ -573,40 +573,6 @@ class InferenceManager(object):
                     self.tree_sequence_builder.num_edges,
                     humanize.naturalsize(mean_memory, binary=True)))
 
-            # a = np.zeros(self.num_sites, dtype=np.int8)
-            # for epoch in range(self.num_epochs):
-            #     time = self.epoch_time[epoch]
-            #     ancestor_focal_sites = self.epoch_ancestors[epoch]
-            #     self.logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
-            #         epoch, time, len(ancestor_focal_sites)))
-            #     child = self.tree_sequence_builder.num_nodes
-            #     for focal_sites in ancestor_focal_sites:
-            #         start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
-            #         match_queue.put((child, focal_sites, start, end, a.copy()))
-            #         child += 1
-            #     # Wait until the match_queue is empty.
-            #     # TODO Note that these calls to queue.join prevent errors that happen in the
-            #     # worker process from propagating back here. Might be better to use some
-            #     # other way of handling threading sync.
-            #     match_queue.join()
-            #     epoch_results = ResultBuffer.combine(results)
-            #     self.tree_sequence_builder.update(
-            #         len(ancestor_focal_sites), time,
-            #         epoch_results.left, epoch_results.right, epoch_results.parent,
-            #         epoch_results.child, epoch_results.site, epoch_results.node,
-            #         epoch_results.derived_state)
-            #     mean_memory = np.mean(matcher_memory)
-            #     self.logger.debug(
-            #         "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
-            #         "mean_matcher_mem={}".format(
-            #             epoch, np.sum(mean_traceback_size) / np.sum(num_matches),
-            #             self.tree_sequence_builder.num_edges,
-            #             humanize.naturalsize(mean_memory, binary=True)))
-            #     mean_traceback_size[:] = 0
-            #     num_matches[:] = 0
-            #     for j in range(self.num_threads):
-            #         results[j].clear()
-
             # Signal to the workers to quit and clean up.
             for j in range(self.num_threads):
                 match_queue.put(None)
@@ -614,47 +580,6 @@ class InferenceManager(object):
                 match_threads[j].join()
 
 
-
-
-    # def initialise(self):
-    #     # This is slow, so we should figure out a way to report progress on it.
-    #     # self.logger.info(
-    #     #     "Initialising ancestor builder for {} samples and {} sites".format(
-    #     #         self.num_samples, self.num_sites))
-
-    #     self.num_ancestors = self.ancestor_builder.num_ancestors
-    #     # Allocate 64K edges initially. This will double as needed and will quickly be
-    #     # big enough even for very large instances.
-    #     max_edges = 64 * 1024
-    #     # This is a safe maximum until we start doing resolution.
-    #     max_nodes = self.num_samples + self.num_sites
-    #     self.tree_sequence_builder = self.tree_sequence_builder_class(
-    #         self.sequence_length, self.positions, self.recombination_rate,
-    #         max_nodes=max_nodes, max_edges=max_edges)
-
-    #     frequency_classes = self.ancestor_builder.get_frequency_classes()
-    #     # TODO change the builder API here to just return the list of focal sites.
-    #     # We really don't care about the actual frequency here.
-    #     self.num_epochs = len(frequency_classes)
-    #     self.epoch_ancestors = [None for _ in range(self.num_epochs)]
-    #     self.epoch_time = [0 for _ in range(self.num_epochs)]
-    #     for j, fc in enumerate(frequency_classes):
-    #         self.epoch_time[j] = self.num_epochs - j
-    #         self.epoch_ancestors[j] = fc[1]
-    #     root_time = self.num_epochs + 1
-    #     self.tree_sequence_builder.update(1, root_time, [], [], [], [], [], [], [])
-
-    #     if self.progress:
-    #         total = self.num_samples + self.num_ancestors - 1
-    #         self.progress_monitor = tqdm.tqdm(total=total, smoothing=0.01)
-    #         self.progress_monitor_lock = threading.Lock()
-
-    # def __update_progress(self):
-    #     with self.progress_monitor_lock:
-    #         # TODO it would be nice to show the progress through the current epoch.
-    #         # We want to show epoch=1/{1234} ancestor=100/123. This way we can see
-    #         # how we're doing withouth the verbose DEBUG messages.
-    #         self.progress_monitor.update()
 
     def __find_path_ancestor(
             self, ancestor, start, end, node_id, focal_sites, matcher, results, match):
@@ -1002,8 +927,8 @@ class AncestorBuilder(object):
     def __init__(self, num_samples, num_sites):
         self.num_samples = num_samples
         self.num_sites = num_sites
-        self.sites = [None for j in range(self.num_sites)]
-        self.frequency_map = collections.defaultdict(dict)
+        self.sites = [None for _ in range(self.num_sites)]
+        self.frequency_map = [{} for _ in range(self.num_samples)]
 
     def add_site(self, site_id, frequency, genotypes):
         """
@@ -1028,12 +953,12 @@ class AncestorBuilder(object):
             site = self.sites[j]
             print(site.frequency, "\t", site.genotypes)
         print("Frequency map")
-        frequencies = sorted(self.frequency_map.keys())
-        for f in frequencies:
+        for f in range(self.num_samples):
             pattern_map = self.frequency_map[f]
-            print("f = ", f, "with ", len(pattern_map), "patterns")
-            for pattern, sites in pattern_map.items():
-                print("\t", pattern, ":", sites)
+            if len(pattern_map) > 0:
+                print("f = ", f, "with ", len(pattern_map), "patterns")
+                for pattern, sites in pattern_map.items():
+                    print("\t", pattern, ":", sites)
 
     def ancestor_descriptors(self):
         """
@@ -1041,12 +966,10 @@ class AncestorBuilder(object):
         ancestors in reverse order of frequency.
         """
         ret = []
-        frequencies = reversed(sorted(self.frequency_map.keys()))
-        for frequency in frequencies:
+        for frequency in reversed(range(self.num_samples)):
             for focal_sites in self.frequency_map[frequency].values():
                 ret.append((frequency, focal_sites))
         return ret
-
 
     def __build_ancestor_sites(self, focal_site, sites, a):
         samples = set()

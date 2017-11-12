@@ -286,9 +286,10 @@ run_generate(const char *input_file, int verbose)
     size_t num_samples, num_sites, j, k, l, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *genotypes = NULL;
+    site_id_t *focal_sites = NULL;
     double *positions = NULL;
     double *recombination_rate = NULL;
-    site_id_t *focal_sites, start, end;
+    site_id_t start, end;
     size_t num_focal_sites;
     ancestor_builder_t ancestor_builder;
     tree_sequence_builder_t ts_builder;
@@ -312,6 +313,9 @@ run_generate(const char *input_file, int verbose)
     allele_t *derived_state_buffer;
     node_id_t child;
     int flags = 0;
+    avl_node_t *avl_node;
+    pattern_map_t *map_elem;
+    site_list_t *s;
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
@@ -320,7 +324,8 @@ run_generate(const char *input_file, int verbose)
         fatal_error("Builder alloc error.");
     }
     genotypes = malloc(num_sites * sizeof(allele_t));
-    if (genotypes == NULL) {
+    focal_sites = malloc(num_sites * sizeof(site_id_t));
+    if (genotypes == NULL || focal_sites == NULL) {
         fatal_error("Error allocing genotypes");
     }
 
@@ -336,7 +341,6 @@ run_generate(const char *input_file, int verbose)
             fatal_error("Add site error");
         }
     }
-    exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
@@ -352,10 +356,15 @@ run_generate(const char *input_file, int verbose)
 
     if (verbose > 0) {
         ancestor_builder_print_state(&ancestor_builder, stdout);
-        ancestor_matcher_print_state(&matcher, stdout);
+        /* ancestor_matcher_print_state(&matcher, stdout); */
     }
+    age = num_samples - 1;
+    while (avl_count(&ancestor_builder.frequency_map[age]) == 0) {
+        age--;
+    }
+    age++;
 
-    age = ancestor_builder.num_frequency_classes + 1;
+    /* age = ancestor_builder.num_frequency_classes + 1; */
     ret = tree_sequence_builder_update(&ts_builder, 1, age,
             0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL);
     if (ret != 0) {
@@ -376,20 +385,26 @@ run_generate(const char *input_file, int verbose)
         fatal_error("alloc");
     }
 
-    for (j = 0; j < ancestor_builder.num_frequency_classes; j++) {
-        age--;
-        num_ancestors = ancestor_builder.frequency_classes[j].num_ancestors;
+    for (age = num_samples - 1; age > 0; age--) {
+        num_ancestors =  avl_count(&ancestor_builder.frequency_map[age]);
         if (verbose > 0) {
-            printf("Generating for frequency class %d: age = %d num_ancestors = %d\n",
-                    (int) j, (int) age, (int) num_ancestors);
+            printf("Generating for frequency class age = %d num_ancestors = %d\n",
+                    (int) age, (int) num_ancestors);
         }
         /* printf("AGE = %d\n", (int) age); */
         total_edges = 0;
         total_mutations = 0;
         child = ts_builder.num_nodes;
-        for (k = 0; k < num_ancestors; k++) {
-            focal_sites = ancestor_builder.frequency_classes[j].ancestor_focal_sites[k];
-            num_focal_sites = ancestor_builder.frequency_classes[j].num_ancestor_focal_sites[k];
+        for (avl_node = ancestor_builder.frequency_map[age].head; avl_node != NULL;
+                avl_node = avl_node->next) {
+            map_elem = (pattern_map_t *) avl_node->item;
+            num_focal_sites = map_elem->num_sites;
+            /* The linked list is in reverse order, so insert backwards here */
+            k = num_focal_sites - 1;
+            for (s = map_elem->sites; s != NULL; s = s->next) {
+                focal_sites[k] = s->site;
+                k--;
+            }
             ret = ancestor_builder_make_ancestor(&ancestor_builder, num_focal_sites,
                     focal_sites, &start, &end, a);
             if (ret != 0) {
@@ -522,6 +537,7 @@ run_generate(const char *input_file, int verbose)
     tree_sequence_builder_free(&ts_builder);
     ancestor_matcher_free(&matcher);
     tsi_safe_free(genotypes);
+    tsi_safe_free(focal_sites);
     tsi_safe_free(haplotypes);
     tsi_safe_free(positions);
     tsi_safe_free(recombination_rate);
