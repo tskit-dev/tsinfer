@@ -6,11 +6,27 @@ import contextlib
 import uuid
 import logging
 import time
+import threading
+import queue
 
 import numpy as np
 import h5py
 
 logger = logging.getLogger(__name__)
+
+# TODO move this into an optional features module that we can pull in
+# from various places.
+
+# prctl is an optional extra; it allows us assign meaninful names to threads
+# for debugging.
+_prctl_available = False
+try:
+    import prctl
+    _prctl_available = True
+except ImportError:
+    pass
+
+
 
 FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
@@ -217,6 +233,7 @@ class AncestorFile(Hdf5File):
 
         # Create the data buffers.
         self.__haplotypes_buffer = np.empty((self.chunk_size, self.num_sites))
+        self.__haplotypes_buffer_lock = threading.Lock()
         self.__time_buffer = np.zeros(num_ancestors, dtype=np.int32)
         self.__start_buffer = np.zeros(num_ancestors, dtype=np.int32)
         self.__end_buffer = np.zeros(num_ancestors, dtype=np.int32)
@@ -228,8 +245,29 @@ class AncestorFile(Hdf5File):
         self.__time_buffer[0] = oldest_time
         self.__haplotypes_buffer[0, :] = 0
         self.__ancestor_id = 1
+        # Start the flush thread.
+        self.__flush_thread = threading.Thread(target=self.flush_worker, daemon=True)
+        self.__flush_queue = queue.Queue(16)  # Arbitrary.
         logger.debug("initialised ancestor file for input {}".format(
             self.input_file.uuid))
+        self.__flush_thread.start()
+
+    def flush_worker(self):
+        logger.info("Ancestor flush worker thread starting")
+        if _prctl_available:
+            prctl.set_name("ancestor-flush-worker")
+        while True:
+            work = self.__flush_queue.get()
+            if work is None:
+                break
+            start, end, H = work
+            before = time.perf_counter()
+            self.haplotypes[start:end,:] = H
+            duration = time.perf_counter() - before
+            logger.info("Flushed genotype chunk in {:.2f}s".format(duration))
+            self.__flush_queue.task_done()
+        self.__flush_queue.task_done()
+        logger.info("Ancestor flush worker thread exiting")
 
     def add_ancestor(
             self, start=None, end=None, ancestor_time=None, focal_sites=None,
@@ -251,11 +289,11 @@ class AncestorFile(Hdf5File):
         self.__ancestor_id += 1
         j = self.__ancestor_id
         if j % self.chunk_size == 0:
-            # Flush this chunk to disk
-            before = time.perf_counter()
-            self.haplotypes[j - self.chunk_size: j] = self.__haplotypes_buffer
-            duration = time.perf_counter() - before
-            logger.info("Flushed genotype chunk in {:.2f}s".format(duration))
+            start = j - self.chunk_size
+            end = j
+            logger.info("Pushing chunk {} onto queue, depth={}".format(
+                j // self.chunk_size, self.__flush_queue.qsize()))
+            self.__flush_queue.put((start, end, self.__haplotypes_buffer.copy()))
 
     def finalise(self):
         """
@@ -264,9 +302,15 @@ class AncestorFile(Hdf5File):
         assert self.num_ancestors == self.__ancestor_id
         last_chunk = self.num_ancestors % self.chunk_size
         if last_chunk != 0:
-            self.haplotypes[-last_chunk:] = self.__haplotypes_buffer[:last_chunk]
+            start = -last_chunk
+            end = -1
+            self.__flush_queue.put(
+                (start, end, self.__haplotypes_buffer[:last_chunk]))
+        self.__flush_queue.put(None)
+        self.__flush_queue.join()
         self.time[:] = self.__time_buffer
         self.start[:] = self.__start_buffer
         self.end[:] = self.__end_buffer
         self.num_focal_sites[:] = self.__num_focal_sites_buffer
         self.focal_sites[:] = self.__focal_sites_buffer
+        self.__flush_thread.join()
