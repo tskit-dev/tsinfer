@@ -61,7 +61,7 @@ def threaded_row_iterator(array, queue_size=4):
         last_chunk = num_rows % chunk_size
         if last_chunk != 0:
             before = time.perf_counter()
-            A = self.genotypes[-last_chunk:]
+            A = array[-last_chunk:]
             duration = time.perf_counter() - before
             logger.info("Loaded final genotype chunk in {:.2f} seconds".format(duration))
             decompressed_queue.put(A)
@@ -191,7 +191,7 @@ class InputFile(Hdf5File):
     @classmethod
     def build(
             cls, input_hdf5, genotypes, sequence_length=None, position=None,
-            recombination_rate=None, chunk_size=None, compression=None):
+            recombination_rate=None, chunk_size=None, compress=True):
         """
         Builds a tsinfer InputFile from the specified data.
         """
@@ -209,7 +209,9 @@ class InputFile(Hdf5File):
         input_hdf5.attrs["sequence_length"] = sequence_length
         input_hdf5.attrs["uuid"] = str(uuid.uuid4())
 
-        compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
+        compressor = None
+        if compress:
+            compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
         variants_group = input_hdf5.create_group("variants")
         variants_group.create_dataset(
@@ -295,7 +297,7 @@ class AncestorFile(Hdf5File):
 
     def initialise(
            self, num_ancestors, oldest_time, total_num_focal_sites,
-           chunk_size=None, compression=None, num_threads=None):
+           chunk_size=None, compress=True, num_threads=None):
         if self.mode != self.MODE_WRITE:
            raise ValueError("Must open in write mode")
         self.write_version_attrs(self.hdf5_file)
@@ -310,7 +312,9 @@ class AncestorFile(Hdf5File):
             num_threads = 4  # Different default?
 
         # Create the datasets.
-        compressor = zarr.Blosc(cname='zstd', clevel=5, shuffle=blosc.BITSHUFFLE)
+        compressor = None
+        if compress:
+            compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
         ancestors_group = self.hdf5_file.create_group("ancestors")
         self.haplotypes = ancestors_group.create_dataset(
@@ -351,8 +355,9 @@ class AncestorFile(Hdf5File):
         # We consume the zero'th index first. Now push the remaining buffers
         # onto the buffer queue.
         self.__buffer_queue = queue.Queue()
-        for j in range(1, num_buffers):
+        for j in range(num_buffers):
             self.__buffer_queue.put(j)
+        self.__haplotypes_buffer_index = self.__buffer_queue.get()
         # Fill in the oldest ancestor.
         self.__time_buffer[0] = oldest_time
         self.__haplotypes_buffers[self.__haplotypes_buffer_index][0, :] = 0
@@ -409,11 +414,10 @@ class AncestorFile(Hdf5File):
         if j % self.chunk_size == 0:
             start = j - self.chunk_size
             end = j
-            self.__buffer_queue.task_done()
             logger.info("Pushing chunk {} onto queue, depth={}".format(
                 j // self.chunk_size, self.__flush_queue.qsize()))
+            self.__buffer_queue.task_done()
             self.__flush_queue.put((start, end, self.__haplotypes_buffer_index))
-            # Get fresh buffer
             self.__haplotypes_buffer_index = self.__buffer_queue.get()
             logger.info("Got new haplotype buffer {}".format(
                 self.__haplotypes_buffer_index))

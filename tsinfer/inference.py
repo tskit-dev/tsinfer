@@ -41,7 +41,7 @@ except ImportError:
 
 
 def build_ancestors(
-        input_hdf5, ancestor_hdf5, progress=False, method="C", compression=None,
+        input_hdf5, ancestor_hdf5, progress=False, method="C", compress=True,
         chunk_size=None):
 
     input_file = formats.InputFile(input_hdf5)
@@ -70,7 +70,7 @@ def build_ancestors(
     oldest_time = descriptors[0][0] + 1
     ancestor_file.initialise(
         num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
-        compression=compression)
+        compress=compress)
 
     a = np.zeros(num_sites, dtype=np.int8)
     progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
@@ -306,10 +306,6 @@ class InferenceManager(object):
 
     def match_ancestors(self):
         num_ancestors = self.ancestors_file.num_ancestors
-
-        progress_monitor = tqdm.tqdm(
-            total=num_ancestors, disable=not self.progress, initial=1, smoothing=0.1)
-
         haplotypes = self.ancestors_file.ancestor_haplotypes()
 
         # Allocate 64K edges initially. This will double as needed and will quickly be
@@ -324,6 +320,26 @@ class InferenceManager(object):
         focal_sites = self.ancestors_file.focal_sites
         start = self.ancestors_file.start
         end = self.ancestors_file.end
+
+        epoch_info = {}
+        current_time = epoch[0]
+        num_ancestors_in_epoch = 0
+        for j in range(num_ancestors):
+            if epoch[j] != current_time:
+                epoch_info[current_time] = collections.OrderedDict([
+                    ("epoch", str(current_time)),
+                    ("nanc", str(num_ancestors_in_epoch))])
+                num_ancestors_in_epoch = 0
+                current_time = epoch[j]
+            num_ancestors_in_epoch += 1
+
+        bar_format=(
+            "{desc}{percentage:3.0f}%|{bar}"
+            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
+        progress_monitor = tqdm.tqdm(
+            desc="match-ancestors", bar_format=bar_format,
+            total=num_ancestors, disable=not self.progress, initial=1, smoothing=0.01,
+            postfix=epoch_info[epoch[0]])
 
         self.tree_sequence_builder.update(1, epoch[0], [], [], [], [], [], [], [])
         a = next(haplotypes)
@@ -347,6 +363,7 @@ class InferenceManager(object):
                     results.clear()
                     num_ancestors_in_epoch = 0
                     current_time = epoch[j]
+                    progress_monitor.set_postfix(epoch_info[current_time])
 
                 num_ancestors_in_epoch += 1
                 a = next(haplotypes)
@@ -430,6 +447,7 @@ class InferenceManager(object):
                     for k in range(self.num_threads):
                         results[k].clear()
                     num_ancestors_in_epoch = 0
+                    progress_monitor.set_postfix(epoch_info[current_time])
                     current_time = epoch[j]
 
                 num_ancestors_in_epoch += 1
@@ -850,7 +868,7 @@ class AncestorBuilder(object):
         ret = []
         for frequency in reversed(range(self.num_samples)):
             for focal_sites in self.frequency_map[frequency].values():
-                ret.append((frequency, focal_sites))
+                ret.append((frequency, np.array(focal_sites, dtype=np.int32)))
         return ret
 
     def __build_ancestor_sites(self, focal_site, sites, a):

@@ -65,24 +65,23 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
     positions = np.array([site.position for site in ts.sites()])
-    S = generate_samples(ts, error_rate)
+    V = ts.genotype_matrix()
+    # S = generate_samples(ts, error_rate)
     # print(S)
     recombination_rate = np.zeros_like(positions) + recombination_rate
 
-    # input_file = "tmp__NOBACKUP__/dev_input.hdf5"
+    input_root = zarr.group()
+    tsinfer.InputFile.build(
+        input_root, genotypes=V, position=positions,
+        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
+        compress=False)
+    ancestors_root = zarr.group()
 
-    input_hdf5 = h5py.File("/dummy", "w", driver="core", backing_store=False)
-    make_input_hdf5(input_hdf5, S, positions, recombination_rate, L_megabases)
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
 
-    # input_hdf5 = h5py.File(input_file, "r")
-    # ancestors_file = "tmp__NOBACKUP__/dev_ancestors.hdf5"
-
-    # ancestors_hdf5 = h5py.File(ancestors_file, "w")
-    ancestors_hdf5 = h5py.File("/other", "w", driver="core", backing_store=False)
-
-    tsinfer.build_ancestors(input_hdf5, ancestors_hdf5, method=method, chunk_size=16)
     ts = tsinfer.match_ancestors(
-        input_hdf5, ancestors_hdf5, method=method, num_threads=num_threads)
+        input_root, ancestors_root, method=method, num_threads=num_threads)
     assert ts.sequence_length == L_megabases
 
     # print(ts)
@@ -92,7 +91,7 @@ def tsinfer_dev(
     #     print(t.draw(format="unicode"))
     # for interval, e_out, e_in in ts.edge_diffs():
     #     print(interval, e_out)
-    A = ancestors_hdf5["ancestors/haplotypes"][:]
+    A = ancestors_root["ancestors/haplotypes"][:]
     A[A == -1] = 0
     for v in ts.variants():
         # print(v.index)
@@ -101,8 +100,8 @@ def tsinfer_dev(
         # print()
         assert np.array_equal(v.genotypes, A[:, v.index])
     print("Verified haplotypes")
-    input_hdf5.close()
-    ancestors_hdf5.close()
+    # input_hdf5.close()
+    # ancestors_hdf5.close()
 
     # tsp = tsinfer.infer(
     #     S, positions, L_megabases, recombination_rate, error_rate,
@@ -363,7 +362,7 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    build_profile_inputs(10, 1)
+    # build_profile_inputs(10, 1)
 
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
@@ -383,10 +382,10 @@ if __name__ == "__main__":
 
     # tsinfer_dev(4, 0.2, seed=84, num_threads=0, error_rate=0.0, method="P")
 
-    # for seed in range(1, 10000):
-    #     print(seed)
-    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-    #     tsinfer_dev(20, 2, seed=seed, num_threads=0, error_rate=0.0, method="C")
+    for seed in range(1, 10000):
+        print(seed)
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+        tsinfer_dev(30, 2.5, seed=seed, num_threads=0, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
