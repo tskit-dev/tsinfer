@@ -91,16 +91,18 @@ def build_ancestors(
 
 
 def match_ancestors(
-        input_hdf5, ancestors_hdf5, method="C", progress=False, num_threads=0,
-        log_level="WARN"):
+        input_hdf5, ancestors_hdf5, method="C", progress=False, num_threads=0):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
     """
     # TODO remove the log_level argument here.
+    input_file = formats.InputFile(input_hdf5)
+    ancestors_file = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
+
     manager = InferenceManager(
-        input_hdf5, ancestors_hdf5, method=method, progress=progress,
-        num_threads=num_threads, log_level=log_level)
+        input_file, ancestors_file, method=method, progress=progress,
+        num_threads=num_threads)
     manager.match_ancestors()
     return manager.get_tree_sequence()
 
@@ -262,21 +264,17 @@ class ResultBuffer(object):
 class InferenceManager(object):
 
     def __init__(
-            self, input_hdf5, ancestors_hdf5, num_threads=1, method="C",
-            progress=False, log_level="WARNING",
-            ancestor_traceback_file_pattern=None):
-        self.ancestors_hdf5 = ancestors_hdf5
-        self.input_hdf5 = input_hdf5
-
-        samples_group = input_hdf5["samples"]
-        sites_group = input_hdf5["sites"]
-        haplotypes = samples_group["haplotypes"]
-        self.sequence_length = input_hdf5.attrs["sequence_length"]
-        self.num_samples = haplotypes.shape[0]
-        self.num_sites = haplotypes.shape[1]
-        self.positions = sites_group["position"][:]
-        self.recombination_rate = sites_group["recombination_rate"][:]
+            self, input_file, ancestors_file, num_threads=1, method="C",
+            progress=False, ancestor_traceback_file_pattern=None):
+        self.ancestors_file = ancestors_file
+        self.input_file = input_file
         self.num_threads = num_threads
+
+        self.num_samples = self.input_file.num_samples
+        self.num_sites = self.input_file.num_sites
+        self.sequence_length = self.input_file.sequence_length
+        self.positions = self.input_file.position
+        self.recombination_rate = self.input_file.recombination_rate
         # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
         # the tracebacks for each node ID and other debugging information.
         self.ancestor_traceback_file_pattern = ancestor_traceback_file_pattern
@@ -307,45 +305,12 @@ class InferenceManager(object):
             _thread.interrupt_main()
 
     def match_ancestors(self):
-        ancestors_group = self.ancestors_hdf5["ancestors"]
-        haplotypes_ds = ancestors_group["haplotypes"]
-
-        epoch = ancestors_group["time"][:]
-        start = ancestors_group["start"][:]
-        end = ancestors_group["end"][:]
-        num_focal_sites = ancestors_group["num_focal_sites"][:]
-        focal_sites = ancestors_group["focal_sites"][:]
-        focal_sites_offset = np.roll(np.cumsum(num_focal_sites), 1)
-        focal_sites_offset[0] = 0
-        num_ancestors = epoch.shape[0]
+        num_ancestors = self.ancestors_file.num_ancestors
 
         progress_monitor = tqdm.tqdm(
-            total=num_ancestors, disable=not self.progress, smoothing=0.1)
+            total=num_ancestors, disable=not self.progress, initial=1, smoothing=0.1)
 
-        def haplotypes_iter():
-            chunk_size = haplotypes_ds.chunks[0]
-            assert haplotypes_ds.chunks[1] == self.num_sites
-            num_chunks = num_ancestors // chunk_size
-            offset = 0
-            for k in range(num_chunks):
-                before = time.perf_counter()
-                A = haplotypes_ds[offset: offset + chunk_size][:]
-                duration = time.perf_counter() - before
-                logger.debug("Decompressed chunk {} of {} in {:.2f}s".format(
-                    k, num_chunks, duration))
-                offset += chunk_size
-                for a in A:
-                    # This is probably not the right place to do this as we'll have a
-                    # long pause at the end when we're flushing the queue.
-                    progress_monitor.update()
-                    yield a
-            if offset != num_ancestors:
-                A = haplotypes_ds[offset:][:]
-                for a in A:
-                    progress_monitor.update()
-                    yield a
-
-        haplotypes = haplotypes_iter()
+        haplotypes = self.ancestors_file.ancestor_haplotypes()
 
         # Allocate 64K edges initially. This will double as needed and will quickly be
         # big enough even for very large instances.
@@ -355,6 +320,11 @@ class InferenceManager(object):
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
             max_nodes=max_nodes, max_edges=max_edges)
+        epoch = self.ancestors_file.time
+        focal_sites = self.ancestors_file.focal_sites
+        start = self.ancestors_file.start
+        end = self.ancestors_file.end
+
         self.tree_sequence_builder.update(1, epoch[0], [], [], [], [], [], [], [])
         a = next(haplotypes)
         assert np.all(a == 0)
@@ -380,13 +350,9 @@ class InferenceManager(object):
 
                 num_ancestors_in_epoch += 1
                 a = next(haplotypes)
-                focal = focal_sites[
-                    focal_sites_offset[j]: focal_sites_offset[j] + num_focal_sites[j]]
-                assert len(focal) > 0
                 self.__find_path_ancestor(
-                    a, start[j], end[j], j, focal, matcher, results, match)
-
-            # print("Flushing", current_time)
+                    a, start[j], end[j], j, focal_sites[j], matcher, results, match)
+                progress_monitor.update()
             self.tree_sequence_builder.update(
                 num_ancestors_in_epoch, current_time,
                 results.left, results.right, results.parent, results.child,
@@ -422,6 +388,7 @@ class InferenceManager(object):
                         self.__find_path_ancestor(
                                 a, start, end, node_id, focal_sites, matcher,
                                 result_buffer, match)
+                        progress_monitor.update()
                         mean_traceback_size[thread_index] += matcher.mean_traceback_size
                         num_matches[thread_index] += 1
                         matcher_memory[thread_index] = matcher.total_memory
@@ -467,10 +434,7 @@ class InferenceManager(object):
 
                 num_ancestors_in_epoch += 1
                 a = next(haplotypes)
-                focal = focal_sites[
-                    focal_sites_offset[j]: focal_sites_offset[j] + num_focal_sites[j]]
-                assert len(focal) > 0
-                match_queue.put((j, focal, start[j], end[j], a))
+                match_queue.put((j, focal_sites[j], start[j], end[j], a))
 
             for j in range(self.num_threads):
                 match_queue.put(None)
@@ -536,110 +500,110 @@ class InferenceManager(object):
         else:
             self.__process_ancestors_multi_threaded()
 
-    def __process_ancestors_multi_threaded(self):
-        match_queue = queue.Queue()
-        results = [ResultBuffer() for _ in range(self.num_threads)]
-        matcher_memory = np.zeros(self.num_threads)
-        mean_traceback_size = np.zeros(self.num_threads)
-        num_matches = np.zeros(self.num_threads)
+    # def __process_ancestors_multi_threaded(self):
+    #     match_queue = queue.Queue()
+    #     results = [ResultBuffer() for _ in range(self.num_threads)]
+    #     matcher_memory = np.zeros(self.num_threads)
+    #     mean_traceback_size = np.zeros(self.num_threads)
+    #     num_matches = np.zeros(self.num_threads)
 
-        def match_worker(thread_index):
-            with self.catch_thread_error():
-                logger.info(
-                    "Ancestor match thread {} starting".format(thread_index))
-                if _prctl_available:
-                    prctl.set_name("ancestor-worker-{}".format(thread_index))
-                if _numa_available and numa.available():
-                    numa.set_localalloc()
-                    logger.debug(
-                        "Set NUMA local allocation policy on thread {}."
-                        .format(thread_index))
-                match = np.zeros(self.num_sites, np.int8)
-                matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
-                result_buffer = results[thread_index]
-                while True:
-                    work = match_queue.get()
-                    if work is None:
-                        break
-                    node_id, focal_sites, start, end, a = work
-                    self.__find_path_ancestor(
-                            a, start, end, node_id, focal_sites, matcher,
-                            result_buffer, match)
-                    mean_traceback_size[thread_index] += matcher.mean_traceback_size
-                    num_matches[thread_index] += 1
-                    matcher_memory[thread_index] = matcher.total_memory
-                    match_queue.task_done()
-                match_queue.task_done()
-                logger.info("Ancestor match thread {} exiting".format(thread_index))
+    #     def match_worker(thread_index):
+    #         with self.catch_thread_error():
+    #             logger.info(
+    #                 "Ancestor match thread {} starting".format(thread_index))
+    #             if _prctl_available:
+    #                 prctl.set_name("ancestor-worker-{}".format(thread_index))
+    #             if _numa_available and numa.available():
+    #                 numa.set_localalloc()
+    #                 logger.debug(
+    #                     "Set NUMA local allocation policy on thread {}."
+    #                     .format(thread_index))
+    #             match = np.zeros(self.num_sites, np.int8)
+    #             matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
+    #             result_buffer = results[thread_index]
+    #             while True:
+    #                 work = match_queue.get()
+    #                 if work is None:
+    #                     break
+    #                 node_id, focal_sites, start, end, a = work
+    #                 self.__find_path_ancestor(
+    #                         a, start, end, node_id, focal_sites, matcher,
+    #                         result_buffer, match)
+    #                 mean_traceback_size[thread_index] += matcher.mean_traceback_size
+    #                 num_matches[thread_index] += 1
+    #                 matcher_memory[thread_index] = matcher.total_memory
+    #                 match_queue.task_done()
+    #             match_queue.task_done()
+    #             logger.info("Ancestor match thread {} exiting".format(thread_index))
 
-        match_threads = [
-            threading.Thread(target=match_worker, args=(j,), daemon=True)
-            for j in range(self.num_threads)]
-        for j in range(self.num_threads):
-            match_threads[j].start()
+    #     match_threads = [
+    #         threading.Thread(target=match_worker, args=(j,), daemon=True)
+    #         for j in range(self.num_threads)]
+    #     for j in range(self.num_threads):
+    #         match_threads[j].start()
 
-        a = np.zeros(self.num_sites, dtype=np.int8)
-        for epoch in range(self.num_epochs):
-            time = self.epoch_time[epoch]
-            ancestor_focal_sites = self.epoch_ancestors[epoch]
-            logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
-                epoch, time, len(ancestor_focal_sites)))
-            child = self.tree_sequence_builder.num_nodes
-            for focal_sites in ancestor_focal_sites:
-                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
-                match_queue.put((child, focal_sites, start, end, a.copy()))
-                child += 1
-            # Wait until the match_queue is empty.
-            # TODO Note that these calls to queue.join prevent errors that happen in the
-            # worker process from propagating back here. Might be better to use some
-            # other way of handling threading sync.
-            match_queue.join()
-            epoch_results = ResultBuffer.combine(results)
-            self.tree_sequence_builder.update(
-                len(ancestor_focal_sites), time,
-                epoch_results.left, epoch_results.right, epoch_results.parent,
-                epoch_results.child, epoch_results.site, epoch_results.node,
-                epoch_results.derived_state)
-            mean_memory = np.mean(matcher_memory)
-            logger.debug(
-                "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
-                "mean_matcher_mem={}".format(
-                    epoch, np.sum(mean_traceback_size) / np.sum(num_matches),
-                    self.tree_sequence_builder.num_edges,
-                    humanize.naturalsize(mean_memory, binary=True)))
-            mean_traceback_size[:] = 0
-            num_matches[:] = 0
-            for j in range(self.num_threads):
-                results[j].clear()
+    #     a = np.zeros(self.num_sites, dtype=np.int8)
+    #     for epoch in range(self.num_epochs):
+    #         time = self.epoch_time[epoch]
+    #         ancestor_focal_sites = self.epoch_ancestors[epoch]
+    #         logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+    #             epoch, time, len(ancestor_focal_sites)))
+    #         child = self.tree_sequence_builder.num_nodes
+    #         for focal_sites in ancestor_focal_sites:
+    #             start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+    #             match_queue.put((child, focal_sites, start, end, a.copy()))
+    #             child += 1
+    #         # Wait until the match_queue is empty.
+    #         # TODO Note that these calls to queue.join prevent errors that happen in the
+    #         # worker process from propagating back here. Might be better to use some
+    #         # other way of handling threading sync.
+    #         match_queue.join()
+    #         epoch_results = ResultBuffer.combine(results)
+    #         self.tree_sequence_builder.update(
+    #             len(ancestor_focal_sites), time,
+    #             epoch_results.left, epoch_results.right, epoch_results.parent,
+    #             epoch_results.child, epoch_results.site, epoch_results.node,
+    #             epoch_results.derived_state)
+    #         mean_memory = np.mean(matcher_memory)
+    #         logger.debug(
+    #             "Finished epoch {}; mean_tb_size={:.2f} edges={}; "
+    #             "mean_matcher_mem={}".format(
+    #                 epoch, np.sum(mean_traceback_size) / np.sum(num_matches),
+    #                 self.tree_sequence_builder.num_edges,
+    #                 humanize.naturalsize(mean_memory, binary=True)))
+    #         mean_traceback_size[:] = 0
+    #         num_matches[:] = 0
+    #         for j in range(self.num_threads):
+    #             results[j].clear()
 
-        # Signal to the workers to quit and clean up.
-        for j in range(self.num_threads):
-            match_queue.put(None)
-        for j in range(self.num_threads):
-            match_threads[j].join()
+    #     # Signal to the workers to quit and clean up.
+    #     for j in range(self.num_threads):
+    #         match_queue.put(None)
+    #     for j in range(self.num_threads):
+    #         match_threads[j].join()
 
-    def __process_ancestors_single_threaded(self):
-        a = np.zeros(self.num_sites, dtype=np.int8)
-        matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
-        results = ResultBuffer()
-        match = np.zeros(self.num_sites, np.int8)
+    # def __process_ancestors_single_threaded(self):
+    #     a = np.zeros(self.num_sites, dtype=np.int8)
+    #     matcher = self.ancestor_matcher_class(self.tree_sequence_builder, 0)
+    #     results = ResultBuffer()
+    #     match = np.zeros(self.num_sites, np.int8)
 
-        for epoch in range(self.num_epochs):
-            time = self.epoch_time[epoch]
-            ancestor_focal_sites = self.epoch_ancestors[epoch]
-            logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
-                epoch, time, len(ancestor_focal_sites)))
-            child = self.tree_sequence_builder.num_nodes
-            for focal_sites in ancestor_focal_sites:
-                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
-                self.__find_path_ancestor(
-                    a, start, end, child, focal_sites, matcher, results, match)
-                child += 1
-            self.tree_sequence_builder.update(
-                len(ancestor_focal_sites), time,
-                results.left, results.right, results.parent, results.child,
-                results.site, results.node, results.derived_state)
-            results.clear()
+    #     for epoch in range(self.num_epochs):
+    #         time = self.epoch_time[epoch]
+    #         ancestor_focal_sites = self.epoch_ancestors[epoch]
+    #         logger.debug("Epoch {}; time = {}; {} ancestors to process".format(
+    #             epoch, time, len(ancestor_focal_sites)))
+    #         child = self.tree_sequence_builder.num_nodes
+    #         for focal_sites in ancestor_focal_sites:
+    #             start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+    #             self.__find_path_ancestor(
+    #                 a, start, end, child, focal_sites, matcher, results, match)
+    #             child += 1
+    #         self.tree_sequence_builder.update(
+    #             len(ancestor_focal_sites), time,
+    #             results.left, results.right, results.parent, results.child,
+    #             results.site, results.node, results.derived_state)
+    #         results.clear()
 
     def __process_sample(self, sample_index, matcher, results, match):
         child = self.sample_ids[sample_index]

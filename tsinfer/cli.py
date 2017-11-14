@@ -42,7 +42,7 @@ def run_build_ancestors(args):
     #         h5py.File(ancestors_path, "w") as ancestors_hdf5:
     # input_container = zarr.DirectoryStore(args.input)
     # ancestors_container = zarr.DirectoryStore(ancestors_path)
-    input_container = zarr.ZipStore(args.input)
+    input_container = zarr.ZipStore(args.input, mode='r')
     ancestors_container = zarr.ZipStore(ancestors_path)
 
     input_root = zarr.open_group(store=input_container)
@@ -57,18 +57,19 @@ def run_build_ancestors(args):
 
 
 def run_match_ancestors(args):
-    log_level = "WARN"
-    if args.verbosity > 0:
-        log_level = "INFO"
-    if args.verbosity > 1:
-        log_level = "DEBUG"
+    setup_logging(args.verbosity)
+
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-    with tsinfer.open_input(args.input) as input_hdf5, \
-            tsinfer.open_ancestors(ancestors_path) as ancestors_hdf5:
-        ts = tsinfer.match_ancestors(
-            input_hdf5, ancestors_hdf5, num_threads=args.num_threads,
-            progress=args.progress, log_level=log_level)
-        ts.dump(args.output)
+    # with tsinfer.open_input(args.input) as input_hdf5, \
+    #         tsinfer.open_ancestors(ancestors_path) as ancestors_hdf5:
+    input_container = zarr.ZipStore(args.input, mode='r')
+    input_root = zarr.open_group(store=input_container)
+    ancestors_container = zarr.ZipStore(ancestors_path)
+    ancestors_root = zarr.open_group(store=ancestors_container)
+    ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, num_threads=args.num_threads,
+        progress=args.progress)
+    ts.dump(args.output)
 
 
 def add_input_file_argument(parser):

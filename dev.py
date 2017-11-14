@@ -163,6 +163,8 @@ def build_profile_inputs(n, num_megabases):
     # with h5py.File(input_file, "w") as input_hdf5:
     # with zarr.ZipStore(input_file) as input_hdf5:
     # input_hdf5 = zarr.DirectoryStore(input_file)
+    if os.path.exists(input_file):
+        os.unlink(input_file)
     input_hdf5 = zarr.ZipStore(input_file)
     root = zarr.group(store=input_hdf5, overwrite=True)
     tsinfer.InputFile.build(
@@ -363,9 +365,9 @@ if __name__ == "__main__":
 
     build_profile_inputs(10, 1)
 
-    build_profile_inputs(1000, 100)
-    build_profile_inputs(10**4, 100)
-    build_profile_inputs(10**5, 100)
+    # build_profile_inputs(1000, 100)
+    # build_profile_inputs(10**4, 100)
+    # build_profile_inputs(10**5, 100)
     # build_profile_inputs(100)
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),

@@ -35,6 +35,54 @@ FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
 
 
+def threaded_row_iterator(array, queue_size=4):
+    """
+    Returns an iterator over the rows in the specified 2D array of
+    genotypes.
+    """
+    chunk_size = array.chunks[0]
+    num_rows = array.shape[0]
+    num_chunks = num_rows // chunk_size
+    logger.info("Loading genotypes in {} rows in {} chunks".format(num_rows, num_chunks))
+    decompressed_queue = queue.Queue(queue_size)
+
+    def decompression_worker():
+        logger.info("Input genotype decompression thread starting")
+        if _prctl_available:
+            prctl.set_name("decompression-worker")
+        j = 0
+        for chunk in range(num_chunks):
+            before = time.perf_counter()
+            A = array[j: j + chunk_size][:]
+            duration = time.perf_counter() - before
+            logger.info("Loaded genotype chunk in {:.2f} seconds".format(duration))
+            decompressed_queue.put(A)
+            j += chunk_size
+        last_chunk = num_rows % chunk_size
+        if last_chunk != 0:
+            before = time.perf_counter()
+            A = self.genotypes[-last_chunk:]
+            duration = time.perf_counter() - before
+            logger.info("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            decompressed_queue.put(A)
+        decompressed_queue.put(None)
+        logger.info("Input genotype decompression thread finishing")
+
+    decompression_thread = threading.Thread(target=decompression_worker, daemon=True)
+    decompression_thread.start()
+
+    while True:
+        chunk = decompressed_queue.get()
+        if chunk is None:
+            break
+        logger.info("Got genotype chunk from queue (depth={})".format(
+            decompressed_queue.qsize()))
+        for row in chunk:
+            yield row
+        decompressed_queue.task_done()
+    decompression_thread.join()
+
+
 @contextlib.contextmanager
 def open_input(path):
     """
@@ -125,6 +173,7 @@ class InputFile(Hdf5File):
         super().__init__(hdf5_file)
         self.check_format()
         self.uuid = self.hdf5_file.attrs["uuid"]
+        self.sequence_length = self.hdf5_file.attrs["sequence_length"]
         variants_group = self.hdf5_file["variants"]
         self.genotypes = variants_group["genotypes"]
         self.position = variants_group["position"]
@@ -137,28 +186,7 @@ class InputFile(Hdf5File):
         """
         Returns an iterator over the genotypes in site-by-site order.
         """
-        chunk_size = self.genotypes.chunks[0]
-        num_sites = self.genotypes.shape[0]
-        num_chunks = num_sites // chunk_size
-        logger.info("Loading genotypes for {} sites in {} chunks".format(
-            num_sites, num_chunks))
-        j = 0
-        for chunk in range(num_chunks):
-            before = time.perf_counter()
-            V = self.genotypes[j: j + chunk_size][:]
-            duration = time.perf_counter() - before
-            logger.info("Loaded genotype chunk in {:.2f} seconds".format(duration))
-            j += chunk_size
-            for v in V:
-                yield v
-        last_chunk = num_sites % chunk_size
-        if last_chunk != 0:
-            before = time.perf_counter()
-            V = self.genotypes[-last_chunk:]
-            duration = time.perf_counter() - before
-            logger.info("Loaded final genotype chunk in {:.2f} seconds".format(duration))
-            for v in V:
-                yield v
+        return threaded_row_iterator(self.genotypes)
 
     @classmethod
     def build(
@@ -181,7 +209,7 @@ class InputFile(Hdf5File):
         input_hdf5.attrs["sequence_length"] = sequence_length
         input_hdf5.attrs["uuid"] = str(uuid.uuid4())
 
-        compressor = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
+        compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
         variants_group = input_hdf5.create_group("variants")
         variants_group.create_dataset(
@@ -216,12 +244,51 @@ class AncestorFile(Hdf5File):
         self.num_samples = input_file.num_samples
         if mode == self.MODE_READ:
             self.check_format()
-            print("read mode")
+            self.read_attributes()
         elif mode == self.MODE_WRITE:
             pass
         else:
             raise ValueError("open mode must be 'r' or 'w'")
         self.mode = mode
+
+    #############################
+    # Read mode
+    #############################
+
+    def read_attributes(self):
+        """
+        Initialisation for read mode.
+        """
+        ancestors_group = self.hdf5_file["ancestors"]
+        self.haplotypes = ancestors_group["haplotypes"]
+
+        self.num_ancestors = self.haplotypes.shape[0]
+        # Take copies of all the small data sets
+        self.time = ancestors_group["time"][:]
+        self.start = ancestors_group["start"][:]
+        self.end = ancestors_group["end"][:]
+        self.num_focal_sites = ancestors_group["num_focal_sites"][:]
+        # Unflatten the focal sites array
+        focal_sites = ancestors_group["focal_sites"][:]
+        self.focal_sites = [None for _ in range(self.num_ancestors)]
+        offset = 0
+        for j in range(self.num_ancestors):
+            self.focal_sites[j] = focal_sites[offset: offset + self.num_focal_sites[j]]
+            offset += self.num_focal_sites[j]
+            if j > 0:
+                assert self.focal_sites[j].shape[0] > 0
+            else:
+                assert self.focal_sites[j].shape[0] == 0
+
+    def ancestor_haplotypes(self):
+        """
+        Returns an iterator over the ancestor haplotypes.
+        """
+        return threaded_row_iterator(self.haplotypes)
+
+    #############################
+    # Write mode
+    #############################
 
     def write_uuid(self):
         self.hdf5_file.attrs["input-uuid"] = self.input_file.uuid
