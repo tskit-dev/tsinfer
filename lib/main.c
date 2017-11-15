@@ -230,8 +230,8 @@ output_ts(tree_sequence_builder_t *ts_builder)
     size_t num_mutations = ts_builder->num_mutations;
     double *time = malloc(num_nodes * sizeof(double));
     uint32_t *flags = malloc(num_nodes * sizeof(uint32_t));
-    double *left = malloc(num_edges * sizeof(double));
-    double *right = malloc(num_edges * sizeof(double));
+    site_id_t *left = malloc(num_edges * sizeof(site_id_t));
+    site_id_t *right = malloc(num_edges * sizeof(site_id_t));
     ancestor_id_t *parent = malloc(num_edges * sizeof(ancestor_id_t));
     ancestor_id_t *children = malloc(num_edges * sizeof(ancestor_id_t));
     site_id_t *site = malloc(num_mutations * sizeof(site_id_t));
@@ -259,7 +259,7 @@ output_ts(tree_sequence_builder_t *ts_builder)
     }
     printf("EDGES\n");
     for (j = 0; j < num_edges; j++) {
-        printf("%.3f\t%.3f\t%d\t%d\n", left[j], right[j], parent[j], children[j]);
+        printf("%d\t%d\t%d\t%d\n", left[j], right[j], parent[j], children[j]);
     }
     ret = tree_sequence_builder_dump_mutations(ts_builder, site, node,
             derived_state, mutation_parent);

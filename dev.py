@@ -5,6 +5,7 @@ import h5py
 import zarr
 import sys
 import pandas as pd
+import daiquiri
 
 
 import tsinfer
@@ -57,6 +58,8 @@ def tsinfer_dev(
     random.seed(seed)
     L_megabases = int(L * 10**6)
 
+    daiquiri.setup(level=log_level)
+
     ts = msprime.simulate(
             n, Ne=10**4, length=L_megabases,
             recombination_rate=1e-8, mutation_rate=1e-8,
@@ -80,42 +83,25 @@ def tsinfer_dev(
     tsinfer.build_ancestors(
         input_root, ancestors_root, method=method, chunk_size=16, compress=False)
 
-    ts = tsinfer.match_ancestors(
+    ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, num_threads=num_threads)
-    assert ts.sequence_length == L_megabases
+    assert ancestors_ts.sequence_length == ts.num_sites
 
-    # print(ts)
-    # print(ts.tables)
-    # for t in ts.trees():
-    #     print("INTERVAL", t.interval)
-    #     print(t.draw(format="unicode"))
-    # for interval, e_out, e_in in ts.edge_diffs():
-    #     print(interval, e_out)
     A = ancestors_root["ancestors/haplotypes"][:]
-    A[A == -1] = 0
-    for v in ts.variants():
-        # print(v.index)
-        # print(A[:,v.index])
-        # print(v.genotypes)
-        # print()
+    A[A == 255] = 0
+    for v in ancestors_ts.variants():
         assert np.array_equal(v.genotypes, A[:, v.index])
-    print("Verified haplotypes")
-    # input_hdf5.close()
-    # ancestors_hdf5.close()
 
-    # tsp = tsinfer.infer(
-    #     S, positions, L_megabases, recombination_rate, error_rate,
-    #     num_threads=num_threads, method=method, log_level=log_level, progress=progress)
-    # print(tsp.tables)
-    # for t in tsp.trees():
-    #     print("tree", t.index)
-    #     print(t.draw(format="unicode"))
+    inferred_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method,
+        num_threads=num_threads)
 
-#     Sp = np.zeros((tsp.sample_size, tsp.num_sites), dtype="i1")
-#     for variant in tsp.variants():
-#         Sp[:, variant.index] = variant.genotypes
-#     assert np.all(Sp == S)
-#     return tsp
+    assert inferred_ts.num_samples == ts.num_samples
+    assert inferred_ts.num_sites == ts.num_sites
+    assert inferred_ts.sequence_length == ts.sequence_length
+    for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
+        assert np.array_equal(v1.genotypes, v2.genotypes)
+        assert v1.position == v2.position
 
 
 def analyse_file(filename):
@@ -380,7 +366,7 @@ if __name__ == "__main__":
 
     # tsinfer_dev(11, 0.1, seed=7, num_threads=1, error_rate=0.0, method="C")
 
-    # tsinfer_dev(4, 0.2, seed=84, num_threads=0, error_rate=0.0, method="P")
+    # tsinfer_dev(4, 0.2, seed=84, num_threads=0, error_rate=0.0, method="C", log_level="DEBUG")
 
     for seed in range(1, 10000):
         print(seed)

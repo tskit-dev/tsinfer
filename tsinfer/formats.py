@@ -55,7 +55,7 @@ def threaded_row_iterator(array, queue_size=4):
             before = time.perf_counter()
             A = array[j: j + chunk_size][:]
             duration = time.perf_counter() - before
-            logger.info("Loaded genotype chunk in {:.2f} seconds".format(duration))
+            logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
             decompressed_queue.put(A)
             j += chunk_size
         last_chunk = num_rows % chunk_size
@@ -63,7 +63,7 @@ def threaded_row_iterator(array, queue_size=4):
             before = time.perf_counter()
             A = array[-last_chunk:]
             duration = time.perf_counter() - before
-            logger.info("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(duration))
             decompressed_queue.put(A)
         decompressed_queue.put(None)
         logger.info("Input genotype decompression thread finishing")
@@ -75,7 +75,7 @@ def threaded_row_iterator(array, queue_size=4):
         chunk = decompressed_queue.get()
         if chunk is None:
             break
-        logger.info("Got genotype chunk from queue (depth={})".format(
+        logger.debug("Got genotype chunk from queue (depth={})".format(
             decompressed_queue.qsize()))
         for row in chunk:
             yield row
@@ -176,8 +176,8 @@ class InputFile(Hdf5File):
         self.sequence_length = self.hdf5_file.attrs["sequence_length"]
         variants_group = self.hdf5_file["variants"]
         self.genotypes = variants_group["genotypes"]
-        self.position = variants_group["position"]
-        self.recombination_rate = variants_group["recombination_rate"]
+        self.position = variants_group["position"][:]
+        self.recombination_rate = variants_group["recombination_rate"][:]
         self.num_sites = self.genotypes.shape[0]
         self.num_samples = self.genotypes.shape[1]
         # TODO check dimensions.
@@ -187,6 +187,15 @@ class InputFile(Hdf5File):
         Returns an iterator over the genotypes in site-by-site order.
         """
         return threaded_row_iterator(self.genotypes)
+
+    def sample_haplotypes(self):
+        """
+        Returns an iterator over the sample haplotypes, i.e., the genotype matrix
+        in column-by-column order.
+        """
+        H = self.genotypes[:].T
+        for a in H:
+            yield a
 
     @classmethod
     def build(
@@ -318,7 +327,7 @@ class AncestorFile(Hdf5File):
 
         ancestors_group = self.hdf5_file.create_group("ancestors")
         self.haplotypes = ancestors_group.create_dataset(
-            "haplotypes", shape=(num_ancestors, self.num_sites), dtype=np.int8,
+            "haplotypes", shape=(num_ancestors, self.num_sites), dtype=np.uint8,
             chunks=(self.chunk_size, self.num_sites), compressor=compressor)
         self.time = ancestors_group.create_dataset(
             "time", shape=(num_ancestors,), compressor=compressor, dtype=np.int32)
@@ -347,7 +356,7 @@ class AncestorFile(Hdf5File):
         # main thread and pushed back onto a queue by the worker threads.
         num_buffers = num_threads * 2
         self.__haplotypes_buffers = [
-            np.empty((self.chunk_size, self.num_sites), dtype=np.int8)
+            np.empty((self.chunk_size, self.num_sites), dtype=np.uint8)
             for _ in range(num_buffers)]
         self.__haplotypes_buffer_index = 0
         logger.info("Alloced {} buffers using {}MB each".format(

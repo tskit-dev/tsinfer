@@ -219,10 +219,21 @@ int tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
         node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node,
         allele_t *derived_state);
+
+/* Restore the state of a previous tree sequence builder. */
+int tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self,
+        size_t num_nodes, double *time);
+int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self,
+        size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
+        node_id_t *child);
+int tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
+        size_t num_mutations, site_id_t *site, node_id_t *node, allele_t *derived_state);
+
+/* Dump the state */
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *children);
+        site_id_t *left, site_id_t *right, ancestor_id_t *parent, ancestor_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
         mutation_id_t *parent);

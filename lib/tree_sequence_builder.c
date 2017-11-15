@@ -160,8 +160,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
 }
 
 static node_id_t WARN_UNUSED
-tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
-        bool is_sample)
+tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool is_sample)
 {
     int ret = 0;
     uint32_t flags = 0;
@@ -257,6 +256,70 @@ out:
     return ret;
 }
 
+static int WARN_UNUSED
+tree_sequence_builder_add_edge(tree_sequence_builder_t *self, site_id_t left,
+        site_id_t right, node_id_t parent, node_id_t child)
+{
+    int ret = 0;
+    edge_t *e;
+
+    if (self->num_edges == self->max_edges) {
+        ret = tree_sequence_builder_expand_edges(self);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+    assert(self->num_edges < self->max_edges);
+    e = self->edges + self->num_edges;
+    e->left = left;
+    e->right = right;
+    e->parent = parent;
+    e->child = child;
+    assert(e->left < e->right);
+    assert(e->parent != NULL_NODE);
+    assert(e->child != NULL_NODE);
+    assert(e->child < (node_id_t) self->num_nodes);
+    assert(e->parent < (node_id_t) self->num_nodes);
+    self->num_edges++;
+out:
+    return ret;
+}
+
+static int WARN_UNUSED
+tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site,
+        node_id_t node, allele_t derived_state)
+{
+    int ret = 0;
+    mutation_list_node_t *list_node, *tail;
+
+    assert(node < (node_id_t) self->num_nodes);
+    assert(node >= 0);
+    assert(site < (site_id_t) self->num_sites);
+    assert(site >= 0);
+    assert(derived_state == 0 || derived_state == 1);
+    list_node = block_allocator_get(&self->block_allocator, sizeof(mutation_list_node_t));
+    if (list_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    list_node->node = node;
+    list_node->derived_state = derived_state;
+    list_node->next = NULL;
+    if (self->sites.mutations[site] == NULL) {
+        self->sites.mutations[site] = list_node;
+        assert(list_node->derived_state == 1);
+    } else {
+        tail = self->sites.mutations[site];
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = list_node;
+    }
+    self->num_mutations++;
+out:
+    return ret;
+}
+
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
@@ -266,8 +329,6 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
 {
     int ret = 0;
     size_t j;
-    edge_t *e;
-    mutation_list_node_t *list_node, *tail;
 
     for (j = 0; j < num_nodes; j++) {
         ret = tree_sequence_builder_add_node(self, time, true);
@@ -275,57 +336,18 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
             goto out;
         }
     }
-    /* We assume that the edges are given in reverse order, so we insert them this
-     * way around to get closer to sortedness */
     for (j = 0; j < num_edges; j++) {
-        if (self->num_edges == self->max_edges) {
-            ret = tree_sequence_builder_expand_edges(self);
-            if (ret != 0) {
-                goto out;
-            }
-        }
-        assert(self->num_edges < self->max_edges);
-        e = self->edges + self->num_edges;
-        e->left = left[j];
-        e->right = right[j];
-        e->parent = parent[j];
-        e->child = child[j];
-        assert(e->left < e->right);
-        assert(e->parent != NULL_NODE);
-        assert(e->child != NULL_NODE);
-        assert(e->child < (node_id_t) self->num_nodes);
-        assert(e->parent < (node_id_t) self->num_nodes);
-        self->num_edges++;
-    }
-
-    for (j = 0; j < num_mutations; j++) {
-        assert(node[j] < (node_id_t) self->num_nodes);
-        assert(node[j] >= 0);
-        assert(site[j] < (site_id_t) self->num_sites);
-        assert(site[j] >= 0);
-        assert(derived_state[j] == 0 || derived_state[j] == 1);
-        list_node = block_allocator_get(&self->block_allocator,
-                sizeof(mutation_list_node_t));
-        if (list_node == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
+        ret = tree_sequence_builder_add_edge(self, left[j], right[j], parent[j], child[j]);
+        if (ret != 0) {
             goto out;
         }
-        list_node->node = node[j];
-        list_node->derived_state = derived_state[j];
-        list_node->next = NULL;
-        if (self->sites.mutations[site[j]] == NULL) {
-            self->sites.mutations[site[j]] = list_node;
-            assert(list_node->derived_state == 1);
-        } else {
-            tail = self->sites.mutations[site[j]];
-            while (tail->next != NULL) {
-                tail = tail->next;
-            }
-            tail->next = list_node;
+    }
+    for (j = 0; j < num_mutations; j++) {
+        ret = tree_sequence_builder_add_mutation(self, site[j], node[j], derived_state[j]);
+        if (ret != 0) {
+            goto out;
         }
     }
-    self->num_mutations += num_mutations;
-
     ret = tree_sequence_builder_index_edges(self);
     if (ret != 0) {
         goto out;
@@ -334,6 +356,61 @@ out:
     return ret;
 }
 
+int
+tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_nodes,
+        double *time)
+{
+    int ret = 0;
+    size_t j;
+
+    for (j = 0; j < num_nodes; j++) {
+        ret = tree_sequence_builder_add_node(self, time[j], true);
+        if (ret < 0) {
+            goto out;
+        }
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+int
+tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_edges,
+        site_id_t *left, site_id_t *right, node_id_t *parent, node_id_t *child)
+{
+    int ret = 0;
+    size_t j;
+
+    for (j = 0; j < num_edges; j++) {
+        ret = tree_sequence_builder_add_edge(self, left[j], right[j], parent[j], child[j]);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+    ret = tree_sequence_builder_index_edges(self);
+    if (ret != 0) {
+        goto out;
+    }
+out:
+    return ret;
+}
+
+int
+tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
+        size_t num_mutations, site_id_t *site, node_id_t *node, allele_t *derived_state)
+{
+    int ret = 0;
+    size_t j = 0;
+
+    for (j = 0; j < num_mutations; j++) {
+        ret = tree_sequence_builder_add_mutation(self, site[j], node[j], derived_state[j]);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
+}
 
 int
 tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
@@ -349,27 +426,9 @@ tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
     return ret;
 }
 
-/* Translates the specified site-index edge coordinate into the appropriate value
- * in the external coordinate system */
-static double
-tree_sequence_builder_translate_coord(tree_sequence_builder_t *self, site_id_t coord)
-{
-    double ret = -1;
-
-    if (coord == 0) {
-        ret = 0;
-    } else if (coord == (site_id_t) self->num_sites) {
-        ret = self->sequence_length;
-    } else if (coord < (site_id_t) self->num_sites) {
-        ret = self->sites.position[coord];
-    }
-    assert(ret != -1);
-    return ret;
-}
-
 int
 tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        double *left, double *right, ancestor_id_t *parent, ancestor_id_t *child)
+        node_id_t *left, node_id_t *right, ancestor_id_t *parent, ancestor_id_t *child)
 {
     int ret = 0;
     size_t j;
@@ -377,8 +436,8 @@ tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 
     for (j = 0; j < self->num_edges; j++) {
         e = self->edges + j;
-        left[j] = tree_sequence_builder_translate_coord(self, (site_id_t) e->left);
-        right[j] = tree_sequence_builder_translate_coord(self, (site_id_t) e->right);
+        left[j] = e->left;
+        right[j] = e->right;
         parent[j] = e->parent;
         child[j] = e->child;
     }
