@@ -454,9 +454,17 @@ class SampleMatcher(Matcher):
         match = np.zeros(self.num_sites, np.uint8)
         sample_haplotypes = self.input_file.sample_haplotypes()
 
-        for j, a in enumerate(sample_haplotypes):
+        progress_monitor = tqdm.tqdm(
+            desc="match-samples",
+            total=self.num_samples, disable=not self.progress, smoothing=0.01)
+
+        j = 0
+        for a in sample_haplotypes:
             sample_id = self.tree_sequence_builder.num_nodes + j
+            j += 1
             self.__process_sample(sample_id, a, matcher, results, match)
+            progress_monitor.update()
+        assert j == self.num_samples
 
         self.tree_sequence_builder.update(
             self.num_samples, 0,

@@ -154,8 +154,7 @@ def build_profile_inputs(n, num_megabases):
     root = zarr.group(store=input_hdf5, overwrite=True)
     tsinfer.InputFile.build(
         root, genotypes=V, position=positions,
-        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
-        compression="gzip")
+        recombination_rate=recombination_rate, sequence_length=ts.sequence_length)
     # input_hdf5.close()
     print("Wrote", input_file)
 
@@ -350,6 +349,8 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
 
+    # build_profile_inputs(1000, 10)
+
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
@@ -371,7 +372,7 @@ if __name__ == "__main__":
     for seed in range(1, 10000):
         print(seed)
         # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-        tsinfer_dev(30, 2.5, seed=seed, num_threads=0, error_rate=0.0, method="C")
+        tsinfer_dev(30, 2.5, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

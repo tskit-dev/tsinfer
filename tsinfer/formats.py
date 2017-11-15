@@ -30,7 +30,6 @@ except ImportError:
     pass
 
 
-
 FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
 
@@ -81,6 +80,55 @@ def threaded_row_iterator(array, queue_size=4):
             yield row
         decompressed_queue.task_done()
     decompression_thread.join()
+
+
+def transposed_threaded_row_iterator(array, queue_size=4):
+    """
+    Returns an iterator over the transposed columns in the specified 2D array of
+    genotypes.
+    """
+    chunk_size = array.chunks[1]
+    num_cols = array.shape[1]
+    num_chunks = num_cols // chunk_size
+    logger.info("Loading genotypes in {} columns in {} chunks".format(num_cols, num_chunks))
+    decompressed_queue = queue.Queue(queue_size)
+
+    def decompression_worker():
+        logger.info("Input genotype decompression thread starting")
+        if _prctl_available:
+            prctl.set_name("decompression-worker")
+        j = 0
+        for chunk in range(num_chunks):
+            before = time.perf_counter()
+            A = array[:,j: j + chunk_size][:].T
+            duration = time.perf_counter() - before
+            logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
+            decompressed_queue.put(A)
+            j += chunk_size
+        last_chunk = num_cols % chunk_size
+        if last_chunk != 0:
+            before = time.perf_counter()
+            A = array[:, -last_chunk:][:].T
+            duration = time.perf_counter() - before
+            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            decompressed_queue.put(A)
+        decompressed_queue.put(None)
+        logger.info("Input genotype decompression thread finishing")
+
+    decompression_thread = threading.Thread(target=decompression_worker, daemon=True)
+    decompression_thread.start()
+
+    while True:
+        chunk = decompressed_queue.get()
+        if chunk is None:
+            break
+        logger.debug("Got genotype chunk from queue (depth={})".format(
+            decompressed_queue.qsize()))
+        for row in chunk:
+            yield row
+        decompressed_queue.task_done()
+    decompression_thread.join()
+
 
 
 @contextlib.contextmanager
@@ -193,9 +241,7 @@ class InputFile(Hdf5File):
         Returns an iterator over the sample haplotypes, i.e., the genotype matrix
         in column-by-column order.
         """
-        H = self.genotypes[:].T
-        for a in H:
-            yield a
+        return transposed_threaded_row_iterator(self.genotypes)
 
     @classmethod
     def build(
@@ -394,7 +440,7 @@ class AncestorFile(Hdf5File):
             before = time.perf_counter()
             self.haplotypes[start:end,:] = H
             duration = time.perf_counter() - before
-            logger.info("Flushed genotype chunk in {:.2f}s".format(duration))
+            logger.debug("Flushed genotype chunk in {:.2f}s".format(duration))
             self.__flush_queue.task_done()
             self.__buffer_queue.put(buffer_index)
         self.__flush_queue.task_done()
@@ -423,12 +469,12 @@ class AncestorFile(Hdf5File):
         if j % self.chunk_size == 0:
             start = j - self.chunk_size
             end = j
-            logger.info("Pushing chunk {} onto queue, depth={}".format(
+            logger.debug("Pushing chunk {} onto queue, depth={}".format(
                 j // self.chunk_size, self.__flush_queue.qsize()))
             self.__buffer_queue.task_done()
             self.__flush_queue.put((start, end, self.__haplotypes_buffer_index))
             self.__haplotypes_buffer_index = self.__buffer_queue.get()
-            logger.info("Got new haplotype buffer {}".format(
+            logger.debug("Got new haplotype buffer {}".format(
                 self.__haplotypes_buffer_index))
 
     def finalise(self):
