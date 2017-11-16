@@ -261,7 +261,7 @@ class InputFile(Hdf5File):
             chunk_size = 8 * 1024  # By default chunk in 64MiB squares.
 
         cls.write_version_attrs(input_hdf5)
-        input_hdf5.attrs["sequence_length"] = sequence_length
+        input_hdf5.attrs["sequence_length"] = float(sequence_length)
         input_hdf5.attrs["uuid"] = str(uuid.uuid4())
 
         compressor = None

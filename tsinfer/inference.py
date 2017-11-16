@@ -17,6 +17,7 @@ import numpy as np
 import tqdm
 import humanize
 import msprime
+import zarr
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -44,22 +45,25 @@ except ImportError:
 UNKNOWN_ALLELE = 255
 
 def infer(
-        samples, positions, sequence_length, recombination_rate, sample_error=0,
-        method="C", num_threads=1, progress=False, log_level="WARNING"):
+        genotypes, positions, sequence_length, recombination_rate, sample_error=0,
+        method="C", num_threads=0, progress=False):
     positions_array = np.array(positions)
     # If the input recombination rate is a single number set this value for all sites.
     recombination_rate_array = np.zeros(positions_array.shape[0], dtype=np.float64)
     recombination_rate_array[:] = recombination_rate
-    # Primary entry point.
-    manager = InferenceManager(
-        samples, positions_array, sequence_length, recombination_rate_array,
-        num_threads=num_threads, method=method, progress=progress, log_level=log_level)
-    manager.initialise()
-    manager.process_ancestors()
-    manager.process_samples(sample_error)
-    ts = manager.finalise()
-    return ts
 
+    input_root = zarr.group()
+    formats.InputFile.build(
+        input_root, genotypes=genotypes, position=positions,
+        recombination_rate=recombination_rate_array, sequence_length=sequence_length,
+        compress=False)
+    ancestors_root = zarr.group()
+    build_ancestors(input_root, ancestors_root, method=method, compress=False)
+    ancestors_ts = match_ancestors(
+        input_root, ancestors_root, method=method, num_threads=num_threads)
+    inferred_ts = match_samples(
+        input_root, ancestors_ts, method=method, num_threads=num_threads)
+    return inferred_ts
 
 
 def build_ancestors(
@@ -89,7 +93,13 @@ def build_ancestors(
     descriptors = ancestor_builder.ancestor_descriptors()
     num_ancestors = 1 + len(descriptors)
     total_num_focal_sites = sum(len(d[1]) for d in descriptors)
-    oldest_time = descriptors[0][0] + 1
+    oldest_time = 1
+    if len(descriptors) > 0:
+        oldest_time = descriptors[0][0] + 1
+    else:
+        raise ValueError(
+            "Zero ancestors current not supported due to bug in Zarr. See "
+            "https://github.com/alimanfoo/zarr/issues/187")
     ancestor_file.initialise(
         num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
         compress=compress)
