@@ -6,7 +6,6 @@ import contextlib
 import uuid
 import logging
 import time
-import threading
 import queue
 
 import numpy as np
@@ -14,20 +13,10 @@ import h5py
 import zarr
 import zarr.blosc as blosc
 
+import tsinfer.threads as threads
+
 blosc.use_threads = False
 logger = logging.getLogger(__name__)
-
-# TODO move this into an optional features module that we can pull in
-# from various places.
-
-# prctl is an optional extra; it allows us assign meaninful names to threads
-# for debugging.
-_prctl_available = False
-try:
-    import prctl
-    _prctl_available = True
-except ImportError:
-    pass
 
 
 FORMAT_NAME_KEY = "format_name"
@@ -45,10 +34,7 @@ def threaded_row_iterator(array, queue_size=4):
     logger.info("Loading genotypes in {} rows in {} chunks".format(num_rows, num_chunks))
     decompressed_queue = queue.Queue(queue_size)
 
-    def decompression_worker():
-        logger.info("Input genotype decompression thread starting")
-        if _prctl_available:
-            prctl.set_name("decompression-worker")
+    def decompression_worker(thread_index):
         j = 0
         for chunk in range(num_chunks):
             before = time.perf_counter()
@@ -62,13 +48,13 @@ def threaded_row_iterator(array, queue_size=4):
             before = time.perf_counter()
             A = array[-last_chunk:]
             duration = time.perf_counter() - before
-            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            logger.debug(
+                "Loaded final genotype chunk in {:.2f} seconds".format(duration))
             decompressed_queue.put(A)
         decompressed_queue.put(None)
-        logger.info("Input genotype decompression thread finishing")
 
-    decompression_thread = threading.Thread(target=decompression_worker, daemon=True)
-    decompression_thread.start()
+    decompression_thread = threads.queue_producer_thread(
+        decompression_worker, decompressed_queue, name="genotype-decompression")
 
     while True:
         chunk = decompressed_queue.get()
@@ -90,17 +76,15 @@ def transposed_threaded_row_iterator(array, queue_size=4):
     chunk_size = array.chunks[1]
     num_cols = array.shape[1]
     num_chunks = num_cols // chunk_size
-    logger.info("Loading genotypes in {} columns in {} chunks".format(num_cols, num_chunks))
+    logger.info("Loading genotypes in {} columns in {} chunks".format(
+        num_cols, num_chunks))
     decompressed_queue = queue.Queue(queue_size)
 
-    def decompression_worker():
-        logger.info("Input genotype decompression thread starting")
-        if _prctl_available:
-            prctl.set_name("decompression-worker")
+    def decompression_worker(thread_index):
         j = 0
         for chunk in range(num_chunks):
             before = time.perf_counter()
-            A = array[:,j: j + chunk_size][:].T
+            A = array[:, j: j + chunk_size][:].T
             duration = time.perf_counter() - before
             logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
             decompressed_queue.put(A)
@@ -110,13 +94,13 @@ def transposed_threaded_row_iterator(array, queue_size=4):
             before = time.perf_counter()
             A = array[:, -last_chunk:][:].T
             duration = time.perf_counter() - before
-            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(duration))
+            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(
+                duration))
             decompressed_queue.put(A)
         decompressed_queue.put(None)
-        logger.info("Input genotype decompression thread finishing")
 
-    decompression_thread = threading.Thread(target=decompression_worker, daemon=True)
-    decompression_thread.start()
+    decompression_thread = threads.queue_producer_thread(
+        decompression_worker, decompressed_queue, name="genotype-decompression")
 
     while True:
         chunk = decompressed_queue.get()
@@ -128,7 +112,6 @@ def transposed_threaded_row_iterator(array, queue_size=4):
             yield row
         decompressed_queue.task_done()
     decompression_thread.join()
-
 
 
 @contextlib.contextmanager
@@ -198,7 +181,6 @@ class Hdf5File(object):
             raise ValueError("Format version {} too new. Current version = {}".format(
                 format_version, self.format_version))
 
-
     @classmethod
     def write_version_attrs(cls, hdf5_file):
         """
@@ -206,7 +188,6 @@ class Hdf5File(object):
         """
         hdf5_file.attrs[FORMAT_NAME_KEY] = cls.format_name
         hdf5_file.attrs[FORMAT_VERSION_KEY] = cls.format_version
-
 
 
 class InputFile(Hdf5File):
@@ -281,7 +262,6 @@ class InputFile(Hdf5File):
             dtype=np.uint8, compressor=compressor)
 
 
-
 class AncestorFile(Hdf5File):
     """
     The intermediate file representing the ancestors that we generate from a
@@ -351,10 +331,10 @@ class AncestorFile(Hdf5File):
         self.hdf5_file.attrs["input-uuid"] = self.input_file.uuid
 
     def initialise(
-           self, num_ancestors, oldest_time, total_num_focal_sites,
-           chunk_size=None, compress=True, num_threads=None):
+            self, num_ancestors, oldest_time, total_num_focal_sites,
+            chunk_size=None, compress=True, num_threads=None):
         if self.mode != self.MODE_WRITE:
-           raise ValueError("Must open in write mode")
+            raise ValueError("Must open in write mode")
         self.write_version_attrs(self.hdf5_file)
         self.write_uuid()
         self.num_ancestors = num_ancestors
@@ -405,7 +385,7 @@ class AncestorFile(Hdf5File):
             np.empty((self.chunk_size, self.num_sites), dtype=np.uint8)
             for _ in range(num_buffers)]
         self.__haplotypes_buffer_index = 0
-        logger.info("Alloced {} buffers using {}MB each".format(
+        logger.debug("Alloced {} buffers using {}MB each".format(
             num_buffers, self.__haplotypes_buffers[0].nbytes // 1024**2))
         # We consume the zero'th index first. Now push the remaining buffers
         # onto the buffer queue.
@@ -418,19 +398,16 @@ class AncestorFile(Hdf5File):
         self.__haplotypes_buffers[self.__haplotypes_buffer_index][0, :] = 0
         self.__ancestor_id = 1
         # Start the flush thread.
-        self.__flush_threads = [
-            threading.Thread(target=self.flush_worker, args=(j,), daemon=True)
-            for j in range(num_threads)]
         self.__flush_queue = queue.Queue(num_buffers)
-        for thread in self.__flush_threads:
-            thread.start()
+        self.__flush_threads = [
+            threads.queue_consumer_thread(
+                self.flush_worker, self.__flush_queue, name="flush-worker-{}".format(j),
+                index=j)
+            for j in range(num_threads)]
         logger.info("initialised ancestor file for input {}".format(
             self.input_file.uuid))
 
     def flush_worker(self, thread_index):
-        logger.info("Ancestor flush worker thread {} starting".format(thread_index))
-        if _prctl_available:
-            prctl.set_name("ancestor-flush-worker")
         while True:
             work = self.__flush_queue.get()
             if work is None:
@@ -438,13 +415,12 @@ class AncestorFile(Hdf5File):
             start, end, buffer_index = work
             H = self.__haplotypes_buffers[buffer_index]
             before = time.perf_counter()
-            self.haplotypes[start:end,:] = H
+            self.haplotypes[start:end, :] = H
             duration = time.perf_counter() - before
             logger.debug("Flushed genotype chunk in {:.2f}s".format(duration))
             self.__flush_queue.task_done()
             self.__buffer_queue.put(buffer_index)
         self.__flush_queue.task_done()
-        logger.info("Ancestor flush worker thread exiting")
 
     def add_ancestor(
             self, start=None, end=None, ancestor_time=None, focal_sites=None,
@@ -484,10 +460,8 @@ class AncestorFile(Hdf5File):
         assert self.num_ancestors == self.__ancestor_id
         last_chunk = self.num_ancestors % self.chunk_size
         if last_chunk != 0:
-            start = self.num_ancestors - last_chunk
-            end = self.num_ancestors
             H = self.__haplotypes_buffers[self.__haplotypes_buffer_index][:last_chunk]
-            logger.info("Flushing final chunk of size {}".format(last_chunk))
+            logger.debug("Flushing final chunk of size {}".format(last_chunk))
             self.haplotypes[-last_chunk:] = H
         for _ in self.__flush_threads:
             self.__flush_queue.put(None)

@@ -291,6 +291,7 @@ class AncestorMatcher(object):
         self.traceback = None
         self.likelihood = None
         self.likelihood_nodes = None
+        self.total_memory = 0
 
     def get_max_likelihood_node(self):
         """
