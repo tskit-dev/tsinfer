@@ -11,16 +11,19 @@ import queue
 import numpy as np
 import h5py
 import zarr
-import zarr.blosc as blosc
+import numcodecs.blosc as blosc
 
 import tsinfer.threads as threads
 
+# We don't want blosc to spin up extra threads for compression.
 blosc.use_threads = False
 logger = logging.getLogger(__name__)
 
 
 FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
+
+DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
 
 def threaded_row_iterator(array, queue_size=4):
@@ -247,8 +250,7 @@ class InputFile(Hdf5File):
 
         compressor = None
         if compress:
-            compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
-
+            compressor = DEFAULT_COMPRESSOR
         variants_group = input_hdf5.create_group("variants")
         variants_group.create_dataset(
             "position", shape=(num_sites,), data=position, dtype=np.float64,
@@ -349,7 +351,7 @@ class AncestorFile(Hdf5File):
         # Create the datasets.
         compressor = None
         if compress:
-            compressor = zarr.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
+            compressor = DEFAULT_COMPRESSOR
 
         ancestors_group = self.hdf5_file.create_group("ancestors")
         self.haplotypes = ancestors_group.create_dataset(

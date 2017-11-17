@@ -136,7 +136,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
             self->num_sites * sizeof(double));
 
     ret = block_allocator_alloc(&self->block_allocator,
-            TSI_MIN(1024, num_sites * sizeof(mutation_list_node_t) / 4));
+            TSI_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
     }

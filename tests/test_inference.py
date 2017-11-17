@@ -73,7 +73,6 @@ class TestRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 0)
         self.verify_round_trip(ts, 1e-9)
 
-    @unittest.skip("Zero real ancestors broken. See Zarr bug report.")
     def test_single_locus_two_samples(self):
         ts = msprime.simulate(2, mutation_rate=1, recombination_rate=0, random_seed=3)
         self.assertGreater(ts.num_sites, 0)

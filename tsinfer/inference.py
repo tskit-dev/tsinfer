@@ -77,10 +77,6 @@ def build_ancestors(
     oldest_time = 1
     if len(descriptors) > 0:
         oldest_time = descriptors[0][0] + 1
-    else:
-        raise ValueError(
-            "Zero ancestors current not supported due to bug in Zarr. See "
-            "https://github.com/alimanfoo/zarr/issues/187")
     ancestor_file.initialise(
         num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
         compress=compress)
