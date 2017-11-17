@@ -65,7 +65,10 @@ def build_ancestors(
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     logger.info("Starting site addition")
     for j, v in enumerate(input_file.site_genotypes()):
-        ancestor_builder.add_site(j, int(np.sum(v)), v)
+        frequency = int(np.sum(v))
+        if frequency == 0 or frequency == num_samples:
+            raise ValueError("Site {} is invariant. Please remove".format(j))
+        ancestor_builder.add_site(j, frequency, v)
         progress_monitor.update()
     progress_monitor.close()
     logger.info("Finished adding sites")
