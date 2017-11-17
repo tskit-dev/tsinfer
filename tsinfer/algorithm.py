@@ -44,7 +44,7 @@ class AncestorBuilder(object):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
-        self.frequency_map = [{} for _ in range(self.num_samples)]
+        self.frequency_map = [{} for _ in range(self.num_samples + 1)]
 
     def add_site(self, site_id, frequency, genotypes):
         """
@@ -82,7 +82,7 @@ class AncestorBuilder(object):
         ancestors in reverse order of frequency.
         """
         ret = []
-        for frequency in reversed(range(self.num_samples)):
+        for frequency in reversed(range(self.num_samples + 1)):
             for focal_sites in self.frequency_map[frequency].values():
                 ret.append((frequency, np.array(focal_sites, dtype=np.int32)))
         return ret

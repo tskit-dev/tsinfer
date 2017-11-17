@@ -238,7 +238,7 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
     /* It's not great that we're breaking encapsulation here and looking
      * directly in to the builder's data structures. However, it's quite an
      * awkward set of data to communicate, so it seems OK. */
-    for (f = self->builder->num_samples - 1; f > 0; f--) {
+    for (f = self->builder->num_samples; f > 0; f--) {
         for (a = self->builder->frequency_map[f].head; a != NULL; a = a->next) {
             map_elem = (pattern_map_t *) a->item;
             dims = map_elem->num_sites;

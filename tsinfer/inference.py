@@ -55,19 +55,17 @@ def build_ancestors(
 
     num_sites = input_file.num_sites
     num_samples = input_file.num_samples
-    if method == "P":
-        logger.debug("Using Python AncestorBuilder implementation")
-        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
-    else:
+    if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
+    else:
+        logger.debug("Using Python AncestorBuilder implementation")
+        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     logger.info("Starting site addition")
     for j, v in enumerate(input_file.site_genotypes()):
         frequency = int(np.sum(v))
-        if frequency == 0 or frequency == num_samples:
-            raise ValueError("Site {} is invariant. Please remove".format(j))
         ancestor_builder.add_site(j, frequency, v)
         progress_monitor.update()
     progress_monitor.close()

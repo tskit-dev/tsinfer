@@ -38,7 +38,7 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     self->num_samples = num_samples;
     self->num_sites = num_sites;
     self->sites = calloc(num_sites, sizeof(site_t));
-    self->frequency_map = calloc(num_samples, sizeof(avl_tree_t));
+    self->frequency_map = calloc(num_samples + 1, sizeof(avl_tree_t));
     if (self->sites == NULL || self->frequency_map == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -47,7 +47,7 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     if (ret != 0) {
         goto out;
     }
-    for (j = 0; j < num_samples; j++) {
+    for (j = 0; j < num_samples + 1; j++) {
         avl_init_tree(&self->frequency_map[j], cmp_pattern_map, NULL);
     }
 out:
@@ -218,7 +218,7 @@ ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequenc
     pattern_map_t search, *map_elem;
     avl_tree_t *pattern_map = &self->frequency_map[frequency];
 
-    assert(frequency < self->num_samples);
+    assert(frequency <= self->num_samples);
     assert(l < (site_id_t) self->num_sites);
     site = &self->sites[l];
     site->frequency = frequency;
@@ -276,7 +276,7 @@ ancestor_builder_check_state(ancestor_builder_t *self)
     site_list_t *s;
     size_t num_ancestors = 0;
 
-    for (f = 0; f < self->num_samples; f++) {
+    for (f = 0; f < self->num_samples + 1; f++) {
         for (a = self->frequency_map[f].head; a != NULL; a = a->next) {
             num_ancestors++;
             map_elem = (pattern_map_t *) a->item;
@@ -316,7 +316,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
                 self->sites[j].genotypes);
     }
     fprintf(out, "Frequency map:\n");
-    for (j = 0; j < self->num_samples; j++) {
+    for (j = 0; j < self->num_samples + 1; j++) {
         printf("Frequency = %d: %d ancestors\n", (int) j,
                 avl_count(&self->frequency_map[j]));
         for (a = self->frequency_map[j].head; a != NULL; a = a->next) {

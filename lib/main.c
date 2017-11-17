@@ -345,7 +345,7 @@ run_generate(const char *input_file, int verbose)
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
             num_sites, positions, recombination_rate,
-            100 * (num_samples + num_ancestors), 10, flags);
+            num_samples + num_ancestors + 1, 10, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -358,7 +358,7 @@ run_generate(const char *input_file, int verbose)
         ancestor_builder_print_state(&ancestor_builder, stdout);
         /* ancestor_matcher_print_state(&matcher, stdout); */
     }
-    age = num_samples - 1;
+    age = num_samples;
     while (avl_count(&ancestor_builder.frequency_map[age]) == 0) {
         age--;
     }

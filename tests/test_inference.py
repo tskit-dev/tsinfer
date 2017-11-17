@@ -9,14 +9,14 @@ import msprime
 import tsinfer
 
 
-def get_random_data_example(num_samples, num_sites):
+def get_random_data_example(num_samples, num_sites, remove_invariant_sites=True):
     S = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
-    # Weed out any invariant sites
-    for j in range(num_sites):
-        if np.sum(S[j, :]) == 0:
-            S[j, 0] = 1
-        elif np.sum(S[j, :]) == num_samples:
-            S[j, 0] = 0
+    if remove_invariant_sites:
+        for j in range(num_sites):
+            if np.sum(S[j, :]) == 0:
+                S[j, 0] = 1
+            elif np.sum(S[j, :]) == num_samples:
+                S[j, 0] = 0
     return S, np.arange(num_sites)
 
 
@@ -45,7 +45,7 @@ class TestRoundTrip(unittest.TestCase):
             sequence_length = positions[-1] + 1
         # import daiquiri
         # daiquiri.setup(level="DEBUG")
-        for method in ["python", "c"]:
+        for method in ["python", "C"]:
             ts = tsinfer.infer(
                 genotypes=genotypes, positions=positions, sequence_length=sequence_length,
                 recombination_rate=recombination_rate, sample_error=sample_error,
@@ -81,6 +81,16 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_random_data_high_recombination(self):
         G, positions = get_random_data_example(20, 30)
+        # Force recombination to do all the matching.
+        self.verify_data_round_trip(G, positions, recombination_rate=1)
+
+    def test_random_data_invariant_sites(self):
+        G, positions = get_random_data_example(24, 35)
+        # Set some sites to be invariant
+        G[10,:] = 1
+        G[15,:] = 0
+        G[20,:] = 1
+        G[22,:] = 0
         # Force recombination to do all the matching.
         self.verify_data_round_trip(G, positions, recombination_rate=1)
 
