@@ -7,6 +7,7 @@ import sys
 import os.path
 import shutil
 import logging
+import bsddb3
 
 import h5py
 import zarr
@@ -40,17 +41,17 @@ def get_output_ts(path, input_path):
     return path
 
 
-def setup_logging(verbosity):
+def setup_logging(args):
     log_level = "WARN"
-    if verbosity > 0:
+    if args.verbosity > 0:
         log_level = "INFO"
-    if verbosity > 1:
+    if args.verbosity > 1:
         log_level = "DEBUG"
     daiquiri.setup(level=log_level)
 
 
 def run_build_ancestors(args):
-    setup_logging(args.verbosity)
+    setup_logging(args)
     if args.compression == "none":
         args.compression = None
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
@@ -62,8 +63,11 @@ def run_build_ancestors(args):
     #         h5py.File(ancestors_path, "w") as ancestors_hdf5:
     # input_container = zarr.DirectoryStore(args.input)
     # ancestors_container = zarr.DirectoryStore(ancestors_path)
-    input_container = zarr.ZipStore(args.input, mode='r')
-    ancestors_container = zarr.ZipStore(ancestors_path)
+    # input_container = zarr.ZipStore(args.input, mode='r')
+    # ancestors_container = zarr.ZipStore(ancestors_path)
+
+    input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
+    ancestors_container = zarr.DBMStore(ancestors_path, open=bsddb3.btopen)
 
     input_root = zarr.open_group(store=input_container)
     ancestors_root = zarr.group(store=ancestors_container, overwrite=True)
@@ -76,16 +80,20 @@ def run_build_ancestors(args):
 
 
 def run_match_ancestors(args):
-    setup_logging(args.verbosity)
+    setup_logging(args)
 
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     logger.info("Loading ancestral haplotypes from {}".format(ancestors_path))
     ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
     # with tsinfer.open_input(args.input) as input_hdf5, \
     #         tsinfer.open_ancestors(ancestors_path) as ancestors_hdf5:
-    input_container = zarr.ZipStore(args.input, mode='r')
+    # input_container = zarr.ZipStore(args.input, mode='r')
+    # ancestors_container = zarr.ZipStore(ancestors_path)
+
+    input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
+    ancestors_container = zarr.DBMStore(ancestors_path, open=bsddb3.btopen)
+
     input_root = zarr.open_group(store=input_container)
-    ancestors_container = zarr.ZipStore(ancestors_path)
     ancestors_root = zarr.open_group(store=ancestors_container)
     ts = tsinfer.match_ancestors(
         input_root, ancestors_root, num_threads=args.num_threads,
@@ -95,8 +103,11 @@ def run_match_ancestors(args):
 
 
 def run_match_samples(args):
-    setup_logging(args.verbosity)
-    input_container = zarr.ZipStore(args.input, mode='r')
+    setup_logging(args)
+    # input_container = zarr.ZipStore(args.input, mode='r')
+
+    input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
+
     input_root = zarr.open_group(store=input_container)
     ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
     output_ts = get_output_ts(args.output_ts, args.input)

@@ -6,6 +6,7 @@ import zarr
 import sys
 import pandas as pd
 import daiquiri
+import bsddb3
 
 
 import tsinfer
@@ -144,18 +145,19 @@ def build_profile_inputs(n, num_megabases):
     print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
     positions = np.array([site.position for site in ts.sites()])
     recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/profile-n={}_m={}.zarr.tsinf".format(n, num_megabases)
+    input_file = "tmp__NOBACKUP__/profile-n={}_m={}_dbm.tsinf".format(n, num_megabases)
     # with h5py.File(input_file, "w") as input_hdf5:
     # with zarr.ZipStore(input_file) as input_hdf5:
     # input_hdf5 = zarr.DirectoryStore(input_file)
     if os.path.exists(input_file):
         os.unlink(input_file)
-    input_hdf5 = zarr.ZipStore(input_file)
+    input_hdf5 = zarr.DBMStore(input_file, open=bsddb3.btopen)
+    # input_hdf5 = zarr.ZipStore(input_file)
     root = zarr.group(store=input_hdf5, overwrite=True)
     tsinfer.InputFile.build(
         root, genotypes=V, position=positions,
         recombination_rate=recombination_rate, sequence_length=ts.sequence_length)
-    # input_hdf5.close()
+    input_hdf5.close()
     print("Wrote", input_file)
 
 
@@ -349,11 +351,11 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
 
-    # build_profile_inputs(1000, 10)
+    build_profile_inputs(1000, 10)
+    build_profile_inputs(1000, 100)
+    build_profile_inputs(10**4, 100)
+    build_profile_inputs(10**5, 100)
 
-    # build_profile_inputs(1000, 100)
-    # build_profile_inputs(10**4, 100)
-    # build_profile_inputs(10**5, 100)
     # build_profile_inputs(100)
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
@@ -369,10 +371,10 @@ if __name__ == "__main__":
 
     # tsinfer_dev(4, 0.2, seed=84, num_threads=1, error_rate=0.0, method="C", log_level="DEBUG")
 
-    for seed in range(1, 10000):
-        print(seed)
-        tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-        # tsinfer_dev(30, 2.5, seed=seed, num_threads=1, error_rate=0.0, method="C")
+    # for seed in range(1, 10000):
+    #     print(seed)
+    #     tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+    #     # tsinfer_dev(30, 2.5, seed=seed, num_threads=1, error_rate=0.0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
