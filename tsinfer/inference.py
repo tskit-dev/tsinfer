@@ -84,6 +84,7 @@ def build_ancestors(
         num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
         compress=compress)
 
+    logger.info("Starting build for {} ancestors".format(num_ancestors))
     a = np.zeros(num_sites, dtype=np.uint8)
     progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
     for freq, focal_sites in descriptors:
@@ -156,10 +157,14 @@ class Matcher(object):
         # Allocate 64K edges initially. This will double as needed and will quickly be
         # big enough even for very large instances.
         max_edges = 64 * 1024
-        max_nodes = self.num_samples + self.num_sites
+        # This is a safe maximum because the max number of ancestors we can have is
+        # the number of sites + 1 (for the oldest ancestor).
+        max_nodes = self.num_samples + self.num_sites + 1
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
             max_nodes=max_nodes, max_edges=max_edges)
+        logger.debug("Allocated tree sequence builder with max_nodes={}".format(
+            max_nodes))
 
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
