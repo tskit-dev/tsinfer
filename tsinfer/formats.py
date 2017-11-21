@@ -229,7 +229,8 @@ class InputFile(Hdf5File):
 
     @classmethod
     def build(
-            cls, input_hdf5, genotypes, sequence_length=None, position=None,
+            cls, input_hdf5, genotypes, genotype_qualities=None,
+            sequence_length=None, position=None,
             recombination_rate=None, chunk_size=None, compress=True):
         """
         Builds a tsinfer InputFile from the specified data.
@@ -237,6 +238,8 @@ class InputFile(Hdf5File):
         num_sites, num_samples = genotypes.shape
         if position is None:
             position = np.arange(num_sites)
+        if genotype_qualities is None:
+            genotype_qualities = 100 + np.zeros((num_sites, num_samples), dtype=np.uint8)
         if sequence_length is None:
             sequence_length = position[-1] + 1
         if recombination_rate is None:
@@ -258,10 +261,18 @@ class InputFile(Hdf5File):
         variants_group.create_dataset(
             "recombination_rate", shape=(num_sites,), data=recombination_rate,
             dtype=np.float64, compressor=compressor)
+        #
+        x_chunk = min(chunk_size, num_sites)
+        y_chunk = min(chunk_size, num_samples)
         variants_group.create_dataset(
             "genotypes", shape=(num_sites, num_samples), data=genotypes,
+            chunks=(x_chunk, y_chunk), dtype=np.uint8, compressor=compressor)
+        variants_group.create_dataset(
+            "genotype_qualities", shape=(num_sites, num_samples),
+            data=genotype_qualities,
             chunks=(min(chunk_size, num_sites), min(chunk_size, num_samples)),
             dtype=np.uint8, compressor=compressor)
+
 
 
 class AncestorFile(Hdf5File):

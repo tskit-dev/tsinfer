@@ -48,11 +48,11 @@ def generate_samples(ts, error_p):
             S[:, variant.index] = make_errors(variant.genotypes, error_p)
             s = np.sum(S[:, variant.index])
             done = 0 < s < ts.sample_size
-    return S
+    return S.T
 
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
-        error_rate=0, method="C", log_level="WARNING",
+        error_probability=0, method="C", log_level="WARNING",
         debug=True, progress=False):
 
     np.random.seed(seed)
@@ -70,13 +70,16 @@ def tsinfer_dev(
     assert ts.num_sites > 0
     positions = np.array([site.position for site in ts.sites()])
     V = ts.genotype_matrix()
-    # S = generate_samples(ts, error_rate)
-    # print(S)
+    # print(V)
+    G = generate_samples(ts, error_probability)
+    # print(S.T)
+    # print(np.where(S.T != V))
     recombination_rate = np.zeros_like(positions) + recombination_rate
 
     input_root = zarr.group()
     tsinfer.InputFile.build(
-        input_root, genotypes=V, position=positions,
+        input_root, genotypes=G, genotype_qualities=tsinfer.to_phred(error_probability),
+        position=positions,
         recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
         compress=False)
     ancestors_root = zarr.group()
@@ -100,9 +103,10 @@ def tsinfer_dev(
     assert inferred_ts.num_samples == ts.num_samples
     assert inferred_ts.num_sites == ts.num_sites
     assert inferred_ts.sequence_length == ts.sequence_length
-    for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
-        assert np.array_equal(v1.genotypes, v2.genotypes)
-        assert v1.position == v2.position
+    assert np.array_equal(G, inferred_ts.genotype_matrix())
+    # for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
+    #     assert np.array_equal(v1.genotypes, v2.genotypes)
+    #     assert v1.position == v2.position
 
 
 def analyse_file(filename):
@@ -351,10 +355,10 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
 
-    build_profile_inputs(1000, 10)
-    build_profile_inputs(1000, 100)
-    build_profile_inputs(10**4, 100)
-    build_profile_inputs(10**5, 100)
+#     build_profile_inputs(1000, 10)
+#     build_profile_inputs(1000, 100)
+#     build_profile_inputs(10**4, 100)
+#     build_profile_inputs(10**5, 100)
 
     # build_profile_inputs(100)
 
@@ -367,7 +371,7 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(11, 0.1, seed=7, num_threads=1, error_rate=0.0, method="P")
+    tsinfer_dev(11, 0.01, seed=7, num_threads=1, error_probability=0.01, method="P")
 
     # tsinfer_dev(4, 0.2, seed=84, num_threads=1, error_rate=0.0, method="C", log_level="DEBUG")
 
