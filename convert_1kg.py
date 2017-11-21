@@ -33,7 +33,6 @@ def variants(vcf_path):
     num_diploids = len(vcf.samples)
     num_samples = 2 * num_diploids
     j = 0
-    a = np.zeros(num_samples, dtype=np.uint8)
     for row in vcf:
         progress.update()
         ancestral_state = None
@@ -48,6 +47,7 @@ def variants(vcf_path):
         except KeyError:
             pass
         if row.num_called == num_diploids and ancestral_state is not None:
+            a = np.zeros(num_samples, dtype=np.uint8)
             if row.is_snp and len(row.ALT) == 1:
                 # Fill in a with genotypes.
                 bases = row.gt_bases
@@ -67,16 +67,23 @@ def main():
         "genetic_map", help="The input genetic map in HapMap format..")
     parser.add_argument(
         "output_file", help="The tsinfer output file to write to.")
+    parser.add_argument(
+        "-n", "--max-variants", default=None, type=int,
+        help="Keep only the first n variants")
 
     args = parser.parse_args()
     genetic_map = msprime.RecombinationMap.read_hapmap(args.genetic_map)
+
+    max_variants = 2**32  # Arbitrary, but > defined max for VCF
+    if args.max_variants is not None:
+        max_variants = args.max_variants
 
     last_physical_pos = 0
     last_genetic_pos = 0
     positions = []
     genotypes = []
     recombination_rates = []
-    for variant in variants(args.vcf):
+    for index, variant in enumerate(variants(args.vcf)):
         physical_pos = variant.position
         genetic_pos = genetic_map.physical_to_genetic(variant.position)
         physical_dist = physical_pos - last_physical_pos
@@ -89,6 +96,8 @@ def main():
         positions.append(physical_pos)
         last_physical_pos = physical_pos
         last_genetic_pos = genetic_pos
+        if index >= max_variants:
+            break
 
     G = np.array(genotypes, dtype=np.uint8)
 
