@@ -6,6 +6,7 @@ TODO module docs.
 import collections
 import queue
 import time
+import datetime
 import logging
 
 import numpy as np
@@ -143,7 +144,8 @@ def build_ancestors(
 
 
 def match_ancestors(
-        input_hdf5, ancestors_hdf5, method="C", progress=False, num_threads=0):
+        input_hdf5, ancestors_hdf5, output_path, method="C", progress=False,
+        num_threads=0, output_interval=None):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -152,10 +154,9 @@ def match_ancestors(
     ancestors_file = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
 
     matcher = AncestorMatcher(
-        input_file, ancestors_file, method=method, progress=progress,
-        num_threads=num_threads)
+        input_file, ancestors_file, output_path=output_path, method=method,
+        progress=progress, num_threads=num_threads, output_interval=output_interval)
     matcher.match_ancestors()
-    return matcher.get_tree_sequence(rescale_positions=False)
 
 
 def match_samples(input_data, ancestors_ts, method="C", progress=False, num_threads=0):
@@ -224,7 +225,7 @@ class Matcher(object):
         self.progress_monitor = tqdm.tqdm(
             desc=self.progress_bar_description, bar_format=bar_format,
             total=total, disable=not self.progress, initial=initial,
-            smoothing=0.01, postfix=postfix)
+            smoothing=0.01, postfix=postfix, dynamic_ncols=True)
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """
@@ -307,8 +308,17 @@ class Matcher(object):
 class AncestorMatcher(Matcher):
     progress_bar_description = "match-ancestors"
 
-    def __init__(self, input_file, ancestors_file, **kwargs):
+    def __init__(
+            self, input_file, ancestors_file, output_path, output_interval=None,
+            **kwargs):
         super().__init__(input_file, **kwargs)
+        self.output_interval = 2**32  # Arbitrary very large number of minutes.
+        if output_interval is not None:
+            self.output_interval = output_interval
+        if self.output_interval < 1:
+            raise ValueError("Output interval must be at least 1 minute")
+        self.output_path = output_path
+        self.last_output_time = time.time()
         self.ancestors_file = ancestors_file
         self.num_ancestors = self.ancestors_file.num_ancestors
         self.epoch = self.ancestors_file.time
@@ -374,6 +384,15 @@ class AncestorMatcher(Matcher):
         self.num_matches[:] = 0
         for results in self.results:
             results.clear()
+        # Output the current state if appropriate
+        delta = datetime.timedelta(seconds=time.time() - self.last_output_time)
+        if delta.total_seconds() >= self.output_interval * 60:
+            # TODO We need some way of indicating that the output is incomplete.
+            # Probably simplest is to read it back into h5py and stick in an
+            # attribute just saying it's a partial read.
+            self.store_output()
+            self.last_output_time = time.time()
+            logger.info("Saved checkpoint {}".format(self.output_path))
 
     def __match_ancestors_single_threaded(self):
         for j in range(1, self.num_epochs):
@@ -435,7 +454,12 @@ class AncestorMatcher(Matcher):
             self.__match_ancestors_single_threaded()
         else:
             self.__match_ancestors_multi_threaded()
+        self.store_output()
         logger.info("Finished ancestor matching")
+
+    def store_output(self):
+        ts = self.get_tree_sequence(rescale_positions=False)
+        ts.dump(self.output_path)
 
 
 class SampleMatcher(Matcher):

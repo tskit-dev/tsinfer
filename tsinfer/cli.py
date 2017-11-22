@@ -95,11 +95,10 @@ def run_match_ancestors(args):
 
     input_root = zarr.open_group(store=input_container)
     ancestors_root = zarr.open_group(store=ancestors_container)
-    ts = tsinfer.match_ancestors(
-        input_root, ancestors_root, num_threads=args.num_threads,
-        progress=args.progress)
-    logger.info("Writing ancestral genealogies to {}".format(ancestors_ts))
-    ts.dump(ancestors_ts)
+    tsinfer.match_ancestors(
+        input_root, ancestors_root, output_path=ancestors_ts,
+        num_threads=args.num_threads, progress=args.progress,
+        output_interval=args.output_interval)
 
 
 def run_match_samples(args):
@@ -172,6 +171,14 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
+def add_output_interval_argument(parser):
+    parser.add_argument(
+        "--output-interval", "-I", type=int, default=None,
+        help=(
+            "The interval in minutes between output auto-saves. By default the "
+            "output is only saved at the end of the run"))
+
+
 def add_compression_argument(parser):
     parser.add_argument(
         "--compression", "-z", choices=["gzip", "lzf", "none"], default="gzip",
@@ -212,7 +219,7 @@ def get_tsinfer_parser():
     add_verbosity_argument(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_ts_argument(parser)
-
+    add_output_interval_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_match_ancestors)
