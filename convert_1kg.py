@@ -73,6 +73,7 @@ def main():
 
     args = parser.parse_args()
     genetic_map = msprime.RecombinationMap.read_hapmap(args.genetic_map)
+    map_length = genetic_map.get_length()
 
     max_variants = 2**32  # Arbitrary, but > defined max for VCF
     if args.max_variants is not None:
@@ -85,6 +86,8 @@ def main():
     recombination_rates = []
     for index, variant in enumerate(variants(args.vcf)):
         physical_pos = variant.position
+        if index >= max_variants or physical_pos >= map_length:
+            break
         genetic_pos = genetic_map.physical_to_genetic(variant.position)
         physical_dist = physical_pos - last_physical_pos
         genetic_dist = genetic_pos - last_genetic_pos
@@ -96,8 +99,6 @@ def main():
         positions.append(physical_pos)
         last_physical_pos = physical_pos
         last_genetic_pos = genetic_pos
-        if index >= max_variants:
-            break
 
     G = np.array(genotypes, dtype=np.uint8)
 
