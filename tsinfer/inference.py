@@ -145,7 +145,7 @@ def build_ancestors(
 
 def match_ancestors(
         input_hdf5, ancestors_hdf5, output_path, method="C", progress=False,
-        num_threads=0, output_interval=None):
+        num_threads=0, output_interval=None, resume=False):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -155,7 +155,8 @@ def match_ancestors(
 
     matcher = AncestorMatcher(
         input_file, ancestors_file, output_path=output_path, method=method,
-        progress=progress, num_threads=num_threads, output_interval=output_interval)
+        progress=progress, num_threads=num_threads, output_interval=output_interval,
+        resume=resume)
     matcher.match_ancestors()
 
 
@@ -259,6 +260,21 @@ class Matcher(object):
         #         logger.debug(
         #             "Dumped ancestor traceback debug to {}".format(filename))
 
+    def restore_tree_sequence_builder(self, ancestors_ts):
+        tables = ancestors_ts.dump_tables()
+        nodes = tables.nodes
+        self.tree_sequence_builder.restore_nodes(nodes.time)
+        edges = tables.edges
+        self.tree_sequence_builder.restore_edges(
+            edges.left.astype(np.int32), edges.right.astype(np.int32),
+            edges.parent, edges.child)
+        mutations = tables.mutations
+        self.tree_sequence_builder.restore_mutations(
+            mutations.site, mutations.node, mutations.derived_state - ord('0'),
+            mutations.parent)
+        logger.info("Loaded {} nodes; {} edges; {} sites; {} mutations".format(
+            len(nodes), len(edges), ancestors_ts.num_sites, len(mutations)))
+
     def get_tree_sequence(self, rescale_positions=True):
         """
         Returns the current state of the build tree sequence. All samples and
@@ -310,7 +326,7 @@ class AncestorMatcher(Matcher):
 
     def __init__(
             self, input_file, ancestors_file, output_path, output_interval=None,
-            **kwargs):
+            resume=False, **kwargs):
         super().__init__(input_file, **kwargs)
         self.output_interval = 2**32  # Arbitrary very large number of minutes.
         if output_interval is not None:
@@ -325,8 +341,6 @@ class AncestorMatcher(Matcher):
         self.focal_sites = self.ancestors_file.focal_sites
         self.start = self.ancestors_file.start
         self.end = self.ancestors_file.end
-        # This is an iterator over all ancestral haplotypes.
-        self.haplotypes = self.ancestors_file.ancestor_haplotypes()
 
         # Create a list of all ID ranges in each epoch.
         breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
@@ -334,8 +348,27 @@ class AncestorMatcher(Matcher):
         end = np.hstack([breaks + 1, [self.num_ancestors]])
         self.epoch_slices = np.vstack([start, end]).T
         self.num_epochs = self.epoch_slices.shape[0]
+
+        first_ancestor = 1
+        self.start_epoch = 1
+        if resume:
+            logger.info("Resuming build from {}".format(self.output_path))
+            ancestor_ts = msprime.load(self.output_path)
+            self.restore_tree_sequence_builder(ancestor_ts)
+            first_ancestor = ancestor_ts.num_nodes
+            # TODO This is probably an off-by-one caused elsewhere. Will break
+            # when we fix the time of the last ancestor to be one.
+            self.start_epoch = self.num_epochs - self.epoch[first_ancestor] + 1
+            logger.info("Resuming at epoch {} ancestor {}".format(
+                self.start_epoch, first_ancestor))
+        else:
+            # Insert the oldest ancestor
+            self.tree_sequence_builder.update(1, self.epoch[0], [], [], [], [], [], [], [])
+
+        # This is an iterator over all ancestral haplotypes.
+        self.haplotypes = self.ancestors_file.ancestor_haplotypes(first_ancestor)
         self.allocate_progress_monitor(
-            self.num_ancestors, initial=1, postfix=self.__epoch_info_dict(0))
+            self.num_ancestors, initial=first_ancestor, postfix=self.__epoch_info_dict(0))
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -395,7 +428,7 @@ class AncestorMatcher(Matcher):
             logger.info("Saved checkpoint {}".format(self.output_path))
 
     def __match_ancestors_single_threaded(self):
-        for j in range(1, self.num_epochs):
+        for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
@@ -403,7 +436,7 @@ class AncestorMatcher(Matcher):
                 self.__ancestor_find_path(ancestor_id, a)
             self.__complete_epoch(j)
 
-    def __match_ancestors_multi_threaded(self):
+    def __match_ancestors_multi_threaded(self, start_epoch=1):
         # See note on match samples multithreaded below. Should combine these
         # into a single function. Possibly when trying to make the thread
         # error handling more robust.
@@ -428,7 +461,7 @@ class AncestorMatcher(Matcher):
             for j in range(self.num_threads)]
         logger.info("Started {} match worker threads".format(self.num_threads))
 
-        for j in range(1, self.num_epochs):
+        for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
@@ -446,10 +479,6 @@ class AncestorMatcher(Matcher):
 
     def match_ancestors(self):
         logger.info("Starting ancestor matching for {} epochs".format(self.num_epochs))
-        # Insert the oldest ancestor
-        self.tree_sequence_builder.update(1, self.epoch[0], [], [], [], [], [], [], [])
-        a = next(self.haplotypes)
-        assert np.all(a == 0)
         if self.num_threads <= 0:
             self.__match_ancestors_single_threaded()
         else:
@@ -467,17 +496,7 @@ class SampleMatcher(Matcher):
 
     def __init__(self, input_file, ancestors_ts, **kwargs):
         super().__init__(input_file, **kwargs)
-        tables = ancestors_ts.dump_tables()
-        nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time)
-        edges = tables.edges
-        self.tree_sequence_builder.restore_edges(
-            edges.left.astype(np.int32), edges.right.astype(np.int32),
-            edges.parent, edges.child)
-        mutations = tables.mutations
-        self.tree_sequence_builder.restore_mutations(
-            mutations.site, mutations.node, mutations.derived_state - ord('0'),
-            mutations.parent)
+        self.restore_tree_sequence_builder(ancestors_ts)
         self.sample_haplotypes = self.input_file.sample_haplotypes()
         self.allocate_progress_monitor(self.num_samples)
 

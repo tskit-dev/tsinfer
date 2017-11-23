@@ -26,7 +26,7 @@ FORMAT_VERSION_KEY = "format_version"
 DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
 
-def threaded_row_iterator(array, queue_size=4):
+def threaded_row_iterator(array, start=0, queue_size=4):
     """
     Returns an iterator over the rows in the specified 2D array of
     genotypes.
@@ -40,11 +40,14 @@ def threaded_row_iterator(array, queue_size=4):
     def decompression_worker(thread_index):
         j = 0
         for chunk in range(num_chunks):
-            before = time.perf_counter()
-            A = array[j: j + chunk_size][:]
-            duration = time.perf_counter() - before
-            logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
-            decompressed_queue.put(A)
+            if j + chunk_size >= start:
+                before = time.perf_counter()
+                A = array[j: j + chunk_size][:]
+                duration = time.perf_counter() - before
+                logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
+                decompressed_queue.put((j, A))
+            else:
+                logger.debug("Skipping genotype chunk {}".format(j))
             j += chunk_size
         last_chunk = num_rows % chunk_size
         if last_chunk != 0:
@@ -53,7 +56,7 @@ def threaded_row_iterator(array, queue_size=4):
             duration = time.perf_counter() - before
             logger.debug(
                 "Loaded final genotype chunk in {:.2f} seconds".format(duration))
-            decompressed_queue.put(A)
+            decompressed_queue.put((num_rows - last_chunk, A))
         decompressed_queue.put(None)
 
     decompression_thread = threads.queue_producer_thread(
@@ -65,8 +68,10 @@ def threaded_row_iterator(array, queue_size=4):
             break
         logger.debug("Got genotype chunk from queue (depth={})".format(
             decompressed_queue.qsize()))
-        for row in chunk:
-            yield row
+        start_index, rows = chunk
+        for index, row in enumerate(rows, start_index):
+            if index >= start:
+                yield row
         decompressed_queue.task_done()
     decompression_thread.join()
 
@@ -330,11 +335,11 @@ class AncestorFile(Hdf5File):
             else:
                 assert self.focal_sites[j].shape[0] == 0
 
-    def ancestor_haplotypes(self):
+    def ancestor_haplotypes(self, start=0):
         """
         Returns an iterator over the ancestor haplotypes.
         """
-        return threaded_row_iterator(self.haplotypes)
+        return threaded_row_iterator(self.haplotypes, start)
 
     #############################
     # Write mode

@@ -98,7 +98,7 @@ def run_match_ancestors(args):
     tsinfer.match_ancestors(
         input_root, ancestors_root, output_path=ancestors_ts,
         num_threads=args.num_threads, progress=args.progress,
-        output_interval=args.output_interval)
+        output_interval=args.output_interval, resume=args.resume)
 
 
 def run_match_samples(args):
@@ -222,6 +222,9 @@ def get_tsinfer_parser():
     add_output_interval_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    parser.add_argument(
+        "--resume", "-r", default=False, action="store_true",
+        help="Resume an existing build")
     parser.set_defaults(runner=run_match_ancestors)
 
     parser = subparsers.add_parser(
