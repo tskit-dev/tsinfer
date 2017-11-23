@@ -119,6 +119,22 @@ def run_match_samples(args):
     ts.dump(output_ts)
 
 
+def run_verify(args):
+    setup_logging(args)
+
+    input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
+    input_root = zarr.open_group(store=input_container)
+    ancestors_path = get_ancestors_path(args.ancestors, args.input)
+    ancestors_container = zarr.DBMStore(ancestors_path, open=bsddb3.btopen)
+
+    ancestors_root = zarr.open_group(store=ancestors_container)
+    ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
+    output_ts = get_output_ts(args.output_ts, args.input)
+    logger.info("Loading ancestral genealogies from {}".format(ancestors_ts))
+    ancestors_ts = msprime.load(ancestors_ts)
+    tsinfer.verify(input_root, ancestors_root, ancestors_ts, progress=args.progress)
+
+
 def add_input_file_argument(parser):
     parser.add_argument(
         "input", help="The input data in tsinfer input HDF5 format.")
@@ -240,6 +256,18 @@ def get_tsinfer_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_match_samples)
+
+    parser = subparsers.add_parser(
+        "verify",
+        help=(
+            "Verifies the integrity of the files associated with a build."))
+    add_input_file_argument(parser)
+    add_verbosity_argument(parser)
+    add_ancestors_file_argument(parser)
+    add_ancestors_ts_argument(parser)
+    add_output_ts_argument(parser)
+    add_progress_argument(parser)
+    parser.set_defaults(runner=run_verify)
 
     return top_parser
 

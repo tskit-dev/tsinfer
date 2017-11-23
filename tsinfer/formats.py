@@ -114,8 +114,8 @@ def transposed_threaded_row_iterator(array, queue_size=4):
         chunk = decompressed_queue.get()
         if chunk is None:
             break
-        logger.debug("Got genotype chunk from queue (depth={})".format(
-            decompressed_queue.qsize()))
+        logger.debug("Got genotype chunk shape={} from queue (depth={})".format(
+            chunk.shape, decompressed_queue.qsize()))
         for row in chunk:
             yield row
         decompressed_queue.task_done()
@@ -217,6 +217,8 @@ class InputFile(Hdf5File):
         self.recombination_rate = variants_group["recombination_rate"][:]
         self.num_sites = self.genotypes.shape[0]
         self.num_samples = self.genotypes.shape[1]
+        logger.info("Loaded input uuid={}; samples={} sites={}".format(
+            self.uuid, self.num_samples, self.num_sites))
         # TODO check dimensions.
 
     def site_genotypes(self):
@@ -266,7 +268,6 @@ class InputFile(Hdf5File):
         variants_group.create_dataset(
             "recombination_rate", shape=(num_sites,), data=recombination_rate,
             dtype=np.float64, compressor=compressor)
-        #
         x_chunk = min(chunk_size, num_sites)
         y_chunk = min(chunk_size, num_samples)
         variants_group.create_dataset(
@@ -334,12 +335,17 @@ class AncestorFile(Hdf5File):
                 assert self.focal_sites[j].shape[0] > 0
             else:
                 assert self.focal_sites[j].shape[0] == 0
+        logger.info("Loaded ancestor matrix; num_ancestors={}".format(
+            self.num_ancestors))
 
     def ancestor_haplotypes(self, start=0):
         """
         Returns an iterator over the ancestor haplotypes.
         """
         return threaded_row_iterator(self.haplotypes, start)
+
+    def site_genotypes(self):
+        return transposed_threaded_row_iterator(self.haplotypes)
 
     #############################
     # Write mode
@@ -358,8 +364,7 @@ class AncestorFile(Hdf5File):
         self.num_ancestors = num_ancestors
         if chunk_size is None:
             chunk_size = 1024  # Default to 1K ancestors per chunk.
-        self.chunk_size = min(chunk_size, num_ancestors)
-        if self.chunk_size < 1:
+        if chunk_size < 1:
             raise ValueError("Chunk size must be >= 1")
         if num_threads is None:
             num_threads = 4  # Different default?
@@ -369,10 +374,13 @@ class AncestorFile(Hdf5File):
         if compress:
             compressor = DEFAULT_COMPRESSOR
 
+        x_chunk = min(chunk_size, num_ancestors)
+        y_chunk = min(chunk_size, self.num_sites)
+
         ancestors_group = self.hdf5_file.create_group("ancestors")
         self.haplotypes = ancestors_group.create_dataset(
             "haplotypes", shape=(num_ancestors, self.num_sites), dtype=np.uint8,
-            chunks=(self.chunk_size, self.num_sites), compressor=compressor)
+            chunks=(x_chunk, y_chunk), compressor=compressor)
         self.time = ancestors_group.create_dataset(
             "time", shape=(num_ancestors,), compressor=compressor, dtype=np.int32)
         self.start = ancestors_group.create_dataset(
@@ -400,7 +408,7 @@ class AncestorFile(Hdf5File):
         # main thread and pushed back onto a queue by the worker threads.
         num_buffers = num_threads * 2
         self.__haplotypes_buffers = [
-            np.empty((self.chunk_size, self.num_sites), dtype=np.uint8)
+            np.empty((x_chunk, self.num_sites), dtype=np.uint8)
             for _ in range(num_buffers)]
         self.__haplotypes_buffer_index = 0
         logger.debug("Alloced {} buffers using {}MB each".format(
@@ -449,7 +457,8 @@ class AncestorFile(Hdf5File):
         """
         j = self.__ancestor_id
         H = self.__haplotypes_buffers[self.__haplotypes_buffer_index]
-        H[j % self.chunk_size] = haplotype
+        chunk_size = H.shape[0]
+        H[j % chunk_size] = haplotype
         self.__time_buffer[j] = ancestor_time
         self.__start_buffer[j] = start
         self.__end_buffer[j] = end
@@ -460,11 +469,11 @@ class AncestorFile(Hdf5File):
         self.__focal_sites_offset += num_focal_sites
         self.__ancestor_id += 1
         j = self.__ancestor_id
-        if j % self.chunk_size == 0:
-            start = j - self.chunk_size
+        if j % chunk_size == 0:
+            start = j - chunk_size
             end = j
             logger.debug("Pushing chunk {} onto queue, depth={}".format(
-                j // self.chunk_size, self.__flush_queue.qsize()))
+                j // chunk_size, self.__flush_queue.qsize()))
             self.__buffer_queue.task_done()
             self.__flush_queue.put((start, end, self.__haplotypes_buffer_index))
             self.__haplotypes_buffer_index = self.__buffer_queue.get()
@@ -475,8 +484,10 @@ class AncestorFile(Hdf5File):
         """
         Finalises the file by writing the buffers out to the datasets.
         """
+        H = self.__haplotypes_buffers[0]
+        chunk_size = H.shape[0]
         assert self.num_ancestors == self.__ancestor_id
-        last_chunk = self.num_ancestors % self.chunk_size
+        last_chunk = self.num_ancestors % chunk_size
         if last_chunk != 0:
             H = self.__haplotypes_buffers[self.__haplotypes_buffer_index][:last_chunk]
             logger.debug("Flushing final chunk of size {}".format(last_chunk))

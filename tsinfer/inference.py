@@ -160,6 +160,37 @@ def match_ancestors(
     return matcher.match_ancestors()
 
 
+def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
+    """
+    Runs the copying process of the specified input and ancestors and returns
+    the resulting tree sequence.
+    """
+    input_file = formats.InputFile(input_hdf5)
+    ancestors_file = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
+    # TODO change these value errors to VerificationErrors or something.
+    if ancestors_ts.num_nodes != ancestors_file.num_ancestors:
+        raise ValueError("Incorrect number of ancestors")
+    if ancestors_ts.num_sites != input_file.num_sites:
+        raise ValueError("Incorrect number of sites")
+
+
+    progress_monitor = tqdm.tqdm(
+        total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
+
+    count = 0
+    for g1, v in zip(ancestors_file.site_genotypes(), ancestors_ts.variants()):
+        g2 = v.genotypes
+        # Set anything unknown to 0
+        g1[g1 == UNKNOWN_ALLELE] = 0
+        if not np.array_equal(g1, g2):
+            raise ValueError("Unequal genotypes at site", v.index)
+        progress_monitor.update()
+        count += 1
+    if count != ancestors_ts.num_sites:
+        raise ValueError("Iteration stopped early")
+    progress_monitor.close()
+
+
 def match_samples(input_data, ancestors_ts, method="C", progress=False, num_threads=0):
     input_file = formats.InputFile(input_data)
     manager = SampleMatcher(
