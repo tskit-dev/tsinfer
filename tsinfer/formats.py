@@ -44,7 +44,7 @@ def threaded_row_iterator(array, start=0, queue_size=4):
                 before = time.perf_counter()
                 A = array[j: j + chunk_size][:]
                 duration = time.perf_counter() - before
-                logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
+                logger.debug("Loaded genotype chunk {} in {:.2f} seconds".format(j, duration))
                 decompressed_queue.put((j, A))
             else:
                 logger.debug("Skipping genotype chunk {}".format(j))

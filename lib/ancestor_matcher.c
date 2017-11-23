@@ -17,6 +17,9 @@ approximately_equal(const double a, const double b)
 }
 
 /* Returns true if x is approximately equal to one. */
+/* TODO We shouldn't need this any more as we are explicitly making sure that there
+ * is always one value in L exactly equal to 1. Should remove and be explicit
+ * about requiring 1.0 */
 static bool
 approximately_one(const double x)
 {
@@ -68,6 +71,13 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
             for (k = 0; k < self->traceback[j].size; k++) {
                 if (approximately_one(self->traceback[j].likelihood[k])) {
                     u = self->traceback[j].node[k];
+                }
+            }
+            if (u == NULL_NODE) {
+                printf("Impossible!: site=%d, size = %d\n", j, self->traceback[j].size);
+                for (k = 0; k < self->traceback[j].size; k++) {
+                    printf("\t%d -> %.14f\n", self->traceback[j].node[k],
+                            self->traceback[j].likelihood[k]);
                 }
             }
             assert(u != NULL_NODE);
@@ -220,7 +230,7 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
     likelihood_list_t *restrict T = self->traceback;
     const node_id_t *restrict L_nodes = self->likelihood_nodes;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
-    bool match;
+    bool match, one_found;
 
     /* Check to see if the previous site has the same likelihoods. If so,
      * we can reuse the same list. */
@@ -256,11 +266,25 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
         T[site_id].node = node;
         T[site_id].likelihood = likelihood;
         T[site_id].size = num_likelihood_nodes;
+        one_found = false;
         for (j = 0; j < num_likelihood_nodes; j++) {
             u = L_nodes[j];
             node[j] = u;
             likelihood[j] = L[u];
+            if (L[u] == 1.0) {
+                one_found = true;
+            }
         }
+        if (! one_found) {
+            printf("NO 1 value found\n");
+            for (j = 0; j < num_likelihood_nodes; j++) {
+                u = L_nodes[j];
+                node[j] = u;
+                likelihood[j] = L[u];
+                printf("%d -> %.17f\n", u, L[u]);
+            }
+        }
+        assert(one_found);
     }
     self->total_traceback_size += num_likelihood_nodes;
 out:
@@ -307,7 +331,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     int8_t *restrict path_cache = self->path_cache;
     int j;
     bool descendant;
-    node_id_t u, v;
+    node_id_t u, v, max_L_node;
     double distance = 1;
 
     if (site > 0) {
@@ -318,6 +342,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     no_recomb_proba *= distance;
 
     max_L = -1;
+    max_L_node = NULL_NODE;
     /* printf("likelihoods for node=%d, n=%d\n", mutation_node, self->num_likelihood_nodes); */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
@@ -366,6 +391,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         L[u] = y * emission;
         if (L[u] > max_L) {
             max_L = L[u];
+            max_L_node = u;
         }
         /* printf("mutation_node = %d u = %d, x = %f, y = %f, emission = %f\n", */
         /*         mutation_node, u, x, y, emission); */
@@ -382,7 +408,38 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             v = parent[v];
         }
     }
+    assert(max_L_node != NULL_NODE);
+
+    /* Make sure the max likelihood is exactly 1. */
+    L[max_L_node] = 1.0;
     return ret;
+}
+
+/* After we have removed a 1.0 valued node, we must renormalise the likelihoods */
+static void
+ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restrict L)
+{
+    double max_L = -1;
+    const int num_likelihood_nodes = self->num_likelihood_nodes;
+    node_id_t *restrict L_nodes = self->likelihood_nodes;
+    node_id_t u, max_L_node;
+    int j;
+
+    max_L_node = NULL_NODE;
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
+        if (L[u] > max_L) {
+            max_L_node = u;
+            max_L = L[u];
+        }
+    }
+    assert(max_L > 0);
+    for (j = 0; j < num_likelihood_nodes; j++) {
+        u = L_nodes[j];
+        L[u] /= max_L;
+    }
+    /* Ensure the max is exactly 1. */
+    L[max_L_node] = 1.0;
 }
 
 static int WARN_UNUSED
@@ -441,6 +498,9 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
             v = parent[v];
         }
     }
+
+    /* Renormalise to make sure we have a maximum equal to 1.0 */
+    ancestor_matcher_renormalise_likelihoods(self, L);
     return ret;
 }
 
@@ -452,6 +512,8 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
     int ret = 0;
     node_id_t mutation_node = NULL_NODE;
     node_id_t u;
+
+    assert(self->num_likelihood_nodes > 0);
 
     if (self->tree_sequence_builder->sites.mutations[site] != NULL) {
         mutation_node = self->tree_sequence_builder->sites.mutations[site]->node;
@@ -638,6 +700,13 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
             match[l] = 0;
             max_likelihood_node = ancestor_matcher_set_site_likelihood(self, l, L);
+            if (max_likelihood_node == NULL_NODE) {
+                printf("DUMPING STATE---FIXME!!\n");
+                FILE *f = fopen("dump_trace.txt", "w");
+                assert(f != NULL);
+                ancestor_matcher_print_state(self, f);
+                fclose(f);
+            }
             assert(max_likelihood_node != NULL_NODE);
             u = self->output.parent[self->output.size];
             /* Set the state of the matched haplotype */
@@ -725,27 +794,6 @@ insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
         right_sib[c] = NULL_NODE;
     }
     right_child[p] = c;
-}
-
-/* After we have removed a 1.0 valued node, we must renormalise the likelihoods */
-static void
-ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restrict L)
-{
-    double max_L = -1;
-    const int num_likelihood_nodes = self->num_likelihood_nodes;
-    node_id_t *restrict L_nodes = self->likelihood_nodes;
-    node_id_t u;
-    int j;
-
-    for (j = 0; j < num_likelihood_nodes; j++) {
-        u = L_nodes[j];
-        max_L = TSI_MAX(max_L,  L[u]);
-    }
-    assert(max_L > 0);
-    for (j = 0; j < num_likelihood_nodes; j++) {
-        u = L_nodes[j];
-        L[u] /= max_L;
-    }
 }
 
 static int

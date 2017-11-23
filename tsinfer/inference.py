@@ -157,7 +157,7 @@ def match_ancestors(
         input_file, ancestors_file, output_path=output_path, method=method,
         progress=progress, num_threads=num_threads, output_interval=output_interval,
         resume=resume)
-    matcher.match_ancestors()
+    return matcher.match_ancestors()
 
 
 def match_samples(input_data, ancestors_ts, method="C", progress=False, num_threads=0):
@@ -392,6 +392,9 @@ class AncestorMatcher(Matcher):
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         haplotype[focal_sites] = 0
+        logger.debug(
+            "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
+            ancestor_id, start, end, focal_sites.shape[0]))
         self._find_path(ancestor_id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index] == haplotype)
 
@@ -483,12 +486,15 @@ class AncestorMatcher(Matcher):
             self.__match_ancestors_single_threaded()
         else:
             self.__match_ancestors_multi_threaded()
-        self.store_output()
+        ts = self.store_output()
         logger.info("Finished ancestor matching")
+        return ts
 
     def store_output(self):
         ts = self.get_tree_sequence(rescale_positions=False)
-        ts.dump(self.output_path)
+        if self.output_path is not None:
+            ts.dump(self.output_path)
+        return ts
 
 
 class SampleMatcher(Matcher):

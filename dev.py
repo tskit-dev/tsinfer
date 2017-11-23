@@ -78,7 +78,8 @@ def tsinfer_dev(
 
     input_root = zarr.group()
     tsinfer.InputFile.build(
-        input_root, genotypes=G, genotype_qualities=tsinfer.to_phred(error_probability),
+        input_root, genotypes=G,
+        # genotype_qualities=tsinfer.proba_to_phred(error_probability),
         position=positions,
         recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
         compress=False)
@@ -88,7 +89,8 @@ def tsinfer_dev(
         input_root, ancestors_root, method=method, chunk_size=16, compress=False)
 
     ancestors_ts = tsinfer.match_ancestors(
-        input_root, ancestors_root, method=method, num_threads=num_threads)
+        input_root, ancestors_root, method=method, num_threads=num_threads,
+        output_path=None)
     assert ancestors_ts.sequence_length == ts.num_sites
 
     A = ancestors_root["ancestors/haplotypes"][:]
@@ -371,14 +373,14 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    tsinfer_dev(11, 0.01, seed=7, num_threads=1, error_probability=0.01, method="P")
+    # tsinfer_dev(11, 0.01, seed=7, num_threads=1, error_probability=0.01, method="P")
 
-    # tsinfer_dev(4, 0.2, seed=84, num_threads=1, error_rate=0.0, method="C", log_level="DEBUG")
+    # tsinfer_dev(4, 0.2, seed=84, num_threads=1, method="C", log_level="DEBUG")
 
-    # for seed in range(1, 10000):
-    #     print(seed)
-    #     tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-    #     # tsinfer_dev(30, 2.5, seed=seed, num_threads=1, error_rate=0.0, method="C")
+    for seed in range(1, 10000):
+        print(seed)
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+        tsinfer_dev(30, 2.5, seed=seed, num_threads=1, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
