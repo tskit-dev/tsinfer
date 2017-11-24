@@ -339,16 +339,12 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     }
     /* TODO make an error here; distance must be > 0, and we should return an error
      * early in the process */
+    assert(distance > 0);
 
     recomb_proba *= distance;
     no_recomb_proba *= distance;
-    if (recomb_proba == 0) {
-        /* FIXME Temporary workaround to get around duplicate sites. Remove. */
-        recomb_proba = 1e-9;
-    }
 
     assert(recomb_proba > 0);
-
     max_L = -1;
     max_L_node = NULL_NODE;
     assert(num_likelihood_nodes > 0);
