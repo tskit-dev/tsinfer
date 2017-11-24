@@ -22,6 +22,26 @@ class Variant(object):
     genotypes = attr.ib(None)
 
 
+def filter_duplicates(vcf):
+    """
+    Returns the list of variants from this specified VCF with duplicate sites filtered
+    out. If any site appears more than once, throw all variants away.
+    """
+    # TODO this had not been tested properly.
+    row = next(vcf, None)
+    bad_pos = -1
+    for next_row in vcf:
+        if bad_pos == -1 and next_row.POS != row.POS:
+            yield row
+        else:
+            if bad_pos == -1:
+                bad_pos = row.POS
+            elif bad_pos != next_row.POS:
+                bad_pos = -1
+        row = next_row
+    if row is not None and bad_pos != -1:
+        yield row
+
 def variants(vcf_path):
 
     output = subprocess.check_output(["bcftools", "index", "--nrecords", vcf_path])
@@ -33,7 +53,7 @@ def variants(vcf_path):
     num_diploids = len(vcf.samples)
     num_samples = 2 * num_diploids
     j = 0
-    for row in vcf:
+    for row in filter_duplicates(vcf):
         progress.update()
         ancestral_state = None
         try:

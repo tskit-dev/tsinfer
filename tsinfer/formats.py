@@ -254,6 +254,9 @@ class InputFile(Hdf5File):
         if chunk_size is None:
             chunk_size = 8 * 1024  # By default chunk in 64MiB squares.
 
+        if np.any(position[1:] == position[:-1]):
+            raise ValueError("All positions must be unique")
+
         cls.write_version_attrs(input_hdf5)
         input_hdf5.attrs["sequence_length"] = float(sequence_length)
         input_hdf5.attrs["uuid"] = str(uuid.uuid4())

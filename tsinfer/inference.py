@@ -91,7 +91,7 @@ def infer(
 
 def build_ancestors(
         input_hdf5, ancestor_hdf5, progress=False, method="C", compress=True,
-        chunk_size=None):
+        num_threads=None, chunk_size=None):
 
     input_file = formats.InputFile(input_hdf5)
     ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
@@ -122,7 +122,7 @@ def build_ancestors(
         oldest_time = descriptors[0][0] + 1
     ancestor_file.initialise(
         num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
-        compress=compress)
+        compress=compress, num_threads=num_threads)
 
     logger.info("Starting build for {} ancestors".format(num_ancestors))
     a = np.zeros(num_sites, dtype=np.uint8)

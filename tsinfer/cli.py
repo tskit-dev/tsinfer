@@ -73,7 +73,8 @@ def run_build_ancestors(args):
     ancestors_root = zarr.group(store=ancestors_container, overwrite=True)
 
     tsinfer.build_ancestors(
-        input_root, ancestors_root, progress=args.progress)
+        input_root, ancestors_root, progress=args.progress,
+        num_threads=args.num_threads)
 
     input_container.close()
     ancestors_container.close()
@@ -220,6 +221,7 @@ def get_tsinfer_parser():
     add_input_file_argument(parser)
     add_ancestors_file_argument(parser)
     add_compression_argument(parser)
+    add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_verbosity_argument(parser)
     parser.set_defaults(runner=run_build_ancestors)

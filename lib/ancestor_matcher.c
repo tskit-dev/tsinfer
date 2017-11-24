@@ -92,7 +92,6 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     node_id_t u;
 
     fprintf(out, "Ancestor matcher state\n");
-    tree_sequence_builder_print_state(self->tree_sequence_builder, out);
     fprintf(out, "tree = \n");
     fprintf(out, "id\tparent\tlchild\trchild\tlsib\trsib\tlikelihood\n");
     for (j = 0; j < (int) self->num_nodes; j++) {
@@ -338,11 +337,21 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         distance = self->tree_sequence_builder->sites.position[site] -
                 self->tree_sequence_builder->sites.position[site - 1];
     }
+    /* TODO make an error here; distance must be > 0, and we should return an error
+     * early in the process */
+
     recomb_proba *= distance;
     no_recomb_proba *= distance;
+    if (recomb_proba == 0) {
+        /* FIXME Temporary workaround to get around duplicate sites. Remove. */
+        recomb_proba = 1e-9;
+    }
+
+    assert(recomb_proba > 0);
 
     max_L = -1;
     max_L_node = NULL_NODE;
+    assert(num_likelihood_nodes > 0);
     /* printf("likelihoods for node=%d, n=%d\n", mutation_node, self->num_likelihood_nodes); */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
@@ -396,6 +405,17 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         /* printf("mutation_node = %d u = %d, x = %f, y = %f, emission = %f\n", */
         /*         mutation_node, u, x, y, emission); */
     }
+    /* TODO should raise an error here, as this can be done with the model */
+    if (max_L <= 0) {
+        printf("DUMPING STATE---FIXME!!\n");
+        printf("max_L = %f, num_likelihood_nodes = %d\n", max_L, (int) num_likelihood_nodes);
+        printf("recomb_proba = %.14f\n", recomb_proba);
+        printf("distance  = %.14f\n", distance );
+        FILE *f = fopen("dump_trace.txt", "w");
+        assert(f != NULL);
+        ancestor_matcher_print_state(self, f);
+        fclose(f);
+    }
     assert(max_L > 0);
     max_L_inv = 1.0 / max_L;
     /* Normalise and reset the path cache. */
@@ -425,6 +445,7 @@ ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restr
     node_id_t u, max_L_node;
     int j;
 
+    assert(num_likelihood_nodes > 0);
     max_L_node = NULL_NODE;
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
@@ -456,6 +477,7 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
 
     num_cached_paths = 0;
     num_likelihood_nodes = 0;
+    assert(old_num_likelihood_nodes > 0);
     for (j = 0; j < old_num_likelihood_nodes; j++) {
         u = L_nodes[j];
         p = parent[u];
@@ -700,13 +722,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
             match[l] = 0;
             max_likelihood_node = ancestor_matcher_set_site_likelihood(self, l, L);
-            if (max_likelihood_node == NULL_NODE) {
-                printf("DUMPING STATE---FIXME!!\n");
-                FILE *f = fopen("dump_trace.txt", "w");
-                assert(f != NULL);
-                ancestor_matcher_print_state(self, f);
-                fclose(f);
-            }
             assert(max_likelihood_node != NULL_NODE);
             u = self->output.parent[self->output.size];
             /* Set the state of the matched haplotype */
