@@ -304,8 +304,10 @@ class Matcher(object):
         self.tree_sequence_builder.restore_mutations(
             mutations.site, mutations.node, mutations.derived_state - ord('0'),
             mutations.parent)
-        logger.info("Loaded {} nodes; {} edges; {} sites; {} mutations".format(
-            len(nodes), len(edges), ancestors_ts.num_sites, len(mutations)))
+        logger.info(
+            "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
+            ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
+            len(mutations)))
 
     def get_tree_sequence(self, rescale_positions=True):
         """
@@ -387,7 +389,7 @@ class AncestorMatcher(Matcher):
             logger.info("Resuming build from {}".format(self.output_path))
             ancestor_ts = msprime.load(self.output_path)
             self.restore_tree_sequence_builder(ancestor_ts)
-            first_ancestor = ancestor_ts.num_nodes
+            first_ancestor = ancestor_ts.num_samples
             # TODO This is probably an off-by-one caused elsewhere. Will break
             # when we fix the time of the last ancestor to be one.
             self.start_epoch = self.num_epochs - self.epoch[first_ancestor] + 1
