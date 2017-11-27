@@ -130,33 +130,19 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     size_t likelihood_list_block_size = 64 * 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
+    /* All allocs for arrays related to nodes are done in expand_nodes */
+    self->max_nodes = 0;
     self->tree_sequence_builder = tree_sequence_builder;
     self->observation_error = observation_error;
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->max_num_mismatches = self->num_sites; /* Ditto here */
-    self->max_nodes = tree_sequence_builder->max_nodes;
-    self->parent = malloc(self->max_nodes * sizeof(node_id_t));
-    self->left_child = malloc(self->max_nodes * sizeof(node_id_t));
-    self->right_child = malloc(self->max_nodes * sizeof(node_id_t));
-    self->left_sib = malloc(self->max_nodes * sizeof(node_id_t));
-    self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
-    self->likelihood = malloc(self->max_nodes * sizeof(double));
-    self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
-    self->likelihood_nodes = malloc(self->max_nodes * sizeof(node_id_t));
-    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(node_id_t));
-    self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
     self->traceback = calloc(self->num_sites, sizeof(likelihood_list_t));
     self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
     self->output.parent = malloc(self->output.max_size * sizeof(node_id_t));
     self->mismatches = malloc(self->max_num_mismatches * sizeof(site_id_t));
-    if (self->parent == NULL
-            || self->left_child == NULL || self->right_child == NULL
-            || self->left_sib == NULL || self->right_sib == NULL
-            || self->likelihood == NULL || self->likelihood_cache == NULL
-            || self->likelihood_nodes == NULL
-            || self->likelihood_nodes_tmp == NULL || self->traceback == NULL
+    if (self->traceback == NULL
             || self->output.left == NULL || self->output.right == NULL
             || self->output.parent == NULL || self->mismatches == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -591,14 +577,63 @@ ancestor_matcher_reset_tree(ancestor_matcher_t *self)
     memset(self->right_sib, 0xff, self->num_nodes * sizeof(node_id_t));
 }
 
+static int WARN_UNUSED
+ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
+{
+    int ret = TSI_ERR_NO_MEMORY;
+
+    tsi_safe_free(self->parent);
+    tsi_safe_free(self->left_child);
+    tsi_safe_free(self->right_child);
+    tsi_safe_free(self->left_sib);
+    tsi_safe_free(self->right_sib);
+    tsi_safe_free(self->likelihood);
+    tsi_safe_free(self->likelihood_cache);
+    tsi_safe_free(self->likelihood_nodes);
+    tsi_safe_free(self->likelihood_nodes_tmp);
+    tsi_safe_free(self->path_cache);
+
+    assert(self->max_nodes > 0);
+    self->parent = malloc(self->max_nodes * sizeof(node_id_t));
+    self->left_child = malloc(self->max_nodes * sizeof(node_id_t));
+    self->right_child = malloc(self->max_nodes * sizeof(node_id_t));
+    self->left_sib = malloc(self->max_nodes * sizeof(node_id_t));
+    self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
+    self->likelihood = malloc(self->max_nodes * sizeof(double));
+    self->likelihood_cache = malloc(self->max_nodes * sizeof(double));
+    self->likelihood_nodes = malloc(self->max_nodes * sizeof(node_id_t));
+    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(node_id_t));
+    self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
+
+    if (self->parent == NULL
+            || self->left_child == NULL || self->right_child == NULL
+            || self->left_sib == NULL || self->right_sib == NULL
+            || self->likelihood == NULL || self->likelihood_cache == NULL
+            || self->likelihood_nodes == NULL
+            || self->likelihood_nodes_tmp == NULL || self->path_cache == NULL) {
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+
+
 static int
 ancestor_matcher_reset(ancestor_matcher_t *self)
 {
     int ret = 0;
 
     /* TODO realloc when this grows */
-    assert(self->max_nodes == self->tree_sequence_builder->max_nodes);
+    if (self->max_nodes != self->tree_sequence_builder->max_nodes) {
+        self->max_nodes = self->tree_sequence_builder->max_nodes;
+        ret = ancestor_matcher_expand_nodes(self);
+        if (ret != 0) {
+            goto out;
+        }
+    }
     self->num_nodes = self->tree_sequence_builder->num_nodes;
+    assert(self->num_nodes < self->max_nodes);
 
     memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t));
     memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));

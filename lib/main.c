@@ -317,6 +317,8 @@ run_generate(const char *input_file, int verbose)
     pattern_map_t *map_elem;
     site_list_t *s;
 
+    flags = TSI_RESOLVE_SHARED_RECOMBS;
+
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites);
@@ -344,8 +346,7 @@ run_generate(const char *input_file, int verbose)
 
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
-            num_sites, positions, recombination_rate,
-            num_samples + num_ancestors + 1, 10, flags);
+            num_sites, positions, recombination_rate, 10, 10, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
