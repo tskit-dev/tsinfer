@@ -144,7 +144,7 @@ def build_ancestors(
 
 
 def match_ancestors(
-        input_hdf5, ancestors_hdf5, output_path, method="C", progress=False,
+        input_hdf5, ancestors_hdf5, output_path=None, method="C", progress=False,
         num_threads=0, output_interval=None, resume=False):
     """
     Runs the copying process of the specified input and ancestors and returns
@@ -272,6 +272,9 @@ class Matcher(object):
         self.progress_monitor.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
+        logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
+            child_id, left.shape[0], matcher.mean_traceback_size,
+            humanize.naturalsize(matcher.total_memory, binary=True)))
 
         # TODO add a function to do this output this debug info.
         # if self.traceback_file_pattern is not None:
@@ -404,6 +407,7 @@ class AncestorMatcher(Matcher):
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
         return collections.OrderedDict([
+            ("edges", "{:.0G}".format(self.tree_sequence_builder.num_edges)),
             ("epoch", str(self.epoch[start])),
             ("nanc", str(end - start))
         ])

@@ -50,6 +50,26 @@ def setup_logging(args):
     daiquiri.setup(level=log_level)
 
 
+def run_infer(args):
+    setup_logging(args)
+    # if args.compression == "none":
+        # args.compression = None
+    input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
+    input_root = zarr.open_group(store=input_container)
+    ancestors_root = zarr.group()
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, progress=args.progress,
+        num_threads=args.num_threads)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root,
+        num_threads=args.num_threads, progress=args.progress)
+    output_ts = get_output_ts(args.output_ts, args.input)
+    ts = tsinfer.match_samples(
+        input_root, ancestors_ts, num_threads=args.num_threads,
+        progress=args.progress)
+    logger.info("Writing output tree sequence to {}".format(output_ts))
+    ts.dump(output_ts)
+
 def run_build_ancestors(args):
     setup_logging(args)
     if args.compression == "none":
@@ -270,6 +290,17 @@ def get_tsinfer_parser():
     add_output_ts_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_verify)
+
+    parser = subparsers.add_parser(
+        "infer",
+        help=(
+            "TODO: document"))
+    add_input_file_argument(parser)
+    add_verbosity_argument(parser)
+    add_output_ts_argument(parser)
+    add_num_threads_argument(parser)
+    add_progress_argument(parser)
+    parser.set_defaults(runner=run_infer)
 
     return top_parser
 

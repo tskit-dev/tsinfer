@@ -26,7 +26,7 @@ FORMAT_VERSION_KEY = "format_version"
 DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
 
-def threaded_row_iterator(array, start=0, queue_size=4):
+def threaded_row_iterator(array, start=0, queue_size=2):
     """
     Returns an iterator over the rows in the specified 2D array of
     genotypes.
@@ -34,7 +34,8 @@ def threaded_row_iterator(array, start=0, queue_size=4):
     chunk_size = array.chunks[0]
     num_rows = array.shape[0]
     num_chunks = num_rows // chunk_size
-    logger.info("Loading genotypes in {} rows in {} chunks".format(num_rows, num_chunks))
+    logger.info("Loading genotypes for {} columns in {} chunks; size={}".format(
+        num_rows, num_chunks, array.chunks))
     decompressed_queue = queue.Queue(queue_size)
 
     def decompression_worker(thread_index):
@@ -42,9 +43,10 @@ def threaded_row_iterator(array, start=0, queue_size=4):
         for chunk in range(num_chunks):
             if j + chunk_size >= start:
                 before = time.perf_counter()
-                A = array[j: j + chunk_size][:]
+                A = array[j: j + chunk_size]
                 duration = time.perf_counter() - before
-                logger.debug("Loaded genotype chunk {} in {:.2f} seconds".format(j, duration))
+                logger.debug("Loaded {:.2f}MiB genotype start={} in {:.2f} seconds".format(
+                    A.nbytes / 1024**2, j, duration))
                 decompressed_queue.put((j, A))
             else:
                 logger.debug("Skipping genotype chunk {}".format(j))
@@ -84,8 +86,8 @@ def transposed_threaded_row_iterator(array, queue_size=4):
     chunk_size = array.chunks[1]
     num_cols = array.shape[1]
     num_chunks = num_cols // chunk_size
-    logger.info("Loading genotypes in {} columns in {} chunks".format(
-        num_cols, num_chunks))
+    logger.info("Loading genotypes for {} columns in {} chunks {}".format(
+        num_cols, num_chunks, array.chunks))
     decompressed_queue = queue.Queue(queue_size)
 
     def decompression_worker(thread_index):
@@ -371,6 +373,7 @@ class AncestorFile(Hdf5File):
             raise ValueError("Chunk size must be >= 1")
         if num_threads is None:
             num_threads = 4  # Different default?
+        num_threads = max(1, num_threads)
 
         # Create the datasets.
         compressor = None

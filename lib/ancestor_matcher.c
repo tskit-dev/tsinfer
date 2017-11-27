@@ -320,7 +320,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     int ret = 0;
     const double n = (double) self->num_nodes;
     const double rho = self->tree_sequence_builder->sites.recombination_rate[site];
-    const double r = 1 - exp(-rho / n);
+    /* FIXME! Hack to ensure we always have nonzero recombination proba. */
+    const double r = TSI_MAX(1 - exp(-rho / n), 1e-200);
     const double err = self->observation_error;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
     const node_id_t *restrict L_nodes = self->likelihood_nodes;
@@ -344,7 +345,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     recomb_proba *= distance;
     no_recomb_proba *= distance;
 
-    assert(recomb_proba > 0);
+    /* assert(recomb_proba > 0); */
     max_L = -1;
     max_L_node = NULL_NODE;
     assert(num_likelihood_nodes > 0);

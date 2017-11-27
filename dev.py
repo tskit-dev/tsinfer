@@ -7,11 +7,47 @@ import sys
 import pandas as pd
 import daiquiri
 import bsddb3
+import time
+import scipy
 
+import matplotlib as mp
+# Force matplotlib to not use any Xwindows backend.
+mp.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 import tsinfer
 import msprime
 
+
+
+def plot_breakpoints(ts, map_file, output_file):
+    # Read in the recombination map using the read_hapmap method,
+    recomb_map = msprime.RecombinationMap.read_hapmap(map_file)
+
+    # Now we get the positions and rates from the recombination
+    # map and plot these using 500 bins.
+    positions = np.array(recomb_map.get_positions()[1:])
+    rates = np.array(recomb_map.get_rates()[1:])
+    num_bins = 500
+    v, bin_edges, _ = scipy.stats.binned_statistic(
+        positions, rates, bins=num_bins)
+    x = bin_edges[:-1][np.logical_not(np.isnan(v))]
+    y = v[np.logical_not(np.isnan(v))]
+    fig, ax1 = plt.subplots(figsize=(16, 6))
+    ax1.plot(x, y, color="blue", label="Recombination rate")
+    ax1.set_ylabel("Recombination rate")
+    ax1.set_xlabel("Chromosome position")
+
+    # Now plot the density of breakpoints along the chromosome
+    breakpoints = np.array(list(ts.breakpoints()))
+    ax2 = ax1.twinx()
+    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
+    ax2.plot(bin_edges[:-1], v, color="green", label="Breakpoint density")
+    ax2.set_ylabel("Breakpoint density")
+    ax2.set_xlim(1.5e7, 5.3e7)
+    plt.legend()
+    fig.savefig(output_file)
 
 
 def make_errors(v, p):
@@ -112,17 +148,45 @@ def tsinfer_dev(
 
 
 def analyse_file(filename):
+    before = time.process_time()
     ts = msprime.load(filename)
+    duration = time.process_time() - before
+    print("loaded in {:.2f} seconds".format(duration))
+    print("num_trees = ", ts.num_trees)
 
-    num_children = np.zeros(ts.num_edgesets, dtype=np.int)
-    for j, e in enumerate(ts.edgesets()):
-        # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
-        num_children[j] = len(e.children)
+    # plot_breakpoints(ts, "data/hapmap/genetic_map_GRCh37_chr22.txt",
+    #     "chr22_breakpoints.png")
 
-    print("total edgesets = ", ts.num_edgesets)
-    print("non binary     = ", np.sum(num_children > 2))
-    print("max children   = ", np.max(num_children))
-    print("mean children  = ", np.mean(num_children))
+    before = time.process_time()
+    j = 0
+    for t in ts.trees():
+        j += 1
+        if j == ts.num_trees / 2:
+            t.draw(path="chr22_tree.svg")
+    assert j == ts.num_trees
+    duration = time.process_time() - before
+    print("Iterated over tress in {:.2f} seconds".format(duration))
+
+
+    # num_children = []
+    # for j, e in enumerate(ts.edgesets()):
+    #     # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
+    #     num_children.append(len(e.children))
+
+    # num_children = np.array(num_children)
+
+    # print("total edges= ", ts.num_edges)
+    # print("non binary     = ", np.sum(num_children > 2))
+    # print("max children   = ", np.max(num_children))
+    # print("mean children  = ", np.mean(num_children))
+    # print("median children= ", np.median(num_children))
+
+    # sns.distplot(num_children)
+    # plt.savefig("chr22_num_children.png")
+
+
+
+
 
     # for l, r_out, r_in in ts.diffs():
     #     print(l, len(r_out), len(r_in), sep="\t")
@@ -165,6 +229,55 @@ def build_profile_inputs(n, num_megabases):
         recombination_rate=recombination_rate, sequence_length=ts.sequence_length)
     input_hdf5.close()
     print("Wrote", input_file)
+
+
+def build_1kg_sim():
+    n = 5008
+    chrom = "22"
+    infile = "data/hapmap/genetic_map_GRCh37_chr{}.txt".format(chrom)
+    recomb_map = msprime.RecombinationMap.read_hapmap(infile)
+
+    # ts = msprime.simulate(
+    #     sample_size=n, Ne=10**4, recombination_map=recomb_map,
+    #     mutation_rate=5*1e-8)
+
+    # print("simulated chr{} with {} sites".format(chrom, ts.num_sites))
+
+    prefix = "tmp__NOBACKUP__/sim1kg_chr{}".format(chrom)
+    outfile = prefix + ".source.ts"
+    # ts.dump(outfile)
+    ts = msprime.load(outfile)
+
+    V = ts.genotype_matrix()
+    print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
+    positions = np.array([site.position for site in ts.sites()])
+    recombination_rates = np.zeros_like(positions)
+    last_physical_pos = 0
+    last_genetic_pos = 0
+    for site in ts.sites():
+        physical_pos = site.position
+        genetic_pos = recomb_map.physical_to_genetic(physical_pos)
+        physical_dist = physical_pos - last_physical_pos
+        genetic_dist = genetic_pos - last_genetic_pos
+        scaled_recomb_rate = 0
+        if genetic_dist > 0:
+            scaled_recomb_rate = physical_dist / genetic_dist
+        recombination_rates[site.index] = scaled_recomb_rate
+        last_physical_pos = physical_pos
+        last_genetic_pos = genetic_pos
+
+    input_file = prefix + ".tsinf"
+    if os.path.exists(input_file):
+        os.unlink(input_file)
+    input_hdf5 = zarr.DBMStore(input_file, open=bsddb3.btopen)
+    root = zarr.group(store=input_hdf5, overwrite=True)
+    tsinfer.InputFile.build(
+        root, genotypes=V, position=positions,
+        recombination_rate=recombination_rates, sequence_length=ts.sequence_length)
+    input_hdf5.close()
+    print("Wrote", input_file)
+
+
 
 
 def large_profile(input_file, output_file, num_threads=2, log_level="DEBUG"):
@@ -353,6 +466,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
+    build_1kg_sim()
+
+    # analyse_file(sys.argv[1])
+
     # verify(sys.argv[1], sys.argv[2])
 
     # build_profile_inputs(10, 1)
@@ -377,10 +494,10 @@ if __name__ == "__main__":
 
     # tsinfer_dev(4, 0.2, seed=84, num_threads=1, method="C", log_level="DEBUG")
 
-    for seed in range(1, 10000):
-        print(seed)
-        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-        tsinfer_dev(30, 2.5, seed=seed, num_threads=1, method="C")
+#     for seed in range(1, 10000):
+#         print(seed)
+#         # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+#         tsinfer_dev(30, 2.5, seed=seed, num_threads=1, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
