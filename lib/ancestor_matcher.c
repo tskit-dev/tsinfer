@@ -633,7 +633,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
         }
     }
     self->num_nodes = self->tree_sequence_builder->num_nodes;
-    assert(self->num_nodes < self->max_nodes);
+    assert(self->num_nodes <= self->max_nodes);
 
     memset(self->traceback, 0, self->num_sites * sizeof(likelihood_list_t));
     memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));

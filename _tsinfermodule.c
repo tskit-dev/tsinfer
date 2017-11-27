@@ -399,7 +399,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     unsigned long max_edges;
     static char *kwlist[] = {"sequence_length", "position",
         "recombination_rate", "max_nodes", "max_edges", NULL};
-    int flags = 0;
+    int flags = TSI_RESOLVE_SHARED_RECOMBS;
     npy_intp *shape;
 
     self->tree_sequence_builder = NULL;

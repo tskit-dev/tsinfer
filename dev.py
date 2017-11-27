@@ -466,7 +466,7 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    build_1kg_sim()
+    # build_1kg_sim()
 
     # analyse_file(sys.argv[1])
 
@@ -492,12 +492,12 @@ if __name__ == "__main__":
 
     # tsinfer_dev(11, 0.01, seed=7, num_threads=1, error_probability=0.01, method="P")
 
-    # tsinfer_dev(4, 0.2, seed=84, num_threads=1, method="C", log_level="DEBUG")
+    # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C", log_level="DEBUG")
 
-#     for seed in range(1, 10000):
-#         print(seed)
-#         # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
-#         tsinfer_dev(30, 2.5, seed=seed, num_threads=1, method="C")
+    for seed in range(1, 10000):
+        print(seed)
+        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, error_rate=0.0, method="P")
+        tsinfer_dev(30, 1.5, seed=seed, num_threads=1, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

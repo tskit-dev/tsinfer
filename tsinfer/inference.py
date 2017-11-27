@@ -226,12 +226,10 @@ class Matcher(object):
         # the tracebacks for each node ID and other debugging information.
         self.traceback_file_pattern = traceback_file_pattern
 
-        # Allocate 64K edges initially. This will double as needed and will quickly be
-        # big enough even for very large instances.
+        # Allocate 64K nodes and edges initially. This will double as needed and will
+        # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
-        # This is a safe maximum because the max number of ancestors we can have is
-        # the number of sites + 1 (for the oldest ancestor).
-        max_nodes = self.num_samples + self.num_sites + 1
+        max_nodes = 1
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
             max_nodes=max_nodes, max_edges=max_edges)
@@ -418,19 +416,20 @@ class AncestorMatcher(Matcher):
         """
         self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
-    def __ancestor_find_path(self, ancestor_id, haplotype, thread_index=0):
+    def __ancestor_find_path(self, ancestor_id, node_id, haplotype, thread_index=0):
         focal_sites = self.focal_sites[ancestor_id]
         start = self.start[ancestor_id]
         end = self.end[ancestor_id]
-        self.results[thread_index].add_mutations(focal_sites, ancestor_id)
+        self.results[thread_index].add_mutations(focal_sites, node_id)
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         haplotype[focal_sites] = 0
         logger.debug(
-            "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
-            ancestor_id, start, end, focal_sites.shape[0]))
-        self._find_path(ancestor_id, haplotype, start, end, thread_index)
+            "Finding path for ancestor {} (node={}); start={} end={} "
+            "num_focal_sites={}".format(
+            ancestor_id, node_id, start, end, focal_sites.shape[0]))
+        self._find_path(node_id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index] == haplotype)
 
     def __complete_epoch(self, epoch_index):
@@ -438,16 +437,19 @@ class AncestorMatcher(Matcher):
         num_ancestors_in_epoch = end - start
         current_time = self.epoch[start]
         epoch_results = ResultBuffer.combine(self.results)
+        nodes_before = self.tree_sequence_builder.num_nodes
         self.tree_sequence_builder.update(
             num_ancestors_in_epoch, current_time,
             epoch_results.left, epoch_results.right, epoch_results.parent,
             epoch_results.child, epoch_results.site, epoch_results.node,
             epoch_results.derived_state)
+        extra_nodes = (
+            self.tree_sequence_builder.num_nodes - nodes_before - num_ancestors_in_epoch)
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
-            "Finished epoch {} with {} ancestors; mean_tb_size={:.2f} "
-            "edges={}; mean_matcher_mem={}".format(
-                current_time, num_ancestors_in_epoch,
+            "Finished epoch {} with {} ancestors; {} extra nodes inserted; "
+            "mean_tb_size={:.2f} edges={}; mean_matcher_mem={}".format(
+                current_time, num_ancestors_in_epoch, extra_nodes,
                 np.sum(self.mean_traceback_size) / np.sum(self.num_matches),
                 self.tree_sequence_builder.num_edges,
                 humanize.naturalsize(mean_memory, binary=True)))
@@ -469,9 +471,11 @@ class AncestorMatcher(Matcher):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
+            node_id = self.tree_sequence_builder.num_nodes
             for ancestor_id in range(start, end):
                 a = next(self.haplotypes)
-                self.__ancestor_find_path(ancestor_id, a)
+                self.__ancestor_find_path(ancestor_id, node_id, a)
+                node_id += 1
             self.__complete_epoch(j)
 
     def __match_ancestors_multi_threaded(self, start_epoch=1):
@@ -487,8 +491,8 @@ class AncestorMatcher(Matcher):
                 work = match_queue.get()
                 if work is None:
                     break
-                ancestor_id, a = work
-                self.__ancestor_find_path(ancestor_id, a, thread_index)
+                ancestor_id, node_id, a = work
+                self.__ancestor_find_path(ancestor_id, node_id, a, thread_index)
                 match_queue.task_done()
             match_queue.task_done()
 
@@ -502,9 +506,11 @@ class AncestorMatcher(Matcher):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
+            node_id = self.tree_sequence_builder.num_nodes
             for ancestor_id in range(start, end):
                 a = next(self.haplotypes)
-                match_queue.put((ancestor_id, a))
+                match_queue.put((ancestor_id, node_id, a))
+                node_id += 1
             # Block until all matches have completed.
             match_queue.join()
             self.__complete_epoch(j)
@@ -539,6 +545,9 @@ class SampleMatcher(Matcher):
         super().__init__(input_file, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
         self.sample_haplotypes = self.input_file.sample_haplotypes()
+        start = self.tree_sequence_builder.num_nodes
+        end = start + self.num_samples
+        self.sample_ids = np.arange(start, end, dtype=np.int32)
         self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
@@ -582,12 +591,8 @@ class SampleMatcher(Matcher):
             for j in range(self.num_threads)]
         logger.info("Started {} match worker threads".format(self.num_threads))
 
-        j = 0
-        for a in self.sample_haplotypes:
-            sample_id = self.tree_sequence_builder.num_nodes + j
+        for sample_id, a in zip(self.sample_ids, self.sample_haplotypes):
             match_queue.put((sample_id, a))
-            j += 1
-        assert j == self.num_samples
 
         # Stop the the worker threads.
         for j in range(self.num_threads):
@@ -612,9 +617,8 @@ class SampleMatcher(Matcher):
         logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence()
         N = ts.num_nodes
-        sample_ids = np.arange(N - self.num_samples, N, dtype=np.int32)
         ts_simplified = ts.simplify(
-            samples=sample_ids, filter_zero_mutation_sites=False)
+            samples=self.sample_ids, filter_zero_mutation_sites=False)
         logger.debug("simplified from ({}, {}) to ({}, {}) nodes and edges".format(
             ts.num_nodes, ts.num_edges, ts_simplified.num_nodes,
             ts_simplified.num_edges))
