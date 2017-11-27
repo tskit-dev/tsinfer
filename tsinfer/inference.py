@@ -295,7 +295,7 @@ class Matcher(object):
     def restore_tree_sequence_builder(self, ancestors_ts):
         tables = ancestors_ts.dump_tables()
         nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time)
+        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
         self.tree_sequence_builder.restore_edges(
             edges.left.astype(np.int32), edges.right.astype(np.int32),

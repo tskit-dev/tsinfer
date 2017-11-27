@@ -631,16 +631,18 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"time", NULL};
+    static char *kwlist[] = {"time", "flags", NULL};
     PyObject *time = NULL;
     PyArrayObject *time_array = NULL;
+    PyObject *flags = NULL;
+    PyArrayObject *flags_array = NULL;
     npy_intp *shape;
     size_t num_nodes;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &time)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO", kwlist, &time, &flags)) {
         goto out;
     }
 
@@ -656,10 +658,24 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
     shape = PyArray_DIMS(time_array);
     num_nodes = shape[0];
 
-    Py_BEGIN_ALLOW_THREADS
+    /* flags */
+    flags_array = (PyArrayObject *) PyArray_FROM_OTF(flags, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    if (flags_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(flags_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(flags_array);
+    if (shape[0] != num_nodes) {
+        PyErr_SetString(PyExc_ValueError, "flags array incorrect size");
+        goto out;
+    }
     err = tree_sequence_builder_restore_nodes(self->tree_sequence_builder,
-            num_nodes, (double *) PyArray_DATA(time_array));
-    Py_END_ALLOW_THREADS
+            num_nodes,
+            (uint32_t *) PyArray_DATA(flags_array),
+            (double *) PyArray_DATA(time_array));
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -667,6 +683,7 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
     ret = Py_BuildValue("");
 out:
     Py_XDECREF(time_array);
+    Py_XDECREF(flags_array);
     return ret;
 }
 

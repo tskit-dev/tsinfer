@@ -114,9 +114,9 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
                 self->removal_order[j]);
     }
     fprintf(out, "nodes = \n");
-    fprintf(out, "id\ttime\n");
+    fprintf(out, "id\tflags\ttime\n");
     for (j = 0; j < self->num_nodes; j++) {
-        fprintf(out, "%d\t%f\n", (int) j, self->time[j]);
+        fprintf(out, "%d\t%d\t%f\n", (int) j, self->node_flags[j], self->time[j]);
     }
     fprintf(out, "mutations = \n");
     fprintf(out, "site\t(node, derived_state),...\n");
@@ -842,13 +842,13 @@ out:
 
 int
 tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_nodes,
-        double *time)
+        uint32_t *flags, double *time)
 {
     int ret = 0;
     size_t j;
 
     for (j = 0; j < num_nodes; j++) {
-        ret = tree_sequence_builder_add_node(self, time[j], true);
+        ret = tree_sequence_builder_add_node(self, time[j], flags[j] == 1);
         if (ret < 0) {
             goto out;
         }

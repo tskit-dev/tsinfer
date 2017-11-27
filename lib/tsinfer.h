@@ -224,7 +224,7 @@ int tree_sequence_builder_update(tree_sequence_builder_t *self,
 
 /* Restore the state of a previous tree sequence builder. */
 int tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self,
-        size_t num_nodes, double *time);
+        size_t num_nodes, uint32_t *flags, double *time);
 int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self,
         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
         node_id_t *child);
