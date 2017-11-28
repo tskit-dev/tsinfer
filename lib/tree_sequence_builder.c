@@ -702,71 +702,101 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 }
             }
             if (synthetic_child != -1) {
-                /* For now, abandon this shared recomb. What we should do is put in
-                 * edges for all the non synthetic children in, pointing to the
-                 * synthetic child. */
-                continue;
-            }
+                /* If we have a synthetic child, the we already have a path covering
+                 * the region. Update all other paths to use this existing path.
+                 */
+                /* printf("synthetic child = %d\n", synthetic_child); */
 
-            /* Mark these edges as used */
-            for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                path = paths[shared_recombinations[j][k]];
+                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
+                    path = paths[shared_recombinations[j][k]];
+                    left = active[path.start].left;
+                    right = active[path.end - 1].right;
+                    parent_time = self->time[synthetic_child];
+                    node_id_t child = active[path.start].child;
+                    /* We can have situations where multiple paths occur at the same
+                     * time. Easiest to just skip these */
+                    double child_time = self->time[child];
+                    if (child != synthetic_child && parent_time > child_time) {
+                        /* Mark these edges as unused */
+                        for (l = path.start; l < path.end; l++) {
+                            assert(!marked[l]);
+                            marked[l] = true;
+                        }
+                        l = path.start;
+                        assert(num_output < max_edges);
+                        output[num_output].left = left;
+                        output[num_output].right = right;
+                        output[num_output].parent = synthetic_child;
+                        output[num_output].child = child;
+                        /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */
+                        /*         output[num_output].right, */
+                        /*         output[num_output].parent, output[num_output].child); */
+                        num_output++;
+                    }
+                }
+            } else {
+
+                /* Mark these edges as used */
+                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
+                    path = paths[shared_recombinations[j][k]];
+                    for (l = path.start; l < path.end; l++) {
+                        assert(!marked[l]);
+                        marked[l] = true;
+                    }
+                }
+                path = paths[shared_recombinations[j][0]];
+                left = active[path.start].left;
+                right = active[path.end - 1].right;
+                /* The parents from the first path */
+                parent_time = self->time[0] + 1;
                 for (l = path.start; l < path.end; l++) {
-                    assert(!marked[l]);
-                    marked[l] = true;
+                     parent_time = TSI_MIN(parent_time, self->time[active[l].parent]);
+                }
+                /* Get the chilren time from the first edge in each path. */
+                children_time = -1;
+                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
+                    path = paths[shared_recombinations[j][k]];
+                    children_time = TSI_MAX(children_time, self->time[active[path.start].child]);
+                }
+                new_time = children_time + (parent_time - children_time) / 2;
+                new_node = tree_sequence_builder_add_node(self, new_time, false);
+                if (new_node < 0) {
+                    ret = new_node;
+                    goto out;
+                }
+                /* printf("parent_time = %f, children_time = %f node_time=%.14f node=%d\n", */
+                /*         parent_time, children_time, new_time, new_node); */
+                /* For each edge in the path, add a new edge with the new node as the
+                 * child. */
+                path = paths[shared_recombinations[j][0]];
+                for (l = path.start; l < path.end; l++) {
+                    assert(num_output < max_edges);
+                    output[num_output].left = active[l].left;
+                    output[num_output].right = active[l].right;
+                    output[num_output].parent = active[l].parent;
+                    output[num_output].child = new_node;
+                    /* printf("\tADD x %d\t%d\t%d\t%d\n", output[num_output].left, */
+                    /*         output[num_output].right, */
+                    /*         output[num_output].parent, output[num_output].child); */
+                    num_output++;
+                }
+                /* For each child add a new edge covering the whole interval */
+                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
+                    path = paths[shared_recombinations[j][k]];
+                    l = path.start;
+                    assert(num_output < max_edges);
+                    output[num_output].left = left;
+                    output[num_output].right = right;
+                    output[num_output].parent = new_node;
+                    output[num_output].child = active[l].child;
+                    /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */
+                    /*         output[num_output].right, */
+                    /*         output[num_output].parent, output[num_output].child); */
+                    num_output++;
                 }
             }
-            path = paths[shared_recombinations[j][0]];
-            left = active[path.start].left;
-            right = active[path.end - 1].right;
-            /* The parents from the first path */
-            parent_time = self->time[0] + 1;
-            for (l = path.start; l < path.end; l++) {
-                 parent_time = TSI_MIN(parent_time, self->time[active[l].parent]);
-            }
-            /* Get the chilren time from the first edge in each path. */
-            children_time = -1;
-            for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                path = paths[shared_recombinations[j][k]];
-                children_time = TSI_MAX(children_time, self->time[active[path.start].child]);
-            }
-            new_time = children_time + (parent_time - children_time) / 2;
-            new_node = tree_sequence_builder_add_node(self, new_time, false);
-            if (new_node < 0) {
-                ret = new_node;
-                goto out;
-            }
-            /* printf("parent_time = %f, children_time = %f node_time=%.14f node=%d\n", */
-            /*         parent_time, children_time, new_time, new_node); */
-            /* For each edge in the path, add a new edge with the new node as the
-             * child. */
-            path = paths[shared_recombinations[j][0]];
-            for (l = path.start; l < path.end; l++) {
-                assert(num_output < max_edges);
-                output[num_output].left = active[l].left;
-                output[num_output].right = active[l].right;
-                output[num_output].parent = active[l].parent;
-                output[num_output].child = new_node;
-                /* printf("\tADD x %d\t%d\t%d\t%d\n", output[num_output].left, */
-                /*         output[num_output].right, */
-                /*         output[num_output].parent, output[num_output].child); */
-                num_output++;
-            }
-            /* For each child add a new edge covering the whole interval */
-            for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                path = paths[shared_recombinations[j][k]];
-                l = path.start;
-                assert(num_output < max_edges);
-                output[num_output].left = left;
-                output[num_output].right = right;
-                output[num_output].parent = new_node;
-                output[num_output].child = active[l].child;
-                /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */
-                /*         output[num_output].right, */
-                /*         output[num_output].parent, output[num_output].child); */
-                num_output++;
-            }
         }
+
         /* Finally append any unmarked edges to the output and save */
         for (j = 0; j < num_active; j++) {
             if (! marked[j]) {
