@@ -210,7 +210,7 @@ def add_num_threads_argument(parser):
 
 def add_output_interval_argument(parser):
     parser.add_argument(
-        "--output-interval", "-I", type=int, default=None,
+        "--output-interval", "-I", type=float, default=None,
         help=(
             "The interval in minutes between output auto-saves. By default the "
             "output is only saved at the end of the run"))

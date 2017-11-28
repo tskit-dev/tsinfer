@@ -229,7 +229,7 @@ class Matcher(object):
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
-        max_nodes = 1
+        max_nodes = 64 * 1024
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             self.sequence_length, self.positions, self.recombination_rate,
             max_nodes=max_nodes, max_edges=max_edges)
@@ -330,6 +330,7 @@ class Matcher(object):
         else:
             position = np.arange(tsb.num_sites)
             sequence_length = tsb.num_sites
+
         edges = msprime.EdgeTable()
         edges.set_columns(left=left, right=right, parent=parent, child=child)
 
@@ -365,8 +366,6 @@ class AncestorMatcher(Matcher):
         self.output_interval = 2**32  # Arbitrary very large number of minutes.
         if output_interval is not None:
             self.output_interval = output_interval
-        if self.output_interval < 1:
-            raise ValueError("Output interval must be at least 1 minute")
         self.output_path = output_path
         self.last_output_time = time.time()
         self.ancestors_file = ancestors_file

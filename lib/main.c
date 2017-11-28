@@ -295,7 +295,7 @@ run_generate(const char *input_file, int verbose)
     tree_sequence_builder_t ts_builder;
     ancestor_matcher_t matcher;
     allele_t *a, *sample, *match;
-    size_t age;
+    size_t frequency;
     int ret;
     /* Buffers for edge output */
     size_t total_edges;
@@ -307,7 +307,7 @@ run_generate(const char *input_file, int verbose)
     node_id_t *child_buffer;
     /* Buffers for mutation output */
     size_t max_mutations = 8192;
-    size_t total_mutations, frequency;
+    size_t total_mutations;
     site_id_t *site_buffer;
     node_id_t *node_buffer;
     allele_t *derived_state_buffer;
@@ -359,14 +359,14 @@ run_generate(const char *input_file, int verbose)
         ancestor_builder_print_state(&ancestor_builder, stdout);
         /* ancestor_matcher_print_state(&matcher, stdout); */
     }
-    age = num_samples;
-    while (avl_count(&ancestor_builder.frequency_map[age]) == 0) {
-        age--;
+    frequency = num_samples;
+    while (avl_count(&ancestor_builder.frequency_map[frequency]) == 0) {
+        frequency--;
     }
-    age++;
+    frequency++;
 
-    /* age = ancestor_builder.num_frequency_classes + 1; */
-    ret = tree_sequence_builder_update(&ts_builder, 1, age,
+    /* frequency = ancestor_builder.num_frequency_classes + 1; */
+    ret = tree_sequence_builder_update(&ts_builder, 1, frequency - 1,
             0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL);
     if (ret != 0) {
         fatal_error("initial update");
@@ -386,17 +386,17 @@ run_generate(const char *input_file, int verbose)
         fatal_error("alloc");
     }
 
-    for (age = num_samples - 1; age > 0; age--) {
-        num_ancestors =  avl_count(&ancestor_builder.frequency_map[age]);
+    for (frequency = num_samples - 1; frequency > 0; frequency--) {
+        num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         if (verbose > 0) {
-            printf("Generating for frequency class age = %d num_ancestors = %d\n",
-                    (int) age, (int) num_ancestors);
+            printf("Generating for frequency class frequency = %d num_ancestors = %d\n",
+                    (int) frequency, (int) num_ancestors);
         }
-        /* printf("AGE = %d\n", (int) age); */
+        /* printf("AGE = %d\n", (int) frequency); */
         total_edges = 0;
         total_mutations = 0;
         child = ts_builder.num_nodes;
-        for (avl_node = ancestor_builder.frequency_map[age].head; avl_node != NULL;
+        for (avl_node = ancestor_builder.frequency_map[frequency].head; avl_node != NULL;
                 avl_node = avl_node->next) {
             map_elem = (pattern_map_t *) avl_node->item;
             num_focal_sites = map_elem->num_sites;
@@ -464,7 +464,7 @@ run_generate(const char *input_file, int verbose)
             }
             child++;
         }
-        ret = tree_sequence_builder_update(&ts_builder, num_ancestors, age,
+        ret = tree_sequence_builder_update(&ts_builder, num_ancestors, frequency - 1,
                 total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
                 total_mutations, site_buffer, node_buffer, derived_state_buffer);
         if (ret != 0) {
@@ -479,7 +479,7 @@ run_generate(const char *input_file, int verbose)
     matcher.observation_error = 0.001;
     for (j = 0; j < num_samples; j++) {
         sample = haplotypes + j * num_sites;
-        child = num_ancestors + j;
+        child = ts_builder.num_nodes + j;
         ret = ancestor_matcher_find_path(&matcher, 0, num_sites, sample, match,
                 &num_edges, &left_output, &right_output, &parent_output);
         if (ret != 0) {

@@ -321,6 +321,7 @@ tree_sequence_builder_add_edge(tree_sequence_builder_t *self, site_id_t left,
     assert(e->child != NULL_NODE);
     assert(e->child < (node_id_t) self->num_nodes);
     assert(e->parent < (node_id_t) self->num_nodes);
+    assert(self->time[child] < self->time[parent]);
     self->num_edges++;
 out:
     return ret;
@@ -456,6 +457,7 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
     /* Take a copy of all the extant edges and put them into the active buffer */
     for (j = 0; j < self->num_edges; j++) {
         active[j] = self->edges[j];
+        assert(self->time[active[j].child] < self->time[active[j].parent]);
     }
 
     num_active = self->num_edges;
@@ -661,6 +663,7 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
         /*     for (k = paths[j].start; k < paths[j].end; k++) { */
         /*         printf("\t\t%d\t%d\t%d\t%d\n", active[k].left, active[k].right, */
         /*                 active[k].parent, active[k].child); */
+        /*         assert(self->time[active[k].child] < self->time[active[k].parent]); */
         /*     } */
         /* } */
         /* printf("%d shared recombinations \n", (int) num_shared_recombinations); */
@@ -683,10 +686,27 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
             /*     printf("%d: (%d, %d)\n", (int) shared_recombinations[j][k], */
             /*             path.start, path.end); */
             /*     for (l = path.start; l < path.end; l++) { */
-            /*         printf("\t%d\t%d\t%d\t%d\n", active[l].left, active[l].right, */
-            /*                 active[l].parent, active[l].child); */
+            /*         printf("\t%d\t%d\t%d\t%d\t:%.14f %.14f:%d %d\n", active[l].left, active[l].right, */
+            /*                 active[l].parent, active[l].child, */
+            /*                 self->time[active[l].parent], self->time[active[l].child], */
+            /*                 self->node_flags[active[l].parent], self->node_flags[active[l].child]); */
+            /*         assert(self->time[active[l].child] < self->time[active[l].parent]); */
             /*     } */
             /* } */
+            /* check if we have a synthetic child on any of the paths */
+            node_id_t synthetic_child = -1;
+            for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
+                path = paths[shared_recombinations[j][k]];
+                if (self->node_flags[active[path.start].child] == 0) {
+                    synthetic_child = active[path.start].child;
+                }
+            }
+            if (synthetic_child != -1) {
+                /* For now, abandon this shared recomb. What we should do is put in
+                 * edges for all the non synthetic children in, pointing to the
+                 * synthetic child. */
+                continue;
+            }
 
             /* Mark these edges as used */
             for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
@@ -716,18 +736,10 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 ret = new_node;
                 goto out;
             }
-            /* printf("New node %d at time %f\n", new_node, new_time); */
+            /* printf("parent_time = %f, children_time = %f node_time=%.14f node=%d\n", */
+            /*         parent_time, children_time, new_time, new_node); */
             /* For each edge in the path, add a new edge with the new node as the
-             * child. If there are overhangs on either side of this interval we
-             * insert edges pointing the new node to 0. */
-            /* if (left != 0) { */
-            /*     assert(num_output < max_edges); */
-            /*     output[num_output].left = 0; */
-            /*     output[num_output].right = left; */
-            /*     output[num_output].parent = 0; */
-            /*     output[num_output].child = new_node; */
-            /*     num_output++; */
-            /* } */
+             * child. */
             path = paths[shared_recombinations[j][0]];
             for (l = path.start; l < path.end; l++) {
                 assert(num_output < max_edges);
@@ -740,14 +752,6 @@ tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
                 /*         output[num_output].parent, output[num_output].child); */
                 num_output++;
             }
-            /* if (right != self->num_sites) { */
-            /*     assert(num_output < max_edges); */
-            /*     output[num_output].left = right; */
-            /*     output[num_output].right = self->num_sites; */
-            /*     output[num_output].parent = 0; */
-            /*     output[num_output].child = new_node; */
-            /*     num_output++; */
-            /* } */
             /* For each child add a new edge covering the whole interval */
             for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
                 path = paths[shared_recombinations[j][k]];
@@ -815,6 +819,8 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
         }
     }
     for (j = 0; j < num_edges; j++) {
+        /* printf("Insert edge left=%d, right=%d, parent=%d child=%d\n", */
+        /*         left[j], right[j], parent[j], child[j]); */
         ret = tree_sequence_builder_add_edge(self, left[j], right[j], parent[j], child[j]);
         if (ret != 0) {
             goto out;
