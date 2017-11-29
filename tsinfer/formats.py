@@ -36,46 +36,85 @@ def threaded_row_iterator(array, start=0, queue_size=2):
     num_chunks = num_rows // chunk_size
     logger.info("Loading genotypes for {} columns in {} chunks; size={}".format(
         num_rows, num_chunks, array.chunks))
-    decompressed_queue = queue.Queue(queue_size)
 
-    def decompression_worker(thread_index):
-        j = 0
-        for chunk in range(num_chunks):
-            if j + chunk_size >= start:
-                before = time.perf_counter()
-                A = array[j: j + chunk_size][:]
-                duration = time.perf_counter() - before
-                logger.debug("Loaded {:.2f}MiB genotype start={} in {:.2f} seconds".format(
-                    A.nbytes / 1024**2, j, duration))
-                decompressed_queue.put((j, A))
-            else:
-                logger.debug("Skipping genotype chunk {}".format(j))
-            j += chunk_size
-        last_chunk = num_rows % chunk_size
-        if last_chunk != 0:
+    # Note: got rid of the threaded version of this because it was causing a
+    # memory leak. Probably we're better off using a simple double buffered
+    # approach here rather than using queues.
+
+    j = 0
+    for chunk in range(num_chunks):
+        if j + chunk_size >= start:
             before = time.perf_counter()
-            A = array[-last_chunk:]
+            A = array[j: j + chunk_size]
             duration = time.perf_counter() - before
-            logger.debug(
-                "Loaded final genotype chunk in {:.2f} seconds".format(duration))
-            decompressed_queue.put((num_rows - last_chunk, A))
-        decompressed_queue.put(None)
+            logger.debug("Loaded {:.2f}MiB chunk start={} in {:.2f} seconds".format(
+                A.nbytes / 1024**2, j, duration))
+            for index in range(chunk_size):
+                if j + index >= start:
+                    # Yielding a copy here because we end up keeping a second copy
+                    # of the matrix when we threads accessing it. Probably not an
+                    # issue if we use a simple double buffer though.
+                    yield A[index][:]
+        else:
+            logger.debug("Skipping genotype chunk {}".format(j))
+        j += chunk_size
+    # TODO this isn't correctly checking for start.
+    last_chunk = num_rows % chunk_size
+    if last_chunk != 0:
+        before = time.perf_counter()
+        A = array[-last_chunk:]
+        duration = time.perf_counter() - before
+        logger.debug(
+            "Loaded final genotype chunk in {:.2f} seconds".format(duration))
+        for row in A:
+            yield row
 
-    decompression_thread = threads.queue_producer_thread(
-        decompression_worker, decompressed_queue, name="genotype-decompression")
 
-    while True:
-        chunk = decompressed_queue.get()
-        if chunk is None:
-            break
-        logger.debug("Got genotype chunk from queue (depth={})".format(
-            decompressed_queue.qsize()))
-        start_index, rows = chunk
-        for index, row in enumerate(rows, start_index):
-            if index >= start:
-                yield row
-        decompressed_queue.task_done()
-    decompression_thread.join()
+    # chunk_size = array.chunks[0]
+    # num_rows = array.shape[0]
+    # num_chunks = num_rows // chunk_size
+    # logger.info("Loading genotypes for {} columns in {} chunks; size={}".format(
+    #     num_rows, num_chunks, array.chunks))
+    # decompressed_queue = queue.Queue(queue_size)
+
+    # def decompression_worker(thread_index):
+    #     j = 0
+    #     for chunk in range(num_chunks):
+    #         if j + chunk_size >= start:
+    #             before = time.perf_counter()
+    #             A = array[j: j + chunk_size]
+    #             duration = time.perf_counter() - before
+    #             logger.debug("Loaded {:.2f}MiB chunk start={} in {:.2f} seconds".format(
+    #                 A.nbytes / 1024**2, j, duration))
+    #             decompressed_queue.put((j, A))
+    #         else:
+    #             logger.debug("Skipping genotype chunk {}".format(j))
+    #         j += chunk_size
+    #     last_chunk = num_rows % chunk_size
+    #     if last_chunk != 0:
+    #         before = time.perf_counter()
+    #         A = array[-last_chunk:]
+    #         duration = time.perf_counter() - before
+    #         logger.debug(
+    #             "Loaded final genotype chunk in {:.2f} seconds".format(duration))
+    #         decompressed_queue.put((num_rows - last_chunk, A))
+    #     decompressed_queue.put(None)
+
+    # decompression_thread = threads.queue_producer_thread(
+    #     decompression_worker, decompressed_queue, name="genotype-decompression")
+
+    # while True:
+    #     chunk = decompressed_queue.get()
+    #     if chunk is None:
+    #         break
+    #     logger.debug("Got genotype chunk from queue (depth={})".format(
+    #         decompressed_queue.qsize()))
+    #     start_index, rows = chunk
+    #     for index, row in enumerate(rows, start_index):
+    #         if index >= start:
+    #             yield row
+    #     decompressed_queue.task_done()
+    # decompression_thread.join()
 
 
 def transposed_threaded_row_iterator(array, queue_size=4):
@@ -89,6 +128,8 @@ def transposed_threaded_row_iterator(array, queue_size=4):
     logger.info("Loading genotypes for {} columns in {} chunks {}".format(
         num_cols, num_chunks, array.chunks))
     decompressed_queue = queue.Queue(queue_size)
+
+    # NOTE Get rid of this; see notes about memory leak above.
 
     def decompression_worker(thread_index):
         j = 0

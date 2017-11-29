@@ -401,7 +401,8 @@ class AncestorMatcher(Matcher):
         # This is an iterator over all ancestral haplotypes.
         self.haplotypes = self.ancestors_file.ancestor_haplotypes(first_ancestor)
         self.allocate_progress_monitor(
-            self.num_ancestors, initial=first_ancestor, postfix=self.__epoch_info_dict(0))
+            self.num_ancestors, initial=first_ancestor,
+            postfix=self.__epoch_info_dict(self.start_epoch - 1))
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
