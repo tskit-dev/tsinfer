@@ -603,9 +603,6 @@ class AncestorMatcher(object):
                 if state == 0:
                     assert len(self.likelihood_nodes) > 0
                 self.store_traceback(site)
-                if site > 0 and (site - 1) \
-                        not in self.tree_sequence_builder.mutations:
-                    assert self.traceback[site] == self.traceback[site - 1]
                 # NASTY!!!!
                 return
             mutation_node = msprime.NULL_NODE
@@ -828,10 +825,8 @@ class AncestorMatcher(object):
 
             self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
-                # print("UPDATE site", site)
                 self.update_site(site, h[site])
 
-            # print("UPDATE TREE", left, right)
             remove_start = k
             while k < M and edges[O[k]].right == right:
                 edge = edges[O[k]]

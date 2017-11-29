@@ -476,7 +476,7 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    build_profile_inputs(10, 1)
+    # build_profile_inputs(10, 1)
 
 #     build_profile_inputs(1000, 10)
 #     build_profile_inputs(1000, 100)
@@ -494,7 +494,7 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(20, 0.2, seed=7, num_threads=1, error_probability=0.01, method="P")
+    tsinfer_dev(20, 0.2, seed=1283, num_threads=0, method="P")
 
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C", log_level="DEBUG")
 
