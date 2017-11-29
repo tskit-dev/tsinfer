@@ -141,7 +141,7 @@ def run_match_samples(args):
     ancestors_ts = msprime.load(ancestors_ts)
     ts = tsinfer.match_samples(
         input_root, ancestors_ts, num_threads=args.num_threads,
-        progress=args.progress)
+        genotype_quality=args.genotype_quality, progress=args.progress)
     logger.info("Writing output tree sequence to {}".format(output_ts))
     ts.dump(output_ts)
 
@@ -284,6 +284,12 @@ def get_tsinfer_parser():
     add_input_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_ts_argument(parser)
+    parser.add_argument(
+        "--genotype-quality", "-Q", type=float, default=0,
+        help=(
+            "Sets the global genotype quality value to the specified value. This "
+            "is the probablity that an observed genotype is incorrect. Note that "
+            "this is NOT phred scaled. Default=0."))
     add_output_ts_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)

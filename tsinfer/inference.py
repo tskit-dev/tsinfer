@@ -191,11 +191,13 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
     progress_monitor.close()
 
 
-def match_samples(input_data, ancestors_ts, method="C", progress=False, num_threads=0):
+def match_samples(
+        input_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
+        num_threads=0):
     input_file = formats.InputFile(input_data)
     manager = SampleMatcher(
-        input_file, ancestors_ts, method=method, progress=progress,
-        num_threads=num_threads)
+        input_file, ancestors_ts, error_probability=genotype_quality,
+        method=method, progress=progress, num_threads=num_threads)
     manager.match_samples()
     return manager.finalise()
 
@@ -206,8 +208,8 @@ class Matcher(object):
     progress_bar_description = None
 
     def __init__(
-            self, input_file, num_threads=1, method="C", progress=False,
-            traceback_file_pattern=None):
+            self, input_file, error_probability=0, num_threads=1, method="C",
+            progress=False, traceback_file_pattern=None):
         self.input_file = input_file
         self.num_threads = num_threads
         self.num_samples = self.input_file.num_samples
@@ -242,8 +244,9 @@ class Matcher(object):
         self.results = [ResultBuffer() for _ in range(num_threads)]
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
+        logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
-            self.ancestor_matcher_class(self.tree_sequence_builder, 0)
+            self.ancestor_matcher_class(self.tree_sequence_builder, error_probability)
             for _ in range(num_threads)]
         # The progress monitor is allocated later by subclasses.
         self.progress_monitor = None

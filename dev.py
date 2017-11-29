@@ -88,7 +88,7 @@ def generate_samples(ts, error_p):
 
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
-        error_probability=0, method="C", log_level="WARNING",
+        genotype_quality=0, method="C", log_level="WARNING",
         debug=True, progress=False):
 
     np.random.seed(seed)
@@ -107,7 +107,7 @@ def tsinfer_dev(
     positions = np.array([site.position for site in ts.sites()])
     V = ts.genotype_matrix()
     # print(V)
-    G = generate_samples(ts, error_probability)
+    G = generate_samples(ts, genotype_quality)
     # print(S.T)
     # print(np.where(S.T != V))
     recombination_rate = np.zeros_like(positions) + recombination_rate
@@ -136,7 +136,7 @@ def tsinfer_dev(
 
     inferred_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method,
-        num_threads=num_threads)
+        genotype_quality=genotype_quality, num_threads=num_threads)
 
     assert inferred_ts.num_samples == ts.num_samples
     assert inferred_ts.num_sites == ts.num_sites
@@ -494,14 +494,15 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    tsinfer_dev(20, 0.2, seed=1283, num_threads=0, method="P")
+    # tsinfer_dev(20, 0.1, seed=1283, num_threads=0, genotype_quality=0.001, method="P")
 
-    # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C", log_level="DEBUG")
+    # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
+    #         genotype_quality=0.001)
 
-    # for seed in range(1, 10000):
-    #     print(seed)
-    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, method="P")
-    #     tsinfer_dev(30, 1.5, seed=seed, num_threads=1, method="C")
+    for seed in range(1, 10000):
+        print(seed)
+        # tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
+        tsinfer_dev(30, 1.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

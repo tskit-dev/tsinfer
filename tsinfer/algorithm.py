@@ -493,7 +493,7 @@ class TreeSequenceBuilder(object):
         return left, right, parent, child
 
     def dump_mutations(self):
-        num_mutations = len(self.mutations)
+        num_mutations = sum(len(muts) for muts in self.mutations.values())
         site = np.zeros(num_mutations, dtype=np.int32)
         node = np.zeros(num_mutations, dtype=np.int32)
         parent = np.zeros(num_mutations, dtype=np.int32)
@@ -619,29 +619,31 @@ class AncestorMatcher(object):
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
         self.store_traceback(site)
 
+
         distance = 1
         if site > 0:
             distance = self.positions[site] - self.positions[site - 1]
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
         max_L = -1
-        # print("Computing likelihoods for ", mutation_node)
+        # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
         path_cache = np.zeros(n, dtype=np.int8) - 1
         for u in self.likelihood_nodes:
-            v = u
-            while v != -1 and v != mutation_node and path_cache[v] == -1:
-                v = self.parent[v]
             d = False
-            if v != -1 and path_cache[v] != -1:
-                d = path_cache[v]
-            else:
-                d = v == mutation_node
-            assert d == is_descendant(self.parent, u, mutation_node)
-            # Insert this path into the cache.
-            v = u
-            while v != -1 and v != mutation_node and path_cache[v] == -1:
-                path_cache[v] = d
-                v = self.parent[v]
+            if mutation_node != -1:
+                v = u
+                while v != -1 and v != mutation_node and path_cache[v] == -1:
+                    v = self.parent[v]
+                if v != -1 and path_cache[v] != -1:
+                    d = path_cache[v]
+                else:
+                    d = v == mutation_node
+                assert d == is_descendant(self.parent, u, mutation_node)
+                # Insert this path into the cache.
+                v = u
+                while v != -1 and v != mutation_node and path_cache[v] == -1:
+                    path_cache[v] = d
+                    v = self.parent[v]
 
             # TODO should we remove this parameter here and include it
             # in the recombination rate parameter??? In practise we'll
@@ -659,7 +661,6 @@ class AncestorMatcher(object):
                 emission_p = (1 - err) * d + err * (not d)
             else:
                 emission_p = err * d + (1 - err) * (not d)
-            # print("setting ", v, z, emission_p, mutation_node)
             self.likelihood[u] = z * emission_p
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
