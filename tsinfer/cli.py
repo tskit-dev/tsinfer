@@ -47,7 +47,13 @@ def setup_logging(args):
         log_level = "INFO"
     if args.verbosity > 1:
         log_level = "DEBUG"
-    daiquiri.setup(level=log_level)
+    if args.log_section is None:
+        daiquiri.setup(level=log_level)
+    else:
+        daiquiri.setup(level="WARN")
+        logger = logging.getLogger(args.log_section)
+        logger.setLevel(log_level)
+
 
 
 def run_infer(args):
@@ -194,10 +200,14 @@ def add_progress_argument(parser):
         help="Show a progress monitor.")
 
 
-def add_verbosity_argument(parser):
+def add_logging_arguments(parser):
+    log_sections = ["tsinfer.inference", "tsinfer.formats", "tsinfer.threads"]
     parser.add_argument(
         "-v", "--verbosity", action='count', default=0,
         help="Increase the verbosity")
+    parser.add_argument(
+        "--log-section", "-L", choices=log_sections, default=None,
+        help=("Log messages only for the specified module"))
 
 
 def add_num_threads_argument(parser):
@@ -243,7 +253,7 @@ def get_tsinfer_parser():
     add_compression_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
-    add_verbosity_argument(parser)
+    add_logging_arguments(parser)
     parser.set_defaults(runner=run_build_ancestors)
 
     parser = subparsers.add_parser(
@@ -254,7 +264,7 @@ def get_tsinfer_parser():
             "each other using the model information specified in the input file "
             "and writes the output to a tree sequence HDF5 file."))
     add_input_file_argument(parser)
-    add_verbosity_argument(parser)
+    add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_ts_argument(parser)
     add_output_interval_argument(parser)
@@ -272,7 +282,7 @@ def get_tsinfer_parser():
             "Matches the samples against the tree sequence structure built "
             "by the match-ancestors command"))
     add_input_file_argument(parser)
-    add_verbosity_argument(parser)
+    add_logging_arguments(parser)
     add_ancestors_ts_argument(parser)
     add_output_ts_argument(parser)
     add_num_threads_argument(parser)
@@ -284,7 +294,7 @@ def get_tsinfer_parser():
         help=(
             "Verifies the integrity of the files associated with a build."))
     add_input_file_argument(parser)
-    add_verbosity_argument(parser)
+    add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_ts_argument(parser)
     add_output_ts_argument(parser)
@@ -296,7 +306,7 @@ def get_tsinfer_parser():
         help=(
             "TODO: document"))
     add_input_file_argument(parser)
-    add_verbosity_argument(parser)
+    add_logging_arguments(parser)
     add_output_ts_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)

@@ -43,7 +43,7 @@ def threaded_row_iterator(array, start=0, queue_size=2):
         for chunk in range(num_chunks):
             if j + chunk_size >= start:
                 before = time.perf_counter()
-                A = array[j: j + chunk_size]
+                A = array[j: j + chunk_size][:]
                 duration = time.perf_counter() - before
                 logger.debug("Loaded {:.2f}MiB genotype start={} in {:.2f} seconds".format(
                     A.nbytes / 1024**2, j, duration))

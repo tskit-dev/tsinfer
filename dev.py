@@ -153,6 +153,7 @@ def analyse_file(filename):
     duration = time.process_time() - before
     print("loaded in {:.2f} seconds".format(duration))
     print("num_trees = ", ts.num_trees)
+    print("size = {:.2f}MiB".format(os.path.getsize(filename) / 1024**2))
 
     # plot_breakpoints(ts, "data/hapmap/genetic_map_GRCh37_chr22.txt",
     #     "chr22_breakpoints.png")
@@ -161,25 +162,28 @@ def analyse_file(filename):
     j = 0
     for t in ts.trees():
         j += 1
-        if j == ts.num_trees / 2:
-            t.draw(path="chr22_tree.svg")
+        # if j == ts.num_trees / 2:
+        #     t.draw(path="chr22_tree.svg")
     assert j == ts.num_trees
     duration = time.process_time() - before
     print("Iterated over tress in {:.2f} seconds".format(duration))
 
+    tss = ts.simplify()
+    tss.dump("tmp.hdf5")
 
-    # num_children = []
-    # for j, e in enumerate(ts.edgesets()):
-    #     # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
-    #     num_children.append(len(e.children))
 
-    # num_children = np.array(num_children)
+#     num_children = []
+#     for j, e in enumerate(ts.edgesets()):
+#         # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
+#         num_children.append(len(e.children))
 
-    # print("total edges= ", ts.num_edges)
-    # print("non binary     = ", np.sum(num_children > 2))
-    # print("max children   = ", np.max(num_children))
-    # print("mean children  = ", np.mean(num_children))
-    # print("median children= ", np.median(num_children))
+#     num_children = np.array(num_children)
+
+#     print("total edges= ", ts.num_edges)
+#     print("non binary     = ", np.sum(num_children > 2))
+#     print("max children   = ", np.max(num_children))
+#     print("mean children  = ", np.mean(num_children))
+#     print("median children= ", np.median(num_children))
 
     # sns.distplot(num_children)
     # plt.savefig("chr22_num_children.png")
@@ -472,7 +476,7 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    # build_profile_inputs(10, 1)
+    build_profile_inputs(10, 1)
 
 #     build_profile_inputs(1000, 10)
 #     build_profile_inputs(1000, 100)
@@ -494,10 +498,10 @@ if __name__ == "__main__":
 
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C", log_level="DEBUG")
 
-    for seed in range(1, 10000):
-        print(seed)
-        # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, method="P")
-        tsinfer_dev(30, 1.5, seed=seed, num_threads=1, method="C")
+    # for seed in range(1, 10000):
+    #     print(seed)
+    #     # tsinfer_dev(20, 0.2, seed=seed, num_threads=0, method="P")
+    #     tsinfer_dev(30, 1.5, seed=seed, num_threads=1, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
