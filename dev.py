@@ -9,6 +9,7 @@ import daiquiri
 import bsddb3
 import time
 import scipy
+import pickle
 
 import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
@@ -121,12 +122,13 @@ def tsinfer_dev(
         compress=False)
     ancestors_root = zarr.group()
 
+    #TMP changed method to C here for make the sets of ancestors comparable.
     tsinfer.build_ancestors(
-        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+        input_root, ancestors_root, method="C", chunk_size=16, compress=False)
 
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, num_threads=num_threads,
-        output_path=None)
+        output_path=None) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
     assert ancestors_ts.sequence_length == ts.num_sites
 
     A = ancestors_root["ancestors/haplotypes"][:]
@@ -136,7 +138,32 @@ def tsinfer_dev(
 
     inferred_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method,
-        genotype_quality=genotype_quality, num_threads=num_threads)
+        genotype_quality=genotype_quality, num_threads=num_threads,
+        simplify=False) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+
+    # with open("tmp__NOBACKUP__/traceback_59.pkl", 'rb') as f:
+    #     d = pickle.load(f)
+    #     tb = d["traceback"]
+    #     for j, row in enumerate(tb):
+    #         print(j)
+    #         for k, v in row.items():
+    #             print("\t", k, "\t{:.14f}".format(v))
+
+    # print(inferred_ts.tables)
+    # for t in inferred_ts.trees():
+    #     # print(t.draw(format="unicode"))
+    #     sites = list(t.sites())
+    #     name = "t_{}_{}.svg".format(sites[0].index, sites[-1].index + 1)
+    #     t.draw(name, width=800, height=600)
+
+    flags = inferred_ts.tables.nodes.flags
+    samples = np.where(flags == 1)[0][-n:]
+    inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
+
+#     print("SIMPLIFIED")
+#     node_labels = {node_map[k]: str(k) for k in range(node_map.shape[0])}
+#     for t in inferred_ts.trees():
+#         print(t.draw(format="unicode", node_label_text=node_labels))
 
     assert inferred_ts.num_samples == ts.num_samples
     assert inferred_ts.num_sites == ts.num_sites
@@ -155,8 +182,8 @@ def analyse_file(filename):
     print("num_trees = ", ts.num_trees)
     print("size = {:.2f}MiB".format(os.path.getsize(filename) / 1024**2))
 
-    # plot_breakpoints(ts, "data/hapmap/genetic_map_GRCh37_chr22.txt",
-    #     "chr22_breakpoints.png")
+    plot_breakpoints(ts, "data/hapmap/genetic_map_GRCh37_chr22.txt",
+        "chr22_breakpoints.png")
 
     before = time.process_time()
     j = 0
@@ -166,27 +193,26 @@ def analyse_file(filename):
         #     t.draw(path="chr22_tree.svg")
     assert j == ts.num_trees
     duration = time.process_time() - before
-    print("Iterated over tress in {:.2f} seconds".format(duration))
-
-    tss = ts.simplify()
-    tss.dump("tmp.hdf5")
+    print("Iterated over trees in {:.2f} seconds".format(duration))
 
 
-#     num_children = []
-#     for j, e in enumerate(ts.edgesets()):
-#         # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
-#         num_children.append(len(e.children))
 
-#     num_children = np.array(num_children)
+    num_children = []
+    for j, e in enumerate(ts.edgesets()):
+        # print(e.left, e.right, e.parent, ts.time(e.parent), e.children, sep="\t")
+        num_children.append(len(e.children))
 
-#     print("total edges= ", ts.num_edges)
-#     print("non binary     = ", np.sum(num_children > 2))
-#     print("max children   = ", np.max(num_children))
-#     print("mean children  = ", np.mean(num_children))
-#     print("median children= ", np.median(num_children))
+    num_children = np.array(num_children)
 
-    # sns.distplot(num_children)
-    # plt.savefig("chr22_num_children.png")
+    print("total edges= ", ts.num_edges)
+    print("non binary     = ", np.sum(num_children > 2))
+    print("max children   = ", np.max(num_children))
+    print("mean children  = ", np.mean(num_children))
+    print("median children= ", np.median(num_children))
+
+    plt.clf()
+    sns.distplot(num_children)
+    plt.savefig("chr22_num_children.png")
 
 
 
@@ -494,15 +520,15 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(20, 0.1, seed=1283, num_threads=0, genotype_quality=0.001, method="P")
+    # tsinfer_dev(10, 0.1, seed=6, num_threads=0, genotype_quality=0, method="P", log_level="WARNING")
 
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
 
     for seed in range(1, 10000):
         print(seed)
-        # tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
-        tsinfer_dev(30, 1.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+        tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
+        # tsinfer_dev(30, 1.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

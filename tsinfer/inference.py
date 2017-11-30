@@ -7,6 +7,7 @@ import collections
 import queue
 import time
 import datetime
+import pickle
 import logging
 
 import numpy as np
@@ -145,7 +146,7 @@ def build_ancestors(
 
 def match_ancestors(
         input_hdf5, ancestors_hdf5, output_path=None, method="C", progress=False,
-        num_threads=0, output_interval=None, resume=False):
+        num_threads=0, output_interval=None, resume=False, traceback_file_pattern=None):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -156,7 +157,7 @@ def match_ancestors(
     matcher = AncestorMatcher(
         input_file, ancestors_file, output_path=output_path, method=method,
         progress=progress, num_threads=num_threads, output_interval=output_interval,
-        resume=resume)
+        resume=resume, traceback_file_pattern=traceback_file_pattern)
     return matcher.match_ancestors()
 
 
@@ -193,13 +194,14 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 
 def match_samples(
         input_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
-        num_threads=0):
+        num_threads=0, simplify=True, traceback_file_pattern=None):
     input_file = formats.InputFile(input_data)
     manager = SampleMatcher(
         input_file, ancestors_ts, error_probability=genotype_quality,
-        method=method, progress=progress, num_threads=num_threads)
+        method=method, progress=progress, num_threads=num_threads,
+        traceback_file_pattern=traceback_file_pattern)
     manager.match_samples()
-    return manager.finalise()
+    return manager.finalise(simplify=simplify)
 
 
 class Matcher(object):
@@ -276,24 +278,24 @@ class Matcher(object):
         logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
-
-        # TODO add a function to do this output this debug info.
-        # if self.traceback_file_pattern is not None:
-        #     # Write out the traceback debug.
-        #     filename = self.traceback_file_pattern.format(node_id)
-        #     traceback = [matcher.get_traceback(l) for l in range(self.num_sites)]
-        #     with open(filename, "wb") as f:
-        #         debug = {
-        #             "node_id:": node_id,
-        #             "focal_sites": focal_sites,
-        #             "ancestor": ancestor,
-        #             "start": start,
-        #             "end": end,
-        #             "match": match,
-        #             "traceback": traceback}
-        #         pickle.dump(debug, f)
-        #         logger.debug(
-        #             "Dumped ancestor traceback debug to {}".format(filename))
+        # print("child =", child_id)
+        # for l, r, p in zip(left, right ,parent):
+        #     print("\tEdge = ", l, r, p)
+        if self.traceback_file_pattern is not None:
+            # Write out the traceback debug. WARNING: this will be huge!
+            filename = self.traceback_file_pattern.format(child_id)
+            traceback = [matcher.get_traceback(l) for l in range(self.num_sites)]
+            with open(filename, "wb") as f:
+                debug = {
+                    "child_id:": child_id,
+                    "haplotype": haplotype,
+                    "start": start,
+                    "end": end,
+                    "match": match,
+                    "traceback": traceback}
+                pickle.dump(debug, f)
+                logger.debug(
+                    "Dumped ancestor traceback debug to {}".format(filename))
 
     def restore_tree_sequence_builder(self, ancestors_ts):
         tables = ancestors_ts.dump_tables()
@@ -618,16 +620,18 @@ class SampleMatcher(Matcher):
             results.site, results.node, results.derived_state)
         logger.info("Finished sample matching")
 
-    def finalise(self):
+    def finalise(self, simplify=True):
         logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence()
-        N = ts.num_nodes
-        ts_simplified = ts.simplify(
-            samples=self.sample_ids, filter_zero_mutation_sites=False)
-        logger.debug("simplified from ({}, {}) to ({}, {}) nodes and edges".format(
-            ts.num_nodes, ts.num_edges, ts_simplified.num_nodes,
-            ts_simplified.num_edges))
-        return ts_simplified
+        if simplify:
+            N = ts.num_nodes
+            logger.info("Running simplify on {} nodes and {} edges".format(
+                ts.num_nodes, ts.num_edges))
+            ts = ts.simplify(
+                samples=self.sample_ids, filter_zero_mutation_sites=False)
+            logger.info("Finished simplify; now have {} nodes and {} edges".format(
+                ts.num_nodes, ts.num_edges))
+        return ts
 
 
 class ResultBuffer(object):

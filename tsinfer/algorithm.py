@@ -557,8 +557,15 @@ class AncestorMatcher(object):
             if likelihood > max_likelihood:
                 u = node
                 max_likelihood = likelihood
+            elif likelihood == max_likelihood:
+                # Choose this node only if it's less general.
+                if node > u:
+                    u = node
         assert u != -1
         return u
+
+    def get_traceback(self, site):
+        return self.traceback[site]
 
     def get_max_likelihood_traceback_node(self, L):
         u = -1
@@ -567,6 +574,10 @@ class AncestorMatcher(object):
             if likelihood > max_likelihood:
                 u = node
                 max_likelihood = likelihood
+            elif likelihood == max_likelihood:
+                # Choose this node only if it's less general.
+                if node > u:
+                    u = node
         assert u != -1
         return u
 
@@ -668,7 +679,10 @@ class AncestorMatcher(object):
 
         # Normalise and reset the path cache
         for u in self.likelihood_nodes:
-            self.likelihood[u] /= max_L
+            if self.likelihood[u] == max_L:
+                self.likelihood[u] = 1.0
+            else:
+                self.likelihood[u] /= max_L
             v = u
             while v != -1 and path_cache[v] != -1:
                 path_cache[v] = -1
@@ -676,6 +690,14 @@ class AncestorMatcher(object):
         assert np.all(path_cache == -1)
 
         self.compress_likelihoods()
+
+        # Normalise again just to make sure we have 1.0 values.
+        max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
+        for u in self.likelihood_nodes:
+            if self.likelihood[u] == max_L:
+                self.likelihood[u] = 1.0
+            else:
+                self.likelihood[u] /= max_L
 
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1
@@ -754,9 +776,6 @@ class AncestorMatcher(object):
         abs_tol = 0.0
         return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
-    def approximately_one(self, a):
-        return self.approximately_equal(a, 1.0)
-
     def find_path(self, h, start, end, match):
 
         M = len(self.tree_sequence_builder.edges)
@@ -813,16 +832,17 @@ class AncestorMatcher(object):
                 edge = edges[O[l]]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
-                        # print("REMOVING ROOT", edge.child, self.likelihood[edge.child])
-                        if self.approximately_one(self.likelihood[u]):
-                            normalisation_required = True
+                        normalisation_required = True
                         self.likelihood[u] = -2
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
             if normalisation_required:
                 max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
                 for u in self.likelihood_nodes:
-                    self.likelihood[u] /= max_L
+                    if self.likelihood[u] == max_L:
+                        self.likelihood[u] = 1.0
+                    else:
+                        self.likelihood[u] /= max_L
 
             self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
@@ -935,7 +955,8 @@ class AncestorMatcher(object):
                     v = self.parent[v]
                     assert v != -1
                 x = L[v]
-                if not self.approximately_one(x):
+                if x != 1.0:
+                    # print("Switch", x)
                     output_edge.left = l
                     u = self.get_max_likelihood_traceback_node(L)
                     output_edge = Edge(right=l, parent=u)
