@@ -87,6 +87,39 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S.T
 
+
+def check_infer(
+        n, L, seed, num_threads=1, recombination_rate=1e-8,
+        genotype_quality=0, method="C", log_level="WARNING",
+        debug=True, progress=False):
+
+    np.random.seed(seed)
+    random.seed(seed)
+    L_megabases = int(L * 10**6)
+
+    daiquiri.setup(level=log_level)
+    ts = msprime.simulate(
+            n, Ne=10**4, length=L_megabases,
+            recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=seed)
+    if debug:
+        print("num_sites = ", ts.num_sites)
+    assert ts.num_sites > 0
+    positions = np.array([site.position for site in ts.sites()])
+    V = ts.genotype_matrix()
+    # print(V)
+    G = generate_samples(ts, genotype_quality)
+    # print(S.T)
+    # print(np.where(S.T != V))
+    recombination_rate = np.zeros_like(positions) + recombination_rate
+
+    inferred_ts = tsinfer.infer(
+        G, positions, ts.sequence_length, recombination_rate,
+        sample_error=genotype_quality, method="method", num_threads=num_threads,
+        progress=progress)
+
+    assert np.array_equal(G, inferred_ts.genotype_matrix())
+
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         genotype_quality=0, method="C", log_level="WARNING",
@@ -527,7 +560,10 @@ if __name__ == "__main__":
 
     for seed in range(1, 10000):
         print(seed)
-        tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
+        # check_infer(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
+        tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+
+        # tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
         # tsinfer_dev(30, 1.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",

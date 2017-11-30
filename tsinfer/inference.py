@@ -86,7 +86,8 @@ def infer(
     ancestors_ts = match_ancestors(
         input_root, ancestors_root, method=method, num_threads=num_threads)
     inferred_ts = match_samples(
-        input_root, ancestors_ts, method=method, num_threads=num_threads)
+        input_root, ancestors_ts, method=method, num_threads=num_threads,
+        genotype_quality=sample_error)
     return inferred_ts
 
 
