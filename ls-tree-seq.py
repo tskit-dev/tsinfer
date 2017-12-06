@@ -703,17 +703,17 @@ def copy_process_dev(n, L, seed):
     for v in ts.variants():
         H[:, v.index] = v.genotypes
 
-    matcher = HaplotypeMatcher(ts, recombination_rate=1e-8)
+    # matcher = HaplotypeMatcher(ts, recombination_rate=1e-8)
     # print(H)
-    for j in range(10):
+    for j in range(1):
         h = random_mosaic(H)
         # h = np.hstack([H[0,:10], H[1,10:]])
         # print()
         # print(h)
-        # p = best_path(h, H, 1e-8)
+        p = best_path(h, H, 1e-2)
         # p = best_path_ts(h, ts, 1e-8)
 
-        p = matcher.run(h)
+        # p = matcher.run(h)
 
         # print("p = ", p)
         hp = H[p, np.arange(m)]

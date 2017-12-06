@@ -1322,7 +1322,7 @@ AncestorMatcher_get_traceback(AncestorMatcher *self, PyObject *args)
 {
     PyObject *ret = NULL;
     unsigned long site;
-    likelihood_list_t *list;
+    node_state_list_t *list;
     PyObject *dict = NULL;
     PyObject *key = NULL;
     PyObject *value = NULL;
@@ -1345,7 +1345,7 @@ AncestorMatcher_get_traceback(AncestorMatcher *self, PyObject *args)
     list = &self->ancestor_matcher->traceback[site];
     for (j = 0; j < list->size; j++) {
         key = Py_BuildValue("k", (unsigned long) list->node[j]);
-        value = Py_BuildValue("d", list->likelihood[j]);
+        value = Py_BuildValue("i", (int) list->recombination_required[j]);
         if (key == NULL || value == NULL) {
             goto out;
         }

@@ -127,8 +127,8 @@ typedef struct {
 typedef struct {
     int32_t size;
     node_id_t *node;
-    double *likelihood;
-} likelihood_list_t;
+    int8_t *recombination_required;
+} node_state_list_t;
 
 typedef struct {
     int flags;
@@ -170,10 +170,14 @@ typedef struct {
     double *likelihood_cache;
     int8_t *path_cache;
     int num_likelihood_nodes;
+    /* At each site, record a node with the maximum likelihood. */
+    node_id_t *max_likelihood_node;
+    /* Used during traceback to map nodes where recombination is required. */
+    int8_t *recombination_required;
     node_id_t *likelihood_nodes_tmp;
     node_id_t *likelihood_nodes;
-    likelihood_list_t *traceback;
-    block_allocator_t likelihood_list_allocator;
+    node_state_list_t *traceback;
+    block_allocator_t traceback_allocator;
     size_t total_traceback_size;
     /* Some better nameing is needed here. The 'output' struct here
      * is really the 'path', and mismatches are also output. Perhaps

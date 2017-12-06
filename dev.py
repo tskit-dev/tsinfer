@@ -161,7 +161,9 @@ def tsinfer_dev(
 
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, num_threads=num_threads,
-        output_path=None) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+        # )
+        output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
+        # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
     assert ancestors_ts.sequence_length == ts.num_sites
 
     A = ancestors_root["ancestors/haplotypes"][:]
@@ -173,6 +175,8 @@ def tsinfer_dev(
         input_root, ancestors_ts, method=method,
         genotype_quality=genotype_quality, num_threads=num_threads,
         simplify=False) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+
+    print("num_edges = ", inferred_ts.num_edges)
 
     # with open("tmp__NOBACKUP__/traceback_59.pkl", 'rb') as f:
     #     d = pickle.load(f)
@@ -523,11 +527,40 @@ def verify(file1, file2):
         assert v1.position == v2.position
         assert np.array_equal(v1.genotypes, v2.genotypes)
 
+def lookat(filename):
+
+    # for j in range(1, 1000):
+    #     tbfile = "tmp__NOBACKUP__/traceback_{}.pkl".format(j)
+    #     with open(tbfile, "rb") as f:
+    #         debug = pickle.load(f)
+    #         tb = debug["traceback"]
+    #         for j, row in enumerate(tb):
+    #             # print(j, row)
+    #             if 596 in row:
+    #                 print(j)
+    #                 for k, v in row.items():
+    #                     print("\t", k, "\t{:.14f}".format(v))
+
+    ts = msprime.load(filename)
+    print(ts.num_edges, ts.num_trees)
+
+    for t in ts.trees():
+        for root in t.roots:
+            if root != 0:
+                if len(list(t.nodes(root))) != 1:
+                    print("ERROR at ", root, "in tree ", t.index, t.interval)
+                    # print(t.draw(format="unicode"))
+
+
+    sys.exit(0)
+
 
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
+
+    # lookat("tmp__NOBACKUP__/bad_tb.tsancts")
 
     # build_1kg_sim()
 
@@ -553,18 +586,19 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(10, 0.1, seed=6, num_threads=0, genotype_quality=0, method="P", log_level="WARNING")
+    # tsinfer_dev(10, 0.01, seed=6, num_threads=0, genotype_quality=0, method="P", log_level="WARNING")
 
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
 
     for seed in range(1, 10000):
+    # for seed in [4]:
         print(seed)
         # check_infer(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
         tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
-        # tsinfer_dev(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
-        # tsinfer_dev(30, 1.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+        # tsinfer_dev(20, 0.4, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+        # tsinfer_dev(30, 5.5, seed=seed, num_threads=10, genotype_quality=0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
