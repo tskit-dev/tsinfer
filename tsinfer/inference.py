@@ -280,8 +280,6 @@ class Matcher(object):
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
         # print("child =", child_id)
-        # for l, r, p in zip(left, right ,parent):
-        #     print("\tEdge = ", l, r, p)
         if self.traceback_file_pattern is not None:
             # Write out the traceback debug. WARNING: this will be huge!
             filename = self.traceback_file_pattern.format(child_id)
@@ -297,6 +295,7 @@ class Matcher(object):
                 pickle.dump(debug, f)
                 logger.debug(
                     "Dumped ancestor traceback debug to {}".format(filename))
+        return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
         tables = ancestors_ts.dump_tables()
@@ -437,8 +436,14 @@ class AncestorMatcher(Matcher):
             "Finding path for ancestor {} (node={}); start={} end={} "
             "num_focal_sites={}".format(
             ancestor_id, node_id, start, end, focal_sites.shape[0]))
-        self._find_path(node_id, haplotype, start, end, thread_index)
+        left, right, parent = self._find_path(node_id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index] == haplotype)
+
+#         for l, r, p in zip(left, right ,parent):
+#             # print("\tEdge = ", l, r, p)
+#             ancestor_id = p  # path compression is turned off.
+#             if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
+#                 print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
 
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])

@@ -542,44 +542,16 @@ class AncestorMatcher(object):
         self.left_child = None
         self.right_sib = None
         self.traceback = None
+        self.max_likelihood_node = None
         self.likelihood = None
         self.likelihood_nodes = None
         self.total_memory = 0
 
-    def get_max_likelihood_node(self):
-        """
-        Returns the node with the maxmimum likelihood from the specified map.
-        """
-        u = -1
-        max_likelihood = -1
-        for node in self.likelihood_nodes:
-            likelihood = self.likelihood[node]
-            if likelihood > max_likelihood:
-                u = node
-                max_likelihood = likelihood
-            elif likelihood == max_likelihood:
-                # Choose this node only if it's less general.
-                if node > u:
-                    u = node
-        assert u != -1
-        return u
-
-    def get_traceback(self, site):
-        return self.traceback[site]
-
-    def get_max_likelihood_traceback_node(self, L):
-        u = -1
-        max_likelihood = -1
-        for node, likelihood in L.items():
-            if likelihood > max_likelihood:
-                u = node
-                max_likelihood = likelihood
-            elif likelihood == max_likelihood:
-                # Choose this node only if it's less general.
-                if node > u:
-                    u = node
-        assert u != -1
-        return u
+    def print_state(self):
+        print("Ancestor matcher state")
+        print("max_L_node\ttraceback")
+        for l in range(self.num_sites):
+            print(self.max_likelihood_node[l], self.traceback[l], sep="\t")
 
     def check_likelihoods(self):
         # Every value in L_nodes must be positive.
@@ -594,10 +566,6 @@ class AncestorMatcher(object):
                 # print("root: u = ", u, self.parent[u], self.left_child[u])
                 assert v == -2
 
-    def store_traceback(self, site):
-        self.traceback[site] = {u: self.likelihood[u] for u in self.likelihood_nodes}
-        # print("Stored traceback for ", site, self.traceback[site])
-
     def update_site(self, site, state):
         n = self.tree_sequence_builder.num_nodes
         recombination_rate = self.tree_sequence_builder.recombination_rate
@@ -608,7 +576,8 @@ class AncestorMatcher(object):
         no_recomb_proba = 1 - r + r / n
 
         if site not in self.tree_sequence_builder.mutations:
-            if err == 0:
+            if False:
+            # if err == 0:
                 # This is a special case for ancestor matching. Very awkward
                 # flow control here. FIXME
                 if state == 0:
@@ -628,17 +597,16 @@ class AncestorMatcher(object):
                 self.likelihood_nodes.append(mutation_node)
 
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
-        self.store_traceback(site)
-
 
         distance = 1
         if site > 0:
             distance = self.positions[site] - self.positions[site - 1]
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
-        max_L = -1
         # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
         path_cache = np.zeros(n, dtype=np.int8) - 1
+        max_L = -1
+        max_L_node = -1
         for u in self.likelihood_nodes:
             d = False
             if mutation_node != -1:
@@ -656,18 +624,16 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-            # TODO should we remove this parameter here and include it
-            # in the recombination rate parameter??? In practise we'll
-            # probably be working it out from a recombination map, so
-            # there's no point in complicating this further by rescaling
-            # it back into physical distance.
             x = self.likelihood[u] * no_recomb_proba * distance
             assert x >= 0
             y = recomb_proba * distance
+            # print("\t", u, x, y)
             if x > y:
                 z = x
+                self.traceback[site][u] = False
             else:
                 z = y
+                self.traceback[site][u] = True
             if state == 1:
                 emission_p = (1 - err) * d + err * (not d)
             else:
@@ -675,14 +641,13 @@ class AncestorMatcher(object):
             self.likelihood[u] = z * emission_p
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
-        assert max_L > 0
+                max_L_node = u
 
-        # Normalise and reset the path cache
+        # print("Max L = ", max_L, "node = ", max_L_node)
+        self.max_likelihood_node[site] = max_L_node
+
+        # Reset the path cache
         for u in self.likelihood_nodes:
-            if self.likelihood[u] == max_L:
-                self.likelihood[u] = 1.0
-            else:
-                self.likelihood[u] /= max_L
             v = u
             while v != -1 and path_cache[v] != -1:
                 path_cache[v] = -1
@@ -690,8 +655,9 @@ class AncestorMatcher(object):
         assert np.all(path_cache == -1)
 
         self.compress_likelihoods()
+        self.normalise_likelihoods()
 
-        # Normalise again just to make sure we have 1.0 values.
+    def normalise_likelihoods(self):
         max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
         for u in self.likelihood_nodes:
             if self.likelihood[u] == max_L:
@@ -789,6 +755,8 @@ class AncestorMatcher(object):
         self.left_sib = np.zeros(n, dtype=int) - 1
         self.right_sib = np.zeros(n, dtype=int) - 1
         self.traceback = [{} for _ in range(m)]
+        self.max_likelihood_node = np.zeros(m, dtype=int) - 1
+
         self.likelihood = np.zeros(n) - 2
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
@@ -825,25 +793,16 @@ class AncestorMatcher(object):
         remove_start = k
         while left < end:
             assert left < right
-
             # print("START OF TREE LOOP", left, right)
-            normalisation_required = False
             for l in range(remove_start, k):
                 edge = edges[O[l]]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
-                        normalisation_required = True
                         self.likelihood[u] = -2
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
-            if normalisation_required:
-                max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
-                for u in self.likelihood_nodes:
-                    if self.likelihood[u] == max_L:
-                        self.likelihood[u] = 1.0
-                    else:
-                        self.likelihood[u] /= max_L
 
+            self.normalise_likelihoods()
             self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
                 self.update_site(site, h[site])
@@ -904,12 +863,15 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
+        # self.print_state()
 
         M = len(self.tree_sequence_builder.edges)
         edges = self.tree_sequence_builder.edges
-        u = self.get_max_likelihood_node()
+        u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
         output_edges = [output_edge]
+        recombination_required = np.zeros(
+            self.tree_sequence_builder.num_nodes, dtype=int) - 1
 
         # Now go back through the trees.
         j = M - 1
@@ -947,20 +909,26 @@ class AncestorMatcher(object):
                             self.parent, u,
                             self.tree_sequence_builder.mutations[l][0][0]):
                         match[l] = 1
-                L = self.traceback[l]
-                # print("TB", l, L)
-                v = u
-                assert len(L) > 0
-                while v not in L:
-                    v = self.parent[v]
-                    assert v != -1
-                x = L[v]
-                if x != 1.0:
-                    # print("Switch", x)
+                # print("TB: site = ", l)
+                # print("traceback = ", self.traceback[l])
+                for u, recombine in self.traceback[l].items():
+                    # Mark the traceback nodes on the tree.
+                    recombination_required[u] = recombine
+                # print("set", recombination_required)
+                # Now traverse up the tree from the current node. The first marked node
+                # we meet tells us whether we need to recombine.
+                u = output_edge.parent
+                while recombination_required[u] == -1:
+                    u = self.parent[u]
+                if recombination_required[u]:
                     output_edge.left = l
-                    u = self.get_max_likelihood_traceback_node(L)
+                    u = self.max_likelihood_node[l - 1]
+                    # print("Switch to ", u)
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
+                # Reset the nodes in the recombination tree.
+                for u in self.traceback[l].keys():
+                    recombination_required[u] = -1
         output_edge.left = start
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites

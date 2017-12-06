@@ -467,6 +467,7 @@ class AncestorFile(Hdf5File):
             self.__buffer_queue.put(j)
         self.__haplotypes_buffer_index = self.__buffer_queue.get()
         # Fill in the oldest ancestor.
+        self.__end_buffer[0] = self.num_sites
         self.__time_buffer[0] = oldest_time
         self.__haplotypes_buffers[self.__haplotypes_buffer_index][0, :] = 0
         self.__ancestor_id = 1
