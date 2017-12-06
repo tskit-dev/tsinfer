@@ -598,7 +598,7 @@ if __name__ == "__main__":
         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
         # tsinfer_dev(20, 0.4, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        tsinfer_dev(30, 5.5, seed=seed, num_threads=10, genotype_quality=0, method="C")
+        tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

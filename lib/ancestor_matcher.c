@@ -324,7 +324,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
         x = L[u] * no_recomb_proba;
         assert(x >= 0);
-        if (x > recomb_proba) {
+        if (x >= recomb_proba) {
             y = x;
             recombination_required[u] = 0;
         } else {
@@ -729,6 +729,9 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
             if (recombination_required[u]) {
                 max_likelihood_node = self->max_likelihood_node[l - 1];
                 /* printf("Recombining! site = %d new node = %d\n", l, max_likelihood_node); */
+                /* if (max_likelihood_node == self->output.parent[self->output.size]) { */
+                /*     ancestor_matcher_print_state(self, stdout); */
+                /* } */
                 assert(max_likelihood_node != self->output.parent[self->output.size]);
                 assert(max_likelihood_node != NULL_NODE);
                 self->output.left[self->output.size] = l;
