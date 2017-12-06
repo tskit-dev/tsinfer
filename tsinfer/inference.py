@@ -439,11 +439,11 @@ class AncestorMatcher(Matcher):
         left, right, parent = self._find_path(node_id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index] == haplotype)
 
-#         for l, r, p in zip(left, right ,parent):
-#             # print("\tEdge = ", l, r, p)
-#             ancestor_id = p  # path compression is turned off.
-#             if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
-#                 print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
+        # for l, r, p in zip(left, right ,parent):
+        #     # print("\tEdge = ", l, r, p)
+        #     ancestor_id = p  # path compression is turned off.
+        #     if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
+        #         print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
 
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])

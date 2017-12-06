@@ -345,7 +345,11 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         /*         mutation_node, u, x, y, emission); */
     }
     /* TODO should raise an error here, as this can be done with the model */
-    assert(max_L > 0);
+    if (max_L < 0) {
+        printf("ERROR: max_L: site = %d mutation mode = %d\n", site, mutation_node);
+        /* ancestor_matcher_print_state(self, stdout); */
+    }
+    assert(max_L >= 0);
     assert(max_L_node != NULL_NODE);
     self->max_likelihood_node[site] = max_L_node;
 
@@ -473,7 +477,7 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
         mutation_node = self->tree_sequence_builder->sites.mutations[site]->node;
     }
     /* ancestor_matcher_print_state(self, stdout); */
-    ancestor_matcher_check_state(self);
+    /* ancestor_matcher_check_state(self); */
     if (false) { /* TODO disabled this optimisation for now */
     /* if (self->observation_error == 0.0 */
     /*             && mutation_node == NULL_NODE */

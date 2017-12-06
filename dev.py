@@ -161,8 +161,8 @@ def tsinfer_dev(
 
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, num_threads=num_threads,
-        # )
-        output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
+        )
+        # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
         # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
     assert ancestors_ts.sequence_length == ts.num_sites
 
@@ -549,7 +549,7 @@ def lookat(filename):
             if root != 0:
                 if len(list(t.nodes(root))) != 1:
                     print("ERROR at ", root, "in tree ", t.index, t.interval)
-                    # print(t.draw(format="unicode"))
+        # print(t.draw(format="unicode"))
 
 
     sys.exit(0)
@@ -595,10 +595,10 @@ if __name__ == "__main__":
     # for seed in [4]:
         print(seed)
         # check_infer(20, 0.2, seed=seed, genotype_quality=0.001, num_threads=0, method="P")
-        tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+        # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
         # tsinfer_dev(20, 0.4, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        # tsinfer_dev(30, 5.5, seed=seed, num_threads=10, genotype_quality=0, method="C")
+        tsinfer_dev(30, 5.5, seed=seed, num_threads=10, genotype_quality=0, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
