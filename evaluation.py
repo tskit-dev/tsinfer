@@ -43,28 +43,28 @@ def generate_samples(ts, error_p):
 
     Rejects any variants that result in a fixed column.
     """
-    S = np.zeros((ts.sample_size, ts.num_mutations), dtype=np.int8)
+    G = np.zeros((ts.num_sites, ts.num_samples), dtype=np.int8)
     for variant in ts.variants():
         done = False
         # Reject any columns that have no 1s or no zeros
         while not done:
-            S[:, variant.index] = make_errors(variant.genotypes, error_p)
-            s = np.sum(S[:, variant.index])
+            G[variant.index] = make_errors(variant.genotypes, error_p)
+            s = np.sum(G[variant.index])
             done = 0 < s < ts.sample_size
-    return S
+    return G
 
 
-def infer_from_simulation(ts, recombination_rate, input_error=0, sample_error=0):
+def infer_from_simulation(
+        ts, recombination_rate=1, input_error=0, sample_error=0, method="C"):
     if input_error == 0:
-        samples = np.zeros((ts.num_samples, ts.num_sites), dtype=np.int8)
-        for variant in ts.variants():
-            samples[:, variant.index] = variant.genotypes
+        genotypes = ts.genotype_matrix()
     else:
         samples = generate_samples(ts, input_error)
     positions = [mut.position for mut in ts.mutations()]
     return tsinfer.infer(
-        samples=samples, positions=positions, sequence_length=ts.sequence_length,
-        recombination_rate=recombination_rate, sample_error=sample_error)
+        genotypes, positions=positions, sequence_length=ts.sequence_length,
+        recombination_rate=recombination_rate, sample_error=sample_error,
+        method=method)
 
 
 def get_mean_rf_distance(ts1, ts2):
@@ -274,8 +274,97 @@ def check_variable_recomb():
     #     print(t.interval[1] - t.interval[0])
 
 
+# TODO these are really unit tests. Move them into the tests directory.
+def check_single_tree_one_mutation_per_branch():
+    for num_samples in [10, 100, 1000, 10000]:
+        print("num_samples = ", num_samples)
+        num_samples = 10
+        for seed in range(1, 10):
+            ts_source = msprime.simulate(num_samples, length=2 * num_samples, random_seed=seed)
+            # Put a mutation on every branch.
+            t = ts_source.dump_tables()
+            for u in range(ts_source.num_nodes - 1):
+                t.sites.add_row(position=u, ancestral_state="0")
+                t.mutations.add_row(site=u, node=u, derived_state="1")
+            ts_source = msprime.load_tables(**t.asdict())
+            ts_inferred = infer_from_simulation(ts_source)
+            assert ts_inferred.num_trees == 1
+
+def check_single_tree_two_mutations_per_branch():
+    for num_samples in [10, 100, 1000, 10000]:
+        print("num_samples = ", num_samples)
+        num_samples = 10
+        num_mutations = 2 * num_samples * 2
+        d = 1 / num_mutations
+        for seed in range(1, 10):
+            ts_source = msprime.simulate(num_samples, length=num_mutations, random_seed=seed)
+            # Put a mutation on every branch.
+            t = ts_source.dump_tables()
+            j = 0
+            for u in range(ts_source.num_nodes - 1):
+                for _ in range(2):
+                    t.sites.add_row(position=j * d, ancestral_state="0")
+                    t.mutations.add_row(site=j, node=u, derived_state="1")
+                    j += 1
+            ts_source = msprime.load_tables(**t.asdict())
+            print(ts_source.tables)
+            ts_inferred = infer_from_simulation(ts_source)
+            assert ts_inferred.num_trees == 1
+
+def check_single_tree_many_mutations_per_branch():
+    num_samples = 10
+    for k in range(2, 20):
+        print("k = ", k)
+        num_mutations = 2 * num_samples * k
+        d = 1 / num_mutations
+        for seed in range(1, 10):
+            ts_source = msprime.simulate(num_samples, length=num_mutations, random_seed=seed)
+            # Put a mutation on every branch.
+            t = ts_source.dump_tables()
+            j = 0
+            for u in range(ts_source.num_nodes - 1):
+                for _ in range(k):
+                    t.sites.add_row(position=j * d, ancestral_state="0")
+                    t.mutations.add_row(site=j, node=u, derived_state="1")
+                    j += 1
+            ts_source = msprime.load_tables(**t.asdict())
+            # print(ts_source.tables)
+            ts_inferred = infer_from_simulation(ts_source)
+            assert ts_inferred.num_trees == 1
+
+
+def check_single_tree_high_mutation_rate():
+    # import daiquiri
+    # daiquiri.setup(level="DEBUG")
+    num_samples = 3
+    for seed in [8]:
+    # for seed in range(1, 10):
+        ts_source = msprime.simulate(num_samples, random_seed=seed, mutation_rate=5)
+        print("sim = ", num_samples, ts_source.num_sites, seed)
+        nodes = set()
+        for site in ts_source.sites():
+            for mutation in site.mutations:
+                nodes.add(mutation.node)
+        if nodes != set(range(ts_source.num_nodes - 1)):
+            continue
+
+        assert nodes == set(range(ts_source.num_nodes - 1))
+        ts_inferred = infer_from_simulation(ts_source, method="P")
+        for t in ts_source.trees():
+            print(t.draw(format="unicode"))
+        print(ts_inferred.num_trees)
+        for t in ts_inferred.trees():
+            print(t.draw(format="unicode"))
+        assert ts_inferred.num_trees == 1
+
+
+
 if __name__ == "__main__":
     # check_basic_performance()
     # check_effect_error_param(float(sys.argv[1]))
     # plot_basic_performance()
-    check_variable_recomb()
+    # check_variable_recomb()
+    # check_single_tree_one_mutation_per_branch()
+    # check_single_tree_two_mutations_per_branch()
+    # check_single_tree_many_mutations_per_branch()
+    check_single_tree_high_mutation_rate()

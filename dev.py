@@ -269,6 +269,93 @@ def analyse_file(filename):
     #     if t.index == 10:
     #         break
 
+
+
+def debug_no_recombination():
+
+    ts_source = msprime.simulate(num_samples, random_seed=8, mutation_rate=5)
+    print("sim = ", num_samples, ts_source.num_sites, seed)
+    nodes = set()
+    for site in ts_source.sites():
+        for mutation in site.mutations:
+            nodes.add(mutation.node)
+    assert nodes == set(range(ts_source.num_nodes - 1))
+
+
+    # ts_inferred = infer_from_simulation(ts_source, method="P")
+    # for t in ts_source.trees():
+    #     print(t.draw(format="unicode"))
+    # print(ts_inferred.num_trees)
+    # for t in ts_inferred.trees():
+    #     print(t.draw(format="unicode"))
+    # assert ts_inferred.num_trees == 1
+
+    input_root = zarr.group()
+    tsinfer.InputFile.build(
+        input_root, genotypes=G,
+        # genotype_qualities=tsinfer.proba_to_phred(error_probability),
+        position=positions,
+        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
+        compress=False)
+    ancestors_root = zarr.group()
+
+    #TMP changed method to C here for make the sets of ancestors comparable.
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, method="C", chunk_size=16, compress=False)
+
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, num_threads=num_threads,
+        )
+        # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
+        # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+    assert ancestors_ts.sequence_length == ts.num_sites
+
+    A = ancestors_root["ancestors/haplotypes"][:]
+    A[A == 255] = 0
+    for v in ancestors_ts.variants():
+        assert np.array_equal(v.genotypes, A[:, v.index])
+
+    inferred_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method,
+        genotype_quality=genotype_quality, num_threads=num_threads,
+        simplify=False) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+
+    print("num_edges = ", inferred_ts.num_edges)
+
+    # with open("tmp__NOBACKUP__/traceback_59.pkl", 'rb') as f:
+    #     d = pickle.load(f)
+    #     tb = d["traceback"]
+    #     for j, row in enumerate(tb):
+    #         print(j)
+    #         for k, v in row.items():
+    #             print("\t", k, "\t{:.14f}".format(v))
+
+    # print(inferred_ts.tables)
+    # for t in inferred_ts.trees():
+    #     # print(t.draw(format="unicode"))
+    #     sites = list(t.sites())
+    #     name = "t_{}_{}.svg".format(sites[0].index, sites[-1].index + 1)
+    #     t.draw(name, width=800, height=600)
+
+    flags = inferred_ts.tables.nodes.flags
+    samples = np.where(flags == 1)[0][-n:]
+    inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
+
+#     print("SIMPLIFIED")
+#     node_labels = {node_map[k]: str(k) for k in range(node_map.shape[0])}
+#     for t in inferred_ts.trees():
+#         print(t.draw(format="unicode", node_label_text=node_labels))
+
+    assert inferred_ts.num_samples == ts.num_samples
+    assert inferred_ts.num_sites == ts.num_sites
+    assert inferred_ts.sequence_length == ts.sequence_length
+    assert np.array_equal(G, inferred_ts.genotype_matrix())
+    # for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
+    #     assert np.array_equal(v1.genotypes, v2.genotypes)
+    #     assert v1.position == v2.position
+
+
+
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
     ts = msprime.simulate(
@@ -568,7 +655,7 @@ if __name__ == "__main__":
 
     # build_1kg_sim()
 
-    compress(sys.argv[1], sys.argv[2])
+    # compress(sys.argv[1], sys.argv[2])
     # analyse_file(sys.argv[1])
 
     # verify(sys.argv[1], sys.argv[2])
@@ -581,6 +668,8 @@ if __name__ == "__main__":
 #     build_profile_inputs(10**5, 100)
 
     # build_profile_inputs(100)
+
+    debug_no_recombination()
 
     # large_profile(sys.argv[1], "{}.inferred.hdf5".format(sys.argv[1]),
     #         num_threads=40, log_level="DEBUG")

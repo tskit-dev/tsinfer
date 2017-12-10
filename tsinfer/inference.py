@@ -224,8 +224,11 @@ class Matcher(object):
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
         self.ancestor_matcher_class = algorithm.AncestorMatcher
         if method == "C":
+            logger.debug("Using Python matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
+        else:
+            logger.debug("Using Python matcher implementation")
         self.tree_sequence_builder = None
         # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
         # the tracebacks for each node ID and other debugging information.
