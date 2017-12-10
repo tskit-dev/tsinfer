@@ -336,26 +336,27 @@ def check_single_tree_many_mutations_per_branch():
 def check_single_tree_high_mutation_rate():
     # import daiquiri
     # daiquiri.setup(level="DEBUG")
-    num_samples = 3
-    for seed in [8]:
-    # for seed in range(1, 10):
-        ts_source = msprime.simulate(num_samples, random_seed=seed, mutation_rate=5)
-        print("sim = ", num_samples, ts_source.num_sites, seed)
-        nodes = set()
-        for site in ts_source.sites():
-            for mutation in site.mutations:
-                nodes.add(mutation.node)
-        if nodes != set(range(ts_source.num_nodes - 1)):
-            continue
-
-        assert nodes == set(range(ts_source.num_nodes - 1))
-        ts_inferred = infer_from_simulation(ts_source, method="P")
-        for t in ts_source.trees():
-            print(t.draw(format="unicode"))
-        print(ts_inferred.num_trees)
-        for t in ts_inferred.trees():
-            print(t.draw(format="unicode"))
-        assert ts_inferred.num_trees == 1
+    # TODO change this test so that we throw a Poisson number of mutations on
+    # each branch. It's very hard to have mutations on _every_ branch for larger
+    # tree sizes.
+    for num_samples in [3, 10, 50]:
+        for seed in range(1, 10):
+            ts_source = msprime.simulate(num_samples, random_seed=seed, mutation_rate=5000)
+            print("sim = ", num_samples, ts_source.num_sites, seed)
+            nodes = set()
+            for site in ts_source.sites():
+                for mutation in site.mutations:
+                    nodes.add(mutation.node)
+            # if nodes != set(range(ts_source.num_nodes - 1)):
+            #     continue
+            assert nodes == set(range(ts_source.num_nodes - 1))
+            ts_inferred = infer_from_simulation(ts_source)
+            # for t in ts_source.trees():
+            #     print(t.draw(format="unicode"))
+            # print(ts_inferred.num_trees)
+            # for t in ts_inferred.trees():
+            #     print(t.draw(format="unicode"))
+            assert ts_inferred.num_trees == 1
 
 
 

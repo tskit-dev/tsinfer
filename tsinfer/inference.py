@@ -72,14 +72,11 @@ def infer(
         genotypes, positions, sequence_length, recombination_rate, sample_error=0,
         method="C", num_threads=0, progress=False):
     positions_array = np.array(positions)
-    # If the input recombination rate is a single number set this value for all sites.
-    recombination_rate_array = np.zeros(positions_array.shape[0], dtype=np.float64)
-    recombination_rate_array[:] = recombination_rate
 
     input_root = zarr.group()
     formats.InputFile.build(
         input_root, genotypes=genotypes, position=positions,
-        recombination_rate=recombination_rate_array, sequence_length=sequence_length,
+        recombination_rate=recombination_rate, sequence_length=sequence_length,
         compress=False)
     ancestors_root = zarr.group()
     build_ancestors(input_root, ancestors_root, method=method, compress=False)
@@ -250,6 +247,7 @@ class Matcher(object):
         self.results = [ResultBuffer() for _ in range(num_threads)]
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
+        assert error_probability == 0
         logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
             self.ancestor_matcher_class(self.tree_sequence_builder, error_probability)
@@ -282,7 +280,6 @@ class Matcher(object):
         logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
-        # print("child =", child_id)
         if self.traceback_file_pattern is not None:
             # Write out the traceback debug. WARNING: this will be huge!
             filename = self.traceback_file_pattern.format(child_id)
@@ -312,6 +309,8 @@ class Matcher(object):
         self.tree_sequence_builder.restore_mutations(
             mutations.site, mutations.node, mutations.derived_state - ord('0'),
             mutations.parent)
+        self.mutated_sites = mutations.site
+        # print("SITE  =", self.mutated_sites)
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
             ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
@@ -567,9 +566,15 @@ class SampleMatcher(Matcher):
         self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
-        self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
-        match = self.match[thread_index]
-        diffs = np.where(haplotype != match)[0]
+        # print("process sample", haplotype)
+        # print("mutated_sites = ", self.mutated_sites)
+        mask = np.zeros(self.num_sites, dtype=np.uint8)
+        mask[self.mutated_sites] = 1
+        h = np.logical_and(haplotype, mask).astype(np.uint8)
+        diffs = np.where(h != haplotype)[0]
+        self._find_path(sample_id, h, 0, self.num_sites, thread_index)
+        # match = self.match[thread_index]
+        # diffs = np.where(haplotype != match)[0]
         derived_state = haplotype[diffs]
         self.results[thread_index].add_mutations(diffs, sample_id, derived_state)
 

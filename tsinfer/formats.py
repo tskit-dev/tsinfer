@@ -297,8 +297,13 @@ class InputFile(Hdf5File):
         if chunk_size is None:
             chunk_size = 8 * 1024  # By default chunk in 64MiB squares.
 
+        position = np.array(position)
         if np.any(position[1:] == position[:-1]):
             raise ValueError("All positions must be unique")
+
+        # If the input recombination rate is a single number set this value for all sites.
+        recombination_rate_array = np.zeros(position.shape[0], dtype=np.float64)
+        recombination_rate_array[:] = recombination_rate
 
         cls.write_version_attrs(input_hdf5)
         input_hdf5.attrs["sequence_length"] = float(sequence_length)
@@ -312,7 +317,7 @@ class InputFile(Hdf5File):
             "position", shape=(num_sites,), data=position, dtype=np.float64,
             compressor=compressor)
         variants_group.create_dataset(
-            "recombination_rate", shape=(num_sites,), data=recombination_rate,
+            "recombination_rate", shape=(num_sites,), data=recombination_rate_array,
             dtype=np.float64, compressor=compressor)
         x_chunk = min(chunk_size, num_sites)
         y_chunk = min(chunk_size, num_samples)

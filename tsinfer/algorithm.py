@@ -575,16 +575,9 @@ class AncestorMatcher(object):
         recomb_proba = r / n
         no_recomb_proba = 1 - r + r / n
 
+        # print("update_site", site, state)
+
         if site not in self.tree_sequence_builder.mutations:
-            if False:
-            # if err == 0:
-                # This is a special case for ancestor matching. Very awkward
-                # flow control here. FIXME
-                if state == 0:
-                    assert len(self.likelihood_nodes) > 0
-                self.store_traceback(site)
-                # NASTY!!!!
-                return
             mutation_node = msprime.NULL_NODE
         else:
             mutation_node = self.tree_sequence_builder.mutations[site][0][0]
@@ -643,7 +636,7 @@ class AncestorMatcher(object):
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # print("Max L = ", max_L, "node = ", max_L_node)
+        # print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
         self.max_likelihood_node[site] = max_L_node
 
         # Reset the path cache
@@ -855,10 +848,6 @@ class AncestorMatcher(object):
 
             if k < M:
                 right = min(right, edges[O[k]].right)
-
-        # print("LIKELIHOODS")
-        # for l in range(self.num_sites):
-        #     print("\t", l, traceback[l])
 
         return self.run_traceback(start, end, match)
 
