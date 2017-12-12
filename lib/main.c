@@ -418,17 +418,16 @@ run_generate(const char *input_file, int verbose)
                 derived_state_buffer[total_mutations] = 1;
                 total_mutations++;
                 assert(a[focal_sites[l]] == 1);
-                a[focal_sites[l]] = 0;
             }
             ret = ancestor_matcher_find_path(&matcher, start, end, a, match,
                     &num_edges, &left_output, &right_output, &parent_output);
             if (ret != 0) {
                 fatal_error("find_path error");
             }
+            for (l = 0; l < (site_id_t) num_focal_sites; l++) {
+                a[focal_sites[l]] = 0;
+            }
             for (l = 0; l < (site_id_t) num_sites; l++) {
-                if (a[l] != match[l]) {
-                    printf("Mismatch at %d : %d %d \n", (int) l, a[l], match[l]);
-                }
                 assert(a[l] == match[l]);
             }
             if (total_edges + num_edges > max_edges) {

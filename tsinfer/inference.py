@@ -247,7 +247,6 @@ class Matcher(object):
         self.results = [ResultBuffer() for _ in range(num_threads)]
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
-        assert error_probability == 0
         logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
             self.ancestor_matcher_class(self.tree_sequence_builder, error_probability)
@@ -433,19 +432,20 @@ class AncestorMatcher(Matcher):
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
-        haplotype[focal_sites] = 0
         logger.debug(
             "Finding path for ancestor {} (node={}); start={} end={} "
             "num_focal_sites={}".format(
             ancestor_id, node_id, start, end, focal_sites.shape[0]))
         left, right, parent = self._find_path(node_id, haplotype, start, end, thread_index)
+        haplotype[focal_sites] = 0
         assert np.all(self.match[thread_index] == haplotype)
 
+        # print("Match", ancestor_id)
         # for l, r, p in zip(left, right ,parent):
-        #     # print("\tEdge = ", l, r, p)
-        #     ancestor_id = p  # path compression is turned off.
-        #     if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
-        #         print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
+        #     print("\tEdge = ", l, r, p)
+            # ancestor_id = p  # path compression is turned off.
+            # if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
+            #     print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
 
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])
@@ -568,13 +568,13 @@ class SampleMatcher(Matcher):
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         # print("process sample", haplotype)
         # print("mutated_sites = ", self.mutated_sites)
-        mask = np.zeros(self.num_sites, dtype=np.uint8)
-        mask[self.mutated_sites] = 1
-        h = np.logical_and(haplotype, mask).astype(np.uint8)
-        diffs = np.where(h != haplotype)[0]
-        self._find_path(sample_id, h, 0, self.num_sites, thread_index)
-        # match = self.match[thread_index]
-        # diffs = np.where(haplotype != match)[0]
+        # mask = np.zeros(self.num_sites, dtype=np.uint8)
+        # mask[self.mutated_sites] = 1
+        # h = np.logical_and(haplotype, mask).astype(np.uint8)
+        # diffs = np.where(h != haplotype)[0]
+        self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
+        match = self.match[thread_index]
+        diffs = np.where(haplotype != match)[0]
         derived_state = haplotype[diffs]
         self.results[thread_index].add_mutations(diffs, sample_id, derived_state)
 

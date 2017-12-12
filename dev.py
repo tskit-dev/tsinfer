@@ -618,6 +618,7 @@ def lookat(filename):
             if root != 0:
                 if len(list(t.nodes(root))) != 1:
                     print("ERROR at ", root, "in tree ", t.index, t.interval)
+
         # print(t.draw(format="unicode"))
 
 
@@ -658,7 +659,8 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(10, 0.01, seed=6, num_threads=0, genotype_quality=0, method="P", log_level="WARNING")
+    # tsinfer_dev(10, 0.01, seed=6, num_threads=0,
+    #         genotype_quality=0.1, method="P", log_level="WARNING")
 
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
@@ -669,8 +671,8 @@ if __name__ == "__main__":
         # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
-        # tsinfer_dev(20, 0.4, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0, method="C")
+        # tsinfer_dev(10, 0.2, seed=seed, genotype_quality=0.01, num_threads=0, method="P")
+        tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.01, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

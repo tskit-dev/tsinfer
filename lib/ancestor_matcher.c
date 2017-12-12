@@ -331,10 +331,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             y = recomb_proba;
             recombination_required[u] = 1;
         }
-        if (state == 1) {
-            emission = (1 - err) * descendant + err * (! descendant);
+        if (mutation_node == NULL_NODE) {
+            emission = 1 - err;
         } else {
-            emission = err * descendant + (1 - err) * (! descendant);
+            if (state == 1) {
+                emission = (1 - err) * descendant + err * (! descendant);
+            } else {
+                emission = err * descendant + (1 - err) * (! descendant);
+            }
         }
         L[u] = y * emission;
         if (L[u] > max_L) {
@@ -478,46 +482,31 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
     }
     /* ancestor_matcher_print_state(self, stdout); */
     /* ancestor_matcher_check_state(self); */
-    if (false) { /* TODO disabled this optimisation for now */
-    /* if (self->observation_error == 0.0 */
-    /*             && mutation_node == NULL_NODE */
-    /*             && site > 0 */
-    /*             && self->tree_sequence_builder->sites.mutations[site - 1] == NULL) { */
-        /* If there are no mutations at this or the last site, then
-         * we are guaranteed that the likelihoods are equal. */
-        /* self->traceback[site] = self->traceback[site - 1]; */
-        /* self->total_traceback_size += self->num_likelihood_nodes; */
-    } else {
-        if (mutation_node != NULL_NODE) {
-            /* Insert a new L-value for the mutation node if needed */
-            if (L[mutation_node] == NULL_LIKELIHOOD) {
-                u = mutation_node;
-                while (L[u] == NULL_LIKELIHOOD) {
-                    u = parent[u];
-                    assert(u != NULL_NODE);
-                }
-                L[mutation_node] = L[u];
-                self->likelihood_nodes[self->num_likelihood_nodes] = mutation_node;
-                self->num_likelihood_nodes++;
+    if (mutation_node != NULL_NODE) {
+        /* Insert a new L-value for the mutation node if needed */
+        if (L[mutation_node] == NULL_LIKELIHOOD) {
+            u = mutation_node;
+            while (L[u] == NULL_LIKELIHOOD) {
+                u = parent[u];
+                assert(u != NULL_NODE);
             }
+            L[mutation_node] = L[u];
+            self->likelihood_nodes[self->num_likelihood_nodes] = mutation_node;
+            self->num_likelihood_nodes++;
         }
-        /* TODO disabling these optimisations here as they don't work */
-        /* if (self->observation_error > 0 || mutation_node != NULL_NODE) { */
-        if (true) {
-            ret = ancestor_matcher_update_site_likelihood_values(self, site,
-                    mutation_node, state, parent, L);
-            if (ret != 0) {
-                goto out;
-            }
-            ret = ancestor_matcher_store_traceback(self, site);
-            if (ret != 0) {
-                goto out;
-            }
-            ret = ancestor_matcher_coalesce_likelihoods(self, parent, L, L_cache);
-            if (ret != 0) {
-                goto out;
-            }
-        }
+    }
+    ret = ancestor_matcher_update_site_likelihood_values(self, site,
+            mutation_node, state, parent, L);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = ancestor_matcher_store_traceback(self, site);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = ancestor_matcher_coalesce_likelihoods(self, parent, L, L_cache);
+    if (ret != 0) {
+        goto out;
     }
 out:
     return ret;

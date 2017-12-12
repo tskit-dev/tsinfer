@@ -627,10 +627,13 @@ class AncestorMatcher(object):
             else:
                 z = y
                 self.traceback[site][u] = True
-            if state == 1:
-                emission_p = (1 - err) * d + err * (not d)
+            if mutation_node == -1:
+                emission_p = 1 - err
             else:
-                emission_p = err * d + (1 - err) * (not d)
+                if state == 1:
+                    emission_p = (1 - err) * d + err * (not d)
+                else:
+                    emission_p = err * d + (1 - err) * (not d)
             self.likelihood[u] = z * emission_p
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
