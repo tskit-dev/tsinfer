@@ -402,7 +402,7 @@ class AncestorMatcher(Matcher):
                 self.start_epoch, first_ancestor))
         else:
             # Insert the oldest ancestor
-            self.tree_sequence_builder.update(1, self.epoch[0], [], [], [], [], [], [], [])
+            self.tree_sequence_builder.add_node(self.epoch[0])
 
         # This is an iterator over all ancestral haplotypes.
         self.haplotypes = self.ancestors_file.ancestor_haplotypes(first_ancestor)
@@ -453,11 +453,26 @@ class AncestorMatcher(Matcher):
         current_time = self.epoch[start]
         epoch_results = ResultBuffer.combine(self.results)
         nodes_before = self.tree_sequence_builder.num_nodes
-        self.tree_sequence_builder.update(
-            num_ancestors_in_epoch, current_time,
-            epoch_results.left, epoch_results.right, epoch_results.parent,
-            epoch_results.child, epoch_results.site, epoch_results.node,
-            epoch_results.derived_state)
+
+#         self.tree_sequence_builder.update(
+#             num_ancestors_in_epoch, current_time,
+#             epoch_results.left, epoch_results.right, epoch_results.parent,
+#             epoch_results.child, epoch_results.site, epoch_results.node,
+#             epoch_results.derived_state)
+
+        for j in range(num_ancestors_in_epoch):
+            c = epoch_results.child[0] + j
+            index = np.where(epoch_results.child == c)
+            # TODO we should be adding the ancestor ID here as well as metadata.
+            node_id = self.tree_sequence_builder.add_node(current_time)
+            self.tree_sequence_builder.add_path(
+                node_id, epoch_results.left[index][::-1],
+                epoch_results.right[index][::-1],
+                epoch_results.parent[index][::-1])
+        self.tree_sequence_builder.add_mutations(
+            epoch_results.site, epoch_results.node, epoch_results.derived_state)
+        # self.tree_sequence_builder.print_state()
+
         extra_nodes = (
             self.tree_sequence_builder.num_nodes - nodes_before - num_ancestors_in_epoch)
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
@@ -628,10 +643,20 @@ class SampleMatcher(Matcher):
         else:
             self.__match_samples_multi_threaded()
         results = ResultBuffer.combine(self.results)
-        self.tree_sequence_builder.update(
-            self.num_samples, 0,
-            results.left, results.right, results.parent, results.child,
+
+        for j in range(self.num_samples):
+            c = results.child[0] + j
+            index = np.where(results.child == c)
+            node_id = self.tree_sequence_builder.add_node(0)
+            self.tree_sequence_builder.add_path(
+                node_id, results.left[index][::-1],
+                results.right[index][::-1], results.parent[index][::-1])
+        self.tree_sequence_builder.add_mutations(
             results.site, results.node, results.derived_state)
+        # self.tree_sequence_builder.update(
+        #     self.num_samples, 0,
+        #     results.left, results.right, results.parent, results.child,
+        #     results.site, results.node, results.derived_state)
         logger.info("Finished sample matching")
 
     def finalise(self, simplify=True):
