@@ -10,29 +10,40 @@
 
 
 static int
-cmp_edge_insertion(const void *a, const void *b) {
-    const edge_sort_t *ca = (const edge_sort_t *) a;
-    const edge_sort_t *cb = (const edge_sort_t *) b;
+cmp_edge_left_increasing_time(const void *a, const void *b) {
+    const edge_t *ca = (const edge_t *) a;
+    const edge_t *cb = (const edge_t *) b;
     int ret = (ca->left > cb->left) - (ca->left < cb->left);
     if (ret == 0) {
         ret = (ca->time > cb->time) - (ca->time < cb->time);
         if (ret == 0) {
-            ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
-            if (ret == 0) {
-                ret = (ca->child > cb->child) - (ca->child < cb->child);
-            }
+            ret = (ca->child > cb->child) - (ca->child < cb->child);
         }
     }
     return ret;
 }
 
 static int
-cmp_edge_removal(const void *a, const void *b) {
-    const edge_sort_t *ca = (const edge_sort_t *) a;
-    const edge_sort_t *cb = (const edge_sort_t *) b;
+cmp_edge_right_decreasing_time(const void *a, const void *b) {
+    const edge_t *ca = (const edge_t *) a;
+    const edge_t *cb = (const edge_t *) b;
     int ret = (ca->right > cb->right) - (ca->right < cb->right);
     if (ret == 0) {
         ret = (ca->time < cb->time) - (ca->time > cb->time);
+        if (ret == 0) {
+            ret = (ca->child > cb->child) - (ca->child < cb->child);
+        }
+    }
+    return ret;
+}
+
+static int
+cmp_edge_path(const void *a, const void *b) {
+    const edge_t *ca = (const edge_t *) a;
+    const edge_t *cb = (const edge_t *) b;
+    int ret = (ca->left > cb->left) - (ca->left < cb->left);
+    if (ret == 0) {
+        ret = (ca->right < cb->right) - (ca->right > cb->right);
         if (ret == 0) {
             ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
             if (ret == 0) {
@@ -43,6 +54,22 @@ cmp_edge_removal(const void *a, const void *b) {
     return ret;
 }
 
+static void
+print_edge_path(edge_t *head, FILE *out)
+{
+    edge_t *edge;
+
+    for (edge = head; edge != NULL; edge = edge->next) {
+        fprintf(out, "(%d, %d, %d, %d)", edge->left, edge->right, edge->parent,
+                edge->child);
+        if (edge->next != NULL) {
+            fprintf(out, "->");
+        }
+    }
+    fprintf(out, "\n");
+}
+
+#if 0
 /* Sorts edges by (left, right, parent, child) order. */
 static int
 cmp_edge_lrpc(const void *a, const void *b) {
@@ -80,15 +107,30 @@ cmp_edge_clrp(const void *a, const void *b) {
     }
     return ret;
 }
-
-
+#endif
 
 
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
-}
+    node_id_t child;
+    edge_t *edge;
+    size_t total_edges = 0;
 
+    for (child = 0; child < (node_id_t) self->num_nodes; child++) {
+        for (edge = self->path[child]; edge != NULL; edge = edge->next) {
+            total_edges++;
+            assert(edge->child == child);
+            if (edge->next != NULL) {
+                /* TODO this can be violated for synethetic nodes */
+                assert(edge->next->left == edge->right);
+            }
+        }
+    }
+    assert(avl_count(&self->left_index) == total_edges);
+    assert(avl_count(&self->right_index) == total_edges);
+    assert(avl_count(&self->path_index) == total_edges);
+}
 
 int
 tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
@@ -114,10 +156,12 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
                 self->removal_order[j]);
     }
     fprintf(out, "nodes = \n");
-    fprintf(out, "id\tflags\ttime\n");
+    fprintf(out, "id\tflags\ttime\tpath\n");
     for (j = 0; j < self->num_nodes; j++) {
-        fprintf(out, "%d\t%d\t%f\n", (int) j, self->node_flags[j], self->time[j]);
+        fprintf(out, "%d\t%d\t%f ", (int) j, self->node_flags[j], self->time[j]);
+        print_edge_path(self->path[j], out);
     }
+
     fprintf(out, "mutations = \n");
     fprintf(out, "site\t(node, derived_state),...\n");
     for (j = 0; j < self->num_sites; j++) {
@@ -132,6 +176,10 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     }
     fprintf(out, "block_allocator = \n");
     block_allocator_print_state(&self->block_allocator, out);
+    fprintf(out, "avl_node_heap = \n");
+    object_heap_print_state(&self->avl_node_heap, out);
+    fprintf(out, "edge_heap = \n");
+    object_heap_print_state(&self->edge_heap, out);
 
     tree_sequence_builder_check_state(self);
     return 0;
@@ -159,8 +207,10 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->edges = malloc(self->max_edges * sizeof(edge_t));
     self->sort_buffer = malloc(self->max_edges * sizeof(edge_sort_t));
     self->removal_order = malloc(self->max_edges * sizeof(node_id_t));
+
     self->time = malloc(self->max_nodes * sizeof(double));
     self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
+    self->path = calloc(self->max_nodes, sizeof(edge_t *));
     self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
     self->sites.position = malloc(self->num_sites * sizeof(double));
     self->sites.recombination_rate = malloc(self->num_sites * sizeof(double));
@@ -173,12 +223,24 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     memcpy(self->sites.position, position, self->num_sites * sizeof(double));
     memcpy(self->sites.recombination_rate, recombination_rate,
             self->num_sites * sizeof(double));
-
+    ret = object_heap_init(&self->avl_node_heap, sizeof(avl_node_t), self->max_edges,
+            NULL);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = object_heap_init(&self->edge_heap, sizeof(edge_t), self->max_edges, NULL);
+    if (ret != 0) {
+        goto out;
+    }
     ret = block_allocator_alloc(&self->block_allocator,
             TSI_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
     }
+    avl_init_tree(&self->left_index, cmp_edge_left_increasing_time, NULL);
+    avl_init_tree(&self->right_index, cmp_edge_right_decreasing_time, NULL);
+    avl_init_tree(&self->path_index, cmp_edge_path, NULL);
+
 out:
     return ret;
 }
@@ -198,6 +260,64 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     return 0;
 }
 
+static inline avl_node_t * WARN_UNUSED
+tree_sequence_builder_alloc_avl_node(tree_sequence_builder_t *self, edge_t *edge)
+{
+    avl_node_t *ret = NULL;
+
+    if (object_heap_empty(&self->avl_node_heap)) {
+        if (object_heap_expand(&self->avl_node_heap) != 0) {
+            goto out;
+        }
+    }
+    ret = (avl_node_t *) object_heap_alloc_object(&self->avl_node_heap);
+    avl_init_node(ret, edge);
+out:
+    return ret;
+}
+
+/* static inline void */
+/* tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *node) */
+/* { */
+/*     object_heap_free_object(&self->avl_node_heap, node); */
+/* } */
+
+static inline edge_t * WARN_UNUSED
+tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
+        site_id_t left, site_id_t right, node_id_t parent, node_id_t child,
+        edge_t *next)
+{
+    edge_t *ret = NULL;
+
+    if (object_heap_empty(&self->edge_heap)) {
+        if (object_heap_expand(&self->edge_heap) != 0) {
+            goto out;
+        }
+    }
+    printf("add %d %d %d %d\n", left, right, parent, child);
+    assert(parent < (node_id_t) self->num_nodes);
+    assert(child < (node_id_t) self->num_nodes);
+    ret = (edge_t *) object_heap_alloc_object(&self->edge_heap);
+    ret->left = left;
+    ret->right = right;
+    ret->parent = parent;
+    ret->child = child;
+    ret->time = self->time[child];
+    ret->next = next;
+out:
+    return ret;
+}
+
+/* static inline void */
+/* tree_sequence_builder_free_edge(tree_sequence_builder_t *self, edge_t *edge) */
+/* { */
+/*     object_heap_free_object(&self->edge_heap, edge); */
+/* } */
+
+
+
+
+#if 0
 static int WARN_UNUSED
 tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
 {
@@ -243,6 +363,7 @@ tree_sequence_builder_index_edges(tree_sequence_builder_t *self)
     }
     return ret;
 }
+#endif
 
 static int WARN_UNUSED
 tree_sequence_builder_expand_edges(tree_sequence_builder_t *self)
@@ -292,6 +413,15 @@ tree_sequence_builder_expand_nodes(tree_sequence_builder_t *self)
         goto out;
     }
     self->node_flags = tmp;
+    tmp = realloc(self->path, self->max_nodes * sizeof(edge_t *));
+    if (tmp == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    self->path = tmp;
+    /* Zero out the extra nodes. */
+    memset(self->path + self->num_nodes, 0,
+            (self->max_nodes - self->num_nodes) * sizeof(edge_t *));
 out:
     return ret;
 }
@@ -327,7 +457,7 @@ out:
     return ret;
 }
 
-static node_id_t WARN_UNUSED
+node_id_t WARN_UNUSED
 tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool is_sample)
 {
     int ret = 0;
@@ -350,7 +480,6 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool 
 out:
     return ret;
 }
-
 
 
 static int WARN_UNUSED
@@ -388,6 +517,8 @@ out:
     return ret;
 }
 
+
+#if 0
 
 typedef struct {
     site_id_t start;
@@ -829,8 +960,110 @@ out:
     tsi_safe_free(shared_recombinations);
     return ret;
 }
+#endif
+
+static int WARN_UNUSED
+tree_sequence_builder_index_edge(tree_sequence_builder_t *self, edge_t *edge)
+{
+    int ret = 0;
+    avl_node_t *avl_node;
+
+    avl_node = tree_sequence_builder_alloc_avl_node(self, edge);
+    if (avl_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    avl_node = avl_insert_node(&self->left_index, avl_node);
+    assert(avl_node != NULL);
+
+    avl_node = tree_sequence_builder_alloc_avl_node(self, edge);
+    if (avl_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    avl_node = avl_insert_node(&self->right_index, avl_node);
+    assert(avl_node != NULL);
+
+    avl_node = tree_sequence_builder_alloc_avl_node(self, edge);
+    if (avl_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    avl_node = avl_insert_node(&self->path_index, avl_node);
+    assert(avl_node != NULL);
+out:
+    return ret;
+}
+
+static int WARN_UNUSED
+tree_sequence_builder_index_edges(tree_sequence_builder_t *self, node_id_t node)
+{
+    int ret = 0;
+    edge_t *edge;
+
+    for (edge = self->path[node]; edge != NULL; edge = edge->next) {
+        ret = tree_sequence_builder_index_edge(self, edge);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
+}
+
+int
+tree_sequence_builder_add_path(tree_sequence_builder_t *self,
+        node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
+        node_id_t *parent, int flags)
+{
+
+    int ret = 0;
+    edge_t *head = NULL;
+    edge_t *prev = NULL;
+    edge_t *edge;
+    size_t j;
+
+    printf("adding %d edges for child = %d\n", (int) num_edges, child);
+    for (j = 0; j < num_edges; j++) {
+        edge = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
+                child, NULL);
+        if (edge == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+        if (j == 0) {
+            head = edge;
+        } else {
+            prev->next = edge;
+        }
+        prev = edge;
+    }
+
+    self->path[child] = head;
+
+    ret = tree_sequence_builder_index_edges(self, child);
+    tree_sequence_builder_print_state(self, stdout);
+out:
+    return ret;
+}
 
 
+int
+tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
+        node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state)
+{
+    int ret = 0;
+    size_t j;
+
+    for (j = 0; j < num_mutations; j++) {
+        ret = tree_sequence_builder_add_mutation(self, site[j], node, derived_state[j]);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
+}
 
 int
 tree_sequence_builder_update(tree_sequence_builder_t *self,
@@ -862,13 +1095,13 @@ tree_sequence_builder_update(tree_sequence_builder_t *self,
             goto out;
         }
     }
-    if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) {
-        ret = tree_sequence_builder_resolve_shared_recombs(self);
-        if (ret != 0) {
-            goto out;
-        }
-    }
-    ret = tree_sequence_builder_index_edges(self);
+    /* if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) { */
+    /*     ret = tree_sequence_builder_resolve_shared_recombs(self); */
+    /*     if (ret != 0) { */
+    /*         goto out; */
+    /*     } */
+    /* } */
+    /* ret = tree_sequence_builder_index_edges(self); */
     if (ret != 0) {
         goto out;
     }
@@ -907,7 +1140,7 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
             goto out;
         }
     }
-    ret = tree_sequence_builder_index_edges(self);
+    /* ret = tree_sequence_builder_index_edges(self); */
     if (ret != 0) {
         goto out;
     }

@@ -611,18 +611,27 @@ def lookat(filename):
     #                     print("\t", k, "\t{:.14f}".format(v))
 
     ts = msprime.load(filename)
-    print(ts.num_edges, ts.num_trees)
+    print(ts.num_edges, ts.num_trees, ts.num_sites)
 
     for t in ts.trees():
-        for root in t.roots:
-            if root != 0:
-                if len(list(t.nodes(root))) != 1:
-                    print("ERROR at ", root, "in tree ", t.index, t.interval)
+        nodes = set()
+        site_nodes = []
+        for site in t.sites():
+            for mutation in site.mutations:
+                nodes.add(mutation.node)
+                site_nodes.append((site.index, mutation.node))
+        tree_nodes = set(t.nodes())
+        print("site nodes = ", nodes)
+        print(site_nodes)
+        # print(tree_nodes - nodes)
 
-        # print(t.draw(format="unicode"))
+
+        # print(len(list(t.sites())(
+        print(t.draw(format="unicode"))
+        print("=" * 20)
 
 
-    sys.exit(0)
+    # sys.exit(0)
 
 
 if __name__ == "__main__":
@@ -630,7 +639,7 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # lookat("tmp__NOBACKUP__/bad_tb.tsancts")
+    lookat(sys.argv[1])
 
     # build_1kg_sim()
 
@@ -665,14 +674,14 @@ if __name__ == "__main__":
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
 
-    for seed in range(1, 10000):
-    # for seed in [4]:
-        print(seed)
-        # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+#     for seed in range(1, 10000):
+#     # for seed in [4]:
+#         print(seed)
+#         # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+#         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
-        tsinfer_dev(10, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-    #     # tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.01, method="C")
+#         tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+#     #     # tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.01, method="C")
 
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)

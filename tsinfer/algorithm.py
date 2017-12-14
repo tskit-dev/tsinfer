@@ -20,13 +20,11 @@ UNKNOWN_ALLELE = 255
 class Edge(object):
 
     def __init__(
-            self, left=None, right=None, parent=None, child=None, prev=None,
-            next=None):
+            self, left=None, right=None, parent=None, child=None, next=None):
         self.left = left
         self.right = right
         self.parent = parent
         self.child = child
-        self.prev = prev
         self.next = next
 
     def __str__(self):
@@ -254,7 +252,6 @@ class TreeSequenceBuilder(object):
         # self.print_chain(head)
         return head
 
-
     def restore_edges(self, left, right, parent, child):
         edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
         # Sort the edges by child and left so we can add them in order.
@@ -263,7 +260,6 @@ class TreeSequenceBuilder(object):
         for edge in edges:
             if edge.child == prev.child:
                 prev.next = edge
-                edge.prev = prev
             else:
                 self.path[edge.child] = edge
             self.index_edge(edge)
@@ -276,7 +272,7 @@ class TreeSequenceBuilder(object):
         prev = None
         head = None
         for l, r, p in zip(left, right, parent):
-            edge = Edge(l, r, p, child, prev, None)
+            edge = Edge(l, r, p, child)
             if prev is None:
                 head = edge
             else:
@@ -290,7 +286,6 @@ class TreeSequenceBuilder(object):
         self.index_edges(child)
         # self.print_state()
         self.check_state()
-
 
     def update_node_time(self, node_id):
         """
@@ -353,8 +348,7 @@ class TreeSequenceBuilder(object):
                 for new, old in matches:
                     if old.child == child_id:
                         # print("\t", new, "\t", old)
-                        synthetic_edge = Edge(
-                            old.left, old.right, old.parent, mapped, synthetic_prev)
+                        synthetic_edge = Edge(old.left, old.right, old.parent, mapped)
                         if synthetic_prev is not None:
                             synthetic_prev.next = synthetic_edge
                         if synthetic_head is None:
@@ -398,7 +392,6 @@ class TreeSequenceBuilder(object):
                 if edge.next is not None:
                     if self.flags[child] != 0:
                         assert edge.next.left == edge.right
-                    assert edge.next.prev == edge
                 assert self.left_index[(edge.left, self.time[child], child)] == edge
                 assert self.right_index[(edge.right, -self.time[child], child)] == edge
                 edge = edge.next
@@ -468,232 +461,6 @@ class TreeSequenceBuilder(object):
                     parent[j] = p
                 j += 1
         return site, node, derived_state, parent
-
-    def _replace_recombinations(self):
-        # print("START!!")
-        # First filter out all edges covering the full interval
-        output_edges = []
-        active = self.edges
-        filtered = []
-        for j in range(len(active)):
-            condition = not (active[j].left == 0 and active[j].right == self.num_sites)
-            if condition:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-        active = filtered
-        if len(active) > 0:
-            # Now sort by (l, r, p, c) to group together all identical (l, r, p) values.
-            active.sort(key=lambda e: (e.left, e.right, e.parent, e.child))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].left == active[j + 1].left and
-                    active[j].right == active[j + 1].right and
-                    active[j].parent == active[j + 1].parent)
-                if prev_cond or next_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = filtered
-
-        if len(active) > 0:
-            # Now sort by (child, left, right) to group together all contiguous
-            active.sort(key=lambda x: (x.child, x.left, x.right))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].right == active[j + 1].left and
-                    active[j].child == active[j + 1].child)
-                if next_cond or prev_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = list(filtered)
-        if len(active) > 0:
-            # We sort by left, right, parent again to find identical edges.
-            # Remove any that there is only one of.
-            active.sort(key=lambda x: (x.left, x.right, x.parent, x.child))
-            filtered = []
-            prev_cond = False
-            for j in range(len(active) - 1):
-                next_cond = (
-                    active[j].left == active[j + 1].left and
-                    active[j].right == active[j + 1].right and
-                    active[j].parent == active[j + 1].parent)
-                if next_cond or prev_cond:
-                    filtered.append(active[j])
-                else:
-                    output_edges.append(active[j])
-                prev_cond = next_cond
-            j = len(active) - 1
-            if prev_cond:
-                filtered.append(active[j])
-            else:
-                output_edges.append(active[j])
-            active = filtered
-
-        if len(active) > 0:
-            assert len(active) + len(output_edges) == len(self.edges)
-            active.sort(key=lambda x: (x.child, x.left, x.right, x.parent))
-            used = [True for _ in active]
-
-            group_start = 0
-            groups = []
-            for j in range(1, len(active)):
-                condition = (
-                    active[j - 1].right != active[j].left or
-                    active[j - 1].child != active[j].child)
-                if condition:
-                    if j - group_start > 1:
-                        groups.append((group_start, j))
-                    group_start = j
-            j = len(active)
-            if j - group_start > 1:
-                groups.append((group_start, j))
-
-            shared_recombinations = []
-            match_found = [False for _ in groups]
-            for j in range(len(groups)):
-                # print("Finding matches for group", j, "match_found = ", match_found)
-                matches = []
-                if not match_found[j]:
-                    for k in range(j + 1, len(groups)):
-                        # Compare this group to the others.
-                        if not match_found[k] and edge_group_equal(
-                                active, groups[j], groups[k]):
-                            matches.append(k)
-                            match_found[k] = True
-                if len(matches) > 0:
-                    match_found[j] = True
-                    shared_recombinations.append([j] + matches)
-                # print("Got", matches, match_found[j])
-
-            if len(shared_recombinations) > 0:
-                print("Shared recombinations = ", shared_recombinations)
-                index_set = set()
-                for group_index_list in shared_recombinations:
-                    for index in group_index_list:
-                        assert index not in index_set
-                        index_set.add(index)
-                for group_index_list in shared_recombinations:
-                    print("Shared recombination for group:", group_index_list)
-                    left_set = set()
-                    right_set = set()
-                    parent_set = set()
-                    synthetic_child = -1
-                    for group_index in group_index_list:
-                        start, end = groups[group_index]
-                        left_set.add(tuple([active[j].left for j in range(start, end)]))
-                        right_set.add(
-                            tuple([active[j].right for j in range(start, end)]))
-                        parent_set.add(
-                            tuple([active[j].parent for j in range(start, end)]))
-                        children = set(active[j].child for j in range(start, end))
-                        if self.flags[active[start].child] == 0:
-                            synthetic_child = active[start].child
-                        assert len(children) == 1
-                        for j in range(start, end - 1):
-                            assert active[j].right == active[j + 1].left
-                        for j in range(start, end):
-                            print("\t", active[j])
-                        print()
-                    assert len(left_set) == 1
-                    assert len(right_set) == 1
-                    assert len(parent_set) == 1
-
-                    if synthetic_child != -1:
-                        # print("Synthetic child!",synthetic_child)
-                        # We have a child in the group already that covers the full
-                        # region. Instead of adding a new node, we make edges pointing
-                        # to this new node.
-                        for group_index in group_index_list:
-                            start, end = groups[group_index]
-                            left = active[start].left
-                            right = active[end - 1].right
-                            t_parent = self.time[synthetic_child]
-                            t_child = self.time[active[start].child]
-                            # We need to guard against making links between nodes with
-                            # equal time. We should do something better here as this
-                            # will mean we consider the same groups over and over, rejecting
-                            # them each time.
-                            if active[start].child != synthetic_child and t_child < t_parent:
-                                # Mark all the edges we don't need as unused.
-                                for j in range(start, end):
-                                    used[j] = False
-                                j = groups[group_index][0]
-                                output_edges.append(
-                                    Edge(left, right, synthetic_child, active[j].child))
-                                # print("g add", output_edges[-1])
-                                # print("time = ", self.time[synthetic_child],
-                                #         self.time[active[j].child])
-                    else:
-                        # Mark the edges in these group as unused.
-                        for group_index in group_index_list:
-                            start, end = groups[group_index]
-                            for j in range(start, end):
-                                used[j] = False
-
-                        parent_time = 1e200
-                        # Get the parents from the first group.
-                        start, end = groups[group_index_list[0]]
-                        for j in range(start, end):
-                            parent_time = min(parent_time, self.time[active[j].parent])
-                        # Get the children from the first record in each group.
-                        children_time = -1
-                        for group_index in group_index_list:
-                            j = groups[group_index][0]
-                            children_time = max(children_time, self.time[active[j].child])
-                        new_time = children_time + (parent_time - children_time) / 2
-                        new_node = self.add_node(new_time, is_sample=False)
-                        # print("adding node ", new_node, "@time", new_time)
-                        # For each segment add a new edge with the new node as child.
-                        start, end = groups[group_index_list[0]]
-                        for j in range(start, end):
-                            output_edges.append(Edge(
-                                active[j].left, active[j].right, active[j].parent, new_node))
-                            # print("s add", output_edges[-1])
-                        left = active[start].left
-                        right = active[end - 1].right
-                        # For each group, add a new segment covering the full interval.
-                        for group_index in group_index_list:
-                            start, end = groups[group_index]
-                            j = groups[group_index][0]
-                            output_edges.append(Edge(left, right, new_node, active[j].child))
-                            # print("g add", output_edges[-1])
-
-                        # print("Done\n")
-
-                # print("Setting edges to ", len(output_edges), "new edges")
-                for j in range(len(active)):
-                    if used[j]:
-                        output_edges.append(active[j])
-                    # else:
-                        # print("Filtering out", active[j])
-                # print("BEFORE")
-                # for e in self.edges:
-                #     print("\t", e)
-
-                # self.replaces_done += 1
-                self.edges = output_edges
-                # print("AFTER")
-                # for e in self.edges:
-                #     print("\t", e)
-
 
 
 def is_descendant(pi, u, v):
