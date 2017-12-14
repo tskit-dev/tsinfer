@@ -26,8 +26,8 @@ class Edge(object):
         self.right = right
         self.parent = parent
         self.child = child
-        self.prev = None
-        self.next = None
+        self.prev = prev
+        self.next = next
 
     def __str__(self):
         return "Edge(left={}, right={}, parent={}, child={}, prev={}, next={})".format(
@@ -227,6 +227,28 @@ class TreeSequenceBuilder(object):
             # Add the edge to the indexes. Break ties between identical values
             # using the child ID.
             self.index_edge(edge)
+        # self.compress_path(child)
+
+    def compress_path(self, child):
+        """
+        Tries to compress the path for the specified child by finding another
+        similar path, and creating a synthetic ancestor for it if necessary.
+        """
+        print("Compress:", child)
+        head = self.paths[child]
+        edge = head
+        while edge is not None:
+            print("Considering ", edge.left, edge.right, edge.parent)
+            key = (edge.left, -1, -1)
+            start = self.left_index.bisect((edge.left, -1, -1))
+            end = self.left_index.bisect((edge.left + 1, -1, -1))
+            for key in self.left_index.islice(start, end):
+                value = self.left_index[key]
+                if value != edge and value.right == edge.right and value.parent == edge.parent:
+                    print("\t", key, "->", value)
+
+            edge = edge.next
+
 
     def restore_mutations(self, site, node, derived_state, parent):
         for s, u, d in zip(site, node, derived_state):
@@ -252,6 +274,7 @@ class TreeSequenceBuilder(object):
                 assert edge.child == child
                 if edge.next is not None:
                     assert edge.next.left == edge.right
+                    assert edge.next.prev == edge
                 assert self.left_index[(edge.left, self.time[child], child)] == edge
                 assert self.right_index[(edge.right, -self.time[child], child)] == edge
                 edge = edge.next
