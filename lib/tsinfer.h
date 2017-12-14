@@ -7,7 +7,6 @@
 #include "object_heap.h"
 #include "avl.h"
 
-
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
 #define NULL_NODE (-1)
@@ -22,12 +21,14 @@ typedef int8_t allele_t;
 typedef int32_t site_id_t;
 typedef int32_t mutation_id_t;
 
-typedef struct {
+typedef struct _edge_t {
     site_id_t left;
     site_id_t right;
     site_id_t end;
     node_id_t parent;
     node_id_t child;
+    double time;
+    struct _edge_t *next;
 } edge_t;
 
 typedef struct _node_segment_list_node_t {
@@ -142,15 +143,23 @@ typedef struct {
     /* TODO add nodes struct */
     double *time;
     uint32_t *node_flags;
+    edge_t **path;
     size_t max_nodes;
     size_t max_edges;
     size_t num_nodes;
     size_t num_edges;
     size_t num_mutations;
+    block_allocator_t block_allocator;
+    object_heap_t avl_node_heap;
+    object_heap_t edge_heap;
+    avl_tree_t left_index;
+    avl_tree_t right_index;
+    avl_tree_t path_index;
+
+    /* old */
     edge_t *edges;
     edge_sort_t *sort_buffer;
     node_id_t *removal_order;
-    block_allocator_t block_allocator;
 } tree_sequence_builder_t;
 
 typedef struct {
@@ -220,6 +229,14 @@ int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         double *recombination_rate, size_t max_nodes, size_t max_edges, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
+int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
+        double time, bool is_sample);
+int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
+        node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
+        node_id_t *parent, int flags);
+int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
+        node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state);
+
 int tree_sequence_builder_update(tree_sequence_builder_t *self,
         size_t num_nodes, double time,
         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,

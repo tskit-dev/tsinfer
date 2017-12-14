@@ -295,11 +295,11 @@ run_generate(const char *input_file, int verbose)
     tree_sequence_builder_t ts_builder;
     ancestor_matcher_t matcher;
     allele_t *a, *sample, *match;
-    size_t frequency;
+    size_t frequency, edge_offset, mutation_offset;
     int ret;
     /* Buffers for edge output */
     size_t total_edges;
-    size_t num_edges;
+    size_t num_edges, *num_edges_buffer, *num_mutations_buffer;
     size_t max_edges = 1024 * 1024;
     site_id_t *left_buffer, *left_output;
     site_id_t *right_buffer, *right_output;
@@ -359,33 +359,34 @@ run_generate(const char *input_file, int verbose)
         ancestor_builder_print_state(&ancestor_builder, stdout);
         /* ancestor_matcher_print_state(&matcher, stdout); */
     }
-    frequency = num_samples;
-    while (avl_count(&ancestor_builder.frequency_map[frequency]) == 0) {
-        frequency--;
-    }
-    frequency++;
 
-    /* frequency = ancestor_builder.num_frequency_classes + 1; */
-    ret = tree_sequence_builder_update(&ts_builder, 1, frequency - 1,
-            0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL);
-    if (ret != 0) {
-        fatal_error("initial update");
-    }
     a = malloc(num_sites * sizeof(allele_t));
     match = malloc(num_sites * sizeof(allele_t));
     left_buffer = malloc(max_edges * sizeof(site_id_t));
     right_buffer = malloc(max_edges * sizeof(site_id_t));
     parent_buffer = malloc(max_edges * sizeof(node_id_t));
     child_buffer = malloc(max_edges * sizeof(node_id_t));
+    num_edges_buffer = malloc(max_edges * sizeof(size_t));
+    num_mutations_buffer = malloc(max_edges * sizeof(size_t));
     node_buffer = malloc(max_mutations * sizeof(node_id_t));
     derived_state_buffer = malloc(max_mutations * sizeof(allele_t));
     site_buffer = malloc(max_mutations * sizeof(site_id_t));
     if (a == NULL || match == NULL || left_buffer == NULL || right_buffer == NULL
             || parent_buffer == NULL || child_buffer == NULL || node_buffer == NULL
-            || site_buffer == NULL || derived_state_buffer == NULL) {
+            || num_edges_buffer == NULL || site_buffer == NULL
+            || derived_state_buffer == NULL) {
         fatal_error("alloc");
     }
+    /* Add the ancestor nodes */
+    for (frequency = num_samples; frequency > 0; frequency--) {
+        ret = tree_sequence_builder_add_node(&ts_builder, frequency, true);
+        if (ret < 0) {
+            fatal_error("add node");
+        }
+    }
+    tree_sequence_builder_print_state(&ts_builder, stdout);
 
+    child = 1;
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
         num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         if (verbose > 0) {
@@ -395,7 +396,7 @@ run_generate(const char *input_file, int verbose)
         /* printf("AGE = %d\n", (int) frequency); */
         total_edges = 0;
         total_mutations = 0;
-        child = ts_builder.num_nodes;
+        j = 0;
         for (avl_node = ancestor_builder.frequency_map[frequency].head; avl_node != NULL;
                 avl_node = avl_node->next) {
             map_elem = (pattern_map_t *) avl_node->item;
@@ -435,11 +436,10 @@ run_generate(const char *input_file, int verbose)
             }
             memcpy(left_buffer + total_edges, left_output, num_edges * sizeof(site_id_t));
             memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
-            memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
-            /* Update the child buffer */
-            for (l = 0; l < (int) num_edges; l++) {
-                child_buffer[total_edges + l] = child;
-            }
+            memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(node_id_t));
+            child_buffer[j] = child;
+            num_edges_buffer[j] = num_edges;
+            num_mutations_buffer[j] = num_focal_sites;
             total_edges += num_edges;
 
             if (verbose > 0) {
@@ -461,14 +461,33 @@ run_generate(const char *input_file, int verbose)
                             parent_output[l], child);
                 }
             }
+            j++;
             child++;
         }
-        ret = tree_sequence_builder_update(&ts_builder, num_ancestors, frequency - 1,
-                total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
-                total_mutations, site_buffer, node_buffer, derived_state_buffer);
-        if (ret != 0) {
-            fatal_error("builder update");
+        edge_offset = 0;
+        mutation_offset = 0;
+        for (j = 0; j < num_ancestors; j++) {
+            ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
+                    num_edges_buffer[j], left_buffer + edge_offset,
+                    right_buffer + edge_offset, parent_buffer + edge_offset, 0);
+            if (ret != 0) {
+                fatal_error("add_path");
+            }
+            edge_offset += num_edges_buffer[j];
+            ret = tree_sequence_builder_add_mutations(&ts_builder, child_buffer[j],
+                    num_mutations_buffer[j], site_buffer + mutation_offset,
+                    derived_state_buffer + mutation_offset);
+            if (ret != 0) {
+                fatal_error("add_path");
+            }
+            mutation_offset += num_mutations_buffer[j];
         }
+        /* ret = tree_sequence_builder_update(&ts_builder, num_ancestors, frequency - 1, */
+        /*         total_edges, left_buffer, right_buffer, parent_buffer, child_buffer, */
+        /*         total_mutations, site_buffer, node_buffer, derived_state_buffer); */
+        /* if (ret != 0) { */
+        /*     fatal_error("builder update"); */
+        /* } */
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
 
@@ -547,6 +566,8 @@ run_generate(const char *input_file, int verbose)
     tsi_safe_free(right_buffer);
     tsi_safe_free(parent_buffer);
     tsi_safe_free(child_buffer);
+    tsi_safe_free(num_edges_buffer);
+    tsi_safe_free(num_mutations_buffer);
     tsi_safe_free(node_buffer);
     tsi_safe_free(site_buffer);
     tsi_safe_free(derived_state_buffer);
