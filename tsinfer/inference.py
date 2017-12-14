@@ -401,8 +401,10 @@ class AncestorMatcher(Matcher):
             logger.info("Resuming at epoch {} ancestor {}".format(
                 self.start_epoch, first_ancestor))
         else:
-            # Insert the oldest ancestor
-            self.tree_sequence_builder.add_node(self.epoch[0])
+            # Add nodes for all the ancestors so that the ancestor IDs are equal
+            # to the node IDs.
+            for ancestor_id in range(self.num_ancestors):
+                self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
         # This is an iterator over all ancestral haplotypes.
         self.haplotypes = self.ancestors_file.ancestor_haplotypes(first_ancestor)
@@ -424,19 +426,19 @@ class AncestorMatcher(Matcher):
         """
         self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
-    def __ancestor_find_path(self, ancestor_id, node_id, haplotype, thread_index=0):
+    def __ancestor_find_path(self, ancestor_id, haplotype, thread_index=0):
         focal_sites = self.focal_sites[ancestor_id]
         start = self.start[ancestor_id]
         end = self.end[ancestor_id]
-        self.results[thread_index].add_mutations(focal_sites, node_id)
+        self.results[thread_index].add_mutations(focal_sites, ancestor_id)
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
-            "Finding path for ancestor {} (node={}); start={} end={} "
-            "num_focal_sites={}".format(
-            ancestor_id, node_id, start, end, focal_sites.shape[0]))
-        left, right, parent = self._find_path(node_id, haplotype, start, end, thread_index)
+            "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
+            ancestor_id, start, end, focal_sites.shape[0]))
+        left, right, parent = self._find_path(
+                ancestor_id, haplotype, start, end, thread_index)
         haplotype[focal_sites] = 0
         assert np.all(self.match[thread_index] == haplotype)
 
@@ -460,15 +462,13 @@ class AncestorMatcher(Matcher):
 #             epoch_results.child, epoch_results.site, epoch_results.node,
 #             epoch_results.derived_state)
 
-        for j in range(num_ancestors_in_epoch):
-            c = epoch_results.child[0] + j
-            index = np.where(epoch_results.child == c)
+        for child_id in range(start, end):
+            index = np.where(epoch_results.child == child_id)[0][::-1]
             # TODO we should be adding the ancestor ID here as well as metadata.
-            node_id = self.tree_sequence_builder.add_node(current_time)
             self.tree_sequence_builder.add_path(
-                node_id, epoch_results.left[index][::-1],
-                epoch_results.right[index][::-1],
-                epoch_results.parent[index][::-1])
+                child_id, epoch_results.left[index],
+                epoch_results.right[index],
+                epoch_results.parent[index])
         self.tree_sequence_builder.add_mutations(
             epoch_results.site, epoch_results.node, epoch_results.derived_state)
         # self.tree_sequence_builder.print_state()
@@ -501,11 +501,9 @@ class AncestorMatcher(Matcher):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
-            node_id = self.tree_sequence_builder.num_nodes
             for ancestor_id in range(start, end):
                 a = next(self.haplotypes)
-                self.__ancestor_find_path(ancestor_id, node_id, a)
-                node_id += 1
+                self.__ancestor_find_path(ancestor_id, a)
             self.__complete_epoch(j)
 
     def __match_ancestors_multi_threaded(self, start_epoch=1):
@@ -575,9 +573,9 @@ class SampleMatcher(Matcher):
         super().__init__(input_file, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
         self.sample_haplotypes = self.input_file.sample_haplotypes()
-        start = self.tree_sequence_builder.num_nodes
-        end = start + self.num_samples
-        self.sample_ids = np.arange(start, end, dtype=np.int32)
+        self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
+        for j in range(self.num_samples):
+            self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
         self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
@@ -596,7 +594,7 @@ class SampleMatcher(Matcher):
     def __match_samples_single_threaded(self):
         j = 0
         for a in self.sample_haplotypes:
-            sample_id = self.tree_sequence_builder.num_nodes + j
+            sample_id = self.sample_ids[j]
             self.__process_sample(sample_id, a)
             j += 1
         assert j == self.num_samples
@@ -644,13 +642,14 @@ class SampleMatcher(Matcher):
             self.__match_samples_multi_threaded()
         results = ResultBuffer.combine(self.results)
 
+        # self.tree_sequence_builder.print_state()
+
         for j in range(self.num_samples):
-            c = results.child[0] + j
-            index = np.where(results.child == c)
-            node_id = self.tree_sequence_builder.add_node(0)
+            sample_id = self.sample_ids[j]
+            index = np.where(results.child == sample_id)[0][::-1]
             self.tree_sequence_builder.add_path(
-                node_id, results.left[index][::-1],
-                results.right[index][::-1], results.parent[index][::-1])
+                sample_id, results.left[index], results.right[index],
+                results.parent[index])
         self.tree_sequence_builder.add_mutations(
             results.site, results.node, results.derived_state)
         # self.tree_sequence_builder.update(
