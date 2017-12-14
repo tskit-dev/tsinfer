@@ -30,9 +30,8 @@ class Edge(object):
         self.next = next
 
     def __str__(self):
-        return "Edge(left={}, right={}, parent={}, child={}, prev={}, next={})".format(
-            self.left, self.right, self.parent, self.child, repr(self.prev),
-            repr(self.next))
+        return "Edge(left={}, right={}, parent={}, child={})".format(
+            self.left, self.right, self.parent, self.child)
 
 
 class Site(object):
@@ -178,10 +177,10 @@ class TreeSequenceBuilder(object):
         self.flags = []
         self.mutations = collections.defaultdict(list)
         self.mean_traceback_size = 0
-
         self.left_index = sortedcontainers.SortedDict()
         self.right_index = sortedcontainers.SortedDict()
-        self.paths = []
+        self.path_index = sortedcontainers.SortedDict()
+        self.path = []
 
     def restore_nodes(self, time, flags):
         for t, flag in zip(time, flags):
@@ -191,13 +190,70 @@ class TreeSequenceBuilder(object):
         self.num_nodes += 1
         self.time.append(time)
         self.flags.append(int(is_sample))
-        self.paths.append(None)
+        self.path.append(None)
         return self.num_nodes - 1
 
     def index_edge(self, edge):
-        # Adds the specified edge to the indexes.
+        # Adds the specified edge to the indexes. Break ties between identical values
+        # using the child ID.
         self.left_index[(edge.left, self.time[edge.child], edge.child)] = edge
         self.right_index[(edge.right, -self.time[edge.child], edge.child)] = edge
+        # We need to find edges with identical (left, right, parent) values for
+        # path compression.
+        self.path_index[(edge.left, edge.right, edge.parent, edge.child)] = edge
+
+    def index_edges(self, node_id):
+        """
+        Indexes the edges for the specified node ID.
+        """
+        edge = self.path[node_id]
+        while edge != None:
+            self.index_edge(edge)
+            edge = edge.next
+
+    def unindex_edge(self, edge):
+        # Removes the specified edge from the indexes.
+        del self.left_index[(edge.left, self.time[edge.child], edge.child)]
+        del self.right_index[(edge.right, -self.time[edge.child], edge.child)]
+        # We need to find edges with identical (left, right, parent) values for
+        # path compression.
+        del self.path_index[(edge.left, edge.right, edge.parent, edge.child)]
+
+    def unindex_edges(self, node_id):
+        """
+        Removes the edges for the specified node from all the indexes.
+        """
+        edge = self.path[node_id]
+        while edge is not None:
+            self.unindex_edge(edge)
+            edge = edge.next
+
+    def squash_edges(self, head):
+        """
+        Squashes any edges in the specified chain that are redundant and
+        returns the resulting segment chain. Specifically, edges
+        (l, x, p, c) and (x, r, p, c) become (l, r, p, c).
+        """
+        # print("Before:", end="")
+        # self.print_chain(head)
+        prev = head
+        x = head.next
+        while x is not None:
+            if prev.right == x.left and prev.child == x.child and prev.parent == x.parent:
+                prev.right = x.right
+                prev.next = x.next
+            x = x.next
+        # Go through again to fixup the prev pointers.
+        x = head.next
+        prev = head
+        while x is not None:
+            x.prev = prev
+            prev = x
+            x = x.next
+        # print("After:", end="")
+        # self.print_chain(head)
+        return head
+
 
     def restore_edges(self, left, right, parent, child):
         edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
@@ -209,46 +265,113 @@ class TreeSequenceBuilder(object):
                 prev.next = edge
                 edge.prev = prev
             else:
-                self.paths[edge.child] = edge
+                self.path[edge.child] = edge
             self.index_edge(edge)
             prev = edge
 
         self.check_state()
 
     def add_path(self, child, left, right, parent):
+        assert self.path[child] == None
         prev = None
+        head = None
         for l, r, p in zip(left, right, parent):
             edge = Edge(l, r, p, child, prev, None)
             if prev is None:
-                self.paths[child] = edge
+                head = edge
             else:
                 prev.next = edge
             prev = edge
-            # Add the edge to the indexes. Break ties between identical values
-            # using the child ID.
-            self.index_edge(edge)
-        # self.compress_path(child)
 
-    def compress_path(self, child):
+        head = self.compress_path(head)
+
+        # Insert the chain into the global state.
+        self.path[child] = head
+        self.index_edges(child)
+        # self.print_state()
+        self.check_state()
+
+
+    def update_node_time(self, node_id):
         """
-        Tries to compress the path for the specified child by finding another
-        similar path, and creating a synthetic ancestor for it if necessary.
+        Updates the node time for the specified synthetic node ID.
         """
-        print("Compress:", child)
-        head = self.paths[child]
-        edge = head
+        # print("Getting node time for ", node_id)
+        assert self.flags[node_id] == 0
+        edge = self.path[node_id]
+        assert edge is not None
+        min_parent_time = self.time[0] + 1
         while edge is not None:
-            print("Considering ", edge.left, edge.right, edge.parent)
-            key = (edge.left, -1, -1)
-            start = self.left_index.bisect((edge.left, -1, -1))
-            end = self.left_index.bisect((edge.left + 1, -1, -1))
-            for key in self.left_index.islice(start, end):
-                value = self.left_index[key]
-                if value != edge and value.right == edge.right and value.parent == edge.parent:
-                    print("\t", key, "->", value)
+            min_parent_time = min(min_parent_time, self.time[edge.parent])
+            edge = edge.next
+        assert min_parent_time >= 0
+        assert min_parent_time <= self.time[0]
+        # print("min_parent_time = ", min_parent_time)
+        self.time[node_id] = min_parent_time - 0.1
 
+    def compress_path(self, head):
+        """
+        Tries to compress the path for the specified edge chain, and returns
+        the resulting path.
+        """
+        # print("Compress for child:", head.child)
+        edge = head
+        matches = []
+        children_map = {}
+        while edge is not None:
+            # print("\tConsidering ", edge.left, edge.right, edge.parent)
+            key = (edge.left, edge.right, edge.parent, -1)
+            index = self.path_index.bisect(key)
+            while index < len(self.path_index) \
+                    and self.path_index.iloc[index][:3] == (edge.left, edge.right, edge.parent):
+                match = self.path_index.peekitem(index)[1]
+                if self.flags[match.child] == 0:
+                    # This is a synthetic match. Update the parent on this input edge to
+                    # point to this synthetic node.
+                    # print("SEtting parent", edge.parent, "->", match.child)
+                    edge.parent = match.child
+                else:
+                    matches.append((edge, match))
+                    if match.child not in children_map:
+                        children_map[match.child] = match.child
+                    else:
+                        if children_map[match.child] == match.child:
+                            # We have a new synthetic ancestor. Figure out the time for this
+                            # ancestor later when we have more information.
+                            synthetic_node = self.add_node(-1, is_sample=False)
+                            children_map[match.child] = synthetic_node
+                index += 1
             edge = edge.next
 
+        # print("matches:", children_map)
+        for child_id, mapped in children_map.items():
+            if child_id != mapped:
+                self.unindex_edges(child_id)
+                synthetic_head = None
+                synthetic_prev = None
+                # print("NEW SYNTHETIC FOR ", child_id, "->", mapped)
+                for new, old in matches:
+                    if old.child == child_id:
+                        # print("\t", new, "\t", old)
+                        synthetic_edge = Edge(
+                            old.left, old.right, old.parent, mapped, synthetic_prev)
+                        if synthetic_prev is not None:
+                            synthetic_prev.next = synthetic_edge
+                        if synthetic_head is None:
+                            synthetic_head = synthetic_edge
+                        synthetic_prev = synthetic_edge
+                        new.parent = mapped
+                        old.parent = mapped
+                # print("END of match loop")
+                self.path[mapped] = self.squash_edges(synthetic_head)
+                self.path[child_id] = self.squash_edges(self.path[child_id])
+                self.update_node_time(mapped)
+                self.index_edges(mapped)
+                self.index_edges(child_id)
+                # self.print_chain(synthetic_head)
+                # self.print_chain(self.path[child_id])
+                # self.print_chain(head)
+        return self.squash_edges(head)
 
     def restore_mutations(self, site, node, derived_state, parent):
         for s, u, d in zip(site, node, derived_state):
@@ -269,11 +392,12 @@ class TreeSequenceBuilder(object):
     def check_state(self):
         total_edges = 0
         for child in range(len(self.time)):
-            edge = self.paths[child]
+            edge = self.path[child]
             while edge is not None:
                 assert edge.child == child
                 if edge.next is not None:
-                    assert edge.next.left == edge.right
+                    if self.flags[child] != 0:
+                        assert edge.next.left == edge.right
                     assert edge.next.prev == edge
                 assert self.left_index[(edge.left, self.time[child], child)] == edge
                 assert self.right_index[(edge.right, -self.time[child], child)] == edge
@@ -281,6 +405,14 @@ class TreeSequenceBuilder(object):
                 total_edges += 1
         assert len(self.left_index) == total_edges
         assert len(self.right_index) == total_edges
+
+    def print_chain(self, head):
+        edge = head
+        while edge is not None:
+            print("({}, {}, {}, {})".format(
+                edge.left, edge.right, edge.parent, edge.child), end="")
+            edge = edge.next
+        print()
 
     def print_state(self):
         print("TreeSequenceBuilder state")
@@ -293,17 +425,11 @@ class TreeSequenceBuilder(object):
         print(nodes)
         for child in range(len(nodes)):
             print("child = ", child, end="\t")
-            edge = self.paths[child]
-            while edge is not None:
-                print("({}, {}, {})".format(edge.left, edge.right, edge.parent), end="")
-                assert edge.child == child
-                edge = edge.next
-            print()
+            self.print_chain(self.path[child])
         self.check_state()
 
-
     def dump_nodes(self):
-        time = self.time[:self.num_nodes]
+        time = self.time[:]
         flags = self.flags[:]
         return flags, time
 
@@ -314,7 +440,7 @@ class TreeSequenceBuilder(object):
         child = np.zeros(self.num_edges, dtype=np.int32)
         j = 0
         for c in range(self.num_nodes):
-            edge = self.paths[c]
+            edge = self.path[c]
             while edge is not None:
                 left[j] = edge.left
                 right[j] = edge.right
