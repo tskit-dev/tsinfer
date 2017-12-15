@@ -271,7 +271,7 @@ class TreeSequenceBuilder(object):
         assert self.path[child] == None
         prev = None
         head = None
-        for l, r, p in zip(left, right, parent):
+        for l, r, p in reversed(list(zip(left, right, parent))):
             edge = Edge(l, r, p, child)
             if prev is None:
                 head = edge
@@ -371,9 +371,9 @@ class TreeSequenceBuilder(object):
         for s, u, d in zip(site, node, derived_state):
             self.mutations[s].append((u, d))
 
-    def add_mutations(self, site, node, derived_state):
-        for s, u, d in zip(site, node, derived_state):
-            self.mutations[s].append((u, d))
+    def add_mutations(self, node, site, derived_state):
+        for s, d in zip(site, derived_state):
+            self.mutations[s].append((node, d))
 
     @property
     def num_edges(self):

@@ -87,45 +87,6 @@ typedef struct _mutation_list_node_t {
 } mutation_list_node_t;
 
 typedef struct {
-    site_id_t left;
-    site_id_t right;
-    ancestor_id_t parent;
-    uint32_t num_children;
-    ancestor_id_t *children;
-    double time; /* Used for sorting */
-} edgeset_t;
-
-typedef struct _node_mapping_t {
-    site_id_t left;
-    site_id_t right;
-    ancestor_id_t node;
-    struct _node_mapping_t *next;
-} node_mapping_t;
-
-typedef struct _segment_list_node_t {
-    site_id_t start;
-    site_id_t end;
-    struct _segment_list_node_t *next;
-} segment_list_node_t;
-
-typedef struct {
-    segment_list_node_t *head;
-    segment_list_node_t *tail;
-    size_t length;
-    size_t block_size;
-    object_heap_t heap;
-} segment_list_t;
-
-typedef struct {
-    site_id_t left;
-    site_id_t right;
-    site_id_t parent;
-    site_id_t child;
-    node_id_t index;
-    double time;
-} edge_sort_t;
-
-typedef struct {
     int32_t size;
     node_id_t *node;
     int8_t *recombination_required;
@@ -144,10 +105,10 @@ typedef struct {
     double *time;
     uint32_t *node_flags;
     edge_t **path;
+    size_t nodes_chunk_size;
+    size_t edges_chunk_size;
     size_t max_nodes;
-    size_t max_edges;
     size_t num_nodes;
-    size_t num_edges;
     size_t num_mutations;
     block_allocator_t block_allocator;
     object_heap_t avl_node_heap;
@@ -155,11 +116,6 @@ typedef struct {
     avl_tree_t left_index;
     avl_tree_t right_index;
     avl_tree_t path_index;
-
-    /* old */
-    edge_t *edges;
-    edge_sort_t *sort_buffer;
-    node_id_t *removal_order;
 } tree_sequence_builder_t;
 
 typedef struct {
@@ -226,7 +182,8 @@ size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         double sequence_length, size_t num_sites, double *position,
-        double *recombination_rate, size_t max_nodes, size_t max_edges, int flags);
+        double *recombination_rate, size_t nodes_chunk_size,
+        size_t edges_chunk_size, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
@@ -236,12 +193,9 @@ int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         node_id_t *parent, int flags);
 int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
         node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state);
-
-int tree_sequence_builder_update(tree_sequence_builder_t *self,
-        size_t num_nodes, double time,
-        size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
-        node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node,
-        allele_t *derived_state);
+size_t tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self);
+size_t tree_sequence_builder_get_num_edges(tree_sequence_builder_t *self);
+size_t tree_sequence_builder_get_num_mutations(tree_sequence_builder_t *self);
 
 /* Restore the state of a previous tree sequence builder. */
 int tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self,
