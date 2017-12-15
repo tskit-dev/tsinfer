@@ -144,7 +144,8 @@ def build_ancestors(
 
 def match_ancestors(
         input_hdf5, ancestors_hdf5, output_path=None, method="C", progress=False,
-        num_threads=0, output_interval=None, resume=False, traceback_file_pattern=None):
+        num_threads=0, path_compression=True, output_interval=None, resume=False,
+        traceback_file_pattern=None):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -154,7 +155,8 @@ def match_ancestors(
 
     matcher = AncestorMatcher(
         input_file, ancestors_file, output_path=output_path, method=method,
-        progress=progress, num_threads=num_threads, output_interval=output_interval,
+        progress=progress, path_compression=path_compression,
+        num_threads=num_threads, output_interval=output_interval,
         resume=resume, traceback_file_pattern=traceback_file_pattern)
     return matcher.match_ancestors()
 
@@ -192,10 +194,12 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 
 def match_samples(
         input_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
-        num_threads=0, simplify=True, traceback_file_pattern=None):
+        num_threads=0, path_compression=True, simplify=True,
+        traceback_file_pattern=None):
     input_file = formats.InputFile(input_data)
     manager = SampleMatcher(
         input_file, ancestors_ts, error_probability=genotype_quality,
+        path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
         traceback_file_pattern=traceback_file_pattern)
     manager.match_samples()
@@ -209,9 +213,10 @@ class Matcher(object):
 
     def __init__(
             self, input_file, error_probability=0, num_threads=1, method="C",
-            progress=False, traceback_file_pattern=None):
+            path_compression=True, progress=False, traceback_file_pattern=None):
         self.input_file = input_file
         self.num_threads = num_threads
+        self.path_compression = path_compression
         self.num_samples = self.input_file.num_samples
         self.num_sites = self.input_file.num_sites
         self.sequence_length = self.input_file.sequence_length
@@ -477,7 +482,8 @@ class AncestorMatcher(Matcher):
             self.tree_sequence_builder.add_path(
                 child_id, epoch_results.left[index],
                 epoch_results.right[index],
-                epoch_results.parent[index])
+                epoch_results.parent[index],
+                compress=self.path_compression)
             index = np.where(epoch_results.node == child_id)
             self.tree_sequence_builder.add_mutations(
                 child_id, epoch_results.site[index], epoch_results.derived_state[index])
@@ -657,7 +663,7 @@ class SampleMatcher(Matcher):
             index = np.where(results.child == sample_id)
             self.tree_sequence_builder.add_path(
                 int(sample_id), results.left[index], results.right[index],
-                results.parent[index])
+                results.parent[index], compress=self.path_compression)
             index = np.where(results.node == sample_id)
             self.tree_sequence_builder.add_mutations(
                 int(sample_id), results.site[index], results.derived_state[index])

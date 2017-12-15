@@ -317,7 +317,7 @@ run_generate(const char *input_file, int verbose)
     pattern_map_t *map_elem;
     site_list_t *s;
 
-    flags = TSI_RESOLVE_SHARED_RECOMBS;
+    flags = 0;
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
@@ -391,7 +391,6 @@ run_generate(const char *input_file, int verbose)
             }
         }
     }
-    tree_sequence_builder_print_state(&ts_builder, stdout);
 
     child = 1;
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
@@ -475,9 +474,11 @@ run_generate(const char *input_file, int verbose)
         edge_offset = 0;
         mutation_offset = 0;
         for (j = 0; j < num_ancestors; j++) {
+            /* tree_sequence_builder_print_state(&ts_builder, stdout); */
             ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
                     num_edges_buffer[j], left_buffer + edge_offset,
-                    right_buffer + edge_offset, parent_buffer + edge_offset, 0);
+                    right_buffer + edge_offset, parent_buffer + edge_offset,
+                    TSI_COMPRESS_PATH);
             if (ret != 0) {
                 fatal_error("add_path");
             }
@@ -554,7 +555,8 @@ run_generate(const char *input_file, int verbose)
     for (j = 0; j < num_samples; j++) {
         ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
                 num_edges_buffer[j], left_buffer + edge_offset,
-                right_buffer + edge_offset, parent_buffer + edge_offset, 0);
+                right_buffer + edge_offset, parent_buffer + edge_offset,
+                TSI_COMPRESS_PATH);
         if (ret != 0) {
             fatal_error("add_path");
         }
@@ -567,12 +569,6 @@ run_generate(const char *input_file, int verbose)
         }
         mutation_offset += num_mutations_buffer[j];
     }
-/*     ret = tree_sequence_builder_update(&ts_builder, num_samples, 0, */
-/*             total_edges, left_buffer, right_buffer, parent_buffer, child_buffer, */
-/*             total_mutations, site_buffer, node_buffer, derived_state_buffer); */
-/*     if (ret != 0) { */
-/*         fatal_error("builder update"); */
-/*     } */
 
     if (1) {
         output_ts(&ts_builder);

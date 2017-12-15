@@ -399,7 +399,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     unsigned long max_edges;
     static char *kwlist[] = {"sequence_length", "position",
         "recombination_rate", "max_nodes", "max_edges", NULL};
-    int flags = TSI_RESOLVE_SHARED_RECOMBS;
+    int flags = 0;
     npy_intp *shape;
 
     self->tree_sequence_builder = NULL;
@@ -503,15 +503,21 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
     int child;
     size_t num_edges;
     npy_intp *shape;
+    int compress = true;
 
-    static char *kwlist[] = {"child", "left", "right", "parent", NULL};
+
+    static char *kwlist[] = {"child", "left", "right", "parent", "compress", NULL};
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOO", kwlist,
-            &child, &left, &right, &parent)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOO|i", kwlist,
+            &child, &left, &right, &parent, &compress)) {
         goto out;
+    }
+
+    if (compress) {
+        flags = TSI_COMPRESS_PATH;
     }
 
     /* left */
@@ -652,176 +658,6 @@ out:
     return ret;
 }
 
-
-
-#if 0
-static PyObject *
-TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
-{
-    int err;
-    PyObject *ret = NULL;
-    static char *kwlist[] = {"num_nodes", "time",
-        /*edgesets */
-        "left", "right", "parent", "child",
-        /* mutations */
-        "site", "node", "derived_state", NULL};
-    unsigned long num_nodes;
-    double time;
-    size_t num_edges, num_mutations;
-    PyObject *left = NULL;
-    PyArrayObject *left_array = NULL;
-    PyObject *right = NULL;
-    PyArrayObject *right_array = NULL;
-    PyObject *parent = NULL;
-    PyArrayObject *parent_array = NULL;
-    PyObject *child = NULL;
-    PyArrayObject *child_array = NULL;
-    PyObject *site = NULL;
-    PyArrayObject *site_array = NULL;
-    PyObject *node = NULL;
-    PyArrayObject *node_array = NULL;
-    PyObject *derived_state = NULL;
-    PyArrayObject *derived_state_array = NULL;
-    npy_intp *shape;
-
-    if (TreeSequenceBuilder_check_state(self) != 0) {
-        goto out;
-    }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kdOOOOOOO", kwlist,
-            &num_nodes, &time,
-            &left, &right, &parent, &child,
-            &site, &node, &derived_state)) {
-        goto out;
-    }
-
-    /* left */
-    left_array = (PyArrayObject *) PyArray_FROM_OTF(left, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
-    if (left_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(left_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(left_array);
-    num_edges = shape[0];
-
-    /* right */
-    right_array = (PyArrayObject *) PyArray_FROM_OTF(right, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
-    if (right_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(right_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(right_array);
-    if (shape[0] != num_edges) {
-        PyErr_SetString(PyExc_ValueError, "right wrong size");
-        goto out;
-    }
-
-    /* parent */
-    parent_array = (PyArrayObject *) PyArray_FROM_OTF(parent, NPY_INT32, NPY_ARRAY_IN_ARRAY);
-    if (parent_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(parent_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(parent_array);
-    if (shape[0] != num_edges) {
-        PyErr_SetString(PyExc_ValueError, "parent wrong size");
-        goto out;
-    }
-
-    /* child */
-    child_array = (PyArrayObject *) PyArray_FROM_OTF(child, NPY_INT32, NPY_ARRAY_IN_ARRAY);
-    if (child_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(child_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(child_array);
-    if (shape[0] != num_edges) {
-        PyErr_SetString(PyExc_ValueError, "child wrong size");
-        goto out;
-    }
-
-    /* site */
-    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
-    if (site_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(site_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(site_array);
-    num_mutations = shape[0];
-
-    /* node */
-    node_array = (PyArrayObject *) PyArray_FROM_OTF(node, NPY_INT32, NPY_ARRAY_IN_ARRAY);
-    if (node_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(node_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(node_array);
-    if (shape[0] != num_mutations) {
-        PyErr_SetString(PyExc_ValueError, "node wrong size");
-        goto out;
-    }
-
-    /* derived_state */
-    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
-    if (derived_state_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(derived_state_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(derived_state_array);
-    if (shape[0] != num_mutations) {
-        PyErr_SetString(PyExc_ValueError, "derived_state wrong size");
-        goto out;
-    }
-
-    Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_update(self->tree_sequence_builder,
-            num_nodes, time, num_edges,
-            (site_id_t *) PyArray_DATA(left_array),
-            (site_id_t *) PyArray_DATA(right_array),
-            (node_id_t *) PyArray_DATA(parent_array),
-            (node_id_t *) PyArray_DATA(child_array),
-            num_mutations,
-            (site_id_t *) PyArray_DATA(site_array),
-            (node_id_t *) PyArray_DATA(node_array),
-            PyArray_DATA(derived_state_array));
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("");
-out:
-    Py_XDECREF(left_array);
-    Py_XDECREF(right_array);
-    Py_XDECREF(parent_array);
-    Py_XDECREF(child_array);
-    Py_XDECREF(site_array);
-    Py_XDECREF(node_array);
-    Py_XDECREF(derived_state_array);
-    return ret;
-}
-#endif
 
 static PyObject *
 TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)

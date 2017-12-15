@@ -240,15 +240,9 @@ class TreeSequenceBuilder(object):
             if prev.right == x.left and prev.child == x.child and prev.parent == x.parent:
                 prev.right = x.right
                 prev.next = x.next
+            else:
+                prev = x
             x = x.next
-        # Go through again to fixup the prev pointers.
-        x = head.next
-        prev = head
-        while x is not None:
-            x.prev = prev
-            prev = x
-            x = x.next
-        # print("After:", end="")
         # self.print_chain(head)
         return head
 
@@ -267,7 +261,7 @@ class TreeSequenceBuilder(object):
 
         self.check_state()
 
-    def add_path(self, child, left, right, parent):
+    def add_path(self, child, left, right, parent, compress=True):
         assert self.path[child] == None
         prev = None
         head = None
@@ -279,7 +273,8 @@ class TreeSequenceBuilder(object):
                 prev.next = edge
             prev = edge
 
-        head = self.compress_path(head)
+        if compress:
+            head = self.compress_path(head)
 
         # Insert the chain into the global state.
         self.path[child] = head
@@ -304,6 +299,47 @@ class TreeSequenceBuilder(object):
         # print("min_parent_time = ", min_parent_time)
         self.time[node_id] = min_parent_time - 0.1
 
+    def remap_synthetic(self, child_id, matches):
+        """
+        Remap the edges in the set of matches to point to the already existing
+        synthethic node.
+        """
+        for new, old in matches:
+            if old.child == child_id:
+                new.parent = child_id
+
+    def create_synthetic_node(self, child_id, matches):
+
+        # If we have more than one edge matching to a given path, then we create
+        # synthetic ancestor for this path.
+        # Create a new node for this synthetic ancestor.
+        synthetic_node = self.add_node(-1, is_sample=False)
+        self.unindex_edges(child_id)
+        synthetic_head = None
+        synthetic_prev = None
+        # print("NEW SYNTHETIC FOR ", child_id, "->", mapped)
+        for new, old in matches:
+            if old.child == child_id:
+                # print("\t", new, "\t", old)
+                synthetic_edge = Edge(
+                    old.left, old.right, old.parent, synthetic_node)
+                if synthetic_prev is not None:
+                    synthetic_prev.next = synthetic_edge
+                if synthetic_head is None:
+                    synthetic_head = synthetic_edge
+                synthetic_prev = synthetic_edge
+                new.parent = synthetic_node
+                old.parent = synthetic_node
+        # print("END of match loop")
+        self.path[synthetic_node] = self.squash_edges(synthetic_head)
+        self.path[child_id] = self.squash_edges(self.path[child_id])
+        self.update_node_time(synthetic_node)
+        self.index_edges(synthetic_node)
+        self.index_edges(child_id)
+        # self.print_chain(synthetic_head)
+        # self.print_chain(self.path[child_id])
+        # self.print_chain(head)
+
     def compress_path(self, head):
         """
         Tries to compress the path for the specified edge chain, and returns
@@ -312,59 +348,26 @@ class TreeSequenceBuilder(object):
         # print("Compress for child:", head.child)
         edge = head
         matches = []
-        children_map = {}
         while edge is not None:
             # print("\tConsidering ", edge.left, edge.right, edge.parent)
             key = (edge.left, edge.right, edge.parent, -1)
             index = self.path_index.bisect(key)
-            while index < len(self.path_index) \
+            if index < len(self.path_index) \
                     and self.path_index.iloc[index][:3] == (edge.left, edge.right, edge.parent):
                 match = self.path_index.peekitem(index)[1]
-                if self.flags[match.child] == 0:
-                    # This is a synthetic match. Update the parent on this input edge to
-                    # point to this synthetic node.
-                    # print("SEtting parent", edge.parent, "->", match.child)
-                    edge.parent = match.child
-                else:
-                    matches.append((edge, match))
-                    if match.child not in children_map:
-                        children_map[match.child] = match.child
-                    else:
-                        if children_map[match.child] == match.child:
-                            # We have a new synthetic ancestor. Figure out the time for this
-                            # ancestor later when we have more information.
-                            synthetic_node = self.add_node(-1, is_sample=False)
-                            children_map[match.child] = synthetic_node
-                index += 1
+                matches.append((edge, match))
             edge = edge.next
 
-        # print("matches:", children_map)
-        for child_id, mapped in children_map.items():
-            if child_id != mapped:
-                self.unindex_edges(child_id)
-                synthetic_head = None
-                synthetic_prev = None
-                # print("NEW SYNTHETIC FOR ", child_id, "->", mapped)
-                for new, old in matches:
-                    if old.child == child_id:
-                        # print("\t", new, "\t", old)
-                        synthetic_edge = Edge(old.left, old.right, old.parent, mapped)
-                        if synthetic_prev is not None:
-                            synthetic_prev.next = synthetic_edge
-                        if synthetic_head is None:
-                            synthetic_head = synthetic_edge
-                        synthetic_prev = synthetic_edge
-                        new.parent = mapped
-                        old.parent = mapped
-                # print("END of match loop")
-                self.path[mapped] = self.squash_edges(synthetic_head)
-                self.path[child_id] = self.squash_edges(self.path[child_id])
-                self.update_node_time(mapped)
-                self.index_edges(mapped)
-                self.index_edges(child_id)
-                # self.print_chain(synthetic_head)
-                # self.print_chain(self.path[child_id])
-                # self.print_chain(head)
+        matched_children_count = collections.Counter()
+        for edge, match in matches:
+            matched_children_count[match.child] += 1
+
+        for child_id, count in matched_children_count.items():
+            if count > 1:
+                if self.flags[child_id] == 0:
+                    self.remap_synthetic(child_id, matches)
+                else:
+                    self.create_synthetic_node(child_id, matches)
         return self.squash_edges(head)
 
     def restore_mutations(self, site, node, derived_state, parent):
