@@ -86,7 +86,10 @@ class AncestorBuilder(object):
         """
         ret = []
         for frequency in reversed(range(self.num_samples + 1)):
-            for focal_sites in self.frequency_map[frequency].values():
+            # Need to make the order in which these are returned deterministic,
+            # or ancestor IDs are not replicable between runs.
+            focal_sites_list = sorted(self.frequency_map[frequency].values())
+            for focal_sites in focal_sites_list:
                 ret.append((frequency, np.array(focal_sites, dtype=np.int32)))
         return ret
 
@@ -506,7 +509,7 @@ class AncestorMatcher(object):
         print("Ancestor matcher state")
         print("max_L_node\ttraceback")
         for l in range(self.num_sites):
-            print(self.max_likelihood_node[l], self.traceback[l], sep="\t")
+            print(l, self.max_likelihood_node[l], self.traceback[l], sep="\t")
 
     def check_likelihoods(self):
         # Every value in L_nodes must be positive.
@@ -827,7 +830,6 @@ class AncestorMatcher(object):
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
-        # edges = self.tree_sequence_builder.edges
         u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
         output_edges = [output_edge]
@@ -905,9 +907,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        # print("returning edges:")
+        print("returning edges:")
         for j, e in enumerate(output_edges):
-            # print("\t", e.left, e.right, e.parent)
+            print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python

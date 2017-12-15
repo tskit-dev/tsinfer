@@ -120,6 +120,107 @@ def check_infer(
 
     assert np.array_equal(G, inferred_ts.genotype_matrix())
 
+
+def debug_pathological():
+
+    # daiquiri.setup(level="DEBUG")
+    method = "P"
+    ts = msprime.load("pathological-small.source.hdf5")
+
+
+    # Put a mutation on every branch.
+    tables = ts.dump_tables()
+    tables.sites.reset()
+    tables.mutations.reset()
+    j = 0
+    for tree in ts.trees():
+        left, right = tree.interval
+        n = len(list(tree.nodes()))
+        delta = (right - left) / n
+        x = left
+        for u in tree.nodes():
+            tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=j, node=u, derived_state="1")
+            j += 1
+            x += delta
+    # print(tables)
+    ts = msprime.load_tables(**tables.asdict())
+    print("num_sites = ", ts.num_sites)
+    print("num_edges = ", ts.num_edges)
+    print("num_trees = ", ts.num_trees)
+    # for t in ts.trees():
+    #     print([site.index for site in t.sites()])
+    #     print(t.draw(format="unicode"))
+
+    # ts = msprime.load("pathological-small.hdf5")
+    # print("inferred num_edges = ", ts.num_edges)
+    # print("inferred num_trees = ", ts.num_trees)
+
+    positions = np.array([site.index for site in ts.sites()])
+    G = ts.genotype_matrix()
+    recombination_rate = np.zeros_like(positions) + 1
+
+    input_root = zarr.group()
+    tsinfer.InputFile.build(
+        input_root, genotypes=G,
+        position=positions,
+        recombination_rate=recombination_rate, sequence_length=ts.num_sites,
+        compress=False)
+    ancestors_root = zarr.group()
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+
+    A = ancestors_root["ancestors/haplotypes"][:]
+
+    print(A.astype(np.int8))
+    A[A == 255] = 0
+    ancestors_root["ancestors/haplotypes"][:] = A
+    ancestors_root["ancestors/start"][:] = 0
+    ancestors_root["ancestors/end"][:] = ts.num_sites
+
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method)
+        # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
+        # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+    assert ancestors_ts.sequence_length == ts.num_sites
+
+    print("ANCESTORS")
+    for t in ancestors_ts.trees():
+        print(t.interval)
+        print(t.draw(format="unicode"))
+        print("=" * 10)
+
+
+    A = ancestors_root["ancestors/haplotypes"][:]
+    # print(A.astype(np.int8))
+    A[A == 255] = 0
+    for v in ancestors_ts.variants():
+        assert np.array_equal(v.genotypes, A[:, v.index])
+
+    inferred_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method,
+        simplify=False) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+
+    print("unsimplified num_edges = ", inferred_ts.num_edges)
+
+    flags = inferred_ts.tables.nodes.flags
+    samples = np.where(flags == 1)[0][-ts.num_samples:]
+    inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
+
+    assert inferred_ts.num_samples == ts.num_samples
+    assert inferred_ts.num_sites == ts.num_sites
+    # assert inferred_ts.sequence_length == ts.sequence_length
+    assert np.array_equal(G, inferred_ts.genotype_matrix())
+    print("simplified num_edges = ", inferred_ts.num_edges)
+    print("inferred num_trees = ", inferred_ts.num_trees)
+
+    # for t in inferred_ts.trees():
+    #     print([site.index for site in t.sites()])
+    #     print(t.draw(format="unicode"))
+
+
+
+
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         genotype_quality=0, method="C", log_level="WARNING",
@@ -642,6 +743,8 @@ if __name__ == "__main__":
 
     # lookat(sys.argv[1])
 
+    debug_pathological()
+
     # build_1kg_sim()
 
     # compress(sys.argv[1], sys.argv[2])
@@ -684,7 +787,6 @@ if __name__ == "__main__":
         # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
         tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
                 method="C", path_compression=True)
-
     # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):
