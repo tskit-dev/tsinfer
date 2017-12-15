@@ -610,7 +610,7 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
     }
 
     /* site */
-    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_INT32, NPY_ARRAY_IN_ARRAY);
     if (site_array == NULL) {
         goto out;
     }
@@ -622,7 +622,7 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
     num_mutations = shape[0];
 
     /* derived_state */
-    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
+    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_UINT8,
             NPY_ARRAY_IN_ARRAY);
     if (derived_state_array == NULL) {
         goto out;
@@ -1339,12 +1339,15 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     dims[0] = num_edges;
-    left = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_left);
-    right = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_UINT32, ret_right);
-    parent = (PyArrayObject *) PyArray_SimpleNewFromData(1, dims, NPY_INT32, ret_parent);
+    left = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_UINT32);
+    right = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_UINT32);
+    parent = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_INT32);
     if (left == NULL || right == NULL || parent == NULL) {
         goto out;
     }
+    memcpy(PyArray_DATA(left), ret_left, num_edges * sizeof(*ret_left));
+    memcpy(PyArray_DATA(right), ret_right, num_edges * sizeof(*ret_right));
+    memcpy(PyArray_DATA(parent), ret_parent, num_edges * sizeof(*ret_parent));
     ret = Py_BuildValue("(OOO)", left, right, parent);
     if (ret == NULL) {
         goto out;

@@ -9,6 +9,7 @@ import time
 import datetime
 import pickle
 import logging
+import threading
 
 import numpy as np
 import tqdm
@@ -249,7 +250,7 @@ class Matcher(object):
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
         self.match = [np.zeros(self.num_sites, np.uint8) for _ in range(num_threads)]
-        self.results = [ResultBuffer() for _ in range(num_threads)]
+        self.results = ResultBuffer()
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
         logger.info("Setting match error probability to {}".format(error_probability))
@@ -274,10 +275,9 @@ class Matcher(object):
         for the specified thread_index.
         """
         matcher = self.matcher[thread_index]
-        results = self.results[thread_index]
         match = self.match[thread_index]
         left, right, parent = matcher.find_path(haplotype, start, end, match)
-        results.add_edges(left, right, parent, child_id)
+        self.results.set_path(child_id, left, right, parent)
         self.progress_monitor.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
@@ -445,7 +445,7 @@ class AncestorMatcher(Matcher):
         focal_sites = self.focal_sites[ancestor_id]
         start = self.start[ancestor_id]
         end = self.end[ancestor_id]
-        self.results[thread_index].add_mutations(focal_sites, ancestor_id)
+        self.results.set_mutations(ancestor_id, focal_sites)
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
@@ -468,27 +468,19 @@ class AncestorMatcher(Matcher):
         start, end = map(int, self.epoch_slices[epoch_index])
         num_ancestors_in_epoch = end - start
         current_time = self.epoch[start]
-        epoch_results = ResultBuffer.combine(self.results)
         nodes_before = self.tree_sequence_builder.num_nodes
 
-#         self.tree_sequence_builder.update(
-#             num_ancestors_in_epoch, current_time,
-#             epoch_results.left, epoch_results.right, epoch_results.parent,
-#             epoch_results.child, epoch_results.site, epoch_results.node,
-#             epoch_results.derived_state)
-
         for child_id in range(start, end):
-            index = np.where(epoch_results.child == child_id)
             # TODO we should be adding the ancestor ID here as well as metadata.
+            left, right, parent = self.results.get_path(child_id)
+            # print("path", child_id)
+            # print(left)
+            # print(right)
+            # print(parent)
             self.tree_sequence_builder.add_path(
-                child_id, epoch_results.left[index],
-                epoch_results.right[index],
-                epoch_results.parent[index],
-                compress=self.path_compression)
-            index = np.where(epoch_results.node == child_id)
-            self.tree_sequence_builder.add_mutations(
-                child_id, epoch_results.site[index], epoch_results.derived_state[index])
-        # self.tree_sequence_builder.print_state()
+                child_id, left, right, parent, compress=self.path_compression)
+            site, derived_state = self.results.get_mutations(child_id)
+            self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
         extra_nodes = (
             self.tree_sequence_builder.num_nodes - nodes_before - num_ancestors_in_epoch)
@@ -502,8 +494,7 @@ class AncestorMatcher(Matcher):
                 humanize.naturalsize(mean_memory, binary=True)))
         self.mean_traceback_size[:] = 0
         self.num_matches[:] = 0
-        for results in self.results:
-            results.clear()
+        self.results.clear()
         # Output the current state if appropriate
         delta = datetime.timedelta(seconds=time.time() - self.last_output_time)
         if delta.total_seconds() >= self.output_interval * 60:
@@ -604,7 +595,7 @@ class SampleMatcher(Matcher):
         match = self.match[thread_index]
         diffs = np.where(haplotype != match)[0]
         derived_state = haplotype[diffs]
-        self.results[thread_index].add_mutations(diffs, sample_id, derived_state)
+        self.results.set_mutations(sample_id, diffs.astype(np.int32), derived_state)
 
     def __match_samples_single_threaded(self):
         j = 0
@@ -655,23 +646,15 @@ class SampleMatcher(Matcher):
             self.__match_samples_single_threaded()
         else:
             self.__match_samples_multi_threaded()
-        results = ResultBuffer.combine(self.results)
-
         # self.tree_sequence_builder.print_state()
 
         for j in range(self.num_samples):
-            sample_id = self.sample_ids[j]
-            index = np.where(results.child == sample_id)
+            sample_id = int(self.sample_ids[j])
+            left, right, parent = self.results.get_path(sample_id)
             self.tree_sequence_builder.add_path(
-                int(sample_id), results.left[index], results.right[index],
-                results.parent[index], compress=self.path_compression)
-            index = np.where(results.node == sample_id)
-            self.tree_sequence_builder.add_mutations(
-                int(sample_id), results.site[index], results.derived_state[index])
-        # self.tree_sequence_builder.update(
-        #     self.num_samples, 0,
-        #     results.left, results.right, results.parent, results.child,
-        #     results.site, results.node, results.derived_state)
+                sample_id, left, right, parent, compress=self.path_compression)
+            site, derived_state = self.results.get_mutations(sample_id)
+            self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
         logger.info("Finished sample matching")
 
     def finalise(self, simplify=True):
@@ -692,151 +675,31 @@ class ResultBuffer(object):
     """
     A wrapper for numpy arrays representing the results of a copying operations.
     """
-    def __init__(self, chunk_size=1024):
-        if chunk_size < 1:
-            raise ValueError("chunk size must be > 0")
-        self.chunk_size = chunk_size
-        # edges
-        self.__left = np.empty(chunk_size, dtype=np.uint32)
-        self.__right = np.empty(chunk_size, dtype=np.uint32)
-        self.__parent = np.empty(chunk_size, dtype=np.int32)
-        self.__child = np.empty(chunk_size, dtype=np.int32)
-        self.num_edges = 0
-        self.max_edges = chunk_size
-        # mutations
-        self.__site = np.empty(chunk_size, dtype=np.uint32)
-        self.__node = np.empty(chunk_size, dtype=np.int32)
-        self.__derived_state = np.empty(chunk_size, dtype=np.int8)
-        self.num_mutations = 0
-        self.max_mutations = chunk_size
-
-    @property
-    def left(self):
-        return self.__left[:self.num_edges]
-
-    @property
-    def right(self):
-        return self.__right[:self.num_edges]
-
-    @property
-    def parent(self):
-        return self.__parent[:self.num_edges]
-
-    @property
-    def child(self):
-        return self.__child[:self.num_edges]
-
-    @property
-    def site(self):
-        return self.__site[:self.num_mutations]
-
-    @property
-    def node(self):
-        return self.__node[:self.num_mutations]
-
-    @property
-    def derived_state(self):
-        return self.__derived_state[:self.num_mutations]
+    def __init__(self):
+        self.paths = {}
+        self.mutations = {}
+        self.lock = threading.Lock()
 
     def clear(self):
         """
         Clears this result buffer.
         """
-        self.num_edges = 0
-        self.num_mutations = 0
+        self.paths.clear()
+        self.mutations.clear()
 
-    def print_state(self):
-        print("Edges = ")
-        print("\tnum_edges = {} max_edges = {}".format(self.num_edges, self.max_edges))
-        print("\tleft\tright\tparent\tchild")
-        for j in range(self.num_edges):
-            print("\t{}\t{}\t{}\t{}".format(
-                self.__left[j], self.__right[j], self.__parent[j], self.__child[j]))
-        print("Mutations = ")
-        print("\tnum_mutations = {} max_mutations = {}".format(
-            self.num_mutations, self.max_mutations))
-        print("\tleft\tright\tparent\tchild")
-        for j in range(self.num_mutations):
-            print("\t{}\t{}".format(self.__site[j], self.__node[j]))
+    def set_path(self, node_id, left, right, parent):
+        with self.lock:
+            assert node_id not in self.paths
+            self.paths[node_id] = left, right, parent
 
-    def check_edges_size(self, additional):
-        """
-        Ensures that there is enough space for the specified number of additional
-        edges.
-        """
-        if self.num_edges + additional > self.max_edges:
-            new_size = self.max_edges + max(additional, self.chunk_size)
-            self.__left.resize(new_size)
-            self.__right.resize(new_size)
-            self.__parent.resize(new_size)
-            self.__child.resize(new_size)
-            self.max_edges = new_size
-
-    def add_edges(self, left, right, parent, child):
-        """
-        Adds the specified edges from the specified values. Left, right and parent
-        must be numpy arrays of the same size. Child may be either a numpy array of
-        the same size, or a single value.
-        """
-        size = left.shape[0]
-        assert right.shape == (size,)
-        assert parent.shape == (size,)
-        self.check_edges_size(size)
-        self.__left[self.num_edges: self.num_edges + size] = left
-        self.__right[self.num_edges: self.num_edges + size] = right
-        self.__parent[self.num_edges: self.num_edges + size] = parent
-        self.__child[self.num_edges: self.num_edges + size] = child
-        self.num_edges += size
-
-    def check_mutations_size(self, additional):
-        """
-        Ensures that there is enough space for the specified number of additional
-        mutations.
-        """
-        if self.num_mutations + additional > self.max_mutations:
-            new_size = self.max_mutations + max(additional, self.chunk_size)
-            self.__site.resize(new_size)
-            self.__node.resize(new_size)
-            self.__derived_state.resize(new_size)
-            self.max_mutations = new_size
-
-    def add_mutations(self, site, node, derived_state=None):
-        """
-        Adds the specified mutations from the specified values. Site must be a
-        numpy array. Node may be either a numpy array of the same size, or a
-        single value.
-        """
-        size = site.shape[0]
-        self.check_mutations_size(size)
-        self.__site[self.num_mutations: self.num_mutations + size] = site
-        self.__node[self.num_mutations: self.num_mutations + size] = node
-        fill = derived_state
+    def set_mutations(self, node_id, site, derived_state=None):
         if derived_state is None:
-            fill = 1
-        self.__derived_state[self.num_mutations: self.num_mutations + size] = fill
-        self.num_mutations += size
+            derived_state = np.ones(site.shape[0], dtype=np.uint8)
+        with self.lock:
+            self.mutations[node_id] = site, derived_state
 
-    def add_back_mutation(self, site, node):
-        """
-        Adds a single back mutation for the specified site.
-        """
-        self.check_mutations_size(1)
-        self.__site[self.num_mutations] = site
-        self.__node[self.num_mutations] = node
-        self.__derived_state[self.num_mutations] = 0
-        self.num_mutations += 1
+    def get_path(self, node_id):
+        return self.paths[node_id]
 
-    @classmethod
-    def combine(cls, result_buffers):
-        """
-        Combines the specfied list of result buffers into a single new buffer.
-        """
-        # There is an inefficiency here where we are allocating too much
-        # space for mutations. Should add a second parameter for mutations size.
-        size = max(1, sum(result.num_edges for result in result_buffers))
-        combined = cls(size)
-        for result in result_buffers:
-            combined.add_edges(
-                result.left, result.right, result.parent, result.child)
-            combined.add_mutations(result.site, result.node, result.derived_state)
-        return combined
+    def get_mutations(self, node_id):
+        return self.mutations[node_id]
