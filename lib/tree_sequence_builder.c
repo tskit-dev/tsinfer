@@ -43,7 +43,7 @@ cmp_edge_path(const void *a, const void *b) {
     const edge_t *cb = (const edge_t *) b;
     int ret = (ca->left > cb->left) - (ca->left < cb->left);
     if (ret == 0) {
-        ret = (ca->right < cb->right) - (ca->right > cb->right);
+        ret = (ca->right > cb->right) - (ca->right < cb->right);
         if (ret == 0) {
             ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
             if (ret == 0) {
@@ -122,8 +122,10 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             total_edges++;
             assert(edge->child == child);
             if (edge->next != NULL) {
-                /* TODO this can be violated for synethetic nodes */
-                assert(edge->next->left == edge->right);
+                /* contiguity can be violated for synethetic nodes */
+                if (self->node_flags[edge->child] != 0) {
+                    assert(edge->next->left == edge->right);
+                }
             }
         }
     }
@@ -139,6 +141,8 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 {
     size_t j;
     mutation_list_node_t *u;
+    avl_node_t *a;
+    edge_t *edge;
 
     fprintf(out, "Tree sequence builder state\n");
     fprintf(out, "flags = %d\n", (int) self->flags);
@@ -168,6 +172,13 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
             fprintf(out, "\n");
         }
     }
+    fprintf(out, "path index \n");
+    for (a = self->path_index.head; a != NULL; a = a->next) {
+        edge = (edge_t *) a->item;
+        fprintf(out, "%d\t%d\t%d\t%d\n", edge->left, edge->right,
+                edge->parent, edge->child);
+    }
+
     fprintf(out, "block_allocator = \n");
     block_allocator_print_state(&self->block_allocator, out);
     fprintf(out, "avl_node_heap = \n");
@@ -267,11 +278,11 @@ out:
     return ret;
 }
 
-/* static inline void */
-/* tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *node) */
-/* { */
-/*     object_heap_free_object(&self->avl_node_heap, node); */
-/* } */
+static inline void
+tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *node)
+{
+    object_heap_free_object(&self->avl_node_heap, node);
+}
 
 static inline edge_t * WARN_UNUSED
 tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
@@ -287,6 +298,7 @@ tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
     }
     assert(parent < (node_id_t) self->num_nodes);
     assert(child < (node_id_t) self->num_nodes);
+    assert(self->time[parent] > self->time[child]);
     ret = (edge_t *) object_heap_alloc_object(&self->edge_heap);
     ret->left = left;
     ret->right = right;
@@ -298,12 +310,11 @@ out:
     return ret;
 }
 
-/* static inline void */
-/* tree_sequence_builder_free_edge(tree_sequence_builder_t *self, edge_t *edge) */
-/* { */
-/*     object_heap_free_object(&self->edge_heap, edge); */
-/* } */
-
+static inline void
+tree_sequence_builder_free_edge(tree_sequence_builder_t *self, edge_t *edge)
+{
+    object_heap_free_object(&self->edge_heap, edge);
+}
 
 static int WARN_UNUSED
 tree_sequence_builder_expand_nodes(tree_sequence_builder_t *self)
@@ -843,6 +854,29 @@ out:
 #endif
 
 static int WARN_UNUSED
+tree_sequence_builder_unindex_edge(tree_sequence_builder_t *self, edge_t *edge)
+{
+    int ret = 0;
+    avl_node_t *avl_node;
+
+    avl_node = avl_search(&self->left_index, edge);
+    assert(avl_node != NULL);
+    avl_unlink_node(&self->left_index, avl_node);
+    tree_sequence_builder_free_avl_node(self, avl_node);
+
+    avl_node = avl_search(&self->right_index, edge);
+    assert(avl_node != NULL);
+    avl_unlink_node(&self->right_index, avl_node);
+    tree_sequence_builder_free_avl_node(self, avl_node);
+
+    avl_node = avl_search(&self->path_index, edge);
+    assert(avl_node != NULL);
+    avl_unlink_node(&self->path_index, avl_node);
+    tree_sequence_builder_free_avl_node(self, avl_node);
+    return ret;
+}
+
+static int WARN_UNUSED
 tree_sequence_builder_index_edge(tree_sequence_builder_t *self, edge_t *edge)
 {
     int ret = 0;
@@ -876,6 +910,22 @@ out:
 }
 
 static int WARN_UNUSED
+tree_sequence_builder_unindex_edges(tree_sequence_builder_t *self, node_id_t node)
+{
+    int ret = 0;
+    edge_t *edge;
+
+    for (edge = self->path[node]; edge != NULL; edge = edge->next) {
+        ret = tree_sequence_builder_unindex_edge(self, edge);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+out:
+    return ret;
+}
+
+static int WARN_UNUSED
 tree_sequence_builder_index_edges(tree_sequence_builder_t *self, node_id_t node)
 {
     int ret = 0;
@@ -891,12 +941,253 @@ out:
     return ret;
 }
 
+/* Looks up the path index to find a matching edge, and returns it.
+ */
+static edge_t *
+tree_sequence_builder_find_match(tree_sequence_builder_t *self, edge_t *query)
+{
+    edge_t *ret = NULL;
+    edge_t search, *found;
+    avl_node_t *avl_node;
+
+    search.left = query->left;
+    search.right = query->right;
+    search.parent = query->parent;
+    search.child = 0;
+
+    avl_search_closest(&self->path_index, &search, &avl_node);
+    if (avl_node != NULL) {
+        found = (edge_t *) avl_node->item;
+        if (found->left == query->left && found->right == query->right
+                && found->parent == query->parent) {
+            ret = found;
+        } else {
+            /* Check the adjacent nodes. */
+            if (avl_node->prev != NULL) {
+                found = (edge_t *) avl_node->prev->item;
+                if (found->left == query->left && found->right == query->right
+                        && found->parent == query->parent) {
+                    ret = found;
+                }
+            }
+            if (ret == NULL && avl_node->next != NULL) {
+                found = (edge_t *) avl_node->next->item;
+                if (found->left == query->left && found->right == query->right
+                        && found->parent == query->parent) {
+                    ret = found;
+                }
+            }
+        }
+    }
+    return ret;
+}
+
+typedef struct {
+    edge_t *source;
+    edge_t *dest;
+} edge_map_t;
+
+typedef struct {
+    node_id_t node;
+    uint32_t count;
+} node_counter_t;
+
+
+/* Remap the edges in the set of matches to point to the already existing
+ * synthethic node. */
+static int
+tree_sequence_builder_remap_synthetic(tree_sequence_builder_t *self,
+        node_id_t mapped_child, int num_mapped, edge_map_t *mapped)
+{
+    int ret = 0;
+    int j;
+
+    for (j = 0; j < num_mapped; j++) {
+        if (mapped[j].dest->child == mapped_child) {
+            mapped[j].source->parent = mapped_child;
+        }
+    }
+    return ret;
+}
+
+static void
+tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node)
+{
+    edge_t *x, *prev, *next;
+
+    prev = self->path[node];
+    assert(prev != NULL);
+    x = prev->next;
+    while (x != NULL) {
+        next = x->next;
+        if (prev->right == x->left && prev->child == x->child
+                && prev->parent == x->parent) {
+            prev->right = x->right;
+            prev->next = next;
+            tree_sequence_builder_free_edge(self, x);
+        } else {
+            prev = x;
+        }
+        x = next;
+    }
+}
+
+/* Create a new synthetic ancestor which consists of the shared path
+ * segments of existing ancestors. */
+static int
+tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
+        node_id_t mapped_child, int num_mapped, edge_map_t *mapped)
+{
+    int ret = 0;
+    node_id_t synthetic_node;
+    edge_t *edge;
+    edge_t *head = NULL;
+    edge_t *prev = NULL;
+    double min_parent_time;
+    int j;
+
+    ret = tree_sequence_builder_unindex_edges(self, mapped_child);
+    if (ret != 0) {
+        goto out;
+    }
+
+    min_parent_time = self->time[0] + 1;
+    for (j = 0; j < num_mapped; j++) {
+        if (mapped[j].dest->child == mapped_child) {
+            min_parent_time = TSI_MIN(
+                min_parent_time, self->time[mapped[j].source->parent]);
+        }
+    }
+    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.125, false);
+    if (ret < 0) {
+        goto out;
+    }
+    synthetic_node = ret;
+
+    for (j = 0; j < num_mapped; j++) {
+        if (mapped[j].dest->child == mapped_child) {
+            edge = tree_sequence_builder_alloc_edge(self,
+                    mapped[j].source->left,
+                    mapped[j].source->right,
+                    mapped[j].source->parent,
+                    synthetic_node, NULL);
+            if (edge == NULL) {
+                ret = TSI_ERR_NO_MEMORY;
+                goto out;
+            }
+            if (head == NULL) {
+                head = edge;
+            } else {
+                prev->next = edge;
+            }
+            prev = edge;
+            mapped[j].source->parent = synthetic_node;
+            mapped[j].dest->parent = synthetic_node;
+        }
+    }
+    self->path[synthetic_node] = head;
+    tree_sequence_builder_squash_edges(self, synthetic_node);
+    tree_sequence_builder_squash_edges(self, mapped_child);
+
+    ret = tree_sequence_builder_index_edges(self, synthetic_node);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = tree_sequence_builder_index_edges(self, mapped_child);
+    if (ret != 0) {
+        goto out;
+    }
+out:
+    return ret;
+}
+
+static int
+tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t child)
+{
+    int ret = 0;
+    edge_t *c_edge, *match_edge;
+    edge_map_t *mapped = NULL;
+    node_counter_t *child_count = NULL;
+    size_t path_length = 0;
+    int num_mapped = 0;
+    int num_mapped_children = 0;
+    int j, k;
+    node_id_t mapped_child;
+
+    for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
+        path_length++;
+    }
+    mapped = malloc(path_length * sizeof(*mapped));
+    child_count = calloc(path_length, sizeof(*child_count));
+    if (mapped == NULL || child_count == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    /* printf("Compressing path:%d: ", child); */
+    /* print_edge_path(self->path[child], stdout); */
+
+    for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
+        /* Can we find a match for this edge? */
+        match_edge = tree_sequence_builder_find_match(self, c_edge);
+        if (match_edge != NULL) {
+            mapped[num_mapped].source = c_edge;
+            mapped[num_mapped].dest = match_edge;
+            num_mapped++;
+        }
+    }
+    for (j = 0; j < num_mapped; j++) {
+        mapped_child = mapped[j].dest->child;
+        /* Increment the counter for this child. */
+        for (k = 0; k < num_mapped_children; k++) {
+            if (child_count[k].node == mapped_child) {
+                break;
+            }
+        }
+        if (k == num_mapped_children) {
+            num_mapped_children++;
+        }
+        child_count[k].node = mapped_child;
+        child_count[k].count++;
+
+        /* printf("mapped (%d, %d, %d, %d) to (%d, %d, %d, %d)\n", */
+        /*         mapped[j].source->left, */
+        /*         mapped[j].source->right, */
+        /*         mapped[j].source->parent, */
+        /*         mapped[j].source->child, */
+        /*         mapped[j].dest->left, */
+        /*         mapped[j].dest->right, */
+        /*         mapped[j].dest->parent, */
+        /*         mapped[j].dest->child); */
+    }
+    /* printf("num_mapped_children = %d\n", num_mapped_children); */
+    for (k = 0; k < num_mapped_children; k++) {
+        /* printf("%d -> %d\n", child_count[k].node, child_count[k].count); */
+        if (child_count[k].count > 1) {
+            mapped_child = child_count[k].node;
+            if (self->node_flags[mapped_child] == 0) {
+                ret = tree_sequence_builder_remap_synthetic(self, mapped_child,
+                        num_mapped, mapped);
+            } else {
+                ret = tree_sequence_builder_make_synthetic_node(self, mapped_child,
+                        num_mapped, mapped);
+            }
+            if (ret != 0) {
+                goto out;
+            }
+        }
+    }
+    tree_sequence_builder_squash_edges(self, child);
+out:
+    tsi_safe_free(mapped);
+    tsi_safe_free(child_count);
+    return ret;
+}
+
 int
 tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
         node_id_t *parent, int flags)
 {
-
     int ret = 0;
     edge_t *head = NULL;
     edge_t *prev = NULL;
@@ -923,8 +1214,13 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         }
         prev = edge;
     }
-
     self->path[child] = head;
+    if (flags & TSI_COMPRESS_PATH) {
+        ret = tree_sequence_builder_compress_path(self, child);
+        if (ret != 0) {
+            goto out;
+        }
+    }
     ret = tree_sequence_builder_index_edges(self, child);
 
     /* tree_sequence_builder_check_state(self); */
@@ -949,51 +1245,6 @@ tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
 out:
     return ret;
 }
-
-
-/* int */
-/* tree_sequence_builder_update(tree_sequence_builder_t *self, */
-/*         size_t num_nodes, double time, */
-/*         size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent, */
-/*         node_id_t *child, size_t num_mutations, site_id_t *site, node_id_t *node, */
-/*         allele_t *derived_state) */
-/* { */
-/*     int ret = 0; */
-/*     size_t j; */
-
-/*     for (j = 0; j < num_nodes; j++) { */
-/*         ret = tree_sequence_builder_add_node(self, time, true); */
-/*         if (ret < 0) { */
-/*             goto out; */
-/*         } */
-/*     } */
-/*     for (j = 0; j < num_edges; j++) { */
-/*         /1* printf("Insert edge left=%d, right=%d, parent=%d child=%d\n", *1/ */
-/*         /1*         left[j], right[j], parent[j], child[j]); *1/ */
-/*         ret = tree_sequence_builder_add_edge(self, left[j], right[j], parent[j], child[j]); */
-/*         if (ret != 0) { */
-/*             goto out; */
-/*         } */
-/*     } */
-/*     for (j = 0; j < num_mutations; j++) { */
-/*         ret = tree_sequence_builder_add_mutation(self, site[j], node[j], derived_state[j]); */
-/*         if (ret != 0) { */
-/*             goto out; */
-/*         } */
-/*     } */
-/*     /1* if (self->flags & TSI_RESOLVE_SHARED_RECOMBS) { *1/ */
-/*     /1*     ret = tree_sequence_builder_resolve_shared_recombs(self); *1/ */
-/*     /1*     if (ret != 0) { *1/ */
-/*     /1*         goto out; *1/ */
-/*     /1*     } *1/ */
-/*     /1* } *1/ */
-/*     /1* ret = tree_sequence_builder_index_edges(self); *1/ */
-/*     if (ret != 0) { */
-/*         goto out; */
-/*     } */
-/* out: */
-/*     return ret; */
-/* } */
 
 int
 tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_nodes,
