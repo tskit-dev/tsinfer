@@ -225,9 +225,9 @@ output_ts(tree_sequence_builder_t *ts_builder)
 {
     int ret = 0;
     size_t j;
-    size_t num_nodes = ts_builder->num_nodes;
-    size_t num_edges = ts_builder->num_edges;
-    size_t num_mutations = ts_builder->num_mutations;
+    size_t num_nodes = tree_sequence_builder_get_num_nodes(ts_builder);
+    size_t num_edges = tree_sequence_builder_get_num_edges(ts_builder);
+    size_t num_mutations = tree_sequence_builder_get_num_mutations(ts_builder);
     double *time = malloc(num_nodes * sizeof(double));
     uint32_t *flags = malloc(num_nodes * sizeof(uint32_t));
     site_id_t *left = malloc(num_edges * sizeof(site_id_t));
@@ -379,9 +379,16 @@ run_generate(const char *input_file, int verbose)
     }
     /* Add the ancestor nodes */
     for (frequency = num_samples; frequency > 0; frequency--) {
-        ret = tree_sequence_builder_add_node(&ts_builder, frequency, true);
-        if (ret < 0) {
-            fatal_error("add node");
+        if (frequency == num_samples) {
+            num_ancestors = 1;
+        } else {
+            num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
+        }
+        for (j = 0; j < num_ancestors; j++) {
+            ret = tree_sequence_builder_add_node(&ts_builder, frequency, true);
+            if (ret < 0) {
+                fatal_error("add node");
+            }
         }
     }
     tree_sequence_builder_print_state(&ts_builder, stdout);
@@ -464,6 +471,7 @@ run_generate(const char *input_file, int verbose)
             j++;
             child++;
         }
+
         edge_offset = 0;
         mutation_offset = 0;
         for (j = 0; j < num_ancestors; j++) {
@@ -482,13 +490,6 @@ run_generate(const char *input_file, int verbose)
             }
             mutation_offset += num_mutations_buffer[j];
         }
-        /* ret = tree_sequence_builder_update(&ts_builder, num_ancestors, frequency - 1, */
-        /*         total_edges, left_buffer, right_buffer, parent_buffer, child_buffer, */
-        /*         total_mutations, site_buffer, node_buffer, derived_state_buffer); */
-        /* if (ret != 0) { */
-        /*     fatal_error("builder update"); */
-        /* } */
-        /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
 
     total_edges = 0;
@@ -514,6 +515,7 @@ run_generate(const char *input_file, int verbose)
             }
             printf("\n");
         }
+        num_mutations_buffer[j] = 0;
         for (l = 0; l < (site_id_t) num_sites; l++) {
             if (sample[l] != match[l]) {
                 assert(total_mutations < max_mutations);
@@ -521,6 +523,7 @@ run_generate(const char *input_file, int verbose)
                 site_buffer[total_mutations] = l;
                 derived_state_buffer[total_mutations] = sample[l];
                 total_mutations++;
+                num_mutations_buffer[j]++;
             }
         }
 
@@ -530,22 +533,46 @@ run_generate(const char *input_file, int verbose)
         memcpy(left_buffer + total_edges, left_output, num_edges * sizeof(site_id_t));
         memcpy(right_buffer + total_edges, right_output, num_edges * sizeof(site_id_t));
         memcpy(parent_buffer + total_edges, parent_output, num_edges * sizeof(site_id_t));
-        /* Update the child buffer */
-        for (l = 0; l < (int) num_edges; l++) {
-            child_buffer[total_edges + l] = child;
-        }
+        child_buffer[j] = child;
+        num_edges_buffer[j] = num_edges;
         total_edges += num_edges;
 
         /* printf("COPIED SAMPLE %d->%d\n", (int) j, (int) sample_id); */
         /* tree_sequence_builder_print_state(&ts_builder, stdout); */
     }
 
-    ret = tree_sequence_builder_update(&ts_builder, num_samples, 0,
-            total_edges, left_buffer, right_buffer, parent_buffer, child_buffer,
-            total_mutations, site_buffer, node_buffer, derived_state_buffer);
-    if (ret != 0) {
-        fatal_error("builder update");
+
+    for (j = 0; j < num_samples; j++) {
+        ret = tree_sequence_builder_add_node(&ts_builder, 0, true);
+        if (ret < 0) {
+            fatal_error("add node");
+        }
     }
+
+    edge_offset = 0;
+    mutation_offset = 0;
+    for (j = 0; j < num_samples; j++) {
+        ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
+                num_edges_buffer[j], left_buffer + edge_offset,
+                right_buffer + edge_offset, parent_buffer + edge_offset, 0);
+        if (ret != 0) {
+            fatal_error("add_path");
+        }
+        edge_offset += num_edges_buffer[j];
+        ret = tree_sequence_builder_add_mutations(&ts_builder, child_buffer[j],
+                num_mutations_buffer[j], site_buffer + mutation_offset,
+                derived_state_buffer + mutation_offset);
+        if (ret != 0) {
+            fatal_error("add_path");
+        }
+        mutation_offset += num_mutations_buffer[j];
+    }
+/*     ret = tree_sequence_builder_update(&ts_builder, num_samples, 0, */
+/*             total_edges, left_buffer, right_buffer, parent_buffer, child_buffer, */
+/*             total_mutations, site_buffer, node_buffer, derived_state_buffer); */
+/*     if (ret != 0) { */
+/*         fatal_error("builder update"); */
+/*     } */
 
     if (1) {
         output_ts(&ts_builder);

@@ -301,9 +301,17 @@ class Matcher(object):
         nodes = tables.nodes
         self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
+        # Need to sort by child ID here and left so that we can efficiently
+        # insert the child paths.
+        # TODO remove this step when we use a native zarr file for storing the
+        # ancestor tree sequence. We output the edges in this order and we're
+        # just sorting/resorting the edges here.
+        index = np.lexsort((edges.left, edges.child))
         self.tree_sequence_builder.restore_edges(
-            edges.left.astype(np.int32), edges.right.astype(np.int32),
-            edges.parent, edges.child)
+            edges.left.astype(np.int32)[index],
+            edges.right.astype(np.int32)[index],
+            edges.parent[index],
+            edges.child[index])
         mutations = tables.mutations
         self.tree_sequence_builder.restore_mutations(
             mutations.site, mutations.node, mutations.derived_state - ord('0'),
@@ -463,14 +471,15 @@ class AncestorMatcher(Matcher):
 #             epoch_results.derived_state)
 
         for child_id in range(start, end):
-            index = np.where(epoch_results.child == child_id)[0][::-1]
+            index = np.where(epoch_results.child == child_id)
             # TODO we should be adding the ancestor ID here as well as metadata.
             self.tree_sequence_builder.add_path(
                 child_id, epoch_results.left[index],
                 epoch_results.right[index],
                 epoch_results.parent[index])
-        self.tree_sequence_builder.add_mutations(
-            epoch_results.site, epoch_results.node, epoch_results.derived_state)
+            index = np.where(epoch_results.node == child_id)
+            self.tree_sequence_builder.add_mutations(
+                child_id, epoch_results.site[index], epoch_results.derived_state[index])
         # self.tree_sequence_builder.print_state()
 
         extra_nodes = (
@@ -519,8 +528,8 @@ class AncestorMatcher(Matcher):
                 work = match_queue.get()
                 if work is None:
                     break
-                ancestor_id, node_id, a = work
-                self.__ancestor_find_path(ancestor_id, node_id, a, thread_index)
+                ancestor_id, a = work
+                self.__ancestor_find_path(ancestor_id, a, thread_index)
                 match_queue.task_done()
             match_queue.task_done()
 
@@ -534,11 +543,9 @@ class AncestorMatcher(Matcher):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
-            node_id = self.tree_sequence_builder.num_nodes
             for ancestor_id in range(start, end):
                 a = next(self.haplotypes)
-                match_queue.put((ancestor_id, node_id, a))
-                node_id += 1
+                match_queue.put((ancestor_id, a))
             # Block until all matches have completed.
             match_queue.join()
             self.__complete_epoch(j)
@@ -646,12 +653,13 @@ class SampleMatcher(Matcher):
 
         for j in range(self.num_samples):
             sample_id = self.sample_ids[j]
-            index = np.where(results.child == sample_id)[0][::-1]
+            index = np.where(results.child == sample_id)
             self.tree_sequence_builder.add_path(
-                sample_id, results.left[index], results.right[index],
+                int(sample_id), results.left[index], results.right[index],
                 results.parent[index])
-        self.tree_sequence_builder.add_mutations(
-            results.site, results.node, results.derived_state)
+            index = np.where(results.node == sample_id)
+            self.tree_sequence_builder.add_mutations(
+                int(sample_id), results.site[index], results.derived_state[index])
         # self.tree_sequence_builder.update(
         #     self.num_samples, 0,
         #     results.left, results.right, results.parent, results.child,

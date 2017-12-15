@@ -13,5 +13,7 @@
 
 #define TSI_ERR_GENERIC                                             -1
 #define TSI_ERR_NO_MEMORY                                           -2
+#define TSI_ERR_NONCONTIGUOUS_EDGES                                 -3
+#define TSI_ERR_UNSORTED_EDGES                                      -4
 
 #endif /*__ERR_H__*/

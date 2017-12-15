@@ -460,6 +460,202 @@ out:
 }
 
 static PyObject *
+TreeSequenceBuilder_add_node(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+
+    static char *kwlist[] = {"time", NULL};
+    double time;
+    int is_sample = true;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "d|i", kwlist, &time,
+                &is_sample)) {
+        goto out;
+    }
+
+    err = tree_sequence_builder_add_node(self->tree_sequence_builder,
+            time, is_sample);
+    if (err < 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("i", err);
+out:
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    int flags = 0;
+    PyObject *left = NULL;
+    PyArrayObject *left_array = NULL;
+    PyObject *right = NULL;
+    PyArrayObject *right_array = NULL;
+    PyObject *parent = NULL;
+    PyArrayObject *parent_array = NULL;
+    int child;
+    size_t num_edges;
+    npy_intp *shape;
+
+    static char *kwlist[] = {"child", "left", "right", "parent", NULL};
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOO", kwlist,
+            &child, &left, &right, &parent)) {
+        goto out;
+    }
+
+    /* left */
+    left_array = (PyArrayObject *) PyArray_FROM_OTF(left, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    if (left_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(left_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(left_array);
+    num_edges = shape[0];
+
+    /* right */
+    right_array = (PyArrayObject *) PyArray_FROM_OTF(right, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    if (right_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(right_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(right_array);
+    if (shape[0] != num_edges) {
+        PyErr_SetString(PyExc_ValueError, "right wrong size");
+        goto out;
+    }
+
+    /* parent */
+    parent_array = (PyArrayObject *) PyArray_FROM_OTF(parent, NPY_INT32, NPY_ARRAY_IN_ARRAY);
+    if (parent_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(parent_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(parent_array);
+    if (shape[0] != num_edges) {
+        PyErr_SetString(PyExc_ValueError, "parent wrong size");
+        goto out;
+    }
+
+    /* WARNING!! This isn't fully safe as we're using pointers to data that can
+     * be modified in Python. Must make sure that these arrays are not modified
+     * by other threads. */
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_add_path(self->tree_sequence_builder,
+            child, num_edges,
+            (site_id_t *) PyArray_DATA(left_array),
+            (site_id_t *) PyArray_DATA(right_array),
+            (node_id_t *) PyArray_DATA(parent_array),
+            flags);
+    Py_END_ALLOW_THREADS
+
+    if (err < 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    Py_XDECREF(left_array);
+    Py_XDECREF(right_array);
+    Py_XDECREF(parent_array);
+    return ret;
+}
+
+static PyObject *
+TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
+{
+    int err;
+    PyObject *ret = NULL;
+    PyObject *site = NULL;
+    PyArrayObject *site_array = NULL;
+    PyObject *derived_state = NULL;
+    PyArrayObject *derived_state_array = NULL;
+    int node;
+    size_t num_mutations;
+    npy_intp *shape;
+
+    static char *kwlist[] = {"node", "site", "derived_state", NULL};
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOO", kwlist,
+            &node, &site, &derived_state)) {
+        goto out;
+    }
+
+    /* site */
+    site_array = (PyArrayObject *) PyArray_FROM_OTF(site, NPY_UINT32, NPY_ARRAY_IN_ARRAY);
+    if (site_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(site_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(site_array);
+    num_mutations = shape[0];
+
+    /* derived_state */
+    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
+            NPY_ARRAY_IN_ARRAY);
+    if (derived_state_array == NULL) {
+        goto out;
+    }
+    if (PyArray_NDIM(derived_state_array) != 1) {
+        PyErr_SetString(PyExc_ValueError, "Dim != 1");
+        goto out;
+    }
+    shape = PyArray_DIMS(derived_state_array);
+    if (shape[0] != num_mutations) {
+        PyErr_SetString(PyExc_ValueError, "derived_state wrong size");
+        goto out;
+    }
+
+    /* WARNING!! This isn't fully safe as we're using pointers to data that can
+     * be modified in Python. Must make sure that these arrays are not modified
+     * by other threads. */
+    Py_BEGIN_ALLOW_THREADS
+    err = tree_sequence_builder_add_mutations(self->tree_sequence_builder,
+            node, num_mutations,
+            (site_id_t *) PyArray_DATA(site_array),
+            (allele_t *) PyArray_DATA(derived_state_array));
+    Py_END_ALLOW_THREADS
+
+    if (err < 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    Py_XDECREF(site_array);
+    Py_XDECREF(derived_state_array);
+    return ret;
+}
+
+
+
+#if 0
+static PyObject *
 TreeSequenceBuilder_update(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
@@ -625,6 +821,7 @@ out:
     Py_XDECREF(derived_state_array);
     return ret;
 }
+#endif
 
 static PyObject *
 TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyObject *kwds)
@@ -947,7 +1144,7 @@ TreeSequenceBuilder_dump_edges(TreeSequenceBuilder *self)
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    shape = self->tree_sequence_builder->num_edges;
+    shape = tree_sequence_builder_get_num_edges(self->tree_sequence_builder);
     left = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
     right = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
     parent = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
@@ -1039,7 +1236,8 @@ TreeSequenceBuilder_get_num_edges(TreeSequenceBuilder *self, void *closure)
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_edges);
+    ret = Py_BuildValue("k", (unsigned long)
+            tree_sequence_builder_get_num_edges(self->tree_sequence_builder));
 out:
     return ret;
 }
@@ -1052,7 +1250,8 @@ TreeSequenceBuilder_get_num_nodes(TreeSequenceBuilder *self, void *closure)
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_nodes);
+    ret = Py_BuildValue("k", (unsigned long)
+            tree_sequence_builder_get_num_nodes(self->tree_sequence_builder));
 out:
     return ret;
 }
@@ -1078,7 +1277,8 @@ TreeSequenceBuilder_get_num_mutations(TreeSequenceBuilder *self, void *closure)
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long) self->tree_sequence_builder->num_mutations);
+    ret = Py_BuildValue("k", (unsigned long)
+            tree_sequence_builder_get_num_mutations(self->tree_sequence_builder));
 out:
     return ret;
 }
@@ -1100,9 +1300,15 @@ static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
 };
 
 static PyMethodDef TreeSequenceBuilder_methods[] = {
-    {"update", (PyCFunction) TreeSequenceBuilder_update,
+    {"add_node", (PyCFunction) TreeSequenceBuilder_add_node,
         METH_VARARGS|METH_KEYWORDS,
-        "Updates the builder with the specified copy results."},
+        "Adds a new node to the tree sequence builder and returns its ID."},
+    {"add_path", (PyCFunction) TreeSequenceBuilder_add_path,
+        METH_VARARGS|METH_KEYWORDS,
+        "Updates the builder with the specified copy results for a given child."},
+    {"add_mutations", (PyCFunction) TreeSequenceBuilder_add_mutations,
+        METH_VARARGS|METH_KEYWORDS,
+        "Updates the builder with mutations for a given node."},
     {"restore_nodes", (PyCFunction) TreeSequenceBuilder_restore_nodes,
         METH_VARARGS|METH_KEYWORDS,
         "Restores the nodes in this tree sequence builder."},
