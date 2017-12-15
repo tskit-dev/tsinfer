@@ -297,6 +297,7 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
+        before = time.perf_counter()
         tables = ancestors_ts.dump_tables()
         nodes = tables.nodes
         self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)

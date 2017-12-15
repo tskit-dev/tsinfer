@@ -927,7 +927,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     self->path[child] = head;
     ret = tree_sequence_builder_index_edges(self, child);
 
-    tree_sequence_builder_check_state(self);
+    /* tree_sequence_builder_check_state(self); */
     /* tree_sequence_builder_print_state(self, stdout); */
 out:
     return ret;

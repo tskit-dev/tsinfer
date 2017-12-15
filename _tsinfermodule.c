@@ -869,10 +869,12 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
         PyErr_SetString(PyExc_ValueError, "flags array incorrect size");
         goto out;
     }
+    Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_restore_nodes(self->tree_sequence_builder,
             num_nodes,
             (uint32_t *) PyArray_DATA(flags_array),
             (double *) PyArray_DATA(time_array));
+    Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
