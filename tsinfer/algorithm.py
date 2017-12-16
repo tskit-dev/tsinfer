@@ -533,7 +533,7 @@ class AncestorMatcher(object):
         recomb_proba = r / n
         no_recomb_proba = 1 - r + r / n
 
-        # print("update_site", site, state)
+        print("update_site", site, state)
 
         if site not in self.tree_sequence_builder.mutations:
             mutation_node = msprime.NULL_NODE
@@ -546,6 +546,7 @@ class AncestorMatcher(object):
                     u = self.parent[u]
                 self.likelihood[mutation_node] = self.likelihood[u]
                 self.likelihood_nodes.append(mutation_node)
+                print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
@@ -554,7 +555,7 @@ class AncestorMatcher(object):
             distance = self.positions[site] - self.positions[site - 1]
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
-        # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
+        print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
         path_cache = np.zeros(n, dtype=np.int8) - 1
         max_L = -1
         max_L_node = -1
@@ -578,8 +579,8 @@ class AncestorMatcher(object):
             x = self.likelihood[u] * no_recomb_proba * distance
             assert x >= 0
             y = recomb_proba * distance
-            # print("\t", u, x, y)
-            if x > y:
+            print("\t", u, x, y)
+            if x >= y:
                 z = x
                 self.traceback[site][u] = False
             else:
@@ -597,7 +598,9 @@ class AncestorMatcher(object):
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
+        print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
+        print("L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
+
         self.max_likelihood_node[site] = max_L_node
 
         # Reset the path cache
@@ -716,7 +719,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        # print("MATCH: start=", start, "end = ", end)
+        print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
@@ -826,7 +829,7 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        # self.print_state()
+        self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
