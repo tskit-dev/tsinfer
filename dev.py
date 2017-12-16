@@ -121,12 +121,30 @@ def check_infer(
     assert np.array_equal(G, inferred_ts.genotype_matrix())
 
 
+def generate_ancestors(ts):
+    A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8) - 1
+
+    for t in ts.trees():
+        for site in t.sites():
+            for u in t.nodes():
+                A[u, site.index] = 0
+            for mutation in site.mutations:
+                # Every node underneath this node will have the value set
+                # at this site.
+                for u in t.nodes(mutation.node):
+                    A[u, site.index] = 1
+    # This is all nodes, but we only want the non samples. We also reverse
+    # the order to make it forwards time.
+    A = A[ts.num_samples:]
+    return A[::-1]
+
+
 def debug_pathological():
 
     # daiquiri.setup(level="DEBUG")
     method = "P"
+    path_compression = False
     ts = msprime.load("pathological-small.source.hdf5")
-
 
     # Put a mutation on every branch.
     tables = ts.dump_tables()
@@ -139,12 +157,21 @@ def debug_pathological():
         delta = (right - left) / n
         x = left
         for u in tree.nodes():
-            tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=j, node=u, derived_state="1")
-            j += 1
-            x += delta
+            if u != tree.root:
+                tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=j, node=u, derived_state="1")
+                j += 1
+                x += delta
     # print(tables)
     ts = msprime.load_tables(**tables.asdict())
+
+    print("INPUT")
+    for t in ts.trees():
+        sites = [s.index for s in t.sites()]
+        print(sites)
+        print(t.draw(format="unicode"))
+        print("=" * 10)
+
     print("num_sites = ", ts.num_sites)
     print("num_edges = ", ts.num_edges)
     print("num_trees = ", ts.num_trees)
@@ -169,20 +196,29 @@ def debug_pathological():
     ancestors_root = zarr.group()
     tsinfer.build_ancestors(
         input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+    # tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
 
     A = ancestors_root["ancestors/haplotypes"][:]
 
-    print(A.astype(np.int8))
-    A[A == 255] = 0
-    ancestors_root["ancestors/haplotypes"][:] = A
-    ancestors_root["ancestors/start"][:] = 0
-    ancestors_root["ancestors/end"][:] = ts.num_sites
+    # print(A.astype(np.int8))
+    for j, a in enumerate(A):
+        s = "".join(str(x) if x < 255 else "*" for x in a)
+        print(j, "\t", s)
+    print("samples")
+    for j, s in enumerate(ts.haplotypes()):
+        print(A.shape[0] + j, "\t", s)
+    # A[A == 255] = 0
+    # ancestors_root["ancestors/haplotypes"][:] = A
+    # ancestors_root["ancestors/start"][:] = 0
+    # ancestors_root["ancestors/end"][:] = ts.num_sites
 
     ancestors_ts = tsinfer.match_ancestors(
-        input_root, ancestors_root, method=method)
+        input_root, ancestors_root, method=method, path_compression=path_compression)
         # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
         # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
     assert ancestors_ts.sequence_length == ts.num_sites
+
+    print(ancestors_ts.tables.edges)
 
     print("ANCESTORS")
     for t in ancestors_ts.trees():
@@ -198,14 +234,26 @@ def debug_pathological():
         assert np.array_equal(v.genotypes, A[:, v.index])
 
     inferred_ts = tsinfer.match_samples(
-        input_root, ancestors_ts, method=method,
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
         simplify=False) #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
 
     print("unsimplified num_edges = ", inferred_ts.num_edges)
+    print("unsimplified num_trees = ", inferred_ts.num_trees)
+
+    print(inferred_ts.tables.edges)
+
+    print("SAMPLES")
+    for t in inferred_ts.trees():
+        print(t.interval)
+        print(t.draw(format="unicode"))
+        print("=" * 10)
+
 
     flags = inferred_ts.tables.nodes.flags
     samples = np.where(flags == 1)[0][-ts.num_samples:]
     inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
+
+
 
     assert inferred_ts.num_samples == ts.num_samples
     assert inferred_ts.num_sites == ts.num_sites
@@ -778,17 +826,17 @@ if __name__ == "__main__":
     # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
 
-    for seed in range(1, 10000):
-    # for seed in [2]:
-        print(seed)
-        # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
-
-        # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
-                method="C", path_compression=True)
-    # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
-    #         log_level="INFO", progress=True)
-    # for seed in range(1, 1000):
+    # for seed in range(1, 10000):
+    # # for seed in [2]:
     #     print(seed)
-    #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
+    #     # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+    #     # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+
+    #     # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+    #     tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
+    #             method="C", path_compression=True)
+    # # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
+    # #         log_level="INFO", progress=True)
+    # # for seed in range(1, 1000):
+    # #     print(seed)
+    # #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")

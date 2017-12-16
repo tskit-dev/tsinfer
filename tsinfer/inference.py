@@ -89,6 +89,76 @@ def infer(
     return inferred_ts
 
 
+def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
+
+    A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
+    A[:] = UNKNOWN_ALLELE
+    mutation_sites = [[] for _ in range(ts.num_nodes)]
+    for t in ts.trees():
+        for site in t.sites():
+            for u in t.nodes():
+                A[u, site.index] = 0
+            for mutation in site.mutations:
+                mutation_sites[mutation.node].append(site.index)
+                # Every node underneath this node will have the value set
+                # at this site.
+                for u in t.nodes(mutation.node):
+                    A[u, site.index] = 1
+    # This is all nodes, but we only want the non samples. We also reverse
+    # the order to make it forwards time.
+    A = A[ts.num_samples:][::-1]
+    mutation_sites = mutation_sites[ts.num_samples:][::-1]
+    # Now we need to process these a bit, to weed out any ancestors
+    # that have no focal sites and also break up any ancestors that
+    # have regions of -1 in the middle.
+    ancestors = []
+    focal_sites = []
+    start = []
+    end = []
+    m = ts.num_sites
+    for a, sites in zip(A, mutation_sites):
+        if len(sites) > 0:
+            offset = 0
+            while offset < m:
+                s = np.where(a[offset:] != UNKNOWN_ALLELE)[0]
+                if len(s) == 0:
+                    break
+                s = offset + s[0]
+                e = np.where(a[offset + s:] == UNKNOWN_ALLELE)[0]
+                if len(e) == 0:
+                    e = m
+                else:
+                    e = offset + s + e[0]
+                offset = e
+                ancestor = np.empty(m, dtype=np.uint8)
+                ancestor[:] = UNKNOWN_ALLELE
+                ancestor[s:e] = a[s:e]
+                ancestors.append(ancestor)
+                start.append(s)
+                end.append(e)
+                focal_sites.append([site for site in sites if s <= site < e])
+
+    time = len(ancestors)
+    total_num_focal_sites = sum(len(f) for f in focal_sites)
+    num_ancestors = sum(len(f) > 0 for f in focal_sites) + 1
+
+    input_file = formats.InputFile(input_hdf5)
+    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
+    ancestor_file.initialise(num_ancestors, time + 1, total_num_focal_sites)
+
+    for a, s, e, focal in zip(ancestors, start, end, focal_sites):
+        assert np.all(a[:s] == UNKNOWN_ALLELE)
+        assert np.all(a[s:e] != UNKNOWN_ALLELE)
+        assert np.all(a[e:] == UNKNOWN_ALLELE)
+        assert all(s <= site < e for site in focal)
+        ancestor_file.add_ancestor(
+            start=s, end=e, ancestor_time=time,
+            focal_sites=np.array(focal, dtype=np.int32),
+            haplotype=a)
+        time -= 1
+    ancestor_file.finalise()
+
+
 def build_ancestors(
         input_hdf5, ancestor_hdf5, progress=False, method="C", compress=True,
         num_threads=None, chunk_size=None):
