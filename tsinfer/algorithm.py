@@ -49,6 +49,9 @@ class AncestorBuilder(object):
         self.sites = [None for _ in range(self.num_sites)]
         self.frequency_map = [{} for _ in range(self.num_samples + 1)]
 
+        # TMOP - hack to force different ancestors below.
+        self.x = 0
+
     def add_site(self, site_id, frequency, genotypes):
         """
         Adds a new site at the specified ID and allele pattern to the builder.
@@ -57,7 +60,14 @@ class AncestorBuilder(object):
         if frequency > 1:
             pattern_map = self.frequency_map[frequency]
             # Each unique pattern gets added to the list
-            key = genotypes.tobytes()
+            # key = genotypes.tobytes()
+            # FIXME Hacking this to ensure that we make a unique ancestor for
+            # each site.
+            if False:
+                key = self.x
+                self.x += 1
+            else:
+                key = genotypes.tobytes()
             if key not in pattern_map:
                 pattern_map[key] = []
             pattern_map[key].append(site_id)
@@ -84,6 +94,7 @@ class AncestorBuilder(object):
         Returns a list of (frequency, focal_sites) tuples describing the
         ancestors in reverse order of frequency.
         """
+        self.print_state()
         ret = []
         for frequency in reversed(range(self.num_samples + 1)):
             # Need to make the order in which these are returned deterministic,
@@ -284,7 +295,7 @@ class TreeSequenceBuilder(object):
         # Insert the chain into the global state.
         self.path[child] = head
         self.index_edges(child)
-        # self.print_state()
+        self.print_state()
         self.check_state()
 
     def update_node_time(self, node_id):
@@ -721,7 +732,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        # print("MATCH: start=", start, "end = ", end, "h = ", h)
+        print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
@@ -831,7 +842,7 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        # self.print_state()
+        self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -912,9 +923,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        # print("returning edges:")
+        print("returning edges:")
         for j, e in enumerate(output_edges):
-            # print("\t", e.left, e.right, e.parent)
+            print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python
@@ -926,3 +937,130 @@ class AncestorMatcher(object):
             parent[j] = e.parent
 
         return left, right, parent
+
+
+class MatrixAncestorMatcher(object):
+
+    def __init__(self, tree_sequence_builder, error_rate=0):
+        self.tree_sequence_builder = tree_sequence_builder
+        self.error_rate = error_rate
+        self.num_sites = tree_sequence_builder.num_sites
+        self.positions = tree_sequence_builder.positions
+        # Just to given the right API.
+        self.mean_traceback_size = 0
+        self.total_memory = 0
+
+    def ancestor_matrix(self):
+        tsb = self.tree_sequence_builder
+        flags, time = tsb.dump_nodes()
+        nodes = msprime.NodeTable()
+        nodes.set_columns(flags=flags, time=time)
+
+        left, right, parent, child = tsb.dump_edges()
+        position = np.arange(tsb.num_sites)
+        sequence_length = tsb.num_sites
+
+        edges = msprime.EdgeTable()
+        edges.set_columns(left=left, right=right, parent=parent, child=child)
+
+        sites = msprime.SiteTable()
+        sites.set_columns(
+            position=position,
+            ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
+            ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
+        mutations = msprime.MutationTable()
+        site = np.zeros(tsb.num_mutations, dtype=np.int32)
+        node = np.zeros(tsb.num_mutations, dtype=np.int32)
+        parent = np.zeros(tsb.num_mutations, dtype=np.int32)
+        derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
+        site, node, derived_state, parent = tsb.dump_mutations()
+        derived_state += ord('0')
+        mutations.set_columns(
+            site=site, node=node, derived_state=derived_state,
+            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32),
+            parent=parent)
+        msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        ts = msprime.load_tables(
+            nodes=nodes, edges=edges, sites=sites, mutations=mutations,
+            sequence_length=sequence_length)
+        n = 0
+        if len(edges) > 0:
+            n = np.max(edges.child)
+        H = ts.genotype_matrix().T[:n + 1]
+
+        mask = np.zeros_like(H)
+        # Set all the edges
+        for edge in ts.edges():
+            mask[edge.child, int(edge.left): int(edge.right)] = 1
+        mask[0,:] = 1
+        H[mask == 0] = -1
+        return H
+
+
+    def find_path(self, h, start, end, match):
+        H = self.ancestor_matrix().astype(np.int8)
+        print("H = ")
+        print(H)
+        print("Find path", start, end)
+        print(h)
+        recombination_rate = 1
+        mutations = self.tree_sequence_builder.mutations
+
+        n, m = H.shape
+        r = 1 - np.exp(-recombination_rate / n)
+        recomb_proba = r / n
+        no_recomb_proba = 1 - r + r / n
+        L = np.ones(n)
+        T = [set() for _ in range(m)]
+        T_dest = np.zeros(m, dtype=int)
+        match[:] = -1
+
+        for l in range(start, end):
+            L_next = np.zeros(n)
+            for j in range(n):
+                x = L[j] * no_recomb_proba
+                y = recomb_proba
+                if x > y:
+                    z = x
+                else:
+                    z = y
+                    T[l].add(j)
+                if H[j, l] == -1:
+                    # Can never match to the missing data.
+                    emission_p = 0
+                else:
+                    if l in mutations:
+                        emission_p = int(H[j, l] == h[l])
+                    else:
+                        emission_p = 1
+                L_next[j] = z * emission_p
+            # Find the max and renormalise
+            L = L_next
+            j = np.argmax(L)
+            T_dest[l] = j
+            L /= L[j]
+            print(l, ":", L)
+        print("T_dest = ", T_dest)
+        print("T = ", T)
+
+        p = T_dest[end - 1]
+        parent = [p]
+        left = []
+        right = [end]
+        for l in range(end - 1, start - 1, -1):
+            print("TB: l = ", l, "p  = " ,p)
+            match[l] = H[p, l]
+            if p in T[l]:
+                assert l != 0
+                print("SWITCH")
+                p = T_dest[l - 1]
+                parent.append(p)
+                right.append(l)
+                left.append(l)
+        left.append(start)
+        return (
+            np.array(left, dtype=np.int32),
+            np.array(right, dtype=np.int32),
+            np.array(parent, dtype=np.int32))
+
+

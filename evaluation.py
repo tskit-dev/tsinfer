@@ -55,7 +55,8 @@ def generate_samples(ts, error_p):
 
 
 def infer_from_simulation(
-        ts, recombination_rate=1, input_error=0, sample_error=0, method="C"):
+        ts, recombination_rate=1, input_error=0, sample_error=0, method="C",
+        path_compression=True):
     if input_error == 0:
         genotypes = ts.genotype_matrix()
     else:
@@ -64,7 +65,7 @@ def infer_from_simulation(
     return tsinfer.infer(
         genotypes, positions=positions, sequence_length=ts.sequence_length,
         recombination_rate=recombination_rate, sample_error=sample_error,
-        method=method)
+        method=method, path_compression=path_compression)
 
 
 def get_mean_rf_distance(ts1, ts2):
@@ -309,6 +310,9 @@ def verify_trees_equal(ts_source, ts_inferred):
 # TODO these are really unit tests. Move them into the tests directory.
 def check_many_trees_one_mutation_per_branch():
     # for num_samples in [10, 100, 1000, 10000]:
+
+    import daiquiri
+    daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
     num_samples = 4
     print("num_samples = ", num_samples)
     # for seed in range(1, 1000):
@@ -333,12 +337,18 @@ def check_many_trees_one_mutation_per_branch():
                     tables.mutations.add_row(site=j, node=u, derived_state="1")
                     j += 1
                     x += delta
-        # print(tables)
+        print(tables)
         ts_source = msprime.load_tables(**tables.asdict())
-        ts_inferred = infer_from_simulation(ts_source, method="C")
+        print("samples")
+        print(ts_source.genotype_matrix().T)
+        ts_inferred = infer_from_simulation(ts_source,
+                path_compression=False,
+                # method="Py-matrix")
+                method="P")
         print("num_trees", ts_source.num_trees, ts_inferred.num_trees)
         print("num_edges", ts_source.num_edges, ts_inferred.num_edges)
         verify_trees_equal(ts_source, ts_inferred)
+        print(ts_inferred.tables)
         assert ts_source.num_trees >= ts_inferred.num_trees
         assert ts_source.num_edges >= ts_inferred.num_edges
 
