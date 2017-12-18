@@ -144,7 +144,9 @@ def debug_pathological():
     # daiquiri.setup(level="DEBUG")
     method = "P"
     path_compression = False
-    ts = msprime.load("pathological-small.source.hdf5")
+    # ts = msprime.load("pathological-small.source.hdf5")
+    ts = msprime.simulate(4, recombination_rate=0.1, random_seed=9)
+    print(ts.num_trees)
 
     # Put a mutation on every branch.
     tables = ts.dump_tables()

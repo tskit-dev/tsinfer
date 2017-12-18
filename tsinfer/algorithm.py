@@ -87,8 +87,10 @@ class AncestorBuilder(object):
         ret = []
         for frequency in reversed(range(self.num_samples + 1)):
             # Need to make the order in which these are returned deterministic,
-            # or ancestor IDs are not replicable between runs.
-            focal_sites_list = sorted(self.frequency_map[frequency].values())
+            # or ancestor IDs are not replicable between runs. In the C implementation
+            # We sort by the genotype patterns
+            keys = sorted(self.frequency_map[frequency].keys())
+            focal_sites_list = [self.frequency_map[frequency][k] for k in keys]
             for focal_sites in focal_sites_list:
                 ret.append((frequency, np.array(focal_sites, dtype=np.int32)))
         return ret
@@ -533,7 +535,7 @@ class AncestorMatcher(object):
         recomb_proba = r / n
         no_recomb_proba = 1 - r + r / n
 
-        print("update_site", site, state)
+        # print("update_site", site, state)
 
         if site not in self.tree_sequence_builder.mutations:
             mutation_node = msprime.NULL_NODE
@@ -546,7 +548,7 @@ class AncestorMatcher(object):
                     u = self.parent[u]
                 self.likelihood[mutation_node] = self.likelihood[u]
                 self.likelihood_nodes.append(mutation_node)
-                print("inserted likelihood for ", mutation_node, self.likelihood[u])
+                # print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
@@ -555,7 +557,7 @@ class AncestorMatcher(object):
             distance = self.positions[site] - self.positions[site - 1]
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
-        print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
+        # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
         path_cache = np.zeros(n, dtype=np.int8) - 1
         max_L = -1
         max_L_node = -1
@@ -579,8 +581,8 @@ class AncestorMatcher(object):
             x = self.likelihood[u] * no_recomb_proba * distance
             assert x >= 0
             y = recomb_proba * distance
-            print("\t", u, x, y)
-            if x >= y:
+            # print("\t", u, x, y)
+            if x > y:
                 z = x
                 self.traceback[site][u] = False
             else:
@@ -598,8 +600,8 @@ class AncestorMatcher(object):
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
-        print("L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
+        # print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
+        # print("L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
         self.max_likelihood_node[site] = max_L_node
 
@@ -719,7 +721,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        print("MATCH: start=", start, "end = ", end, "h = ", h)
+        # print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
@@ -829,7 +831,7 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        self.print_state()
+        # self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -910,9 +912,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        print("returning edges:")
+        # print("returning edges:")
         for j, e in enumerate(output_edges):
-            print("\t", e.left, e.right, e.parent)
+            # print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python

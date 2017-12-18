@@ -5,8 +5,11 @@ import unittest
 
 import numpy as np
 import msprime
+import zarr
 
 import tsinfer
+import tsinfer.algorithm as algorithm
+import tsinfer.formats as formats
 
 
 def get_random_data_example(num_samples, num_sites, remove_invariant_sites=True):
@@ -250,3 +253,44 @@ class TestPhredEncoding(unittest.TestCase):
         for p in [1.0001, 10000, 1e200]:
             self.assertRaises(ValueError, tsinfer.proba_to_phred, p)
             self.assertRaises(ValueError, tsinfer.proba_to_phred, [0.1, p])
+
+
+class TestAncestorGeneratorsEquivalant(unittest.TestCase):
+    """
+    Tests for the ancestor generation process.
+    """
+
+    def verify_ancestor_generator(self, genotypes):
+
+        input_root = zarr.group()
+        tsinfer.InputFile.build(
+            input_root, genotypes=genotypes,
+            recombination_rate=0, compress=False)
+
+        ancestors_root = zarr.group()
+        tsinfer.build_ancestors(
+            input_root, ancestors_root, method="C", compress=False)
+        A_c = ancestors_root["ancestors/haplotypes"][:]
+        ancestors_root = zarr.group()
+        tsinfer.build_ancestors(
+            input_root, ancestors_root, method="P", compress=False)
+        A_p = ancestors_root["ancestors/haplotypes"][:]
+        self.assertTrue(np.array_equal(A_c, A_p))
+
+    def test_no_recombination(self):
+        ts = msprime.simulate(
+            20, length=1, recombination_rate=0, mutation_rate=1, random_seed=1)
+        assert ts.num_sites > 0 and ts.num_sites < 50
+        self.verify_ancestor_generator(ts.genotype_matrix())
+
+    def test_with_recombination(self):
+        ts = msprime.simulate(
+            20, length=1, recombination_rate=1, mutation_rate=1, random_seed=1)
+        assert ts.num_trees > 1
+        assert ts.num_sites > 0 and ts.num_sites < 50
+        self.verify_ancestor_generator(ts.genotype_matrix())
+
+    def test_random_data(self):
+        G, _ = get_random_data_example(20, 50)
+        self.verify_ancestor_generator(G)
+
