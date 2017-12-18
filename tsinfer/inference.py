@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 UNKNOWN_ALLELE = 255
 PHRED_MAX = 255
 
-
 def proba_to_phred(probability, min_value=1e-10):
     """
     Returns the specfied array of probability values in phred
@@ -71,7 +70,7 @@ def phred_to_proba(phred_score):
 
 def infer(
         genotypes, positions, sequence_length, recombination_rate, sample_error=0,
-        method="C", num_threads=0, progress=False):
+        method="C", num_threads=0, progress=False, path_compression=True):
     positions_array = np.array(positions)
 
     input_root = zarr.group()
@@ -82,10 +81,11 @@ def infer(
     ancestors_root = zarr.group()
     build_ancestors(input_root, ancestors_root, method=method, compress=False)
     ancestors_ts = match_ancestors(
-        input_root, ancestors_root, method=method, num_threads=num_threads)
+        input_root, ancestors_root, method=method, num_threads=num_threads,
+        path_compression=path_compression)
     inferred_ts = match_samples(
         input_root, ancestors_ts, method=method, num_threads=num_threads,
-        genotype_quality=sample_error)
+        genotype_quality=sample_error, path_compression=path_compression)
     return inferred_ts
 
 
@@ -295,13 +295,16 @@ class Matcher(object):
         self.recombination_rate = self.input_file.recombination_rate
         self.progress = progress
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
-        self.ancestor_matcher_class = algorithm.AncestorMatcher
         if method == "C":
-            logger.debug("Using Python matcher implementation")
+            logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
+        elif method == "Py-matrix":
+            logger.debug("Using Python matrix implementation")
+            self.ancestor_matcher_class = algorithm.MatrixAncestorMatcher
         else:
             logger.debug("Using Python matcher implementation")
+            self.ancestor_matcher_class = algorithm.AncestorMatcher
         self.tree_sequence_builder = None
         # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
         # the tracebacks for each node ID and other debugging information.
@@ -521,6 +524,7 @@ class AncestorMatcher(Matcher):
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
             ancestor_id, start, end, focal_sites.shape[0]))
+        assert np.all(haplotype[focal_sites] == 1)
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
         haplotype[focal_sites] = 0
