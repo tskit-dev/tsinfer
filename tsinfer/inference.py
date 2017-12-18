@@ -391,6 +391,7 @@ class AncestorMatcher(Matcher):
         first_ancestor = 1
         self.start_epoch = 1
         if resume:
+            assert False, "Resume is current broken. Need to find youngest edge"
             logger.info("Resuming build from {}".format(self.output_path))
             ancestor_ts = msprime.load(self.output_path)
             self.restore_tree_sequence_builder(ancestor_ts)
