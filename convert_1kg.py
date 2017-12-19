@@ -141,6 +141,8 @@ def main():
         "--start", default=1, type=int, help="The first autosome")
     parser.add_argument(
         "--stop", default=22, type=int, help="The last autosome")
+    parser.add_argument(
+        "--processes", default=10, type=int, help="The number of worker processes")
 
     args = parser.parse_args()
     chromosomes = list(range(args.start, args.stop + 1))
@@ -160,7 +162,7 @@ def main():
             raise ValueError("{} does not exist".format(genetic_map_file))
 
     work = reversed(list(zip(vcf_files, genetic_map_files, output_files, max_variants)))
-    with multiprocessing.Pool(10) as pool:
+    with multiprocessing.Pool(args.processes) as pool:
         pool.map(worker, work)
     # for t in work:
     #     worker(t)
