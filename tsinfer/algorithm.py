@@ -94,7 +94,7 @@ class AncestorBuilder(object):
         Returns a list of (frequency, focal_sites) tuples describing the
         ancestors in reverse order of frequency.
         """
-        self.print_state()
+        # self.print_state()
         ret = []
         for frequency in reversed(range(self.num_samples + 1)):
             # Need to make the order in which these are returned deterministic,
@@ -295,7 +295,7 @@ class TreeSequenceBuilder(object):
         # Insert the chain into the global state.
         self.path[child] = head
         self.index_edges(child)
-        self.print_state()
+        # self.print_state()
         self.check_state()
 
     def update_node_time(self, node_id):
@@ -732,7 +732,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        print("MATCH: start=", start, "end = ", end, "h = ", h)
+        # print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
@@ -842,7 +842,7 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        self.print_state()
+        # self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -923,9 +923,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        print("returning edges:")
+        # print("returning edges:")
         for j, e in enumerate(output_edges):
-            print("\t", e.left, e.right, e.parent)
+            # print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python
