@@ -4,6 +4,7 @@ genetic map.
 """
 import argparse
 import subprocess
+import multiprocessing
 import os
 
 import numpy as np
@@ -42,11 +43,11 @@ def filter_duplicates(vcf):
     if row is not None and bad_pos != -1:
         yield row
 
-def variants(vcf_path):
+def variants(vcf_path, show_progress=False):
 
     output = subprocess.check_output(["bcftools", "index", "--nrecords", vcf_path])
     num_rows = int(output)
-    progress = tqdm.tqdm(total=num_rows)
+    progress = tqdm.tqdm(total=num_rows, disable=not show_progress)
 
     vcf = cyvcf2.VCF(vcf_path)
 
@@ -77,34 +78,19 @@ def variants(vcf_path):
                 yield Variant(position=row.POS, genotypes=a)
     vcf.close()
 
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Script to convert a VCF + genetic map to tsinfer input.")
-    parser.add_argument(
-        "vcf", help="The input VCF file.")
-    parser.add_argument(
-        "genetic_map", help="The input genetic map in HapMap format..")
-    parser.add_argument(
-        "output_file", help="The tsinfer output file to write to.")
-    parser.add_argument(
-        "-n", "--max-variants", default=None, type=int,
-        help="Keep only the first n variants")
-
-    args = parser.parse_args()
-    genetic_map = msprime.RecombinationMap.read_hapmap(args.genetic_map)
+def convert(vcf_file, genetic_map_file, output_file, max_variants=None, show_progress=False):
+    genetic_map = msprime.RecombinationMap.read_hapmap(genetic_map_file)
     map_length = genetic_map.get_length()
 
-    max_variants = 2**32  # Arbitrary, but > defined max for VCF
-    if args.max_variants is not None:
-        max_variants = args.max_variants
+    if max_variants is None:
+        max_variants = 2**32  # Arbitrary, but > defined max for VCF
 
     last_physical_pos = 0
     last_genetic_pos = 0
     positions = []
     genotypes = []
     recombination_rates = []
-    for index, variant in enumerate(variants(args.vcf)):
+    for index, variant in enumerate(variants(vcf_file, show_progress)):
         physical_pos = variant.position
         if index >= max_variants or physical_pos >= map_length:
             break
@@ -123,14 +109,62 @@ def main():
     G = np.array(genotypes, dtype=np.uint8)
 
     # This is crud, need to abstract this away from the user.
-    output = args.output_file
-    if os.path.exists(output):
-        os.unlink(output)
-    input_hdf5 = zarr.DBMStore(output, open=bsddb3.btopen)
+    if os.path.exists(output_file):
+        os.unlink(output_file)
+    input_hdf5 = zarr.DBMStore(output_file, open=bsddb3.btopen)
     root = zarr.group(store=input_hdf5, overwrite=True)
     tsinfer.InputFile.build(
         root, genotypes=G, position=positions, recombination_rate=recombination_rates)
     input_hdf5.close()
+    print("Wrote", output_file)
+
+
+def worker(t):
+    vcf, genetic_map, output, max_variants = t
+    print("Converting", vcf)
+    convert(vcf, genetic_map, output, max_variants)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Script to convert VCF files into tsinfer input.")
+    parser.add_argument(
+        "vcf_pattern", help="The input VCF files file pattern.")
+    parser.add_argument(
+        "genetic_map_pattern", help="The input genetic maps in HapMap format file pattern")
+    parser.add_argument(
+        "output_file_pattern", help="The tsinfer output file pattern to write to.")
+    parser.add_argument(
+        "-n", "--max-variants", default=None, type=int,
+        help="Keep only the first n variants")
+    parser.add_argument(
+        "--start", default=1, type=int, help="The first autosome")
+    parser.add_argument(
+        "--stop", default=22, type=int, help="The last autosome")
+
+    args = parser.parse_args()
+    chromosomes = list(range(args.start, args.stop + 1))
+
+    # Build the file lists for the 22 autosomes.
+    vcf_files = [args.vcf_pattern.format(j) for j in chromosomes]
+    genetic_map_files = [args.genetic_map_pattern.format(j) for j in chromosomes]
+    output_files = [args.output_file_pattern.format(j) for j in chromosomes]
+    max_variants = [args.max_variants for _ in chromosomes]
+
+    for vcf_file in vcf_files:
+        if not os.path.exists(vcf_file):
+            raise ValueError("{} does not exist".format(vcf_file))
+
+    for genetic_map_file in genetic_map_files:
+        if not os.path.exists(genetic_map_file):
+            raise ValueError("{} does not exist".format(genetic_map_file))
+
+    work = reversed(list(zip(vcf_files, genetic_map_files, output_files, max_variants)))
+    with multiprocessing.Pool(10) as pool:
+        pool.map(worker, work)
+    # for t in work:
+    #     worker(t)
+
 
 
 if __name__ == "__main__":
