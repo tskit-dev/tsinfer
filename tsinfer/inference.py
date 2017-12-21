@@ -344,7 +344,7 @@ class Matcher(object):
         sites.set_columns(
             position=position,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
-            ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
+            ancestral_state_offset=np.arange(tsb.num_sites + 1, dtype=np.uint32))
         mutations = msprime.MutationTable()
         site = np.zeros(tsb.num_mutations, dtype=np.int32)
         node = np.zeros(tsb.num_mutations, dtype=np.int32)
@@ -354,7 +354,7 @@ class Matcher(object):
         derived_state += ord('0')
         mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
-            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32),
+            derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
         return msprime.load_tables(
