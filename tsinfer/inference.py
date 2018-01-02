@@ -70,7 +70,7 @@ def phred_to_proba(phred_score):
 
 def infer(
         genotypes, positions, sequence_length, recombination_rate, sample_error=0,
-        method="C", num_threads=0, progress=False):
+        method="C", num_threads=0, progress=False, simplify=True):
     positions_array = np.array(positions)
 
     input_root = zarr.group()
@@ -84,7 +84,7 @@ def infer(
         input_root, ancestors_root, method=method, num_threads=num_threads)
     inferred_ts = match_samples(
         input_root, ancestors_ts, method=method, num_threads=num_threads,
-        genotype_quality=sample_error)
+        genotype_quality=sample_error, simplify=simplify)
     return inferred_ts
 
 
