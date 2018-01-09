@@ -9,8 +9,8 @@ import numpy as np
 import zarr
 
 # use the local copy of msprime in preference to the global one
-sys.path.insert(1,os.path.join(sys.path[0],'..','msprime'))
-sys.path.insert(1,os.path.join(sys.path[0],'..','tsinfer'))
+sys.path.insert(1,os.path.join(sys.path[0],'..','..','msprime'))
+sys.path.insert(1,os.path.join(sys.path[0],'..','..','tsinfer'))
 import msprime
 import tsinfer
 
