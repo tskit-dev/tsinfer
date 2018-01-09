@@ -1,5 +1,8 @@
 """
-This currently bombs out at the tsinfer.match_samples stage
+As of Jan 9th 2018 the tsinfer.match_samples stage either stalls (method='P') or encounters an assertion failure (method='C': 
+
+Assertion failed: (max_L > 0), function ancestor_matcher_renormalise_likelihoods, file lib/ancestor_matcher.c, line 394.
+)
 """
 import os
 import sys
