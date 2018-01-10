@@ -54,14 +54,12 @@ ancestors_root = zarr.group()
 #tsinfer.extract_ancestors(ts, ancestors_root) 
 tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
 
-try:
-    ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
-    assert ancestors_ts.sequence_length == ts.num_sites
-    inferred_ts = tsinfer.match_samples(
-        input_root, ancestors_ts, method="C",
-        simplify=True) 
-except:
-    print('failed')
+ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
+assert ancestors_ts.sequence_length == ts.num_sites
+inferred_ts = tsinfer.match_samples(
+    input_root, ancestors_ts, method="P",
+    simplify=True) 
+
 print("num_edges: original: {}; inferred: {}".format(ts.num_edges,inferred_ts.num_edges))
 
 for t in inferred_ts.trees():
