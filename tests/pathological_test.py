@@ -15,14 +15,15 @@ sys.path.insert(1,os.path.join(sys.path[0],'..','..','tsinfer'))
 import msprime
 import tsinfer
 
-l=100000000
-recombination_rate = rho = 0.000000000001
+l=6000000
+recombination_rate = rho = 5E-11
 recombination_map = msprime.RecombinationMap.uniform_map(l, rho, l)
-rng1 = random.Random(10)
+rng1 = random.Random(1181207362)
 sim_seed = rng1.randint(1, 2**31)
 ts = msprime.simulate(
-    4, 5000, recombination_map=recombination_map, mutation_rate=0.00000001,
+    4, 5000, recombination_map=recombination_map, mutation_rate=5E-09,
     random_seed=sim_seed, model="smc_prime")
+
 
 nodes = collections.defaultdict(list)
 for m in ts.mutations():
@@ -51,13 +52,32 @@ tsinfer.InputFile.build(
 ancestors_root = zarr.group()
 
 
-#tsinfer.extract_ancestors(ts, ancestors_root) 
-tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+tsinfer.build_ancestors(input_root, ancestors_root, method="C", chunk_size=16, compress=False) 
+#tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=True)
+
+A = ancestors_root["ancestors/haplotypes"][:]
+
+print("ANCESTORS")
+# print(A.astype(np.int8))
+for j, a in enumerate(A):
+    s = "".join(str(x) if x < 255 else "*" for x in a)
+    print(j, "\t", s)
+print("samples")
+for j, s in enumerate(ts.haplotypes()):
+    print(A.shape[0] + j, "\t", s)
+
+
 
 ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
 assert ancestors_ts.sequence_length == ts.num_sites
+
+print("========")
+print("INFERRED ANCESTRAL PATHS")
+print(ancestors_ts.tables.edges)
+
+
 inferred_ts = tsinfer.match_samples(
-    input_root, ancestors_ts, method="P",
+    input_root, ancestors_ts, method="C",
     simplify=True) 
 
 print("num_edges: original: {}; inferred: {}".format(ts.num_edges,inferred_ts.num_edges))
