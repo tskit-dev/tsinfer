@@ -89,21 +89,51 @@ def infer(
     return inferred_ts
 
 
-def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
+def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False):
 
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-    A[:] = UNKNOWN_ALLELE
     mutation_sites = [[] for _ in range(ts.num_nodes)]
-    for t in ts.trees():
-        for site in t.sites():
-            for u in t.nodes():
-                A[u, site.index] = 0
+    
+    if guess_unknown:
+        #fill in all the ancestral genotypes, even for regions which do not contribute to the 
+        #final samples. This stops the inference algorithm getting confused by known boundaries
+        #but we have to construct the ancestral types by iterating over edges for each node
+        #and extending the edges left and right where appropriate
+        sites = np.array([s.position for s in ts.sites()])
+        edges_by_child = collections.defaultdict(list)
+        for i, site in enumerate(ts.sites()):
             for mutation in site.mutations:
-                mutation_sites[mutation.node].append(site.index)
-                # Every node underneath this node will have the value set
-                # at this site.
-                for u in t.nodes(mutation.node):
-                    A[u, site.index] = 1
+                mutation_sites[mutation.node].append(i)
+        for e in ts.edges():
+            edges_by_child[e.child].append([e.left, e.right, e.parent])
+        for child in sorted(edges_by_child.keys(), reverse=True):
+            #extend the edges leftwards and rightwards to include all parts of the genome
+            edges = sorted(edges_by_child[child], key=lambda x: x[0])
+            edges[0][0] = 0
+            edges[-1][1] = ts.sequence_length
+            for i in range(len(edges)-1):
+                edges[i][1] = edges[i+1][0] = (edges[i][1] + edges[i+1][0])/2
+            #now actually construct the sites array
+            for edge in edges:
+                #which sites does this edge span?
+                mask = np.logical_and(sites >= edge[0], sites < edge[1])
+                A[child,mask]=A[edge[2], mask]
+                #add mutations
+                for m in mutation_sites[child]:
+                    A[child,m]=1
+    else:
+        #Jerome's original routine, where we iterate over trees, not edges
+        A[:] = UNKNOWN_ALLELE
+        for t in ts.trees():
+            for site in t.sites():
+                for u in t.nodes():
+                    A[u, site.index] = 0
+                for mutation in site.mutations:
+                    mutation_sites[mutation.node].append(site.index)
+                    # Every node underneath this node will have the value set
+                    # at this site.
+                    for u in t.nodes(mutation.node):
+                        A[u, site.index] = 1
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
