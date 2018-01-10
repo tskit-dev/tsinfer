@@ -17,6 +17,9 @@ mp.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# use the local copy of msprime in preference to the global one
+sys.path.insert(1,os.path.join(sys.path[0],'..','msprime'))
+sys.path.insert(1,os.path.join(sys.path[0],'..','tsinfer'))
 import tsinfer
 import msprime
 
@@ -142,7 +145,7 @@ def generate_ancestors(ts):
 def debug_pathological():
 
     # daiquiri.setup(level="DEBUG")
-    method = "P"
+    method = "C"
     path_compression = False
     # ts = msprime.load("pathological-small.source.hdf5")
     ts = msprime.simulate(4, recombination_rate=0.1, random_seed=9)
@@ -196,12 +199,13 @@ def debug_pathological():
         recombination_rate=recombination_rate, sequence_length=ts.num_sites,
         compress=False)
     ancestors_root = zarr.group()
-    tsinfer.build_ancestors(
-        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
-    # tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+    #tsinfer.build_ancestors(
+    #    input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
 
     A = ancestors_root["ancestors/haplotypes"][:]
 
+    print("ANCESTORS")
     # print(A.astype(np.int8))
     for j, a in enumerate(A):
         s = "".join(str(x) if x < 255 else "*" for x in a)
@@ -222,7 +226,6 @@ def debug_pathological():
 
     print(ancestors_ts.tables.edges)
 
-    print("ANCESTORS")
     for t in ancestors_ts.trees():
         print(t.interval)
         print(t.draw(format="unicode"))
