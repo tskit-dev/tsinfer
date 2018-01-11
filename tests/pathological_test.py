@@ -24,6 +24,22 @@ ts = msprime.simulate(
     4, 5000, recombination_map=recombination_map, mutation_rate=5E-09,
     random_seed=sim_seed, model="smc_prime")
 
+#remove singletons
+sites = msprime.SiteTable()
+mutations = msprime.MutationTable()
+for variant in ts.variants():
+    if np.sum(variant.genotypes) > 1:
+        site_id = sites.add_row(
+            position=variant.site.position,
+            ancestral_state=variant.site.ancestral_state)
+        for mutation in variant.site.mutations:
+            assert mutation.parent == -1  # No back mutations
+            mutations.add_row(
+                site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+
+tables = ts.dump_tables()
+ts = msprime.load_tables(
+    nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
 
 nodes = collections.defaultdict(list)
 for m in ts.mutations():
@@ -62,11 +78,10 @@ print("ANCESTORS")
 for j, a in enumerate(A):
     s = "".join(str(x) if x < 255 else "*" for x in a)
     print(j, "\t", s)
+
 print("samples")
 for j, s in enumerate(ts.haplotypes()):
     print(A.shape[0] + j, "\t", s)
-
-
 
 ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
 assert ancestors_ts.sequence_length == ts.num_sites
@@ -78,7 +93,7 @@ print(ancestors_ts.tables.edges)
 
 inferred_ts = tsinfer.match_samples(
     input_root, ancestors_ts, method="C",
-    simplify=True) 
+    simplify=False) 
 
 print("num_edges: original: {}; inferred: {}".format(ts.num_edges,inferred_ts.num_edges))
 
