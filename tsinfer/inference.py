@@ -93,9 +93,9 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False
 
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
     mutation_sites = [[] for _ in range(ts.num_nodes)]
-    
+
     if guess_unknown:
-        #fill in all the ancestral genotypes, even for regions which do not contribute to the 
+        #fill in all the ancestral genotypes, even for regions which do not contribute to the
         #final samples. This stops the inference algorithm getting confused by known boundaries
         #but we have to construct the ancestral types by iterating over edges for each node
         #and extending the edges left and right where appropriate
@@ -559,14 +559,8 @@ class AncestorMatcher(Matcher):
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
         haplotype[focal_sites] = 0
-        assert np.all(self.match[thread_index] == haplotype)
 
-        # print("Match", ancestor_id)
-        # for l, r, p in zip(left, right ,parent):
-        #     print("\tEdge = ", l, r, p)
-            # ancestor_id = p  # path compression is turned off.
-            # if l < self.start[ancestor_id] or r > self.end[ancestor_id]:
-            #     print("BAD EDGE!!", l, r, p, ":", self.start[p], self.end[p])
+        assert np.all(self.match[thread_index] == haplotype)
 
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])
@@ -577,10 +571,6 @@ class AncestorMatcher(Matcher):
         for child_id in range(start, end):
             # TODO we should be adding the ancestor ID here as well as metadata.
             left, right, parent = self.results.get_path(child_id)
-            # print("path", child_id)
-            # print(left)
-            # print(right)
-            # print(parent)
             self.tree_sequence_builder.add_path(
                 child_id, left, right, parent, compress=self.path_compression)
             site, derived_state = self.results.get_mutations(child_id)

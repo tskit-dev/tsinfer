@@ -627,11 +627,16 @@ class AncestorMatcher(object):
         self.compress_likelihoods()
         self.normalise_likelihoods()
 
-    def normalise_likelihoods(self):
+    def normalise_likelihoods(self, allow_zeros=False):
         max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
+        if not allow_zeros:
+            assert max_L > 0
+        max_val = 0.0
+        if max_L != 0.0:
+            max_val = 1.0
         for u in self.likelihood_nodes:
             if self.likelihood[u] == max_L:
-                self.likelihood[u] = 1.0
+                self.likelihood[u] = max_val
             else:
                 self.likelihood[u] /= max_L
 
@@ -738,6 +743,8 @@ class AncestorMatcher(object):
         left = 0
         pos = 0
         right = m
+        if j < M and start < Il.peekitem(j)[1].left:
+            right = Il.peekitem(j)[1].left
         while j < M and k < M and Il.peekitem(j)[1].left <= start:
             # while edges[O[k]].right == pos:
             while Ir.peekitem(k)[1].right == pos:
@@ -766,10 +773,11 @@ class AncestorMatcher(object):
             if self.parent[u] != -1:
                 self.likelihood[u] = -1
 
+        # print("START:", left, right)
         remove_start = k
         while left < end:
-            assert left < right
             # print("START OF TREE LOOP", left, right)
+            assert left < right
             for l in range(remove_start, k):
                 # edge = edges[O[l]]
                 edge = Ir.peekitem(l)[1]
@@ -778,8 +786,9 @@ class AncestorMatcher(object):
                         self.likelihood[u] = -2
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
-
-            self.normalise_likelihoods()
+            # We can have situations where we've removed the only nonzero likelihood.
+            # Then all values are equally likely.
+            self.normalise_likelihoods(allow_zeros=True)
             self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
                 self.update_site(site, h[site])
@@ -842,6 +851,7 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
+        # print("traceback", start, end)
         # self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index

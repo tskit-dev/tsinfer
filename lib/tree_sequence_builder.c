@@ -1299,6 +1299,7 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
         }
         prev = edge;
     }
+    ret = 0;
 out:
     return ret;
 }

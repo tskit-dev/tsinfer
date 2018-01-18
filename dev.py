@@ -17,9 +17,6 @@ mp.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# use the local copy of msprime in preference to the global one
-sys.path.insert(1,os.path.join(sys.path[0],'..','msprime'))
-sys.path.insert(1,os.path.join(sys.path[0],'..','tsinfer'))
 import tsinfer
 import msprime
 
@@ -789,6 +786,57 @@ def lookat(filename):
     # sys.exit(0)
 
 
+def asserts_fail():
+
+    # seed = 1
+    for seed in range(1, 1000):
+    # for seed in [11]:
+        print("seed=", seed, file=sys.stderr)
+        ts = msprime.simulate(40, mutation_rate=20, recombination_rate=1,
+                random_seed=seed, model="smc_prime")
+        print("num_sites = ", ts.num_sites)
+        if ts.num_sites == 0:
+            continue
+
+        positions = pos = np.array([v.position for v in ts.variants()])
+        S = np.zeros((ts.sample_size, ts.num_mutations), dtype="u1")
+        for variant in ts.variants():
+            S[:,variant.index] = variant.genotypes
+
+        G = S.astype(np.uint8).T
+
+        #Create the ancestors
+        input_root = zarr.group()
+        tsinfer.InputFile.build(
+            input_root, genotypes=G,
+            # genotype_qualities=tsinfer.proba_to_phred(error_probability),
+            position=positions,
+            recombination_rate=1, sequence_length=ts.sequence_length,
+            compress=False)
+        ancestors_root = zarr.group()
+
+        #tsinfer.extract_ancestors(ts, ancestors_root)
+        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+
+        # A = ancestors_root["ancestors/haplotypes"][:]
+        # print(S)
+
+        # print("ANCESTORS")
+        # # print(A.astype(np.int8))
+        # for j, a in enumerate(A):
+        #     s = "".join(str(x) if x < 255 else "*" for x in a)
+        #     print(j, "\t", s)
+
+        method = "C"
+        ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root, method=method)
+        assert ancestors_ts.sequence_length == ts.num_sites
+        inferred_ts = tsinfer.match_samples(
+            input_root, ancestors_ts, method=method,
+            simplify=False)
+
+        print("inferred num_edges = ", inferred_ts.num_edges)
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -796,7 +844,9 @@ if __name__ == "__main__":
 
     # lookat(sys.argv[1])
 
-    debug_pathological()
+    asserts_fail()
+
+    # debug_pathological()
 
     # build_1kg_sim()
 

@@ -376,12 +376,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
 /* After we have removed a 1.0 valued node, we must renormalise the likelihoods */
 static void
-ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restrict L)
+ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self,
+        double *restrict L, bool accept_zeros)
 {
     double max_L = -1;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
     node_id_t *restrict L_nodes = self->likelihood_nodes;
     node_id_t u;
+    double max_val;
     int j;
 
     assert(num_likelihood_nodes > 0);
@@ -391,12 +393,21 @@ ancestor_matcher_renormalise_likelihoods(ancestor_matcher_t *self, double *restr
             max_L = L[u];
         }
     }
-    assert(max_L > 0);
+    /* TODO figure out a more robust way of dealing with this. The issue is
+     * that we can have situations when all the likelihoods are zeros after
+     * we removed a nonzero root. */
+    if (! accept_zeros) {
+        assert(max_L > 0);
+    }
+    max_val = 0.0;
+    if (max_L > 0) {
+        max_val = 1.0;
+    }
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
         if (L[u] == max_L) {
-            /* Ensure all max valued nodes are exactly 1.0 */
-            L[u] = 1.0;
+            /* Ensure all max valued nodes are exactly 1.0 (in the nominal case) */
+            L[u] = max_val;
         } else {
             L[u] /= max_L;
         }
@@ -462,7 +473,7 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
     }
 
     /* Renormalise to make sure we have a maximum equal to 1.0 */
-    ancestor_matcher_renormalise_likelihoods(self, L);
+    ancestor_matcher_renormalise_likelihoods(self, L, false);
     return ret;
 }
 
@@ -836,7 +847,9 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     left = 0;
     pos = 0;
     right = self->num_sites;
-
+    if (in != NULL && start < edge_left(in)) {
+        right = edge_left(in);
+    }
     while (in != NULL && out != NULL && edge_left(in) <= start) {
         while (out != NULL && (edge = get_edge(out)).right == pos) {
             remove_edge(edge, parent, left_child, right_child,
@@ -908,7 +921,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             }
         }
         if (unlikely(renormalise_required)) {
-            ancestor_matcher_renormalise_likelihoods(self, L);
+            ancestor_matcher_renormalise_likelihoods(self, L, true);
         }
         /* ancestor_matcher_print_state(self, stdout); */
         /* ancestor_matcher_check_state(self); */

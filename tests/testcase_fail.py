@@ -1,5 +1,5 @@
 """
-As of Jan 9th 2018 the tsinfer.match_samples stage either stalls (method='P') or encounters an assertion failure (method='C': 
+As of Jan 9th 2018 the tsinfer.match_samples stage either stalls (method='P') or encounters an assertion failure (method='C':
 
 Assertion failed: (max_L > 0), function ancestor_matcher_renormalise_likelihoods, file lib/ancestor_matcher.c, line 394.
 )
@@ -12,8 +12,6 @@ import numpy as np
 import zarr
 
 # use the local copy of msprime in preference to the global one
-sys.path.insert(1,os.path.join(sys.path[0],'..','..','msprime'))
-sys.path.insert(1,os.path.join(sys.path[0],'..','..','tsinfer'))
 import msprime
 import tsinfer
 
@@ -32,7 +30,7 @@ for variant in ts.variants():
     S[:,variant.index] = variant.genotypes
 
 G = S.astype(np.uint8).T
-    
+
 #Create the ancestors
 input_root = zarr.group()
 tsinfer.InputFile.build(
@@ -44,13 +42,13 @@ tsinfer.InputFile.build(
 ancestors_root = zarr.group()
 
 
-#tsinfer.extract_ancestors(ts, ancestors_root) 
+#tsinfer.extract_ancestors(ts, ancestors_root)
 tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
 
 ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
 assert ancestors_ts.sequence_length == ts.num_sites
 inferred_ts = tsinfer.match_samples(
     input_root, ancestors_ts, method="C",
-    simplify=False) 
+    simplify=False)
 
 print("inferred num_edges = ", inferred_ts.num_edges)
