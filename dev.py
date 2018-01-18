@@ -139,16 +139,29 @@ def generate_ancestors(ts):
     return A[::-1]
 
 def debug_real_ancestor_injection():
-    
-    # daiquiri.setup(level="DEBUG")
     method = "C"
-    path_compression = False
+    path_compression = True
     rng1 = random.Random(1234)
     print("trees","sites","edges:", "tsinfer", "known_anc_orig", 
         "known_anc_jerome", "known_anc_yan", sep="\t")
     for i in range(100):
-        ts = msprime.simulate(8, recombination_rate=0.1, random_seed=rng1.randint(1, 2**31))
+        ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts = \
+            single_real_ancestor_injection(method, path_compression, rng1.randint(1, 2**31))
 
+        print(ts.num_trees, ts.num_sites, ts.num_edges, sep="\t", end="\t")
+        inf_edges = np.array([[x.num_edges, x.num_trees] \
+            for x in (full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts)], dtype=np.int)
+        print("\t".join(["{} {}/{}".format(x[1],x[0], ts.num_edges) + \
+            ("*" if x[0]==min(inf_edges[:,0]) and np.sum(inf_edges[:,0]==min(inf_edges[:,0]))==1 else " ")\
+            for x in inf_edges]))
+
+def single_real_ancestor_injection(method, path_compression, seed, simplify=False, mutation_rate=None):
+    """
+    if no mutation rate specified, put one mutation per branch
+    """
+    # daiquiri.setup(level="DEBUG")
+    if mutation_rate is None:
+        ts = msprime.simulate(10, recombination_rate=0.35, random_seed=seed)
         # Put a mutation on every branch.
         tables = ts.dump_tables()
         tables.sites.reset()
@@ -167,65 +180,57 @@ def debug_real_ancestor_injection():
                     x += delta
         # print(tables)
         ts = msprime.load_tables(**tables.asdict())
+    else:
+        ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, random_seed=seed)
+    positions = np.array([site.index for site in ts.sites()])
+    G = ts.genotype_matrix()
+    recombination_rate = np.zeros_like(positions) + 1
     
-        print(ts.num_trees, ts.num_sites, ts.num_edges, sep="\t", end="\t")
+    input_root = zarr.group()
+    tsinfer.InputFile.build(
+        input_root, genotypes=G,
+        position=positions,
+        recombination_rate=recombination_rate, sequence_length=ts.num_sites,
+        compress=False)
     
-        positions = np.array([site.index for site in ts.sites()])
-        G = ts.genotype_matrix()
-        recombination_rate = np.zeros_like(positions) + 1
+    ancestors_root = zarr.group()
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, path_compression=path_compression)
+    full_inferred_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
+        simplify=simplify)
     
-        input_root = zarr.group()
-        tsinfer.InputFile.build(
-            input_root, genotypes=G,
-            position=positions,
-            recombination_rate=recombination_rate, sequence_length=ts.num_sites,
-            compress=False)
-    
-        ancestors_root = zarr.group()
-        tsinfer.build_ancestors(
-            input_root, ancestors_root, method=method, chunk_size=16, compress=False)
-        ancestors_ts = tsinfer.match_ancestors(
-            input_root, ancestors_root, method=method, path_compression=path_compression)
-        inferred_ts = tsinfer.match_samples(
-            input_root, ancestors_ts, method=method, path_compression=path_compression,
-            simplify=False)
-        tsinf = inferred_ts.num_edges, 
-            
-        ancestors_root = zarr.group()
-        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
-            guess_unknown=False)
-        ancestors_ts = tsinfer.match_ancestors(
-            input_root, ancestors_root, method=method, path_compression=path_compression)
-        inferred_ts = tsinfer.match_samples(
-            input_root, ancestors_ts, method=method, path_compression=path_compression,
-            simplify=False)
-        orig = inferred_ts.num_edges
-    
-        ancestors_root = zarr.group()
-        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
-            guess_unknown=None)
-        ancestors_ts = tsinfer.match_ancestors(
-            input_root, ancestors_root, method=method, path_compression=path_compression)
-        inferred_ts = tsinfer.match_samples(
-            input_root, ancestors_ts, method=method, path_compression=path_compression,
-            simplify=False)
-        jk = inferred_ts.num_edges
-    
-        ancestors_root = zarr.group()
-        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
-            guess_unknown=True)
-        ancestors_ts = tsinfer.match_ancestors(
-            input_root, ancestors_root, method=method, path_compression=path_compression)
-        inferred_ts = tsinfer.match_samples(
-            input_root, ancestors_ts, method=method, path_compression=path_compression,
-            simplify=False)
-        hyw = inferred_ts.num_edges
         
-        inf_edges = np.array([tsinf, orig, jk, hyw], dtype=np.int)
-        print("\t".join(["{}/{}".format(x, ts.num_edges) + \
-            ("*" if x==min(inf_edges) and np.sum(inf_edges==min(inf_edges))==1 else "")\
-            for x in inf_edges]))
-
+    ancestors_root = zarr.group()
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+        guess_unknown=False)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, path_compression=path_compression)
+    orig_anc_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
+        simplify=simplify)
+    
+    ancestors_root = zarr.group()
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+        guess_unknown=None)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, path_compression=path_compression)
+    jk_anc_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
+        simplify=simplify)
+    
+    ancestors_root = zarr.group()
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+        guess_unknown=True)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, path_compression=path_compression)
+    hyw_anc_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
+        simplify=simplify)
+    
+    return ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts
 
 def debug_pathological():
 
