@@ -56,6 +56,13 @@ for variant in ts.variants():
     S[:,variant.index] = variant.genotypes
 
 G = S.astype(np.uint8).T
+
+G = np.array([
+    [0,1,1,1,1,0],
+    [1,1,0,0,1,1],
+    [0,0,1,0,0,0],
+    [1,1,1,1,1,1]], dtype=np.uint8).T
+positions = pos = list(range(0,6))
     
 #Create the ancestors
 input_root = zarr.group()
@@ -68,8 +75,8 @@ tsinfer.InputFile.build(
 ancestors_root = zarr.group()
 
 
-tsinfer.build_ancestors(input_root, ancestors_root, method="C", chunk_size=16, compress=False) 
-#tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=True)
+tsinfer.build_ancestors(input_root, ancestors_root, method="P", chunk_size=16, compress=False) 
+#tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=False)
 
 A = ancestors_root["ancestors/haplotypes"][:]
 
@@ -84,7 +91,7 @@ for j, s in enumerate(ts.haplotypes()):
     print(A.shape[0] + j, "\t", s)
 
 ancestors_ts = tsinfer.match_ancestors(input_root, ancestors_root)
-assert ancestors_ts.sequence_length == ts.num_sites
+#assert ancestors_ts.sequence_length == ts.num_sites
 
 print("========")
 print("INFERRED ANCESTRAL PATHS")
