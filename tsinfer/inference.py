@@ -185,11 +185,12 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False
         assert np.all(a[s:e] != UNKNOWN_ALLELE)
         assert np.all(a[e:] == UNKNOWN_ALLELE)
         assert all(s <= site < e for site in focal)
-        ancestor_file.add_ancestor(
-            start=s, end=e, ancestor_time=time,
-            focal_sites=np.array(focal, dtype=np.int32),
-            haplotype=a)
-        time -= 1
+        if len(focal) > 0:
+            ancestor_file.add_ancestor(
+                start=s, end=e, ancestor_time=time,
+                focal_sites=np.array(focal, dtype=np.int32),
+                haplotype=a)
+            time -= 1
     ancestor_file.finalise()
 
 
