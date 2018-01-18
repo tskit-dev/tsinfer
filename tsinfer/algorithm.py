@@ -593,7 +593,9 @@ class AncestorMatcher(object):
             assert x >= 0
             y = recomb_proba * distance
             # print("\t", u, x, y)
-            if x > y:
+            # Try to recombine as little as possible, so do not switch if
+            # the likelihoods are equal.
+            if x >= y:
                 z = x
                 self.traceback[site][u] = False
             else:

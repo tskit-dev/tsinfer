@@ -324,6 +324,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
         x = L[u] * no_recomb_proba;
         assert(x >= 0);
+        /* Try to recombine as little as possible, so do not switch if */
+        /* the likelihoods are equal. */
         if (x >= recomb_proba) {
             y = x;
             recombination_required[u] = 0;
