@@ -138,6 +138,94 @@ def generate_ancestors(ts):
     A = A[ts.num_samples:]
     return A[::-1]
 
+def debug_real_ancestor_injection():
+    
+    # daiquiri.setup(level="DEBUG")
+    method = "C"
+    path_compression = False
+    rng1 = random.Random(1234)
+    print("trees","sites","edges:", "tsinfer", "known_anc_orig", 
+        "known_anc_jerome", "known_anc_yan", sep="\t")
+    for i in range(100):
+        ts = msprime.simulate(8, recombination_rate=0.1, random_seed=rng1.randint(1, 2**31))
+
+        # Put a mutation on every branch.
+        tables = ts.dump_tables()
+        tables.sites.reset()
+        tables.mutations.reset()
+        j = 0
+        for tree in ts.trees():
+            left, right = tree.interval
+            n = len(list(tree.nodes()))
+            delta = (right - left) / n
+            x = left
+            for u in tree.nodes():
+                if u != tree.root:
+                    tables.sites.add_row(position=x, ancestral_state="0")
+                    tables.mutations.add_row(site=j, node=u, derived_state="1")
+                    j += 1
+                    x += delta
+        # print(tables)
+        ts = msprime.load_tables(**tables.asdict())
+    
+        print(ts.num_trees, ts.num_sites, ts.num_edges, sep="\t", end="\t")
+    
+        positions = np.array([site.index for site in ts.sites()])
+        G = ts.genotype_matrix()
+        recombination_rate = np.zeros_like(positions) + 1
+    
+        input_root = zarr.group()
+        tsinfer.InputFile.build(
+            input_root, genotypes=G,
+            position=positions,
+            recombination_rate=recombination_rate, sequence_length=ts.num_sites,
+            compress=False)
+    
+        ancestors_root = zarr.group()
+        tsinfer.build_ancestors(
+            input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+        ancestors_ts = tsinfer.match_ancestors(
+            input_root, ancestors_root, method=method, path_compression=path_compression)
+        inferred_ts = tsinfer.match_samples(
+            input_root, ancestors_ts, method=method, path_compression=path_compression,
+            simplify=False)
+        tsinf = inferred_ts.num_edges, 
+            
+        ancestors_root = zarr.group()
+        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+            guess_unknown=False)
+        ancestors_ts = tsinfer.match_ancestors(
+            input_root, ancestors_root, method=method, path_compression=path_compression)
+        inferred_ts = tsinfer.match_samples(
+            input_root, ancestors_ts, method=method, path_compression=path_compression,
+            simplify=False)
+        orig = inferred_ts.num_edges
+    
+        ancestors_root = zarr.group()
+        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+            guess_unknown=None)
+        ancestors_ts = tsinfer.match_ancestors(
+            input_root, ancestors_root, method=method, path_compression=path_compression)
+        inferred_ts = tsinfer.match_samples(
+            input_root, ancestors_ts, method=method, path_compression=path_compression,
+            simplify=False)
+        jk = inferred_ts.num_edges
+    
+        ancestors_root = zarr.group()
+        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+            guess_unknown=True)
+        ancestors_ts = tsinfer.match_ancestors(
+            input_root, ancestors_root, method=method, path_compression=path_compression)
+        inferred_ts = tsinfer.match_samples(
+            input_root, ancestors_ts, method=method, path_compression=path_compression,
+            simplify=False)
+        hyw = inferred_ts.num_edges
+        
+        inf_edges = np.array([tsinf, orig, jk, hyw], dtype=np.int)
+        print("\t".join(["{}/{}".format(x, ts.num_edges) + \
+            ("*" if x==min(inf_edges) and np.sum(inf_edges==min(inf_edges))==1 else "")\
+            for x in inf_edges]))
+
 
 def debug_pathological():
 
@@ -214,6 +302,9 @@ def debug_pathological():
     # ancestors_root["ancestors/haplotypes"][:] = A
     # ancestors_root["ancestors/start"][:] = 0
     # ancestors_root["ancestors/end"][:] = ts.num_sites
+
+    print("========")
+    print("INFERRED ANCESTRAL PATHS")
 
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=path_compression)
@@ -844,9 +935,10 @@ if __name__ == "__main__":
 
     # lookat(sys.argv[1])
 
-    asserts_fail()
+    #asserts_fail()
 
     # debug_pathological()
+    debug_real_ancestor_injection()
 
     # build_1kg_sim()
 
