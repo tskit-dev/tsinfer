@@ -90,11 +90,15 @@ def infer(
 
 
 def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False):
-
+    """
+    guess_unknown = False: use the exact ancestors from the coalescent simulation
+    guess_unknown = None: fill out left and right of missing ancestral material with 0
+    guess_unknown = True: fill out left and right of missing ancestral material by copying from nearest known ancestor
+    """
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
     mutation_sites = [[] for _ in range(ts.num_nodes)]
 
-    if guess_unknown:
+    if guess_unknown==True:
         #fill in all the ancestral genotypes, even for regions which do not contribute to the
         #final samples. This stops the inference algorithm getting confused by known boundaries
         #but we have to construct the ancestral types by iterating over edges for each node
@@ -123,7 +127,7 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False
                     A[child,m]=1
     else:
         #Jerome's original routine, where we iterate over trees, not edges
-        A[:] = UNKNOWN_ALLELE
+        A[:] = (0 if guess_unknown==None else UNKNOWN_ALLELE)
         for t in ts.trees():
             for site in t.sites():
                 for u in t.nodes():
@@ -153,12 +157,12 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False
                 s = np.where(a[offset:] != UNKNOWN_ALLELE)[0]
                 if len(s) == 0:
                     break
-                s = offset + s[0]
-                e = np.where(a[offset + s:] == UNKNOWN_ALLELE)[0]
+                s = offset + s[0] # convert to actual location, not offset
+                e = np.where(a[s:] == UNKNOWN_ALLELE)[0]
                 if len(e) == 0:
                     e = m
                 else:
-                    e = offset + s + e[0]
+                    e = s + e[0]  # convert to actual location, not offset
                 offset = e
                 ancestor = np.empty(m, dtype=np.uint8)
                 ancestor[:] = UNKNOWN_ALLELE
