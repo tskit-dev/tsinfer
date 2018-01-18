@@ -294,3 +294,60 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         G, _ = get_random_data_example(20, 50)
         self.verify_ancestor_generator(G)
 
+
+class TestGeneratedAncestors(unittest.TestCase):
+    """
+    Ensures we work correctly with the ancestors recovered from the
+    simulations.
+    """
+
+
+    def verify_inserted_ancestors(self, ts):
+        # Verifies that we can round-trip the specified tree sequence
+        # using the generated ancestors. NOTE: this must be an SMC
+        # consistent tree sequence!
+        positions = np.array([v.position for v in ts.variants()])
+        G = ts.genotype_matrix()
+
+        #Create the ancestors
+        input_root = zarr.group()
+        tsinfer.InputFile.build(
+            input_root, genotypes=G,
+            position=positions,
+            recombination_rate=1, sequence_length=ts.sequence_length,
+            compress=False)
+        ancestors_root = zarr.group()
+        tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+
+        A = ancestors_root["ancestors/haplotypes"][:]
+        # Need to set all missing values to 0 for matching.
+        A[A == tsinfer.UNKNOWN_ALLELE] = 0
+
+        for method in ["P", "C"]:
+            ancestors_ts = tsinfer.match_ancestors(
+                input_root, ancestors_root, method=method)
+            self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A.T))
+            inferred_ts = tsinfer.match_samples(
+                input_root, ancestors_ts, method=method)
+            self.assertTrue(np.array_equal(inferred_ts.genotype_matrix(), G))
+
+    def test_no_recombination(self):
+        ts = msprime.simulate(
+            20, length=1, recombination_rate=0, mutation_rate=1,
+            random_seed=1, model="smc_prime")
+        assert ts.num_sites > 0 and ts.num_sites < 50
+        self.verify_inserted_ancestors(ts)
+
+    def test_small_sample_high_recombination(self):
+        ts = msprime.simulate(
+            4, length=1, recombination_rate=5, mutation_rate=1,
+            random_seed=1, model="smc_prime")
+        assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
+        self.verify_inserted_ancestors(ts)
+
+    def test_high_recombination(self):
+        ts = msprime.simulate(
+            30, length=1, recombination_rate=5, mutation_rate=1,
+            random_seed=1, model="smc_prime")
+        assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
+        self.verify_inserted_ancestors(ts)
