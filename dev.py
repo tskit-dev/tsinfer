@@ -142,7 +142,7 @@ def debug_real_ancestor_injection():
     method = "C"
     path_compression = True
     rng1 = random.Random(1234)
-    print("trees","sites","edges:", "tsinfer", "known_anc_orig", 
+    print("trees","sites","edges:", "tsinfer", "known_anc_orig",
         "known_anc_jerome", "known_anc_yan", sep="\t")
     for i in range(100):
         ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts = \
@@ -185,14 +185,14 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
     positions = np.array([site.index for site in ts.sites()])
     G = ts.genotype_matrix()
     recombination_rate = np.zeros_like(positions) + 1
-    
+
     input_root = zarr.group()
     tsinfer.InputFile.build(
         input_root, genotypes=G,
         position=positions,
         recombination_rate=recombination_rate, sequence_length=ts.num_sites,
         compress=False)
-    
+
     ancestors_root = zarr.group()
     tsinfer.build_ancestors(
         input_root, ancestors_root, method=method, chunk_size=16, compress=False)
@@ -201,36 +201,83 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
     full_inferred_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method, path_compression=path_compression,
         simplify=simplify)
-    
-        
+
+
     ancestors_root = zarr.group()
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts,
         guess_unknown=False)
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=path_compression)
     orig_anc_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method, path_compression=path_compression,
         simplify=simplify)
-    
+
     ancestors_root = zarr.group()
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts,
         guess_unknown=None)
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=path_compression)
     jk_anc_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method, path_compression=path_compression,
         simplify=simplify)
-    
+
     ancestors_root = zarr.group()
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, 
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts,
         guess_unknown=True)
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=path_compression)
     hyw_anc_ts = tsinfer.match_samples(
         input_root, ancestors_ts, method=method, path_compression=path_compression,
         simplify=simplify)
-    
+
     return ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts
+
+def insert_perfect_mutations(ts):
+    """
+    Returns a copy of the specified tree sequence where the left and right
+    coordinates of all edges are marked by mutations. This *should* be sufficient
+    information to recover the tree sequence exactly.
+
+    This has to be fudged slightly because we cannot have two sites with
+    precisely the same coordinates. We work around this by having sites at
+    some very small delta from the correct location.
+    """
+    # Mark each edge with two mutations.
+    tables = ts.dump_tables()
+    tables.sites.clear()
+    tables.mutations.clear()
+    x = 0
+    # This is an arbitrary small value. We just use this to avoid having two sites
+    # at precisely the same location, which is forbidden. This isn't a robust
+    # approach, but should be good enough for most things.
+    delta = 1e-9
+    nodes = set()
+    for (left, right), edges_out, edges_in in ts.edge_diffs():
+        for edge in edges_out:
+            assert x < right
+            assert edge.left <= x < edge.right
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
+            nodes.remove(edge.child)
+            x += delta
+        # Insert a site for each incoming edge.
+        x = left
+        for edge in edges_in:
+            assert edge.left <= x < edge.right
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
+            nodes.add(edge.child)
+            x += delta
+    # Insert mutations for the last tree.
+    x = ts.sequence_length - (len(nodes) + 1) * delta
+    for node in nodes:
+        site_id = tables.sites.add_row(position=x, ancestral_state="0")
+        tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+        x += delta
+
+    return msprime.load_tables(**tables.asdict())
+
+
 
 def debug_pathological():
 
@@ -239,32 +286,17 @@ def debug_pathological():
     path_compression = False
     # ts = msprime.load("pathological-small.source.hdf5")
     ts = msprime.simulate(4, recombination_rate=0.1, random_seed=9)
+    # ts = msprime.simulate(4, recombination_rate=1.5, random_seed=3)
     print(ts.num_trees)
 
-    # Put a mutation on every branch.
-    tables = ts.dump_tables()
-    tables.sites.reset()
-    tables.mutations.reset()
-    j = 0
-    for tree in ts.trees():
-        left, right = tree.interval
-        n = len(list(tree.nodes()))
-        delta = (right - left) / n
-        x = left
-        for u in tree.nodes():
-            if u != tree.root:
-                tables.sites.add_row(position=x, ancestral_state="0")
-                tables.mutations.add_row(site=j, node=u, derived_state="1")
-                j += 1
-                x += delta
-    # print(tables)
-    ts = msprime.load_tables(**tables.asdict())
+    ts = insert_perfect_mutations(ts)
 
     print("INPUT")
     for t in ts.trees():
         sites = [s.index for s in t.sites()]
         print(sites)
         print(t.draw(format="unicode"))
+        t.draw("tree_{}.svg".format(t.index))
         print("=" * 10)
 
     print("num_sites = ", ts.num_sites)
@@ -291,7 +323,7 @@ def debug_pathological():
     ancestors_root = zarr.group()
     #tsinfer.build_ancestors(
     #    input_root, ancestors_root, method=method, chunk_size=16, compress=False)
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=True)
 
     A = ancestors_root["ancestors/haplotypes"][:]
 
@@ -323,7 +355,6 @@ def debug_pathological():
         print(t.interval)
         print(t.draw(format="unicode"))
         print("=" * 10)
-
 
     A = ancestors_root["ancestors/haplotypes"][:]
     # print(A.astype(np.int8))
@@ -942,8 +973,8 @@ if __name__ == "__main__":
 
     #asserts_fail()
 
-    # debug_pathological()
-    debug_real_ancestor_injection()
+    debug_pathological()
+    # debug_real_ancestor_injection()
 
     # build_1kg_sim()
 
