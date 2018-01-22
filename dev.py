@@ -157,11 +157,11 @@ def debug_real_ancestor_injection():
 
 def single_real_ancestor_injection(method, path_compression, seed, simplify=False, mutation_rate=None):
     """
-    if no mutation rate specified, put one mutation per branch
+    if no mutation rate specified, put one mutation per branch, apart from tips
     """
     # daiquiri.setup(level="DEBUG")
     if mutation_rate is None:
-        ts = msprime.simulate(10, recombination_rate=0.35, random_seed=seed)
+        ts = msprime.simulate(6, recombination_rate=0.35, random_seed=seed)
         # Put a mutation on every branch.
         tables = ts.dump_tables()
         tables.sites.reset()
@@ -173,7 +173,7 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
             delta = (right - left) / n
             x = left
             for u in tree.nodes():
-                if u != tree.root:
+                if u != tree.root and not tree.is_leaf(u):
                     tables.sites.add_row(position=x, ancestral_state="0")
                     tables.mutations.add_row(site=j, node=u, derived_state="1")
                     j += 1
@@ -182,7 +182,7 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
         ts = msprime.load_tables(**tables.asdict())
     else:
         ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, random_seed=seed)
-    positions = np.array([site.index for site in ts.sites()])
+    positions = np.array([v.position for v in ts.variants()])
     G = ts.genotype_matrix()
     recombination_rate = np.zeros_like(positions) + 1
 
@@ -190,7 +190,7 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
     tsinfer.InputFile.build(
         input_root, genotypes=G,
         position=positions,
-        recombination_rate=recombination_rate, sequence_length=ts.num_sites,
+        recombination_rate=recombination_rate, sequence_length=1,
         compress=False)
 
     ancestors_root = zarr.group()
