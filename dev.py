@@ -161,10 +161,10 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
     """
     # daiquiri.setup(level="DEBUG")
     if mutation_rate is None:
-        ts = msprime.simulate(6, recombination_rate=0.35, random_seed=seed)
+        ts = msprime.simulate(5, recombination_rate=0.35, random_seed=seed, model="smc_prime")
         ts = insert_perfect_mutations(ts)
     else:
-        ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, random_seed=seed)
+        ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, model="smc_prime", random_seed=seed)
 
         #remove singletons
     sites = msprime.SiteTable()
