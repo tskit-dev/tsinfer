@@ -88,3 +88,4 @@ ENV/
 .ropeproject
 
 *.svg
+tsinfer/_version.py
