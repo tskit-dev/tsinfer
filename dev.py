@@ -162,26 +162,27 @@ def single_real_ancestor_injection(method, path_compression, seed, simplify=Fals
     # daiquiri.setup(level="DEBUG")
     if mutation_rate is None:
         ts = msprime.simulate(6, recombination_rate=0.35, random_seed=seed)
-        # Put a mutation on every branch.
-        tables = ts.dump_tables()
-        tables.sites.reset()
-        tables.mutations.reset()
-        j = 0
-        for tree in ts.trees():
-            left, right = tree.interval
-            n = len(list(tree.nodes()))
-            delta = (right - left) / n
-            x = left
-            for u in tree.nodes():
-                if u != tree.root and not tree.is_leaf(u):
-                    tables.sites.add_row(position=x, ancestral_state="0")
-                    tables.mutations.add_row(site=j, node=u, derived_state="1")
-                    j += 1
-                    x += delta
-        # print(tables)
-        ts = msprime.load_tables(**tables.asdict())
+        ts = insert_perfect_mutations(ts)
     else:
         ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, random_seed=seed)
+
+        #remove singletons
+    sites = msprime.SiteTable()
+    mutations = msprime.MutationTable()
+    for variant in ts.variants():
+        if np.sum(variant.genotypes) > 1:
+            site_id = sites.add_row(
+                position=variant.site.position,
+                ancestral_state=variant.site.ancestral_state)
+            for mutation in variant.site.mutations:
+                assert mutation.parent == -1  # No back mutations
+                mutations.add_row(
+                    site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+    tables = ts.dump_tables()
+    ts = msprime.load_tables(
+        nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
+
+
     positions = np.array([v.position for v in ts.variants()])
     G = ts.genotype_matrix()
     recombination_rate = np.zeros_like(positions) + 1
@@ -253,7 +254,10 @@ def insert_perfect_mutations(ts):
     delta = 1e-9
     nodes = set()
     for (left, right), edges_out, edges_in in ts.edge_diffs():
+        #print("--Edges from {} to {} ---".format(left, right))
+        x = left-len(edges_out)*delta
         for edge in edges_out:
+            #print("edge pos", edge.left, edge.right, 'x', x)
             assert x < right
             assert edge.left <= x < edge.right
             site_id = tables.sites.add_row(position=x, ancestral_state="0")
@@ -263,6 +267,7 @@ def insert_perfect_mutations(ts):
         # Insert a site for each incoming edge.
         x = left
         for edge in edges_in:
+            #print("edge in pos", left, right, 'x', x)
             assert edge.left <= x < edge.right
             site_id = tables.sites.add_row(position=x, ancestral_state="0")
             tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
