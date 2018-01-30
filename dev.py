@@ -138,7 +138,7 @@ def generate_ancestors(ts):
     A = A[ts.num_samples:]
     return A[::-1]
 
-def debug_real_ancestor_injection():
+def debug_real_ancestor_injection(n_samples):
     method = "C"
     path_compression = True
     rng1 = random.Random(1234)
@@ -155,16 +155,16 @@ def debug_real_ancestor_injection():
             ("*" if x[0]==min(inf_edges[:,0]) and np.sum(inf_edges[:,0]==min(inf_edges[:,0]))==1 else " ")\
             for x in inf_edges]))
 
-def single_real_ancestor_injection(method, path_compression, seed, simplify=False, mutation_rate=None):
+def single_real_ancestor_injection(method, path_compression, n_samples, seed, simplify=False, mutation_rate=None, model=None):
     """
     if no mutation rate specified, put one mutation per branch, apart from tips
     """
     # daiquiri.setup(level="DEBUG")
     if mutation_rate is None:
-        ts = msprime.simulate(5, recombination_rate=0.35, random_seed=seed, model="smc_prime")
+        ts = msprime.simulate(n_samples, recombination_rate=0.35, random_seed=seed)
         ts = insert_perfect_mutations(ts)
     else:
-        ts = msprime.simulate(10, mutation_rate=mutation_rate, recombination_rate=0.35, model="smc_prime", random_seed=seed)
+        ts = msprime.simulate(n_samples, mutation_rate=mutation_rate, recombination_rate=0.35, model=model, random_seed=seed)
 
         #remove singletons
     sites = msprime.SiteTable()
@@ -979,7 +979,7 @@ if __name__ == "__main__":
     #asserts_fail()
 
     debug_pathological()
-    # debug_real_ancestor_injection()
+    # debug_real_ancestor_injection(10)
 
     # build_1kg_sim()
 
