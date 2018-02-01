@@ -131,13 +131,13 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False
         for t in ts.trees():
             for site in t.sites():
                 for u in t.nodes():
-                    A[u, site.index] = 0
+                    A[u, site.id] = 0
                 for mutation in site.mutations:
-                    mutation_sites[mutation.node].append(site.index)
+                    mutation_sites[mutation.node].append(site.id)
                     # Every node underneath this node will have the value set
                     # at this site.
                     for u in t.nodes(mutation.node):
-                        A[u, site.index] = 1
+                        A[u, site.id] = 1
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
@@ -290,7 +290,7 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
         # Set anything unknown to 0
         g1[g1 == UNKNOWN_ALLELE] = 0
         if not np.array_equal(g1, g2):
-            raise ValueError("Unequal genotypes at site", v.index)
+            raise ValueError("Unequal genotypes at site", v.id)
         progress_monitor.update()
         count += 1
     if count != ancestors_ts.num_sites:
