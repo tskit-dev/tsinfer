@@ -26,7 +26,7 @@ for i, fn in enumerate(args.infiles):
     if args.outfile:
         out_fn = args.outfile + ext
     else:
-        out_fn = os.path.splitext(fn)[0] + '.ts'
+        out_fn = os.path.splitext(fn)[0] + '.hdf5'
     if not os.path.isfile(fn):
         raise FileNotFoundError
     input_hdf5 = zarr.DBMStore(fn, open=bsddb3.btopen)
