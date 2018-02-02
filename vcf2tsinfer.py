@@ -236,7 +236,7 @@ for c, dat in chromosomes.items():
                 genetic_map_file, args.recombination_rate))
 
 
-    output_file = args.outfile + str(c) + ".hdf5"
+    output_file = args.outfile + str(c) + ".tsinf"
     if os.path.exists(output_file):
         os.unlink(output_file)
     input_hdf5 = zarr.DBMStore(output_file, open=bsddb3.btopen)
