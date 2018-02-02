@@ -249,3 +249,19 @@ for c, dat in chromosomes.items():
     #sample_names=[s.encode() for s in reduced_rows]
     input_hdf5.close()
     print("Saved {} biallelic loci for {} samples into {}".format(len(dat['position']), len(reduced_rows), output_file))
+
+
+"""
+Then do something like
+    input_hdf5 = zarr.DBMStore(output_file, open=bsddb3.btopen)
+    input_root = zarr.group(store=input_hdf5
+    ancestors_root = zarr.group()
+    tsinfer.build_ancestors(
+        input_root, ancestors_root, method=method, chunk_size=16, compress=False)
+    ancestors_ts = tsinfer.match_ancestors(
+        input_root, ancestors_root, method=method, path_compression=path_compression)
+    full_inferred_ts = tsinfer.match_samples(
+        input_root, ancestors_ts, method=method, path_compression=path_compression,
+        simplify=simplify)
+    full_inferred_ts.dump(output_file + '.ts')
+"""
