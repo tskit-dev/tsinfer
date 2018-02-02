@@ -209,7 +209,7 @@ for c, dat in chromosomes.items():
 
     recombination_rates = np.zeros_like(len(dat['position'])) + args.recombination_rate
     if args.genetic_map_pattern is None:
-        print("Using consant recombination rate of {}".format(args.recombination_rate))
+        print("Using constant recombination rate of {}".format(args.recombination_rate))
     else:
         if "{}" in args.genetic_map_pattern:
             genetic_map_file = args.genetic_map_pattern.format(c)
