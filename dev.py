@@ -6,7 +6,7 @@ import zarr
 import sys
 import pandas as pd
 import daiquiri
-import bsddb3
+#import bsddb3
 import time
 import scipy
 import pickle
@@ -155,18 +155,16 @@ def debug_real_ancestor_injection(n_samples):
             ("*" if x[0]==min(inf_edges[:,0]) and np.sum(inf_edges[:,0]==min(inf_edges[:,0]))==1 else " ")\
             for x in inf_edges]))
 
-def single_real_ancestor_injection(method, path_compression, n_samples, seed, simplify=False, mutation_rate=None, model=None):
+def single_real_ancestor_injection(method, path_compression, simplify=False, **kwargs):
     """
     if no mutation rate specified, put one mutation per branch, apart from tips
     """
     # daiquiri.setup(level="DEBUG")
-    if mutation_rate is None:
-        ts = msprime.simulate(n_samples, recombination_rate=0.35, random_seed=seed)
+    ts = msprime.simulate(**kwargs)
+    if 'mutation_rate' not in kwargs:
         ts = insert_perfect_mutations(ts)
-    else:
-        ts = msprime.simulate(n_samples, mutation_rate=mutation_rate, recombination_rate=0.35, model=model, random_seed=seed)
 
-        #remove singletons
+    #remove singletons
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
     for variant in ts.variants():
@@ -256,7 +254,7 @@ def insert_perfect_mutations(ts):
     for (left, right), edges_out, edges_in in ts.edge_diffs():
         #print("--Edges from {} to {} ---".format(left, right))
         x = left-len(edges_out)*delta
-        for edge in edges_out:
+        for edge in reversed(edges_out):
             #print("edge pos", edge.left, edge.right, 'x', x)
             assert x < right
             assert edge.left <= x < edge.right
@@ -266,7 +264,7 @@ def insert_perfect_mutations(ts):
             x += delta
         # Insert a site for each incoming edge.
         x = left
-        for edge in edges_in:
+        for edge in  reversed(edges_in):
             #print("edge in pos", left, right, 'x', x)
             assert edge.left <= x < edge.right
             site_id = tables.sites.add_row(position=x, ancestral_state="0")
