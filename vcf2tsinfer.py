@@ -254,7 +254,7 @@ for c, dat in chromosomes.items():
 """
 Then do something like
     input_hdf5 = zarr.DBMStore(output_file, open=bsddb3.btopen)
-    input_root = zarr.group(store=input_hdf5
+    input_root = zarr.group(store=input_hdf5)
     ancestors_root = zarr.group()
     tsinfer.build_ancestors(
         input_root, ancestors_root, method=method, chunk_size=16, compress=False)
