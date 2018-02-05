@@ -10,6 +10,7 @@ import daiquiri
 import time
 import scipy
 import pickle
+import itertools
 
 import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
@@ -231,6 +232,64 @@ def single_real_ancestor_injection(method, path_compression, simplify=False, **k
 
     return ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts
 
+def kc_distance(tree1, tree2):
+    """
+    Returns the Kendall-Colijn topological distance between the specified
+    pair of trees. Note that this does not include the branch length component.
+    """
+    samples = tree1.tree_sequence.samples()
+    if not np.array_equal(samples, tree2.tree_sequence.samples()):
+        raise ValueError("Trees must have the same samples")
+    k = samples.shape[0]
+    n = (k * (k - 1)) // 2
+    trees = [tree1, tree2]
+    M = [np.ones(n + k), np.ones(n + k)]
+    D = [{}, {}]
+    for j, (a, b) in enumerate(itertools.combinations(samples, 2)):
+        for tree, m, d in zip(trees, M, D):
+            u = tree.mrca(a, b)
+            if u not in d:
+                # Cache the distance values
+                path_len = 0
+                v = u
+                while tree1.parent(u) != msprime.NULL_NODE:
+                    path_len += 1
+                    u = tree1.parent(u)
+                d[v] = path_len
+            m[j] = path_len
+    return np.linalg.norm(M[0] - M[1])
+
+
+def compare(ts1, ts2):
+    """
+    Returns the KC distance between the specified tree sequences and
+    the intervals over which the trees are compared.
+    """
+    if ts1.sequence_length != ts2.sequence_length:
+        raise ValueError("Tree sequences must be equal length.")
+    if not np.array_equal(ts1.samples(), ts2.samples()):
+        raise ValueError("Tree sequences must have the same samples")
+    L = ts1.sequence_length
+    trees1 = ts1.trees()
+    trees2 = ts2.trees()
+    tree1 = next(trees1)
+    tree2 = next(trees2)
+    breakpoints = [0]
+    metrics = []
+    right = 0
+    while right != L:
+        right = min(tree1.interval[1], tree2.interval[1])
+        breakpoints.append(right)
+        metrics.append(kc_distance(tree1, tree2))
+        # Advance
+        if tree1.interval[1] == right:
+            tree1 = next(trees1, None)
+        if tree2.interval[1] == right:
+            tree2 = next(trees2, None)
+    return np.array(breakpoints), np.array(metrics)
+
+
+
 def insert_perfect_mutations(ts):
     """
     Returns a copy of the specified tree sequence where the left and right
@@ -288,15 +347,16 @@ def debug_pathological():
     method = "C"
     path_compression = False
     # ts = msprime.load("pathological-small.source.hdf5")
-    ts = msprime.simulate(4, recombination_rate=0.1, random_seed=9)
+    ts = msprime.simulate(5, recombination_rate=1.2, random_seed=9)
     # ts = msprime.simulate(4, recombination_rate=1.5, random_seed=3)
     print(ts.num_trees)
 
     ts = insert_perfect_mutations(ts)
+    print(ts.sequence_length)
 
     print("INPUT")
     for t in ts.trees():
-        sites = [s.index for s in t.sites()]
+        sites = [s.id for s in t.sites()]
         print(sites)
         print(t.draw(format="unicode"))
         t.draw("tree_{}.svg".format(t.index))
@@ -313,7 +373,7 @@ def debug_pathological():
     # print("inferred num_edges = ", ts.num_edges)
     # print("inferred num_trees = ", ts.num_trees)
 
-    positions = np.array([site.index for site in ts.sites()])
+    positions = np.array([site.position for site in ts.sites()])
     G = ts.genotype_matrix()
     recombination_rate = np.zeros_like(positions) + 1
 
@@ -321,7 +381,7 @@ def debug_pathological():
     tsinfer.InputFile.build(
         input_root, genotypes=G,
         position=positions,
-        recombination_rate=recombination_rate, sequence_length=ts.num_sites,
+        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
         compress=False)
     ancestors_root = zarr.group()
     #tsinfer.build_ancestors(
@@ -374,18 +434,16 @@ def debug_pathological():
 
     print(inferred_ts.tables.edges)
 
-    print("SAMPLES")
-    for t in inferred_ts.trees():
-        print(t.interval)
-        print(t.draw(format="unicode"))
-        print("=" * 10)
+    # print("SAMPLES")
+    # for t in inferred_ts.trees():
+    #     print(t.interval)
+    #     print(t.draw(format="unicode"))
+    #     print("=" * 10)
 
 
     flags = inferred_ts.tables.nodes.flags
     samples = np.where(flags == 1)[0][-ts.num_samples:]
     inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
-
-
 
     assert inferred_ts.num_samples == ts.num_samples
     assert inferred_ts.num_sites == ts.num_sites
@@ -394,9 +452,14 @@ def debug_pathological():
     print("simplified num_edges = ", inferred_ts.num_edges)
     print("inferred num_trees = ", inferred_ts.num_trees)
 
-    # for t in inferred_ts.trees():
-    #     print([site.index for site in t.sites()])
-    #     print(t.draw(format="unicode"))
+    for t in inferred_ts.trees():
+        print([site.position for site in t.sites()])
+        print(t.draw(format="unicode"))
+
+    bp, metrics = compare(ts, inferred_ts)
+    print(bp)
+    print(metrics)
+
 
 
 
