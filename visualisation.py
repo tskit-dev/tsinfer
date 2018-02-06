@@ -11,10 +11,6 @@ import PIL.ImageColor as ImageColor
 
 import zarr
 
-# script_path = __file__ if "__file__" in locals() else "./dummy.py"
-# sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','msprime')) # use the local copy of msprime in preference to the global one
-# sys.path.insert(1,os.path.join(os.path.dirname(os.path.abspath(script_path)),'..','tsinfer')) # use the local copy of tsinfer in preference to the global one
-
 import tsinfer
 import msprime
 
@@ -211,19 +207,39 @@ def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
     # visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
+    inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
+            simplify=True, path_compression=False)
+
+    breakpoints, distance = tsinfer.compare(ts, inferred_ts)
+    print(breakpoints)
+    print(distance)
+    # print("INPUT:")
+    # for tree in ts.trees():
+    #     print("Interval = ", tree.interval)
+    #     print(tree.draw(format="unicode"))
+
+    # print("INPUT:")
+    # for tree in ts.trees():
+    #     print("Interval = ", tree.interval)
+    #     print(tree.draw(format="unicode"))
+
 
 def run_viz(n, L, seed):
+    recomb_map = msprime.RecombinationMap.uniform_map(
+            length=L, rate=0.01, num_loci=L)
     ts = msprime.simulate(
-        n, length=L, recombination_rate=0.5, mutation_rate=1, random_seed=seed)
-    print(ts.num_sites)
-    if ts.num_sites == 0:
-        print("zero sites; skipping")
-        return
+        n, recombination_map=recomb_map, random_seed=seed,
+        model="smc_prime")
+    # print(ts.num_sites)
+    # if ts.num_sites == 0:
+    #     print("zero sites; skipping")
+    #     return
+    ts = tsinfer.insert_perfect_mutations(ts)
     visualise(ts, 1e-9, 0, method="P", box_size=16)
 
 
 def main():
-    run_viz(5, 8, 1)
+    run_viz(5, 100, 2)
 
 
 if __name__ == "__main__":
