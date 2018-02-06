@@ -10,6 +10,7 @@ import daiquiri
 import time
 import scipy
 import pickle
+import collections
 import itertools
 
 import matplotlib as mp
@@ -156,6 +157,7 @@ def debug_real_ancestor_injection(n_samples):
             ("*" if x[0]==min(inf_edges[:,0]) and np.sum(inf_edges[:,0]==min(inf_edges[:,0]))==1 else " ")\
             for x in inf_edges]))
 
+
 def single_real_ancestor_injection(method, path_compression, simplify=False, **kwargs):
     """
     if no mutation rate specified, put one mutation per branch, apart from tips
@@ -165,22 +167,7 @@ def single_real_ancestor_injection(method, path_compression, simplify=False, **k
     if 'mutation_rate' not in kwargs:
         ts = insert_perfect_mutations(ts)
 
-    #remove singletons
-    sites = msprime.SiteTable()
-    mutations = msprime.MutationTable()
-    for variant in ts.variants():
-        if np.sum(variant.genotypes) > 1:
-            site_id = sites.add_row(
-                position=variant.site.position,
-                ancestral_state=variant.site.ancestral_state)
-            for mutation in variant.site.mutations:
-                assert mutation.parent == -1  # No back mutations
-                mutations.add_row(
-                    site=site_id, node=mutation.node, derived_state=mutation.derived_state)
-    tables = ts.dump_tables()
-    ts = msprime.load_tables(
-        nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
-
+    ts = strip_singletons(ts)
 
     positions = np.array([v.position for v in ts.variants()])
     G = ts.genotype_matrix()
@@ -232,134 +219,28 @@ def single_real_ancestor_injection(method, path_compression, simplify=False, **k
 
     return ts, full_inferred_ts, orig_anc_ts, jk_anc_ts, hyw_anc_ts
 
-def kc_distance(tree1, tree2):
-    """
-    Returns the Kendall-Colijn topological distance between the specified
-    pair of trees. Note that this does not include the branch length component.
-    """
-    samples = tree1.tree_sequence.samples()
-    if not np.array_equal(samples, tree2.tree_sequence.samples()):
-        raise ValueError("Trees must have the same samples")
-    k = samples.shape[0]
-    n = (k * (k - 1)) // 2
-    trees = [tree1, tree2]
-    M = [np.ones(n + k), np.ones(n + k)]
-    D = [{}, {}]
-    for j, (a, b) in enumerate(itertools.combinations(samples, 2)):
-        for tree, m, d in zip(trees, M, D):
-            u = tree.mrca(a, b)
-            if u not in d:
-                # Cache the distance values
-                path_len = 0
-                v = u
-                while tree1.parent(u) != msprime.NULL_NODE:
-                    path_len += 1
-                    u = tree1.parent(u)
-                d[v] = path_len
-            m[j] = path_len
-    return np.linalg.norm(M[0] - M[1])
-
-
-def compare(ts1, ts2):
-    """
-    Returns the KC distance between the specified tree sequences and
-    the intervals over which the trees are compared.
-    """
-    if ts1.sequence_length != ts2.sequence_length:
-        raise ValueError("Tree sequences must be equal length.")
-    if not np.array_equal(ts1.samples(), ts2.samples()):
-        raise ValueError("Tree sequences must have the same samples")
-    L = ts1.sequence_length
-    trees1 = ts1.trees()
-    trees2 = ts2.trees()
-    tree1 = next(trees1)
-    tree2 = next(trees2)
-    breakpoints = [0]
-    metrics = []
-    right = 0
-    while right != L:
-        right = min(tree1.interval[1], tree2.interval[1])
-        breakpoints.append(right)
-        metrics.append(kc_distance(tree1, tree2))
-        # Advance
-        if tree1.interval[1] == right:
-            tree1 = next(trees1, None)
-        if tree2.interval[1] == right:
-            tree2 = next(trees2, None)
-    return np.array(breakpoints), np.array(metrics)
-
-
-
-def insert_perfect_mutations(ts):
-    """
-    Returns a copy of the specified tree sequence where the left and right
-    coordinates of all edges are marked by mutations. This *should* be sufficient
-    information to recover the tree sequence exactly.
-
-    This has to be fudged slightly because we cannot have two sites with
-    precisely the same coordinates. We work around this by having sites at
-    some very small delta from the correct location.
-    """
-    # Mark each edge with two mutations.
-    tables = ts.dump_tables()
-    tables.sites.clear()
-    tables.mutations.clear()
-    x = 0
-    # This is an arbitrary small value. We just use this to avoid having two sites
-    # at precisely the same location, which is forbidden. This isn't a robust
-    # approach, but should be good enough for most things.
-    delta = 1e-9
-    nodes = set()
-    for (left, right), edges_out, edges_in in ts.edge_diffs():
-        #print("--Edges from {} to {} ---".format(left, right))
-        x = left-len(edges_out)*delta
-        for edge in reversed(edges_out):
-            #print("edge pos", edge.left, edge.right, 'x', x)
-            assert x < right
-            assert edge.left <= x < edge.right
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
-            nodes.remove(edge.child)
-            x += delta
-        # Insert a site for each incoming edge.
-        x = left
-        for edge in  reversed(edges_in):
-            #print("edge in pos", left, right, 'x', x)
-            assert edge.left <= x < edge.right
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
-            nodes.add(edge.child)
-            x += delta
-    # Insert mutations for the last tree.
-    x = ts.sequence_length - (len(nodes) + 1) * delta
-    for node in nodes:
-        site_id = tables.sites.add_row(position=x, ancestral_state="0")
-        tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-        x += delta
-
-    return msprime.load_tables(**tables.asdict())
-
-
-
 def debug_pathological():
 
     # daiquiri.setup(level="DEBUG")
     method = "C"
     path_compression = False
     # ts = msprime.load("pathological-small.source.hdf5")
-    ts = msprime.simulate(5, recombination_rate=1.2, random_seed=9)
+    recomb_map = msprime.RecombinationMap.uniform_map(
+            length=100, rate=0.01, num_loci=100)
+    ts = msprime.simulate(6, recombination_map=recomb_map, random_seed=4)
+    # ts = msprime.simulate(5, recombination_rate=1.2, random_seed=9)
     # ts = msprime.simulate(4, recombination_rate=1.5, random_seed=3)
     print(ts.num_trees)
 
-    ts = insert_perfect_mutations(ts)
+    ts = tsinfer.insert_perfect_mutations(ts)
     print(ts.sequence_length)
 
     print("INPUT")
     for t in ts.trees():
         sites = [s.id for s in t.sites()]
-        print(sites)
+        print(t.interval)
         print(t.draw(format="unicode"))
-        t.draw("tree_{}.svg".format(t.index))
+        # t.draw("tree_{}.svg".format(t.index))
         print("=" * 10)
 
     print("num_sites = ", ts.num_sites)
@@ -413,9 +294,12 @@ def debug_pathological():
     assert ancestors_ts.sequence_length == ts.num_sites
 
     print(ancestors_ts.tables.edges)
+    positions = list(positions)
+    positions.append(ts.sequence_length)
 
     for t in ancestors_ts.trees():
         print(t.interval)
+        print(positions[int(t.interval[0])], positions[int(t.interval[1])])
         print(t.draw(format="unicode"))
         print("=" * 10)
 
@@ -452,13 +336,23 @@ def debug_pathological():
     print("simplified num_edges = ", inferred_ts.num_edges)
     print("inferred num_trees = ", inferred_ts.num_trees)
 
+    # # Round the edges to the nearest integer.
+    # t = inferred_ts.tables
+    # t.edges.set_columns(
+    #     np.round(t.edges.left), np.round(t.edges.right),
+    #     t.edges.parent, t.edges.child)
+    # print(t.edges)
+    # inferred_ts = msprime.load_tables(**t.asdict())
+
     for t in inferred_ts.trees():
         print([site.position for site in t.sites()])
+        print("interval = ", t.interval)
         print(t.draw(format="unicode"))
 
-    bp, metrics = compare(ts, inferred_ts)
-    print(bp)
-    print(metrics)
+    bp, metrics = tsinfer.compare(ts, inferred_ts)
+    print("METRICS")
+    for x, v in zip(bp, metrics):
+        print(x,"\t", v)
 
 
 

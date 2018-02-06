@@ -162,7 +162,7 @@ class Visualiser(object):
         ts = self.inferred_ts
         site_index = {}
         for site in ts.sites():
-            site_index[site.position] = site.index
+            site_index[site.position] = site.id
         site_index[ts.sequence_length] = ts.num_sites
         site_index[0] = 0
         max_num_children = 0
@@ -188,25 +188,25 @@ class Visualiser(object):
             self.draw_copying_path(pattern.format(picture_index), j, P[j], I)
 
 
-def visualise(
-        samples, positions, length, recombination_rate, error_rate, method="C",
-        box_size=8):
+def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
 
+    samples = ts.genotype_matrix()
     input_root = zarr.group()
     tsinfer.InputFile.build(
-        input_root, genotypes=samples.T,
+        input_root, genotypes=samples,
         recombination_rate=recombination_rate,
-        position=positions,
-        sequence_length=length,
+        position=[site.position for site in ts.sites()],
+        sequence_length=ts.sequence_length,
         compress=False)
     ancestors_root = zarr.group()
-    tsinfer.build_ancestors(
-        input_root, ancestors_root, method=method, compress=False)
+    # tsinfer.build_ancestors(
+    #     input_root, ancestors_root, method=method, compress=False)
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=True)
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=False)
     inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
             simplify=False, path_compression=False)
-    visualiser = Visualiser(samples, ancestors_root, inferred_ts, box_size=box_size)
+    visualiser = Visualiser(samples.T, ancestors_root, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
     # visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
@@ -219,15 +219,11 @@ def run_viz(n, L, seed):
     if ts.num_sites == 0:
         print("zero sites; skipping")
         return
-    positions = np.array([site.position for site in ts.sites()])
-    S = np.zeros((ts.sample_size, ts.num_sites), dtype="i1")
-    for variant in ts.variants():
-        S[:, variant.index] = variant.genotypes
-    visualise(S, positions, L, 1e-9, 0, method="P", box_size=16)
+    visualise(ts, 1e-9, 0, method="P", box_size=16)
 
 
 def main():
-    run_viz(5, 5, 1)
+    run_viz(5, 8, 1)
 
 
 if __name__ == "__main__":
