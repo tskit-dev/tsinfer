@@ -46,15 +46,6 @@ class Visualiser(object):
         self.ancestors = ancestors_root["/ancestors/haplotypes"][:]
         self.num_ancestors = self.ancestors.shape[0]
 
-        # for j in range(1, len(self.ancestors)):
-        #     jj
-        #     if frequency[focal_sites[0]] != last_frequency:
-        #         last_frequency = frequency[focal_sites[0]]
-        #         num_haplotype_rows += 1
-        #     self.row_map[j] = num_haplotype_rows
-        #     num_haplotype_rows += 1
-        # num_ancestor_rows = num_haplotype_rows
-
         num_haplotype_rows += 1
         for j in range(self.num_ancestors):
             self.row_map[j] = num_haplotype_rows
@@ -66,28 +57,21 @@ class Visualiser(object):
 
         # Make the tree sequence box.
         num_ancestor_rows = self.num_ancestors
-        num_ts_rows = num_ancestor_rows
 
         self.width = box_size * self.num_sites + self.left_padding + self.right_padding
         self.height = (
             self.top_padding + self.bottom_padding + self.mid_padding
-            + num_haplotype_rows * box_size + num_ts_rows * box_size)
+            + num_haplotype_rows * box_size)
         self.ts_origin = (self.left_padding, self.top_padding)
         self.haplotype_origin = (
                 self.left_padding,
-                self.top_padding + self.mid_padding + num_ts_rows * box_size)
+                self.top_padding + self.mid_padding)
         self.base_image = Image.new(
             "RGB", (self.width, self.height), color=self.background_colour)
         self.draw_base()
 
     def draw_base(self):
-        self.draw_base_tree_sequence()
         self.draw_base_haplotypes()
-
-    def draw_base_tree_sequence(self):
-        draw = ImageDraw.Draw(self.base_image)
-        I = np.zeros((self.num_ancestors, self.num_sites))
-        self.__draw_ts_intensity(draw, I)
 
     def draw_base_haplotypes(self):
         b = self.box_size
@@ -114,24 +98,7 @@ class Visualiser(object):
     def draw_haplotypes(self, filename):
         self.base_image.save(filename)
 
-    def __draw_ts_intensity(self, draw, child_intensity):
-        b = self.box_size
-        origin = self.ts_origin
-        for j in range(self.ancestors.shape[0]):
-            a = self.ancestors[j]
-            row = self.row_map[j]
-            y = row * b + origin[1]
-            for k in range(self.num_sites):
-                x = k * b + origin[0]
-                # hsl = "hsl(240, {}%, 50%)".format(int(child_intensity[j, k] * 100))
-                # fill = ImageColor.getrgb(hsl)
-                v = 255 - int(child_intensity[j, k] * 255)
-                fill = (v, v, v)
-                draw.rectangle(
-                    [(x, y), (x + b, y + b)], fill=fill, outline="black")
-
-
-    def draw_copying_path(self, filename, child_row, parents, child_intensity):
+    def draw_copying_path(self, filename, child_row, parents, breakpoints):
         origin = self.haplotype_origin
         b = self.box_size
         m = self.num_sites
@@ -139,6 +106,7 @@ class Visualiser(object):
         draw = ImageDraw.Draw(image)
         y = self.row_map[child_row] * b + origin[1]
         x = origin[0]
+        draw.text((x - b, y), str(child_row), fill="black")
         draw.rectangle([(x, y), (x + m * b, y + b)], outline=self.copying_outline_colour)
         for k in range(m):
             if parents[k] != -1:
@@ -147,24 +115,31 @@ class Visualiser(object):
                 x = k * b + origin[0]
                 a = self.ancestors[parents[k], k]
                 draw.rectangle([(x, y), (x + b, y + b)], fill=self.copy_colours[a])
+
+        for k, position in breakpoints.items():
+            x = origin[0] + k * b
+            y = origin[1] - b
+            draw.text((x, y), "{}".format(position), fill="black")
+            x = origin[0] + (k + 1) * b
+            y1 = origin[0] + self.row_map[0] * b
+            y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
+            draw.line([(x, y1), (x, y2)], fill="black")
+
         print("Saving", filename)
-        self.__draw_ts_intensity(draw, child_intensity)
         image.save(filename)
 
     def draw_copying_paths(self, pattern):
         N = self.num_ancestors + self.samples.shape[0]
         P = np.zeros((N, self.num_sites), dtype=int) - 1
         C = np.zeros((self.num_ancestors, self.num_sites), dtype=int)
+        breakpoints = []
         ts = self.inferred_ts
         site_index = {}
+        sites = list(ts.sites())
         for site in ts.sites():
             site_index[site.position] = site.id
         site_index[ts.sequence_length] = ts.num_sites
         site_index[0] = 0
-        max_num_children = 0
-        for e in ts.edgesets():
-            if e.parent != 0:
-                max_num_children = max(max_num_children, len(e.children))
         for e in ts.edges():
             left = site_index[e.left]
             right = site_index[e.right]
@@ -172,16 +147,11 @@ class Visualiser(object):
             P[e.child, left:right] = e.parent
         index = np.arange(self.num_sites, dtype=int)
         n = self.samples.shape[0]
-        for j in range(n):
-            k = self.num_ancestors + j
-            C[P[k], index] += 1
-            I = C / max_num_children
-            self.draw_copying_path(pattern.format(j), k, P[k], I)
-        for j in reversed(range(1, self.num_ancestors)):
-            picture_index = self.num_ancestors - j + n - 1
-            C[P[j],index] += 1
-            I = C / max_num_children
-            self.draw_copying_path(pattern.format(picture_index), j, P[j], I)
+        breakpoints = {}
+        for j in range(1, self.num_ancestors + n):
+            for k in np.where(P[j][1:] != P[j][:-1])[0]:
+                breakpoints[k] = sites[k].position
+            self.draw_copying_path(pattern.format(j - 1), j, P[j], breakpoints)
 
 
 def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
@@ -210,23 +180,28 @@ def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
     inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
             simplify=True, path_compression=False)
 
-    breakpoints, distance = tsinfer.compare(ts, inferred_ts)
-    print(breakpoints)
-    print(distance)
-    # print("INPUT:")
-    # for tree in ts.trees():
-    #     print("Interval = ", tree.interval)
-    #     print(tree.draw(format="unicode"))
+    for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, inferred_ts):
+        distance = tsinfer.kc_distance(tree1, tree2)
+        trailer = ""
+        if distance != 0:
+            trailer = "[MISMATCH]"
+        print("-" * 20)
+        print("Interval          =", left, "--", right)
+        print("Source interval   =", tree1.interval)
+        print("Inferred interval =", tree2.interval)
+        print("KC distance       =", distance, trailer)
+        print()
+        d1 = tree1.draw(format="unicode").splitlines()
+        d2 = tree2.draw(format="unicode").splitlines()
+        # This won't work when the trees have different structures and therefore
+        # different numbers of lines.
+        for row1, row2 in zip(d1, d2):
+            print(row1, " | ", row2)
+        print()
 
-    # print("INPUT:")
-    # for tree in ts.trees():
-    #     print("Interval = ", tree.interval)
-    #     print(tree.draw(format="unicode"))
-
-
-def run_viz(n, L, seed):
+def run_viz(n, L, rate, seed):
     recomb_map = msprime.RecombinationMap.uniform_map(
-            length=L, rate=0.01, num_loci=L)
+            length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
@@ -239,7 +214,7 @@ def run_viz(n, L, seed):
 
 
 def main():
-    run_viz(5, 100, 2)
+    run_viz(8, 100, 0.1, 3)
 
 
 if __name__ == "__main__":

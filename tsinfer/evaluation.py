@@ -39,32 +39,42 @@ def kc_distance(tree1, tree2):
     return np.linalg.norm(M[0] - M[1])
 
 
-def compare(ts1, ts2):
+def tree_pairs(ts1, ts2):
     """
-    Returns the KC distance between the specified tree sequences and
-    the intervals over which the trees are compared.
+    Returns an iterator over the pairs of trees for each distinct
+    interval in the specified pair of tree sequences.
     """
     if ts1.sequence_length != ts2.sequence_length:
         raise ValueError("Tree sequences must be equal length.")
-    if not np.array_equal(ts1.samples(), ts2.samples()):
-        raise ValueError("Tree sequences must have the same samples")
     L = ts1.sequence_length
     trees1 = ts1.trees()
     trees2 = ts2.trees()
     tree1 = next(trees1)
     tree2 = next(trees2)
-    breakpoints = [0]
-    metrics = []
     right = 0
     while right != L:
+        left = right
         right = min(tree1.interval[1], tree2.interval[1])
-        breakpoints.append(right)
-        metrics.append(kc_distance(tree1, tree2))
+        yield (left, right), tree1, tree2
         # Advance
         if tree1.interval[1] == right:
             tree1 = next(trees1, None)
         if tree2.interval[1] == right:
             tree2 = next(trees2, None)
+
+
+def compare(ts1, ts2):
+    """
+    Returns the KC distance between the specified tree sequences and
+    the intervals over which the trees are compared.
+    """
+    if not np.array_equal(ts1.samples(), ts2.samples()):
+        raise ValueError("Tree sequences must have the same samples")
+    breakpoints = [0]
+    metrics = []
+    for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
+        breakpoints.append(right)
+        metrics.append(kc_distance(tree1, tree2))
     return np.array(breakpoints), np.array(metrics)
 
 
