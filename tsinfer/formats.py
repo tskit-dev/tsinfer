@@ -382,10 +382,6 @@ class AncestorFile(Hdf5File):
         for j in range(self.num_ancestors):
             self.focal_sites[j] = focal_sites[offset: offset + self.num_focal_sites[j]]
             offset += self.num_focal_sites[j]
-            if j > 0:
-                assert self.focal_sites[j].shape[0] > 0
-            else:
-                assert self.focal_sites[j].shape[0] == 0
         logger.info("Loaded ancestor matrix; num_ancestors={}".format(
             self.num_ancestors))
 

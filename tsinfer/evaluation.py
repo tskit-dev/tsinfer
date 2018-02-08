@@ -117,7 +117,8 @@ def insert_perfect_mutations(ts, delta=1e-3):
 
     # Edgesets are useful in one way as we can tag two different children at the
     # same time with one mutation. However, this means that we have mutations over
-    # roots, and therefore fixed sites.
+    # roots, and therefore fixed sites. It seems hard to ensure that we have
+    # mutations tagging every ancestor without doing it this way though.
 
     # edgesets = list(ts.edgesets())
     # edgesets.sort(key=lambda e: -e.parent)
@@ -130,7 +131,6 @@ def insert_perfect_mutations(ts, delta=1e-3):
     #     assert e.left <= x < e.right
     #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
     #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
-
     #     x = e.right - right_map[e.right] * delta
     #     right_map[e.right] += 1
     #     assert e.left <= x < e.right
@@ -199,18 +199,18 @@ def get_ancestor_descriptors(A):
         masked = np.logical_and(a == 1, mask).astype(int)
         new_sites = np.where(masked)[0]
         mask[new_sites] = 0
-        if len(new_sites) > 0:
-            segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
-            s = segment[0]
-            e = segment[-1] + 1
-            assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
-            assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
-            assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
-            ancestors.append(a)
-            focal_sites.append(new_sites)
-            start.append(s)
-            end.append(e)
+        segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
+        s = segment[0]
+        e = segment[-1] + 1
+        assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
+        assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
+        assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+        ancestors.append(a)
+        focal_sites.append(new_sites)
+        start.append(s)
+        end.append(e)
     return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
+
 
 def assert_smc(ts):
     """
@@ -232,16 +232,13 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
-    print(A)
+    # print(A.astype(np.int8))
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
 
-
-    for edge in ts.edges():
-        print(edge.left, edge.right, edge.parent, edge.child, sep="\t")
-
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
+    # print(ancestors.astype(np.int8))
     time = len(ancestors)
     total_num_focal_sites = sum(len(f) for f in focal_sites)
     num_ancestors = len(ancestors)
@@ -253,7 +250,6 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
     ancestor_file.initialise(num_ancestors, time, total_num_focal_sites)
     time -= 1
     for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
-        print(s, e, focal, a[s:e])
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
         assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
@@ -264,111 +260,3 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
             haplotype=a)
         time -= 1
     ancestor_file.finalise()
-
-
-def build_simulated_ancestors_old(input_hdf5, ancestor_hdf5, ts, guess_unknown=False):
-    """
-    guess_unknown = False: use the exact ancestors from the coalescent simulation
-    guess_unknown = None: fill out left and right of missing ancestral material with 0
-    guess_unknown = True: fill out left and right of missing ancestral material by
-        copying from nearest known ancestor
-    """
-    A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-    mutation_sites = [[] for _ in range(ts.num_nodes)]
-
-    if guess_unknown==True:
-        #fill in all the ancestral genotypes, even for regions which do not contribute to the
-        #final samples. This stops the inference algorithm getting confused by known boundaries
-        #but we have to construct the ancestral types by iterating over edges for each node
-        #and extending the edges left and right where appropriate
-        sites = np.array([s.position for s in ts.sites()])
-        edges_by_child = collections.defaultdict(list)
-        for site in ts.sites():
-            for mutation in site.mutations:
-                mutation_sites[mutation.node].append(site.id)
-        for e in ts.edges():
-            edges_by_child[e.child].append([e.left, e.right, e.parent])
-        for child in sorted(edges_by_child.keys(), reverse=True):
-            #extend the edges leftwards and rightwards to include all parts of the genome
-            edges = sorted(edges_by_child[child], key=lambda x: x[0])
-            edges[0][0] = 0
-            edges[-1][1] = ts.sequence_length
-            for i in range(len(edges)-1):
-                edges[i][1] = edges[i+1][0] = (edges[i][1] + edges[i+1][0])/2
-            #now actually construct the sites array
-            for edge in edges:
-                #which sites does this edge span?
-                mask = np.logical_and(sites >= edge[0], sites < edge[1])
-                A[child,mask]=A[edge[2], mask]
-                #add mutations
-                for m in mutation_sites[child]:
-                    A[child,m]=1
-    else:
-        #Jerome's original routine, where we iterate over trees, not edges
-        A[:] = (0 if guess_unknown==None else inference.UNKNOWN_ALLELE)
-        for t in ts.trees():
-            for site in t.sites():
-                for u in t.nodes():
-                    A[u, site.id] = 0
-                for mutation in site.mutations:
-                    mutation_sites[mutation.node].append(site.id)
-                    # Every node underneath this node will have the value set
-                    # at this site.
-                    for u in t.nodes(mutation.node):
-                        A[u, site.id] = 1
-    # This is all nodes, but we only want the non samples. We also reverse
-    # the order to make it forwards time.
-    A = A[ts.num_samples:][::-1]
-    mutation_sites = mutation_sites[ts.num_samples:][::-1]
-    # Now we need to process these a bit, to weed out any ancestors
-    # that have no focal sites and also break up any ancestors that
-    # have regions of -1 in the middle.
-    ancestors = []
-    focal_sites = []
-    start = []
-    end = []
-    m = ts.num_sites
-    for a, sites in zip(A, mutation_sites):
-        if len(sites) > 0:
-            offset = 0
-            while offset < m:
-                s = np.where(a[offset:] != inference.UNKNOWN_ALLELE)[0]
-                if len(s) == 0:
-                    break
-                s = offset + s[0] # convert to actual location, not offset
-                e = np.where(a[s:] == inference.UNKNOWN_ALLELE)[0]
-                if len(e) == 0:
-                    e = m
-                else:
-                    e = s + e[0]  # convert to actual location, not offset
-                offset = e
-                ancestor = np.empty(m, dtype=np.uint8)
-                ancestor[:] = inference.UNKNOWN_ALLELE
-                ancestor[s:e] = a[s:e]
-                ancestors.append(ancestor)
-                start.append(s)
-                end.append(e)
-                focal_sites.append([site for site in sites if s <= site < e])
-
-    time = len(ancestors)
-    total_num_focal_sites = sum(len(f) for f in focal_sites)
-    num_ancestors = sum(len(f) > 0 for f in focal_sites) + 1
-
-    input_file = formats.InputFile(input_hdf5)
-    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
-    ancestor_file.initialise(num_ancestors, time + 1, total_num_focal_sites)
-
-    for a, s, e, focal in zip(ancestors, start, end, focal_sites):
-        assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
-        assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
-        assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
-        assert all(s <= site < e for site in focal)
-        if len(focal) > 0:
-            ancestor_file.add_ancestor(
-                start=s, end=e, ancestor_time=time,
-                focal_sites=np.array(focal, dtype=np.int32),
-                haplotype=a)
-            time -= 1
-    ancestor_file.finalise()
-
-

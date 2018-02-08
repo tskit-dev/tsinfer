@@ -279,13 +279,13 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         A = A[ts.num_samples:][::-1]
         n, m = A.shape
         ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
-        self.assertTrue(np.array_equal(A, ancestors))
-        self.assertEqual(start, [0 for _ in range(n)])
-        self.assertTrue(end, [m for _ in range(n)])
-        for j in range(1, n):
-            self.assertGreater(len(focal_sites[j]), 0)
+        self.assertTrue(np.array_equal(A, ancestors[-n:]))
+        self.assertEqual(start, [0 for _ in range(ancestors.shape[0])])
+        self.assertTrue(end, [m for _ in range(ancestors.shape[0])])
+        for j in range(1, ancestors.shape[0]):
+            self.assertGreaterEqual(len(focal_sites[j]), 0)
             for site in focal_sites[j]:
-                self.assertEqual(A[j, site], 1)
+                self.assertEqual(ancestors[j, site], 1)
 
     def verify_many_trees_dense_mutations(self, ts):
         A = tsinfer.get_ancestral_haplotypes(ts)

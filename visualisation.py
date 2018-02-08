@@ -86,10 +86,13 @@ class Visualiser(object):
         b = self.box_size
         origin = self.haplotype_origin
         for position in self.true_breakpoints:
-            x = self.x_coordinate_map[position]
-            y1 = origin[0] + self.row_map[0] * b
-            y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
-            draw.line([(x, y1), (x, y2)], fill="purple", width=3)
+            if position in self.x_coordinate_map:
+                x = self.x_coordinate_map[position]
+                y1 = origin[0] + self.row_map[0] * b
+                y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
+                draw.line([(x, y1), (x, y2)], fill="purple", width=3)
+            else:
+                print("WARNING: position", position, "missing from site map")
 
     def draw_base_haplotypes(self, draw):
         b = self.box_size
@@ -242,12 +245,14 @@ def run_viz(n, L, rate, seed):
     # if ts.num_sites == 0:
     #     print("zero sites; skipping")
     #     return
+    # TODO singletons definitely causing problems here. Deal with these first.
     ts = tsinfer.insert_perfect_mutations(ts)
-    visualise(ts, 1e-9, 0, method="P", box_size=26)
+    # ts = tsinfer.strip_singletons(ts)
+    visualise(ts, 1e-9, 0, method="C", box_size=26)
 
 
 def main():
-    run_viz(5, 100, 0.01, 12)
+    run_viz(4, 100, 0.01, 14)
 
 if __name__ == "__main__":
     main()
