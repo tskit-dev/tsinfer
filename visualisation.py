@@ -9,6 +9,8 @@ import PIL.Image as Image
 import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
 
+import gizeh
+
 import zarr
 
 import tsinfer
@@ -17,11 +19,17 @@ import msprime
 
 class Visualiser(object):
 
-    def __init__(self, samples, ancestors_root, inferred_ts, box_size=8):
+    def __init__(self, original_ts, ancestors, inferred_ts, box_size=8):
         self.box_size = box_size
-        self.samples = samples
+        self.samples = original_ts.genotype_matrix().T
+        self.original_ts = original_ts
         self.inferred_ts = inferred_ts
-        self.num_samples, self.num_sites = samples.shape
+        self.ancestors = ancestors
+        self.num_samples, self.num_sites = self.samples.shape
+        # Find the site indexes for the true breakpoints
+        position_map = {site.position: site.id for site in original_ts.sites()}
+        breakpoints = list(original_ts.breakpoints())
+        self.true_breakpoints = [position_map[x] for x in breakpoints[1:-1]]
 
         self.top_padding = box_size
         self.left_padding = box_size
@@ -39,11 +47,8 @@ class Visualiser(object):
             1: ImageColor.getrgb("green")}
 
         # Make the haplotype box
-        frequency = np.sum(samples, axis=0)
         num_haplotype_rows = 1
         self.row_map = {0:0}
-        last_frequency = 0
-        self.ancestors = ancestors_root["/ancestors/haplotypes"][:]
         self.num_ancestors = self.ancestors.shape[0]
 
         num_haplotype_rows += 1
@@ -51,12 +56,9 @@ class Visualiser(object):
             self.row_map[j] = num_haplotype_rows
             num_haplotype_rows += 1
         num_haplotype_rows += 1
-        for j in range(samples.shape[0]):
+        for j in range(self.num_samples):
             self.row_map[self.num_ancestors + j] = num_haplotype_rows
             num_haplotype_rows += 1
-
-        # Make the tree sequence box.
-        num_ancestor_rows = self.num_ancestors
 
         self.width = box_size * self.num_sites + self.left_padding + self.right_padding
         self.height = (
@@ -71,11 +73,23 @@ class Visualiser(object):
         self.draw_base()
 
     def draw_base(self):
-        self.draw_base_haplotypes()
-
-    def draw_base_haplotypes(self):
-        b = self.box_size
         draw = ImageDraw.Draw(self.base_image)
+        self.draw_base_haplotypes(draw)
+        self.draw_true_breakpoints(draw)
+
+    def draw_true_breakpoints(self, draw):
+        b = self.box_size
+        origin = self.haplotype_origin
+        for k in self.true_breakpoints:
+            x = origin[0] + k * b
+            y = origin[1] - b
+            x = origin[0] + (k + 1) * b
+            y1 = origin[0] + self.row_map[0] * b
+            y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
+            draw.line([(x, y1), (x, y2)], fill="purple", width=3)
+
+    def draw_base_haplotypes(self, draw):
+        b = self.box_size
         origin = self.haplotype_origin
         # Draw the ancestors
         for j in range(self.ancestors.shape[0]):
@@ -165,16 +179,18 @@ def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
         sequence_length=ts.sequence_length,
         compress=False)
     ancestors_root = zarr.group()
+
     # tsinfer.build_ancestors(
     #     input_root, ancestors_root, method=method, compress=False)
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts, guess_unknown=True)
+    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+
     ancestors_ts = tsinfer.match_ancestors(
         input_root, ancestors_root, method=method, path_compression=False)
     inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
             simplify=False, path_compression=False)
-    visualiser = Visualiser(samples.T, ancestors_root, inferred_ts, box_size=box_size)
+    ancestors = ancestors_root["/ancestors/haplotypes"][:]
+    visualiser = Visualiser(ts, ancestors, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
-    # visualiser.draw_haplotypes(os.path.join(prefix, "haplotypes.png"))
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
     inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
@@ -214,8 +230,7 @@ def run_viz(n, L, rate, seed):
 
 
 def main():
-    run_viz(8, 100, 0.1, 3)
-
+    run_viz(5, 100, 0.01, 9)
 
 if __name__ == "__main__":
     main()

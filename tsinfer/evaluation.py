@@ -151,7 +151,108 @@ def insert_perfect_mutations(ts):
     return msprime.load_tables(**tables.asdict())
 
 
-def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts, guess_unknown=False):
+def get_ancestral_haplotypes(ts):
+    """
+    Returns a numpy array of the haplotypes of the ancestors in the
+    specified tree sequence.
+    """
+    A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
+    A[:] = inference.UNKNOWN_ALLELE
+    for t in ts.trees():
+        for site in t.sites():
+            for u in t.nodes():
+                A[u, site.id] = 0
+            for mutation in site.mutations:
+                # Every node underneath this node will have the value set
+                # at this site.
+                for u in t.nodes(mutation.node):
+                    A[u, site.id] = 1
+    return A
+
+
+def get_ancestor_descriptors(A):
+    """
+    Given an array of ancestral haplotypes A in forwards time-order (i.e.,
+    so that A[0] == 0), return the descriptors for each ancestor within
+    this set and remove any ancestors that do not have any novel mutations.
+    Returns the list of ancestors, the start and end site indexes for
+    each ancestor, and the list of focal sites for each one.
+
+    This assumes that the input is SMC safe, and will return incorrect
+    results on ancestors that contain trapped genetic material.
+    """
+    L = A.shape[1]
+    ancestors = [np.zeros(L, dtype=np.uint8)]
+    focal_sites = [[]]
+    start = [0]
+    end = [L]
+    mask = np.ones(L)
+    for a in A:
+        masked = np.logical_and(a == 1, mask).astype(int)
+        new_sites = np.where(masked)[0]
+        mask[new_sites] = 0
+        if len(new_sites) > 0:
+            segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
+            s = segment[0]
+            e = segment[-1] + 1
+            assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
+            assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
+            assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+            ancestors.append(a)
+            focal_sites.append(new_sites)
+            start.append(s)
+            end.append(e)
+    return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
+
+def assert_smc(ts):
+    """
+    Check if the specified tree sequence fulfils SMC requirements. This
+    means that we cannot have any discontinuous parent segments.
+    """
+    parent_intervals = collections.defaultdict(list)
+    for es in ts.edgesets():
+        parent_intervals[es.parent].append((es.left, es.right))
+    for intervals in parent_intervals.values():
+        if len(intervals) > 0:
+            intervals.sort()
+            for j in range(1, len(intervals)):
+                if intervals[j - 1][1] != intervals[j][0]:
+                    raise ValueError("Only SMC simulations are supported")
+
+
+def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
+    # Any non-smc tree sequences are rejected.
+    assert_smc(ts)
+    A = get_ancestral_haplotypes(ts)
+    # This is all nodes, but we only want the non samples. We also reverse
+    # the order to make it forwards time.
+    A = A[ts.num_samples:][::-1]
+
+    ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
+    time = len(ancestors)
+    total_num_focal_sites = sum(len(f) for f in focal_sites)
+    num_ancestors = len(ancestors)
+
+    # TODO it's very confusing here on whether we have to add the initial
+    # ancestor or not. Fix the API in some way.
+    input_file = formats.InputFile(input_hdf5)
+    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
+    ancestor_file.initialise(num_ancestors, time, total_num_focal_sites)
+    time -= 1
+    for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
+        assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
+        assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
+        assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+        assert all(s <= site < e for site in focal)
+        ancestor_file.add_ancestor(
+            start=s, end=e, ancestor_time=time,
+            focal_sites=np.array(focal, dtype=np.int32),
+            haplotype=a)
+        time -= 1
+    ancestor_file.finalise()
+
+
+def build_simulated_ancestors_old(input_hdf5, ancestor_hdf5, ts, guess_unknown=False):
     """
     guess_unknown = False: use the exact ancestors from the coalescent simulation
     guess_unknown = None: fill out left and right of missing ancestral material with 0

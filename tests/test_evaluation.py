@@ -10,6 +10,18 @@ import numpy as np
 import tsinfer
 
 
+def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
+    """
+    Returns an smc simulation for a sample of size n, with L loci
+    and recombination at the specified rate.
+    """
+    recomb_map = msprime.RecombinationMap.uniform_map(
+            length=L, rate=recombination_rate, num_loci=L)
+    return msprime.simulate(
+        n, recombination_map=recomb_map, random_seed=seed,
+        model="smc_prime")
+
+
 class TestKCMetric(unittest.TestCase):
     """
     Tests on the KC metric distances.
@@ -177,3 +189,142 @@ class TestTreePairs(unittest.TestCase):
             self.assertIs(tree2.tree_sequence, ts2)
         all_breakpoints = set(ts1.breakpoints()) | set(ts2.breakpoints())
         self.assertEqual(breakpoints, sorted(all_breakpoints))
+
+
+class TestGetAncestralHaplotypes(unittest.TestCase):
+    """
+    Tests for the method to the actual ancestors from a simulation.
+    """
+    def verify_samples(self, ts, A):
+        # Samples should be nodes rows 0 to n - 1, and should be equal to
+        # the genotypes.
+        G = ts.genotype_matrix()
+        self.assertTrue(np.array_equal(G.T, A[:ts.num_samples]))
+
+    def verify_single_tree(self, ts, A):
+        self.assertTrue(np.all(A[-1] == 0))
+        self.assertEqual(ts.num_trees, 1)
+        self.assertGreater(ts.num_sites, 1)
+        self.verify_haplotypes(ts, A)
+
+    def verify_haplotypes(self, ts, A):
+        self.verify_samples(ts, A)
+        for tree in ts.trees():
+            for site in tree.sites():
+                self.assertEqual(len(site.mutations), 1)
+                mutation = site.mutations[0]
+                below = np.array(list(tree.nodes(mutation.node)), dtype=int)
+                self.assertTrue(np.all(A[below, site.id] == 1))
+                above = np.array(list(
+                    set(tree.nodes()) - set(tree.nodes(mutation.node))), dtype=int)
+                self.assertTrue(np.all(A[above, site.id] == 0))
+                outside = np.array(list(
+                    set(range(ts.num_nodes)) - set(tree.nodes())), dtype=int)
+                self.assertTrue(np.all(A[outside, site.id] == tsinfer.UNKNOWN_ALLELE))
+
+    def test_single_tree(self):
+        ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        self.verify_single_tree(ts, A)
+
+    def test_single_tree_perfect_mutations(self):
+        ts = msprime.simulate(5, random_seed=234)
+        ts = tsinfer.insert_perfect_mutations(ts)
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        self.verify_single_tree(ts, A)
+
+    def test_many_trees(self):
+        ts = msprime.simulate(
+            8, recombination_rate=10, mutation_rate=10, random_seed=234)
+        self.assertGreater(ts.num_trees, 1)
+        self.assertGreater(ts.num_sites, 1)
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        self.verify_haplotypes(ts, A)
+
+    def test_many_trees_perfect_mutations(self):
+        ts = get_smc_simulation(10, 100, 0.1, 1234)
+        self.assertGreater(ts.num_trees, 1)
+        ts = tsinfer.insert_perfect_mutations(ts)
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        self.verify_haplotypes(ts, A)
+
+
+class TestAssertSmc(unittest.TestCase):
+    """
+    Check that our assertion for SMC simulations works correctly.
+    """
+    def test_single_tree(self):
+        ts = msprime.simulate(5, random_seed=234)
+        tsinfer.assert_smc(ts)
+
+    def test_non_smc(self):
+        ts = msprime.simulate(3, recombination_rate=10, random_seed=14)
+        self.assertRaises(ValueError, tsinfer.assert_smc, ts)
+
+    def test_smc(self):
+        for seed in range(1, 10):
+            ts = get_smc_simulation(10, 100, 0.1, seed)
+            tsinfer.assert_smc(ts)
+            self.assertGreater(ts.num_trees, 1)
+
+
+class TestGetAncestorDescriptors(unittest.TestCase):
+    """
+    Tests that we correctly recover the ancestor descriptors from a
+    given set of ancestral haplotypes.
+    """
+    def verify_single_tree_dense_mutations(self, ts):
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        A = A[ts.num_samples:][::-1]
+        n, m = A.shape
+        ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
+        self.assertTrue(np.array_equal(A, ancestors))
+        self.assertEqual(start, [0 for _ in range(n)])
+        self.assertTrue(end, [m for _ in range(n)])
+        for j in range(1, n):
+            self.assertGreater(len(focal_sites[j]), 0)
+            for site in focal_sites[j]:
+                self.assertEqual(A[j, site], 1)
+
+    def verify_many_trees_dense_mutations(self, ts):
+        A = tsinfer.get_ancestral_haplotypes(ts)
+        A = A[ts.num_samples:][::-1]
+        tsinfer.get_ancestor_descriptors(A)
+
+        ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
+        n, m = ancestors.shape
+        self.assertEqual(m, ts.num_sites)
+        self.assertTrue(np.all(ancestors[0,:] == 0))
+        for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
+            self.assertTrue(0 <= s < e <= m)
+            self.assertTrue(np.all(a[:s] == tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[e:] == tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[s:e] != tsinfer.UNKNOWN_ALLELE))
+            for site in focal:
+                self.assertEqual(a[site], 1)
+
+    def test_single_tree_perfect_mutations(self):
+        ts = msprime.simulate(5, random_seed=234)
+        ts = tsinfer.insert_perfect_mutations(ts)
+        self.verify_single_tree_dense_mutations(ts)
+
+    def test_single_tree_random_mutations(self):
+        ts = msprime.simulate(5, mutation_rate=5, random_seed=234)
+        self.assertGreater(ts.num_sites, 1)
+        self.verify_single_tree_dense_mutations(ts)
+
+    def test_small_smc_perfect_mutations(self):
+        for seed in range(1, 10):
+            ts = get_smc_simulation(5, 100, 0.02, seed)
+            ts = tsinfer.insert_perfect_mutations(ts)
+            self.assertGreater(ts.num_trees, 1)
+            self.verify_many_trees_dense_mutations(ts)
+
+
+    def test_large_smc_perfect_mutations(self):
+        for seed in range(1, 10):
+            ts = get_smc_simulation(10, 100, 0.1, seed)
+            ts = tsinfer.insert_perfect_mutations(ts)
+            self.assertGreater(ts.num_trees, 1)
+            self.verify_many_trees_dense_mutations(ts)
+
