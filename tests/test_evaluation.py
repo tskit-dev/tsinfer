@@ -3,6 +3,7 @@ Test cases for the evaluation code.
 """
 
 import unittest
+import collections
 
 import msprime
 import numpy as np
@@ -294,7 +295,7 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
         n, m = ancestors.shape
         self.assertEqual(m, ts.num_sites)
-        self.assertTrue(np.all(ancestors[0,:] == 0))
+        self.assertTrue(np.all(ancestors[0, :] == 0))
         for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
             self.assertTrue(0 <= s < e <= m)
             self.assertTrue(np.all(a[:s] == tsinfer.UNKNOWN_ALLELE))
@@ -320,7 +321,6 @@ class TestGetAncestorDescriptors(unittest.TestCase):
             self.assertGreater(ts.num_trees, 1)
             self.verify_many_trees_dense_mutations(ts)
 
-
     def test_large_smc_perfect_mutations(self):
         for seed in range(1, 10):
             ts = get_smc_simulation(10, 100, 0.1, seed)
@@ -328,3 +328,36 @@ class TestGetAncestorDescriptors(unittest.TestCase):
             self.assertGreater(ts.num_trees, 1)
             self.verify_many_trees_dense_mutations(ts)
 
+
+class TestInsertPerfectMutations(unittest.TestCase):
+    """
+    Test cases for the inserting perfect mutations to allow a tree
+    sequence to be exactly recovered.
+    """
+
+    def verify_perfect_mutations(self, ts):
+        """
+        Check that we have exactly two mutations on each edge.
+        """
+        node_mutations = collections.defaultdict(list)
+        for site in ts.sites():
+            self.assertEqual(len(site.mutations), 1)
+            mutation = site.mutations[0]
+            node_mutations[mutation.node].append(site.position)
+
+        for edge in ts.edges():
+            mutations = [
+                x for x in node_mutations[edge.child] if edge.left <= x < edge.right]
+            self.assertEqual(len(mutations), 2)
+
+    def test_single_tree(self):
+        ts = msprime.simulate(5, random_seed=234)
+        ts = tsinfer.insert_perfect_mutations(ts)
+        self.verify_perfect_mutations(ts)
+
+    def test_small_smc_mutations(self):
+        for seed in range(1, 10):
+            ts = get_smc_simulation(5, 100, 0.02, seed)
+            ts = tsinfer.insert_perfect_mutations(ts)
+            self.assertGreater(ts.num_trees, 1)
+        self.verify_perfect_mutations(ts)

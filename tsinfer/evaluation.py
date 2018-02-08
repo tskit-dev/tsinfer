@@ -99,53 +99,61 @@ def strip_singletons(ts):
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
 
 
-def insert_perfect_mutations(ts):
+def insert_perfect_mutations(ts, delta=1e-3):
     """
     Returns a copy of the specified tree sequence where the left and right
-    coordinates of all edges are marked by mutations. This *should* be sufficient
+    coordinates of all edgesets are marked by mutations. This *should* be sufficient
     information to recover the tree sequence exactly.
 
     This has to be fudged slightly because we cannot have two sites with
     precisely the same coordinates. We work around this by having sites at
     some very small delta from the correct location.
     """
-
-    # Mark each edge with two mutations.
     tables = ts.dump_tables()
     tables.sites.clear()
     tables.mutations.clear()
-    x = 0
-    # This is an arbitrary small value. We just use this to avoid having two sites
-    # at precisely the same location, which is forbidden. This isn't a robust
-    # approach, but should be good enough for most things.
-    delta = 1e-3
-    nodes = set()
-    for (left, right), edges_out, edges_in in ts.edge_diffs():
-        # print("--Edges from {} to {} ---".format(left, right))
-        x = left - len(edges_out) * delta
-        for edge in edges_out:
-            # print("edge pos", edge.left, edge.right, 'x', x)
-            assert x < right
-            assert edge.left <= x < edge.right
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
-            nodes.remove(edge.child)
-            x += delta
-        # Insert a site for each incoming edge.
-        x = left
-        for edge in reversed(edges_in):
-            # print("edge in pos", left, right, 'x', x)
-            assert edge.left <= x < edge.right
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=edge.child, derived_state="1")
-            nodes.add(edge.child)
-            x += delta
-    # Insert mutations for the last tree.
-    x = ts.sequence_length - (len(nodes) + 1) * delta
-    for node in nodes:
+    left_map = collections.Counter()
+    right_map = collections.Counter()
+
+    # Edgesets are useful in one way as we can tag two different children at the
+    # same time with one mutation. However, this means that we have mutations over
+    # roots, and therefore fixed sites.
+
+    # edgesets = list(ts.edgesets())
+    # edgesets.sort(key=lambda e: -e.parent)
+    # for e in edgesets:
+    #     left_map[e.left] +=  1
+    #     right_map[e.right] += 1
+    # for e in edgesets:
+    #     left_map[e.left] -= 1
+    #     x = e.left + left_map[e.left] * delta
+    #     assert e.left <= x < e.right
+    #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    #     x = e.right - right_map[e.right] * delta
+    #     right_map[e.right] += 1
+    #     assert e.left <= x < e.right
+    #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    edges = list(ts.edges())
+    # Edges are sorted by time.
+    for e in edges:
+        left_map[e.left] +=  1
+        right_map[e.right] += 1
+    for e in edges:
+        left_map[e.left] -= 1
+        x = e.left + left_map[e.left] * delta
+        assert e.left <= x < e.right
         site_id = tables.sites.add_row(position=x, ancestral_state="0")
-        tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-        x += delta
+        tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+
+        x = e.right - right_map[e.right] * delta
+        right_map[e.right] += 1
+        assert e.left <= x < e.right
+        site_id = tables.sites.add_row(position=x, ancestral_state="0")
+        tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())
@@ -224,9 +232,14 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
+    print(A)
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
+
+
+    for edge in ts.edges():
+        print(edge.left, edge.right, edge.parent, edge.child, sep="\t")
 
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)
@@ -240,6 +253,7 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
     ancestor_file.initialise(num_ancestors, time, total_num_focal_sites)
     time -= 1
     for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
+        print(s, e, focal, a[s:e])
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
         assert np.all(a[e:] == inference.UNKNOWN_ALLELE)

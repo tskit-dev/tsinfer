@@ -3,13 +3,13 @@ Visualisation of the copying process and ancestor generation using PIL
 """
 import os
 import sys
+import collections
 
 import numpy as np
 import PIL.Image as Image
 import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
-
-import gizeh
+import PIL.ImageFont as ImageFont
 
 import zarr
 
@@ -27,9 +27,9 @@ class Visualiser(object):
         self.ancestors = ancestors
         self.num_samples, self.num_sites = self.samples.shape
         # Find the site indexes for the true breakpoints
-        position_map = {site.position: site.id for site in original_ts.sites()}
+
         breakpoints = list(original_ts.breakpoints())
-        self.true_breakpoints = [position_map[x] for x in breakpoints[1:-1]]
+        self.true_breakpoints = breakpoints[1:-1]
 
         self.top_padding = box_size
         self.left_padding = box_size
@@ -70,6 +70,11 @@ class Visualiser(object):
                 self.top_padding + self.mid_padding)
         self.base_image = Image.new(
             "RGB", (self.width, self.height), color=self.background_colour)
+
+        b = self.box_size
+        origin = self.haplotype_origin
+        self.x_coordinate_map = {
+            site.position: origin[0] + site.id * b for site in original_ts.sites()}
         self.draw_base()
 
     def draw_base(self):
@@ -80,10 +85,8 @@ class Visualiser(object):
     def draw_true_breakpoints(self, draw):
         b = self.box_size
         origin = self.haplotype_origin
-        for k in self.true_breakpoints:
-            x = origin[0] + k * b
-            y = origin[1] - b
-            x = origin[0] + (k + 1) * b
+        for position in self.true_breakpoints:
+            x = self.x_coordinate_map[position]
             y1 = origin[0] + self.row_map[0] * b
             y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
             draw.line([(x, y1), (x, y2)], fill="purple", width=3)
@@ -130,15 +133,23 @@ class Visualiser(object):
                 a = self.ancestors[parents[k], k]
                 draw.rectangle([(x, y), (x + b, y + b)], fill=self.copy_colours[a])
 
-        for k, position in breakpoints.items():
-            x = origin[0] + k * b
-            y = origin[1] - b
-            draw.text((x, y), "{}".format(position), fill="black")
-            x = origin[0] + (k + 1) * b
+        for position in breakpoints:
+            x = self.x_coordinate_map[position]
             y1 = origin[0] + self.row_map[0] * b
             y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
             draw.line([(x, y1), (x, y2)], fill="black")
 
+        # Draw the positions of the sites.
+        font = ImageFont.load_default()
+        for site in self.original_ts.sites():
+            label = "{}".format(site.position)
+            img_txt = Image.new('L', font.getsize(label), color="white")
+            draw_txt = ImageDraw.Draw(img_txt)
+            draw_txt.text((0,0), label, font=font)
+            t = img_txt.rotate(90, expand=1)
+            x = origin[0] + site.id * b
+            y = origin[1] - b
+            image.paste(t, (x, y))
         print("Saving", filename)
         image.save(filename)
 
@@ -146,7 +157,6 @@ class Visualiser(object):
         N = self.num_ancestors + self.samples.shape[0]
         P = np.zeros((N, self.num_sites), dtype=int) - 1
         C = np.zeros((self.num_ancestors, self.num_sites), dtype=int)
-        breakpoints = []
         ts = self.inferred_ts
         site_index = {}
         sites = list(ts.sites())
@@ -161,10 +171,10 @@ class Visualiser(object):
             P[e.child, left:right] = e.parent
         index = np.arange(self.num_sites, dtype=int)
         n = self.samples.shape[0]
-        breakpoints = {}
+        breakpoints = []
         for j in range(1, self.num_ancestors + n):
             for k in np.where(P[j][1:] != P[j][:-1])[0]:
-                breakpoints[k] = sites[k].position
+                breakpoints.append(sites[k + 1].position)
             self.draw_copying_path(pattern.format(j - 1), j, P[j], breakpoints)
 
 
@@ -209,10 +219,17 @@ def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
         print()
         d1 = tree1.draw(format="unicode").splitlines()
         d2 = tree2.draw(format="unicode").splitlines()
-        # This won't work when the trees have different structures and therefore
-        # different numbers of lines.
-        for row1, row2 in zip(d1, d2):
-            print(row1, " | ", row2)
+        j = 0
+        while j < (min(len(d1), len(d2))):
+            print(d1[j], " | ", d2[j])
+            j += 1
+        while j < len(d1):
+            print(d1[j], " |")
+            j += 1
+        while j < len(d2):
+            print(" " * len(d1[0]), " | ", d2[j])
+            j += 1
+
         print()
 
 def run_viz(n, L, rate, seed):
@@ -226,11 +243,11 @@ def run_viz(n, L, rate, seed):
     #     print("zero sites; skipping")
     #     return
     ts = tsinfer.insert_perfect_mutations(ts)
-    visualise(ts, 1e-9, 0, method="P", box_size=16)
+    visualise(ts, 1e-9, 0, method="P", box_size=26)
 
 
 def main():
-    run_viz(5, 100, 0.01, 9)
+    run_viz(5, 100, 0.01, 12)
 
 if __name__ == "__main__":
     main()
