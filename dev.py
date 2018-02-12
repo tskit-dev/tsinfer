@@ -376,78 +376,101 @@ def tsinfer_dev(
     if debug:
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
-    positions = np.array([site.position for site in ts.sites()])
-    V = ts.genotype_matrix()
-    # print(V)
+
     G = generate_samples(ts, genotype_quality)
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        filename="tmp.dbm")
+    print("sample data before save:")
+    print(sample_data.format_version)
+    print(sample_data.format_name)
+    print(sample_data.uuid)
+
+    for site, genotypes in zip(ts.sites(), G):
+        sample_data.add_variant(site.position, ["0", "1"], genotypes)
+    sample_data.finalise()
+
+    sample_data = tsinfer.SampleData.load("tmp.dbm")
+    print("sample data after save:")
+    sample_data.print_list()
+
+
+
+#     print(sample_data.data)
+
+#     ancestor_data = tsinfer.build_ancestors(sample_data)
+#     ancestor_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+#     output_ts = tsinfer.match_samples(sample_data, ancestor_ts)
+
+
     # print(S.T)
     # print(np.where(S.T != V))
-    recombination_rate = np.zeros_like(positions) + recombination_rate
+    # recombination_rate = np.zeros_like(positions) + recombination_rate
 
-    input_root = zarr.group()
-    tsinfer.InputFile.build(
-        input_root, genotypes=G,
-        # genotype_qualities=tsinfer.proba_to_phred(error_probability),
-        position=positions,
-        recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
-        compress=False)
-    ancestors_root = zarr.group()
+#     input_root = zarr.group()
+#     tsinfer.InputFile.build(
+#         input_root, genotypes=G,
+#         # genotype_qualities=tsinfer.proba_to_phred(error_probability),
+#         position=positions,
+#         recombination_rate=recombination_rate, sequence_length=ts.sequence_length,
+#         compress=False)
+    # ancestors_root = zarr.group()
 
-    #TMP changed method to C here for make the sets of ancestors comparable.
-    tsinfer.build_ancestors(
-        input_root, ancestors_root, method="C", chunk_size=16, compress=False)
+    # #TMP changed method to C here for make the sets of ancestors comparable.
+    # tsinfer.build_ancestors(
+    #     input_root, ancestors_root, method="C", chunk_size=16, compress=False)
 
-    ancestors_ts = tsinfer.match_ancestors(
-        input_root, ancestors_root, method=method, num_threads=num_threads,
-        path_compression=path_compression)
-        # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
-        # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
-    assert ancestors_ts.sequence_length == ts.num_sites
+    # ancestors_ts = tsinfer.match_ancestors(
+    #     input_root, ancestors_root, method=method, num_threads=num_threads,
+    #     path_compression=path_compression)
+    #     # output_path="tmp__NOBACKUP__/bad_tb.tsancts", output_interval=0.1)
+    #     # output_path=None, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+    # assert ancestors_ts.sequence_length == ts.num_sites
 
-    A = ancestors_root["ancestors/haplotypes"][:]
-    A[A == 255] = 0
-    for v in ancestors_ts.variants():
-        assert np.array_equal(v.genotypes, A[:, v.index])
+    # A = ancestors_root["ancestors/haplotypes"][:]
+    # A[A == 255] = 0
+    # for v in ancestors_ts.variants():
+    #     assert np.array_equal(v.genotypes, A[:, v.index])
 
-    inferred_ts = tsinfer.match_samples(
-        input_root, ancestors_ts, method=method,
-        genotype_quality=genotype_quality, num_threads=num_threads,
-        simplify=False, path_compression=path_compression)
-    #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
+    # inferred_ts = tsinfer.match_samples(
+    #     input_root, ancestors_ts, method=method,
+    #     genotype_quality=genotype_quality, num_threads=num_threads,
+    #     simplify=False, path_compression=path_compression)
+    # #, traceback_file_pattern="tmp__NOBACKUP__/traceback_{}.pkl")
 
-    print("num_edges = ", inferred_ts.num_edges)
+    # print("num_edges = ", inferred_ts.num_edges)
 
-    # with open("tmp__NOBACKUP__/traceback_59.pkl", 'rb') as f:
-    #     d = pickle.load(f)
-    #     tb = d["traceback"]
-    #     for j, row in enumerate(tb):
-    #         print(j)
-    #         for k, v in row.items():
-    #             print("\t", k, "\t{:.14f}".format(v))
+    # # with open("tmp__NOBACKUP__/traceback_59.pkl", 'rb') as f:
+    # #     d = pickle.load(f)
+    # #     tb = d["traceback"]
+    # #     for j, row in enumerate(tb):
+    # #         print(j)
+    # #         for k, v in row.items():
+    # #             print("\t", k, "\t{:.14f}".format(v))
 
-    # print(inferred_ts.tables)
-    # for t in inferred_ts.trees():
-    #     # print(t.draw(format="unicode"))
-    #     sites = list(t.sites())
-    #     name = "t_{}_{}.svg".format(sites[0].index, sites[-1].index + 1)
-    #     t.draw(name, width=800, height=600)
+    # # print(inferred_ts.tables)
+    # # for t in inferred_ts.trees():
+    # #     # print(t.draw(format="unicode"))
+    # #     sites = list(t.sites())
+    # #     name = "t_{}_{}.svg".format(sites[0].index, sites[-1].index + 1)
+    # #     t.draw(name, width=800, height=600)
 
-    flags = inferred_ts.tables.nodes.flags
-    samples = np.where(flags == 1)[0][-n:]
-    inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
+    # flags = inferred_ts.tables.nodes.flags
+    # samples = np.where(flags == 1)[0][-n:]
+    # inferred_ts, node_map = inferred_ts.simplify(samples.astype(np.int32), map_nodes=True)
 
-#     print("SIMPLIFIED")
-#     node_labels = {node_map[k]: str(k) for k in range(node_map.shape[0])}
-#     for t in inferred_ts.trees():
-#         print(t.draw(format="unicode", node_label_text=node_labels))
+# #     print("SIMPLIFIED")
+# #     node_labels = {node_map[k]: str(k) for k in range(node_map.shape[0])}
+# #     for t in inferred_ts.trees():
+# #         print(t.draw(format="unicode", node_label_text=node_labels))
 
-    assert inferred_ts.num_samples == ts.num_samples
-    assert inferred_ts.num_sites == ts.num_sites
-    assert inferred_ts.sequence_length == ts.sequence_length
-    assert np.array_equal(G, inferred_ts.genotype_matrix())
-    # for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
-    #     assert np.array_equal(v1.genotypes, v2.genotypes)
-    #     assert v1.position == v2.position
+    # assert inferred_ts.num_samples == ts.num_samples
+    # assert inferred_ts.num_sites == ts.num_sites
+    # assert inferred_ts.sequence_length == ts.sequence_length
+    # assert np.array_equal(G, inferred_ts.genotype_matrix())
+    # # for v1, v2 in zip(ts.variants(), inferred_ts.variants()):
+    # #     assert np.array_equal(v1.genotypes, v2.genotypes)
+    # #     assert v1.position == v2.position
 
 def compress(filename, output_file):
     ts = msprime.load(filename)
@@ -933,7 +956,7 @@ if __name__ == "__main__":
 
     #asserts_fail()
 
-    debug_pathological()
+    # debug_pathological()
     # debug_real_ancestor_injection(10)
 
     # build_1kg_sim()
@@ -966,8 +989,8 @@ if __name__ == "__main__":
     # tsinfer_dev(10, 0.1, seed=6, num_threads=0,
     #         genotype_quality=0.0, method="P", log_level="WARNING")
 
-    # tsinfer_dev(40, 0.2, seed=84, num_threads=0, method="C",
-    #         genotype_quality=0.001)
+    tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
+            genotype_quality=0.001)
 
     # for seed in range(1, 10000):
     # # for seed in [2]:
@@ -983,3 +1006,4 @@ if __name__ == "__main__":
     # # for seed in range(1, 1000):
     # #     print(seed)
     # #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
+

@@ -7,6 +7,9 @@ import uuid
 import logging
 import time
 import queue
+import os
+import warnings
+import dbm
 
 import numpy as np
 import h5py
@@ -551,3 +554,264 @@ class AncestorFile(Hdf5File):
         self.focal_sites[:] = self.__focal_sites_buffer
         for thread in self.__flush_threads:
             thread.join()
+
+
+##################################
+# New APIs.
+#################################
+
+class DataContainer(object):
+    """
+    Superclass of objects used to represent a collection of related
+    data. Each datacontainer in a wrapper around a zarr group.
+    """
+    # Must be defined by subclasses.
+    FORMAT_NAME = None
+    FORMAT_VERSION = None
+
+    @classmethod
+    def load(cls, filename):
+        self = cls()
+        if not os.path.exists(filename):
+            raise FileNotFoundError(filename)
+        self.store = zarr.DBMStore(filename, flag="r")
+        self.data = zarr.open_group(store=self.store)
+        self.check_format()
+        return self
+
+    def check_format(self):
+        try:
+            format_name = self.format_name
+            format_version = self.format_version
+        except KeyError:
+            raise ValueError("Incorrect file format")
+        if format_name != self.FORMAT_NAME:
+            raise ValueError("Incorrect file format: expected '{}' got '{}'".format(
+                self.FORMAT_VERSION, format_version))
+        if format_version[0] < self.FORMAT_VERSION[0]:
+            raise ValueError("Format version {} too old. Current version = {}".format(
+                format_version, self.FORMAT_VERSION))
+        if format_version[0] > self.FORMAT_VERSION[0]:
+            raise ValueError("Format version {} too new. Current version = {}".format(
+                format_version, self.FORMAT_VERSION))
+
+    def _initialise(self, filename=None):
+        """
+        Initialise the basic state of the data container.
+        """
+        self.store = None
+        self.data = zarr.group()
+        if filename is not None:
+            self.store = zarr.DBMStore(filename, flag='n')
+            self.data = zarr.open_group(store=self.store)
+
+        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
+        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
+        print("self.data = ", self.data)
+
+    def finalise(self):
+        """
+        Ensures that the state of the data is flushed to file if a store
+        is present.
+        """
+        if self.store is not None:
+            self.store.close()
+
+    @property
+    def format_name(self):
+        return self.data.attrs[FORMAT_NAME_KEY]
+
+    @property
+    def format_version(self):
+        return self.data.attrs[FORMAT_VERSION_KEY]
+
+    @property
+    def uuid(self):
+        return str(self.data.attrs["uuid"])
+
+
+class BufferedSite(object):
+    """
+    Simple container to hold site information while being buffered during
+    addition. The frequency is the number of genotypes with the derived
+    state.
+    """
+    def __init__(self, position, frequency, alleles, genotypes=None):
+        self.position = position
+        self.frequency = frequency
+        self.alleles = alleles
+        self.genotypes = genotypes
+
+
+class SampleData(DataContainer):
+    """
+    Class representing the data stored about our input samples.
+    """
+    FORMAT_NAME = "tsinfer-sample-data"
+    FORMAT_VERSION = (0, 1)
+
+    @property
+    def num_samples(self):
+        return self.data.attrs["num_samples"]
+
+    @property
+    def sequence_length(self):
+        return self.data.attrs["sequence_length"]
+
+    @property
+    def position(self):
+        return self.data["sites/position"]
+
+    @property
+    def alleles(self):
+        return self.data["sites/alleles"]
+
+    @property
+    def frequency(self):
+        return self.data["sites/frequency"]
+
+    def print_list(self):
+        """
+        Show a brief listing of the objects and sizes of the data in this container.
+        """
+        print("format_name =", self.format_name)
+        print("format_version =", self.format_version)
+        print("uuid =", self.uuid)
+        print("num_samples =", self.num_samples)
+        print("sequence_length =", self.sequence_length)
+        print("position = ", self.position)
+        print("frequency = ", self.frequency)
+        print("alleles = ", self.alleles)
+
+
+    ####################################
+    # Write mode
+    ####################################
+
+    @classmethod
+    def initialise(
+            cls, num_samples=None, sequence_length=None, filename=None,
+            recombination_map=None, compressor=DEFAULT_COMPRESSOR):
+        """
+        Initialises a new SampleData object. Data can be added to
+        this object using the add_variant method.
+        """
+        self = cls()
+        super(cls, self)._initialise(filename)
+        self.data.attrs["uuid"] = str(uuid.uuid4())
+        self.data.attrs["sequence_length"] = float(sequence_length)
+        self.data.attrs["num_samples"] = int(num_samples)
+
+        # TODO recombination map should be either a string or an
+        # instance of msprime.RecombinationMap or None
+        self.recombination_map = recombination_map
+        self.site_buffer = []
+        self.compressor = compressor
+
+        return self
+
+    def add_variant(self, position, alleles, genotypes):
+        if len(alleles) > 2:
+            raise ValueError("Only biallelic sites supported")
+        if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
+            raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
+        if genotypes.shape != (self.num_samples,):
+            raise ValueError("Must have num_samples genotypes.")
+        if position < 0 or position >= self.sequence_length:
+            raise ValueError("position must be between 0 and sequence_length")
+
+        frequency = np.sum(genotypes)
+        if frequency == 1 or frequency == self.num_samples:
+            genotypes = None
+        else:
+            genotypes = genotypes[:]
+        self.site_buffer.append(BufferedSite(position, frequency, alleles, genotypes))
+
+    def finalise(self):
+        print("Finalising")
+        # singleton_sites = []
+        # fixed_sites = []
+        # useful_sites = []
+        # num_samples = self.num_samples
+        # for site in self.site_buffer:
+        #     if site.frequency == 1:
+        #         singleton_sites.append(site.position)
+        #     elif site.frequency == num_samples:
+        #         fixed_sites.append(site.position)
+        #     else:
+        #         useful_sites.append(site)
+        # fixed_site_positions = np.array(fixed_sites)
+        # singleton_site_positions = np.array(singleton_sites)
+
+        # find the maximum length of an allele
+        max_allele_length = 0
+        for site in self.site_buffer:
+            for allele in site.alleles:
+                max_allele_length = max(max_allele_length, len(allele))
+        variant_sites = []
+        num_samples = self.num_samples
+        num_sites = len(self.site_buffer)
+        self.data.attrs["num_sites"] = num_sites
+        position = np.empty(num_sites)
+        frequency = np.empty(num_sites, dtype=np.uint32)
+        # We only support biallelic sites
+        alleles = np.empty((num_sites, 2), dtype=(np.unicode_, max_allele_length))
+        for j, site in enumerate(self.site_buffer):
+            position[j] = site.position
+            frequency[j] = site.frequency
+            for k in range(len(site.alleles)):
+                alleles[j, k] = site.alleles[k]
+            if site.frequency > 1 and site.frequency < num_samples:
+                variant_sites.append(site)
+
+        sites_group = self.data.create_group("sites")
+        sites_group.array("position", data=position, compressor=self.compressor)
+        sites_group.array("frequency", data=frequency, compressor=self.compressor)
+        sites_group.array("alleles", data=alleles, compressor=self.compressor)
+
+        num_variant_sites = len(variant_sites)
+        # TODO (1) work out recombination rates from the recomb_map
+        # (2) update the genotypes code here to work chunk-wise so
+        # that we can compress. (3) add a progress callback to we can
+        # get updates on how the compression is going.
+
+#         variants_group = self.data.create_group("variants")
+#         variants_group.create_dataset(
+#             "recombination_rate", shape=(num_sites,), data=recombination_rate_array,
+#             dtype=np.float64, compressor=compressor)
+#         x_chunk = min(chunk_size, num_sites)
+#         y_chunk = min(chunk_size, num_samples)
+#         variants_group.create_dataset(
+#             "genotypes", shape=(num_sites, num_samples), data=genotypes,
+#             chunks=(x_chunk, y_chunk), dtype=np.uint8, compressor=compressor)
+#         variants_group.create_dataset(
+#             "genotype_qualities", shape=(num_sites, num_samples),
+#             data=genotype_qualities,
+#             chunks=(min(chunk_size, num_sites), min(chunk_size, num_samples)),
+#             dtype=np.uint8, compressor=compressor)
+
+        super(SampleData, self).finalise()
+
+
+
+
+
+class AncestorData(object):
+    """
+    Class representing the data stored about our input samples.
+    """
+    def __init__(self, sequence_length=None):
+        self.sequence_length = sequence_length
+        self.data = zarr.group()
+
+    @classmethod
+    def load(cls, filename):
+        """
+        Loads a SampleData object from the specified file.
+        """
+
+    def add_variant(self, position, genotypes, recombination_rate):
+        print("Adding ", position, genotypes, recombination_rate)
+
+
+
