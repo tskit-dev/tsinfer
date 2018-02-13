@@ -12,6 +12,7 @@ import scipy
 import pickle
 import collections
 import itertools
+import tqdm
 
 import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
@@ -598,30 +599,29 @@ def build_profile_inputs(n, num_megabases):
         random_seed=10)
     print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
             "num_trees =", ts.num_trees)
-    input_file = "tmp__NOBACKUP__/large-input-source-n={}-m={}.hdf5".format(
+    input_file = "tmp__NOBACKUP__/profile-source-n={}-m={}.hdf5".format(
             n, num_megabases)
     ts.dump(input_file)
-    V = ts.genotype_matrix()
-    # V = np.zeros((ts.num_sites, ts.sample_size), dtype=np.uint8)
-    # for v in ts.variants():
-    #     V[v.index:] = v.genotypes
-    print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
-    positions = np.array([site.position for site in ts.sites()])
-    recombination_rate = np.zeros(ts.num_sites) + 1e-8
-    input_file = "tmp__NOBACKUP__/profile-n={}_m={}_dbm.tsinf".format(n, num_megabases)
-    # with h5py.File(input_file, "w") as input_hdf5:
-    # with zarr.ZipStore(input_file) as input_hdf5:
-    # input_hdf5 = zarr.DirectoryStore(input_file)
-    if os.path.exists(input_file):
-        os.unlink(input_file)
-    input_hdf5 = zarr.DBMStore(input_file, open=bsddb3.btopen)
-    # input_hdf5 = zarr.ZipStore(input_file)
-    root = zarr.group(store=input_hdf5, overwrite=True)
-    tsinfer.InputFile.build(
-        root, genotypes=V, position=positions,
-        recombination_rate=recombination_rate, sequence_length=ts.sequence_length)
-    input_hdf5.close()
-    print("Wrote", input_file)
+    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.tsis".format(n, num_megabases)
+    if os.path.exists(filename):
+        os.unlink(filename)
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        filename=filename)
+    progress_monitor = tqdm.tqdm(total=ts.num_sites)
+    for variant in ts.variants():
+        sample_data.add_variant(
+            variant.site.position, variant.alleles, variant.genotypes)
+        progress_monitor.update()
+    sample_data.finalise()
+    progress_monitor.close()
+
+    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.tsia".format(n, num_megabases)
+    if os.path.exists(filename):
+        os.unlink(filename)
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
+    tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
+    ancestor_data.finalise()
 
 
 def build_1kg_sim():
@@ -963,10 +963,10 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
 
-#     build_profile_inputs(1000, 10)
-#     build_profile_inputs(1000, 100)
-#     build_profile_inputs(10**4, 100)
-#     build_profile_inputs(10**5, 100)
+    # build_profile_inputs(1000, 10)
+    build_profile_inputs(1000, 100)
+    build_profile_inputs(10**4, 100)
+    build_profile_inputs(10**5, 100)
 
     # build_profile_inputs(100)
 
@@ -986,8 +986,8 @@ if __name__ == "__main__":
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
-    tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
-            genotype_quality=0.001)
+    # tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
+    #         genotype_quality=0.001)
 
     # for seed in range(1, 10000):
     # # for seed in [2]:

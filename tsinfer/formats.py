@@ -20,6 +20,9 @@ import msprime
 
 import tsinfer.threads as threads
 
+# FIXME need some global place to keep these constants
+UNKNOWN_ALLELE = 255
+
 # We don't want blosc to spin up extra threads for compression.
 blosc.use_threads = False
 logger = logging.getLogger(__name__)
@@ -1023,8 +1026,9 @@ class AncestorData(DataContainer):
         num_sites = self.input_data.num_variant_sites
         self.data.attrs["num_sites"] = num_sites
         self.ancestor_buffer = []
-        self.haplotypes_buffer = np.empty((chunk_size, num_sites), dtype=np.uint8)
-        self.haplotypes_buffer_offset = 0
+        self.genotypes_buffer = np.empty((num_sites, chunk_size), dtype=np.uint8)
+        self.genotypes_buffer[:] = UNKNOWN_ALLELE
+        self.genotypes_buffer_offset = 0
 
         self.ancestors_group = self.data.create_group("ancestors")
         x_chunk = min(chunk_size, num_sites)
@@ -1049,13 +1053,14 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (num_sites,):
             raise ValueError("haplotypes incorrect shape.")
-        j = self.haplotypes_buffer_offset
-        N = self.haplotypes_buffer.shape[0]
-        self.haplotypes_buffer[j] = haplotype
+        j = self.genotypes_buffer_offset
+        N = self.genotypes_buffer.shape[1]
+        self.genotypes_buffer[start: end, j] = haplotype[start: end]
         if j == N - 1:
-            self.genotypes.append(self.haplotypes_buffer.T, axis=1)
-            self.haplotypes_buffer_offset = -1
-        self.haplotypes_buffer_offset += 1
+            self.genotypes.append(self.genotypes_buffer, axis=1)
+            self.genotypes_buffer_offset = -1
+            self.genotypes_buffer[:] = UNKNOWN_ALLELE
+        self.genotypes_buffer_offset += 1
         self.ancestor_buffer.append(BufferedAncestor(start, end, time_, focal_sites))
 
     def finalise(self):
@@ -1094,9 +1099,9 @@ class AncestorData(DataContainer):
             data=time_, compressor=self.compressor)
 
         self.genotypes.append(
-            self.haplotypes_buffer[:self.haplotypes_buffer_offset].T, axis=1)
+            self.genotypes_buffer[:, :self.genotypes_buffer_offset], axis=1)
         self.ancestor_buffer = None
-        self.haplotypes_buffer = None
+        self.genotypes_buffer = None
         super(AncestorData, self).finalise()
 
     ####################################
