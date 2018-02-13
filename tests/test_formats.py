@@ -70,7 +70,10 @@ class TestSampleData(unittest.TestCase):
         compressor = formats.DEFAULT_COMPRESSOR
         self.assertEqual(input_file.position.compressor, compressor)
         self.assertEqual(input_file.frequency.compressor, compressor)
-        # self.assertEqual(input_file.alleles.compressor, compressor)
+        self.assertEqual(input_file.ancestral_state.compressor, compressor)
+        self.assertEqual(input_file.ancestral_state_offset.compressor, compressor)
+        self.assertEqual(input_file.derived_state.compressor, compressor)
+        self.assertEqual(input_file.derived_state_offset.compressor, compressor)
         self.assertEqual(input_file.variant_sites.compressor, compressor)
         self.assertEqual(input_file.recombination_rate.compressor, compressor)
         self.assertEqual(input_file.genotypes.compressor, compressor)
@@ -161,3 +164,194 @@ class TestSampleData(unittest.TestCase):
         self.assertTrue(np.array_equal(
             t.mutations.derived_state_offset, input_file.derived_state_offset[:]))
 
+    def test_str(self):
+        ts = self.get_example_ts(5, 3)
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+        self.assertGreater(len(str(input_file)), 0)
+
+    def test_eq(self):
+        ts = self.get_example_ts(5, 3)
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+        self.assertTrue(input_file == input_file)
+        self.assertFalse(input_file == None)
+        self.assertFalse(None == input_file)
+
+    def test_variant_errors(self):
+        input_file = formats.SampleData.initialise(num_samples=2, sequence_length=10)
+        genotypes = np.zeros(2, np.uint8)
+        input_file.add_variant(0, alleles=["0", "1"], genotypes=genotypes)
+        for bad_position in [-1, 10, 100]:
+            self.assertRaises(
+                ValueError, input_file.add_variant, position=bad_position,
+                alleles=["0", "1"], genotypes=genotypes)
+        for bad_genotypes in [[0, 2], [-1, 0], [], [0], [0, 0, 0]]:
+            genotypes = np.array(bad_genotypes, dtype=np.uint8)
+            self.assertRaises(
+                ValueError, input_file.add_variant, position=1,
+                alleles=["0", "1"], genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_variant, position=1,
+            alleles=["0", "1", "2"], genotypes=np.zeros(2, dtype=np.int8))
+        self.assertRaises(
+            ValueError, input_file.add_variant, position=1,
+            alleles=["0"], genotypes=np.array([0, 1], dtype=np.int8))
+        self.assertRaises(
+            ValueError, input_file.add_variant, position=1,
+            alleles=["0", "1"], genotypes=np.array([0, 2], dtype=np.int8))
+
+    def test_variants(self):
+        ts = self.get_example_ts(13, 12)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        variants = []
+        for v in ts.variants():
+            input_file.add_variant(v.site.position, v.alleles, v.genotypes)
+            if 1 < np.sum(v.genotypes) < ts.num_samples:
+                variants.append(v)
+        input_file.finalise()
+        self.assertGreater(len(variants), 0)
+        self.assertEqual(input_file.num_variant_sites, len(variants))
+        j = 0
+        for site_id, genotypes in input_file.variants():
+            self.assertEqual(variants[j].site.id, site_id)
+            self.assertTrue(np.array_equal(variants[j].genotypes, genotypes))
+            j += 1
+        self.assertEqual(j, len(variants))
+
+
+class TestAncestorData(unittest.TestCase):
+    """
+    Test cases for the sample data file format.
+    """
+    def get_example_data(self, sample_size, sequence_length, num_ancestors):
+        ts =  msprime.simulate(
+            sample_size, recombination_rate=1, mutation_rate=10,
+            length=sequence_length, random_seed=100)
+        sample_data = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        for v in ts.variants():
+            sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.finalise()
+
+        num_sites = sample_data.num_variant_sites
+        ancestors = []
+        for j in range(num_ancestors):
+            haplotype = np.zeros(num_sites, dtype=np.uint8) + tsinfer.UNKNOWN_ALLELE
+            start = j
+            end = num_sites - j
+            haplotype[start: start + j] = 0
+            haplotype[start + j: end] = 1
+            focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
+            ancestors.append((start, end, 2 * j, focal_sites, haplotype))
+        return sample_data, ancestors
+
+    def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
+        for start, end, time, focal_sites, haplotype in ancestors:
+            ancestor_data.add_ancestor(start, end, time, focal_sites, haplotype)
+        ancestor_data.finalise()
+
+        self.assertGreater(len(ancestor_data.uuid), 0)
+        self.assertEqual(ancestor_data.sample_data_uuid, sample_data.uuid)
+        self.assertEqual(ancestor_data.format_name, formats.AncestorData.FORMAT_NAME)
+        self.assertEqual(
+            ancestor_data.format_version, formats.AncestorData.FORMAT_VERSION)
+        self.assertEqual(ancestor_data.num_sites, sample_data.num_variant_sites)
+        self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
+
+        haplotypes = list(ancestor_data.haplotypes())
+        stored_start = ancestor_data.start[:]
+        stored_end = ancestor_data.end[:]
+        stored_time = ancestor_data.time[:]
+        stored_genotypes = ancestor_data.genotypes[:]
+        stored_focal_sites = ancestor_data.focal_sites[:]
+        offset = ancestor_data.focal_sites_offset[:]
+        for j, (start, end, time, focal_sites, haplotype) in enumerate(ancestors):
+            self.assertEqual(stored_start[j], start)
+            self.assertEqual(stored_end[j], end)
+            self.assertEqual(stored_time[j], time)
+            self.assertTrue(np.array_equal(stored_genotypes[:, j], haplotype))
+            self.assertTrue(np.array_equal(
+                focal_sites,
+                stored_focal_sites[offset[j]: offset[j + 1]]))
+            self.assertTrue(np.array_equal(haplotypes[j], haplotype))
+
+    def test_defaults(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+        self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+        compressor = formats.DEFAULT_COMPRESSOR
+        self.assertEqual(ancestor_data.start.compressor, compressor)
+        self.assertEqual(ancestor_data.end.compressor, compressor)
+        self.assertEqual(ancestor_data.time.compressor, compressor)
+        self.assertEqual(ancestor_data.focal_sites.compressor, compressor)
+        self.assertEqual(ancestor_data.focal_sites_offset.compressor, compressor)
+        self.assertEqual(ancestor_data.genotypes.compressor, compressor)
+
+    def test_chunk_size(self):
+        N = 50
+        for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
+            sample_data, ancestors = self.get_example_data(12, 11, N)
+            ancestor_data = tsinfer.AncestorData.initialise(
+                sample_data, chunk_size=chunk_size)
+            self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+            self.assertEqual(
+                ancestor_data.genotypes.chunks,
+                (min(ancestor_data.num_sites, chunk_size), chunk_size))
+
+    def test_filename(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "ancestors.tmp")
+            ancestor_data = tsinfer.AncestorData.initialise(
+                sample_data, filename=filename)
+            self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+            self.assertTrue(os.path.exists(filename))
+            self.assertGreater(os.path.getsize(filename), 0)
+            other_ancestor_data = formats.AncestorData.load(filename)
+            self.assertIsNot(other_ancestor_data, ancestor_data)
+            self.assertEqual(other_ancestor_data, ancestor_data)
+
+    def test_chunk_size_file_equal(self):
+        N = 60
+        sample_data, ancestors = self.get_example_data(22, 16, N)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            files = []
+            for chunk_size in [5, 7]:
+                filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
+                files.append(filename)
+                ancestor_data = tsinfer.AncestorData.initialise(
+                    sample_data, filename=filename, chunk_size=chunk_size)
+                self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+                self.assertEqual(ancestor_data.genotypes.chunks, (chunk_size, chunk_size))
+            # Now reload the files and check they are equal
+            file0 = formats.AncestorData.load(files[0])
+            file1 = formats.AncestorData.load(files[1])
+            self.assertTrue(file0.data_equal(file1))
+
+    def test_add_ancestor_errors(self):
+        sample_data, ancestors = self.get_example_data(22, 16, 30)
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+        num_sites = ancestor_data.num_sites
+        haplotype = np.zeros(num_sites, dtype=np.int8)
+        ancestor_data.add_ancestor(
+            start=0, end=num_sites, time_=0, focal_sites=np.array([]),
+            haplotype=haplotype)
+        for bad_start in [-1, -100, num_sites, num_sites + 1]:
+            self.assertRaises(
+                ValueError, ancestor_data.add_ancestor,
+                start=bad_start, end=num_sites, time_=0, focal_sites=np.array([]),
+                haplotype=haplotype)
+        for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
+            self.assertRaises(
+                ValueError, ancestor_data.add_ancestor,
+                start=0, end=bad_end, time_=0, focal_sites=np.array([]),
+                haplotype=haplotype)
+        self.assertRaises(
+            ValueError, ancestor_data.add_ancestor,
+            start=0, end=num_sites, time_=0, focal_sites=np.array([]),
+            haplotype=np.zeros(num_sites + 1, dtype=np.uint8))

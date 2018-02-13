@@ -90,14 +90,10 @@ def infer(
 
 
 def build_ancestors(
-        input_hdf5, ancestor_hdf5, progress=False, method="C", compress=True,
-        num_threads=None, chunk_size=None):
+        input_data, ancestor_data, progress=False, method="C", num_threads=None):
 
-    input_file = formats.InputFile(input_hdf5)
-    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
-
-    num_sites = input_file.num_sites
-    num_samples = input_file.num_samples
+    num_sites = input_data.num_variant_sites
+    num_samples = input_data.num_samples
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
@@ -106,10 +102,10 @@ def build_ancestors(
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
+    frequency = input_data.frequency[:]
     logger.info("Starting site addition")
-    for j, v in enumerate(input_file.site_genotypes()):
-        frequency = int(np.sum(v))
-        ancestor_builder.add_site(j, frequency, v)
+    for j, (site_id, genotypes)  in enumerate(input_data.variants()):
+        ancestor_builder.add_site(j, int(frequency[site_id]), genotypes)
         progress_monitor.update()
     progress_monitor.close()
     logger.info("Finished adding sites")
@@ -120,9 +116,6 @@ def build_ancestors(
     oldest_time = 1
     if len(descriptors) > 0:
         oldest_time = descriptors[0][0] + 1
-    ancestor_file.initialise(
-        num_ancestors, oldest_time, total_num_focal_sites, chunk_size=chunk_size,
-        compress=compress, num_threads=num_threads)
 
     logger.info("Starting build for {} ancestors".format(num_ancestors))
     a = np.zeros(num_sites, dtype=np.uint8)
@@ -134,28 +127,24 @@ def build_ancestors(
         logger.debug(
             "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
                 focal_sites.shape[0], e - s, duration))
-        ancestor_file.add_ancestor(
-            start=s, end=e, ancestor_time=freq, focal_sites=focal_sites,
+        ancestor_data.add_ancestor(
+            start=s, end=e, time_=freq, focal_sites=focal_sites,
             haplotype=a)
         progress_monitor.update()
-    ancestor_file.finalise()
     progress_monitor.close()
     logger.info("Finished building ancestors")
 
 
 def match_ancestors(
-        input_hdf5, ancestors_hdf5, output_path=None, method="C", progress=False,
+        sample_data, ancestor_data, output_path=None, method="C", progress=False,
         num_threads=0, path_compression=True, output_interval=None, resume=False,
         traceback_file_pattern=None):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
     """
-    input_file = formats.InputFile(input_hdf5)
-    ancestors_file = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
-
     matcher = AncestorMatcher(
-        input_file, ancestors_file, output_path=output_path, method=method,
+        sample_data, ancestor_data, output_path=output_path, method=method,
         progress=progress, path_compression=path_compression,
         num_threads=num_threads, output_interval=output_interval,
         resume=resume, traceback_file_pattern=traceback_file_pattern)
@@ -168,9 +157,9 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
     the resulting tree sequence.
     """
     input_file = formats.InputFile(input_hdf5)
-    ancestors_file = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
+    ancestor_data = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
     # TODO change these value errors to VerificationErrors or something.
-    if ancestors_ts.num_nodes != ancestors_file.num_ancestors:
+    if ancestors_ts.num_nodes != ancestor_data.num_ancestors:
         raise ValueError("Incorrect number of ancestors")
     if ancestors_ts.num_sites != input_file.num_sites:
         raise ValueError("Incorrect number of sites")
@@ -180,7 +169,7 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
         total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
 
     count = 0
-    for g1, v in zip(ancestors_file.site_genotypes(), ancestors_ts.variants()):
+    for g1, v in zip(ancestor_data.site_genotypes(), ancestors_ts.variants()):
         g2 = v.genotypes
         # Set anything unknown to 0
         g1[g1 == UNKNOWN_ALLELE] = 0
@@ -213,16 +202,16 @@ class Matcher(object):
     progress_bar_description = None
 
     def __init__(
-            self, input_file, error_probability=0, num_threads=1, method="C",
+            self, sample_data, error_probability=0, num_threads=1, method="C",
             path_compression=True, progress=False, traceback_file_pattern=None):
-        self.input_file = input_file
+        self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
-        self.num_samples = self.input_file.num_samples
-        self.num_sites = self.input_file.num_sites
-        self.sequence_length = self.input_file.sequence_length
-        self.positions = self.input_file.position
-        self.recombination_rate = self.input_file.recombination_rate
+        self.num_samples = self.sample_data.num_samples
+        self.num_sites = self.sample_data.num_variant_sites
+        self.sequence_length = self.sample_data.sequence_length
+        self.positions = self.sample_data.position[:][self.sample_data.variant_sites]
+        self.recombination_rate = self.sample_data.recombination_rate
         self.progress = progress
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
         if method == "C":
@@ -383,20 +372,23 @@ class AncestorMatcher(Matcher):
     progress_bar_description = "match-ancestors"
 
     def __init__(
-            self, input_file, ancestors_file, output_path, output_interval=None,
+            self, sample_data, ancestor_data, output_path, output_interval=None,
             resume=False, **kwargs):
-        super().__init__(input_file, **kwargs)
+        super().__init__(sample_data, **kwargs)
         self.output_interval = 2**32  # Arbitrary very large number of minutes.
         if output_interval is not None:
             self.output_interval = output_interval
         self.output_path = output_path
         self.last_output_time = time.time()
-        self.ancestors_file = ancestors_file
-        self.num_ancestors = self.ancestors_file.num_ancestors
-        self.epoch = self.ancestors_file.time
-        self.focal_sites = self.ancestors_file.focal_sites
-        self.start = self.ancestors_file.start
-        self.end = self.ancestors_file.end
+        self.ancestor_data = ancestor_data
+        self.num_ancestors = self.ancestor_data.num_ancestors
+        self.epoch = self.ancestor_data.time[:]
+        off = self.ancestor_data.focal_sites_offset[:]
+        focal_sites = self.ancestor_data.focal_sites[:]
+        self.focal_sites = [
+            focal_sites[off[j]: off[j + 1]] for j in range(self.num_ancestors)]
+        self.start = self.ancestor_data.start[:]
+        self.end = self.ancestor_data.end[:]
 
         # Create a list of all ID ranges in each epoch.
         breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
@@ -425,7 +417,7 @@ class AncestorMatcher(Matcher):
                 self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
         # This is an iterator over all ancestral haplotypes.
-        self.haplotypes = self.ancestors_file.ancestor_haplotypes(first_ancestor)
+        self.haplotypes = self.ancestor_data.haplotypes(start=first_ancestor)
         self.allocate_progress_monitor(
             self.num_ancestors, initial=first_ancestor,
             postfix=self.__epoch_info_dict(self.start_epoch - 1))
@@ -569,10 +561,10 @@ class AncestorMatcher(Matcher):
 class SampleMatcher(Matcher):
     progress_bar_description = "match-samples"
 
-    def __init__(self, input_file, ancestors_ts, **kwargs):
-        super().__init__(input_file, **kwargs)
+    def __init__(self, sample_data, ancestors_ts, **kwargs):
+        super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
-        self.sample_haplotypes = self.input_file.sample_haplotypes()
+        self.sample_haplotypes = self.sample_data.sample_haplotypes()
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)

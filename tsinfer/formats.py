@@ -562,6 +562,39 @@ class AncestorFile(Hdf5File):
 # New APIs.
 #################################
 
+class BufferedSite(object):
+    """
+    Simple container to hold site information while being buffered during
+    addition. The frequency is the number of genotypes with the derived
+    state.
+    """
+    def __init__(self, position, frequency, alleles):
+        self.position = position
+        self.frequency = frequency
+        self.alleles = alleles
+
+
+class BufferedAncestor(object):
+    """
+    Simple container to hold ancestor information while being buffered during
+    addition.
+    """
+    def __init__(self, start, end, time_, focal_sites):
+        self.start = start
+        self.end = end
+        self.time = time_
+        self.focal_sites = focal_sites
+
+
+def zarr_summary(array):
+    """
+    Returns a string with a brief summary of the specified zarr array.
+    """
+    return "shape={};chunks={};size={};dtype={}".format(
+        array.shape, array.chunks, humanize.naturalsize(array.nbytes),
+        array.dtype)
+
+
 class DataContainer(object):
     """
     Superclass of objects used to represent a collection of related
@@ -608,6 +641,7 @@ class DataContainer(object):
             self.data = zarr.open_group(store=self.store)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
+        self.data.attrs["uuid"] = str(uuid.uuid4())
 
     def finalise(self):
         """
@@ -632,25 +666,21 @@ class DataContainer(object):
     def uuid(self):
         return str(self.data.attrs["uuid"])
 
+    def _format_str(self, values):
+        """
+        Helper function for formatting __str__ output.
+        """
+        s = ""
+        max_key = max(len(k) for k, _ in values)
+        for k, v in values:
+            s += "{:<{}} = {}\n".format(k, max_key, v)
+        return s
 
-class BufferedSite(object):
-    """
-    Simple container to hold site information while being buffered during
-    addition. The frequency is the number of genotypes with the derived
-    state.
-    """
-    def __init__(self, position, frequency, alleles):
-        self.position = position
-        self.frequency = frequency
-        self.alleles = alleles
-
-def zarr_summary(array):
-    """
-    Returns a string with a brief summary of the specified zarr array.
-    """
-    return "shape={};chunks={};size={};dtype={}".format(
-        array.shape, array.chunks, humanize.naturalsize(array.nbytes),
-        array.dtype)
+    def __eq__(self, other):
+        ret = NotImplemented
+        if isinstance(other, type(self)):
+            ret = self.uuid == other.uuid and self.data_equal(other)
+        return ret
 
 
 class SampleData(DataContainer):
@@ -658,7 +688,7 @@ class SampleData(DataContainer):
     Class representing the data stored about our input samples.
     """
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (0, 1)
+    FORMAT_VERSION = (0, 2)
 
     @property
     def num_samples(self):
@@ -708,11 +738,6 @@ class SampleData(DataContainer):
     def recombination_rate(self):
         return self.data["variants/recombination_rate"]
 
-
-#     @property
-#     def genotype_qualities(self):
-#         return self.data["variants/genotype_qualities"]
-
     @property
     def variant_sites(self):
         return self.data["variants/site"]
@@ -739,11 +764,7 @@ class SampleData(DataContainer):
             ("variant_sites", zarr_summary(self.variant_sites)),
             ("recombination_rate", zarr_summary(self.recombination_rate)),
             ("genotypes", zarr_summary(self.genotypes))]
-        s = ""
-        max_key = max(len(k) for k, _ in values)
-        for k, v in values:
-            s += "{:<{}} = {}\n".format(k, max_key, v)
-        return s
+        return self._format_str(values)
 
     def data_equal(self, other):
         """
@@ -770,11 +791,6 @@ class SampleData(DataContainer):
             np.array_equal(self.recombination_rate[:], other.recombination_rate[:]) and
             np.array_equal(self.genotypes[:], other.genotypes[:]))
 
-    def __eq__(self, other):
-        ret = False
-        if isinstance(other, SampleData):
-            ret = self.uuid == other.uuid and self.data_equal(other)
-        return ret
 
     ####################################
     # Write mode
@@ -782,15 +798,14 @@ class SampleData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, num_samples=None, sequence_length=None, filename=None,
-            recombination_map=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
+            cls, num_samples=None, sequence_length=None, recombination_map=None,
+            filename=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_variant method.
         """
         self = cls()
         super(cls, self)._initialise(filename)
-        self.data.attrs["uuid"] = str(uuid.uuid4())
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["num_samples"] = int(num_samples)
 
@@ -810,9 +825,6 @@ class SampleData(DataContainer):
         self.variants_group.create_dataset(
             "genotypes", shape=(0, num_samples), chunks=(x_chunk, y_chunk),
             dtype=np.uint8, compressor=compressor)
-        # variants_group.create_dataset(
-        #     "genotype_qualities", shape=(0, num_samples), chunks=(x_chunk, y_chunk),
-        #     dtype=np.uint8, compressor=compressor)
         return self
 
     def add_variant(self, position, alleles, genotypes):
@@ -838,7 +850,6 @@ class SampleData(DataContainer):
         self.site_buffer.append(BufferedSite(position, frequency, alleles))
 
     def finalise(self):
-        # find the maximum length of an allele
         variant_sites = []
         num_samples = self.num_samples
         num_sites = len(self.site_buffer)
@@ -889,26 +900,215 @@ class SampleData(DataContainer):
             dtype=np.uint32, data=recombination_rate, compressor=self.compressor)
 
         self.genotypes.append(self.genotypes_buffer[:self.genotypes_buffer_offset])
-
+        self.site_buffer = None
+        self.genotypes_buffer = None
         super(SampleData, self).finalise()
 
+    ####################################
+    # Read mode
+    ####################################
 
-class AncestorData(object):
+    def variants(self):
+        """
+        Returns an iterator over the (site_id, genotypes) pairs for all variant
+        sites in the input data.
+        """
+        # TODO add a num_threads or other option to control threading.
+        variant_sites = self.variant_sites[:]
+        for j, genotypes in enumerate(threaded_row_iterator(self.genotypes)):
+            yield variant_sites[j], genotypes
+
+
+
+class AncestorData(DataContainer):
     """
     Class representing the data stored about our input samples.
     """
-    def __init__(self, sequence_length=None):
-        self.sequence_length = sequence_length
-        self.data = zarr.group()
+    FORMAT_NAME = "tsinfer-ancestor-data"
+    FORMAT_VERSION = (0, 2)
+
+    def __str__(self):
+        path = None
+        if self.store is not None:
+            path = self.store.path
+        values = [
+            ("path", path),
+            ("format_name", self.format_name),
+            ("format_version", self.format_version),
+            ("uuid", self.uuid),
+            ("sample_data_uuid", self.sample_data_uuid),
+            ("num_ancestors", self.num_ancestors),
+            ("num_sites", self.num_sites),
+            ("start", zarr_summary(self.start)),
+            ("end", zarr_summary(self.end)),
+            ("time", zarr_summary(self.time)),
+            ("focal_sites", zarr_summary(self.focal_sites)),
+            ("focal_sites_offset", zarr_summary(self.focal_sites_offset)),
+            ("genotypes", zarr_summary(self.genotypes))]
+        return self._format_str(values)
+
+    def data_equal(self, other):
+        """
+        Returns True if all the data attributes of this input file and the
+        specified input file are equal. This compares every attribute except
+        the UUID.
+        """
+        return (
+            self.sample_data_uuid == other.sample_data_uuid and
+            self.format_name == other.format_name and
+            self.format_version == other.format_version and
+            self.num_ancestors == other.num_ancestors and
+            self.num_sites == other.num_sites and
+            np.array_equal(self.start[:], other.start[:]) and
+            np.array_equal(self.end[:], other.end[:]) and
+            np.array_equal(self.focal_sites[:], other.focal_sites[:]) and
+            np.array_equal(
+                self.focal_sites_offset[:], other.focal_sites_offset[:]) and
+            np.array_equal(self.genotypes[:], other.genotypes[:]))
+
+    @property
+    def sample_data_uuid(self):
+        return self.data.attrs["sample_data_uuid"]
+
+    @property
+    def num_ancestors(self):
+        return self.data.attrs["num_ancestors"]
+
+    @property
+    def num_sites(self):
+        return self.data.attrs["num_sites"]
+
+    @property
+    def start(self):
+        return self.data["ancestors/start"]
+
+    @property
+    def end(self):
+        return self.data["ancestors/end"]
+
+    @property
+    def time(self):
+        return self.data["ancestors/time"]
+
+    @property
+    def focal_sites(self):
+        return self.data["ancestors/focal_sites"]
+
+    @property
+    def focal_sites_offset(self):
+        return self.data["ancestors/focal_sites_offset"]
+
+    @property
+    def genotypes(self):
+        return self.data["ancestors/genotypes"]
+
+    ####################################
+    # Write mode
+    ####################################
 
     @classmethod
-    def load(cls, filename):
+    def initialise(
+            cls, input_data, filename=None, chunk_size=8192,
+            compressor=DEFAULT_COMPRESSOR):
         """
-        Loads a SampleData object from the specified file.
+        Initialises a new SampleData object. Data can be added to
+        this object using the add_ancestor method.
         """
+        self = cls()
+        super(cls, self)._initialise(filename)
+        self.input_data = input_data
+        self.compressor = compressor
+        self.data.attrs["sample_data_uuid"] = input_data.uuid
 
-    def add_variant(self, position, genotypes, recombination_rate):
-        print("Adding ", position, genotypes, recombination_rate)
+        num_sites = self.input_data.num_variant_sites
+        self.data.attrs["num_sites"] = num_sites
+        self.ancestor_buffer = []
+        self.haplotypes_buffer = np.empty((chunk_size, num_sites), dtype=np.uint8)
+        self.haplotypes_buffer_offset = 0
 
+        self.ancestors_group = self.data.create_group("ancestors")
+        x_chunk = min(chunk_size, num_sites)
+        y_chunk = chunk_size
+        self.ancestors_group.create_dataset(
+            "genotypes", shape=(num_sites, 0), chunks=(x_chunk, y_chunk),
+            dtype=np.uint8, compressor=self.compressor)
+        return self
+
+    def add_ancestor(self, start, end, time_, focal_sites, haplotype):
+        """
+        Adds an ancestor with the specified haplotype, with ancestral material
+        over the interval [start:end], that is associated with the specfied time
+        and has new mutations at the specified list of focal sites.
+        """
+        num_sites = self.input_data.num_variant_sites
+        if start < 0:
+            raise ValueError("Start must be >= 0")
+        if end > num_sites:
+            raise ValueError("end must be <= num_variant_sites")
+        if start >= end:
+            raise ValueError("start must be < end")
+        if haplotype.shape != (num_sites,):
+            raise ValueError("haplotypes incorrect shape.")
+        j = self.haplotypes_buffer_offset
+        N = self.haplotypes_buffer.shape[0]
+        self.haplotypes_buffer[j] = haplotype
+        if j == N - 1:
+            self.genotypes.append(self.haplotypes_buffer.T, axis=1)
+            self.haplotypes_buffer_offset = -1
+        self.haplotypes_buffer_offset += 1
+        self.ancestor_buffer.append(BufferedAncestor(start, end, time_, focal_sites))
+
+    def finalise(self):
+        total_focal_sites = sum(
+            ancestor.focal_sites.shape[0] for ancestor in self.ancestor_buffer)
+        num_ancestors = len(self.ancestor_buffer)
+        self.data.attrs["num_ancestors"] = num_ancestors
+        start = np.empty(num_ancestors, dtype=np.int32)
+        end = np.empty(num_ancestors, dtype=np.int32)
+        time_ = np.empty(num_ancestors, dtype=np.float64)
+        focal_sites = np.empty(total_focal_sites, dtype=np.uint32)
+        focal_sites_offset = np.zeros(num_ancestors + 1, dtype=np.int32)
+        for j, ancestor in enumerate(self.ancestor_buffer):
+            start[j] = ancestor.start
+            end[j] = ancestor.end
+            time_[j] = ancestor.time
+            focal_sites_offset[j + 1] = (
+                focal_sites_offset[j] + ancestor.focal_sites.shape[0])
+            focal_sites[
+                focal_sites_offset[j]: focal_sites_offset[j + 1]] = ancestor.focal_sites
+
+        self.ancestors_group.create_dataset(
+            "start", shape=(num_ancestors,), chunks=(num_ancestors,),
+            data=start, compressor=self.compressor)
+        self.ancestors_group.create_dataset(
+            "end", shape=(num_ancestors,), chunks=(num_ancestors,),
+            data=end, compressor=self.compressor)
+        self.ancestors_group.create_dataset(
+            "focal_sites_offset", shape=(num_ancestors + 1,), chunks=(num_ancestors + 1,),
+            data=focal_sites_offset, compressor=self.compressor)
+        self.ancestors_group.create_dataset(
+            "focal_sites", shape=(total_focal_sites,), chunks=(total_focal_sites),
+            data=focal_sites, compressor=self.compressor)
+        self.ancestors_group.create_dataset(
+            "time", shape=(num_ancestors,), chunks=(num_ancestors,),
+            data=time_, compressor=self.compressor)
+
+        self.genotypes.append(
+            self.haplotypes_buffer[:self.haplotypes_buffer_offset].T, axis=1)
+        self.ancestor_buffer = None
+        self.haplotypes_buffer = None
+        super(AncestorData, self).finalise()
+
+    ####################################
+    # Read mode
+    ####################################
+    def haplotypes(self, start=0):
+        """
+        Returns an iterator over the ancestral haplotypes.
+        """
+        iterator = transposed_threaded_row_iterator(self.genotypes)
+        for j, h in enumerate(iterator):
+            if j >= start:
+                yield h
 
 
