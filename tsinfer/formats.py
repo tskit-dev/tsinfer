@@ -14,7 +14,9 @@ import dbm
 import numpy as np
 import h5py
 import zarr
+import humanize
 import numcodecs.blosc as blosc
+import msprime
 
 import tsinfer.threads as threads
 
@@ -604,10 +606,8 @@ class DataContainer(object):
         if filename is not None:
             self.store = zarr.DBMStore(filename, flag='n')
             self.data = zarr.open_group(store=self.store)
-
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
-        print("self.data = ", self.data)
 
     def finalise(self):
         """
@@ -616,6 +616,9 @@ class DataContainer(object):
         """
         if self.store is not None:
             self.store.close()
+            # Reopen the store in readonly mode.
+            self.store = zarr.DBMStore(self.store.path, flag="r")
+            self.data = zarr.open_group(store=self.store)
 
     @property
     def format_name(self):
@@ -623,7 +626,7 @@ class DataContainer(object):
 
     @property
     def format_version(self):
-        return self.data.attrs[FORMAT_VERSION_KEY]
+        return tuple(self.data.attrs[FORMAT_VERSION_KEY])
 
     @property
     def uuid(self):
@@ -636,11 +639,18 @@ class BufferedSite(object):
     addition. The frequency is the number of genotypes with the derived
     state.
     """
-    def __init__(self, position, frequency, alleles, genotypes=None):
+    def __init__(self, position, frequency, alleles):
         self.position = position
         self.frequency = frequency
         self.alleles = alleles
-        self.genotypes = genotypes
+
+def zarr_summary(array):
+    """
+    Returns a string with a brief summary of the specified zarr array.
+    """
+    return "shape={};chunks={};size={};dtype={}".format(
+        array.shape, array.chunks, humanize.naturalsize(array.nbytes),
+        array.dtype)
 
 
 class SampleData(DataContainer):
@@ -655,6 +665,14 @@ class SampleData(DataContainer):
         return self.data.attrs["num_samples"]
 
     @property
+    def num_sites(self):
+        return self.data.attrs["num_sites"]
+
+    @property
+    def num_variant_sites(self):
+        return self.data.attrs["num_variant_sites"]
+
+    @property
     def sequence_length(self):
         return self.data.attrs["sequence_length"]
 
@@ -663,26 +681,100 @@ class SampleData(DataContainer):
         return self.data["sites/position"]
 
     @property
-    def alleles(self):
-        return self.data["sites/alleles"]
+    def ancestral_state(self):
+        return self.data["sites/ancestral_state"]
+
+    @property
+    def ancestral_state_offset(self):
+        return self.data["sites/ancestral_state_offset"]
+
+    @property
+    def derived_state(self):
+        return self.data["sites/derived_state"]
+
+    @property
+    def derived_state_offset(self):
+        return self.data["sites/derived_state_offset"]
 
     @property
     def frequency(self):
         return self.data["sites/frequency"]
 
-    def print_list(self):
-        """
-        Show a brief listing of the objects and sizes of the data in this container.
-        """
-        print("format_name =", self.format_name)
-        print("format_version =", self.format_version)
-        print("uuid =", self.uuid)
-        print("num_samples =", self.num_samples)
-        print("sequence_length =", self.sequence_length)
-        print("position = ", self.position)
-        print("frequency = ", self.frequency)
-        print("alleles = ", self.alleles)
+    @property
+    def genotypes(self):
+        return self.data["variants/genotypes"]
 
+    @property
+    def recombination_rate(self):
+        return self.data["variants/recombination_rate"]
+
+
+#     @property
+#     def genotype_qualities(self):
+#         return self.data["variants/genotype_qualities"]
+
+    @property
+    def variant_sites(self):
+        return self.data["variants/site"]
+
+    def __str__(self):
+        path = None
+        if self.store is not None:
+            path = self.store.path
+        values = [
+            ("path", path),
+            ("format_name", self.format_name),
+            ("format_version", self.format_version),
+            ("uuid", self.uuid),
+            ("num_samples", self.num_samples),
+            ("num_sites", self.num_sites),
+            ("num_variant_sites", self.num_variant_sites),
+            ("sequence_length", self.sequence_length),
+            ("position", zarr_summary(self.position)),
+            ("frequency", zarr_summary(self.frequency)),
+            ("ancestral_state", zarr_summary(self.ancestral_state)),
+            ("ancestral_state_offset", zarr_summary(self.ancestral_state_offset)),
+            ("derived_state", zarr_summary(self.derived_state)),
+            ("derived_state_offset", zarr_summary(self.derived_state_offset)),
+            ("variant_sites", zarr_summary(self.variant_sites)),
+            ("recombination_rate", zarr_summary(self.recombination_rate)),
+            ("genotypes", zarr_summary(self.genotypes))]
+        s = ""
+        max_key = max(len(k) for k, _ in values)
+        for k, v in values:
+            s += "{:<{}} = {}\n".format(k, max_key, v)
+        return s
+
+    def data_equal(self, other):
+        """
+        Returns True if all the data attributes of this input file and the
+        specified input file are equal. This compares every attribute except
+        the UUID.
+        """
+        return (
+            self.format_name == other.format_name and
+            self.format_version == other.format_version and
+            self.num_samples == other.num_samples and
+            self.num_sites == other.num_sites and
+            self.num_variant_sites == other.num_variant_sites and
+            self.sequence_length == other.sequence_length and
+            np.array_equal(self.position[:], other.position[:]) and
+            np.array_equal(self.frequency[:], other.frequency[:]) and
+            np.array_equal(self.ancestral_state[:], other.ancestral_state[:]) and
+            np.array_equal(
+                self.ancestral_state_offset[:], other.ancestral_state_offset[:]) and
+            np.array_equal(self.derived_state[:], other.derived_state[:]) and
+            np.array_equal(
+                self.derived_state_offset[:], other.derived_state_offset[:]) and
+            np.array_equal(self.variant_sites[:], other.variant_sites[:]) and
+            np.array_equal(self.recombination_rate[:], other.recombination_rate[:]) and
+            np.array_equal(self.genotypes[:], other.genotypes[:]))
+
+    def __eq__(self, other):
+        ret = False
+        if isinstance(other, SampleData):
+            ret = self.uuid == other.uuid and self.data_equal(other)
+        return ret
 
     ####################################
     # Write mode
@@ -691,7 +783,7 @@ class SampleData(DataContainer):
     @classmethod
     def initialise(
             cls, num_samples=None, sequence_length=None, filename=None,
-            recombination_map=None, compressor=DEFAULT_COMPRESSOR):
+            recombination_map=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_variant method.
@@ -706,8 +798,21 @@ class SampleData(DataContainer):
         # instance of msprime.RecombinationMap or None
         self.recombination_map = recombination_map
         self.site_buffer = []
+        self.genotypes_buffer = np.empty((chunk_size, num_samples), dtype=np.uint8)
+        self.genotype_qualities_buffer = np.empty(
+            (chunk_size, num_samples), dtype=np.uint8)
+        self.genotypes_buffer_offset = 0
         self.compressor = compressor
 
+        self.variants_group = self.data.create_group("variants")
+        x_chunk = chunk_size
+        y_chunk = min(chunk_size, num_samples)
+        self.variants_group.create_dataset(
+            "genotypes", shape=(0, num_samples), chunks=(x_chunk, y_chunk),
+            dtype=np.uint8, compressor=compressor)
+        # variants_group.create_dataset(
+        #     "genotype_qualities", shape=(0, num_samples), chunks=(x_chunk, y_chunk),
+        #     dtype=np.uint8, compressor=compressor)
         return self
 
     def add_variant(self, position, alleles, genotypes):
@@ -721,79 +826,71 @@ class SampleData(DataContainer):
             raise ValueError("position must be between 0 and sequence_length")
 
         frequency = np.sum(genotypes)
-        if frequency == 1 or frequency == self.num_samples:
-            genotypes = None
-        else:
-            genotypes = genotypes[:]
-        self.site_buffer.append(BufferedSite(position, frequency, alleles, genotypes))
+        if 1 < frequency < self.num_samples:
+            j = self.genotypes_buffer_offset
+            N = self.genotypes_buffer.shape[0]
+            self.genotypes_buffer[j] = genotypes
+            if j == N - 1:
+                self.genotypes.append(self.genotypes_buffer)
+                self.genotypes_buffer_offset = -1
+            self.genotypes_buffer_offset += 1
+
+        self.site_buffer.append(BufferedSite(position, frequency, alleles))
 
     def finalise(self):
-        print("Finalising")
-        # singleton_sites = []
-        # fixed_sites = []
-        # useful_sites = []
-        # num_samples = self.num_samples
-        # for site in self.site_buffer:
-        #     if site.frequency == 1:
-        #         singleton_sites.append(site.position)
-        #     elif site.frequency == num_samples:
-        #         fixed_sites.append(site.position)
-        #     else:
-        #         useful_sites.append(site)
-        # fixed_site_positions = np.array(fixed_sites)
-        # singleton_site_positions = np.array(singleton_sites)
-
         # find the maximum length of an allele
-        max_allele_length = 0
-        for site in self.site_buffer:
-            for allele in site.alleles:
-                max_allele_length = max(max_allele_length, len(allele))
         variant_sites = []
         num_samples = self.num_samples
         num_sites = len(self.site_buffer)
-        self.data.attrs["num_sites"] = num_sites
         position = np.empty(num_sites)
         frequency = np.empty(num_sites, dtype=np.uint32)
-        # We only support biallelic sites
-        alleles = np.empty((num_sites, 2), dtype=(np.unicode_, max_allele_length))
+        ancestral_states = []
+        derived_states = []
         for j, site in enumerate(self.site_buffer):
             position[j] = site.position
             frequency[j] = site.frequency
-            for k in range(len(site.alleles)):
-                alleles[j, k] = site.alleles[k]
             if site.frequency > 1 and site.frequency < num_samples:
-                variant_sites.append(site)
-
+                variant_sites.append(j)
+            ancestral_states.append(site.alleles[0])
+            derived_states.append(site.alleles[1])
         sites_group = self.data.create_group("sites")
-        sites_group.array("position", data=position, compressor=self.compressor)
-        sites_group.array("frequency", data=frequency, compressor=self.compressor)
-        sites_group.array("alleles", data=alleles, compressor=self.compressor)
+        sites_group.array(
+            "position", data=position, chunks=(num_sites,), compressor=self.compressor)
+        sites_group.array(
+            "frequency", data=frequency, chunks=(num_sites,), compressor=self.compressor)
+
+        ancestral_state, ancestral_state_offset = msprime.pack_strings(ancestral_states)
+        sites_group.array(
+            "ancestral_state", data=ancestral_state, chunks=(num_sites,),
+            compressor=self.compressor)
+        sites_group.array(
+            "ancestral_state_offset", data=ancestral_state_offset, chunks=(num_sites + 1,),
+            compressor=self.compressor)
+        derived_state, derived_state_offset = msprime.pack_strings(derived_states)
+        sites_group.array(
+            "derived_state", data=derived_state, chunks=(num_sites,),
+            compressor=self.compressor)
+        sites_group.array(
+            "derived_state_offset", data=derived_state_offset, chunks=(num_sites + 1,),
+            compressor=self.compressor)
 
         num_variant_sites = len(variant_sites)
-        # TODO (1) work out recombination rates from the recomb_map
-        # (2) update the genotypes code here to work chunk-wise so
-        # that we can compress. (3) add a progress callback to we can
-        # get updates on how the compression is going.
+        self.data.attrs["num_sites"] = num_sites
+        self.data.attrs["num_variant_sites"] = num_variant_sites
 
-#         variants_group = self.data.create_group("variants")
-#         variants_group.create_dataset(
-#             "recombination_rate", shape=(num_sites,), data=recombination_rate_array,
-#             dtype=np.float64, compressor=compressor)
-#         x_chunk = min(chunk_size, num_sites)
-#         y_chunk = min(chunk_size, num_samples)
-#         variants_group.create_dataset(
-#             "genotypes", shape=(num_sites, num_samples), data=genotypes,
-#             chunks=(x_chunk, y_chunk), dtype=np.uint8, compressor=compressor)
-#         variants_group.create_dataset(
-#             "genotype_qualities", shape=(num_sites, num_samples),
-#             data=genotype_qualities,
-#             chunks=(min(chunk_size, num_sites), min(chunk_size, num_samples)),
-#             dtype=np.uint8, compressor=compressor)
+        # TODO work out the recombination rates according to a map.
+        recombination_rate = np.ones(num_variant_sites)
+
+        self.variants_group.create_dataset(
+            "site", shape=(num_variant_sites,), chunks=(num_variant_sites,),
+            dtype=np.uint32, data=variant_sites, compressor=self.compressor)
+        self.variants_group.create_dataset(
+            "recombination_rate", shape=(num_variant_sites,), chunks=(num_variant_sites,),
+            dtype=np.uint32, data=recombination_rate, compressor=self.compressor)
+
+        self.genotypes.append(self.genotypes_buffer[:self.genotypes_buffer_offset])
 
         super(SampleData, self).finalise()
-
-
-
 
 
 class AncestorData(object):

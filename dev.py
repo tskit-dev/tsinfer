@@ -989,8 +989,10 @@ if __name__ == "__main__":
     # tsinfer_dev(10, 0.1, seed=6, num_threads=0,
     #         genotype_quality=0.0, method="P", log_level="WARNING")
 
-    tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
+    tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
             genotype_quality=0.001)
+    # tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
+    #         genotype_quality=0.001)
 
     # for seed in range(1, 10000):
     # # for seed in [2]:
