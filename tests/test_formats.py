@@ -360,7 +360,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.all(haplotype[:start] == tsinfer.UNKNOWN_ALLELE))
             self.assertTrue(np.all(haplotype[end:] == tsinfer.UNKNOWN_ALLELE))
             focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
-            ancestors.append((start, end, 2 * j, focal_sites, haplotype))
+            ancestors.append((start, end, 2 * j + 1, focal_sites, haplotype))
         return sample_data, ancestors
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
@@ -454,7 +454,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
-            start=0, end=num_sites, time=0, focal_sites=np.array([]),
+            start=0, end=num_sites, time=1, focal_sites=np.array([]),
             haplotype=haplotype)
         for bad_start in [-1, -100, num_sites, num_sites + 1]:
             self.assertRaises(
@@ -464,9 +464,14 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=bad_end, time=0, focal_sites=np.array([]),
+                start=0, end=bad_end, time=1, focal_sites=np.array([]),
+                haplotype=haplotype)
+        for bad_time in [-1, 0]:
+            self.assertRaises(
+                ValueError, ancestor_data.add_ancestor,
+                start=0, end=num_sites, time=bad_time, focal_sites=np.array([]),
                 haplotype=haplotype)
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time=0, focal_sites=np.array([]),
+            start=0, end=num_sites, time=1, focal_sites=np.array([]),
             haplotype=np.zeros(num_sites + 1, dtype=np.uint8))

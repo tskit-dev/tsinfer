@@ -19,13 +19,33 @@ import msprime
 
 class Visualiser(object):
 
-    def __init__(self, original_ts, ancestors, inferred_ts, box_size=8):
+    def __init__(self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8):
         self.box_size = box_size
+        self.sample_data = sample_data
+        self.ancestor_data = ancestor_data
         self.samples = original_ts.genotype_matrix().T
+        self.ancestors = np.zeros(
+            (ancestor_data.num_ancestors, original_ts.num_sites), dtype=np.uint8)
+        start = ancestor_data.start[:]
+        end = ancestor_data.end[:]
+        variant_sites = np.hstack(
+            [sample_data.variant_site, [sample_data.num_sites]])
+        A = ancestor_data.genotypes[:]
+        for j in range(ancestor_data.num_ancestors):
+            self.ancestors[j, variant_sites[:-1]] = A[:, j]
+            self.ancestors[j, :variant_sites[start[j]]] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, variant_sites[end[j]]:] = tsinfer.UNKNOWN_ALLELE
+
+            print(j, start[j], variant_sites[start[j]], end[j],
+                    variant_sites[end[j]], A[:, j].astype(np.int8))
+
+
+        print(self.ancestors)
+
         self.original_ts = original_ts
         self.inferred_ts = inferred_ts
-        self.ancestors = ancestors
-        self.num_samples, self.num_sites = self.samples.shape
+        self.num_samples = self.original_ts.num_samples
+        self.num_sites = self.ancestors.shape[1]
         # Find the site indexes for the true breakpoints
 
         breakpoints = list(original_ts.breakpoints())
@@ -39,10 +59,11 @@ class Visualiser(object):
         self.background_colour = ImageColor.getrgb("white")
         self.copying_outline_colour = ImageColor.getrgb("black")
         self.colours = {
-            255: ImageColor.getrgb("white"),
+            255: ImageColor.getrgb("pink"),
             0: ImageColor.getrgb("blue"),
             1: ImageColor.getrgb("red")}
         self.copy_colours = {
+            255: ImageColor.getrgb("white"),
             0: ImageColor.getrgb("black"),
             1: ImageColor.getrgb("green")}
 
@@ -109,6 +130,7 @@ class Visualiser(object):
         # Draw the samples
         for j in range(self.samples.shape[0]):
             a = self.samples[j]
+            print(a)
             row = self.row_map[self.num_ancestors + j]
             y = row * b + origin[1]
             for k in range(self.num_sites):
@@ -181,32 +203,34 @@ class Visualiser(object):
             self.draw_copying_path(pattern.format(j - 1), j, P[j], breakpoints)
 
 
-def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
+def visualise(
+        ts, recombination_rate, error_rate, method="C", box_size=8,
+        perfect_ancestors=False):
 
-    samples = ts.genotype_matrix()
-    input_root = zarr.group()
-    tsinfer.InputFile.build(
-        input_root, genotypes=samples,
-        recombination_rate=recombination_rate,
-        position=[site.position for site in ts.sites()],
-        sequence_length=ts.sequence_length,
-        compress=False)
-    ancestors_root = zarr.group()
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
 
-    # tsinfer.build_ancestors(
-    #     input_root, ancestors_root, method=method, compress=False)
-    tsinfer.build_simulated_ancestors(input_root, ancestors_root, ts)
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    if perfect_ancestors:
+        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+    else:
+        tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
+    ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
-        input_root, ancestors_root, method=method, path_compression=False)
-    inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
+        sample_data, ancestor_data, method=method, path_compression=False)
+    inferred_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method,
             simplify=False, path_compression=False)
-    ancestors = ancestors_root["/ancestors/haplotypes"][:]
-    visualiser = Visualiser(ts, ancestors, inferred_ts, box_size=box_size)
+    visualiser = Visualiser(
+        ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
-    inferred_ts = tsinfer.match_samples(input_root, ancestors_ts, method=method,
+    inferred_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method,
             simplify=True, path_compression=False)
 
     for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, inferred_ts):
@@ -232,7 +256,6 @@ def visualise(ts, recombination_rate, error_rate, method="C", box_size=8):
         while j < len(d2):
             print(" " * len(d1[0]), " | ", d2[j])
             j += 1
-
         print()
 
 def run_viz(n, L, rate, seed):
@@ -245,14 +268,12 @@ def run_viz(n, L, rate, seed):
     # if ts.num_sites == 0:
     #     print("zero sites; skipping")
     #     return
-    # TODO singletons definitely causing problems here. Deal with these first.
     ts = tsinfer.insert_perfect_mutations(ts)
-    # ts = tsinfer.strip_singletons(ts)
-    visualise(ts, 1e-9, 0, method="C", box_size=26)
+    visualise(ts, 1e-9, 0, method="C", box_size=26, perfect_ancestors=True)
 
 
 def main():
-    run_viz(4, 100, 0.01, 14)
+    run_viz(6, 100, 0.01, 14)
 
 if __name__ == "__main__":
     main()

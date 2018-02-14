@@ -684,6 +684,8 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (num_sites,):
             raise ValueError("haplotypes incorrect shape.")
+        if time <= 0:
+            raise ValueError("time must be > 0")
         j = self.genotypes_buffer_offset
         N = self.genotypes_buffer.shape[1]
         self.genotypes_buffer[start: end, j] = haplotype[start: end]

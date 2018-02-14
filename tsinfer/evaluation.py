@@ -244,9 +244,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)
     num_ancestors = len(ancestors)
-
-    time -= 1
-    for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
+    for a, s, e, focal in zip(ancestors, start, end, focal_sites):
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
         assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
