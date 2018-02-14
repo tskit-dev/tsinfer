@@ -32,7 +32,8 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     // TODO error checking
     //
     assert(num_samples > 1);
-    assert(num_sites > 0);
+    /* TODO need to be able to handle zero sites */
+    /* assert(num_sites > 0); */
 
     memset(self, 0, sizeof(ancestor_builder_t));
     self->num_samples = num_samples;

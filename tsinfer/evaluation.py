@@ -200,15 +200,17 @@ def get_ancestor_descriptors(A):
         new_sites = np.where(masked)[0]
         mask[new_sites] = 0
         segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
-        s = segment[0]
-        e = segment[-1] + 1
-        assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
-        assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
-        assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
-        ancestors.append(a)
-        focal_sites.append(new_sites)
-        start.append(s)
-        end.append(e)
+        # Skip any ancestors that are entirely unknown.
+        if segment.shape[0] > 0:
+            s = segment[0]
+            e = segment[-1] + 1
+            assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
+            assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
+            assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+            ancestors.append(a)
+            focal_sites.append(new_sites)
+            start.append(s)
+            end.append(e)
     return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
 
 
@@ -228,7 +230,7 @@ def assert_smc(ts):
                     raise ValueError("Only SMC simulations are supported")
 
 
-def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
+def build_simulated_ancestors(sample_data, ancestor_data, ts):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
@@ -236,27 +238,20 @@ def build_simulated_ancestors(input_hdf5, ancestor_hdf5, ts):
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
+    # We also only want the variant sites
+    A = A[:, sample_data.variant_site]
 
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
-    # print(ancestors.astype(np.int8))
     time = len(ancestors)
-    total_num_focal_sites = sum(len(f) for f in focal_sites)
     num_ancestors = len(ancestors)
 
-    # TODO it's very confusing here on whether we have to add the initial
-    # ancestor or not. Fix the API in some way.
-    input_file = formats.InputFile(input_hdf5)
-    ancestor_file = formats.AncestorFile(ancestor_hdf5, input_file, 'w')
-    ancestor_file.initialise(num_ancestors, time, total_num_focal_sites)
     time -= 1
     for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
         assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
         assert all(s <= site < e for site in focal)
-        ancestor_file.add_ancestor(
-            start=s, end=e, ancestor_time=time,
-            focal_sites=np.array(focal, dtype=np.int32),
+        ancestor_data.add_ancestor(
+            start=s, end=e, time=time, focal_sites=np.array(focal, dtype=np.int32),
             haplotype=a)
         time -= 1
-    ancestor_file.finalise()

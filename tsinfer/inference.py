@@ -71,20 +71,24 @@ def phred_to_proba(phred_score):
 def infer(
         genotypes, positions, sequence_length, recombination_rate, sample_error=0,
         method="C", num_threads=0, progress=False, path_compression=True):
-    positions_array = np.array(positions)
 
-    input_root = zarr.group()
-    formats.InputFile.build(
-        input_root, genotypes=genotypes, position=positions,
-        recombination_rate=recombination_rate, sequence_length=sequence_length,
-        compress=False)
-    ancestors_root = zarr.group()
-    build_ancestors(input_root, ancestors_root, method=method, compress=False)
+    num_sites, num_samples = genotypes.shape
+    sample_data = formats.SampleData.initialise(
+        num_samples=num_samples, sequence_length=sequence_length, compressor=None)
+    for j in range(num_sites):
+        sample_data.add_variant(positions[j], ["0", "1"], genotypes[j])
+    sample_data.finalise()
+
+    ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+    build_ancestors(sample_data, ancestor_data, method=method)
+    ancestor_data.finalise()
+
     ancestors_ts = match_ancestors(
-        input_root, ancestors_root, method=method, num_threads=num_threads,
+        sample_data, ancestor_data, method=method, num_threads=num_threads,
         path_compression=path_compression)
+
     inferred_ts = match_samples(
-        input_root, ancestors_ts, method=method, num_threads=num_threads,
+        sample_data, ancestors_ts, method=method, num_threads=num_threads,
         genotype_quality=sample_error, path_compression=path_compression)
     return inferred_ts
 
@@ -111,27 +115,29 @@ def build_ancestors(
     logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
-    num_ancestors = 1 + len(descriptors)
-    total_num_focal_sites = sum(len(d[1]) for d in descriptors)
-    oldest_time = 1
-    if len(descriptors) > 0:
-        oldest_time = descriptors[0][0] + 1
-
-    logger.info("Starting build for {} ancestors".format(num_ancestors))
-    a = np.zeros(num_sites, dtype=np.uint8)
-    progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
-    for freq, focal_sites in descriptors:
-        before = time.perf_counter()
-        s, e = ancestor_builder.make_ancestor(focal_sites, a)
-        duration = time.perf_counter() - before
-        logger.debug(
-            "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
-                focal_sites.shape[0], e - s, duration))
+    num_ancestors = len(descriptors) + 1
+    if num_ancestors > 1:
+        ultimate_ancestor_time = descriptors[0][0] + 1
+        logger.info("Starting build for {} ancestors".format(num_ancestors))
+        a = np.zeros(num_sites, dtype=np.uint8)
+        # Add the ultimate ancestor.
         ancestor_data.add_ancestor(
-            start=s, end=e, time_=freq, focal_sites=focal_sites,
-            haplotype=a)
-        progress_monitor.update()
-    progress_monitor.close()
+            start=0, end=num_sites, time=ultimate_ancestor_time,
+            focal_sites=np.array([], dtype=np.int32), haplotype=a)
+
+        progress_monitor = tqdm.tqdm(total=num_ancestors, start=1, disable=not progress)
+        for freq, focal_sites in descriptors:
+            before = time.perf_counter()
+            # TODO: This is a read-only process so we can multithread it.
+            s, e = ancestor_builder.make_ancestor(focal_sites, a)
+            duration = time.perf_counter() - before
+            logger.debug(
+                "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
+                    focal_sites.shape[0], e - s, duration))
+            ancestor_data.add_ancestor(
+                start=s, end=e, time=freq, focal_sites=focal_sites, haplotype=a)
+            progress_monitor.update()
+        progress_monitor.close()
     logger.info("Finished building ancestors")
 
 
@@ -183,17 +189,17 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 
 
 def match_samples(
-        input_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
+        sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
         traceback_file_pattern=None):
-    input_file = formats.InputFile(input_data)
     manager = SampleMatcher(
-        input_file, ancestors_ts, error_probability=genotype_quality,
+        sample_data, ancestors_ts, error_probability=genotype_quality,
         path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
         traceback_file_pattern=traceback_file_pattern)
     manager.match_samples()
-    return manager.finalise(simplify=simplify)
+    ts = manager.finalise(simplify=simplify)
+    return ts
 
 
 class Matcher(object):
@@ -210,7 +216,7 @@ class Matcher(object):
         self.num_samples = self.sample_data.num_samples
         self.num_sites = self.sample_data.num_variant_sites
         self.sequence_length = self.sample_data.sequence_length
-        self.positions = self.sample_data.position[:][self.sample_data.variant_sites]
+        self.positions = self.sample_data.position[:][self.sample_data.variant_site]
         self.recombination_rate = self.sample_data.recombination_rate
         self.progress = progress
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
@@ -321,11 +327,14 @@ class Matcher(object):
             ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
             len(mutations)))
 
-    def get_tree_sequence(self, rescale_positions=True):
+    def get_tree_sequence(self, rescale_positions=True, all_sites=False):
         """
         Returns the current state of the build tree sequence. All samples and
         ancestors will have the sample node flag set.
         """
+        # TODO Change the API here to ask whether we want a final tree sequence
+        # or not. In the latter case we also need to translate the ancestral
+        # and derived states to the input values.
         tsb = self.tree_sequence_builder
         flags, time = tsb.dump_nodes()
         nodes = msprime.NodeTable()
@@ -341,7 +350,7 @@ class Matcher(object):
             right = x[right]
         else:
             position = np.arange(tsb.num_sites)
-            sequence_length = tsb.num_sites
+            sequence_length = max(1, tsb.num_sites)
 
         edges = msprime.EdgeTable()
         edges.set_columns(left=left, right=right, parent=parent, child=child)
@@ -362,6 +371,30 @@ class Matcher(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
+        if all_sites:
+            # Append the sites and mutations for each singleton.
+            num_singletons = self.sample_data.num_singleton_sites
+            singleton_site = self.sample_data.singleton_site[:]
+            singleton_sample = self.sample_data.singleton_sample[:]
+            pos = self.sample_data.position[:]
+            new_sites = np.arange(
+                len(sites), len(sites) + num_singletons, dtype=np.int32)
+            sites.append_columns(
+                position=pos[singleton_site],
+                ancestral_state=np.zeros(num_singletons, dtype=np.int8) + ord('0'),
+                ancestral_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
+            mutations.append_columns(
+                site=new_sites, node=self.sample_ids[singleton_sample],
+                derived_state=np.zeros(num_singletons, dtype=np.int8) + ord('1'),
+                derived_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
+            # Get the invariant sites
+            num_invariants = self.sample_data.num_invariant_sites
+            invariant_site = self.sample_data.invariant_site[:]
+            sites.append_columns(
+                position=pos[invariant_site],
+                ancestral_state=np.zeros(num_invariants, dtype=np.int8) + ord('0'),
+                ancestral_state_offset=np.arange(num_invariants + 1, dtype=np.uint32))
+
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
@@ -391,12 +424,14 @@ class AncestorMatcher(Matcher):
         self.end = self.ancestor_data.end[:]
 
         # Create a list of all ID ranges in each epoch.
-        breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
-        start = np.hstack([[0], breaks + 1])
-        end = np.hstack([breaks + 1, [self.num_ancestors]])
-        self.epoch_slices = np.vstack([start, end]).T
-        self.num_epochs = self.epoch_slices.shape[0]
-
+        if self.start.shape[0] == 0:
+            self.num_epochs = 0
+        else:
+            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
+            start = np.hstack([[0], breaks + 1])
+            end = np.hstack([breaks + 1, [self.num_ancestors]])
+            self.epoch_slices = np.vstack([start, end]).T
+            self.num_epochs = self.epoch_slices.shape[0]
         first_ancestor = 1
         self.start_epoch = 1
         if resume:
@@ -418,9 +453,10 @@ class AncestorMatcher(Matcher):
 
         # This is an iterator over all ancestral haplotypes.
         self.haplotypes = self.ancestor_data.haplotypes(start=first_ancestor)
-        self.allocate_progress_monitor(
-            self.num_ancestors, initial=first_ancestor,
-            postfix=self.__epoch_info_dict(self.start_epoch - 1))
+        if self.num_epochs > 0:
+            self.allocate_progress_monitor(
+                self.num_ancestors, initial=first_ancestor,
+                postfix=self.__epoch_info_dict(self.start_epoch - 1))
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -552,7 +588,12 @@ class AncestorMatcher(Matcher):
         return ts
 
     def store_output(self):
-        ts = self.get_tree_sequence(rescale_positions=False)
+        if self.num_ancestors > 0:
+            ts = self.get_tree_sequence(rescale_positions=False)
+        else:
+            # Allocate an empty tree sequence.
+            ts = msprime.load_tables(
+                nodes=msprime.NodeTable(), edges=msprime.EdgeTable(), sequence_length=1)
         if self.output_path is not None:
             ts.dump(self.output_path)
         return ts
@@ -564,7 +605,7 @@ class SampleMatcher(Matcher):
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
-        self.sample_haplotypes = self.sample_data.sample_haplotypes()
+        self.sample_haplotypes = self.sample_data.haplotypes()
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
@@ -628,24 +669,23 @@ class SampleMatcher(Matcher):
 
     def match_samples(self):
         logger.info("Started matching for {} samples".format(self.num_samples))
-        if self.num_threads <= 0:
-            self.__match_samples_single_threaded()
-        else:
-            self.__match_samples_multi_threaded()
-        # self.tree_sequence_builder.print_state()
-
-        for j in range(self.num_samples):
-            sample_id = int(self.sample_ids[j])
-            left, right, parent = self.results.get_path(sample_id)
-            self.tree_sequence_builder.add_path(
-                sample_id, left, right, parent, compress=self.path_compression)
-            site, derived_state = self.results.get_mutations(sample_id)
-            self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
+        if self.sample_data.num_variant_sites > 0:
+            if self.num_threads <= 0:
+                self.__match_samples_single_threaded()
+            else:
+                self.__match_samples_multi_threaded()
+            for j in range(self.num_samples):
+                sample_id = int(self.sample_ids[j])
+                left, right, parent = self.results.get_path(sample_id)
+                self.tree_sequence_builder.add_path(
+                    sample_id, left, right, parent, compress=self.path_compression)
+                site, derived_state = self.results.get_mutations(sample_id)
+                self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
         logger.info("Finished sample matching")
 
     def finalise(self, simplify=True):
         logger.info("Finalising tree sequence")
-        ts = self.get_tree_sequence()
+        ts = self.get_tree_sequence(all_sites=True)
         if simplify:
             N = ts.num_nodes
             logger.info("Running simplify on {} nodes and {} edges".format(

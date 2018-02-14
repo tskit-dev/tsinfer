@@ -683,6 +683,16 @@ class DataContainer(object):
             ret = self.uuid == other.uuid and self.data_equal(other)
         return ret
 
+    def haplotypes(self, start=0):
+        """
+        Returns an iterator over the haplotypes starting at the specified
+        index..
+        """
+        iterator = transposed_threaded_row_iterator(self.genotypes)
+        for j, h in enumerate(iterator):
+            if j >= start:
+                yield h
+
 
 class SampleData(DataContainer):
     """
@@ -702,6 +712,14 @@ class SampleData(DataContainer):
     @property
     def num_variant_sites(self):
         return self.data.attrs["num_variant_sites"]
+
+    @property
+    def num_singleton_sites(self):
+        return self.data.attrs["num_singleton_sites"]
+
+    @property
+    def num_invariant_sites(self):
+        return self.data.attrs["num_invariant_sites"]
 
     @property
     def sequence_length(self):
@@ -732,6 +750,18 @@ class SampleData(DataContainer):
         return self.data["sites/frequency"]
 
     @property
+    def invariant_site(self):
+        return self.data["invariants/site"]
+
+    @property
+    def singleton_site(self):
+        return self.data["singletons/site"]
+
+    @property
+    def singleton_sample(self):
+        return self.data["singletons/sample"]
+
+    @property
     def genotypes(self):
         return self.data["variants/genotypes"]
 
@@ -740,21 +770,26 @@ class SampleData(DataContainer):
         return self.data["variants/recombination_rate"]
 
     @property
-    def variant_sites(self):
+    def variant_site(self):
         return self.data["variants/site"]
 
     def __str__(self):
         path = None
+        store = None
         if self.store is not None:
             path = self.store.path
+            store = dbm.whichdb(path)
         values = [
             ("path", path),
+            ("store", store),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("uuid", self.uuid),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
             ("num_variant_sites", self.num_variant_sites),
+            ("num_singleton_sites", self.num_singleton_sites),
+            ("num_invariant_sites", self.num_invariant_sites),
             ("sequence_length", self.sequence_length),
             ("position", zarr_summary(self.position)),
             ("frequency", zarr_summary(self.frequency)),
@@ -762,8 +797,11 @@ class SampleData(DataContainer):
             ("ancestral_state_offset", zarr_summary(self.ancestral_state_offset)),
             ("derived_state", zarr_summary(self.derived_state)),
             ("derived_state_offset", zarr_summary(self.derived_state_offset)),
-            ("variant_sites", zarr_summary(self.variant_sites)),
+            ("variant_site", zarr_summary(self.variant_site)),
             ("recombination_rate", zarr_summary(self.recombination_rate)),
+            ("singleton_site", zarr_summary(self.singleton_site)),
+            ("invariant_site", zarr_summary(self.invariant_site)),
+            ("singleton_sample", zarr_summary(self.singleton_sample)),
             ("genotypes", zarr_summary(self.genotypes))]
         return self._format_str(values)
 
@@ -779,6 +817,8 @@ class SampleData(DataContainer):
             self.num_samples == other.num_samples and
             self.num_sites == other.num_sites and
             self.num_variant_sites == other.num_variant_sites and
+            self.num_singleton_sites == other.num_singleton_sites and
+            self.num_invariant_sites == other.num_invariant_sites and
             self.sequence_length == other.sequence_length and
             np.array_equal(self.position[:], other.position[:]) and
             np.array_equal(self.frequency[:], other.frequency[:]) and
@@ -788,7 +828,10 @@ class SampleData(DataContainer):
             np.array_equal(self.derived_state[:], other.derived_state[:]) and
             np.array_equal(
                 self.derived_state_offset[:], other.derived_state_offset[:]) and
-            np.array_equal(self.variant_sites[:], other.variant_sites[:]) and
+            np.array_equal(self.variant_site[:], other.variant_site[:]) and
+            np.array_equal(self.invariant_site[:], other.invariant_site[:]) and
+            np.array_equal(self.singleton_site[:], other.singleton_site[:]) and
+            np.array_equal(self.singleton_sample[:], other.singleton_sample[:]) and
             np.array_equal(self.recombination_rate[:], other.recombination_rate[:]) and
             np.array_equal(self.genotypes[:], other.genotypes[:]))
 
@@ -815,11 +858,10 @@ class SampleData(DataContainer):
         self.recombination_map = recombination_map
         self.site_buffer = []
         self.genotypes_buffer = np.empty((chunk_size, num_samples), dtype=np.uint8)
-        self.genotype_qualities_buffer = np.empty(
-            (chunk_size, num_samples), dtype=np.uint8)
         self.genotypes_buffer_offset = 0
+        self.singletons_buffer = []
+        self.invariants_buffer = []
         self.compressor = compressor
-
         self.variants_group = self.data.create_group("variants")
         x_chunk = chunk_size
         y_chunk = min(chunk_size, num_samples)
@@ -839,7 +881,10 @@ class SampleData(DataContainer):
             raise ValueError("position must be between 0 and sequence_length")
 
         frequency = np.sum(genotypes)
-        if 1 < frequency < self.num_samples:
+        if frequency == 1:
+            sample = np.where(genotypes == 1)[0][0]
+            self.singletons_buffer.append((len(self.site_buffer), sample))
+        elif 0 < frequency < self.num_samples:
             j = self.genotypes_buffer_offset
             N = self.genotypes_buffer.shape[0]
             self.genotypes_buffer[j] = genotypes
@@ -847,10 +892,13 @@ class SampleData(DataContainer):
                 self.genotypes.append(self.genotypes_buffer)
                 self.genotypes_buffer_offset = -1
             self.genotypes_buffer_offset += 1
-
+        else:
+            self.invariants_buffer.append(len(self.site_buffer))
         self.site_buffer.append(BufferedSite(position, frequency, alleles))
 
     def finalise(self):
+        if self.genotypes_buffer is None:
+            raise ValueError("Cannot call finalise in read-mode")
         variant_sites = []
         num_samples = self.num_samples
         num_sites = len(self.site_buffer)
@@ -864,7 +912,7 @@ class SampleData(DataContainer):
             if site.frequency > 1 and site.frequency < num_samples:
                 variant_sites.append(j)
             ancestral_states.append(site.alleles[0])
-            derived_states.append(site.alleles[1])
+            derived_states.append("" if len(site.alleles) < 2 else site.alleles[1])
         sites_group = self.data.create_group("sites")
         sites_group.array(
             "position", data=position, chunks=(num_sites,), compressor=self.compressor)
@@ -886,19 +934,41 @@ class SampleData(DataContainer):
             "derived_state_offset", data=derived_state_offset, chunks=(num_sites + 1,),
             compressor=self.compressor)
 
+        num_singletons = len(self.singletons_buffer)
+        singleton_sites = np.array(
+            [site for site, _ in self.singletons_buffer], dtype=np.int32)
+        singleton_samples = np.array(
+            [sample for _, sample in self.singletons_buffer], dtype=np.int32)
+        singletons_group = self.data.create_group("singletons")
+        chunks = max(num_singletons, 1),
+        singletons_group.array(
+            "site", data=singleton_sites, chunks=chunks, compressor=self.compressor)
+        singletons_group.array(
+            "sample", data=singleton_samples, chunks=chunks, compressor=self.compressor)
+
+        num_invariants = len(self.invariants_buffer)
+        invariant_sites = np.array(self.invariants_buffer, dtype=np.int32)
+        invariants_group = self.data.create_group("invariants")
+        chunks = max(num_invariants, 1),
+        invariants_group.array(
+            "site", data=invariant_sites, chunks=chunks, compressor=self.compressor)
+
         num_variant_sites = len(variant_sites)
         self.data.attrs["num_sites"] = num_sites
         self.data.attrs["num_variant_sites"] = num_variant_sites
+        self.data.attrs["num_singleton_sites"] = num_singletons
+        self.data.attrs["num_invariant_sites"] = num_invariants
 
         # TODO work out the recombination rates according to a map.
         recombination_rate = np.ones(num_variant_sites)
 
+        chunks = max(num_variant_sites, 1),
         self.variants_group.create_dataset(
-            "site", shape=(num_variant_sites,), chunks=(num_variant_sites,),
-            dtype=np.uint32, data=variant_sites, compressor=self.compressor)
+            "site", shape=(num_variant_sites,), chunks=chunks,
+            dtype=np.int32, data=variant_sites, compressor=self.compressor)
         self.variants_group.create_dataset(
-            "recombination_rate", shape=(num_variant_sites,), chunks=(num_variant_sites,),
-            dtype=np.uint32, data=recombination_rate, compressor=self.compressor)
+            "recombination_rate", shape=(num_variant_sites,), chunks=chunks,
+            data=recombination_rate, compressor=self.compressor)
 
         self.genotypes.append(self.genotypes_buffer[:self.genotypes_buffer_offset])
         self.site_buffer = None
@@ -915,7 +985,7 @@ class SampleData(DataContainer):
         sites in the input data.
         """
         # TODO add a num_threads or other option to control threading.
-        variant_sites = self.variant_sites[:]
+        variant_sites = self.variant_site[:]
         for j, genotypes in enumerate(threaded_row_iterator(self.genotypes)):
             yield variant_sites[j], genotypes
 
@@ -930,10 +1000,13 @@ class AncestorData(DataContainer):
 
     def __str__(self):
         path = None
+        store = None
         if self.store is not None:
             path = self.store.path
+            store = dbm.whichdb(path)
         values = [
             ("path", path),
+            ("store", store),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("uuid", self.uuid),
@@ -1029,14 +1102,14 @@ class AncestorData(DataContainer):
         self.genotypes_buffer_offset = 0
 
         self.ancestors_group = self.data.create_group("ancestors")
-        x_chunk = min(chunk_size, num_sites)
+        x_chunk = max(1, min(chunk_size, num_sites))
         y_chunk = chunk_size
         self.ancestors_group.create_dataset(
             "genotypes", shape=(num_sites, 0), chunks=(x_chunk, y_chunk),
             dtype=np.uint8, compressor=self.compressor)
         return self
 
-    def add_ancestor(self, start, end, time_, focal_sites, haplotype):
+    def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material
         over the interval [start:end], that is associated with the specfied time
@@ -1059,59 +1132,47 @@ class AncestorData(DataContainer):
             self.genotypes_buffer_offset = -1
             self.genotypes_buffer[:] = UNKNOWN_ALLELE
         self.genotypes_buffer_offset += 1
-        self.ancestor_buffer.append(BufferedAncestor(start, end, time_, focal_sites))
+        self.ancestor_buffer.append(BufferedAncestor(start, end, time, focal_sites))
 
     def finalise(self):
+        if self.ancestor_buffer is None:
+            raise ValueError("Cannot call finalise in read-mode")
         total_focal_sites = sum(
             ancestor.focal_sites.shape[0] for ancestor in self.ancestor_buffer)
         num_ancestors = len(self.ancestor_buffer)
         self.data.attrs["num_ancestors"] = num_ancestors
         start = np.empty(num_ancestors, dtype=np.int32)
         end = np.empty(num_ancestors, dtype=np.int32)
-        time_ = np.empty(num_ancestors, dtype=np.float64)
-        focal_sites = np.empty(total_focal_sites, dtype=np.uint32)
-        focal_sites_offset = np.zeros(num_ancestors + 1, dtype=np.int32)
+        time = np.empty(num_ancestors, dtype=np.uint32)
+        focal_sites = np.empty(total_focal_sites, dtype=np.int32)
+        focal_sites_offset = np.zeros(num_ancestors + 1, dtype=np.uint32)
         for j, ancestor in enumerate(self.ancestor_buffer):
             start[j] = ancestor.start
             end[j] = ancestor.end
-            time_[j] = ancestor.time
+            time[j] = ancestor.time
             focal_sites_offset[j + 1] = (
                 focal_sites_offset[j] + ancestor.focal_sites.shape[0])
             focal_sites[
                 focal_sites_offset[j]: focal_sites_offset[j + 1]] = ancestor.focal_sites
-
+        chunks = max(num_ancestors, 1),
         self.ancestors_group.create_dataset(
-            "start", shape=(num_ancestors,), chunks=(num_ancestors,),
-            data=start, compressor=self.compressor)
+            "start", shape=(num_ancestors,), chunks=chunks, data=start,
+            compressor=self.compressor)
         self.ancestors_group.create_dataset(
-            "end", shape=(num_ancestors,), chunks=(num_ancestors,),
-            data=end, compressor=self.compressor)
+            "end", shape=(num_ancestors,), chunks=chunks, data=end,
+            compressor=self.compressor)
+        self.ancestors_group.create_dataset(
+            "time", shape=(num_ancestors,), chunks=chunks, data=time,
+            compressor=self.compressor)
         self.ancestors_group.create_dataset(
             "focal_sites_offset", shape=(num_ancestors + 1,), chunks=(num_ancestors + 1,),
             data=focal_sites_offset, compressor=self.compressor)
         self.ancestors_group.create_dataset(
-            "focal_sites", shape=(total_focal_sites,), chunks=(total_focal_sites),
+            "focal_sites", shape=(total_focal_sites,), chunks=(max(total_focal_sites, 1)),
             data=focal_sites, compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "time", shape=(num_ancestors,), chunks=(num_ancestors,),
-            data=time_, compressor=self.compressor)
 
         self.genotypes.append(
             self.genotypes_buffer[:, :self.genotypes_buffer_offset], axis=1)
         self.ancestor_buffer = None
         self.genotypes_buffer = None
         super(AncestorData, self).finalise()
-
-    ####################################
-    # Read mode
-    ####################################
-    def haplotypes(self, start=0):
-        """
-        Returns an iterator over the ancestral haplotypes.
-        """
-        iterator = transposed_threaded_row_iterator(self.genotypes)
-        for j, h in enumerate(iterator):
-            if j >= start:
-                yield h
-
-

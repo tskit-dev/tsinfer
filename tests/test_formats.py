@@ -51,6 +51,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.sequence_length, ts.sequence_length)
         self.assertEqual(input_file.num_sites, ts.num_sites)
 
+        self.assertEqual(input_file.genotypes.dtype, np.uint8)
+        self.assertEqual(input_file.recombination_rate.dtype, np.float64)
+        self.assertEqual(input_file.position.dtype, np.float64)
+        self.assertEqual(input_file.frequency.dtype, np.uint32)
+        self.assertEqual(input_file.ancestral_state.dtype, np.int8)
+        self.assertEqual(input_file.ancestral_state_offset.dtype, np.uint32)
+        self.assertEqual(input_file.derived_state.dtype, np.int8)
+        self.assertEqual(input_file.derived_state_offset.dtype, np.uint32)
+        self.assertEqual(input_file.variant_site.dtype, np.int32)
+        self.assertEqual(input_file.invariant_site.dtype, np.int32)
+        self.assertEqual(input_file.singleton_site.dtype, np.int32)
+        self.assertEqual(input_file.singleton_sample.dtype, np.int32)
+
         # Take copies to avoid decompressing the data repeatedly.
         genotypes = input_file.genotypes[:]
         position = input_file.position[:]
@@ -62,20 +75,39 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file.derived_state[:], input_file.derived_state_offset[:])
         j = 0
         variant_sites = []
+        invariant_sites = []
+        singleton_sites = []
+        singleton_samples = []
         for variant in ts.variants():
             f = np.sum(variant.genotypes)
             self.assertEqual(variant.site.position, position[variant.site.id])
             self.assertEqual(f, frequency[variant.site.id])
             self.assertEqual(variant.alleles[0], ancestral_states[variant.site.id])
-            self.assertEqual(variant.alleles[1], derived_states[variant.site.id])
-            if f > 1 and f < ts.num_samples:
+            if len(variant.alleles) > 1:
+                self.assertEqual(variant.alleles[1], derived_states[variant.site.id])
+            else:
+                self.assertEqual(derived_states[variant.site.id], "")
+            if f == 1:
+                singleton_sites.append(variant.site.id)
+                singleton_samples.append(np.where(variant.genotypes == 1)[0][0])
+            elif 0 < f < ts.num_samples:
                 variant_sites.append(variant.site.id)
                 self.assertTrue(np.array_equal(genotypes[j], variant.genotypes))
                 self.assertGreaterEqual(recombination_rate[j], 0)
                 j += 1
+            else:
+                invariant_sites.append(variant.site.id)
         self.assertEqual(input_file.num_variant_sites, j)
+        self.assertEqual(input_file.num_singleton_sites, len(singleton_sites))
+        self.assertEqual(input_file.num_invariant_sites, len(invariant_sites))
         self.assertTrue(np.array_equal(
-            input_file.variant_sites[:], np.array(variant_sites, dtype=np.uint32)))
+            input_file.variant_site[:], np.array(variant_sites, dtype=np.int32)))
+        self.assertTrue(np.array_equal(
+            input_file.invariant_site[:], np.array(invariant_sites, dtype=np.int32)))
+        self.assertTrue(np.array_equal(
+            input_file.singleton_site[:], np.array(singleton_sites, dtype=np.int32)))
+        self.assertTrue(np.array_equal(
+            input_file.singleton_sample[:], np.array(singleton_samples, dtype=np.int32)))
 
     def test_defaults(self):
         ts = self.get_example_ts(10, 10)
@@ -89,7 +121,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.ancestral_state_offset.compressor, compressor)
         self.assertEqual(input_file.derived_state.compressor, compressor)
         self.assertEqual(input_file.derived_state_offset.compressor, compressor)
-        self.assertEqual(input_file.variant_sites.compressor, compressor)
+        self.assertEqual(input_file.variant_site.compressor, compressor)
+        self.assertEqual(input_file.invariant_site.compressor, compressor)
+        self.assertEqual(input_file.singleton_site.compressor, compressor)
+        self.assertEqual(input_file.singleton_sample.compressor, compressor)
         self.assertEqual(input_file.recombination_rate.compressor, compressor)
         self.assertEqual(input_file.genotypes.compressor, compressor)
 
@@ -154,7 +189,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(input_file.ancestral_state_offset.compressor, compressor)
             self.assertEqual(input_file.derived_state.compressor, compressor)
             self.assertEqual(input_file.derived_state_offset.compressor, compressor)
-            self.assertEqual(input_file.variant_sites.compressor, compressor)
+            self.assertEqual(input_file.variant_site.compressor, compressor)
+            self.assertEqual(input_file.invariant_site.compressor, compressor)
+            self.assertEqual(input_file.singleton_site.compressor, compressor)
+            self.assertEqual(input_file.singleton_sample.compressor, compressor)
             self.assertEqual(input_file.recombination_rate.compressor, compressor)
             self.assertEqual(input_file.genotypes.compressor, compressor)
 
@@ -239,6 +277,58 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(variants[j].genotypes, genotypes))
             j += 1
         self.assertEqual(j, len(variants))
+
+    def test_invariant_sites(self):
+        n = 10
+        m = 10
+        for value in [0, 1]:
+            G = np.zeros((m, n), dtype=np.int8) + value
+            input_file = formats.SampleData.initialise(num_samples=n, sequence_length=m)
+            for j in range(m):
+                input_file.add_variant(j, ["0", "1"], G[j])
+            input_file.finalise()
+            self.assertEqual(input_file.num_variant_sites, 0)
+            self.assertEqual(input_file.num_invariant_sites, m)
+            self.assertEqual(input_file.num_sites, m)
+            self.assertTrue(np.array_equal(
+                input_file.invariant_site, np.arange(m, dtype=np.int32)))
+
+    def test_ts_with_invariant_sites(self):
+        ts = self.get_example_ts(5, 3)
+        t = ts.dump_tables()
+        positions = set(site.position for site in ts.sites())
+        for j in range(10):
+            pos = 1 / (j + 1)
+            if pos not in positions:
+                t.sites.add_row(position=pos, ancestral_state="0")
+                positions.add(pos)
+        self.assertGreater(len(positions), ts.num_sites)
+        msprime.sort_tables(**t.asdict())
+        ts = msprime.load_tables(**t.asdict())
+
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+        self.assertGreater(len(str(input_file)), 0)
+
+    def test_ts_with_root_mutations(self):
+        ts = self.get_example_ts(5, 3)
+        t = ts.dump_tables()
+        positions = set(site.position for site in ts.sites())
+        for tree in ts.trees():
+            pos = tree.interval[0]
+            if pos not in positions:
+                site_id = t.sites.add_row(position=pos, ancestral_state="0")
+                t.mutations.add_row(site=site_id, node=tree.root, derived_state="1")
+                positions.add(pos)
+        self.assertGreater(len(positions), ts.num_sites)
+        msprime.sort_tables(**t.asdict())
+        ts = msprime.load_tables(**t.asdict())
+
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+
 
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
@@ -364,19 +454,19 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
-            start=0, end=num_sites, time_=0, focal_sites=np.array([]),
+            start=0, end=num_sites, time=0, focal_sites=np.array([]),
             haplotype=haplotype)
         for bad_start in [-1, -100, num_sites, num_sites + 1]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=bad_start, end=num_sites, time_=0, focal_sites=np.array([]),
+                start=bad_start, end=num_sites, time=0, focal_sites=np.array([]),
                 haplotype=haplotype)
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=bad_end, time_=0, focal_sites=np.array([]),
+                start=0, end=bad_end, time=0, focal_sites=np.array([]),
                 haplotype=haplotype)
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time_=0, focal_sites=np.array([]),
+            start=0, end=num_sites, time=0, focal_sites=np.array([]),
             haplotype=np.zeros(num_sites + 1, dtype=np.uint8))
