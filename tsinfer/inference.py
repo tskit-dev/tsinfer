@@ -125,7 +125,7 @@ def build_ancestors(
             start=0, end=num_sites, time=ultimate_ancestor_time,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
 
-        progress_monitor = tqdm.tqdm(total=num_ancestors, start=1, disable=not progress)
+        progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.

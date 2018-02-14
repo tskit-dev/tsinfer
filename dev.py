@@ -537,10 +537,10 @@ def build_profile_inputs(n, num_megabases):
         random_seed=10)
     print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
             "num_trees =", ts.num_trees)
-    input_file = "tmp__NOBACKUP__/profile-source-n={}-m={}.hdf5".format(
+    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.hdf5".format(
             n, num_megabases)
     ts.dump(input_file)
-    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.tsis".format(n, num_megabases)
+    filename = "tmp__NOBACKUP__/profile-n={}_m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
     sample_data = tsinfer.SampleData.initialise(
@@ -554,7 +554,7 @@ def build_profile_inputs(n, num_megabases):
     sample_data.finalise()
     progress_monitor.close()
 
-    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.tsia".format(n, num_megabases)
+    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.ancestors".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
@@ -899,12 +899,11 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    # build_profile_inputs(10, 1)
-
-    # build_profile_inputs(1000, 10)
-    # build_profile_inputs(1000, 100)
-    # build_profile_inputs(10**4, 100)
-    # build_profile_inputs(10**5, 100)
+    build_profile_inputs(10, 1)
+    build_profile_inputs(1000, 10)
+    build_profile_inputs(1000, 100)
+    build_profile_inputs(10**4, 100)
+    build_profile_inputs(10**5, 100)
 
     # build_profile_inputs(100)
 
@@ -927,17 +926,17 @@ if __name__ == "__main__":
     # tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
     #         log_level="WARNING")
 
-    for seed in range(1, 10000):
-    # for seed in [2]:
-        print(seed)
-        # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+    # for seed in range(1, 10000):
+    # # for seed in [2]:
+    #     print(seed)
+    #     # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+    #     # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
-        # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-        tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
-                method="C", path_compression=True)
-    # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
-    #         log_level="INFO", progress=True)
+    #     # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+    #     tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
+    #             method="C", path_compression=True)
+    # # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
+    # #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):
     #     print(seed)
     #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
