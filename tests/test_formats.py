@@ -5,21 +5,36 @@ Tests for the data files.
 import unittest
 import tempfile
 import os.path
+import dbm
 
 import numpy as np
 import msprime
-import zarr
 import numcodecs.blosc as blosc
 
 import tsinfer
-import tsinfer.algorithm as algorithm
 import tsinfer.formats as formats
 
 
-class TestSampleData(unittest.TestCase):
+class DataContainerMixin(object):
+    """
+    Common tests for the the data container classes."
+    """
+    def test_load(self):
+        bad_files = ["/", "/file/does/not/exist"]
+        for bad_file in bad_files:
+            self.assertRaises(dbm.error, self.tested_class.load, bad_file)
+        bad_format_files = ["LICENSE"]
+        for bad_format_file in bad_format_files:
+            self.assertTrue(os.path.exists(bad_format_file))
+            self.assertRaises(dbm.error, formats.SampleData.load, bad_format_file)
+
+
+class TestSampleData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.
     """
+    tested_class = formats.SampleData
+
     def get_example_ts(self, sample_size, sequence_length):
         return msprime.simulate(
             sample_size, recombination_rate=1, mutation_rate=10,
@@ -79,14 +94,16 @@ class TestSampleData(unittest.TestCase):
         self.assertEqual(input_file.genotypes.compressor, compressor)
 
     def test_chunk_size(self):
-        ts = self.get_example_ts(4, 20)
+        ts = self.get_example_ts(4, 2)
+        self.assertGreater(ts.num_sites, 50)
         for chunk_size in [1, 2, 3, ts.num_sites - 1, ts.num_sites, ts.num_sites + 1]:
             input_file = formats.SampleData.initialise(
                 num_samples=ts.num_samples, sequence_length=ts.sequence_length,
                 chunk_size=chunk_size)
             self.verify_data_round_trip(ts, input_file)
             self.assertEqual(
-                input_file.genotypes.chunks, (chunk_size, min(chunk_size, ts.num_samples)))
+                input_file.genotypes.chunks,
+                (chunk_size, min(chunk_size, ts.num_samples)))
 
     def test_filename(self):
         ts = self.get_example_ts(14, 15)
@@ -95,9 +112,9 @@ class TestSampleData(unittest.TestCase):
             input_file = formats.SampleData.initialise(
                 num_samples=ts.num_samples, sequence_length=ts.sequence_length,
                 filename=filename)
+            whichdb = dbm.whichdb(filename)
+            self.assertTrue(whichdb is not None and whichdb != '')
             self.verify_data_round_trip(ts, input_file)
-            self.assertTrue(os.path.exists(filename))
-            self.assertGreater(os.path.getsize(filename), 0)
             other_input_file = formats.SampleData.load(filename)
             self.assertIsNot(other_input_file, input_file)
             self.assertEqual(other_input_file, input_file)
@@ -177,8 +194,8 @@ class TestSampleData(unittest.TestCase):
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
         self.assertTrue(input_file == input_file)
-        self.assertFalse(input_file == None)
-        self.assertFalse(None == input_file)
+        self.assertFalse(input_file == [])
+        self.assertFalse({} == input_file)
 
     def test_variant_errors(self):
         input_file = formats.SampleData.initialise(num_samples=2, sequence_length=10)
@@ -224,12 +241,14 @@ class TestSampleData(unittest.TestCase):
         self.assertEqual(j, len(variants))
 
 
-class TestAncestorData(unittest.TestCase):
+class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.
     """
+    tested_class = formats.AncestorData
+
     def get_example_data(self, sample_size, sequence_length, num_ancestors):
-        ts =  msprime.simulate(
+        ts = msprime.simulate(
             sample_size, recombination_rate=1, mutation_rate=10,
             length=sequence_length, random_seed=100)
         sample_data = formats.SampleData.initialise(
@@ -243,9 +262,13 @@ class TestAncestorData(unittest.TestCase):
         for j in range(num_ancestors):
             haplotype = np.zeros(num_sites, dtype=np.uint8) + tsinfer.UNKNOWN_ALLELE
             start = j
-            end = num_sites - j
-            haplotype[start: start + j] = 0
-            haplotype[start + j: end] = 1
+            end = max(num_sites - j, start + 1)
+            self.assertLess(start, end)
+            haplotype[start: end] = 0
+            if start + j < end:
+                haplotype[start + j: end] = 1
+            self.assertTrue(np.all(haplotype[:start] == tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(haplotype[end:] == tsinfer.UNKNOWN_ALLELE))
             focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
             ancestors.append((start, end, 2 * j, focal_sites, haplotype))
         return sample_data, ancestors
@@ -293,9 +316,10 @@ class TestAncestorData(unittest.TestCase):
         self.assertEqual(ancestor_data.genotypes.compressor, compressor)
 
     def test_chunk_size(self):
-        N = 50
+        N = 20
         for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
-            sample_data, ancestors = self.get_example_data(12, 11, N)
+            sample_data, ancestors = self.get_example_data(6, 1, N)
+            self.assertGreater(sample_data.num_variant_sites, 2 * N)
             ancestor_data = tsinfer.AncestorData.initialise(
                 sample_data, chunk_size=chunk_size)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
@@ -304,14 +328,14 @@ class TestAncestorData(unittest.TestCase):
                 (min(ancestor_data.num_sites, chunk_size), chunk_size))
 
     def test_filename(self):
-        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        sample_data, ancestors = self.get_example_data(10, 2, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
             ancestor_data = tsinfer.AncestorData.initialise(
                 sample_data, filename=filename)
+            whichdb = dbm.whichdb(filename)
+            self.assertTrue(whichdb is not None and whichdb != '')
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-            self.assertTrue(os.path.exists(filename))
-            self.assertGreater(os.path.getsize(filename), 0)
             other_ancestor_data = formats.AncestorData.load(filename)
             self.assertIsNot(other_ancestor_data, ancestor_data)
             self.assertEqual(other_ancestor_data, ancestor_data)
@@ -327,7 +351,8 @@ class TestAncestorData(unittest.TestCase):
                 ancestor_data = tsinfer.AncestorData.initialise(
                     sample_data, filename=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-                self.assertEqual(ancestor_data.genotypes.chunks, (chunk_size, chunk_size))
+                self.assertEqual(
+                    ancestor_data.genotypes.chunks, (chunk_size, chunk_size))
             # Now reload the files and check they are equal
             file0 = formats.AncestorData.load(files[0])
             file1 = formats.AncestorData.load(files[1])

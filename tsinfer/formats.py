@@ -610,8 +610,6 @@ class DataContainer(object):
     @classmethod
     def load(cls, filename):
         self = cls()
-        if not os.path.exists(filename):
-            raise FileNotFoundError(filename)
         self.store = zarr.DBMStore(filename, flag="r")
         self.data = zarr.open_group(store=self.store)
         self.check_format()
