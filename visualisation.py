@@ -2,16 +2,12 @@
 Visualisation of the copying process and ancestor generation using PIL
 """
 import os
-import sys
-import collections
 
 import numpy as np
 import PIL.Image as Image
 import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
 import PIL.ImageFont as ImageFont
-
-import zarr
 
 import tsinfer
 import msprime
@@ -35,19 +31,12 @@ class Visualiser(object):
             self.ancestors[j, variant_sites[:-1]] = A[:, j]
             self.ancestors[j, :variant_sites[start[j]]] = tsinfer.UNKNOWN_ALLELE
             self.ancestors[j, variant_sites[end[j]]:] = tsinfer.UNKNOWN_ALLELE
-
-            print(j, start[j], variant_sites[start[j]], end[j],
-                    variant_sites[end[j]], A[:, j].astype(np.int8))
-
-
-        print(self.ancestors)
-
         self.original_ts = original_ts
         self.inferred_ts = inferred_ts
         self.num_samples = self.original_ts.num_samples
         self.num_sites = self.ancestors.shape[1]
-        # Find the site indexes for the true breakpoints
 
+        # Find the site indexes for the true breakpoints
         breakpoints = list(original_ts.breakpoints())
         self.true_breakpoints = breakpoints[1:-1]
 
@@ -69,7 +58,7 @@ class Visualiser(object):
 
         # Make the haplotype box
         num_haplotype_rows = 1
-        self.row_map = {0:0}
+        self.row_map = {0: 0}
         self.num_ancestors = self.ancestors.shape[0]
 
         num_haplotype_rows += 1
@@ -130,7 +119,6 @@ class Visualiser(object):
         # Draw the samples
         for j in range(self.samples.shape[0]):
             a = self.samples[j]
-            print(a)
             row = self.row_map[self.num_ancestors + j]
             y = row * b + origin[1]
             for k in range(self.num_sites):
@@ -170,7 +158,7 @@ class Visualiser(object):
             label = "{}".format(site.position)
             img_txt = Image.new('L', font.getsize(label), color="white")
             draw_txt = ImageDraw.Draw(img_txt)
-            draw_txt.text((0,0), label, font=font)
+            draw_txt.text((0, 0), label, font=font)
             t = img_txt.rotate(90, expand=1)
             x = origin[0] + site.id * b
             y = origin[1] - b
@@ -181,7 +169,6 @@ class Visualiser(object):
     def draw_copying_paths(self, pattern):
         N = self.num_ancestors + self.samples.shape[0]
         P = np.zeros((N, self.num_sites), dtype=int) - 1
-        C = np.zeros((self.num_ancestors, self.num_sites), dtype=int)
         ts = self.inferred_ts
         site_index = {}
         sites = list(ts.sites())
@@ -194,7 +181,6 @@ class Visualiser(object):
             right = site_index[e.right]
             assert left < right
             P[e.child, left:right] = e.parent
-        index = np.arange(self.num_sites, dtype=int)
         n = self.samples.shape[0]
         breakpoints = []
         for j in range(1, self.num_ancestors + n):
@@ -223,15 +209,18 @@ def visualise(
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, method=method, path_compression=False)
-    inferred_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method,
-            simplify=False, path_compression=False)
+    inferred_ts = tsinfer.match_samples(
+        sample_data, ancestors_ts, method=method, simplify=False,
+        path_compression=False)
     visualiser = Visualiser(
         ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
+    print(inferred_ts.tables.edges)
 
-    inferred_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method,
-            simplify=True, path_compression=False)
+    inferred_ts = tsinfer.match_samples(
+        sample_data, ancestors_ts, method=method, simplify=True,
+        path_compression=False)
 
     for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, inferred_ts):
         distance = tsinfer.kc_distance(tree1, tree2)
@@ -258,22 +247,36 @@ def visualise(
             j += 1
         print()
 
+
 def run_viz(n, L, rate, seed):
     recomb_map = msprime.RecombinationMap.uniform_map(
             length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
-    # print(ts.num_sites)
-    # if ts.num_sites == 0:
-    #     print("zero sites; skipping")
-    #     return
     ts = tsinfer.insert_perfect_mutations(ts)
+
+
+    ts = msprime.simulate(
+        4, recombination_rate=0.1, random_seed=5, length=10,
+        model="smc_prime")
+    ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+    # self.verify(ts)
+
     visualise(ts, 1e-9, 0, method="C", box_size=26, perfect_ancestors=True)
 
 
 def main():
-    run_viz(6, 100, 0.01, 14)
+
+    import daiquiri
+    import sys
+    # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
+
+    # Contains weird mismatch that shouldn't happen. Insufficient mutations around
+    # 9 -- 57??
+    # run_viz(8, 100, 0.01, 19)
+    run_viz(8, 100, 0.01, 20)
+
 
 if __name__ == "__main__":
     main()

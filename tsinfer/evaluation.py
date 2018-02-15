@@ -3,6 +3,7 @@ Tools for evaluating the algorithm.
 """
 import collections
 import itertools
+import warnings
 
 import numpy as np
 import msprime
@@ -82,7 +83,6 @@ def strip_singletons(ts):
     """
     Returns a copy of the specified tree sequence with singletons removed.
     """
-    #remove singletons
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
     for variant in ts.variants():
@@ -99,7 +99,7 @@ def strip_singletons(ts):
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
 
 
-def insert_perfect_mutations(ts, delta=1e-3):
+def insert_perfect_mutations(ts, delta=1/64):
     """
     Returns a copy of the specified tree sequence where the left and right
     coordinates of all edgesets are marked by mutations. This *should* be sufficient
@@ -112,48 +112,27 @@ def insert_perfect_mutations(ts, delta=1e-3):
     tables = ts.dump_tables()
     tables.sites.clear()
     tables.mutations.clear()
-    left_map = collections.Counter()
-    right_map = collections.Counter()
-
-    # Edgesets are useful in one way as we can tag two different children at the
-    # same time with one mutation. However, this means that we have mutations over
-    # roots, and therefore fixed sites. It seems hard to ensure that we have
-    # mutations tagging every ancestor without doing it this way though.
-
-    # edgesets = list(ts.edgesets())
-    # edgesets.sort(key=lambda e: -e.parent)
-    # for e in edgesets:
-    #     left_map[e.left] +=  1
-    #     right_map[e.right] += 1
-    # for e in edgesets:
-    #     left_map[e.left] -= 1
-    #     x = e.left + left_map[e.left] * delta
-    #     assert e.left <= x < e.right
-    #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
-    #     x = e.right - right_map[e.right] * delta
-    #     right_map[e.right] += 1
-    #     assert e.left <= x < e.right
-    #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
-
-    edges = list(ts.edges())
     # Edges are sorted by time.
-    for e in edges:
-        left_map[e.left] +=  1
-        right_map[e.right] += 1
-    for e in edges:
-        left_map[e.left] -= 1
-        x = e.left + left_map[e.left] * delta
-        assert e.left <= x < e.right
-        site_id = tables.sites.add_row(position=x, ancestral_state="0")
-        tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    left_map = collections.defaultdict(list)
+    right_map = collections.defaultdict(list)
+    for e in ts.edges():
+        left_map[e.left].append(e.child)
+        right_map[e.right].append(e.child)
 
-        x = e.right - right_map[e.right] * delta
-        right_map[e.right] += 1
-        assert e.left <= x < e.right
-        site_id = tables.sites.add_row(position=x, ancestral_state="0")
-        tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    for t in ts.trees():
+        left, right = t.interval
+        x = left
+        for node in left_map[left]:
+            if t.num_samples(node) > 1:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+                x += delta
+        x = right - delta
+        for node in reversed(right_map[right]):
+            if t.num_samples(node) > 1:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+                x -= delta
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())
@@ -211,6 +190,8 @@ def get_ancestor_descriptors(A):
             focal_sites.append(new_sites)
             start.append(s)
             end.append(e)
+        else:
+            warnings.warn("Unknown ancestor provided")
     return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
 
 
@@ -234,12 +215,12 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
-    # print(A.astype(np.int8))
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
     # We also only want the variant sites
     A = A[:, sample_data.variant_site]
+    # print(A.astype(np.int8))
 
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)

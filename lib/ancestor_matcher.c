@@ -1020,6 +1020,7 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
 {
     int ret = 0;
 
+    /* printf("FIND PATH: start=%d end=%d\n", start, end); */
     ret = ancestor_matcher_reset(self);
     if (ret != 0) {
         goto out;

@@ -409,3 +409,67 @@ class TestBuildAncestors(unittest.TestCase):
         tsinfer.build_ancestors(sample_data, ancestor_data)
         ancestor_data.finalise()
         self.verify_ancestors(sample_data, ancestor_data)
+
+
+class TestAlgorithmsExactlyEqual(unittest.TestCase):
+    """
+    For small example tree sequences, check that the Python and C implementations
+    return precisely the same tree sequence when fed with perfect mutations.
+    """
+    def infer(self, ts, method):
+        sample_data = tsinfer.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+            compressor=None)
+        for v in ts.variants():
+            sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.finalise()
+
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(
+            sample_data, ancestor_data, method=method, path_compression=False)
+        inferred_ts = tsinfer.match_samples(
+            sample_data, ancestors_ts, method=method, simplify=False,
+            path_compression=False)
+        return inferred_ts
+
+    def verify(self, ts):
+        tsp = self.infer(ts, "P")
+        tsc = self.infer(ts, "C")
+        self.assertEqual(ts.num_sites, tsp.num_sites)
+        self.assertEqual(ts.num_sites, tsc.num_sites)
+        self.assertEqual(tsc.num_samples, tsp.num_samples)
+        tables_p = tsp.dump_tables()
+        tables_c = tsc.dump_tables()
+        self.assertEqual(tables_p.nodes, tables_c.nodes)
+        if tables_p.edges != tables_c.edges:
+            print(len(tables_p.edges), len(tables_c.edges))
+            print(tables_p.edges)
+            print(tables_c.edges)
+        self.assertEqual(tables_p.edges, tables_c.edges)
+        self.assertEqual(tables_p.sites, tables_c.sites)
+        self.assertEqual(tables_p.mutations, tables_c.mutations)
+
+    def test_single_tree(self):
+        for seed in range(10):
+            ts = msprime.simulate(10, random_seed=seed + 1)
+            ts = tsinfer.insert_perfect_mutations(ts)
+            self.verify(ts)
+
+    def test_three_samples(self):
+        for seed in range(10):
+            ts = msprime.simulate(
+                3, recombination_rate=1, random_seed=seed + 1, model="smc_prime")
+            ts = tsinfer.insert_perfect_mutations(ts)
+            self.verify(ts)
+
+    def test_four_samples(self):
+        for seed in range(5):
+            print("SEED = ", seed)
+            ts = msprime.simulate(
+                4, recombination_rate=0.1, random_seed=seed + 1, length=10,
+                model="smc_prime")
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+            self.verify(ts)
+
