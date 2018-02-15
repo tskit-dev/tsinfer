@@ -9,7 +9,6 @@ import numpy as np
 import msprime
 
 import tsinfer.inference as inference
-import tsinfer.formats as formats
 
 
 def kc_distance(tree1, tree2):
@@ -93,7 +92,8 @@ def strip_singletons(ts):
             for mutation in variant.site.mutations:
                 assert mutation.parent == -1  # No back mutations
                 mutations.add_row(
-                    site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+                    site=site_id, node=mutation.node,
+                    derived_state=mutation.derived_state)
     tables = ts.dump_tables()
     return msprime.load_tables(
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
@@ -224,7 +224,6 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
 
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)
-    num_ancestors = len(ancestors)
     for a, s, e, focal in zip(ancestors, start, end, focal_sites):
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
@@ -234,3 +233,34 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
             start=s, end=e, time=time, focal_sites=np.array(focal, dtype=np.int32),
             haplotype=a)
         time -= 1
+
+
+def print_tree_pairs(ts1, ts2):
+    """
+    Prints out the trees at each point in the specified tree sequences,
+    alone with their KC distance.
+    """
+    for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
+        distance = kc_distance(tree1, tree2)
+        trailer = ""
+        if distance != 0:
+            trailer = "[MISMATCH]"
+        print("-" * 20)
+        print("Interval          =", left, "--", right)
+        print("Source interval   =", tree1.interval)
+        print("Inferred interval =", tree2.interval)
+        print("KC distance       =", distance, trailer)
+        print()
+        d1 = tree1.draw(format="unicode").splitlines()
+        d2 = tree2.draw(format="unicode").splitlines()
+        j = 0
+        while j < (min(len(d1), len(d2))):
+            print(d1[j], " | ", d2[j])
+            j += 1
+        while j < len(d1):
+            print(d1[j], " |")
+            j += 1
+        while j < len(d2):
+            print(" " * len(d1[0]), " | ", d2[j])
+            j += 1
+        print()

@@ -350,7 +350,7 @@ run_generate(const char *input_file, int verbose)
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.0);
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.0, 0);
     if (ret != 0) {
         fatal_error("alloc error");
     }

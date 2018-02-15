@@ -1238,16 +1238,18 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
+    int extended_checks = 0;
     static char *kwlist[] = {"tree_sequence_builder",
-        "observation_error", NULL};
+        "observation_error", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     double observation_error;
+    int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d|i", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &observation_error)) {
+                &observation_error, &extended_checks)) {
         goto out;
     }
     self->tree_sequence_builder = tree_sequence_builder;
@@ -1260,8 +1262,12 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
+    if (observation_error) {
+        flags = TSI_EXTENDED_CHECKS;
+    }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
-            self->tree_sequence_builder->tree_sequence_builder, observation_error);
+            self->tree_sequence_builder->tree_sequence_builder, observation_error,
+            flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;

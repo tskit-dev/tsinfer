@@ -144,7 +144,7 @@ def build_ancestors(
 def match_ancestors(
         sample_data, ancestor_data, output_path=None, method="C", progress=False,
         num_threads=0, path_compression=True, output_interval=None, resume=False,
-        traceback_file_pattern=None):
+        traceback_file_pattern=None, extended_checks=False):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -153,7 +153,8 @@ def match_ancestors(
         sample_data, ancestor_data, output_path=output_path, method=method,
         progress=progress, path_compression=path_compression,
         num_threads=num_threads, output_interval=output_interval,
-        resume=resume, traceback_file_pattern=traceback_file_pattern)
+        resume=resume, traceback_file_pattern=traceback_file_pattern,
+        extended_checks=extended_checks)
     return matcher.match_ancestors()
 
 
@@ -191,12 +192,13 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 def match_samples(
         sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
-        traceback_file_pattern=None):
+        traceback_file_pattern=None, extended_checks=False):
     manager = SampleMatcher(
         sample_data, ancestors_ts, error_probability=genotype_quality,
         path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
-        traceback_file_pattern=traceback_file_pattern)
+        traceback_file_pattern=traceback_file_pattern,
+        extended_checks=extended_checks)
     manager.match_samples()
     ts = manager.finalise(simplify=simplify)
     return ts
@@ -209,7 +211,8 @@ class Matcher(object):
 
     def __init__(
             self, sample_data, error_probability=0, num_threads=1, method="C",
-            path_compression=True, progress=False, traceback_file_pattern=None):
+            path_compression=True, progress=False, traceback_file_pattern=None,
+            extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
@@ -219,6 +222,7 @@ class Matcher(object):
         self.positions = self.sample_data.position[:][self.sample_data.variant_site]
         self.recombination_rate = self.sample_data.recombination_rate
         self.progress = progress
+        self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
         if method == "C":
             logger.debug("Using C matcher implementation")
@@ -253,7 +257,9 @@ class Matcher(object):
         self.num_matches = np.zeros(num_threads)
         logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
-            self.ancestor_matcher_class(self.tree_sequence_builder, error_probability)
+            self.ancestor_matcher_class(
+                self.tree_sequence_builder, error_probability,
+                extended_checks=self.extended_checks)
             for _ in range(num_threads)]
         # The progress monitor is allocated later by subclasses.
         self.progress_monitor = None

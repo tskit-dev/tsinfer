@@ -504,9 +504,10 @@ def is_descendant(pi, u, v):
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, error_rate=0):
+    def __init__(self, tree_sequence_builder, error_rate=0, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
         self.error_rate = error_rate
+        self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
         self.positions = tree_sequence_builder.positions
         self.parent = None
@@ -594,8 +595,9 @@ class AncestorMatcher(object):
             y = recomb_proba * distance
             # print("\t", u, x, y)
             # Try to recombine as little as possible, so do not switch if
-            # the likelihoods are equal.
-            if x >= y:
+            # the likelihoods are equal. This constant is a hack; should
+            # really be some function of the recombination rate.
+            if x > y + 1e-9:
                 z = x
                 self.traceback[site][u] = False
             else:
@@ -791,7 +793,8 @@ class AncestorMatcher(object):
             # We can have situations where we've removed the only nonzero likelihood.
             # Then all values are equally likely.
             self.normalise_likelihoods(allow_zeros=True)
-            self.check_likelihoods()
+            if self.extended_checks:
+                self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
                 self.update_site(site, h[site])
 

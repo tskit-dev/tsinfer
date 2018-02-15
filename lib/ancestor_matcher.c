@@ -84,13 +84,14 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     }
     block_allocator_print_state(&self->traceback_allocator, out);
 
-    ancestor_matcher_check_state(self);
+    /* ancestor_matcher_check_state(self); */
     return 0;
 }
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, double observation_error)
+        tree_sequence_builder_t *tree_sequence_builder, double observation_error,
+        int flags)
 {
     int ret = 0;
     /* TODO make these input parameters. */
@@ -98,6 +99,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     /* All allocs for arrays related to nodes are done in expand_nodes */
+    self->flags = flags;
     self->max_nodes = 0;
     self->tree_sequence_builder = tree_sequence_builder;
     self->observation_error = observation_error;
@@ -321,18 +323,23 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             }
         }
         /* assert(descendant == is_descendant(u, mutation_node, parent)); */
-
         x = L[u] * no_recomb_proba;
         assert(x >= 0);
         /* Try to recombine as little as possible, so do not switch if */
-        /* the likelihoods are equal. */
-        if (x >= recomb_proba) {
+        /* the likelihoods are equal. Because of numerical jitter, we can
+         * have situtations where equal values actually differ by very
+         * small amounts, resulting in spurious recombinations. This
+         * constant is bad: it should be some function of the recombination
+         * rate. */
+        if (x > recomb_proba + 1e-9) {
             y = x;
             recombination_required[u] = 0;
         } else {
             y = recomb_proba;
             recombination_required[u] = 1;
         }
+        /* printf("site=%d, u=%d, x=%.14f, y=%.14f, recomb=%d\n", site, u, x, y, */
+        /*         recombination_required[u]); */
         if (mutation_node == NULL_NODE) {
             emission = 1 - err;
         } else {
@@ -493,8 +500,9 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t sit
     if (self->tree_sequence_builder->sites.mutations[site] != NULL) {
         mutation_node = self->tree_sequence_builder->sites.mutations[site]->node;
     }
-    /* ancestor_matcher_print_state(self, stdout); */
-    /* ancestor_matcher_check_state(self); */
+    if (self->flags & TSI_EXTENDED_CHECKS) {
+        ancestor_matcher_check_state(self);
+    }
     if (mutation_node != NULL_NODE) {
         /* Insert a new L-value for the mutation node if needed */
         if (L[mutation_node] == NULL_LIKELIHOOD) {
@@ -681,6 +689,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     avl_node_t *restrict in = self->tree_sequence_builder->right_index.tail;
     avl_node_t *restrict out = self->tree_sequence_builder->left_index.tail;
 
+    /* printf("START TRACEBACK\n"); */
     /* ancestor_matcher_print_state(self, stdout); */
 
     /* Prepare for the traceback and get the memory ready for recording
@@ -894,8 +903,9 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     /* printf("j = %d k = %d\n", j, k); */
     /* ancestor_matcher_print_state(self, stdout); */
 
-    /* ancestor_matcher_check_state(self); */
-
+    if (self->flags & TSI_EXTENDED_CHECKS) {
+        ancestor_matcher_check_state(self);
+    }
     /* remove_start = k; */
     remove_start = out;
     while (left < end) {

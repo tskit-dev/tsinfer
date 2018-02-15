@@ -428,10 +428,11 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, method=method, path_compression=False)
+            sample_data, ancestor_data, method=method, path_compression=False,
+            extended_checks=True)
         inferred_ts = tsinfer.match_samples(
             sample_data, ancestors_ts, method=method, simplify=False,
-            path_compression=False)
+            path_compression=False, extended_checks=True)
         return inferred_ts
 
     def verify(self, ts):
@@ -443,10 +444,6 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
         tables_p = tsp.dump_tables()
         tables_c = tsc.dump_tables()
         self.assertEqual(tables_p.nodes, tables_c.nodes)
-        if tables_p.edges != tables_c.edges:
-            print(len(tables_p.edges), len(tables_c.edges))
-            print(tables_p.edges)
-            print(tables_c.edges)
         self.assertEqual(tables_p.edges, tables_c.edges)
         self.assertEqual(tables_p.sites, tables_c.sites)
         self.assertEqual(tables_p.mutations, tables_c.mutations)
@@ -466,9 +463,32 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
 
     def test_four_samples(self):
         for seed in range(5):
-            print("SEED = ", seed)
             ts = msprime.simulate(
                 4, recombination_rate=0.1, random_seed=seed + 1, length=10,
+                model="smc_prime")
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+            self.verify(ts)
+
+    def test_five_samples(self):
+        for seed in range(5):
+            ts = msprime.simulate(
+                5, recombination_rate=0.1, random_seed=seed + 100, length=10,
+                model="smc_prime")
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+            self.verify(ts)
+
+    def test_ten_samples(self):
+        for seed in range(5):
+            ts = msprime.simulate(
+                10, recombination_rate=0.1, random_seed=seed + 200, length=10,
+                model="smc_prime")
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+            self.verify(ts)
+
+    def test_twenty_samples(self):
+        for seed in range(5):
+            ts = msprime.simulate(
+                10, recombination_rate=0.1, random_seed=seed + 500, length=10,
                 model="smc_prime")
             ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
             self.verify(ts)

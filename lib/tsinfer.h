@@ -14,6 +14,8 @@
 
 #define TSI_COMPRESS_PATH 1
 
+#define TSI_EXTENDED_CHECKS 1
+
 /* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;
 typedef int32_t node_id_t;
@@ -119,6 +121,7 @@ typedef struct {
 } tree_sequence_builder_t;
 
 typedef struct {
+    int flags;
     tree_sequence_builder_t *tree_sequence_builder;
     double *recombination_rate;
     double observation_error;
@@ -170,7 +173,7 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder,
-        double observation_error);
+        double observation_error, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self,
         site_id_t start, site_id_t end, allele_t *haplotype,

@@ -163,7 +163,7 @@ class Visualiser(object):
             x = origin[0] + site.id * b
             y = origin[1] - b
             image.paste(t, (x, y))
-        print("Saving", filename)
+        # print("Saving", filename)
         image.save(filename)
 
     def draw_copying_paths(self, pattern):
@@ -216,36 +216,13 @@ def visualise(
         ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
-    print(inferred_ts.tables.edges)
 
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False)
 
-    for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, inferred_ts):
-        distance = tsinfer.kc_distance(tree1, tree2)
-        trailer = ""
-        if distance != 0:
-            trailer = "[MISMATCH]"
-        print("-" * 20)
-        print("Interval          =", left, "--", right)
-        print("Source interval   =", tree1.interval)
-        print("Inferred interval =", tree2.interval)
-        print("KC distance       =", distance, trailer)
-        print()
-        d1 = tree1.draw(format="unicode").splitlines()
-        d2 = tree2.draw(format="unicode").splitlines()
-        j = 0
-        while j < (min(len(d1), len(d2))):
-            print(d1[j], " | ", d2[j])
-            j += 1
-        while j < len(d1):
-            print(d1[j], " |")
-            j += 1
-        while j < len(d2):
-            print(" " * len(d1[0]), " | ", d2[j])
-            j += 1
-        print()
+    tsinfer.print_tree_pairs(ts, inferred_ts)
+
 
 
 def run_viz(n, L, rate, seed):
@@ -255,15 +232,7 @@ def run_viz(n, L, rate, seed):
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
     ts = tsinfer.insert_perfect_mutations(ts)
-
-
-    ts = msprime.simulate(
-        4, recombination_rate=0.1, random_seed=5, length=10,
-        model="smc_prime")
-    ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
-    # self.verify(ts)
-
-    visualise(ts, 1e-9, 0, method="C", box_size=26, perfect_ancestors=True)
+    visualise(ts, 1e-9, 0, method="P", box_size=26, perfect_ancestors=True)
 
 
 def main():
