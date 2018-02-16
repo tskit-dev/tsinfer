@@ -8,9 +8,57 @@ import PIL.Image as Image
 import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
 import PIL.ImageFont as ImageFont
+import svgwrite
 
 import tsinfer
 import msprime
+
+
+def draw_edges(ts, width=800, height=600):
+    """
+    Returns an SVG depiction of the edges in the specified tree sequence.
+    """
+    dwg = svgwrite.Drawing(size=(width, height), debug=True)
+    x_pad = 20
+    y_pad = 20
+    x_unit = (width - 2 * x_pad) / ts.sequence_length
+    y_unit = (height - 2 * y_pad) / (ts.num_nodes + 1)
+
+    def x_trans(v):
+        return x_pad + v * x_unit
+
+    def y_trans(v):
+        return height - (y_pad + v * y_unit)
+
+    lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+    left_labels = dwg.add(dwg.g(font_size=14, text_anchor="start"))
+    mid_labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
+    for u in range(ts.num_nodes):
+        left_labels.add(dwg.text(str(u), (0, y_trans(u))))
+    for x in ts.breakpoints():
+        dwg.add(dwg.line(
+            (x_trans(x), 2 * y_pad), (x_trans(x), height), stroke="grey",
+            stroke_width=1))
+        dwg.add(dwg.text(str(x), (x_trans(x), y_pad),  writing_mode="tb"))
+
+    for edge in ts.edges():
+        a = x_trans(edge.left), y_trans(edge.child)
+        b = x_trans(edge.right), y_trans(edge.child)
+        c = x_trans(edge.left + (edge.right - edge.left) / 2), y_trans(edge.child) - 5
+        mid_labels.add(dwg.text(str(edge.parent), c))
+        dwg.add(dwg.circle(center=a, r=3, fill="black"))
+        dwg.add(dwg.circle(center=b, r=3, fill="black"))
+        lines.add(dwg.line(a, b))
+
+    for site in ts.sites():
+        assert len(site.mutations) == 1
+        mutation = site.mutations[0]
+        a = x_trans(site.position), y_trans(mutation.node)
+        dwg.add(dwg.circle(center=a, r=1, fill="red"))
+
+
+    return dwg.tostring()
+
 
 
 class Visualiser(object):
@@ -221,11 +269,12 @@ def visualise(
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
+    # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False)
 
-    tsinfer.print_tree_pairs(ts, inferred_ts)
+    tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
 
 
 
@@ -235,21 +284,30 @@ def run_viz(n, L, rate, seed, method="C", perfect_ancestors=True):
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
-    ts = tsinfer.insert_perfect_mutations(ts)
+    ts = tsinfer.insert_perfect_mutations(ts, delta=1/8)
+    with open("tmp__NOBACKUP__/edges.svg", "w") as f:
+        f.write(draw_edges(ts))
+
     visualise(
         ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors)
 
 
 def main():
 
+    np.set_printoptions(linewidth=20000)
+    np.set_printoptions(threshold=20000000)
     # import daiquiri
     # import sys
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
-    # Contains weird mismatch that shouldn't happen. Insufficient mutations around
-    # 9 -- 57??
-    run_viz(8, 100, 0.01, 19)
+    # run_viz(12, 100, 0.01, 23)
 
+    # Good example; mismatches in a couple of places, despite getting breakpoints
+    # exactly right.
+    # run_viz(7, 100, 0.01, 26)
+    run_viz(8, 100, 0.01, 26)
+
+    # run_viz(6, 100, 0.01, 28)
 
 
 if __name__ == "__main__":

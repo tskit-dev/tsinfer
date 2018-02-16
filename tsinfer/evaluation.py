@@ -112,27 +112,131 @@ def insert_perfect_mutations(ts, delta=1/64):
     tables = ts.dump_tables()
     tables.sites.clear()
     tables.mutations.clear()
-    # Edges are sorted by time.
-    left_map = collections.defaultdict(list)
-    right_map = collections.defaultdict(list)
-    for e in ts.edges():
-        left_map[e.left].append(e.child)
-        right_map[e.right].append(e.child)
 
-    for t in ts.trees():
-        left, right = t.interval
-        x = left
-        for node in left_map[left]:
-            if t.num_samples(node) > 1:
+    # Commented out version tried to use to some reasoning about SPRs.
+    # Not very successful, but seems like the right way to do this.
+
+    # diffs = ts.edge_diffs()
+    # (left, right), edges_out, edges_in = next(diffs)
+    # children = [[] for _ in range(ts.num_nodes)]
+    # parent = np.zeros(ts.num_nodes, dtype=int) - 1
+    # for e in edges_in:
+    #     parent[e.child] = e.parent
+    #     children[e.parent].append(e.child)
+    # x = left
+    # for e in reversed(edges_in):
+    #     if len(children[e.child]) > 0:
+    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    #         print("ADDED mutation over", e.child, "at ", x)
+    #         x += delta
+
+    # for (left, right), edges_out, edges_in in diffs:
+    #     print("=============")
+    #     print("left = ", left)
+    #     # u = edges_out[0].parent
+    #     # nodes = [u]
+    #     # if parent[u] == -1:
+    #     #     nodes = children[u]
+    #     assert len(edges_out) == len(edges_in)
+    #     x = left - delta
+    #     if len(edges_in) < 4:
+    #         # Put a site over the last two children
+    #         for e in edges_out[-2:]:
+    #             site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    #             x -= delta
+    #     else:
+    #         # Put a site over the root of the SPR
+    #         u = edges_out[0].parent
+    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+
+    #     for e in edges_out:
+    #         print("out:", e)
+    #         parent[e.child] = -1
+    #         children[e.parent].remove(e.child)
+    #     for e in edges_in:
+    #         print("in :", e)
+    #         parent[e.child] = e.parent
+    #         children[e.parent].append(e.child)
+
+    #     x = left
+    #     if len(edges_in) < 4:
+    #         # Put a site over the last two children
+    #         for e in edges_in[:2]:
+    #             site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    #             x += delta
+    #     else:
+    #         # Put a site over the root of the SPR
+    #         u = edges_in[-1].parent
+    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+
+        # u = edges_in[-1].parent
+        # nodes = [u]
+        # if parent[u] == -1:
+        #     nodes = children[u]
+        # nodes = children[edges_in[-1].parent]
+        # x = left
+        # for u in nodes:
+        #     if len(children[u]) > 0:
+        #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
+        #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+        #         x += delta
+
+        # print(parent)
+        # print(children)
+
+#         u = edges_in[-1].parent
+#         if parent[u] != -1:
+#             site_id = tables.sites.add_row(position=left, ancestral_state="0")
+#             tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+
+
+    num_children = np.zeros(ts.num_nodes, dtype=int)
+    parent = np.zeros(ts.num_nodes, dtype=int) - 1
+    for (left, right), edges_out, edges_in in ts.edge_diffs():
+        print("=============")
+        print("left = ", left)
+        x = left - delta
+        # for e in reversed(edges_out):
+        for e in edges_out:
+            # if parent[e.parent] != -1:
+            #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+            #     x -= delta
+            if num_children[e.child] > 0:
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
-                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-                x += delta
-        x = right - delta
-        for node in reversed(right_map[right]):
-            if t.num_samples(node) > 1:
-                site_id = tables.sites.add_row(position=x, ancestral_state="0")
-                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+                tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
                 x -= delta
+        for e in edges_out:
+            print("out:", e)
+            parent[e.child] = -1
+            num_children[e.parent] -= 1
+        for e in edges_in:
+            print("in :", e)
+            parent[e.child] = e.parent
+            num_children[e.parent] += 1
+        x = left
+        # for e in reversed(edges_in):
+        for e in edges_in:
+            # if parent[e.parent] != -1:
+            #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+            #     x += delta
+            if num_children[e.child] > 0:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+                x += delta
+    x = ts.sequence_length - delta
+    for u in reversed(range(ts.num_nodes)):
+        if num_children[u] > 0 and parent[u] != -1:
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+            x -= delta
+
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())
@@ -215,12 +319,15 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
+    # print(A.astype(np.int8))
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
     # We also only want the variant sites
     A = A[:, sample_data.variant_site]
     # print(A.astype(np.int8))
+    # print(ts.tables.sites)
+    # print(ts.tables.edges)
 
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)
@@ -235,21 +342,22 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
         time -= 1
 
 
-def print_tree_pairs(ts1, ts2):
+def print_tree_pairs(ts1, ts2, compute_distances=True):
     """
     Prints out the trees at each point in the specified tree sequences,
     alone with their KC distance.
     """
     for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
-        distance = kc_distance(tree1, tree2)
-        trailer = ""
-        if distance != 0:
-            trailer = "[MISMATCH]"
         print("-" * 20)
         print("Interval          =", left, "--", right)
         print("Source interval   =", tree1.interval)
         print("Inferred interval =", tree2.interval)
-        print("KC distance       =", distance, trailer)
+        if compute_distances:
+            distance = kc_distance(tree1, tree2)
+            trailer = ""
+            if distance != 0:
+                trailer = "[MISMATCH]"
+            print("KC distance       =", distance, trailer)
         print()
         d1 = tree1.draw(format="unicode").splitlines()
         d2 = tree2.draw(format="unicode").splitlines()
