@@ -46,7 +46,7 @@ class Visualiser(object):
         self.mid_padding = 2 * box_size
         self.right_padding = box_size
         self.background_colour = ImageColor.getrgb("white")
-        self.copying_outline_colour = ImageColor.getrgb("black")
+        self.copying_outline_colour = ImageColor.getrgb("orange")
         self.colours = {
             255: ImageColor.getrgb("pink"),
             0: ImageColor.getrgb("blue"),
@@ -107,6 +107,11 @@ class Visualiser(object):
     def draw_base_haplotypes(self, draw):
         b = self.box_size
         origin = self.haplotype_origin
+        for node in self.row_map.keys():
+            y = self.row_map[node] * b + origin[1]
+            x = origin[0]
+            draw.text((x - b, y), str(node), fill="black")
+
         # Draw the ancestors
         for j in range(self.ancestors.shape[0]):
             a = self.ancestors[j]
@@ -136,7 +141,6 @@ class Visualiser(object):
         draw = ImageDraw.Draw(image)
         y = self.row_map[child_row] * b + origin[1]
         x = origin[0]
-        draw.text((x - b, y), str(child_row), fill="black")
         draw.rectangle([(x, y), (x + m * b, y + b)], outline=self.copying_outline_colour)
         for k in range(m):
             if parents[k] != -1:
@@ -225,26 +229,27 @@ def visualise(
 
 
 
-def run_viz(n, L, rate, seed):
+def run_viz(n, L, rate, seed, method="C", perfect_ancestors=True):
     recomb_map = msprime.RecombinationMap.uniform_map(
             length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
     ts = tsinfer.insert_perfect_mutations(ts)
-    visualise(ts, 1e-9, 0, method="P", box_size=26, perfect_ancestors=True)
+    visualise(
+        ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors)
 
 
 def main():
 
-    import daiquiri
-    import sys
+    # import daiquiri
+    # import sys
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     # Contains weird mismatch that shouldn't happen. Insufficient mutations around
     # 9 -- 57??
-    # run_viz(8, 100, 0.01, 19)
-    run_viz(8, 100, 0.01, 20)
+    run_viz(8, 100, 0.01, 19)
+
 
 
 if __name__ == "__main__":

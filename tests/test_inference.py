@@ -5,10 +5,8 @@ import unittest
 
 import numpy as np
 import msprime
-import zarr
 
 import tsinfer
-import tsinfer.algorithm as algorithm
 import tsinfer.formats as formats
 
 
@@ -50,9 +48,9 @@ class TestRoundTrip(unittest.TestCase):
         # daiquiri.setup(level="DEBUG")
         for method in ["python", "C"]:
             ts = tsinfer.infer(
-                genotypes=genotypes, positions=positions, sequence_length=sequence_length,
-                recombination_rate=recombination_rate, sample_error=sample_error,
-                method=method)
+                genotypes=genotypes, positions=positions,
+                sequence_length=sequence_length, recombination_rate=recombination_rate,
+                sample_error=sample_error, method=method)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
@@ -89,10 +87,10 @@ class TestRoundTrip(unittest.TestCase):
     def test_random_data_invariant_sites_ancestral_state(self):
         G, positions = get_random_data_example(24, 35)
         # Set some sites to be invariant for the ancestral state
-        G[10,:] = 0
-        G[15,:] = 0
-        G[20,:] = 0
-        G[22,:] = 0
+        G[10, :] = 0
+        G[15, :] = 0
+        G[20, :] = 0
+        G[22, :] = 0
         # Force recombination to do all the matching.
         self.verify_data_round_trip(G, positions, recombination_rate=1)
 
@@ -100,10 +98,10 @@ class TestRoundTrip(unittest.TestCase):
     def test_random_data_invariant_sites(self):
         G, positions = get_random_data_example(39, 25)
         # Set some sites to be invariant
-        G[10,:] = 1
-        G[15,:] = 0
-        G[20,:] = 1
-        G[22,:] = 0
+        G[10, :] = 1
+        G[15, :] = 0
+        G[20, :] = 1
+        G[22, :] = 0
         self.verify_data_round_trip(G, positions, recombination_rate=1)
 
     def test_random_data_no_recombination(self):
@@ -389,7 +387,8 @@ class TestBuildAncestors(unittest.TestCase):
         self.verify_ancestors(sample_data, ancestor_data)
 
     def test_simulated_recombination(self):
-        ts = msprime.simulate(10, recombination_rate=10, mutation_rate=10, random_seed=10)
+        ts = msprime.simulate(
+            10, recombination_rate=10, mutation_rate=10, random_seed=10)
         self.assertGreater(ts.num_sites, 10)
         sample_data, ancestor_data = self.get_simulated_example(ts)
         self.verify_ancestors(sample_data, ancestor_data)
@@ -493,3 +492,112 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
             ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
             self.verify(ts)
 
+
+class TestPartialAncestorMatching(unittest.TestCase):
+    """
+    Tests for copying process behaviour when we have partially
+    defined ancestors.
+    """
+    def verify_edges(self, sample_data, ancestor_data, expected_edges):
+
+        def key(e):
+            return (e.left, e.right, e.parent, e.child)
+
+        for method in ["C", "P"]:
+            ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+            self.assertEqual(
+                sorted(expected_edges, key=key), sorted(ts.edges(), key=key))
+
+    def test_easy_case(self):
+        num_sites = 6
+        sample_data = tsinfer.SampleData.initialise(3, num_sites)
+        for j in range(num_sites):
+            sample_data.add_variant(j, ["0", "1"], [0, 1, 1])
+        sample_data.finalise()
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+
+        ancestor_data.add_ancestor(  # ID 0
+            start=0, end=6, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0])
+        ancestor_data.add_ancestor(  # ID 1
+            start=0, end=3, focal_sites=[2], time=3, haplotype=[0, 0, 1, -1, -1, -1])
+        ancestor_data.add_ancestor(  # ID 2
+            start=3, end=6, focal_sites=[4], time=2, haplotype=[-1, -1, -1, 0, 1, 0])
+        ancestor_data.add_ancestor(  # ID 3
+            start=0, end=6, focal_sites=[0, 1, 3, 5], time=1,
+            haplotype=[1, 1, 1, 1, 1, 1])
+        ancestor_data.finalise()
+
+        expected_edges = [
+            msprime.Edge(0, 3, 1, 3),
+            msprime.Edge(3, 6, 2, 3),
+            msprime.Edge(3, 6, 0, 2),
+            msprime.Edge(0, 3, 0, 1)]
+        self.verify_edges(sample_data, ancestor_data, expected_edges)
+
+    def test_partial_overlap(self):
+        num_sites = 7
+        sample_data = tsinfer.SampleData.initialise(3, num_sites)
+        for j in range(num_sites):
+            sample_data.add_variant(j, ["0", "1"], [0, 1, 1])
+        sample_data.finalise()
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+
+        ancestor_data.add_ancestor(  # ID 0
+            start=0, end=7, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0, 0])
+        ancestor_data.add_ancestor(  # ID 1
+            start=0, end=3, focal_sites=[2], time=3, haplotype=[0, 0, 1, 0, 0, 0, 0])
+        ancestor_data.add_ancestor(  # ID 2
+            start=3, end=7, focal_sites=[4, 6], time=2, haplotype=[-1, -1, -1, 0, 1, 0, 1])
+        ancestor_data.add_ancestor(  # ID 3
+            start=0, end=7, focal_sites=[0, 1, 3, 5], time=1,
+            haplotype=[1, 1, 1, 1, 1, 1, 1])
+        ancestor_data.finalise()
+
+        expected_edges = [
+            msprime.Edge(0, 3, 1, 3),
+            msprime.Edge(3, 7, 2, 3),
+            msprime.Edge(3, 7, 0, 2),
+            msprime.Edge(0, 3, 0, 1)]
+        self.verify_edges(sample_data, ancestor_data, expected_edges)
+
+    def test_edge_overlap_bug(self):
+        num_sites = 12
+        sample_data = tsinfer.SampleData.initialise(3, num_sites)
+        for j in range(num_sites):
+            sample_data.add_variant(j, ["0", "1"], [0, 1, 1])
+        sample_data.finalise()
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+
+        ancestor_data.add_ancestor(  # ID 0
+            start=0, end=12, focal_sites=[], time=7,
+            haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        ancestor_data.add_ancestor(  # ID 1
+            start=0, end=4, focal_sites=[], time=6,
+            haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1])
+        ancestor_data.add_ancestor(  # ID 2
+            start=4, end=12, focal_sites=[], time=5,
+            haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0])
+        ancestor_data.add_ancestor(  # ID 3
+            start=8, end=12, focal_sites=[9, 11], time=4,
+            haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1])
+        ancestor_data.add_ancestor(  # ID 4
+            start=4, end=8, focal_sites=[5, 7], time=3,
+            haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1])
+        ancestor_data.add_ancestor(  # ID 5
+            start=0, end=4, focal_sites=[1, 3], time=2,
+            haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1])
+        ancestor_data.add_ancestor(  # ID 6
+            start=0, end=12, focal_sites=[0, 2, 4, 6, 8, 10], time=1,
+            haplotype=[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0])
+        ancestor_data.finalise()
+
+        expected_edges = [
+            msprime.Edge(0, 4, 0, 1),
+            msprime.Edge(4, 12, 0, 2),
+            msprime.Edge(8, 12, 0, 3),
+            msprime.Edge(4, 8, 0, 4),
+            msprime.Edge(0, 4, 0, 5),
+            msprime.Edge(0, 4, 0, 6),
+            msprime.Edge(4, 8, 4, 6),
+            msprime.Edge(8, 12, 0, 6)]
+        self.verify_edges(sample_data, ancestor_data, expected_edges)

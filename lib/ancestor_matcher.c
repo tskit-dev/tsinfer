@@ -270,7 +270,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     int8_t *restrict recombination_required = self->recombination_required;
     double recomb_proba = r / n;
     double no_recomb_proba = 1 - r + r / n;
-    double x, y, max_L, emission;
+    double y, max_L, emission, L_recomb, L_no_recomb;
     int8_t *restrict path_cache = self->path_cache;
     int j;
     bool descendant;
@@ -322,22 +322,26 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
                 v = parent[v];
             }
         }
+
         /* assert(descendant == is_descendant(u, mutation_node, parent)); */
-        x = L[u] * no_recomb_proba;
-        assert(x >= 0);
-        /* Try to recombine as little as possible, so do not switch if */
-        /* the likelihoods are equal. Because of numerical jitter, we can
-         * have situtations where equal values actually differ by very
-         * small amounts, resulting in spurious recombinations. This
-         * constant is bad: it should be some function of the recombination
-         * rate. */
-        if (x > recomb_proba + 1e-9) {
-            y = x;
-            recombination_required[u] = 0;
+        L_no_recomb = L[u] * no_recomb_proba;
+        assert(L_no_recomb >= 0);
+        L_recomb = recomb_proba;
+
+        /* Only recombine if the likelihood of recombination is more than delta
+           bigger than the likelihood of no recombination. This avoids issues
+           with numerical jitter when comparing the values, which results in
+           spurious recombinations. */
+        /* TODO the constant is a hack; should really be a function of the */
+        /* recombination rate in some way. */
+        if (L_recomb > L_no_recomb + 1e-9) {
+            y = L_recomb;
+            recombination_required[u] = true;
         } else {
-            y = recomb_proba;
-            recombination_required[u] = 1;
+            y = L_no_recomb;
+            recombination_required[u] = false;
         }
+
         /* printf("site=%d, u=%d, x=%.14f, y=%.14f, recomb=%d\n", site, u, x, y, */
         /*         recombination_required[u]); */
         if (mutation_node == NULL_NODE) {

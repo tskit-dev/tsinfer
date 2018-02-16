@@ -432,6 +432,7 @@ class SampleData(DataContainer):
         return self
 
     def add_variant(self, position, alleles, genotypes):
+        genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
         if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
@@ -676,6 +677,8 @@ class AncestorData(DataContainer):
         and has new mutations at the specified list of focal sites.
         """
         num_sites = self.input_data.num_variant_sites
+        haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
+        focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > num_sites:
@@ -686,6 +689,12 @@ class AncestorData(DataContainer):
             raise ValueError("haplotypes incorrect shape.")
         if time <= 0:
             raise ValueError("time must be > 0")
+        if not np.all(haplotype[focal_sites] == 1):
+            raise ValueError("haplotype[j] must be = 1 for all focal sites")
+        if np.any(focal_sites < start) or np.any(focal_sites >= end):
+            raise ValueError("focal sites must be between start and end")
+        if np.any(haplotype[start: end] > 1):
+            raise ValueError("Biallelic sites only supported.")
         j = self.genotypes_buffer_offset
         N = self.genotypes_buffer.shape[1]
         self.genotypes_buffer[start: end, j] = haplotype[start: end]

@@ -590,19 +590,23 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-            x = self.likelihood[u] * no_recomb_proba * distance
-            assert x >= 0
-            y = recomb_proba * distance
-            # print("\t", u, x, y)
-            # Try to recombine as little as possible, so do not switch if
-            # the likelihoods are equal. This constant is a hack; should
-            # really be some function of the recombination rate.
-            if x > y + 1e-9:
-                z = x
-                self.traceback[site][u] = False
-            else:
-                z = y
+            L_no_recomb = self.likelihood[u] * no_recomb_proba * distance
+            assert L_no_recomb >= 0
+            L_recomb = recomb_proba * distance
+            delta = 1e-9
+            # Only recombine if the likelihood of recombination is more than delta
+            # bigger than the likelihood of no recombination. This avoids issues
+            # with numerical jitter when comparing the values, which results in
+            # spurious recombinations.
+            # TODO the constant is a hack; should really be a function of the
+            # recombination rate in some way.
+            if L_recomb > L_no_recomb + delta:
+                z = L_recomb
                 self.traceback[site][u] = True
+            else:
+                z = L_no_recomb
+                self.traceback[site][u] = False
+
             if mutation_node == -1:
                 emission_p = 1 - err
             else:
@@ -615,8 +619,8 @@ class AncestorMatcher(object):
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # print("site=", site, "Max L = ", max_L, "node = ", max_L_node)
-        # print("L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
+        # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
+        # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
         self.max_likelihood_node[site] = max_L_node
 
@@ -630,6 +634,7 @@ class AncestorMatcher(object):
 
         self.compress_likelihoods()
         self.normalise_likelihoods()
+        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def normalise_likelihoods(self, allow_zeros=False):
         max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
@@ -843,6 +848,7 @@ class AncestorMatcher(object):
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
                     if self.likelihood[u] == -2:
+                        # print("INSERTING NODE", u)
                         self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
             right = m
@@ -905,12 +911,12 @@ class AncestorMatcher(object):
             assert left < right
             for l in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
+                # print("TB: site = ", l, u)
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
                             self.parent, u,
                             self.tree_sequence_builder.mutations[l][0][0]):
                         match[l] = 1
-                # print("TB: site = ", l)
                 # print("traceback = ", self.traceback[l])
                 for u, recombine in self.traceback[l].items():
                     # Mark the traceback nodes on the tree.
@@ -924,7 +930,7 @@ class AncestorMatcher(object):
                 if recombination_required[u]:
                     output_edge.left = l
                     u = self.max_likelihood_node[l - 1]
-                    # print("Switch to ", u)
+                    # print("\tSwitch to ", u)
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.

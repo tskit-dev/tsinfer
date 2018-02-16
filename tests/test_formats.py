@@ -360,6 +360,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.all(haplotype[:start] == tsinfer.UNKNOWN_ALLELE))
             self.assertTrue(np.all(haplotype[end:] == tsinfer.UNKNOWN_ALLELE))
             focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
+            focal_sites = focal_sites[focal_sites < end]
+            haplotype[focal_sites] = 1
             ancestors.append((start, end, 2 * j + 1, focal_sites, haplotype))
         return sample_data, ancestors
 
@@ -454,24 +456,43 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
-            start=0, end=num_sites, time=1, focal_sites=np.array([]),
-            haplotype=haplotype)
+            start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype)
         for bad_start in [-1, -100, num_sites, num_sites + 1]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=bad_start, end=num_sites, time=0, focal_sites=np.array([]),
+                start=bad_start, end=num_sites, time=0, focal_sites=[],
                 haplotype=haplotype)
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=bad_end, time=1, focal_sites=np.array([]),
-                haplotype=haplotype)
+                start=0, end=bad_end, time=1, focal_sites=[], haplotype=haplotype)
         for bad_time in [-1, 0]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=num_sites, time=bad_time, focal_sites=np.array([]),
+                start=0, end=num_sites, time=bad_time, focal_sites=[],
                 haplotype=haplotype)
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time=1, focal_sites=np.array([]),
+            start=0, end=num_sites, time=1, focal_sites=[],
             haplotype=np.zeros(num_sites + 1, dtype=np.uint8))
+        # Haplotypes must be < 2
+        self.assertRaises(
+            ValueError, ancestor_data.add_ancestor,
+            start=0, end=num_sites, time=1, focal_sites=[],
+            haplotype=np.zeros(num_sites, dtype=np.uint8) + 2)
+
+        # focal sites must be within start:end
+        self.assertRaises(
+            ValueError, ancestor_data.add_ancestor,
+            start=1, end=num_sites, time=1, focal_sites=[0],
+            haplotype=np.ones(num_sites, dtype=np.uint8))
+        self.assertRaises(
+            ValueError, ancestor_data.add_ancestor,
+            start=0, end=num_sites - 2, time=1, focal_sites=[num_sites - 1],
+            haplotype=np.ones(num_sites, dtype=np.uint8))
+        # focal sites must be set to 1
+        self.assertRaises(
+            ValueError, ancestor_data.add_ancestor,
+            start=0, end=num_sites, time=1, focal_sites=[0],
+            haplotype=np.zeros(num_sites, dtype=np.uint8))
+
