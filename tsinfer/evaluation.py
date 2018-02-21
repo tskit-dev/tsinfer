@@ -198,8 +198,8 @@ def insert_perfect_mutations(ts, delta=1/64):
     num_children = np.zeros(ts.num_nodes, dtype=int)
     parent = np.zeros(ts.num_nodes, dtype=int) - 1
     for (left, right), edges_out, edges_in in ts.edge_diffs():
-        print("=============")
-        print("left = ", left)
+        # print("=============")
+        # print("left = ", left)
         x = left - delta
         # for e in reversed(edges_out):
         for e in edges_out:
@@ -212,11 +212,11 @@ def insert_perfect_mutations(ts, delta=1/64):
                 tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
                 x -= delta
         for e in edges_out:
-            print("out:", e)
+            # print("out:", e)
             parent[e.child] = -1
             num_children[e.parent] -= 1
         for e in edges_in:
-            print("in :", e)
+            # print("in :", e)
             parent[e.child] = e.parent
             num_children[e.parent] += 1
         x = left
