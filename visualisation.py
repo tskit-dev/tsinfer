@@ -60,6 +60,50 @@ def draw_edges(ts, width=800, height=600):
     return dwg.tostring()
 
 
+def draw_ancestors(ts, width=800, height=600):
+    """
+    Returns an SVG depiction of the ancestors in the specified tree sequence.
+    """
+    dwg = svgwrite.Drawing(size=(width, height), debug=True)
+    x_pad = 20
+    y_pad = 20
+    x_unit = (width - 2 * x_pad) / ts.sequence_length
+    y_unit = (height - 2 * y_pad) / (ts.num_nodes + 1)
+
+    def x_trans(v):
+        return x_pad + v * x_unit
+
+    def y_trans(v):
+        return height - (y_pad + v * y_unit)
+
+    lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+    left_labels = dwg.add(dwg.g(font_size=14, text_anchor="start"))
+    mid_labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
+    for u in range(ts.num_nodes):
+        left_labels.add(dwg.text(str(u), (0, y_trans(u))))
+    for x in ts.breakpoints():
+        dwg.add(dwg.line(
+            (x_trans(x), 2 * y_pad), (x_trans(x), height), stroke="grey",
+            stroke_width=1))
+        dwg.add(dwg.text(str(x), (x_trans(x), y_pad),  writing_mode="tb"))
+
+    for e in ts.edgesets():
+        a = x_trans(e.left), y_trans(e.parent)
+        b = x_trans(e.right), y_trans(e.parent)
+        c = x_trans(e.left + (e.right - e.left) / 2), y_trans(e.parent) - 5
+        mid_labels.add(dwg.text(str(e.children), c))
+        dwg.add(dwg.circle(center=a, r=3, fill="black"))
+        dwg.add(dwg.circle(center=b, r=3, fill="black"))
+        lines.add(dwg.line(a, b))
+
+    for site in ts.sites():
+        assert len(site.mutations) == 1
+        mutation = site.mutations[0]
+        a = x_trans(site.position), y_trans(mutation.node)
+        dwg.add(dwg.circle(center=a, r=1, fill="red"))
+    return dwg.tostring()
+
+
 
 class Visualiser(object):
 
@@ -269,7 +313,7 @@ def visualise(
     prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
-    # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
+    tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False)
@@ -284,12 +328,80 @@ def run_viz(n, L, rate, seed, method="C", perfect_ancestors=True):
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
-    ts = tsinfer.insert_perfect_mutations(ts, delta=1/8)
+    ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
     with open("tmp__NOBACKUP__/edges.svg", "w") as f:
         f.write(draw_edges(ts))
-
+    with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
+        f.write(draw_ancestors(ts))
     visualise(
         ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors)
+
+
+
+def check_instance(n, L, rate, seed, method="C"):
+    recomb_map = msprime.RecombinationMap.uniform_map(
+            length=L, rate=rate, num_loci=L)
+    ts = msprime.simulate(
+        n, recombination_map=recomb_map, random_seed=seed,
+        model="smc_prime")
+    diffs = ts.edge_diffs()
+    parent = [-1 for _ in range(ts.num_nodes)]
+    _, edges_out, edges_in = next(diffs)
+    for e in edges_in:
+        parent[e.child] = e.parent
+
+    for _, edges_out, edges_in in diffs:
+        if len(edges_out) < 4:
+            print("REJECT not 4")
+            return
+        nodes_out = set()
+        print("edges_out:", edges_out)
+        for e in edges_out:
+            nodes_out.add(e.parent)
+            nodes_out.add(e.child)
+        nodes_in = set()
+        for e in edges_in:
+            nodes_in.add(e.parent)
+            nodes_in.add(e.child)
+        node_out = (nodes_out - nodes_in).pop()
+        node_in = (nodes_in - nodes_out).pop()
+        last_parent = list(parent)
+        for e in edges_out:
+            parent[e.child] = -1
+        for e in edges_in:
+            parent[e.child] = e.parent
+
+        if parent[node_in] == -1 or last_parent[node_out] == -1:
+            print("REJECT root node")
+            return
+
+    print("OK num trees = ", ts.num_trees, "seed = ", seed)
+    ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
+
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+    ancestor_data.finalise()
+
+    ancestors_ts = tsinfer.match_ancestors(
+        sample_data, ancestor_data, method=method, path_compression=False)
+    inferred_ts = tsinfer.match_samples(
+        sample_data, ancestors_ts, method=method, simplify=True,
+        path_compression=False)
+
+    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
+    assert np.all(kc_distance == 0)
+
+def check_inference(n, L, rate, seed_start=1, seed_end=100):
+    for j in range(seed_start, seed_end):
+        print("seed = ", j)
+        check_instance(n, L, rate,  j)
 
 
 def main():
@@ -305,9 +417,18 @@ def main():
     # Good example; mismatches in a couple of places, despite getting breakpoints
     # exactly right.
     # run_viz(7, 100, 0.01, 26)
-    run_viz(8, 100, 0.01, 26)
+    # run_viz(8, 100, 0.01, 26)
 
-    # run_viz(6, 100, 0.01, 28)
+    # run_viz(8, 100, 0.01, 278)
+    # run_viz(4, 100, 0.02, 36175)
+    # run_viz(6, 100, 0.02, 2960)
+    # run_viz(8, 100, 0.02, 278)
+    check_inference(8, 100, 0.02, 279, 100000)
+
+
+    # run_viz(7, 100, 0.01, 20)
+    # run_viz(20, 100, 0.01, 5)
+    # run_viz(25, 100, 0.01, 6)
 
 
 if __name__ == "__main__":

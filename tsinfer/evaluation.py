@@ -113,123 +113,374 @@ def insert_perfect_mutations(ts, delta=1/64):
     tables.sites.clear()
     tables.mutations.clear()
 
-    # Commented out version tried to use to some reasoning about SPRs.
-    # Not very successful, but seems like the right way to do this.
+    left_map = {}
+    right_map = {}
+    parent = [-1 for _ in range(ts.num_nodes)]
+    children = [[] for _ in range(ts.num_nodes)]
+    diffs = ts.edge_diffs()
+    (_, right) , _, edges_in = next(diffs)
+    for e in edges_in:
+        parent[e.child] = e.parent
+        children[e.parent].append(e.child)
 
-    # diffs = ts.edge_diffs()
-    # (left, right), edges_out, edges_in = next(diffs)
-    # children = [[] for _ in range(ts.num_nodes)]
-    # parent = np.zeros(ts.num_nodes, dtype=int) - 1
+    root = edges_in[-1].parent
+    stack = list(children[root])
+    left = 0
+    while len(stack) > 0:
+        node = stack.pop()
+        if len(children[node]) > 0:
+            stack.extend(children[node])
+            assert left < right
+            site_id = tables.sites.add_row(position=left, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+            left += delta
+    # left = 0
+    # # for e in sorted(edges_in, key=lambda e: (e.right, -e.parent)):
     # for e in edges_in:
-    #     parent[e.child] = e.parent
-    #     children[e.parent].append(e.child)
-    # x = left
-    # for e in reversed(edges_in):
-    #     if len(children[e.child]) > 0:
-    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #         tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
-    #         print("ADDED mutation over", e.child, "at ", x)
-    #         x += delta
+    #     node = e.child
+    #     print("inserting", e)
+    #     if len(children[node]) > 0:
+    #         assert left < right
+    #         site_id = tables.sites.add_row(position=left, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+    #         left += delta
 
-    # for (left, right), edges_out, edges_in in diffs:
-    #     print("=============")
-    #     print("left = ", left)
-    #     # u = edges_out[0].parent
-    #     # nodes = [u]
-    #     # if parent[u] == -1:
-    #     #     nodes = children[u]
-    #     assert len(edges_out) == len(edges_in)
-    #     x = left - delta
-    #     if len(edges_in) < 4:
-    #         # Put a site over the last two children
-    #         for e in edges_out[-2:]:
-    #             site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
-    #             x -= delta
-    #     else:
-    #         # Put a site over the root of the SPR
-    #         u = edges_out[0].parent
-    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+    for (left, right), edges_out, edges_in in diffs:
+        print("=============")
+        print("left = ", left)
 
-    #     for e in edges_out:
-    #         print("out:", e)
-    #         parent[e.child] = -1
-    #         children[e.parent].remove(e.child)
-    #     for e in edges_in:
-    #         print("in :", e)
-    #         parent[e.child] = e.parent
-    #         children[e.parent].append(e.child)
+        last_parent = list(parent)
+        last_children = list(children)
+        for e in edges_out:
+            print("out:", e)
+            parent[e.child] = -1
+            children[e.parent].remove(e.child)
+        for e in edges_in:
+            print("in :", e)
+            parent[e.child] = e.parent
+            children[e.parent].append(e.child)
+        print("parent = ", parent)
+        print("children = ", children)
 
-    #     x = left
-    #     if len(edges_in) < 4:
-    #         # Put a site over the last two children
-    #         for e in edges_in[:2]:
-    #             site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
-    #             x += delta
-    #     else:
-    #         # Put a site over the root of the SPR
-    #         u = edges_in[-1].parent
-    #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
-    #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+        if len(edges_out) > 2:
+            nodes_out = set()
+            print("edges_out:", edges_out)
+            for e in edges_out:
+                nodes_out.add(e.parent)
+                nodes_out.add(e.child)
+            nodes_in = set()
+            for e in edges_in:
+                nodes_in.add(e.parent)
+                nodes_in.add(e.child)
+            node_out = (nodes_out - nodes_in).pop()
+            node_in = (nodes_in - nodes_out).pop()
+            print("NODE_IN = ", node_in)
+            print("NODE_OUT = ", node_out)
+            assert parent[node_in] != -1
 
-        # u = edges_in[-1].parent
-        # nodes = [u]
-        # if parent[u] == -1:
-        #     nodes = children[u]
-        # nodes = children[edges_in[-1].parent]
-        # x = left
-        # for u in nodes:
-        #     if len(children[u]) > 0:
-        #         site_id = tables.sites.add_row(position=x, ancestral_state="0")
-        #         tables.mutations.add_row(site=site_id, node=u, derived_state="1")
-        #         x += delta
+            assert last_parent[node_out] != -1
+            site_id = tables.sites.add_row(position=left, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=node_in, derived_state="1")
+            site_id = tables.sites.add_row(position=left - delta, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=node_out, derived_state="1")
 
-        # print(parent)
-        # print(children)
+            root = 0
+            while parent[root] != -1:
+                root = parent[root]
+            x  = left + (right - left) / 2
+            for c in children[root]:
+                if len(children[c]) > 0:
+                    site_id = tables.sites.add_row(
+                            position=x, ancestral_state="0")
+                    tables.mutations.add_row(site=site_id, node=c, derived_state="1")
+                    x += delta
+                    # Only insert 1.
+                    break
 
-#         u = edges_in[-1].parent
-#         if parent[u] != -1:
+
+            # if parent[node_in] != -1:
+            #     site_id = tables.sites.add_row(position=left, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=node_in, derived_state="1")
+            # else:
+            #     c = children[node_in]
+            #     child = c[0]
+            #     if len(children[child]) == 0:
+            #         child = c[1]
+            #     site_id = tables.sites.add_row(position=left, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=child, derived_state="1")
+
+            # if last_parent[node_out] != -1:
+            #     site_id = tables.sites.add_row(position=left - delta, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=node_out, derived_state="1")
+            # else:
+            #     c = last_children[node_out]
+            #     child = c[0]
+            #     if len(children[child]) == 0:
+            #         child = c[1]
+            #     site_id = tables.sites.add_row(position=left - delta, ancestral_state="0")
+            #     tables.mutations.add_row(site=site_id, node=child, derived_state="1")
+
+#         else:
+#             print("Root change")
+#             c = [edges_out[j].child for j in range(2)]
+#             child = c[0]
+#             if len(children[child]) == 0:
+#                 child = c[1]
 #             site_id = tables.sites.add_row(position=left, ancestral_state="0")
-#             tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+#             tables.mutations.add_row(site=site_id, node=child, derived_state="1")
 
+
+
+    root = 0
+    while parent[root] != -1:
+        root = parent[root]
+    stack = list(children[root])
+    x = ts.sequence_length - delta
+    while len(stack) > 0:
+        node = stack.pop()
+        if len(children[node]) > 0:
+            stack.extend(children[node])
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+            x -= delta
+
+
+
+#     assert ts.num_samples > 2
+#     left_map = {}
+#     right_map = {}
+#     for e in sorted(ts.edgesets(), key=lambda e: -e.parent):
+#         is_root = False
+#         for t in ts.trees():
+#             if e.left == t.interval[0]:
+#                 is_root = e.parent == t.root
+#                 break
+#         node = e.parent
+#         print(e)
+#         if is_root:
+#             node = e.children[0]
+#             if node < ts.num_samples:
+#                 node = e.children[1]
+#             assert node >= ts.num_samples
+#             print("Choosing node", node)
+#         if e.left not in left_map:
+#             left_map[e.left] = e.left
+#         left = left_map[e.left]
+#         left_map[e.left] = left + delta
+#         site_id = tables.sites.add_row(position=left, ancestral_state="0")
+#         tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+
+#         if e.right not in right_map:
+#             right_map[e.right] = e.right - delta
+#         right = right_map[e.right]
+#         right_map[e.right] = right - delta
+#         site_id = tables.sites.add_row(position=right, ancestral_state="0")
+#         tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+
+
+    # parent_edgese = collections.defaultdict(list)
+    # for e in ts.edges():
+    #     parent_edges[e.parent].append(e)
+
+    # left_map = {}
+    # right_map = {}
+    # for ancestor in range(ts.num_samples, ts.num_nodes):
+    #     print("ancestor = ", ancestor, parent_edges[ancestor])
+    #     edges = parent_edges[ancestor]
+    #     edges.sort(key=lambda e: e.left)
+    #     e = edges[0]
+    #     is_root = False
+    #     for t in ts.trees():
+    #         if e.left == t.interval[0]:
+    #             if ancestor == t.root:
+    #                 is_root = True
+    #             break
+    #     if not is_root:
+    #         if e.left not in left_map:
+    #             left_map[e.left] = e.left
+    #         left = left_map[e.left]
+    #         left_map[e.left] = left + delta
+    #         site_id = tables.sites.add_row(position=left, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    #         e = edges[-1]
+    #         if e.right not in right_map:
+    #             right_map[e.right] = e.right - delta
+    #         right = right_map[e.right]
+    #         right_map[e.right] = right - delta
+    #         site_id = tables.sites.add_row(position=right, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    # child_edges = collections.defaultdict(list)
+    # for e in ts.edges():
+    #     child_edges[e.child].append(e)
+
+    # left_map = {}
+    # right_map = {}
+    # for child in range(ts.num_samples, ts.num_nodes):
+    #     edges = child_edges[child]
+    #     edges.sort(key=lambda e: e.left)
+    #     print(child, edges)
+    #     if len(edges) > 0:
+    #         e = edges[0]
+    #         if e.left not in left_map:
+    #             left_map[e.left] = e.left
+    #         left = left_map[e.left]
+    #         left_map[e.left] = left + delta
+    #         site_id = tables.sites.add_row(position=left, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    #         e = edges[-1]
+    #         if e.right not in right_map:
+    #             right_map[e.right] = e.right - delta
+    #         right = right_map[e.right]
+    #         right_map[e.right] = right - delta
+    #         site_id = tables.sites.add_row(position=right, ancestral_state="0")
+    #         tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    # for e in ts.edges():
+    #     if e.left not in left_map:
+    #         left_map[e.left] = e.left
+    #     left = left_map[e.left]
+    #     left_map[e.left] = left + delta
+    #     site_id = tables.sites.add_row(position=left, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+    # for e in reversed(list(ts.edges())):
+    #     if e.right not in right_map:
+    #         right_map[e.right] = e.right - delta
+    #     right = right_map[e.right]
+    #     right_map[e.right] = right - delta
+    #     site_id = tables.sites.add_row(position=right, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+
+
+#     for e in ts.edges():
+#         if e.child >= ts.num_samples:
+#             if e.left not in left_map:
+#                 left_map[e.left] = e.left
+#             left = left_map[e.left]
+#             left_map[e.left] = left + delta
+#             site_id = tables.sites.add_row(position=left, ancestral_state="0")
+#             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+
+#     for e in list(ts.edges()):
+#         if e.child >= ts.num_samples:
+#             if e.right not in right_map:
+#                 right_map[e.right] = e.right - delta
+#             right = right_map[e.right]
+#             right_map[e.right] = right - delta
+#             site_id = tables.sites.add_row(position=right, ancestral_state="0")
+#             tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+
+    # for e in sorted(ts.edgesets(), key=lambda e: e.parent):
+    #     print(e)
+    #     if e.left not in left_map:
+    #         left_map[e.left] = e.left
+    #     left = left_map[e.left]
+    #     left_map[e.left] = left + delta
+    #     site_id = tables.sites.add_row(position=left, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    #     if e.right not in right_map:
+    #         right_map[e.right] = e.right - delta
+    #     right = right_map[e.right]
+    #     right_map[e.right] = right - delta
+    #     site_id = tables.sites.add_row(position=right, ancestral_state="0")
+    #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+
+    print(tables.sites)
+    print(tables.mutations)
+    msprime.sort_tables(**tables.asdict())
+
+    # ts = msprime.load_tables(**tables.asdict())
+    # tables.sites.clear()
+    # tables.mutations.clear()
+    # for tree in ts.trees():
+    #     for site in tree.sites():
+    #         assert len(site.mutations) == 1
+    #         mutation = site.mutations[0]
+    #         if tree.num_samples(mutation.node) < ts.num_samples:
+    #             site_id = tables.sites.add_row(
+    #                 position=site.position, ancestral_state=site.ancestral_state)
+    #             tables.mutations.add_row(
+    #                 site=site_id, node=mutation.node,
+    #                 derived_state=mutation.derived_state)
+
+    ts = msprime.load_tables(**tables.asdict())
+    A = get_ancestral_haplotypes(ts)[::-1]
+    print(A.astype(np.int8))
+    return ts
+
+
+def insert_perfect_mutations_old(ts, delta=1/64):
+    """
+    Returns a copy of the specified tree sequence where the left and right
+    coordinates of all edgesets are marked by mutations. This *should* be sufficient
+    information to recover the tree sequence exactly.
+
+    This has to be fudged slightly because we cannot have two sites with
+    precisely the same coordinates. We work around this by having sites at
+    some very small delta from the correct location.
+    """
+    tables = ts.dump_tables()
+    tables.sites.clear()
+    tables.mutations.clear()
 
     num_children = np.zeros(ts.num_nodes, dtype=int)
     parent = np.zeros(ts.num_nodes, dtype=int) - 1
     for (left, right), edges_out, edges_in in ts.edge_diffs():
-        # print("=============")
-        # print("left = ", left)
-        x = left - delta
-        # for e in reversed(edges_out):
+        print("=============")
+        print("left = ", left)
+        last_parent = list(parent)
+        last_num_children = list(num_children)
         for e in edges_out:
-            # if parent[e.parent] != -1:
-            #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
-            #     x -= delta
-            if num_children[e.child] > 0:
-                site_id = tables.sites.add_row(position=x, ancestral_state="0")
-                tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
-                x -= delta
-        for e in edges_out:
-            # print("out:", e)
+        # for e in sorted(edges_out, key=lambda e: e.right - e.left):
+            print("out:", e)
             parent[e.child] = -1
             num_children[e.parent] -= 1
+
+        # for e in sorted(edges_in, key=lambda e: -(e.right - e.left)):
         for e in edges_in:
             # print("in :", e)
             parent[e.child] = e.parent
             num_children[e.parent] += 1
-        x = left
-        # for e in reversed(edges_in):
+
+        x = left - delta
+        spr_out_root = -1
+        for e in edges_out:
+            if parent[e.parent] == -1 and num_children[e.parent] == 0:
+                spr_out_root = e.parent
+        for e in edges_out:
+            if last_num_children[e.child] > 0:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
+                x -= delta
+        print("spr_out_root = ", spr_out_root)
+        if spr_out_root != -1 and last_parent[spr_out_root] != -1:
+            print("INSERT out root @ ", x)
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=spr_out_root, derived_state="1")
+            x -= delta
+
+        spr_in_root = -1
         for e in edges_in:
-            # if parent[e.parent] != -1:
-            #     site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            #     tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
-            #     x += delta
+            # print("in: ", e.parent, last_parent[e.parent], last_num_children[e.parent])
+            if last_parent[e.parent] == -1 and last_num_children[e.parent] == 0:
+                spr_in_root = e.parent
+
+        print("spr in root = ", spr_in_root)
+        x = left
+        for e in edges_in:
             if num_children[e.child] > 0:
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
                 x += delta
+        if parent[spr_in_root] != -1:
+            print("INSERT in root")
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=spr_in_root, derived_state="1")
+            x += delta
+
     x = ts.sequence_length - delta
     for u in reversed(range(ts.num_nodes)):
         if num_children[u] > 0 and parent[u] != -1:
@@ -258,7 +509,25 @@ def get_ancestral_haplotypes(ts):
                 # at this site.
                 for u in t.nodes(mutation.node):
                     A[u, site.id] = 1
-    return A
+
+    site_map = {ts.sequence_length: ts.num_sites}
+    for site in ts.sites():
+        site_map[site.position] = site.id
+    # Now split up any ancestors that are composed of multiple edgesets.
+    B = []
+    ancestor_edgesets = collections.defaultdict(list)
+    for e in ts.edgesets():
+        ancestor_edgesets[e.parent].append(e)
+    for j in range(ts.num_samples):
+        B.append(A[j])
+    for j in range(ts.num_samples, ts.num_nodes):
+        edgesets = sorted(ancestor_edgesets[j], key=lambda e: e.left)
+        for e in edgesets:
+            a = A[j].copy()
+            a[:site_map[e.left]] = inference.UNKNOWN_ALLELE
+            a[site_map[e.right]:] = inference.UNKNOWN_ALLELE
+            B.append(a)
+    return np.array(B, dtype=np.uint8)
 
 
 def get_ancestor_descriptors(A):
@@ -329,6 +598,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
     # print(ts.tables.sites)
     # print(ts.tables.edges)
 
+    # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
     time = len(ancestors)
     for a, s, e, focal in zip(ancestors, start, end, focal_sites):
@@ -347,6 +617,9 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
     Prints out the trees at each point in the specified tree sequences,
     alone with their KC distance.
     """
+    weighted_distance = 0
+    total_mismatch_interval = 0
+    total_mismatches = 0
     for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
         print("-" * 20)
         print("Interval          =", left, "--", right)
@@ -354,8 +627,11 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
         print("Inferred interval =", tree2.interval)
         if compute_distances:
             distance = kc_distance(tree1, tree2)
+            weighted_distance += (right - left) * distance
             trailer = ""
             if distance != 0:
+                total_mismatch_interval += (right - left)
+                total_mismatches += 1
                 trailer = "[MISMATCH]"
             print("KC distance       =", distance, trailer)
         print()
@@ -372,3 +648,6 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
             print(" " * len(d1[0]), " | ", d2[j])
             j += 1
         print()
+    print("Total weighted tree distance = ", weighted_distance)
+    print("Total mismatch interval      = ", total_mismatch_interval)
+    print("Total mismatches             = ", total_mismatches)
