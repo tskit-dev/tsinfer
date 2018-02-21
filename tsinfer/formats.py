@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
+FINALISED_KEY = "finalised"
 
 DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
@@ -172,7 +173,7 @@ class DataContainer(object):
     @classmethod
     def load(cls, filename):
         self = cls()
-        self.store = zarr.DBMStore(filename, flag="r")
+        self.store = zarr.DirectoryStore(filename)
         self.data = zarr.open_group(store=self.store)
         self.check_format()
         return self
@@ -200,7 +201,7 @@ class DataContainer(object):
         self.store = None
         self.data = zarr.group()
         if filename is not None:
-            self.store = zarr.DBMStore(filename, flag='n')
+            self.store = zarr.DirectoryStore(filename)
             self.data = zarr.open_group(store=self.store)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
@@ -211,11 +212,7 @@ class DataContainer(object):
         Ensures that the state of the data is flushed to file if a store
         is present.
         """
-        if self.store is not None:
-            self.store.close()
-            # Reopen the store in readonly mode.
-            self.store = zarr.DBMStore(self.store.path, flag="r")
-            self.data = zarr.open_group(store=self.store)
+        self.data.attrs[FINALISED_KEY] = True
 
     @property
     def format_name(self):
@@ -224,6 +221,13 @@ class DataContainer(object):
     @property
     def format_version(self):
         return tuple(self.data.attrs[FORMAT_VERSION_KEY])
+
+    @property
+    def finalised(self):
+        ret = False
+        if FINALISED_KEY in self.data.attrs:
+            ret = True
+        return ret
 
     @property
     def uuid(self):
@@ -337,15 +341,13 @@ class SampleData(DataContainer):
 
     def __str__(self):
         path = None
-        store = None
         if self.store is not None:
             path = self.store.path
-            store = dbm.whichdb(path)
         values = [
             ("path", path),
-            ("store", store),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
+            ("finalised", self.finalised),
             ("uuid", self.uuid),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),

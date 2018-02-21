@@ -13,6 +13,7 @@ import pickle
 import collections
 import itertools
 import tqdm
+import shutil
 
 import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
@@ -529,7 +530,6 @@ def debug_no_recombination():
     print("num_trees = ", inferred_ts.num_trees)
 
 
-
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
     ts = msprime.simulate(
@@ -542,7 +542,7 @@ def build_profile_inputs(n, num_megabases):
     ts.dump(input_file)
     filename = "tmp__NOBACKUP__/profile-n={}_m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
-        os.unlink(filename)
+        shutil.rmtree(filename)
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         filename=filename)
@@ -554,12 +554,12 @@ def build_profile_inputs(n, num_megabases):
     sample_data.finalise()
     progress_monitor.close()
 
-    filename = "tmp__NOBACKUP__/profile-n={}_m={}_.ancestors".format(n, num_megabases)
-    if os.path.exists(filename):
-        os.unlink(filename)
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
-    tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
-    ancestor_data.finalise()
+#     filename = "tmp__NOBACKUP__/profile-n={}_m={}.ancestors".format(n, num_megabases)
+#     if os.path.exists(filename):
+#         os.unlink(filename)
+#     ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
+#     tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
+#     ancestor_data.finalise()
 
 
 def build_1kg_sim():
@@ -900,10 +900,11 @@ if __name__ == "__main__":
     # verify(sys.argv[1], sys.argv[2])
 
     build_profile_inputs(10, 1)
-    build_profile_inputs(1000, 10)
-    build_profile_inputs(1000, 100)
-    build_profile_inputs(10**4, 100)
-    build_profile_inputs(10**5, 100)
+
+    # build_profile_inputs(1000, 10)
+    # build_profile_inputs(1000, 100)
+    # build_profile_inputs(10**4, 100)
+    # build_profile_inputs(10**5, 100)
 
     # build_profile_inputs(100)
 
@@ -939,5 +940,3 @@ if __name__ == "__main__":
     # #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):
     #     print(seed)
-    #     tsinfer_dev(36, 10, seed=seed, error_rate=0.1, method="python")
-
