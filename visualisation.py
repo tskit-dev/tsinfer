@@ -2,6 +2,7 @@
 Visualisation of the copying process and ancestor generation using PIL
 """
 import os
+import sys
 
 import numpy as np
 import PIL.Image as Image
@@ -138,7 +139,7 @@ class Visualiser(object):
         self.mid_padding = 2 * box_size
         self.right_padding = box_size
         self.background_colour = ImageColor.getrgb("white")
-        self.copying_outline_colour = ImageColor.getrgb("orange")
+        self.copying_outline_colour = ImageColor.getrgb("white")
         self.colours = {
             255: ImageColor.getrgb("pink"),
             0: ImageColor.getrgb("blue"),
@@ -200,9 +201,14 @@ class Visualiser(object):
         b = self.box_size
         origin = self.haplotype_origin
         for node in self.row_map.keys():
-            y = self.row_map[node] * b + origin[1]
+            y = self.row_map[node] * b + origin[1] + b / 2
             x = origin[0]
             draw.text((x - b, y), str(node), fill="black")
+            x = self.width - self.right_padding
+            mapped = (node - len(self.row_map) + 1) * -1
+            if mapped < self.num_samples:
+                mapped = (mapped - self.num_samples + 1) * -1
+            draw.text((x + b / 4, y), str(mapped), fill="black")
 
         # Draw the ancestors
         for j in range(self.ancestors.shape[0]):
@@ -308,9 +314,10 @@ def visualise(
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=False,
         path_compression=False)
+
+    prefix = "tmp__NOBACKUP__/"
     visualiser = Visualiser(
         ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
-    prefix = "tmp__NOBACKUP__/"
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
@@ -319,7 +326,7 @@ def visualise(
         path_compression=False)
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
-
+    sys.stdout.flush()
 
 
 def run_viz(n, L, rate, seed, method="C", perfect_ancestors=True):
@@ -344,36 +351,6 @@ def check_instance(n, L, rate, seed, method="C"):
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
-    diffs = ts.edge_diffs()
-    parent = [-1 for _ in range(ts.num_nodes)]
-    _, edges_out, edges_in = next(diffs)
-    for e in edges_in:
-        parent[e.child] = e.parent
-
-    for _, edges_out, edges_in in diffs:
-        if len(edges_out) < 4:
-            print("REJECT not 4")
-            return
-        nodes_out = set()
-        print("edges_out:", edges_out)
-        for e in edges_out:
-            nodes_out.add(e.parent)
-            nodes_out.add(e.child)
-        nodes_in = set()
-        for e in edges_in:
-            nodes_in.add(e.parent)
-            nodes_in.add(e.child)
-        node_out = (nodes_out - nodes_in).pop()
-        node_in = (nodes_in - nodes_out).pop()
-        last_parent = list(parent)
-        for e in edges_out:
-            parent[e.child] = -1
-        for e in edges_in:
-            parent[e.child] = e.parent
-
-        if parent[node_in] == -1 or last_parent[node_out] == -1:
-            print("REJECT root node")
-            return
 
     print("OK num trees = ", ts.num_trees, "seed = ", seed)
     ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
@@ -396,7 +373,7 @@ def check_instance(n, L, rate, seed, method="C"):
         path_compression=False)
 
     breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
-    assert np.all(kc_distance == 0)
+    # assert np.all(kc_distance == 0)
 
 def check_inference(n, L, rate, seed_start=1, seed_end=100):
     for j in range(seed_start, seed_end):
@@ -422,8 +399,11 @@ def main():
     # run_viz(8, 100, 0.01, 278)
     # run_viz(4, 100, 0.02, 36175)
     # run_viz(6, 100, 0.02, 2960)
-    # run_viz(8, 100, 0.02, 278)
-    check_inference(8, 100, 0.02, 279, 100000)
+
+    # run_viz(8, 100, 0.02, 1)
+
+    run_viz(7, 100000, 0.00002, 2, method="C")
+    # check_inference(4, 10000, 0.0002, 1, 100000)
 
 
     # run_viz(7, 100, 0.01, 20)

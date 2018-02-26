@@ -379,22 +379,22 @@ def tsinfer_dev(
 
     G = generate_samples(ts, genotype_quality)
     sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        filename="tmp.tsis")
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        # filename="tmp.tsis")
     for site, genotypes in zip(ts.sites(), G):
         sample_data.add_variant(site.position, ["0", "1"], genotypes)
     sample_data.finalise()
 
-    sample_data = tsinfer.SampleData.load("tmp.tsis")
-    print("sample data after save:")
-    print(sample_data)
+#     sample_data = tsinfer.SampleData.load("tmp.tsis")
+#     print("sample data after save:")
+#     print(sample_data)
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename="tmp.tsia")
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data)
     tsinfer.build_ancestors(sample_data, ancestor_data)
     ancestor_data.finalise()
 
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
 
     A = ancestor_data.genotypes[:].T
     A[A == 255] = 0
@@ -899,7 +899,7 @@ if __name__ == "__main__":
 
     # verify(sys.argv[1], sys.argv[2])
 
-    build_profile_inputs(10, 1)
+    # build_profile_inputs(10, 1)
 
     # build_profile_inputs(1000, 10)
     # build_profile_inputs(1000, 100)
@@ -919,8 +919,8 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(10, 0.1, seed=6, num_threads=0,
-    #         genotype_quality=0.0, method="P", log_level="WARNING")
+    tsinfer_dev(10, 0.1, seed=6, num_threads=0,
+            genotype_quality=0.0, method="P") #, log_level="WARNING")
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)

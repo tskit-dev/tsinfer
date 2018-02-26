@@ -622,6 +622,23 @@ class AncestorMatcher(object):
         # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
         # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
+        # Traverse downwards and choose the deepest matching node.
+        # stack = [(max_L_node, 0)]
+        # max_depth = -1
+        # # print("Starting traversal at ", max_L_node)
+        # while len(stack) > 0:
+        #     u, depth = stack.pop()
+        #     # print("  " * depth, "visit", u)
+        #     if depth > max_depth:
+        #         max_L_node = u
+        #         max_depth = depth
+        #     v = self.left_child[u]
+        #     while v != -1:
+        #         if self.likelihood[v] == -1:
+        #             stack.append((v, depth + 1))
+        #         v = self.right_sib[v]
+        # # print("done; max_depth = ", max_depth, max_L_node)
+
         self.max_likelihood_node[site] = max_L_node
 
         # Reset the path cache
@@ -880,30 +897,29 @@ class AncestorMatcher(object):
         match[:] = 0
         match[:start] = UNKNOWN_ALLELE
         match[end:] = UNKNOWN_ALLELE
+        # Reset the tree.
         self.parent[:] = -1
+        self.left_child[:] = -1
+        self.right_child[:] = -1
+        self.left_sib[:] = -1
+        self.right_sib[:] = -1
         # print("TB: max_likelihood node = ", u)
         pos = self.tree_sequence_builder.num_sites
         while pos > start:
             # print("Top of loop: pos = ", pos)
-            # while k >= 0 and edges[k].left == pos:
-            #     self.parent[edges[k].child] = -1
             while k >= 0 and Il.peekitem(k)[1].left == pos:
                 edge = Il.peekitem(k)[1]
-                self.parent[edge.child] = -1
+                self.remove_edge(edge)
                 k -= 1
-            # while j >= 0 and edges[I[j]].right == pos:
-            #     self.parent[edges[I[j]].child] = edges[I[j]].parent
             while j >= 0 and Ir.peekitem(j)[1].right == pos:
                 edge = Ir.peekitem(j)[1]
-                self.parent[edge.child] = edge.parent
+                self.insert_edge(edge)
                 j -= 1
             right = pos
             left = 0
             if k >= 0:
-                # left = max(left, edges[k].left)
                 left = max(left, Il.peekitem(k)[1].left)
             if j >= 0:
-                # left = max(left, edges[I[j]].right)
                 left = max(left, Ir.peekitem(j)[1].right)
             pos = left
             # print("tree:", left, right, "j = ", j, "k = ", k)
