@@ -880,7 +880,7 @@ class AncestorMatcher(object):
 
     def run_traceback(self, start, end, match):
         # print("traceback", start, end)
-        # self.print_state()
+        self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -927,7 +927,7 @@ class AncestorMatcher(object):
             assert left < right
             for l in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
-                # print("TB: site = ", l, u)
+                print("TB: site = ", l, u)
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
                             self.parent, u,
@@ -946,7 +946,7 @@ class AncestorMatcher(object):
                 if recombination_required[u]:
                     output_edge.left = l
                     u = self.max_likelihood_node[l - 1]
-                    # print("\tSwitch to ", u)
+                    print("\tSwitch to ", u)
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.
@@ -960,9 +960,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        # print("returning edges:")
+        print("returning edges:")
         for j, e in enumerate(output_edges):
-            # print("\t", e.left, e.right, e.parent)
+            print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python
@@ -972,6 +972,11 @@ class AncestorMatcher(object):
             left[j] = e.left
             right[j] = e.right
             parent[j] = e.parent
+            assert self.max_likelihood_node[e.right - 1] == e.parent
+            max_right = e.right
+            while max_right < self.num_sites and self.max_likelihood_node[max_right - 1] == e.parent:
+                max_right += 1
+            print("\tmax_right = ", max_right)
 
         return left, right, parent
 

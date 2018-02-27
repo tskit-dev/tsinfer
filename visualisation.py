@@ -341,12 +341,9 @@ def run_viz(
         model="smc_prime", mutation_rate=mutation_rate)
     if perfect_mutations:
         ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+    else:
+        ts = tsinfer.strip_singletons(ts)
     print("num_sites = ", ts.num_sites)
-    # D = tsinfer.hk_D_matrix(ts.genotype_matrix())
-    # print(D)
-    # nonzero = list(zip(*np.where(D != 0)))
-    # print(nonzero)
-    tsinfer.hk_intervals(ts.genotype_matrix())
 
     with open("tmp__NOBACKUP__/edges.svg", "w") as f:
         f.write(draw_edges(ts))
@@ -414,8 +411,8 @@ def main():
 
     # run_viz(8, 100, 0.02, 1)
     run_viz(
-        8, 100, 0.02, 5, mutation_rate=0.05, perfect_ancestors=False,
-        perfect_mutations=False)
+        5, 100, 0.01, 5, mutation_rate=0.05, perfect_ancestors=False,
+        perfect_mutations=False, method="P")
 
 
     # run_viz(7, 100000, 0.00002, 2, method="C")

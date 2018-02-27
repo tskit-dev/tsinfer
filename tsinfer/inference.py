@@ -280,7 +280,9 @@ class Matcher(object):
         """
         matcher = self.matcher[thread_index]
         match = self.match[thread_index]
+        print("Find path", child_id)
         left, right, parent = matcher.find_path(haplotype, start, end, match)
+        print("Done")
         self.results.set_path(child_id, left, right, parent)
         self.progress_monitor.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
