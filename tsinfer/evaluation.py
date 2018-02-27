@@ -133,37 +133,37 @@ def insert_perfect_mutations(ts, delta=1/64):
     msprime.sort_tables(**tables.asdict())
     ts = msprime.load_tables(**tables.asdict())
 
-    tables = ts.dump_tables()
-    A = get_ancestral_haplotypes(ts)
-    site_map = {site.position: site.id for site in ts.sites()}
-    print(A)
+#     tables = ts.dump_tables()
+#     A = get_ancestral_haplotypes(ts)
+#     site_map = {site.position: site.id for site in ts.sites()}
+#     print(A)
 
-    child_edges = collections.defaultdict(list)
-    for e in ts.edges():
-        child_edges[e.child].append(e)
+#     child_edges = collections.defaultdict(list)
+#     for e in ts.edges():
+#         child_edges[e.child].append(e)
 
-    breakpoints = collections.Counter()
-    for child in reversed(sorted(child_edges.keys())):
-        edges = child_edges[child]
-        if len(edges) > 1:
-            edges = sorted(edges, key=lambda e: -e.left)
-            print("child = ", child)
-            for j in range(len(edges) - 1):
-                p1 = edges[j].parent
-                p2 = edges[j + 1].parent
-                bp = site_map[edges[j].left]
-                print("\tpos = ", edges[j].left)
-                print("\t", p1, A[p1, bp-1:bp+1])
-                print("\t", p2, A[p2, bp-1:bp+1])
-                values = (A[p1, bp - 1], A[p2, bp - 1])
-                if (
-                        p1 != p2 and #inference.UNKNOWN_ALLELE not in values and \
-                        values[0] != values[1]):
-                    breakpoints[edges[j].left] += 1
-                    x = edges[j].left - breakpoints[edges[j].left] * delta
-                    print("\tINSERTING at ", x)
-                    site_id = tables.sites.add_row(position=x, ancestral_state="0")
-                    tables.mutations.add_row(site=site_id, node=p2, derived_state="1")
+#     breakpoints = collections.Counter()
+#     for child in reversed(sorted(child_edges.keys())):
+#         edges = child_edges[child]
+#         if len(edges) > 1:
+#             edges = sorted(edges, key=lambda e: -e.left)
+#             print("child = ", child)
+#             for j in range(len(edges) - 1):
+#                 p1 = edges[j].parent
+#                 p2 = edges[j + 1].parent
+#                 bp = site_map[edges[j].left]
+#                 print("\tpos = ", edges[j].left)
+#                 print("\t", p1, A[p1, bp-1:bp+1])
+#                 print("\t", p2, A[p2, bp-1:bp+1])
+#                 values = (A[p1, bp - 1], A[p2, bp - 1])
+#                 if (
+#                         p1 != p2 and #inference.UNKNOWN_ALLELE not in values and \
+#                         values[0] != values[1]):
+#                     breakpoints[edges[j].left] += 1
+#                     x = edges[j].left - breakpoints[edges[j].left] * delta
+#                     print("\tINSERTING at ", x)
+#                     site_id = tables.sites.add_row(position=x, ancestral_state="0")
+#                     tables.mutations.add_row(site=site_id, node=p2, derived_state="1")
 
 
 #             for e in edges:
@@ -199,8 +199,8 @@ def insert_perfect_mutations(ts, delta=1/64):
 #                     # site_id = tables.sites.add_row(position=x, ancestral_state="0")
 #                     # tables.mutations.add_row(site=site_id, node=node, derived_state="1")
 
-    msprime.sort_tables(**tables.asdict())
-    ts = msprime.load_tables(**tables.asdict())
+    # msprime.sort_tables(**tables.asdict())
+    # ts = msprime.load_tables(**tables.asdict())
     return ts
 
 
@@ -728,6 +728,60 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
             start=s, end=e, time=time, focal_sites=np.array(focal, dtype=np.int32),
             haplotype=a)
         time -= 1
+
+
+def hk_D_matrix(genotype_matrix):
+    """
+    Returns the Hudson-Kaplan D matrix for all pairs of sites in the specified
+    genotypes matrix (rows correspond to sites). Only fills in values above
+    the diagonal.
+    """
+    m, n = genotype_matrix.shape
+    D = np.zeros((m, m), dtype=np.int8)
+    for j in range(m):
+        Gj = genotype_matrix[j]
+        for k in range(j + 1, m):
+            Gk = genotype_matrix[k]
+            q00 = np.any(np.logical_not(np.logical_or(Gk, Gj)))
+            q01 = np.any(np.logical_and(Gk, np.logical_not(Gj)))
+            q10 = np.any(np.logical_and(np.logical_not(Gk), Gj))
+            q11 = np.any(np.logical_and(Gk, Gj))
+            D[j, k] = q00 and q01 and q10 and q11
+    return D
+
+def hk_intervals(genotype_matrix):
+    """
+    Returns the minimal set of intervals required according to the
+    Hudson-Kaplan algorithm for computing R_min.
+    """
+    m, n = genotype_matrix.shape
+    intervals = []
+    for j in range(m):
+        Gj = genotype_matrix[j]
+        for k in range(j + 1, m):
+            Gk = genotype_matrix[k]
+            q00 = np.any(np.logical_not(np.logical_or(Gk, Gj)))
+            q01 = np.any(np.logical_and(Gk, np.logical_not(Gj)))
+            q10 = np.any(np.logical_and(np.logical_not(Gk), Gj))
+            q11 = np.any(np.logical_and(Gk, Gj))
+            if q00 and q01 and q10 and q11:
+                intervals.append((j, k))
+
+    # Now remove the intervals that completely overlap
+    I = []
+    for j in range(len(intervals)):
+        x  = intervals[j]
+        keep = True
+        for k in range(len(intervals)):
+            y = intervals[k]
+            if j != k and x[0] <= y[0] < y[1] <= x[1]:
+                keep = False
+                break
+        if keep:
+            I.append(x)
+    print("After: ", I)
+    # We should also remove all the intervals that overlap with any others,
+    # until we're left with the set non-overlapping intervals.
 
 
 def print_tree_pairs(ts1, ts2, compute_distances=True):

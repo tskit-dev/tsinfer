@@ -86,7 +86,7 @@ def draw_ancestors(ts, width=800, height=600):
         dwg.add(dwg.line(
             (x_trans(x), 2 * y_pad), (x_trans(x), height), stroke="grey",
             stroke_width=1))
-        dwg.add(dwg.text(str(x), (x_trans(x), y_pad),  writing_mode="tb"))
+        dwg.add(dwg.text("{}".format(x), (x_trans(x), y_pad),  writing_mode="tb"))
 
     for e in ts.edgesets():
         a = x_trans(e.left), y_trans(e.parent)
@@ -188,14 +188,16 @@ class Visualiser(object):
     def draw_true_breakpoints(self, draw):
         b = self.box_size
         origin = self.haplotype_origin
-        for position in self.true_breakpoints:
-            if position in self.x_coordinate_map:
-                x = self.x_coordinate_map[position]
-                y1 = origin[0] + self.row_map[0] * b
-                y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
-                draw.line([(x, y1), (x, y2)], fill="purple", width=3)
-            else:
-                print("WARNING: position", position, "missing from site map")
+        coordinates = sorted(self.x_coordinate_map.keys())
+        for bp in self.true_breakpoints:
+            # Find the smallest coordinate > position
+            for position in coordinates:
+                if position >= bp:
+                    break
+            x = self.x_coordinate_map[position]
+            y1 = origin[0] + self.row_map[0] * b
+            y2 = origin[1] + (self.row_map[len(self.row_map) - 1] + 1) * b
+            draw.line([(x, y1), (x, y2)], fill="purple", width=3)
 
     def draw_base_haplotypes(self, draw):
         b = self.box_size
@@ -257,7 +259,7 @@ class Visualiser(object):
         # Draw the positions of the sites.
         font = ImageFont.load_default()
         for site in self.original_ts.sites():
-            label = "{}".format(site.position)
+            label = "{} {:.6f}".format(site.id, site.position)
             img_txt = Image.new('L', font.getsize(label), color="white")
             draw_txt = ImageDraw.Draw(img_txt)
             draw_txt.text((0, 0), label, font=font)
@@ -320,7 +322,7 @@ def visualise(
         ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
-    tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
+    # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False)
@@ -329,13 +331,23 @@ def visualise(
     sys.stdout.flush()
 
 
-def run_viz(n, L, rate, seed, method="C", perfect_ancestors=True):
+def run_viz(
+        n, L, rate, seed, mutation_rate=0, method="C",
+        perfect_ancestors=True, perfect_mutations=True):
     recomb_map = msprime.RecombinationMap.uniform_map(
             length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
-        model="smc_prime")
-    ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+        model="smc_prime", mutation_rate=mutation_rate)
+    if perfect_mutations:
+        ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+    print("num_sites = ", ts.num_sites)
+    # D = tsinfer.hk_D_matrix(ts.genotype_matrix())
+    # print(D)
+    # nonzero = list(zip(*np.where(D != 0)))
+    # print(nonzero)
+    tsinfer.hk_intervals(ts.genotype_matrix())
+
     with open("tmp__NOBACKUP__/edges.svg", "w") as f:
         f.write(draw_edges(ts))
     with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
@@ -401,8 +413,12 @@ def main():
     # run_viz(6, 100, 0.02, 2960)
 
     # run_viz(8, 100, 0.02, 1)
+    run_viz(
+        8, 100, 0.02, 5, mutation_rate=0.05, perfect_ancestors=False,
+        perfect_mutations=False)
 
-    run_viz(7, 100000, 0.00002, 2, method="C")
+
+    # run_viz(7, 100000, 0.00002, 2, method="C")
     # check_inference(4, 10000, 0.0002, 1, 100000)
 
 
