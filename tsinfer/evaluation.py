@@ -113,30 +113,76 @@ def insert_perfect_mutations(ts, delta=1/64):
     tables.sites.clear()
     tables.mutations.clear()
 
-    direction = 0
+    # ancestors = collections.defaultdict(list)
+    # for e in ts.edgesets():
+    #     ancestors[e.parent].append(e)
+    # breakpoints = []
+    # for node, edgesets in ancestors.items():
+    #     right = max(e.right for e in edgesets)
+    #     if right != ts.sequence_length:
+    #         breakpoints.append((right, node))
+
+    # breakpoints.sort()
+    # # Add sentinel
+    # breakpoints.append((ts.sequence_length + 1, 0))
+    # for x, u in breakpoints:
+    #     print(x, u)
+    edgesets = sorted(list(ts.edgesets()), key=lambda e: e.right)
+    j = 0
     for tree in ts.trees():
         x = tree.interval[0]
-        nodes = list(tree.nodes())
-        if direction == 1:
-            nodes = list(reversed(nodes))
-        direction = (direction + 1) % 2
-        for node in nodes:
+        for node in tree.nodes():
             if tree.parent(node) != -1 and len(tree.children(node)) > 0:
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
                 x += delta
-        for node in nodes:
-            if tree.parent(node) != -1 and len(tree.children(node)) > 0:
+        # print("tree interval", tree.interval)
+        x = tree.interval[1] - delta
+        while j < len(edgesets) and edgesets[j].right == tree.interval[1]:
+            e = edgesets[j]
+            # print("\t", e.right, e.parent)
+            node = e.parent
+            # print("Process breakpoint", breakpoints[j])
+            if tree.parent(node) != -1:
+                # print("site at", x)
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-                x += delta
+                x -= delta
+            j += 1
+
+
+
+#     for parent, edgesets in ancestors.items():
+#         edgesets = sorted(edgesets, key=lambda e: -e.left)
+#         print(parent, [e.children for e in edgesets])
+#         for j in range(len(edgesets) - 1):
+#             diff = set(edgesets[j + 1].children) - set(edgesets[j].children)
+#             pos = edgesets[j].left
+#             print("diff = ", diff)
+#             print("pos = ", pos)
+#             last_site = site_map[pos] - 1
+#             for node in sorted(diff):
+#                 print("node = ", node, A[node, last_site], A[node])
+#                 if A[node, last_site] == 1:
+#                     x = edgesets[j].left - delta
+#                 else:
+#                     x = edgesets[j].left - 2 * delta
+#                 print("\t", node, parent, edgesets[j].left, x)
+#                 print("\tInsertint mutation at ",x, "over ", node)
+#                 # site_id = tables.sites.add_row(position=x, ancestral_state="0")
+#                 # tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+
+
+
     msprime.sort_tables(**tables.asdict())
     ts = msprime.load_tables(**tables.asdict())
+    return ts
 
-#     tables = ts.dump_tables()
-#     A = get_ancestral_haplotypes(ts)
-#     site_map = {site.position: site.id for site in ts.sites()}
-#     print(A)
+
+    # tables = ts.dump_tables()
+    # site_map = {site.position: site.id for site in ts.sites()}
+    # A = get_ancestral_haplotypes(ts)
+# #     print(A)
 
 #     child_edges = collections.defaultdict(list)
 #     for e in ts.edges():
@@ -201,7 +247,7 @@ def insert_perfect_mutations(ts, delta=1/64):
 
     # msprime.sort_tables(**tables.asdict())
     # ts = msprime.load_tables(**tables.asdict())
-    return ts
+    # return ts
 
 
 def insert_perfect_mutations_spr(ts, delta=1/64):
@@ -652,6 +698,10 @@ def get_ancestor_descriptors(A):
     focal_sites = [[]]
     start = [0]
     end = [L]
+    # ancestors = []
+    # focal_sites = []
+    # start = []
+    # end = []
     mask = np.ones(L)
     for a in A:
         masked = np.logical_and(a == 1, mask).astype(int)

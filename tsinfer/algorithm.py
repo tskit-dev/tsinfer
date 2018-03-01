@@ -153,30 +153,6 @@ class AncestorBuilder(object):
         return start, end
 
 
-def edge_group_equal(edges, group1, group2):
-    """
-    Returns true if the specified subsets of the list of edges are considered
-    equal in terms of a shared recombination.
-    """
-    s1, e1 = group1
-    s2, e2 = group2
-    ret = False
-    if (e1 - s1) == (e2 - s2):
-        ret = True
-        for j in range(e1 - s1):
-            edge1 = edges[s1 + j]
-            edge2 = edges[s2 + j]
-            condition = (
-                edge1.left != edge2.left or
-                edge1.right != edge2.right or
-                edge1.parent != edge2.parent)
-            if condition:
-                ret = False
-                break
-    return ret
-
-
-
 class TreeSequenceBuilder(object):
 
     def __init__(
@@ -955,7 +931,14 @@ class AncestorMatcher(object):
         output_edge.left = start
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
-        # print("mathc h = ", match)
+        # print("match = ", match)
+        # for j, e in enumerate(output_edges):
+
+        #     assert self.max_likelihood_node[e.right - 1] == e.parent
+        #     max_right = e.right
+        #     while max_right < self.num_sites and self.max_likelihood_node[max_right - 1] == e.parent:
+        #         max_right += 1
+        #     print("\tmax_right = ", max_right)
 
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
@@ -972,11 +955,6 @@ class AncestorMatcher(object):
             left[j] = e.left
             right[j] = e.right
             parent[j] = e.parent
-            assert self.max_likelihood_node[e.right - 1] == e.parent
-            max_right = e.right
-            while max_right < self.num_sites and self.max_likelihood_node[max_right - 1] == e.parent:
-                max_right += 1
-            print("\tmax_right = ", max_right)
 
         return left, right, parent
 
