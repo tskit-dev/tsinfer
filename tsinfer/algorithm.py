@@ -631,6 +631,7 @@ class AncestorMatcher(object):
         # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def normalise_likelihoods(self, allow_zeros=False):
+        assert len(self.likelihood_nodes) > 0
         max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
         if not allow_zeros:
             assert max_L > 0
@@ -789,13 +790,12 @@ class AncestorMatcher(object):
                 root = self.left_child[0]
                 assert self.right_sib[root] == -1
 
-            root_change = False
             if root != last_root:
-                root_change = True
                 if last_root == 0:
                     self.likelihood[last_root] = -2
                     self.likelihood_nodes.remove(last_root)
-                if root not in self.likelihood_nodes:
+                if self.likelihood[root] == -2:
+                # if root not in self.likelihood_nodes:
                     self.likelihood[root] = 0
                     self.likelihood_nodes.append(root)
                 last_root = root

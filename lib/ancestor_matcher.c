@@ -753,12 +753,12 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 
             /* Traverse up the tree from the current node. The first marked node that we
              * meed tells us whether we need to recombine */
-            while (recombination_required[u] == -1) {
+            while (u != 0 && recombination_required[u] == -1) {
                 u = parent[u];
                 /* printf("\ttraverse up %d -> %d\n", u, recombination_required[u]); */
                 assert(u != NULL_NODE);
             }
-            if (recombination_required[u]) {
+            if (recombination_required[u] && l > start) {
                 max_likelihood_node = self->max_likelihood_node[l - 1];
                 /* printf("Recombining! site = %d new node = %d\n", l, max_likelihood_node); */
                 /* if (max_likelihood_node == self->output.parent[self->output.size]) { */
@@ -839,7 +839,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     int ret = 0;
     site_id_t site;
     edge_t edge;
-    node_id_t u;
+    node_id_t u, root, last_root;
     double L_child = 0;
     /* Use the restrict keyword here to try to improve performance by avoiding
      * unecessary loads. We must be very careful to to ensure that all references
@@ -887,14 +887,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         pos = right;
     }
 
-    /* Insert the initial likelihoods. Zero is the root, and it has likelihood
-     * one. All non-zero roots are marked with a special value so we can
-     * identify them when the enter the tree */
-    L[0] = 1.0;
+    /* Insert the initial likelihoods. All non-zero roots are marked with a
+     * special value so we can identify them when the enter the tree */
     L_cache[0] = CACHE_UNSET;
-    self->likelihood_nodes[0] = 0;
-    self->num_likelihood_nodes = 1;
-    for (u = 1; u < (node_id_t) self->num_nodes; u++) {
+    for (u = 0; u < (node_id_t) self->num_nodes; u++) {
         L_cache[u] = CACHE_UNSET;
         if (parent[u] != NULL_NODE) {
             L[u] = NULL_LIKELIHOOD;
@@ -910,7 +906,15 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     if (self->flags & TSI_EXTENDED_CHECKS) {
         ancestor_matcher_check_state(self);
     }
-    /* remove_start = k; */
+    last_root = 0;
+    if (left_child[0] != NULL_NODE) {
+        last_root = left_child[0];
+        assert(right_sib[last_root] == NULL_NODE);
+    }
+    L[last_root] = 1.0;
+    self->likelihood_nodes[0] = last_root;
+    self->num_likelihood_nodes = 1;
+
     remove_start = out;
     while (left < end) {
         assert(left < right);
@@ -936,9 +940,29 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 L[edge.parent] = NONZERO_ROOT_LIKELIHOOD;
             }
         }
+
+        root = 0;
+        if (left_child[0] != NULL_NODE) {
+            root = left_child[0];
+            assert(right_sib[root] == NULL_NODE);
+        }
+        if (root != last_root) {
+            if (last_root == 0) {
+                ancestor_matcher_delete_likelihood(self, last_root, L);
+                L[last_root] = NONZERO_ROOT_LIKELIHOOD;
+            }
+            if (L[root] == NONZERO_ROOT_LIKELIHOOD) {
+                L[root] = 0;
+                self->likelihood_nodes[self->num_likelihood_nodes] = root;
+                self->num_likelihood_nodes++;
+            }
+            last_root = root;
+            renormalise_required = true;
+        }
         if (unlikely(renormalise_required)) {
             ancestor_matcher_renormalise_likelihoods(self, L, true);
         }
+
         /* ancestor_matcher_print_state(self, stdout); */
         /* ancestor_matcher_check_state(self); */
         for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
@@ -955,7 +979,6 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         while (out != NULL && (edge = get_edge(out)).right == right) {
             remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             out = out->next;
-            assert(L[edge.parent] != NONZERO_ROOT_LIKELIHOOD);
             assert(L[edge.child] != NONZERO_ROOT_LIKELIHOOD);
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 u = edge.parent;
@@ -1002,7 +1025,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             /* Insert zero likelihoods for any nonzero roots that have entered
              * the tree. Note we don't bother trying to compress the tree here
              * because this will be done for the next site anyway. */
-            if (unlikely(L[edge.parent] == NONZERO_ROOT_LIKELIHOOD)) {
+            if (unlikely(edge.parent != 0 && L[edge.parent] == NONZERO_ROOT_LIKELIHOOD)) {
                 L[edge.parent] = 0;
                 self->likelihood_nodes[self->num_likelihood_nodes] = edge.parent;
                 self->num_likelihood_nodes++;

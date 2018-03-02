@@ -383,17 +383,20 @@ def check_instance(n, L, rate, seed, method="C"):
         path_compression=False)
 
     breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
-    print(np.all(kc_distance) == 0)
     # assert np.all(kc_distance == 0)
     # print(breakpoints, kc_distance)
     # I = kc_distance != 0
     # print(breakpoints[I])
+    diffs = []
     for j in range(len(kc_distance)):
         diff = breakpoints[j + 1] - breakpoints[j]
+        if kc_distance[j] != 0:
+            diffs.append(diff)
         if diff > 1:
-            if kc_distance[j] != 0:
-                print(diff, breakpoints[j], breakpoints[j + 1], kc_distance[j])
             assert kc_distance[j] == 0
+    diffs = np.array(diffs)
+    print("num_diffs = {} total_diff_length = {:.2f} mean_diff = {:.4f} max_diff = {:.4f}".format(
+        diffs.shape[0], np.sum(diffs), np.mean(diffs), np.max(diffs)))
 
 def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
     for j in range(seed_start, seed_end):
@@ -430,11 +433,11 @@ def main():
 
     # Violations caused by ultimate ancestor, not just withing the deltas.
     # run_viz(4, 100, 0.02, 1, method="C")
-    run_viz(4, 100, 0.02, 42, method="P")
+    # run_viz(4, 100, 0.02, 42, method="P")
     # run_viz(25, 100, 0.02, 3, method="P")
 
-    # run_viz(4, 100, 0.02, 429, method="P")
-    # check_inference(25, 100, 0.02, 1, 100000, method="P")
+    run_viz(5, 100, 0.02, 112, method="P")
+    # check_inference(155, 100, 0.02, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)
