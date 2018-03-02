@@ -312,10 +312,11 @@ def visualise(
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, method=method, path_compression=False)
+        sample_data, ancestor_data, method=method, path_compression=False,
+        extended_checks=True)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=False,
-        path_compression=False)
+        path_compression=False, extended_checks=True)
 
     prefix = "tmp__NOBACKUP__/"
     visualiser = Visualiser(
@@ -382,6 +383,7 @@ def check_instance(n, L, rate, seed, method="C"):
         path_compression=False)
 
     breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
+    print(np.all(kc_distance) == 0)
     # assert np.all(kc_distance == 0)
     # print(breakpoints, kc_distance)
     # I = kc_distance != 0
@@ -393,19 +395,20 @@ def check_instance(n, L, rate, seed, method="C"):
                 print(diff, breakpoints[j], breakpoints[j + 1], kc_distance[j])
             assert kc_distance[j] == 0
 
-def check_inference(n, L, rate, seed_start=1, seed_end=100):
+def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
     for j in range(seed_start, seed_end):
-        print("seed = ", j)
-        check_instance(n, L, rate,  j)
+        print("seed = ", j, file=sys.stderr)
+        check_instance(n, L, rate,  j, method)
 
 
 def main():
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
-    # import daiquiri
-    # import sys
-    # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
+
+#     import daiquiri
+#     import sys
+#     daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     # run_viz(12, 100, 0.01, 23)
 
@@ -427,11 +430,11 @@ def main():
 
     # Violations caused by ultimate ancestor, not just withing the deltas.
     # run_viz(4, 100, 0.02, 1, method="C")
-    run_viz(4, 100, 0.02, 42, method="C")
+    run_viz(4, 100, 0.02, 42, method="P")
+    # run_viz(25, 100, 0.02, 3, method="P")
 
-    # run_viz(20, 100, 0.02, 10, method="C")
-    # check_inference(20, 100, 0.02, 1, 100000)
-
+    # run_viz(4, 100, 0.02, 429, method="P")
+    # check_inference(25, 100, 0.02, 1, 100000, method="P")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)

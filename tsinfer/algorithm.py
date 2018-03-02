@@ -502,6 +502,7 @@ class AncestorMatcher(object):
             print(l, self.max_likelihood_node[l], self.traceback[l], sep="\t")
 
     def check_likelihoods(self):
+        assert len(set(self.likelihood_nodes)) == len(self.likelihood_nodes)
         # Every value in L_nodes must be positive.
         for u in self.likelihood_nodes:
             assert self.likelihood[u] >= 0
@@ -720,8 +721,6 @@ class AncestorMatcher(object):
         return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
     def find_path(self, h, start, end, match):
-
-        # M = len(self.tree_sequence_builder.edges)
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -748,46 +747,59 @@ class AncestorMatcher(object):
         if j < M and start < Il.peekitem(j)[1].left:
             right = Il.peekitem(j)[1].left
         while j < M and k < M and Il.peekitem(j)[1].left <= start:
-            # while edges[O[k]].right == pos:
             while Ir.peekitem(k)[1].right == pos:
-                # self.remove_edge(edges[O[k]])
                 self.remove_edge(Ir.peekitem(k)[1])
                 k += 1
-            # while j < M and edges[j].left == pos:
             while j < M and Il.peekitem(j)[1].left == pos:
-                # self.insert_edge(edges[j])
                 self.insert_edge(Il.peekitem(j)[1])
                 j += 1
             left = pos
             right = m
             if j < M:
-                # right = min(right, edges[j].left)
                 right = min(right, Il.peekitem(j)[1].left)
             if k < M:
-                # right = min(right, edges[O[k]].right)
                 right = min(right, Ir.peekitem(k)[1].right)
             pos = right
         assert left < right
 
-        self.likelihood_nodes.append(0)
-        self.likelihood[0] = 1
         for u in range(n):
             if self.parent[u] != -1:
                 self.likelihood[u] = -1
 
-        # print("START:", left, right)
+        last_root = 0
+        if self.left_child[0] != -1:
+            last_root = self.left_child[0]
+            assert self.right_sib[last_root] == -1
+        self.likelihood_nodes.append(last_root)
+        self.likelihood[last_root] = 1
+
         remove_start = k
         while left < end:
             # print("START OF TREE LOOP", left, right)
             assert left < right
             for l in range(remove_start, k):
-                # edge = edges[O[l]]
                 edge = Ir.peekitem(l)[1]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
                         self.likelihood[u] = -2
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
+            root = 0
+            if self.left_child[0] != -1:
+                root = self.left_child[0]
+                assert self.right_sib[root] == -1
+
+            root_change = False
+            if root != last_root:
+                root_change = True
+                if last_root == 0:
+                    self.likelihood[last_root] = -2
+                    self.likelihood_nodes.remove(last_root)
+                if root not in self.likelihood_nodes:
+                    self.likelihood[root] = 0
+                    self.likelihood_nodes.append(root)
+                last_root = root
+
             # We can have situations where we've removed the only nonzero likelihood.
             # Then all values are equally likely.
             self.normalise_likelihoods(allow_zeros=True)
@@ -797,9 +809,7 @@ class AncestorMatcher(object):
                 self.update_site(site, h[site])
 
             remove_start = k
-            # while k < M and edges[O[k]].right == right:
             while k < M and Ir.peekitem(k)[1].right == right:
-                # edge = edges[O[k]]
                 edge = Ir.peekitem(k)[1]
                 self.remove_edge(edge)
                 k += 1
@@ -822,7 +832,6 @@ class AncestorMatcher(object):
                     self.likelihood_nodes.append(edge.child)
             # Clear the L cache
             for l in range(remove_start, k):
-                # edge = edges[O[l]]
                 edge = Ir.peekitem(l)[1]
                 u = edge.parent
                 while L_cache[u] != -1:
@@ -831,8 +840,6 @@ class AncestorMatcher(object):
             assert np.all(L_cache == -1)
 
             left = right
-            # while j < M and edges[j].left == left:
-            #     edge = edges[j]
             while j < M and Il.peekitem(j)[1].left == left:
                 edge = Il.peekitem(j)[1]
                 self.insert_edge(edge)
@@ -840,23 +847,20 @@ class AncestorMatcher(object):
                 # There's no point in compressing the likelihood tree here as we'll be
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
-                    if self.likelihood[u] == -2:
-                        # print("INSERTING NODE", u)
+                    if u != 0 and self.likelihood[u] == -2:
                         self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
             right = m
             if j < M:
-                # right = min(right, edges[j].left)
                 right = min(right, Il.peekitem(j)[1].left)
             if k < M:
-                # right = min(right, edges[O[k]].right)
                 right = min(right, Ir.peekitem(k)[1].right)
 
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
         # print("traceback", start, end)
-        self.print_state()
+        # self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -903,7 +907,7 @@ class AncestorMatcher(object):
             assert left < right
             for l in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
-                print("TB: site = ", l, u)
+                # print("TB: site = ", l, u)
                 if l in self.tree_sequence_builder.mutations:
                     if is_descendant(
                             self.parent, u,
@@ -913,16 +917,15 @@ class AncestorMatcher(object):
                 for u, recombine in self.traceback[l].items():
                     # Mark the traceback nodes on the tree.
                     recombination_required[u] = recombine
-                # print("set", recombination_required)
                 # Now traverse up the tree from the current node. The first marked node
                 # we meet tells us whether we need to recombine.
                 u = output_edge.parent
-                while recombination_required[u] == -1:
+                while u != 0 and recombination_required[u] == -1:
                     u = self.parent[u]
-                if recombination_required[u]:
+                if recombination_required[u] and l > start:
                     output_edge.left = l
                     u = self.max_likelihood_node[l - 1]
-                    print("\tSwitch to ", u)
+                    # print("\tSwitch to ", u)
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.
@@ -943,9 +946,9 @@ class AncestorMatcher(object):
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        print("returning edges:")
+        # print("returning edges:")
         for j, e in enumerate(output_edges):
-            print("\t", e.left, e.right, e.parent)
+            # print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python
