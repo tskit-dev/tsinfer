@@ -409,9 +409,9 @@ def main():
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-#     import daiquiri
-#     import sys
-#     daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
+    # import daiquiri
+    # import sys
+    # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     # run_viz(12, 100, 0.01, 23)
 

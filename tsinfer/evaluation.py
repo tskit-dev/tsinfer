@@ -98,7 +98,7 @@ def strip_singletons(ts):
     return msprime.load_tables(
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
 
-def insert_perfect_mutations(ts, delta=1/64):
+def insert_perfect_mutations(ts, delta=None):
     """
     Returns a copy of the specified tree sequence where the left and right
     coordinates of all edgesets are marked by mutations. This *should* be sufficient
@@ -113,20 +113,9 @@ def insert_perfect_mutations(ts, delta=1/64):
     tables.sites.clear()
     tables.mutations.clear()
 
-    # ancestors = collections.defaultdict(list)
-    # for e in ts.edgesets():
-    #     ancestors[e.parent].append(e)
-    # breakpoints = []
-    # for node, edgesets in ancestors.items():
-    #     right = max(e.right for e in edgesets)
-    #     if right != ts.sequence_length:
-    #         breakpoints.append((right, node))
+    if delta is None:
+        delta = 1 / (4 * ts.num_samples)
 
-    # breakpoints.sort()
-    # # Add sentinel
-    # breakpoints.append((ts.sequence_length + 1, 0))
-    # for x, u in breakpoints:
-    #     print(x, u)
     edgesets = sorted(list(ts.edgesets()), key=lambda e: e.right)
     j = 0
     for tree in ts.trees():
@@ -136,8 +125,17 @@ def insert_perfect_mutations(ts, delta=1/64):
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
                 x += delta
-        # print("tree interval", tree.interval)
+
         x = tree.interval[1] - delta
+        for node in tree.nodes():
+            if tree.parent(node) != -1 and len(tree.children(node)) > 0:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+                x -= delta
+        # Put a mutation in the middle of the interval so that we 'anchor' the
+        # copying process in the middle. Otherwise, it can be as easy to copy from
+        # an older ancestor, resulting in errors.
+        # print("tree interval", tree.interval)
         while j < len(edgesets) and edgesets[j].right == tree.interval[1]:
             e = edgesets[j]
             # print("\t", e.right, e.parent)
@@ -149,8 +147,6 @@ def insert_perfect_mutations(ts, delta=1/64):
                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
                 x -= delta
             j += 1
-
-
 
 #     for parent, edgesets in ancestors.items():
 #         edgesets = sorted(edgesets, key=lambda e: -e.left)
