@@ -98,7 +98,7 @@ def strip_singletons(ts):
     return msprime.load_tables(
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
 
-def insert_perfect_mutations(ts, delta=None):
+def insert_perfect_mutations_trees(ts, delta=None):
     """
     Returns a copy of the specified tree sequence where the left and right
     coordinates of all edgesets are marked by mutations. This *should* be sufficient
@@ -127,11 +127,11 @@ def insert_perfect_mutations(ts, delta=None):
                 x += delta
 
         x = tree.interval[1] - delta
-        for node in tree.nodes():
-            if tree.parent(node) != -1 and len(tree.children(node)) > 0:
-                site_id = tables.sites.add_row(position=x, ancestral_state="0")
-                tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-                x -= delta
+#         for node in tree.nodes():
+#             if tree.parent(node) != -1 and len(tree.children(node)) > 0:
+#                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
+#                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
+#                 x -= delta
         # Put a mutation in the middle of the interval so that we 'anchor' the
         # copying process in the middle. Otherwise, it can be as easy to copy from
         # an older ancestor, resulting in errors.
@@ -147,31 +147,41 @@ def insert_perfect_mutations(ts, delta=None):
                 tables.mutations.add_row(site=site_id, node=node, derived_state="1")
                 x -= delta
             j += 1
-
-#     for parent, edgesets in ancestors.items():
-#         edgesets = sorted(edgesets, key=lambda e: -e.left)
-#         print(parent, [e.children for e in edgesets])
-#         for j in range(len(edgesets) - 1):
-#             diff = set(edgesets[j + 1].children) - set(edgesets[j].children)
-#             pos = edgesets[j].left
-#             print("diff = ", diff)
-#             print("pos = ", pos)
-#             last_site = site_map[pos] - 1
-#             for node in sorted(diff):
-#                 print("node = ", node, A[node, last_site], A[node])
-#                 if A[node, last_site] == 1:
-#                     x = edgesets[j].left - delta
-#                 else:
-#                     x = edgesets[j].left - 2 * delta
-#                 print("\t", node, parent, edgesets[j].left, x)
-#                 print("\tInsertint mutation at ",x, "over ", node)
-#                 # site_id = tables.sites.add_row(position=x, ancestral_state="0")
-#                 # tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-
-
-
     msprime.sort_tables(**tables.asdict())
     ts = msprime.load_tables(**tables.asdict())
+
+    parent = [-1 for _ in range(ts.num_nodes)]
+    children = [[] for _ in range(ts.num_nodes)]
+    ancestors = collections.defaultdict(list)
+    for interval, edges_out, edges_in in ts.edge_diffs():
+        print("interval = ", interval)
+        for e in edges_out:
+            parent[e.child] = -1
+            children[e.parent].remove(e.child)
+        for e in edges_in:
+            parent[e.child] = e.parent
+            children[e.parent].append(e.child)
+
+        root = 0
+        while parent[root] != -1:
+            root = parent[root]
+
+        for e in edges_in:
+            # Add a site for this edge.
+            print("edge_in = ", e)
+            stack = [(root, False)]
+            while len(stack) > 0:
+                u, in_subtree = stack.pop()
+                ancestors[u].append(int(in_subtree))
+                print("\t", u, in_subtree)
+                for v in children[u]:
+                    stack.append((v, in_subtree or v == e.child))
+
+    for u in range(ts.num_nodes):
+        print(u, "->", ancestors[u], sep="\t")
+
+
+
     return ts
 
 
@@ -578,7 +588,7 @@ def insert_perfect_mutations_spr(ts, delta=1/64):
     return ts
 
 
-def insert_perfect_mutations_old(ts, delta=1/64):
+def insert_perfect_mutations(ts, delta=None):
     """
     Returns a copy of the specified tree sequence where the left and right
     coordinates of all edgesets are marked by mutations. This *should* be sufficient
@@ -594,66 +604,57 @@ def insert_perfect_mutations_old(ts, delta=1/64):
 
     num_children = np.zeros(ts.num_nodes, dtype=int)
     parent = np.zeros(ts.num_nodes, dtype=int) - 1
+    if delta is None:
+        delta = 1 / (4 * ts.num_samples)
+
+
     for (left, right), edges_out, edges_in in ts.edge_diffs():
-        print("=============")
-        print("left = ", left)
+        # print("=============")
+        # print("left = ", left)
         last_parent = list(parent)
         last_num_children = list(num_children)
         for e in edges_out:
-        # for e in sorted(edges_out, key=lambda e: e.right - e.left):
-            print("out:", e)
+            # print("out:", e)
             parent[e.child] = -1
             num_children[e.parent] -= 1
-
-        # for e in sorted(edges_in, key=lambda e: -(e.right - e.left)):
         for e in edges_in:
-            # print("in :", e)
+            # print("in:", e)
             parent[e.child] = e.parent
             num_children[e.parent] += 1
 
         x = left - delta
-        spr_out_root = -1
-        for e in edges_out:
-            if parent[e.parent] == -1 and num_children[e.parent] == 0:
-                spr_out_root = e.parent
+        marked = set()
         for e in edges_out:
             if last_num_children[e.child] > 0:
+                # print("marking out child", e.child, "at ", x)
+                marked.add(e.child)
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
                 x -= delta
-        print("spr_out_root = ", spr_out_root)
-        if spr_out_root != -1 and last_parent[spr_out_root] != -1:
-            print("INSERT out root @ ", x)
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=spr_out_root, derived_state="1")
-            x -= delta
+        for e in edges_out:
+            if e.parent not in marked and last_parent[e.parent] != -1:
+                # print("marking out parent", e.parent, "at", x)
+                marked.add(e.parent)
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+                x -= delta
 
-        spr_in_root = -1
-        for e in edges_in:
-            # print("in: ", e.parent, last_parent[e.parent], last_num_children[e.parent])
-            if last_parent[e.parent] == -1 and last_num_children[e.parent] == 0:
-                spr_in_root = e.parent
-
-        print("spr in root = ", spr_in_root)
         x = left
+        marked = set()
         for e in edges_in:
             if num_children[e.child] > 0:
+                # print("marking in child", e.child, "at ", x)
+                marked.add(e.child)
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=e.child, derived_state="1")
                 x += delta
-        if parent[spr_in_root] != -1:
-            print("INSERT in root")
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=spr_in_root, derived_state="1")
-            x += delta
-
-    x = ts.sequence_length - delta
-    for u in reversed(range(ts.num_nodes)):
-        if num_children[u] > 0 and parent[u] != -1:
-            site_id = tables.sites.add_row(position=x, ancestral_state="0")
-            tables.mutations.add_row(site=site_id, node=u, derived_state="1")
-            x -= delta
-
+        for e in edges_in:
+            if e.parent not in marked and parent[e.parent] != -1:
+                marked.add(e.parent)
+                # print("marking in parent", e.parent, "at", x)
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
+                x += delta
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())
@@ -850,7 +851,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
             if distance != 0:
                 total_mismatch_interval += (right - left)
                 total_mismatches += 1
-                trailer = "[MISMATCH]"
+                trailer = "[MISMATCH over {:.2f}]".format(right - left)
             print("KC distance       =", distance, trailer)
         print()
         d1 = tree1.draw(format="unicode").splitlines()
