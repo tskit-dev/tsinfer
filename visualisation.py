@@ -363,7 +363,7 @@ def check_instance(n, L, rate, seed, method="C"):
         model="smc_prime")
 
     print("OK num trees = ", ts.num_trees, "seed = ", seed)
-    ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+    ts = tsinfer.insert_perfect_mutations(ts)
 
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
@@ -394,13 +394,16 @@ def check_instance(n, L, rate, seed, method="C"):
             diffs.append(diff)
         if diff > 1:
             assert kc_distance[j] == 0
-    diffs = np.array(diffs)
-    print("num_diffs = {} total_diff_length = {:.2f} mean_diff = {:.4f} max_diff = {:.4f}".format(
-        diffs.shape[0], np.sum(diffs), np.mean(diffs), np.max(diffs)))
+    if len(diffs) > 0:
+        diffs = np.array(diffs)
+        print("num_diffs = {} total_diff_length = {:.2f} mean_diff = {:.4f} max_diff = {:.4f}".format(
+            diffs.shape[0], np.sum(diffs), np.mean(diffs), np.max(diffs)))
+    else:
+        print("perfect!")
 
 def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
     for j in range(seed_start, seed_end):
-        print("seed = ", j, file=sys.stderr)
+        print("n = ", n, "L = ", L, "seed = ", j, file=sys.stderr)
         check_instance(n, L, rate,  j, method)
 
 
@@ -436,8 +439,8 @@ def main():
     # run_viz(4, 100, 0.02, 42, method="P")
     # run_viz(25, 100, 0.02, 3, method="P")
 
-    run_viz(5, 100, 0.02, 112, method="P")
-    # check_inference(155, 100, 0.02, 1, 100000, method="C")
+    # run_viz(5, 100, 0.02, 112, method="P")
+    check_inference(500, 100, 0.02, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)
