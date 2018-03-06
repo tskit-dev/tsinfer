@@ -184,78 +184,6 @@ def insert_perfect_mutations_trees(ts, delta=None):
 
     return ts
 
-
-    # tables = ts.dump_tables()
-    # site_map = {site.position: site.id for site in ts.sites()}
-    # A = get_ancestral_haplotypes(ts)
-# #     print(A)
-
-#     child_edges = collections.defaultdict(list)
-#     for e in ts.edges():
-#         child_edges[e.child].append(e)
-
-#     breakpoints = collections.Counter()
-#     for child in reversed(sorted(child_edges.keys())):
-#         edges = child_edges[child]
-#         if len(edges) > 1:
-#             edges = sorted(edges, key=lambda e: -e.left)
-#             print("child = ", child)
-#             for j in range(len(edges) - 1):
-#                 p1 = edges[j].parent
-#                 p2 = edges[j + 1].parent
-#                 bp = site_map[edges[j].left]
-#                 print("\tpos = ", edges[j].left)
-#                 print("\t", p1, A[p1, bp-1:bp+1])
-#                 print("\t", p2, A[p2, bp-1:bp+1])
-#                 values = (A[p1, bp - 1], A[p2, bp - 1])
-#                 if (
-#                         p1 != p2 and #inference.UNKNOWN_ALLELE not in values and \
-#                         values[0] != values[1]):
-#                     breakpoints[edges[j].left] += 1
-#                     x = edges[j].left - breakpoints[edges[j].left] * delta
-#                     print("\tINSERTING at ", x)
-#                     site_id = tables.sites.add_row(position=x, ancestral_state="0")
-#                     tables.mutations.add_row(site=site_id, node=p2, derived_state="1")
-
-
-#             for e in edges:
-#                 print("\t", e)
-#                 print("\t child  = ", A[e.child])
-#                 print("\t parent = ", A[e.parent])
-
-
-
-#     ancestors = collections.defaultdict(list)
-#     for e in ts.edgesets():
-#         ancestors[e.parent].append(e)
-
-
-#     for parent, edgesets in ancestors.items():
-#         if len(edgesets) > 1:
-#             edgesets = sorted(edgesets, key=lambda e: -e.left)
-#             print(parent, [e.children for e in edgesets])
-#             for j in range(len(edgesets) - 1):
-#                 diff = set(edgesets[j + 1].children) - set(edgesets[j].children)
-#                 pos = edgesets[j].left
-#                 print("diff = ", diff)
-#                 print("pos = ", pos)
-#                 last_site = site_map[pos] - 1
-#                 for node in sorted(diff):
-#                     print("node = ", node, A[node, last_site], A[node])
-#                     if A[node, last_site] == 1:
-#                         x = edgesets[j].left - delta
-#                     else:
-#                         x = edgesets[j].left - 2 * delta
-#                     print("\t", node, parent, edgesets[j].left, x)
-#                     print("\tInsertint mutation at ",x, "over ", node)
-#                     # site_id = tables.sites.add_row(position=x, ancestral_state="0")
-#                     # tables.mutations.add_row(site=site_id, node=node, derived_state="1")
-
-    # msprime.sort_tables(**tables.asdict())
-    # ts = msprime.load_tables(**tables.asdict())
-    # return ts
-
-
 def insert_perfect_mutations_spr(ts, delta=1/64):
     """
     Returns a copy of the specified tree sequence where the left and right
@@ -655,6 +583,14 @@ def insert_perfect_mutations(ts, delta=None):
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=e.parent, derived_state="1")
                 x += delta
+
+    x = ts.sequence_length - delta
+    for u in range(ts.num_nodes):
+        if parent[u] != -1 and num_children[u] > 0:
+            site_id = tables.sites.add_row(position=x, ancestral_state="0")
+            tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+            x -= delta
+
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())

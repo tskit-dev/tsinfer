@@ -439,8 +439,8 @@ def main():
     # run_viz(4, 100, 0.02, 42, method="P")
     # run_viz(25, 100, 0.02, 3, method="P")
 
-    # run_viz(12, 50, 0.02, 12, method="C", perfect_ancestors=True)
-    check_inference(18, 100, 0.02, 1, 100000, method="C")
+    # run_viz(6, 50, 0.02, 12, method="C", perfect_ancestors=True)
+    check_inference(16, 100, 0.02, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)
