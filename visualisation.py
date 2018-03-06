@@ -387,26 +387,10 @@ def check_instance(n, L, rate, seed, method="C"):
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False)
 
-    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
-    # assert np.all(kc_distance == 0)
-    # print(breakpoints, kc_distance)
-    # I = kc_distance != 0
-    # print(breakpoints[I])
-    diffs = []
-    for j in range(len(kc_distance)):
-        diff = breakpoints[j + 1] - breakpoints[j]
-        if kc_distance[j] != 0:
-            diffs.append(diff)
-        if diff > 1:
-            assert kc_distance[j] == 0
-    assert len(diffs) == 0
+    assert ts.tables.edges == inferred_ts.tables.edges
 
-    if len(diffs) > 0:
-        diffs = np.array(diffs)
-        print("num_diffs = {} total_diff_length = {:.2f} mean_diff = {:.4f} max_diff = {:.4f}".format(
-            diffs.shape[0], np.sum(diffs), np.mean(diffs), np.max(diffs)))
-    else:
-        print("perfect!")
+    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
+    assert np.all(kc_distance == 0)
 
 def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
     for j in range(seed_start, seed_end):
@@ -447,7 +431,7 @@ def main():
     # run_viz(25, 100, 0.02, 3, method="P")
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
-    check_inference(6, 1000000, 0.00002, 1, 100000, method="C")
+    check_inference(166, 1000000, 0.00002, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)
