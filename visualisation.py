@@ -361,6 +361,11 @@ def check_instance(n, L, rate, seed, method="C"):
     ts = msprime.simulate(
         n, recombination_map=recomb_map, random_seed=seed,
         model="smc_prime")
+    # Check for multiple recombinations.
+    for _, edges_out, _ in ts.edge_diffs():
+        if len(edges_out) > 4:
+            print("Multiple recombination", seed)
+            return
 
     ts = tsinfer.insert_perfect_mutations(ts)
     print("OK num trees = ", ts.num_trees, "seed = ", seed, "num_sites = ", ts.num_sites)
@@ -394,6 +399,8 @@ def check_instance(n, L, rate, seed, method="C"):
             diffs.append(diff)
         if diff > 1:
             assert kc_distance[j] == 0
+    assert len(diffs) == 0
+
     if len(diffs) > 0:
         diffs = np.array(diffs)
         print("num_diffs = {} total_diff_length = {:.2f} mean_diff = {:.4f} max_diff = {:.4f}".format(
@@ -439,8 +446,8 @@ def main():
     # run_viz(4, 100, 0.02, 42, method="P")
     # run_viz(25, 100, 0.02, 3, method="P")
 
-    # run_viz(6, 50, 0.02, 12, method="C", perfect_ancestors=True)
-    check_inference(16, 100, 0.02, 1, 100000, method="C")
+    # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
+    check_inference(6, 1000000, 0.00002, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)
