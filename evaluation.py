@@ -455,8 +455,8 @@ def run_perfect_inference(args):
         base_ts = msprime.simulate(
             args.sample_size, Ne=10**4, length=args.length * 10**6,
             recombination_rate=1e-8, random_seed=seed, model="smc_prime")
-        print("simulated ts with n={} and {} trees".format(
-            base_ts.num_samples, base_ts.num_trees))
+        print("simulated ts with n={} and {} trees; seed={}".format(
+            base_ts.num_samples, base_ts.num_trees, seed))
         if multiple_recombinations(base_ts):
             print("Multiple recombinations; skipping")
             continue
