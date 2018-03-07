@@ -405,36 +405,13 @@ def main():
     # import sys
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
-    # run_viz(12, 100, 0.01, 23)
+    run_viz(
+        10, 100000, 0.00002, 6, mutation_rate=0.1, perfect_ancestors=False,
+        perfect_mutations=True, method="P")
 
-    # Good example; mismatches in a couple of places, despite getting breakpoints
-    # exactly right.
-    # run_viz(7, 100, 0.01, 26)
-    # run_viz(8, 100, 0.01, 26)
-
-    # run_viz(8, 100, 0.01, 278)
-    # run_viz(4, 100, 0.02, 36175)
-    # run_viz(6, 100, 0.02, 2960)
-
-    # run_viz(4, 1000, 0.02, 1)
-
-    # run_viz(
-    #     10, 100, 0.02, 6, mutation_rate=0.1, perfect_ancestors=False,
-    #     perfect_mutations=False, method="P")
-
-
-    # Violations caused by ultimate ancestor, not just withing the deltas.
-    # run_viz(4, 100, 0.02, 1, method="C")
-    # run_viz(4, 100, 0.02, 42, method="P")
-    # run_viz(25, 100, 0.02, 3, method="P")
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
-    check_inference(500, 1000000, 0.00002, 1, 100000, method="C")
-
-    # run_viz(7, 100, 0.01, 20)
-    # run_viz(20, 100, 0.01, 5)
-    # run_viz(25, 100, 0.01, 6)
-
+    # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")
 
 if __name__ == "__main__":
     main()

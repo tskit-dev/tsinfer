@@ -3,7 +3,6 @@ Test cases for the evaluation code.
 """
 
 import unittest
-import collections
 
 import msprime
 import numpy as np
@@ -13,13 +12,11 @@ import tsinfer
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
     """
-    Returns an smc simulation for a sample of size n, with L loci
+    Returns an smc simulation for a sample of size n, with sequence length L
     and recombination at the specified rate.
     """
-    recomb_map = msprime.RecombinationMap.uniform_map(
-            length=L, rate=recombination_rate, num_loci=L)
     return msprime.simulate(
-        n, recombination_map=recomb_map, random_seed=seed,
+        n, length=L, recombination_rate=recombination_rate, random_seed=seed,
         model="smc_prime")
 
 
@@ -329,7 +326,6 @@ class TestGetAncestorDescriptors(unittest.TestCase):
             self.verify_many_trees_dense_mutations(ts)
 
 
-@unittest.skip("Fix tests for perfect mutations")
 class TestInsertPerfectMutations(unittest.TestCase):
     """
     Test cases for the inserting perfect mutations to allow a tree
@@ -340,16 +336,14 @@ class TestInsertPerfectMutations(unittest.TestCase):
         """
         Check that we have exactly two mutations on each edge.
         """
-        node_mutations = collections.defaultdict(list)
-        for site in ts.sites():
-            self.assertEqual(len(site.mutations), 1)
-            mutation = site.mutations[0]
-            node_mutations[mutation.node].append(site.position)
-
-        for edge in ts.edges():
-            mutations = [
-                x for x in node_mutations[edge.child] if edge.left <= x < edge.right]
-            self.assertEqual(len(mutations), 2)
+        for tree, ((left, right), e_out, e_in) in zip(ts.trees(), ts.edge_diffs()):
+            self.assertEqual(tree.interval, (left, right))
+            positions = [site.position for site in tree.sites()]
+            # TODO make better tests when we've figured out the exact algorithm.
+            self.assertGreater(len(positions), 0)
+            self.assertEqual(positions[0], left)
+            for site in tree.sites():
+                self.assertEqual(len(site.mutations), 1)
 
     def test_single_tree(self):
         ts = msprime.simulate(5, random_seed=234)
@@ -358,7 +352,25 @@ class TestInsertPerfectMutations(unittest.TestCase):
 
     def test_small_smc_mutations(self):
         for seed in range(1, 10):
-            ts = get_smc_simulation(5, 100, 0.02, seed)
+            ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=seed)
             ts = tsinfer.insert_perfect_mutations(ts)
             self.assertGreater(ts.num_trees, 1)
+            self.verify_perfect_mutations(ts)
+
+    def test_large_smc_mutations(self):
+        ts = get_smc_simulation(50, L=1, recombination_rate=100, seed=1)
+        ts = tsinfer.insert_perfect_mutations(ts)
+        self.assertGreater(ts.num_trees, 100)
         self.verify_perfect_mutations(ts)
+
+    def test_multiple_recombinations(self):
+        recomb_map = msprime.RecombinationMap.uniform_map(
+            length=10, rate=10, num_loci=10)
+        ts = msprime.simulate(10, recombination_map=recomb_map, random_seed=1)
+        found = False
+        for _, e_out, _ in ts.edge_diffs():
+            if len(e_out) > 4:
+                found = True
+                break
+        self.assertTrue(found)
+        self.assertRaises(ValueError, tsinfer.insert_perfect_mutations, ts)

@@ -115,8 +115,10 @@ def insert_perfect_mutations(ts, delta=None):
 
     num_children = np.zeros(ts.num_nodes, dtype=int)
     parent = np.zeros(ts.num_nodes, dtype=int) - 1
-    if delta is None:
-        delta = 1 / (8 * ts.num_samples)
+
+    current_delta = 0
+    if delta is not None:
+        current_delta = delta
 
     for (left, right), edges_out, edges_in in ts.edge_diffs():
         last_parent = list(parent)
@@ -140,20 +142,24 @@ def insert_perfect_mutations(ts, delta=None):
 
         if len(edges_out) > 4:
             raise ValueError("Multiple recombination detected")
-
-        x = left - delta
+        # We use the value of delta from the previous iteration
+        x = left - current_delta
         for u in list(children_out - children_in) + list(children_in & children_out):
             if last_num_children[u] > 0:
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=u, derived_state="1")
-                x -= delta
+                x -= current_delta
 
+        # Now update delta for this interval.
+        if delta is None:
+            max_nodes = 2 * (len(children_out) + len(children_in)) + len(parents_in) + 1
+            current_delta = (right - left) / max_nodes
         x = left
         for c in list(children_in - children_out) + list(children_in & children_out):
             if num_children[c] > 0:
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=c, derived_state="1")
-                x += delta
+                x += current_delta
 
         # It seems wrong that we have to mark every parent, since a few of these
         # will already have been marked out by the children.
@@ -162,7 +168,7 @@ def insert_perfect_mutations(ts, delta=None):
                 # print("marking in parent", u, "at", x)
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=u, derived_state="1")
-                x += delta
+                x += current_delta
 
     msprime.sort_tables(**tables.asdict())
     return msprime.load_tables(**tables.asdict())
@@ -224,8 +230,6 @@ def get_ancestor_descriptors(A):
             focal_sites.append(new_sites)
             start.append(s)
             end.append(e)
-        else:
-            warnings.warn("Unknown ancestor provided")
     return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
 
 

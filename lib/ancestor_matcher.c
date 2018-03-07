@@ -45,8 +45,6 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
         }
         if (is_nonzero_root(u, self->parent, self->left_child)) {
             assert(self->likelihood[u] == NONZERO_ROOT_LIKELIHOOD);
-        } else {
-            assert(self->likelihood[u] != NONZERO_ROOT_LIKELIHOOD);
         }
     }
     assert(num_likelihoods == self->num_likelihood_nodes);

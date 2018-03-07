@@ -15,7 +15,6 @@ import numpy as np
 import tqdm
 import humanize
 import msprime
-import zarr
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -26,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 UNKNOWN_ALLELE = 255
 PHRED_MAX = 255
+
 
 def proba_to_phred(probability, min_value=1e-10):
     """
@@ -65,7 +65,6 @@ def phred_to_proba(phred_score):
     if scalar_input:
         return np.squeeze(ret)
     return ret
-
 
 
 def infer(
@@ -108,7 +107,7 @@ def build_ancestors(
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     frequency = input_data.frequency[:]
     logger.info("Starting site addition")
-    for j, (site_id, genotypes)  in enumerate(input_data.variants()):
+    for j, (site_id, genotypes) in enumerate(input_data.variants()):
         ancestor_builder.add_site(j, int(frequency[site_id]), genotypes)
         progress_monitor.update()
     progress_monitor.close()
@@ -117,15 +116,23 @@ def build_ancestors(
     descriptors = ancestor_builder.ancestor_descriptors()
     num_ancestors = len(descriptors) + 1
     if num_ancestors > 1:
-        ultimate_ancestor_time = descriptors[0][0] + 1
         logger.info("Starting build for {} ancestors".format(num_ancestors))
+        ultimate_ancestor_time = descriptors[0][0] + 1
         a = np.zeros(num_sites, dtype=np.uint8)
+        # FIXME quick hack to make sure that the ultimate ancestor is always
+        # defined. This should be addressed more elegantly within the matching
+        # code, as we now assume that there must be this single "meta-ancestor"
+        # for the algorithm to work.
+        ancestor_data.add_ancestor(
+            start=0, end=num_sites, time=ultimate_ancestor_time + 1,
+            focal_sites=np.array([], dtype=np.int32), haplotype=a)
         # Add the ultimate ancestor.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=ultimate_ancestor_time,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
 
-        progress_monitor = tqdm.tqdm(total=num_ancestors, initial=1, disable=not progress)
+        progress_monitor = tqdm.tqdm(
+            total=num_ancestors, initial=1, disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
@@ -170,7 +177,6 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
         raise ValueError("Incorrect number of ancestors")
     if ancestors_ts.num_sites != input_file.num_sites:
         raise ValueError("Incorrect number of sites")
-
 
     progress_monitor = tqdm.tqdm(
         total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
@@ -308,7 +314,7 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
-        before = time.perf_counter()
+        # before = time.perf_counter()
         tables = ancestors_ts.dump_tables()
         nodes = tables.nodes
         self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
@@ -332,8 +338,8 @@ class Matcher(object):
         # print("SITE  =", self.mutated_sites)
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
-            ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
-            len(mutations)))
+                ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
+                len(mutations)))
 
     def get_tree_sequence(self, rescale_positions=True, all_sites=False):
         """
@@ -490,7 +496,7 @@ class AncestorMatcher(Matcher):
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
-            ancestor_id, start, end, focal_sites.shape[0]))
+                ancestor_id, start, end, focal_sites.shape[0]))
         assert np.all(haplotype[focal_sites] == 1)
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
@@ -695,7 +701,6 @@ class SampleMatcher(Matcher):
         logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence(all_sites=True)
         if simplify:
-            N = ts.num_nodes
             logger.info("Running simplify on {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
             ts = ts.simplify(
