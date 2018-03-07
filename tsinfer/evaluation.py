@@ -9,6 +9,7 @@ import numpy as np
 import msprime
 
 import tsinfer.inference as inference
+import tsinfer.formats as formats
 
 
 def kc_distance(tree1, tree2):
@@ -382,3 +383,33 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
     print("Total weighted tree distance = ", weighted_distance)
     print("Total mismatch interval      = ", total_mismatch_interval)
     print("Total mismatches             = ", total_mismatches)
+
+
+def run_perfect_inference(
+        base_ts, method="C", num_threads=1, path_compression=False,
+        extended_checks=True, progress=False):
+    """
+    Runs the perfect inference process on the specified tree sequence.
+    """
+    ts = insert_perfect_mutations(base_ts)
+    print("Done generating mutations")
+    sample_data = formats.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
+
+    print("Building ancestors")
+    ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+    build_simulated_ancestors(sample_data, ancestor_data, ts)
+    ancestor_data.finalise()
+    print("Done")
+
+    ancestors_ts = inference.match_ancestors(
+        sample_data, ancestor_data, method=method, path_compression=path_compression,
+        num_threads=num_threads, extended_checks=extended_checks, progress=progress)
+    inferred_ts = inference.match_samples(
+        sample_data, ancestors_ts, method=method, path_compression=path_compression,
+        num_threads=num_threads, extended_checks=extended_checks, progress=progress)
+    return ts, inferred_ts

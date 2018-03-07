@@ -295,7 +295,7 @@ class Visualiser(object):
 
 def visualise(
         ts, recombination_rate, error_rate, method="C", box_size=8,
-        perfect_ancestors=False):
+        perfect_ancestors=False, path_compression=False):
 
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
@@ -312,11 +312,11 @@ def visualise(
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, method=method, path_compression=False,
+        sample_data, ancestor_data, method=method, path_compression=path_compression,
         extended_checks=True)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=False,
-        path_compression=False, extended_checks=True)
+        path_compression=path_compression, extended_checks=True)
 
     prefix = "tmp__NOBACKUP__/"
     visualiser = Visualiser(
@@ -334,7 +334,7 @@ def visualise(
 
 def run_viz(
         n, L, rate, seed, mutation_rate=0, method="C",
-        perfect_ancestors=True, perfect_mutations=True):
+        perfect_ancestors=True, perfect_mutations=True, path_compression=False):
     recomb_map = msprime.RecombinationMap.uniform_map(
             length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
@@ -351,49 +351,9 @@ def run_viz(
     with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
         f.write(draw_ancestors(ts))
     visualise(
-        ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors)
+        ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors,
+        path_compression=path_compression)
 
-
-
-def check_instance(n, L, rate, seed, method="C"):
-    recomb_map = msprime.RecombinationMap.uniform_map(
-            length=L, rate=rate, num_loci=L)
-    ts = msprime.simulate(
-        n, recombination_map=recomb_map, random_seed=seed,
-        model="smc_prime")
-    # Check for multiple recombinations.
-    for _, edges_out, _ in ts.edge_diffs():
-        if len(edges_out) > 4:
-            print("Multiple recombination", seed)
-            return
-
-    ts = tsinfer.insert_perfect_mutations(ts)
-    print("OK num trees = ", ts.num_trees, "seed = ", seed, "num_sites = ", ts.num_sites)
-
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        compressor=None)
-    for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
-    sample_data.finalise()
-
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
-    ancestor_data.finalise()
-
-    ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, method=method, path_compression=False)
-    inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, method=method, simplify=True,
-        path_compression=False)
-
-    assert ts.tables.edges == inferred_ts.tables.edges
-
-
-def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
-    for j in range(seed_start, seed_end):
-        print("n = ", n, "L = ", L, "seed = ", j, file=sys.stderr)
-        check_instance(n, L, rate,  j, method)
 
 
 def main():
@@ -406,9 +366,8 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        10, 100000, 0.00002, 6, mutation_rate=0.1, perfect_ancestors=False,
-        perfect_mutations=True, method="P")
-
+        10, 100000, 0.00002, 6, mutation_rate=0.1, perfect_ancestors=True,
+        perfect_mutations=True, method="C", path_compression=False)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")

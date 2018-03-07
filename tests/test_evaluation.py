@@ -350,14 +350,14 @@ class TestInsertPerfectMutations(unittest.TestCase):
         ts = tsinfer.insert_perfect_mutations(ts)
         self.verify_perfect_mutations(ts)
 
-    def test_small_smc_mutations(self):
+    def test_small_smc(self):
         for seed in range(1, 10):
             ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=seed)
             ts = tsinfer.insert_perfect_mutations(ts)
             self.assertGreater(ts.num_trees, 1)
             self.verify_perfect_mutations(ts)
 
-    def test_large_smc_mutations(self):
+    def test_large_smc(self):
         ts = get_smc_simulation(50, L=1, recombination_rate=100, seed=1)
         ts = tsinfer.insert_perfect_mutations(ts)
         self.assertGreater(ts.num_trees, 100)
@@ -374,3 +374,47 @@ class TestInsertPerfectMutations(unittest.TestCase):
                 break
         self.assertTrue(found)
         self.assertRaises(ValueError, tsinfer.insert_perfect_mutations, ts)
+
+
+class TestPerfectInference(unittest.TestCase):
+    """
+    Test cases for the method to run perfect inference on an input tree sequence.
+    """
+    def verify_perfect_inference(self, ts, inferred_ts):
+        self.assertEqual(ts.sequence_length, inferred_ts.sequence_length)
+        self.assertEqual(ts.tables.edges, inferred_ts.tables.edges)
+        self.assertEqual(ts.tables.sites, inferred_ts.tables.sites)
+        self.assertEqual(ts.tables.mutations, inferred_ts.tables.mutations)
+        self.assertTrue(
+            np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags))
+
+    def test_single_tree_defaults(self):
+        base_ts = msprime.simulate(5, random_seed=234)
+        for method in ["P", "C"]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, method=method)
+            self.verify_perfect_inference(ts, inferred_ts)
+
+    def test_small_smc(self):
+        base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
+        self.assertGreater(base_ts.num_trees, 1)
+        for method in ["P", "C"]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, method=method)
+            self.verify_perfect_inference(ts, inferred_ts)
+
+    @unittest.skip("Path compression breaks perfect inference")
+    def test_small_smc_path_compression(self):
+        base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
+        self.assertGreater(base_ts.num_trees, 1)
+        for method in ["P", "C"]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                base_ts, method=method, path_compression=True)
+            self.verify_perfect_inference(ts, inferred_ts)
+
+    def test_small_smc_threads(self):
+        base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
+        self.assertGreater(base_ts.num_trees, 1)
+        for method in ["P", "C"]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                base_ts, method=method, num_threads=4)
+            self.verify_perfect_inference(ts, inferred_ts)
+

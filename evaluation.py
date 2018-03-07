@@ -1,7 +1,7 @@
 """
 Script for statistically evaluating various aspects of tsinfer performance.
 """
-
+import argparse
 import sys
 
 import numpy as np
@@ -435,8 +435,78 @@ def check_single_tree_high_mutation_rate():
             assert ts_inferred.num_trees == 1
 
 
+##############################
+# Updated code to work with the CLI
+##############################
+
+
+
+def multiple_recombinations(ts):
+    """
+    Returns true if the specified tree sequence contains multiple recombinations.
+    """
+    for _, e_out, _ in ts.edge_diffs():
+        if len(e_out) > 4:
+            return True
+    return False
+
+def run_perfect_inference(args):
+    for seed in range(1, args.num_replicates + 1):
+        base_ts = msprime.simulate(
+            args.sample_size, Ne=10**4, length=args.length * 10**6,
+            recombination_rate=1e-8, random_seed=seed, model="smc_prime")
+        print("simulated ts with n={} and {} trees".format(
+            base_ts.num_samples, base_ts.num_trees))
+        if multiple_recombinations(base_ts):
+            print("Multiple recombinations; skipping")
+            continue
+        ts, inferred_ts = tsinfer.run_perfect_inference(
+            base_ts, num_threads=args.num_threads, progress=args.progress,
+            extended_checks=args.extended_checks)
+        print("n={} num_trees={} num_sites={}".format(
+            ts.num_samples, ts.num_trees, ts.num_sites))
+        assert ts.tables.edges == inferred_ts.tables.edges
+        assert ts.tables.sites == inferred_ts.tables.sites
+        assert ts.tables.mutations == inferred_ts.tables.mutations
+        assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
+        assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
+
+        # print("n = ", n, "L = ", L, "seed = ", j, file=sys.stderr)
+        # check_instance(n, L, rate,  j, method)
+
+
 
 if __name__ == "__main__":
+
+    top_parser = argparse.ArgumentParser(
+        description="Simple inferface for running various tsinfer evaluations.")
+    top_parser.add_argument(
+        "-V", "--version", action='version',
+        version='%(prog)s {}'.format(tsinfer.__version__))
+
+    subparsers = top_parser.add_subparsers(dest="subcommand")
+    subparsers.required = True
+
+    parser = subparsers.add_parser(
+        "perfect-inference", aliases=["pi"],
+        help="Runs the perfect inference process on simulated tree sequences.")
+    parser.set_defaults(runner=run_perfect_inference)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-L", type=int, default=1, help="Sequence length in MB")
+    parser.add_argument("--num-replicates", "-r", type=int, default=1)
+    parser.add_argument("--num-threads", "-t", type=int, default=0)
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+    parser.add_argument(
+        "--extended-checks", "-X", action="store_true",
+        help="Enable extra consistency checking (slow)")
+
+    args = top_parser.parse_args()
+    args.runner(args)
+
+
     # check_basic_performance()
     # check_effect_error_param(float(sys.argv[1]))
     # plot_basic_performance()
@@ -445,4 +515,6 @@ if __name__ == "__main__":
     # check_single_tree_two_mutations_per_branch()
     # check_single_tree_many_mutations_per_branch()
     # check_single_tree_high_mutation_rate()
-    check_many_trees_one_mutation_per_branch()
+    # check_many_trees_one_mutation_per_branch()
+
+
