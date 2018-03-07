@@ -193,6 +193,23 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
     """
     Tests for the method to the actual ancestors from a simulation.
     """
+    def get_matrix(self, ts):
+        """
+        Simple implementation using tree traversals.
+        """
+        A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
+        A[:] = tsinfer.UNKNOWN_ALLELE
+        for t in ts.trees():
+            for site in t.sites():
+                for u in t.nodes():
+                    A[u, site.id] = 0
+                for mutation in site.mutations:
+                    # Every node underneath this node will have the value set
+                    # at this site.
+                    for u in t.nodes(mutation.node):
+                        A[u, site.id] = 1
+        return A
+
     def verify_samples(self, ts, A):
         # Samples should be nodes rows 0 to n - 1, and should be equal to
         # the genotypes.
@@ -223,12 +240,16 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
     def test_single_tree(self):
         ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
         A = tsinfer.get_ancestral_haplotypes(ts)
+        B = self.get_matrix(ts)
+        self.assertTrue(np.array_equal(A, B))
         self.verify_single_tree(ts, A)
 
     def test_single_tree_perfect_mutations(self):
         ts = msprime.simulate(5, random_seed=234)
         ts = tsinfer.insert_perfect_mutations(ts)
         A = tsinfer.get_ancestral_haplotypes(ts)
+        B = self.get_matrix(ts)
+        self.assertTrue(np.array_equal(A, B))
         self.verify_single_tree(ts, A)
 
     def test_many_trees(self):
@@ -237,6 +258,8 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         self.assertGreater(ts.num_trees, 1)
         self.assertGreater(ts.num_sites, 1)
         A = tsinfer.get_ancestral_haplotypes(ts)
+        B = self.get_matrix(ts)
+        self.assertTrue(np.array_equal(A, B))
         self.verify_haplotypes(ts, A)
 
     def test_many_trees_perfect_mutations(self):
@@ -244,6 +267,8 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         self.assertGreater(ts.num_trees, 1)
         ts = tsinfer.insert_perfect_mutations(ts)
         A = tsinfer.get_ancestral_haplotypes(ts)
+        B = self.get_matrix(ts)
+        self.assertTrue(np.array_equal(A, B))
         self.verify_haplotypes(ts, A)
 
 
@@ -417,4 +442,3 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, method=method, num_threads=4)
             self.verify_perfect_inference(ts, inferred_ts)
-

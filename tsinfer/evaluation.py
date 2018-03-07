@@ -3,7 +3,7 @@ Tools for evaluating the algorithm.
 """
 import collections
 import itertools
-import warnings
+import bisect
 
 import numpy as np
 import msprime
@@ -122,7 +122,6 @@ def insert_perfect_mutations(ts, delta=None):
         current_delta = delta
 
     for (left, right), edges_out, edges_in in ts.edge_diffs():
-        last_parent = list(parent)
         last_num_children = list(num_children)
         children_in = set()
         children_out = set()
@@ -180,17 +179,26 @@ def get_ancestral_haplotypes(ts):
     Returns a numpy array of the haplotypes of the ancestors in the
     specified tree sequence.
     """
+    nodes = ts.tables.nodes
+    flags = nodes.flags[:]
+    flags[:] = 1
+    nodes.set_columns(time=nodes.time, flags=flags)
+
+    sites = [site.position for site in ts.sites()]
+    tsp = msprime.load_tables(
+        nodes=nodes, edges=ts.tables.edges, sites=ts.tables.sites,
+        mutations=ts.tables.mutations)
+    B = tsp.genotype_matrix().T
+
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
     A[:] = inference.UNKNOWN_ALLELE
-    for t in ts.trees():
-        for site in t.sites():
-            for u in t.nodes():
-                A[u, site.id] = 0
-            for mutation in site.mutations:
-                # Every node underneath this node will have the value set
-                # at this site.
-                for u in t.nodes(mutation.node):
-                    A[u, site.id] = 1
+    for edge in ts.edges():
+        start = bisect.bisect_left(sites, edge.left)
+        end = bisect.bisect_right(sites, edge.right)
+        if sites[end - 1] == edge.right:
+            end -= 1
+        A[edge.parent, start:end] = B[edge.parent, start:end]
+    A[:ts.num_samples] = B[:ts.num_samples]
     return A
 
 
@@ -290,60 +298,6 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts):
         time -= 1
 
 
-def hk_D_matrix(genotype_matrix):
-    """
-    Returns the Hudson-Kaplan D matrix for all pairs of sites in the specified
-    genotypes matrix (rows correspond to sites). Only fills in values above
-    the diagonal.
-    """
-    m, n = genotype_matrix.shape
-    D = np.zeros((m, m), dtype=np.int8)
-    for j in range(m):
-        Gj = genotype_matrix[j]
-        for k in range(j + 1, m):
-            Gk = genotype_matrix[k]
-            q00 = np.any(np.logical_not(np.logical_or(Gk, Gj)))
-            q01 = np.any(np.logical_and(Gk, np.logical_not(Gj)))
-            q10 = np.any(np.logical_and(np.logical_not(Gk), Gj))
-            q11 = np.any(np.logical_and(Gk, Gj))
-            D[j, k] = q00 and q01 and q10 and q11
-    return D
-
-def hk_intervals(genotype_matrix):
-    """
-    Returns the minimal set of intervals required according to the
-    Hudson-Kaplan algorithm for computing R_min.
-    """
-    m, n = genotype_matrix.shape
-    intervals = []
-    for j in range(m):
-        Gj = genotype_matrix[j]
-        for k in range(j + 1, m):
-            Gk = genotype_matrix[k]
-            q00 = np.any(np.logical_not(np.logical_or(Gk, Gj)))
-            q01 = np.any(np.logical_and(Gk, np.logical_not(Gj)))
-            q10 = np.any(np.logical_and(np.logical_not(Gk), Gj))
-            q11 = np.any(np.logical_and(Gk, Gj))
-            if q00 and q01 and q10 and q11:
-                intervals.append((j, k))
-
-    # Now remove the intervals that completely overlap
-    I = []
-    for j in range(len(intervals)):
-        x  = intervals[j]
-        keep = True
-        for k in range(len(intervals)):
-            y = intervals[k]
-            if j != k and x[0] <= y[0] < y[1] <= x[1]:
-                keep = False
-                break
-        if keep:
-            I.append(x)
-    print("After: ", I)
-    # We should also remove all the intervals that overlap with any others,
-    # until we're left with the set non-overlapping intervals.
-
-
 def print_tree_pairs(ts1, ts2, compute_distances=True):
     """
     Prints out the trees at each point in the specified tree sequences,
@@ -392,7 +346,6 @@ def run_perfect_inference(
     Runs the perfect inference process on the specified tree sequence.
     """
     ts = insert_perfect_mutations(base_ts)
-    print("Done generating mutations")
     sample_data = formats.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
@@ -400,11 +353,9 @@ def run_perfect_inference(
         sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
-    print("Building ancestors")
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
     build_simulated_ancestors(sample_data, ancestor_data, ts)
     ancestor_data.finalise()
-    print("Done")
 
     ancestors_ts = inference.match_ancestors(
         sample_data, ancestor_data, method=method, path_compression=path_compression,

@@ -471,10 +471,6 @@ def run_perfect_inference(args):
         assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
         assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
 
-        # print("n = ", n, "L = ", L, "seed = ", j, file=sys.stderr)
-        # check_instance(n, L, rate,  j, method)
-
-
 
 if __name__ == "__main__":
 
@@ -493,7 +489,7 @@ if __name__ == "__main__":
     parser.set_defaults(runner=run_perfect_inference)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-L", type=int, default=1, help="Sequence length in MB")
+        "--length", "-L", type=float, default=1, help="Sequence length in MB")
     parser.add_argument("--num-replicates", "-r", type=int, default=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
     parser.add_argument(
