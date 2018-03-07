@@ -389,8 +389,6 @@ def check_instance(n, L, rate, seed, method="C"):
 
     assert ts.tables.edges == inferred_ts.tables.edges
 
-    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
-    assert np.all(kc_distance == 0)
 
 def check_inference(n, L, rate, seed_start=1, seed_end=100, method="C"):
     for j in range(seed_start, seed_end):
@@ -431,7 +429,7 @@ def main():
     # run_viz(25, 100, 0.02, 3, method="P")
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
-    check_inference(166, 1000000, 0.00002, 1, 100000, method="C")
+    check_inference(500, 1000000, 0.00002, 1, 100000, method="C")
 
     # run_viz(7, 100, 0.01, 20)
     # run_viz(20, 100, 0.01, 5)

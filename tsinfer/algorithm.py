@@ -570,14 +570,17 @@ class AncestorMatcher(object):
             L_no_recomb = self.likelihood[u] * no_recomb_proba * distance
             assert L_no_recomb >= 0
             L_recomb = recomb_proba * distance
-            delta = 1e-9
+            eps = 1e-14
             # Only recombine if the likelihood of recombination is more than delta
             # bigger than the likelihood of no recombination. This avoids issues
             # with numerical jitter when comparing the values, which results in
             # spurious recombinations.
             # TODO the constant is a hack; should really be a function of the
             # recombination rate in some way.
-            if L_recomb > L_no_recomb + delta:
+            # TODO This has caused subtle numerical problems, where all the
+            # likelihoods ended up being less than epsilon. Definitely need
+            # a better way of doing this!!!
+            if L_recomb > L_no_recomb + eps:
                 z = L_recomb
                 self.traceback[site][u] = True
             else:

@@ -334,7 +334,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
            spurious recombinations. */
         /* TODO the constant is a hack; should really be a function of the */
         /* recombination rate in some way. */
-        if (L_recomb > L_no_recomb + 1e-9) {
+        if (L_recomb > L_no_recomb + 1e-14) {
             y = L_recomb;
             recombination_required[u] = true;
         } else {
