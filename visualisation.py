@@ -295,7 +295,7 @@ class Visualiser(object):
 
 def visualise(
         ts, recombination_rate, error_rate, method="C", box_size=8,
-        perfect_ancestors=False, path_compression=False):
+        perfect_ancestors=False, path_compression=False, time_chunking=False):
 
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
@@ -306,7 +306,8 @@ def visualise(
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
     if perfect_ancestors:
-        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        tsinfer.build_simulated_ancestors(
+            sample_data, ancestor_data, ts, time_chunking=time_chunking)
     else:
         tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
@@ -326,7 +327,7 @@ def visualise(
     # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
-        path_compression=False)
+        path_compression=False, stabilise_node_ordering=True)
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
     sys.stdout.flush()
@@ -334,7 +335,8 @@ def visualise(
 
 def run_viz(
         n, L, rate, seed, mutation_rate=0, method="C",
-        perfect_ancestors=True, perfect_mutations=True, path_compression=False):
+        perfect_ancestors=True, perfect_mutations=True, path_compression=False,
+        time_chunking=True):
     recomb_map = msprime.RecombinationMap.uniform_map(
             length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
@@ -352,7 +354,7 @@ def run_viz(
         f.write(draw_ancestors(ts))
     visualise(
         ts, 1e-9, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors,
-        path_compression=path_compression)
+        path_compression=path_compression, time_chunking=time_chunking)
 
 
 
@@ -366,8 +368,8 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        10, 100000, 0.00002, 6, mutation_rate=0.1, perfect_ancestors=True,
-        perfect_mutations=True, method="C", path_compression=False)
+        6, 1000, 0.0005, 7, mutation_rate=0.0001, perfect_ancestors=True,
+        perfect_mutations=True, time_chunking=True, method="C", path_compression=False)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")

@@ -442,3 +442,11 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, method=method, num_threads=4)
             self.verify_perfect_inference(ts, inferred_ts)
+
+    def test_small_smc_no_time_chunking(self):
+        base_ts = get_smc_simulation(10, L=1, recombination_rate=10, seed=113)
+        self.assertGreater(base_ts.num_trees, 1)
+        for method in ["P", "C"]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                base_ts, method=method, time_chunking=False)
+            self.verify_perfect_inference(ts, inferred_ts)

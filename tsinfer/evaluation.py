@@ -139,8 +139,12 @@ def insert_perfect_mutations(ts, delta=None):
             num_children[e.parent] += 1
             children_in.add(e.child)
             parents_in.add(e.parent)
-
-        if len(edges_out) > 4:
+        root = 0
+        while parent[root] != -1:
+            root = parent[root]
+        # If we have more than 4 edges in the diff, or we have a 2 edge diff
+        # that is not a root change this must be a multiple recombination.
+        if len(edges_out) > 4 or (len(edges_out) == 2 and root not in parents_in):
             raise ValueError("Multiple recombination detected")
         # We use the value of delta from the previous iteration
         x = left - current_delta
@@ -270,32 +274,40 @@ def assert_single_recombination(ts):
             raise ValueError("Multiple recombinations at ", e.right)
 
 
-def build_simulated_ancestors(sample_data, ancestor_data, ts):
+def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=False):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
     A = get_ancestral_haplotypes(ts)
-    # print(A.astype(np.int8))
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
     # We also only want the variant sites
     A = A[:, sample_data.variant_site]
-    # print(A.astype(np.int8))
-    # print(ts.tables.sites)
-    # print(ts.tables.edges)
 
     # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
-    time = len(ancestors)
-    for a, s, e, focal in zip(ancestors, start, end, focal_sites):
+    N = len(ancestors)
+    if time_chunking:
+        time = np.zeros(N)
+        intersect_mask = np.zeros(A.shape[1], dtype=int)
+        t = 0
+        for j in range(N):
+            if np.any(intersect_mask[start[j]: end[j]] == 1):
+                t += 1
+                intersect_mask[:] = 0
+            intersect_mask[start[j]: end[j]] = 1
+            time[j] = t
+    else:
+        time = np.arange(N)
+    time = -1 * (time - time[-1]) + 1
+    for a, s, e, focal, t in zip(ancestors, start, end, focal_sites, time):
         assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
         assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
         assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
-            start=s, end=e, time=time, focal_sites=np.array(focal, dtype=np.int32),
+            start=s, end=e, time=t, focal_sites=np.array(focal, dtype=np.int32),
             haplotype=a)
-        time -= 1
 
 
 def print_tree_pairs(ts1, ts2, compute_distances=True):
@@ -341,7 +353,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
 
 def run_perfect_inference(
         base_ts, method="C", num_threads=1, path_compression=False,
-        extended_checks=True, progress=False):
+        extended_checks=True, time_chunking=True, progress=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -354,13 +366,16 @@ def run_perfect_inference(
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-    build_simulated_ancestors(sample_data, ancestor_data, ts)
+    build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=time_chunking)
     ancestor_data.finalise()
 
     ancestors_ts = inference.match_ancestors(
         sample_data, ancestor_data, method=method, path_compression=path_compression,
         num_threads=num_threads, extended_checks=extended_checks, progress=progress)
+    # If time_chunking is turned on we need to stabilise the node ordering in the output
+    # to ensure that the node IDs are comparable.
     inferred_ts = inference.match_samples(
         sample_data, ancestors_ts, method=method, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks, progress=progress)
+        num_threads=num_threads, extended_checks=extended_checks, progress=progress,
+        stabilise_node_ordering=time_chunking)
     return ts, inferred_ts

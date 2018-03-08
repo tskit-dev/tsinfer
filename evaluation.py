@@ -15,6 +15,7 @@ import seaborn as sns
 import dendropy
 
 import tsinfer
+import tsinfer.cli as cli
 import msprime
 
 def make_errors(v, p):
@@ -462,7 +463,8 @@ def run_perfect_inference(args):
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
             base_ts, num_threads=args.num_threads, progress=args.progress,
-            extended_checks=args.extended_checks)
+            extended_checks=args.extended_checks,
+            time_chunking=not args.no_time_chunking)
         print("n={} num_trees={} num_sites={}".format(
             ts.num_samples, ts.num_trees, ts.num_sites))
         assert ts.tables.edges == inferred_ts.tables.edges
@@ -470,6 +472,20 @@ def run_perfect_inference(args):
         assert ts.tables.mutations == inferred_ts.tables.mutations
         assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
         assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
+
+
+def setup_logging(args):
+    log_level = "WARN"
+    if args.verbosity > 0:
+        log_level = "INFO"
+    if args.verbosity > 1:
+        log_level = "DEBUG"
+    if args.log_section is None:
+        daiquiri.setup(level=log_level)
+    else:
+        daiquiri.setup(level="WARN")
+        logger = logging.getLogger(args.log_section)
+        logger.setLevel(log_level)
 
 
 if __name__ == "__main__":
@@ -489,7 +505,7 @@ if __name__ == "__main__":
     parser.set_defaults(runner=run_perfect_inference)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-L", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument("--num-replicates", "-r", type=int, default=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
     parser.add_argument(
@@ -498,8 +514,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--extended-checks", "-X", action="store_true",
         help="Enable extra consistency checking (slow)")
+    parser.add_argument(
+        "--no-time-chunking", action="store_true",
+        help="Disable time-chunking to give each ancestor a distinct time.")
+    cli.add_logging_arguments(parser)
 
     args = top_parser.parse_args()
+    cli.setup_logging(args)
     args.runner(args)
 
 

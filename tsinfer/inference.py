@@ -198,7 +198,7 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 def match_samples(
         sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
-        traceback_file_pattern=None, extended_checks=False):
+        traceback_file_pattern=None, extended_checks=False, stabilise_node_ordering=False):
     manager = SampleMatcher(
         sample_data, ancestors_ts, error_probability=genotype_quality,
         path_compression=path_compression,
@@ -206,7 +206,8 @@ def match_samples(
         traceback_file_pattern=traceback_file_pattern,
         extended_checks=extended_checks)
     manager.match_samples()
-    ts = manager.finalise(simplify=simplify)
+    ts = manager.finalise(
+        simplify=simplify, stabilise_node_ordering=stabilise_node_ordering)
     return ts
 
 
@@ -697,12 +698,26 @@ class SampleMatcher(Matcher):
                 self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
         logger.info("Finished sample matching")
 
-    def finalise(self, simplify=True):
+    def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
         ts = self.get_tree_sequence(all_sites=True)
         if simplify:
             logger.info("Running simplify on {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
+            if stabilise_node_ordering:
+                # Ensure all the node times are distinct so that they will have
+                # stable IDs after simplifying. This could possibly also be done
+                # by reversing the IDs within a time slice. This is used for comparing
+                # tree sequences produced by perfect inference.
+                tables = ts.tables
+                time = tables.nodes.time
+                for t in range(1, int(time[0])):
+                    index = np.where(time == t)[0]
+                    k = index.shape[0]
+                    time[index] += np.arange(k)[::-1] / k
+                tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
+                msprime.sort_tables(**tables.asdict())
+                ts = msprime.load_tables(**tables.asdict())
             ts = ts.simplify(
                 samples=self.sample_ids, filter_zero_mutation_sites=False)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
