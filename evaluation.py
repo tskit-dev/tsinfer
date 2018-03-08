@@ -3,6 +3,7 @@ Script for statistically evaluating various aspects of tsinfer performance.
 """
 import argparse
 import sys
+import collections
 
 import numpy as np
 import pandas as pd
@@ -11,8 +12,8 @@ import matplotlib as mp
 mp.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+import tqdm
 
-import dendropy
 
 import tsinfer
 import tsinfer.cli as cli
@@ -441,6 +442,83 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
+def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
+    """
+    Runs the perfect inference process on the specified tree sequence.
+    """
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
+
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    if exact_ancestors:
+        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+    else:
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+    ancestor_data.finalise()
+
+    ancestors_ts = tsinfer.match_ancestors(
+        sample_data, ancestor_data, path_compression=path_compression,
+        num_threads=num_threads)
+    inferred_ts = tsinfer.match_samples(
+        sample_data, ancestors_ts, path_compression=path_compression,
+        num_threads=num_threads)
+    return inferred_ts
+
+
+def run_edges_performance(args):
+    Ne = 10**4
+    recombination_rate = 1e-8
+    mutation_rate = 1e-8
+    num_lengths = 10
+    data = collections.defaultdict(list)
+    progress = tqdm.tqdm(
+        total=num_lengths * args.num_replicates, disable=not args.progress)
+
+    for L in np.linspace(0.01, args.length, num_lengths):
+        source = np.zeros(args.num_replicates)
+        exact_ancestors = np.zeros(args.num_replicates)
+        estimated_ancestors = np.zeros(args.num_replicates)
+        num_sites = np.zeros(args.num_replicates)
+        num_trees = np.zeros(args.num_replicates)
+        replicates = msprime.simulate(
+            sample_size=args.sample_size, length=L * 10**6,
+            recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+            Ne=Ne, model="smc_prime", num_replicates=args.num_replicates,
+            random_seed=args.random_seed)
+        for j, smc_ts in enumerate(replicates):
+            assert smc_ts.num_sites > 1
+            num_sites[j] = smc_ts.num_sites
+            num_trees[j] = smc_ts.num_trees
+            source[j] = smc_ts.num_edges
+            inferred_ts = run_infer(smc_ts, exact_ancestors=False)
+            estimated_ancestors[j] = inferred_ts.num_edges
+            inferred_ts = run_infer(smc_ts, exact_ancestors=True)
+            exact_ancestors[j] = inferred_ts.num_edges
+            progress.update()
+        data["length"].append(L)
+        data["num_sites"].append(np.mean(num_sites))
+        data["num_trees"].append(np.mean(num_trees))
+        data["source"].append(np.mean(source))
+        data["estimated_ancestors"].append(np.mean(estimated_ancestors))
+        data["exact_ancestors"].append(np.mean(exact_ancestors))
+
+    progress.close()
+    df = pd.DataFrame(data)
+    print(df)
+    plt.plot(
+        df.num_sites, df.estimated_ancestors / df.source, label="estimated ancestors")
+    plt.plot(
+        df.num_sites, df.exact_ancestors / df.source, label="exact ancestors")
+    plt.title("n = {}".format(args.sample_size))
+    plt.ylabel("Source to inferrred edge ratio")
+    plt.xlabel("Number of sites")
+    plt.legend(loc="upper right")
+    plt.savefig("edge-performance_n={}.png".format(args.sample_size))
+    plt.clf()
 
 def multiple_recombinations(ts):
     """
@@ -502,6 +580,7 @@ if __name__ == "__main__":
     parser = subparsers.add_parser(
         "perfect-inference", aliases=["pi"],
         help="Runs the perfect inference process on simulated tree sequences.")
+    cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
@@ -517,11 +596,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-time-chunking", action="store_true",
         help="Disable time-chunking to give each ancestor a distinct time.")
+
+    parser = subparsers.add_parser(
+        "edges-performance", aliases=["ep"],
+        help="Runs a plot showing performance in terms of the edge ratio.")
     cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_edges_performance)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument("--num-replicates", "-r", type=int, default=10)
+    parser.add_argument("--num-threads", "-t", type=int, default=0)
+    parser.add_argument("--random-seed", "-s", type=int, default=1)
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
     args.runner(args)
+
 
 
     # check_basic_performance()
