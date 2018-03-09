@@ -502,12 +502,12 @@ def edges_performance_worker(args):
         breakpoints, kc_distance = tsinfer.compare(smc_ts, exact_ancestors_ts)
         d = breakpoints[1:] - breakpoints[:-1]
         d /= breakpoints[-1]
-        exact_anc_kc_distance_weighted = np.mean(kc_distance * d)
+        exact_anc_kc_distance_weighted = np.sum(kc_distance * d)
         exact_anc_kc_mean = np.mean(kc_distance)
         breakpoints, kc_distance = tsinfer.compare(smc_ts, estimated_ancestors_ts)
         d = breakpoints[1:] - breakpoints[:-1]
         d /= breakpoints[-1]
-        estimated_anc_kc_distance_weighted = np.mean(kc_distance * d)
+        estimated_anc_kc_distance_weighted = np.sum(kc_distance * d)
         estimated_anc_kc_mean = np.mean(kc_distance)
         tree_metrics_time = time.perf_counter() - before
         results.update({
@@ -565,7 +565,7 @@ def run_edges_performance(args):
         dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges,
         label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.recombination_rate, args.mutation_rate,
+        args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
     plt.ylabel("inferred # edges / source # edges")
     plt.xlabel("Num sites")
@@ -574,10 +574,10 @@ def run_edges_performance(args):
         args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     plt.clf()
 
-    plt.semilogy(
+    plt.plot(
         dfg.num_sites, dfg.estimated_anc_kc_distance_weighted,
         label="estimated ancestors")
-    plt.semilogy(
+    plt.plot(
         dfg.num_sites, dfg.exact_anc_kc_distance_weighted,
         label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
