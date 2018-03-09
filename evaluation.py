@@ -4,6 +4,8 @@ Script for statistically evaluating various aspects of tsinfer performance.
 import argparse
 import sys
 import collections
+import random
+import concurrent.futures
 
 import numpy as np
 import pandas as pd
@@ -468,56 +470,67 @@ def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
         num_threads=num_threads)
     return inferred_ts
 
+def edges_performance_worker(simulation_args):
+    smc_ts = msprime.simulate(**simulation_args)
+    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
+    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
+    results = {
+        "num_sites": smc_ts.num_sites,
+        "num_trees": smc_ts.num_trees,
+        "source": smc_ts.num_edges,
+        "estimated_ancestors": estimated_ancestors_ts.num_edges,
+        "exact_ancestors": exact_ancestors_ts.num_edges,
+    }
+    results.update(simulation_args)
+    return results
+
 
 def run_edges_performance(args):
-    Ne = 10**4
-    recombination_rate = 1e-8
-    mutation_rate = 1e-8
     num_lengths = 10
-    data = collections.defaultdict(list)
-    progress = tqdm.tqdm(
-        total=num_lengths * args.num_replicates, disable=not args.progress)
+    MB = 10**6
 
+    work = []
+    rng = random.Random()
+    rng.seed(args.random_seed)
     for L in np.linspace(0.01, args.length, num_lengths):
-        source = np.zeros(args.num_replicates)
-        exact_ancestors = np.zeros(args.num_replicates)
-        estimated_ancestors = np.zeros(args.num_replicates)
-        num_sites = np.zeros(args.num_replicates)
-        num_trees = np.zeros(args.num_replicates)
-        replicates = msprime.simulate(
-            sample_size=args.sample_size, length=L * 10**6,
-            recombination_rate=recombination_rate, mutation_rate=mutation_rate,
-            Ne=Ne, model="smc_prime", num_replicates=args.num_replicates,
-            random_seed=args.random_seed)
-        for j, smc_ts in enumerate(replicates):
-            assert smc_ts.num_sites > 1
-            num_sites[j] = smc_ts.num_sites
-            num_trees[j] = smc_ts.num_trees
-            source[j] = smc_ts.num_edges
-            inferred_ts = run_infer(smc_ts, exact_ancestors=False)
-            estimated_ancestors[j] = inferred_ts.num_edges
-            inferred_ts = run_infer(smc_ts, exact_ancestors=True)
-            exact_ancestors[j] = inferred_ts.num_edges
-            progress.update()
-        data["length"].append(L)
-        data["num_sites"].append(np.mean(num_sites))
-        data["num_trees"].append(np.mean(num_trees))
-        data["source"].append(np.mean(source))
-        data["estimated_ancestors"].append(np.mean(estimated_ancestors))
-        data["exact_ancestors"].append(np.mean(exact_ancestors))
+        for _ in range(args.num_replicates):
+            work.append({
+                "sample_size": args.sample_size,
+                "length": L * MB,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": 10**4,
+                "model": "smc_prime",
+                "random_seed": rng.randint(1, 2**30)})
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(edges_performance_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
 
     progress.close()
-    df = pd.DataFrame(data)
-    print(df)
+
+    df = pd.DataFrame(results)
+    df.length /= MB
+    dfg = df.groupby(df.length).mean()
+    print(dfg)
     plt.plot(
-        df.num_sites, df.estimated_ancestors / df.source, label="estimated ancestors")
+        dfg.num_sites, dfg.estimated_ancestors / dfg.source, label="estimated ancestors")
     plt.plot(
-        df.num_sites, df.exact_ancestors / df.source, label="exact ancestors")
-    plt.title("n = {}".format(args.sample_size))
-    plt.ylabel("Source to inferrred edge ratio")
-    plt.xlabel("Number of sites")
-    plt.legend(loc="upper right")
-    plt.savefig("edge-performance_n={}.png".format(args.sample_size))
+        dfg.num_sites, dfg.exact_ancestors / dfg.source, label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}".format(
+        args.sample_size, args.recombination_rate, args.mutation_rate))
+    plt.ylabel("inferred # edges / source # edges")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig("edge-performance_n={}_L={}.png".format(args.sample_size, args.length))
     plt.clf()
 
 def multiple_recombinations(ts):
@@ -585,7 +598,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
-    parser.add_argument("--num-replicates", "-r", type=int, default=1)
+    parser.add_argument("--num-replicates", "-R", type=int, default=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
     parser.add_argument(
         "--progress", "-p", action="store_true",
@@ -605,8 +618,14 @@ if __name__ == "__main__":
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
-    parser.add_argument("--num-replicates", "-r", type=int, default=10)
-    parser.add_argument("--num-threads", "-t", type=int, default=0)
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=1)
     parser.add_argument(
         "--progress", "-p", action="store_true",
