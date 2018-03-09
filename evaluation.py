@@ -501,15 +501,21 @@ def edges_performance_worker(args):
         before = time.perf_counter()
         breakpoints, kc_distance = tsinfer.compare(smc_ts, exact_ancestors_ts)
         d = breakpoints[1:] - breakpoints[:-1]
-        exact_anc_kc_distance_weighted = np.mean(kc_distance / d)
+        d /= breakpoints[-1]
+        exact_anc_kc_distance_weighted = np.mean(kc_distance * d)
+        exact_anc_kc_mean = np.mean(kc_distance)
         breakpoints, kc_distance = tsinfer.compare(smc_ts, estimated_ancestors_ts)
         d = breakpoints[1:] - breakpoints[:-1]
-        estimated_anc_kc_distance_weighted = np.mean(kc_distance / d)
+        d /= breakpoints[-1]
+        estimated_anc_kc_distance_weighted = np.mean(kc_distance * d)
+        estimated_anc_kc_mean = np.mean(kc_distance)
         tree_metrics_time = time.perf_counter() - before
         results.update({
             "tree_metrics_time": tree_metrics_time,
             "exact_anc_kc_distance_weighted": exact_anc_kc_distance_weighted,
+            "exact_anc_kc_mean": exact_anc_kc_mean,
             "estimated_anc_kc_distance_weighted": estimated_anc_kc_distance_weighted,
+            "estimated_anc_kc_mean": estimated_anc_kc_mean,
         })
     return results
 
@@ -520,7 +526,8 @@ def run_edges_performance(args):
 
     work = []
     rng = random.Random()
-    rng.seed(args.random_seed)
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
     for L in np.linspace(0.01, args.length, num_lengths):
         for _ in range(args.num_replicates):
             sim_args = {
@@ -557,27 +564,48 @@ def run_edges_performance(args):
     plt.plot(
         dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges,
         label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}".format(
-        args.sample_size, args.recombination_rate, args.mutation_rate))
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.recombination_rate, args.mutation_rate,
+        args.num_replicates))
     plt.ylabel("inferred # edges / source # edges")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig("ancestors_edges_n={}_L={}.png".format(args.sample_size, args.length))
+    plt.savefig("ancestors_n={}_L={}_mu={}_rho={}_edges.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     plt.clf()
 
-    plt.plot(
+    plt.semilogy(
         dfg.num_sites, dfg.estimated_anc_kc_distance_weighted,
         label="estimated ancestors")
-    plt.plot(
+    plt.semilogy(
         dfg.num_sites, dfg.exact_anc_kc_distance_weighted,
         label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}".format(
-        args.sample_size, args.recombination_rate, args.mutation_rate))
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
     plt.ylabel("Distance weighted KC metric")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig("ancestors_kc_distance_n={}_L={}.png".format(args.sample_size, args.length))
+    plt.savefig("ancestors_n={}_L={}_mu={}_rho={}_kc_distance_weighted.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     plt.clf()
+
+    plt.plot(
+        dfg.num_sites, dfg.estimated_anc_kc_mean,
+        label="estimated ancestors")
+    plt.plot(
+        dfg.num_sites, dfg.exact_anc_kc_mean,
+        label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    plt.ylabel("Mean KC metric")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig("ancestors_n={}_L={}_mu={}_rho={}_kc_mean.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+    plt.clf()
+
 
 
 
@@ -674,7 +702,7 @@ if __name__ == "__main__":
         help="Mutation rate")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-P", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=1)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
