@@ -6,6 +6,7 @@ import sys
 import collections
 import random
 import concurrent.futures
+import time
 
 import numpy as np
 import pandas as pd
@@ -470,18 +471,46 @@ def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
         num_threads=num_threads)
     return inferred_ts
 
-def edges_performance_worker(simulation_args):
+def edges_performance_worker(args):
+    simulation_args, tree_metrics = args
+    before = time.perf_counter()
     smc_ts = msprime.simulate(**simulation_args)
+    sim_time = time.perf_counter() - before
+
+    before = time.perf_counter()
     estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
+    estimated_ancestors_time = time.perf_counter() - before
+
+    before = time.perf_counter()
     exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
+    exact_ancestors_time = time.perf_counter() - before
     results = {
+        "sim_time": sim_time,
+        "estimated_anc_time": estimated_ancestors_time,
+        "exact_anc_time": exact_ancestors_time,
         "num_sites": smc_ts.num_sites,
-        "num_trees": smc_ts.num_trees,
-        "source": smc_ts.num_edges,
-        "estimated_ancestors": estimated_ancestors_ts.num_edges,
-        "exact_ancestors": exact_ancestors_ts.num_edges,
+        "source_num_trees": smc_ts.num_trees,
+        "estimated_anc_trees": estimated_ancestors_ts.num_trees,
+        "exact_anc_trees": exact_ancestors_ts.num_trees,
+        "source_edges": smc_ts.num_edges,
+        "estimated_anc_edges": estimated_ancestors_ts.num_edges,
+        "exact_anc_edges": exact_ancestors_ts.num_edges,
     }
     results.update(simulation_args)
+    if tree_metrics:
+        before = time.perf_counter()
+        breakpoints, kc_distance = tsinfer.compare(smc_ts, exact_ancestors_ts)
+        d = breakpoints[1:] - breakpoints[:-1]
+        exact_anc_kc_distance_weighted = np.mean(kc_distance / d)
+        breakpoints, kc_distance = tsinfer.compare(smc_ts, estimated_ancestors_ts)
+        d = breakpoints[1:] - breakpoints[:-1]
+        estimated_anc_kc_distance_weighted = np.mean(kc_distance / d)
+        tree_metrics_time = time.perf_counter() - before
+        results.update({
+            "tree_metrics_time": tree_metrics_time,
+            "exact_anc_kc_distance_weighted": exact_anc_kc_distance_weighted,
+            "estimated_anc_kc_distance_weighted": estimated_anc_kc_distance_weighted,
+        })
     return results
 
 
@@ -494,14 +523,15 @@ def run_edges_performance(args):
     rng.seed(args.random_seed)
     for L in np.linspace(0.01, args.length, num_lengths):
         for _ in range(args.num_replicates):
-            work.append({
+            sim_args = {
                 "sample_size": args.sample_size,
                 "length": L * MB,
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
                 "Ne": 10**4,
                 "model": "smc_prime",
-                "random_seed": rng.randint(1, 2**30)})
+                "random_seed": rng.randint(1, 2**30)}
+            work.append((sim_args, True))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -514,24 +544,42 @@ def run_edges_performance(args):
 
     except KeyboardInterrupt:
         pass
-
     progress.close()
 
     df = pd.DataFrame(results)
     df.length /= MB
     dfg = df.groupby(df.length).mean()
     print(dfg)
+
     plt.plot(
-        dfg.num_sites, dfg.estimated_ancestors / dfg.source, label="estimated ancestors")
+        dfg.num_sites, dfg.estimated_anc_edges / dfg.source_edges,
+        label="estimated ancestors")
     plt.plot(
-        dfg.num_sites, dfg.exact_ancestors / dfg.source, label="exact ancestors")
+        dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges,
+        label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}".format(
         args.sample_size, args.recombination_rate, args.mutation_rate))
     plt.ylabel("inferred # edges / source # edges")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig("edge-performance_n={}_L={}.png".format(args.sample_size, args.length))
+    plt.savefig("ancestors_edges_n={}_L={}.png".format(args.sample_size, args.length))
     plt.clf()
+
+    plt.plot(
+        dfg.num_sites, dfg.estimated_anc_kc_distance_weighted,
+        label="estimated ancestors")
+    plt.plot(
+        dfg.num_sites, dfg.exact_anc_kc_distance_weighted,
+        label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}".format(
+        args.sample_size, args.recombination_rate, args.mutation_rate))
+    plt.ylabel("Distance weighted KC metric")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig("ancestors_kc_distance_n={}_L={}.png".format(args.sample_size, args.length))
+    plt.clf()
+
+
 
 def multiple_recombinations(ts):
     """
