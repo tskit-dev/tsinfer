@@ -466,6 +466,8 @@ class SampleData(DataContainer):
         variant_sites = []
         num_samples = self.num_samples
         num_sites = len(self.site_buffer)
+        if num_sites == 0:
+            raise ValueError("Must have at least one site")
         position = np.empty(num_sites)
         frequency = np.empty(num_sites, dtype=np.uint32)
         ancestral_states = []

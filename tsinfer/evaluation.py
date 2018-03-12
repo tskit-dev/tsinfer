@@ -277,6 +277,7 @@ def assert_single_recombination(ts):
 def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=False):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
+    assert sample_data.num_variant_sites > 0
     A = get_ancestral_haplotypes(ts)
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
