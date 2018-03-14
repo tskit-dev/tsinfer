@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import multiprocessing
 import os
+import shutil
 
 import numpy as np
 import msprime
@@ -87,9 +88,22 @@ def convert(vcf_file, genetic_map_file, output_file, max_variants=None, show_pro
 
     last_physical_pos = 0
     last_genetic_pos = 0
-    positions = []
-    genotypes = []
-    recombination_rates = []
+    # This is crud, need to abstract this away from the user.
+    if os.path.exists(output_file):
+        shutil.rmtree(output_file)
+
+    vcf = cyvcf2.VCF(vcf_file)
+    num_diploids = len(vcf.samples)
+    num_samples = 2 * num_diploids
+    vcf.close()
+
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=num_samples, sequence_length=map_length,
+        filename=output_file)
+
+    # for v in ts.variants():
+    #     sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+
     for index, variant in enumerate(variants(vcf_file, show_progress)):
         physical_pos = variant.position
         if index >= max_variants or physical_pos >= map_length:
@@ -100,22 +114,14 @@ def convert(vcf_file, genetic_map_file, output_file, max_variants=None, show_pro
         scaled_recomb_rate = 0
         if genetic_dist > 0:
             scaled_recomb_rate = physical_dist / genetic_dist
-        recombination_rates.append(scaled_recomb_rate)
-        genotypes.append(variant.genotypes)
-        positions.append(physical_pos)
+        # Skipping recombination rate for now.
+        # recombination_rates.append(scaled_recomb_rate)
+        sample_data.add_variant(variant.position, ["0", "1"], variant.genotypes)
+
         last_physical_pos = physical_pos
         last_genetic_pos = genetic_pos
 
-    G = np.array(genotypes, dtype=np.uint8)
-
-    # This is crud, need to abstract this away from the user.
-    if os.path.exists(output_file):
-        os.unlink(output_file)
-    input_hdf5 = zarr.DBMStore(output_file, open=bsddb3.btopen)
-    root = zarr.group(store=input_hdf5, overwrite=True)
-    tsinfer.InputFile.build(
-        root, genotypes=G, position=positions, recombination_rate=recombination_rates)
-    input_hdf5.close()
+    sample_data.finalise()
     print("Wrote", output_file)
 
 
@@ -142,7 +148,9 @@ def main():
     parser.add_argument(
         "--stop", default=22, type=int, help="The last autosome")
     parser.add_argument(
-        "--processes", default=10, type=int, help="The number of worker processes")
+        "-P", "--processes", default=10, type=int, help="The number of worker processes")
+    parser.add_argument(
+        "-p", "--progress", action="store_true")
 
     args = parser.parse_args()
     chromosomes = list(range(args.start, args.stop + 1))
@@ -161,12 +169,16 @@ def main():
         if not os.path.exists(genetic_map_file):
             raise ValueError("{} does not exist".format(genetic_map_file))
 
-    work = reversed(list(zip(vcf_files, genetic_map_files, output_files, max_variants)))
-    with multiprocessing.Pool(args.processes) as pool:
-        pool.map(worker, work)
-    # for t in work:
-    #     worker(t)
+#     work = reversed(list(zip(
+#         vcf_files, genetic_map_files, output_files, max_variants)))
+#     with multiprocessing.Pool(args.processes) as pool:
+#         pool.map(worker, work)
+#     # for t in work:
+#     #     worker(t)
 
+    convert(
+        vcf_files[0], genetic_map_files[0], output_files[0], args.max_variants,
+        show_progress=args.progress)
 
 
 if __name__ == "__main__":
