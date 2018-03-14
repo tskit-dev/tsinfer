@@ -15,8 +15,10 @@ import tsinfer.formats as formats
 def kc_distance(tree1, tree2):
     """
     Returns the Kendall-Colijn topological distance between the specified
-    pair of trees. Note that this does not include the branch length component.
+    pair of trees. This is a very simple and direct implementation for testing.
     """
+    # print(tree1.draw(format="unicode"))
+    # print(tree2.draw(format="unicode"))
     samples = tree1.tree_sequence.samples()
     if not np.array_equal(samples, tree2.tree_sequence.samples()):
         raise ValueError("Trees must have the same samples")
@@ -24,19 +26,23 @@ def kc_distance(tree1, tree2):
     n = (k * (k - 1)) // 2
     trees = [tree1, tree2]
     M = [np.ones(n + k), np.ones(n + k)]
-    D = [{}, {}]
-    for j, (a, b) in enumerate(itertools.combinations(samples, 2)):
-        for tree, m, d in zip(trees, M, D):
-            u = tree.mrca(a, b)
-            if u not in d:
-                # Cache the distance values
-                path_len = 0
-                v = u
-                while tree.parent(v) != msprime.NULL_NODE:
-                    path_len += 1
-                    v = tree.parent(v)
-                d[u] = path_len
-            m[j] = d[u]
+    for tree_index, tree in enumerate([tree1, tree2]):
+        stack = [(tree.root, 0)]
+        while len(stack) > 0:
+            u, depth = stack.pop()
+            children = tree.children(u)
+            for v in children:
+                stack.append((v, depth + 1))
+            for c1, c2 in itertools.combinations(children, 2):
+                for u in tree.samples(c1):
+                    for v in tree.samples(c2):
+                        if u < v:
+                            a, b = u, v
+                        else:
+                            a, b = v, u
+                        pair_index = a * (a - 2 * k + 1) // -2 + b - a - 1
+                        assert M[tree_index][pair_index] == 1
+                        M[tree_index][pair_index] = depth
     return np.linalg.norm(M[0] - M[1])
 
 
@@ -48,8 +54,8 @@ def tree_pairs(ts1, ts2):
     if ts1.sequence_length != ts2.sequence_length:
         raise ValueError("Tree sequences must be equal length.")
     L = ts1.sequence_length
-    trees1 = ts1.trees()
-    trees2 = ts2.trees()
+    trees1 = ts1.trees(sample_lists=True)
+    trees2 = ts2.trees(sample_lists=True)
     tree1 = next(trees1)
     tree2 = next(trees2)
     right = 0

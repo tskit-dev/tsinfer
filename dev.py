@@ -880,10 +880,28 @@ def asserts_fail():
         print("inferred num_edges = ", inferred_ts.num_edges)
 
 
+def kc_metric():
+    n = 10
+    ts1 = msprime.simulate(n, random_seed=1,
+            demographic_events=[msprime.SimpleBottleneck(0.2, 0.99)])
+    ts2 = msprime.simulate(n, random_seed=2)
+    t1 = next(ts1.trees(sample_lists=True))
+    t2 = next(ts2.trees(sample_lists=True))
+    before = time.perf_counter()
+    d = tsinfer.kc_distance(t1, t2)
+    duration = time.perf_counter() - before
+
+    # print(d)
+    print("time = ", duration)
+
+
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
+
+    kc_metric()
 
     # lookat(sys.argv[1])
 
@@ -919,8 +937,8 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    tsinfer_dev(10, 0.1, seed=6, num_threads=0,
-            genotype_quality=0.0, method="P") #, log_level="WARNING")
+    # tsinfer_dev(10, 0.1, seed=6, num_threads=0,
+    #         genotype_quality=0.0, method="P") #, log_level="WARNING")
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)

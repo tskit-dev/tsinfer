@@ -1,7 +1,7 @@
 """
 Test cases for the evaluation code.
 """
-
+import itertools
 import unittest
 
 import msprime
@@ -18,6 +18,30 @@ def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
     return msprime.simulate(
         n, length=L, recombination_rate=recombination_rate, random_seed=seed,
         model="smc_prime")
+
+
+def kc_distance(tree1, tree2):
+    """
+    Returns the Kendall-Colijn topological distance between the specified
+    pair of trees. This is a very simple and direct implementation for testing.
+    """
+    samples = tree1.tree_sequence.samples()
+    if not np.array_equal(samples, tree2.tree_sequence.samples()):
+        raise ValueError("Trees must have the same samples")
+    k = samples.shape[0]
+    n = (k * (k - 1)) // 2
+    trees = [tree1, tree2]
+    M = [np.ones(n + k), np.ones(n + k)]
+    for tree_index, tree in enumerate([tree1, tree2]):
+        for j, (a, b) in enumerate(itertools.combinations(samples, 2)):
+            u = tree.mrca(a, b)
+            path_len = 0
+            v = u
+            while tree.parent(v) != msprime.NULL_NODE:
+                path_len += 1
+                v = tree.parent(v)
+            M[tree_index][j] = path_len
+    return np.linalg.norm(M[0] - M[1])
 
 
 class TestKCMetric(unittest.TestCase):
@@ -46,7 +70,64 @@ class TestKCMetric(unittest.TestCase):
         tree2 = msprime.simulate(2, random_seed=1).first()
         self.assertRaises(ValueError, tsinfer.kc_distance, tree1, tree2)
 
-    # TODO add more tests checking actual examples.
+    def validate_trees(self, n):
+        for seed in range(1, 10):
+            tree1 = msprime.simulate(n, random_seed=seed).first()
+            tree2 = msprime.simulate(n, random_seed=seed + 1).first()
+            self.assertAlmostEqual(
+                tsinfer.kc_distance(tree1, tree2), kc_distance(tree1, tree2))
+
+    def test_sample_3(self):
+        self.validate_trees(3)
+
+    def test_sample_4(self):
+        self.validate_trees(4)
+
+    def test_sample_10(self):
+        self.validate_trees(10)
+
+    def test_sample_20(self):
+        self.validate_trees(20)
+
+    def validate_nonbinary_trees(self, n):
+        demographic_events = [
+            msprime.SimpleBottleneck(0.02, 0, proportion=0.25),
+            msprime.SimpleBottleneck(0.2, 0, proportion=1)]
+
+        for seed in range(1, 10):
+            ts = msprime.simulate(
+                n, random_seed=seed, demographic_events=demographic_events)
+            # Check if this is really nonbinary
+            found = False
+            for edgeset in ts.edgesets():
+                if len(edgeset.children) > 2:
+                    found = True
+                    break
+            self.assertTrue(found)
+            tree1 = ts.first()
+
+            ts  = msprime.simulate(
+                n, random_seed=seed + 1, demographic_events=demographic_events)
+            tree2 = ts.first()
+            self.assertAlmostEqual(
+                tsinfer.kc_distance(tree1, tree2), kc_distance(tree1, tree2))
+            self.assertAlmostEqual(
+                tsinfer.kc_distance(tree2, tree1), kc_distance(tree2, tree1))
+            # compare to a binary tree also
+            tree2 = msprime.simulate(n, random_seed=seed + 1).first()
+            self.assertAlmostEqual(
+                tsinfer.kc_distance(tree1, tree2), kc_distance(tree1, tree2))
+            self.assertAlmostEqual(
+                tsinfer.kc_distance(tree2, tree1), kc_distance(tree2, tree1))
+
+    def test_non_binary_sample_10(self):
+        self.validate_nonbinary_trees(10)
+
+    def test_non_binary_sample_20(self):
+        self.validate_nonbinary_trees(20)
+
+    def test_non_binary_sample_30(self):
+        self.validate_nonbinary_trees(30)
 
 
 class TestTreeSequenceCompare(unittest.TestCase):
