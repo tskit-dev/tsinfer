@@ -447,7 +447,9 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
-def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
+def run_infer(
+        ts, num_threads=1, path_compression=True, exact_ancestors=False,
+        fgt_break=True):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -462,7 +464,7 @@ def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
     if exact_ancestors:
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
     else:
-        tsinfer.build_ancestors(sample_data, ancestor_data)
+        tsinfer.build_ancestors(sample_data, ancestor_data, fgt_break=fgt_break)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
@@ -474,7 +476,7 @@ def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
     return inferred_ts
 
 def edges_performance_worker(args):
-    simulation_args, tree_metrics = args
+    simulation_args, tree_metrics, fgt_break = args
     before = time.perf_counter()
     smc_ts = msprime.simulate(**simulation_args)
     sim_time = time.perf_counter() - before
@@ -485,7 +487,7 @@ def edges_performance_worker(args):
         return {}
 
     before = time.perf_counter()
-    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
+    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False, fgt_break=fgt_break)
     estimated_ancestors_time = time.perf_counter() - before
 
     before = time.perf_counter()
@@ -495,6 +497,7 @@ def edges_performance_worker(args):
         "sim_time": sim_time,
         "estimated_anc_time": estimated_ancestors_time,
         "exact_anc_time": exact_ancestors_time,
+        "fgt_break": fgt_break,
         "num_sites": smc_ts.num_sites,
         "source_num_trees": smc_ts.num_trees,
         "estimated_anc_trees": estimated_ancestors_ts.num_trees,
@@ -549,7 +552,7 @@ def run_edges_performance(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, args.compute_tree_metrics))
+            work.append((sim_args, args.compute_tree_metrics, not args.no_fgt_break))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -571,8 +574,11 @@ def run_edges_performance(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "ancestors_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir,
+        "ancestors_n={}_L={}_mu={}_rho={}_fgt_break={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+            int(not args.no_fgt_break)))
+
     plt.plot(
         dfg.num_sites, dfg.estimated_anc_edges / dfg.source_edges,
         label="estimated ancestors")
@@ -635,7 +641,8 @@ def run_edges_performance(args):
         plt.clf()
 
 
-def ancestor_properties_worker(simulation_args):
+def ancestor_properties_worker(args):
+    simulation_args, fgt_break = args
     ts = msprime.simulate(**simulation_args)
 
     sample_data = tsinfer.SampleData.initialise(
@@ -651,11 +658,12 @@ def ancestor_properties_worker(simulation_args):
     exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc)
+    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
 
     results = {
+        "fgt_break": fgt_break,
         "num_sites": ts.num_sites,
         "num_trees": ts.num_trees,
         "exact_anc_num": exact_anc.num_ancestors,
@@ -685,7 +693,7 @@ def run_ancestor_properties(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append(sim_args)
+            work.append((sim_args, not args.no_fgt_break))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -707,8 +715,10 @@ def run_ancestor_properties(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_fgt={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+        int(not args.no_fgt_break)))
+
     # plt.plot(
     #     dfg.num_sites, dfg.exact_anc_num / dfg.estimated_anc_num,
     #     label="")
@@ -724,9 +734,6 @@ def run_ancestor_properties(args):
     plt.savefig(name_format.format("num"))
     plt.clf()
 
-    name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     plt.plot(dfg.num_sites, dfg.estimated_anc_mean_len, label="estimated ancestors")
     plt.plot(dfg.num_sites, dfg.exact_anc_mean_len, label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
@@ -737,8 +744,6 @@ def run_ancestor_properties(args):
     plt.legend()
     plt.savefig(name_format.format("mean_len"))
     plt.clf()
-
-
 
 
 def multiple_recombinations(ts):
@@ -842,6 +847,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
+    parser.add_argument(
+        "--no-fgt-break", "-F", action="store_true",
+        help="Disable the four-gamete test breaking")
 
     parser = subparsers.add_parser(
         "ancestor-properties", aliases=["ap"],
@@ -864,6 +872,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
+    parser.add_argument(
+        "--no-fgt-break", "-F", action="store_true",
+        help="Disable the four-gamete test breaking")
 
 
     args = top_parser.parse_args()

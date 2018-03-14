@@ -43,14 +43,12 @@ class AncestorBuilder(object):
     """
     Builds inferred ancestors.
     """
-    def __init__(self, num_samples, num_sites):
+    def __init__(self, num_samples, num_sites, fgt_break=True):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
         self.frequency_map = [{} for _ in range(self.num_samples + 1)]
-
-        # TMOP - hack to force different ancestors below.
-        self.x = 0
+        self.fgt_break = fgt_break
 
     def add_site(self, site_id, frequency, genotypes):
         """
@@ -60,14 +58,7 @@ class AncestorBuilder(object):
         if frequency > 1:
             pattern_map = self.frequency_map[frequency]
             # Each unique pattern gets added to the list
-            # key = genotypes.tobytes()
-            # FIXME Hacking this to ensure that we make a unique ancestor for
-            # each site.
-            if False:
-                key = self.x
-                self.x += 1
-            else:
-                key = genotypes.tobytes()
+            key = genotypes.tobytes()
             if key not in pattern_map:
                 pattern_map[key] = []
             pattern_map[key].append(site_id)
@@ -107,12 +98,26 @@ class AncestorBuilder(object):
         return ret
 
     def __build_ancestor_sites(self, focal_site, sites, a):
+        # print("__build_ancestor_sites", focal_site, sites)
         samples = set()
         g = self.sites[focal_site].genotypes
         for j in range(self.num_samples):
             if g[j] == 1:
                 samples.add(j)
+        fgt_patterns = set()
         for l in sites:
+            if self.fgt_break:
+                gfocal = self.sites[focal_site].genotypes
+                gl = self.sites[l].genotypes
+                for j in range(self.num_samples):
+                    fgt_patterns.add((gfocal[j], gl[j]))
+            # We need to special case here for when we're filling in the middle
+            # of ancestors that share the same pattern. Finding FGT violations
+            # here like this should result in a different ancestor probably.
+            if len(sites) > 1 and len(fgt_patterns) == 4:
+                # print("FGT violation at ", l)
+                break
+                # pass
             a[l] = 0
             if self.sites[l].frequency > self.sites[focal_site].frequency:
                 # print("\texamining:", self.sites[l])
@@ -135,6 +140,7 @@ class AncestorBuilder(object):
                 break
 
     def make_ancestor(self, focal_sites, a):
+        # print("MAKE ANC", focal_sites)
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
@@ -150,6 +156,8 @@ class AncestorBuilder(object):
         known = np.where(a != UNKNOWN_ALLELE)[0]
         start = known[0]
         end = known[-1] + 1
+        # print("Made ancestor", start, end, a)
+        assert np.all(a[start: end] != UNKNOWN_ALLELE)
         return start, end
 
 

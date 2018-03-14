@@ -13,6 +13,7 @@
 #define CACHE_UNSET (-1)
 
 #define TSI_COMPRESS_PATH 1
+#define TSI_FGT_BREAK 1
 
 #define TSI_EXTENDED_CHECKS 1
 
@@ -75,6 +76,7 @@ typedef struct {
     size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
+    int flags;
     site_t *sites;
     /* frequency_map[f] is an AVL tree mapping unique genotypes to the sites that
      * the occur at. Each of these sites has frequency f. */
@@ -162,7 +164,8 @@ typedef struct {
     site_id_t *mismatches;
 } ancestor_matcher_t;
 
-int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_sites);
+int ancestor_builder_alloc(ancestor_builder_t *self,
+        size_t num_samples, size_t num_sites, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_add_site(ancestor_builder_t *self, site_id_t site,

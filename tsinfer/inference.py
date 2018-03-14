@@ -93,16 +93,17 @@ def infer(
 
 
 def build_ancestors(
-        input_data, ancestor_data, progress=False, method="C", num_threads=None):
+        input_data, ancestor_data, progress=False, method="C", num_threads=None,
+        fgt_break=True):
 
     num_sites = input_data.num_variant_sites
     num_samples = input_data.num_samples
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
-        ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
+        ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites, fgt_break)
     else:
         logger.debug("Using Python AncestorBuilder implementation")
-        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
+        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites, fgt_break)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     frequency = input_data.frequency[:]

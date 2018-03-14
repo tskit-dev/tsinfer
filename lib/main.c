@@ -321,7 +321,8 @@ run_generate(const char *input_file, int verbose)
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
-    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites);
+    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
+            TSI_FGT_BREAK);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }

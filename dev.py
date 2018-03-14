@@ -361,7 +361,8 @@ def debug_pathological():
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         genotype_quality=0, method="C", log_level="WARNING",
-        debug=True, progress=False, path_compression=True):
+        debug=True, progress=False, path_compression=True,
+        fgt_break=True):
 
     np.random.seed(seed)
     random.seed(seed)
@@ -390,11 +391,13 @@ def tsinfer_dev(
 #     print(sample_data)
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(sample_data, ancestor_data)
+    tsinfer.build_ancestors(
+        sample_data, ancestor_data, method=method, fgt_break=fgt_break)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
+    print("inferred_num_edges = ", output_ts.num_edges)
 
     A = ancestor_data.genotypes[:].T
     A[A == 255] = 0
@@ -901,7 +904,7 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    kc_metric()
+    # kc_metric()
 
     # lookat(sys.argv[1])
 
@@ -937,24 +940,24 @@ if __name__ == "__main__":
     # save_ancestor_ts(15, 0.03, 7, recombination_rate=1, method="P",
     #         resolve_shared_recombinations=False)
 
-    # tsinfer_dev(10, 0.1, seed=6, num_threads=0,
-    #         genotype_quality=0.0, method="P") #, log_level="WARNING")
+    tsinfer_dev(15, 0.2, seed=6, num_threads=0,
+            genotype_quality=0.0, method="P", fgt_break=False) #, log_level="WARNING")
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
     # tsinfer_dev(4, 0.2, seed=84, num_threads=0, method="C",
     #         log_level="WARNING")
 
-    # for seed in range(1, 10000):
-    # # for seed in [2]:
-    #     print(seed)
-    #     # check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-    #     # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+#     for seed in range(1, 10000):
+#     # for seed in [2]:
+#         print(seed)
+#         check_infer(20, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+#         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
 
-    #     # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
-    #     tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
-    #             method="C", path_compression=True)
-    # # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
+        # tsinfer_dev(30, 0.2, seed=seed, genotype_quality=0.0, num_threads=0, method="P")
+        # tsinfer_dev(30, 1.5, seed=seed, num_threads=2, genotype_quality=0.0,
+        #         method="C", path_compression=True)
+    # tsinfer_dev(60, 1000, num_threads=5, seed=1, error_rate=0.1, method="C",
     # #         log_level="INFO", progress=True)
     # for seed in range(1, 1000):
     #     print(seed)
