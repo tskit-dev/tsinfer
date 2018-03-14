@@ -635,6 +635,111 @@ def run_edges_performance(args):
         plt.clf()
 
 
+def ancestor_properties_worker(simulation_args):
+    ts = msprime.simulate(**simulation_args)
+
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
+
+    exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
+    exact_anc.finalise()
+    exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
+
+    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    tsinfer.build_ancestors(sample_data, estimated_anc)
+    estimated_anc.finalise()
+    estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
+
+    results = {
+        "num_sites": ts.num_sites,
+        "num_trees": ts.num_trees,
+        "exact_anc_num": exact_anc.num_ancestors,
+        "exact_anc_mean_len": np.mean(exact_anc_length),
+        "estimated_anc_num": estimated_anc.num_ancestors,
+        "estimated_anc_mean_len": np.mean(estimated_anc_length),
+    }
+    results.update(simulation_args)
+    return results
+
+
+def run_ancestor_properties(args):
+    num_lengths = 10
+    MB = 10**6
+
+    work = []
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    for L in np.linspace(0, args.length, num_lengths + 1)[1:]:
+        for _ in range(args.num_replicates):
+            sim_args = {
+                "sample_size": args.sample_size,
+                "length": L * MB,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": 10**4,
+                "model": "smc_prime",
+                "random_seed": rng.randint(1, 2**30)}
+            work.append(sim_args)
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(ancestor_properties_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
+    progress.close()
+
+    df = pd.DataFrame(results)
+    df.length /= MB
+    dfg = df.groupby(df.length).mean()
+    # print(dfg.estimated_anc_edges.describe())
+    print(dfg)
+
+    name_format = os.path.join(
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+    # plt.plot(
+    #     dfg.num_sites, dfg.exact_anc_num / dfg.estimated_anc_num,
+    #     label="")
+        # label="exact ancestors")
+    plt.plot(dfg.num_sites, dfg.estimated_anc_num, label="estimated ancestors")
+    plt.plot(dfg.num_sites, dfg.exact_anc_num, label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    # plt.ylabel("inferred # ancestors / exact # ancestors")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig(name_format.format("num"))
+    plt.clf()
+
+    name_format = os.path.join(
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+    plt.plot(dfg.num_sites, dfg.estimated_anc_mean_len, label="estimated ancestors")
+    plt.plot(dfg.num_sites, dfg.exact_anc_mean_len, label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    # plt.ylabel("inferred # ancestors / exact # ancestors")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig(name_format.format("mean_len"))
+    plt.clf()
+
+
+
 
 def multiple_recombinations(ts):
     """
@@ -737,6 +842,29 @@ if __name__ == "__main__":
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
+        "ancestor-properties", aliases=["ap"],
+        help="Runs plots showing the properties of estimated ancestors.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_ancestor_properties)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
