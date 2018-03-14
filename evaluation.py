@@ -642,7 +642,7 @@ def run_edges_performance(args):
 
 
 def ancestor_properties_worker(args):
-    simulation_args, fgt_break = args
+    simulation_args, fgt_break, compute_exact = args
     ts = msprime.simulate(**simulation_args)
 
     sample_data = tsinfer.SampleData.initialise(
@@ -651,11 +651,6 @@ def ancestor_properties_worker(args):
     for v in ts.variants():
         sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
-
-    exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
-    exact_anc.finalise()
-    exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
     tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
@@ -666,11 +661,19 @@ def ancestor_properties_worker(args):
         "fgt_break": fgt_break,
         "num_sites": ts.num_sites,
         "num_trees": ts.num_trees,
-        "exact_anc_num": exact_anc.num_ancestors,
-        "exact_anc_mean_len": np.mean(exact_anc_length),
         "estimated_anc_num": estimated_anc.num_ancestors,
         "estimated_anc_mean_len": np.mean(estimated_anc_length),
     }
+
+    if compute_exact:
+        exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
+        exact_anc.finalise()
+        exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
+        results.update({
+            "exact_anc_num": exact_anc.num_ancestors,
+            "exact_anc_mean_len": np.mean(exact_anc_length)})
+
     results.update(simulation_args)
     return results
 
@@ -693,7 +696,7 @@ def run_ancestor_properties(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, not args.no_fgt_break))
+            work.append((sim_args, not args.no_fgt_break, not args.skip_exact))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -711,7 +714,6 @@ def run_ancestor_properties(args):
     df = pd.DataFrame(results)
     df.length /= MB
     dfg = df.groupby(df.length).mean()
-    # print(dfg.estimated_anc_edges.describe())
     print(dfg)
 
     name_format = os.path.join(
@@ -724,7 +726,8 @@ def run_ancestor_properties(args):
     #     label="")
         # label="exact ancestors")
     plt.plot(dfg.num_sites, dfg.estimated_anc_num, label="estimated ancestors")
-    plt.plot(dfg.num_sites, dfg.exact_anc_num, label="exact ancestors")
+    if not args.skip_exact:
+        plt.plot(dfg.num_sites, dfg.exact_anc_num, label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
@@ -735,7 +738,8 @@ def run_ancestor_properties(args):
     plt.clf()
 
     plt.plot(dfg.num_sites, dfg.estimated_anc_mean_len, label="estimated ancestors")
-    plt.plot(dfg.num_sites, dfg.exact_anc_mean_len, label="exact ancestors")
+    if not args.skip_exact:
+        plt.plot(dfg.num_sites, dfg.exact_anc_mean_len, label="exact ancestors")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
@@ -875,7 +879,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-fgt-break", "-F", action="store_true",
         help="Disable the four-gamete test breaking")
-
+    parser.add_argument(
+        "--skip-exact", "-S", action="store_true",
+        help="Skip computing the exact ancestors")
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
