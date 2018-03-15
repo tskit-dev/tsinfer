@@ -223,51 +223,72 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
 {
     PyObject *ret = NULL;
     PyObject *descriptors = NULL;
-    PyObject *descriptor = NULL;
+    PyObject *py_descriptor = NULL;
     PyArrayObject *site_array = NULL;
-    int32_t *site_array_data;
-    avl_node_t *a;
-    pattern_map_t *map_elem;
-    site_list_t *s;
-    size_t j, f, k;
+    ancestor_descriptor_t *descriptor;
+    size_t j;
     npy_intp dims;
+    int err;
 
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
 
+    err = ancestor_builder_finalise(self->builder);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
     descriptors = PyTuple_New(self->builder->num_ancestors);
     if (descriptors == NULL) {
         goto out;
     }
-    j = 0;
-    /* It's not great that we're breaking encapsulation here and looking
-     * directly in to the builder's data structures. However, it's quite an
-     * awkward set of data to communicate, so it seems OK. */
-    for (f = self->builder->num_samples; f > 0; f--) {
-        for (a = self->builder->frequency_map[f].head; a != NULL; a = a->next) {
-            map_elem = (pattern_map_t *) a->item;
-            dims = map_elem->num_sites;
-            site_array = (PyArrayObject *) PyArray_SimpleNew(1, &dims, NPY_INT32);
-            if (site_array == NULL) {
-                goto out;
-            }
-            site_array_data = (int32_t *) PyArray_DATA(site_array);
-            /* The elements are listed backwards, so reverse them */
-            k = map_elem->num_sites - 1;
-            for (s = map_elem->sites; s != NULL; s = s->next) {
-                site_array_data[k] = (int32_t) s->site;
-                k--;
-            }
-            descriptor = Py_BuildValue("kO", (unsigned long) f, site_array);
-            if (descriptor == NULL) {
-                Py_DECREF(site_array);
-                goto out;
-            }
-            PyTuple_SET_ITEM(descriptors, j, descriptor);
-            j++;
+    for (j = 0; j < self->builder->num_ancestors; j++) {
+        descriptor = &self->builder->descriptors[j];
+        dims = descriptor->num_focal_sites;
+        site_array = (PyArrayObject *) PyArray_SimpleNew(1, &dims, NPY_INT32);
+
+        if (site_array == NULL) {
+            goto out;
         }
+        memcpy(PyArray_DATA(site_array), descriptor->focal_sites,
+                descriptor->num_focal_sites * sizeof(site_id_t));
+        py_descriptor = Py_BuildValue("kO",
+                (unsigned long) descriptor->frequency, site_array);
+        if (py_descriptor == NULL) {
+            Py_DECREF(site_array);
+            goto out;
+        }
+        PyTuple_SET_ITEM(descriptors, j, py_descriptor);
     }
+    /* j = 0; */
+    /* /1* It's not great that we're breaking encapsulation here and looking */
+    /*  * directly in to the builder's data structures. However, it's quite an */
+    /*  * awkward set of data to communicate, so it seems OK. *1/ */
+    /* for (f = self->builder->num_samples; f > 0; f--) { */
+    /*     for (a = self->builder->frequency_map[f].head; a != NULL; a = a->next) { */
+    /*         map_elem = (pattern_map_t *) a->item; */
+    /*         dims = map_elem->num_sites; */
+    /*         site_array = (PyArrayObject *) PyArray_SimpleNew(1, &dims, NPY_INT32); */
+    /*         if (site_array == NULL) { */
+    /*             goto out; */
+    /*         } */
+    /*         site_array_data = (int32_t *) PyArray_DATA(site_array); */
+    /*         /1* The elements are listed backwards, so reverse them *1/ */
+    /*         k = map_elem->num_sites - 1; */
+    /*         for (s = map_elem->sites; s != NULL; s = s->next) { */
+    /*             site_array_data[k] = (int32_t) s->site; */
+    /*             k--; */
+    /*         } */
+    /*         descriptor = Py_BuildValue("kO", (unsigned long) f, site_array); */
+    /*         if (descriptor == NULL) { */
+    /*             Py_DECREF(site_array); */
+    /*             goto out; */
+    /*         } */
+    /*         PyTuple_SET_ITEM(descriptors, j, descriptor); */
+    /*         j++; */
+    /*     } */
+    /* } */
     ret = descriptors;
     descriptors = NULL;
 out:

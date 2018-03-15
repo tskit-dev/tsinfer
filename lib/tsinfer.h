@@ -73,6 +73,12 @@ typedef struct {
 } pattern_map_t;
 
 typedef struct {
+    size_t frequency;
+    size_t num_focal_sites;
+    site_id_t *focal_sites;
+} ancestor_descriptor_t;
+
+typedef struct {
     size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
@@ -82,6 +88,7 @@ typedef struct {
      * the occur at. Each of these sites has frequency f. */
     avl_tree_t *frequency_map;
     block_allocator_t allocator;
+    ancestor_descriptor_t *descriptors;
 } ancestor_builder_t;
 
 typedef struct _mutation_list_node_t {
@@ -173,6 +180,7 @@ int ancestor_builder_add_site(ancestor_builder_t *self, site_id_t site,
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
         size_t num_focal_sites, site_id_t *focal_sites,
         site_id_t *start, site_id_t *end, allele_t *haplotype);
+int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder,

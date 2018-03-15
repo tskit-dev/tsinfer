@@ -42,7 +42,9 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     self->flags = flags;
     self->sites = calloc(num_sites, sizeof(site_t));
     self->frequency_map = calloc(num_samples + 1, sizeof(avl_tree_t));
-    if (self->sites == NULL || self->frequency_map == NULL) {
+    self->descriptors = calloc(num_sites, sizeof(ancestor_descriptor_t));
+    if (self->sites == NULL || self->frequency_map == NULL
+            || self->descriptors == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -62,6 +64,7 @@ ancestor_builder_free(ancestor_builder_t *self)
 {
     tsi_safe_free(self->sites);
     tsi_safe_free(self->frequency_map);
+    tsi_safe_free(self->descriptors);
     block_allocator_free(&self->allocator);
     return 0;
 }
@@ -293,7 +296,6 @@ ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequenc
                 ret = TSI_ERR_NO_MEMORY;
                 goto out;
             }
-            self->num_ancestors++;
         } else {
             map_elem = (pattern_map_t *) avl_node->item;
             site->genotypes = map_elem->genotypes;
@@ -320,11 +322,9 @@ ancestor_builder_check_state(ancestor_builder_t *self)
     avl_node_t *a;
     pattern_map_t *map_elem;
     site_list_t *s;
-    size_t num_ancestors = 0;
 
     for (f = 0; f < self->num_samples + 1; f++) {
         for (a = self->frequency_map[f].head; a != NULL; a = a->next) {
-            num_ancestors++;
             map_elem = (pattern_map_t *) a->item;
             count = 0;
             for (k = 0; k < self->num_samples; k++) {
@@ -340,7 +340,6 @@ ancestor_builder_check_state(ancestor_builder_t *self)
             assert(map_elem->num_sites == count);
         }
     }
-    assert(num_ancestors == self->num_ancestors);
 }
 
 int
@@ -378,7 +377,98 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
             printf("\n");
         }
     }
+    fprintf(out, "Descriptors:\n");
+    for (j = 0; j < self->num_ancestors; j++) {
+        fprintf(out, "%d\t%d: ",  (int) self->descriptors[j].frequency,
+                (int) self->descriptors[j].num_focal_sites);
+        for (k = 0; k < self->descriptors[j].num_focal_sites; k++) {
+            fprintf(out, "%d, ", self->descriptors[j].focal_sites[k]);
+        }
+        fprintf(out, "\n");
+    }
     block_allocator_print_state(&self->allocator, out);
     ancestor_builder_check_state(self);
     return 0;
+}
+
+/* Returns true if we should break the an ancestor that spans from focal
+ * site a to focal site b */
+static bool
+ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
+        site_id_t b)
+{
+    bool ret = false;
+    site_id_t j, k;
+    const uint8_t fgt_all = 15;
+    uint8_t fgt_patterns;
+    /* printf("BREAK FOR %d %d\n", a, b); */
+
+    for (j = a; j <= b && !ret; j++) {
+        if (self->sites[j].frequency > 1) {
+            for (k = j + 1; k <= b; k++) {
+                if (self->sites[k].frequency > 1) {
+                    fgt_patterns = ancestor_builder_get_fgt_patterns(self, j, k);
+                    if (fgt_patterns == fgt_all) {
+                        /* printf("Consider %d - %d = %d\n", j, k, fgt_patterns); */
+                        ret = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    /* ret = false; */
+    return ret;
+}
+
+int
+ancestor_builder_finalise(ancestor_builder_t *self)
+{
+    int ret = 0;
+    size_t j, k;
+    avl_node_t *a;
+    pattern_map_t *map_elem;
+    site_list_t *s;
+    ancestor_descriptor_t *descriptor;
+    site_id_t *focal_sites = NULL;
+    site_id_t *p;
+
+    self->num_ancestors = 0;
+    for (j = self->num_samples; j > 1; j--) {
+        for (a = self->frequency_map[j].head; a != NULL; a = a->next) {
+            descriptor = self->descriptors + self->num_ancestors;
+            self->num_ancestors++;
+            descriptor->frequency = j;
+            map_elem = (pattern_map_t *) a->item;
+            focal_sites = block_allocator_get(&self->allocator,
+                    map_elem->num_sites * sizeof(site_id_t));
+            if (focal_sites == NULL) {
+                ret = TSI_ERR_NO_MEMORY;
+                goto out;
+            }
+            descriptor->focal_sites = focal_sites;
+            descriptor->num_focal_sites = map_elem->num_sites;
+            k = map_elem->num_sites - 1;
+            for (s = map_elem->sites; s != NULL; s = s->next) {
+                focal_sites[k] = s->site;
+                k--;
+            }
+            /* Now check to see if we need to split this ancestor up
+             * further */
+            for (k = 0; k < map_elem->num_sites - 1; k++) {
+                if (ancestor_builder_break_ancestor(
+                        self, focal_sites[k], focal_sites[k + 1])) {
+                    p = focal_sites + k + 1;
+                    descriptor->num_focal_sites = p - descriptor->focal_sites;
+                    descriptor = self->descriptors + self->num_ancestors;
+                    self->num_ancestors++;
+                    descriptor->frequency = j;
+                    descriptor->num_focal_sites = map_elem->num_sites - k - 1;
+                    descriptor->focal_sites = p;
+                }
+            }
+        }
+    }
+out:
+    return ret;
 }

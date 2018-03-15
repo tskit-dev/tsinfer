@@ -653,9 +653,16 @@ def ancestor_properties_worker(args):
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
+    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break, method="P")
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
+    focal_sites = estimated_anc.focal_sites[:]
+    focal_sites_offset = estimated_anc.focal_sites_offset[:]
+    estimated_anc_focal_distance = np.zeros(estimated_anc.num_ancestors)
+    for j in range(estimated_anc.num_ancestors):
+        focal = focal_sites[focal_sites_offset[j]: focal_sites_offset[j + 1]]
+        if len(focal) > 0:
+            estimated_anc_focal_distance[j] = focal[-1] - focal[0]
 
     results = {
         "fgt_break": fgt_break,
@@ -663,6 +670,7 @@ def ancestor_properties_worker(args):
         "num_trees": ts.num_trees,
         "estimated_anc_num": estimated_anc.num_ancestors,
         "estimated_anc_mean_len": np.mean(estimated_anc_length),
+        "estimated_anc_mean_focal_distance": np.mean(estimated_anc_focal_distance),
     }
 
     if compute_exact:
@@ -670,9 +678,19 @@ def ancestor_properties_worker(args):
         tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
         exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
+
+        focal_sites = exact_anc.focal_sites[:]
+        focal_sites_offset = exact_anc.focal_sites_offset[:]
+        exact_anc_focal_distance = np.zeros(exact_anc.num_ancestors)
+        for j in range(exact_anc.num_ancestors):
+            focal = focal_sites[focal_sites_offset[j]: focal_sites_offset[j + 1]]
+            if len(focal) > 0:
+                exact_anc_focal_distance[j] = focal[-1] - focal[0]
         results.update({
             "exact_anc_num": exact_anc.num_ancestors,
-            "exact_anc_mean_len": np.mean(exact_anc_length)})
+            "exact_anc_mean_len": np.mean(exact_anc_length),
+            "exact_anc_mean_focal_distance": np.mean(exact_anc_focal_distance),
+        })
 
     results.update(simulation_args)
     return results
@@ -748,6 +766,23 @@ def run_ancestor_properties(args):
     plt.legend()
     plt.savefig(name_format.format("mean_len"))
     plt.clf()
+
+    plt.plot(
+        dfg.num_sites, dfg.estimated_anc_mean_focal_distance,
+        label="estimated ancestors")
+    if not args.skip_exact:
+        plt.plot(
+            dfg.num_sites, dfg.exact_anc_mean_focal_distance,
+            label="exact ancestors")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    # plt.ylabel("inferred # ancestors / exact # ancestors")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig(name_format.format("mean_focal_distance"))
+    plt.clf()
+
 
 
 def multiple_recombinations(ts):

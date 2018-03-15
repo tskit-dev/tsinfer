@@ -344,6 +344,13 @@ run_generate(const char *input_file, int verbose)
             fatal_error("Add site error");
         }
     }
+    ret = ancestor_builder_finalise(&ancestor_builder);
+    if (ret != 0) {
+        fatal_error("builder finalise");
+    }
+
+    printf("EXITING because rest is broken");
+    exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
@@ -360,7 +367,11 @@ run_generate(const char *input_file, int verbose)
         ancestor_builder_print_state(&ancestor_builder, stdout);
         /* ancestor_matcher_print_state(&matcher, stdout); */
     }
-
+    /* TODO This is all out of date now. Need to rewrite this inferface to
+     * follow the high-level approach of generating ancestors and matching
+     * samples and ancestors. Probably we'll need to map the input file
+     * formats to HDF5 so that we can read them in C
+     * */
     a = malloc(num_sites * sizeof(allele_t));
     match = malloc(num_sites * sizeof(allele_t));
     left_buffer = malloc(max_edges * sizeof(site_id_t));

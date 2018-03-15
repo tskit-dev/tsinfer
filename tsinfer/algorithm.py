@@ -10,6 +10,7 @@ updates made to the low-level C engine should be made here
 first.
 """
 import collections
+import itertools
 
 import numpy as np
 import msprime
@@ -80,6 +81,26 @@ class AncestorBuilder(object):
                 for pattern, sites in pattern_map.items():
                     print("\t", pattern, ":", sites)
 
+    def get_genotype_pairs(self, a, b):
+        """
+        Returns the set of pair bit patterns between the specified sites.
+        """
+        ga = self.sites[a].genotypes
+        gb = self.sites[b].genotypes
+        return set(zip(ga, gb))
+
+    def break_ancestor(self, a, b):
+        """
+        Returns True if we should split the ancestor with focal sites at
+        a and b into two separate ancestors.
+        """
+        for j in range(a, b + 1):
+            for k in range(j + 1, b + 1):
+                fgt_patterns = self.get_genotype_pairs(j, k)
+                if len(fgt_patterns) == 4:
+                    return True
+        return False
+
     def ancestor_descriptors(self):
         """
         Returns a list of (frequency, focal_sites) tuples describing the
@@ -92,9 +113,17 @@ class AncestorBuilder(object):
             # or ancestor IDs are not replicable between runs. In the C implementation
             # We sort by the genotype patterns
             keys = sorted(self.frequency_map[frequency].keys())
-            focal_sites_list = [self.frequency_map[frequency][k] for k in keys]
+            focal_sites_list = [
+                np.array(self.frequency_map[frequency][k], dtype=np.int32)
+                for k in keys]
             for focal_sites in focal_sites_list:
-                ret.append((frequency, np.array(focal_sites, dtype=np.int32)))
+                # print("focal_sites = ", focal_sites)
+                start = 0
+                for j in range(len(focal_sites) - 1):
+                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1]):
+                        ret.append((frequency, focal_sites[start: j + 1]))
+                        start = j + 1
+                ret.append((frequency, focal_sites[start:]))
         return ret
 
     def __build_ancestor_sites(self, focal_site, sites, a):
@@ -104,20 +133,14 @@ class AncestorBuilder(object):
         for j in range(self.num_samples):
             if g[j] == 1:
                 samples.add(j)
-        fgt_patterns = set()
-        for l in sites:
+        for j, l in enumerate(sites):
             if self.fgt_break:
-                gfocal = self.sites[focal_site].genotypes
-                gl = self.sites[l].genotypes
-                for j in range(self.num_samples):
-                    fgt_patterns.add((gfocal[j], gl[j]))
-            # We need to special case here for when we're filling in the middle
-            # of ancestors that share the same pattern. Finding FGT violations
-            # here like this should result in a different ancestor probably.
-            if len(sites) > 1 and len(fgt_patterns) == 4:
-                # print("FGT violation at ", l)
-                break
-                # pass
+                pass
+                # # Look for any FGT violation between sites that we've examined.
+                # for k in [focal_site] + list(sites[:j]):
+                #     fgt_patterns = self.get_genotype_pairs(k, l)
+                #     if len(fgt_patterns) == 4:
+                #         break
             a[l] = 0
             if self.sites[l].frequency > self.sites[focal_site].frequency:
                 # print("\texamining:", self.sites[l])
