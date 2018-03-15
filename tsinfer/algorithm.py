@@ -89,15 +89,18 @@ class AncestorBuilder(object):
         gb = self.sites[b].genotypes
         return set(zip(ga, gb))
 
-    def break_ancestor(self, a, b):
+    def break_ancestor(self, a, b, samples):
         """
         Returns True if we should split the ancestor with focal sites at
         a and b into two separate ancestors.
         """
+        index = np.where(samples == 1)[0]
+        # print("index = ", index)
         for j in range(a, b + 1):
+            gj = self.sites[j].genotypes[index]
             for k in range(j + 1, b + 1):
-                fgt_patterns = self.get_genotype_pairs(j, k)
-                if len(fgt_patterns) == 4:
+                gk = self.sites[k].genotypes[index]
+                if len(set(zip(gj, gk))) == 4:
                     return True
         return False
 
@@ -113,14 +116,13 @@ class AncestorBuilder(object):
             # or ancestor IDs are not replicable between runs. In the C implementation
             # We sort by the genotype patterns
             keys = sorted(self.frequency_map[frequency].keys())
-            focal_sites_list = [
-                np.array(self.frequency_map[frequency][k], dtype=np.int32)
-                for k in keys]
-            for focal_sites in focal_sites_list:
-                # print("focal_sites = ", focal_sites)
+            for key in keys:
+                focal_sites= np.array(self.frequency_map[frequency][key], dtype=np.int32)
+                samples = np.frombuffer(key, dtype=np.uint8)
+                # print("focal_sites = ", key, samples, focal_sites)
                 start = 0
                 for j in range(len(focal_sites) - 1):
-                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1]):
+                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samples):
                         ret.append((frequency, focal_sites[start: j + 1]))
                         start = j + 1
                 ret.append((frequency, focal_sites[start:]))

@@ -43,8 +43,13 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     self->sites = calloc(num_sites, sizeof(site_t));
     self->frequency_map = calloc(num_samples + 1, sizeof(avl_tree_t));
     self->descriptors = calloc(num_sites, sizeof(ancestor_descriptor_t));
+    /* Note that this means that we cannot use threads to build multiple
+     * ancestors at the same time!! Will need to add a num_threads
+     * argument here and a thread index or something. */
+    self->consistent_samples_mem = malloc(self->num_samples
+            * sizeof(ancestor_id_hash_t));
     if (self->sites == NULL || self->frequency_map == NULL
-            || self->descriptors == NULL) {
+            || self->descriptors == NULL || self->consistent_samples_mem == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -65,29 +70,26 @@ ancestor_builder_free(ancestor_builder_t *self)
     tsi_safe_free(self->sites);
     tsi_safe_free(self->frequency_map);
     tsi_safe_free(self->descriptors);
+    tsi_safe_free(self->consistent_samples_mem);
     block_allocator_free(&self->allocator);
     return 0;
 }
 
-typedef struct {
-    ancestor_id_t value;
-    UT_hash_handle hh;
-} ancestor_id_hash_t;
-
-
 static inline uint8_t
 ancestor_builder_get_fgt_patterns(ancestor_builder_t *self, site_id_t focal_site_id,
-        site_id_t site_id)
+        site_id_t site_id, ancestor_id_hash_t **consistent_samples)
 {
     allele_t *restrict focal_genotypes = self->sites[focal_site_id].genotypes;
     allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
     uint8_t fgt_patterns = 0;
-    int j, index;
+    int index;
     allele_t a, b;
+    ancestor_id_hash_t *s, *tmp;
 
-    for (j = 0; j < (int) self->num_samples; j++) {
-        a = focal_genotypes[j];
-        b = site_genotypes[j];
+    /* for (j = 0; j < (int) self->num_samples; j++) { */
+    HASH_ITER(hh, *consistent_samples, s, tmp) {
+        a = focal_genotypes[s->value];
+        b = site_genotypes[s->value];
         /* Unrank the bit pattern 00, 01, 10, 11 to an index 0,...,3
          * and set the correponding bit in ret */
         index = a * 2 + b;
@@ -133,8 +135,7 @@ ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
 
 static inline void
 ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t focal_site_id,
-        ancestor_id_hash_t **consistent_samples, ancestor_id_hash_t *consistent_samples_mem,
-        size_t *num_consistent_samples)
+        ancestor_id_hash_t **consistent_samples)
 {
     size_t j, k;
     ancestor_id_hash_t *s;
@@ -144,7 +145,7 @@ ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t foca
     for (j = 0; j < self->num_samples; j++) {
         /* if (self->haplotypes[j * self->num_sites + focal_site_id] == 1) { */
         if (genotypes[j] == 1) {
-            s = consistent_samples_mem + k;
+            s = self->consistent_samples_mem + k;
             k++;
             assert(k <= self->num_samples);
             s->value = (ancestor_id_t) j;
@@ -164,20 +165,13 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     site_id_t focal_site, start, end;
     site_id_t j, k;
     size_t num_sites = self->num_sites;
-    size_t num_consistent_samples;
     uint8_t fgt_patterns;
     /* We map the four gametes to the first four bits of the fgt_patterns
      * variable. If all four are set, this is equal to 15. */
     const uint8_t fgt_all = 15;
     bool fgt_break = self->flags & TSI_FGT_BREAK;
     ancestor_id_hash_t *consistent_samples = NULL;
-    ancestor_id_hash_t *consistent_samples_mem = malloc(
-            self->num_samples * sizeof(ancestor_id_hash_t));
 
-    if (consistent_samples_mem == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
     // TODO proper error checking.
     assert(num_focal_sites > 0);
     /* printf("FOCAL SITES (%d)", (int) num_focal_sites); */
@@ -195,8 +189,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     memset(ancestor, 0xff, num_sites * sizeof(allele_t));
 
     /* Fill in the sites within the bounds of the focal sites */
-    ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples,
-            consistent_samples_mem, &num_consistent_samples);
+    ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples);
     ancestor[focal_sites[0]] = 1;
     for (j = 1; j < (site_id_t) num_focal_sites; j++) {
         for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) {
@@ -218,7 +211,8 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
         /* printf("LEFT: l = %d, count = %d fgt=%d\n", (int) l, */
         /*         HASH_COUNT(consistent_samples), fgt_patterns); */
         if (fgt_break) {
-            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l);
+            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l,
+                    &consistent_samples);
             if (fgt_patterns == fgt_all) {
                 break;
             }
@@ -232,14 +226,14 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     /* Work rightwards from the last focal site */
     fgt_patterns = 0;
     focal_site = focal_sites[num_focal_sites - 1];
-    ancestor_builder_get_consistent_samples(self, focal_site, &consistent_samples,
-            consistent_samples_mem, &num_consistent_samples);
+    ancestor_builder_get_consistent_samples(self, focal_site, &consistent_samples);
     for (l = focal_site + 1; l < (int64_t) num_sites
             && HASH_COUNT(consistent_samples) > 1; l++) {
         /* printf("RIGHT: l = %d, count = %d fgt=%d\n", (int) l, */
         /*         HASH_COUNT(consistent_samples), fgt_patterns); */
         if (fgt_break) {
-            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l);
+            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l,
+                    &consistent_samples);
             if (fgt_patterns == fgt_all) {
                 break;
             }
@@ -251,8 +245,6 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     HASH_CLEAR(hh, consistent_samples);
     *ret_start = start;
     *ret_end = end;
-out:
-    tsi_safe_free(consistent_samples_mem);
     return ret;
 }
 
@@ -401,13 +393,14 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
     site_id_t j, k;
     const uint8_t fgt_all = 15;
     uint8_t fgt_patterns;
-    /* printf("BREAK FOR %d %d\n", a, b); */
-
+    ancestor_id_hash_t *consistent_samples = NULL;
+    ancestor_builder_get_consistent_samples(self, a, &consistent_samples);
     for (j = a; j <= b && !ret; j++) {
         if (self->sites[j].frequency > 1) {
             for (k = j + 1; k <= b; k++) {
                 if (self->sites[k].frequency > 1) {
-                    fgt_patterns = ancestor_builder_get_fgt_patterns(self, j, k);
+                    fgt_patterns = ancestor_builder_get_fgt_patterns(
+                            self, j, k, &consistent_samples);
                     if (fgt_patterns == fgt_all) {
                         /* printf("Consider %d - %d = %d\n", j, k, fgt_patterns); */
                         ret = true;
@@ -417,6 +410,7 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
             }
         }
     }
+    HASH_CLEAR(hh, consistent_samples);
     /* ret = false; */
     return ret;
 }

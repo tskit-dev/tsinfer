@@ -653,7 +653,7 @@ def ancestor_properties_worker(args):
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break, method="P")
+    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
     focal_sites = estimated_anc.focal_sites[:]

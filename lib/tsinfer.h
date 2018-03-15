@@ -6,6 +6,7 @@
 #include "block_allocator.h"
 #include "object_heap.h"
 #include "avl.h"
+#include "uthash.h"
 
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
@@ -79,6 +80,11 @@ typedef struct {
 } ancestor_descriptor_t;
 
 typedef struct {
+    ancestor_id_t value;
+    UT_hash_handle hh;
+} ancestor_id_hash_t;
+
+typedef struct {
     size_t num_sites;
     size_t num_samples;
     size_t num_ancestors;
@@ -89,6 +95,7 @@ typedef struct {
     avl_tree_t *frequency_map;
     block_allocator_t allocator;
     ancestor_descriptor_t *descriptors;
+    ancestor_id_hash_t *consistent_samples_mem;
 } ancestor_builder_t;
 
 typedef struct _mutation_list_node_t {
