@@ -94,7 +94,7 @@ def infer(
 
 def build_ancestors(
         input_data, ancestor_data, progress=False, method="C", num_threads=None,
-        fgt_break=True):
+        fgt_break=False):
 
     num_sites = input_data.num_variant_sites
     num_samples = input_data.num_samples
