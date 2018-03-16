@@ -783,7 +783,64 @@ def run_ancestor_properties(args):
     plt.savefig(name_format.format("mean_focal_distance"))
     plt.clf()
 
+def running_mean(x, N):
+    cumsum = np.cumsum(np.insert(x, 0, 0))
+    return (cumsum[N:] - cumsum[:-N]) / float(N)
 
+def run_ancestor_comparison(args):
+    MB = 10**6
+    fgt_break = not args.no_fgt_break
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    sim_args = {
+        "sample_size": args.sample_size,
+        "length": args.length * MB,
+        "recombination_rate": args.recombination_rate,
+        "mutation_rate": args.mutation_rate,
+        "Ne": 10**4,
+        "model": "smc_prime",
+        "random_seed": rng.randint(1, 2**30)}
+    ts = msprime.simulate(**sim_args)
+
+    sample_data = tsinfer.SampleData.initialise(
+        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+        compressor=None)
+    for v in ts.variants():
+        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    sample_data.finalise()
+
+    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
+    estimated_anc.finalise()
+    estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
+
+    print(estimated_anc)
+
+    exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
+    exact_anc.finalise()
+    exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
+
+    print(exact_anc)
+
+    name_format = os.path.join(
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_fgt={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+        int(not args.no_fgt_break)))
+    plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
+    plt.legend()
+    plt.savefig(name_format.format("length-dist"))
+    plt.clf()
+
+    nbins = 100
+    plt.plot(running_mean(exact_anc_length, nbins), label="Exact")
+    plt.plot(running_mean(estimated_anc_length, nbins), label="Estimated")
+    plt.xlabel("Time (oldest to yougest2)")
+    plt.ylabel("Length")
+    plt.legend()
+    plt.savefig(name_format.format("length-time"))
+    plt.clf()
 
 def multiple_recombinations(ts):
     """
@@ -917,6 +974,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--skip-exact", "-S", action="store_true",
         help="Skip computing the exact ancestors")
+
+    parser = subparsers.add_parser(
+        "ancestor-comparison", aliases=["ac"],
+        help="Runs plots comparing the real and simulated ancestors for a single instance.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_ancestor_comparison)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--no-fgt-break", "-F", action="store_true",
+        help="Disable the four-gamete test breaking")
 
     args = top_parser.parse_args()
     cli.setup_logging(args)

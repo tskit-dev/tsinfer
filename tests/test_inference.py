@@ -222,7 +222,6 @@ class TestPhredEncoding(unittest.TestCase):
             self.assertRaises(ValueError, tsinfer.proba_to_phred, [0.1, p])
 
 
-@unittest.skip("FGT breaking not the same in C and Py")
 class TestAncestorGeneratorsEquivalant(unittest.TestCase):
     """
     Tests for the ancestor generation process.
@@ -235,7 +234,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
             sample_data.add_variant(j, ["0", "1"], genotypes[j])
         sample_data.finalise()
 
-        for fgt_break in [False, True]:
+        for fgt_break in [False]: #, True]:
             adc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
             tsinfer.build_ancestors(sample_data, adc, method="C", fgt_break=fgt_break)
             adc.finalise()
@@ -252,6 +251,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
             # print(B)
             # print(np.all(A == B))
             # print((A == B).astype(np.int))
+
             self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
@@ -276,6 +276,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def test_random_data(self):
         G, _ = get_random_data_example(20, 50)
+        # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
 
 

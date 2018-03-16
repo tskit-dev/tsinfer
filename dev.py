@@ -941,7 +941,7 @@ if __name__ == "__main__":
     #         resolve_shared_recombinations=False)
 
     tsinfer_dev(8, 0.2, seed=6, num_threads=0,
-            genotype_quality=0.0, method="C", fgt_break=False) #, log_level="WARNING")
+            genotype_quality=0.0, method="P", fgt_break=False) #, log_level="WARNING")
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)
