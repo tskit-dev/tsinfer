@@ -168,7 +168,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     int ret = 0;
     int64_t l;
     site_id_t focal_site, start, end;
-    site_id_t j;
+    site_id_t j, k;
     size_t num_sites = self->num_sites;
     uint8_t fgt_patterns;
     /* We map the four gametes to the first four bits of the fgt_patterns
@@ -197,18 +197,18 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     /* Fill in the sites within the bounds of the focal sites */
     ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples);
     ancestor[focal_sites[0]] = 1;
-    assert(num_focal_sites == 1);
+    /* assert(num_focal_sites == 1); */
 
-/*     for (j = 1; j < (site_id_t) num_focal_sites; j++) { */
-/*         for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) { */
-/*             ancestor_builder_make_site(self, focal_sites[j], k, false, */
-/*                     &consistent_samples, ancestor); */
-/*         } */
-/*         /1* printf("Setting %d: %d\n", focal_sites[j], HASH_COUNT(consistent_samples)); *1/ */
-/*         ancestor[focal_sites[j]] = 1; */
-/*     } */
-/*     /1* printf("DONE INTER\n"); *1/ */
-/*     /1* fflush(stdout); *1/ */
+    for (j = 1; j < (site_id_t) num_focal_sites; j++) {
+        for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) {
+            ancestor_builder_make_site(self, focal_sites[j], k, false,
+                    &consistent_samples, ancestor);
+        }
+        /* printf("Setting %d: %d\n", focal_sites[j], HASH_COUNT(consistent_samples)); */
+        ancestor[focal_sites[j]] = 1;
+    }
+    /* printf("DONE INTER\n"); */
+    /* fflush(stdout); */
 
     /* Work leftwards from the first focal site */
     fgt_patterns = 0;
@@ -400,6 +400,25 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
         site_id_t b)
 {
 
+    bool ret = false;
+    site_id_t j;
+    ancestor_id_hash_t *consistent_samples = NULL;
+    ancestor_builder_get_consistent_samples(self, a, &consistent_samples);
+    ancestor_id_hash_t *s, *tmp;
+    size_t ones;
+
+    for (j = a + 1; j < b && !ret; j++) {
+        if (self->sites[j].frequency > self->sites[a].frequency) {
+            ones = 0;
+            HASH_ITER(hh, consistent_samples, s, tmp) {
+                ones += self->sites[j].genotypes[s->value];
+                /* printf("\t\tsample %d\n", s->value); */
+            }
+            if (ones != HASH_COUNT(consistent_samples) && ones != 0) {
+                ret = true;
+            }
+        }
+    }
     /* bool ret = false; */
     /* site_id_t j, k; */
     /* const uint8_t fgt_all = 15; */
@@ -421,10 +440,8 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
      /*        } */
      /*    } */
     /* } */
-    /* HASH_CLEAR(hh, consistent_samples); */
-    /* /1* ret = false; *1/ */
-    /* return ret; */
-    return true;
+    HASH_CLEAR(hh, consistent_samples);
+    return ret;
 }
 
 int

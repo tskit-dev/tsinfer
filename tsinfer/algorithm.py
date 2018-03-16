@@ -94,18 +94,19 @@ class AncestorBuilder(object):
         Returns True if we should split the ancestor with focal sites at
         a and b into two separate ancestors.
         """
-        # FIXME Just returning here directly for now as it looks like breaking
-        # up these ancestors always is better than trying to detect when we
-        # should break them.
-        return True
         index = np.where(samples == 1)[0]
-        # print("index = ", index)
-        for j in range(a, b + 1):
-            gj = self.sites[j].genotypes[index]
-            for k in range(j + 1, b + 1):
-                gk = self.sites[k].genotypes[index]
-                if len(set(zip(gj, gk))) == 4:
+        for j in range(a + 1, b):
+            if self.sites[j].frequency > self.sites[a].frequency:
+                gj = self.sites[j].genotypes[index]
+                if len(set(gj)) != 1:
                     return True
+        # print("index = ", index)
+        # for j in range(a, b + 1):
+        #     gj = self.sites[j].genotypes[index]
+        #     for k in range(j + 1, b + 1):
+        #         gk = self.sites[k].genotypes[index]
+        #         if len(set(zip(gj, gk))) == 4:
+        #             return True
         return False
 
     def ancestor_descriptors(self):
@@ -181,7 +182,6 @@ class AncestorBuilder(object):
     def make_ancestor(self, focal_sites, a):
         # print("MAKE ANC", focal_sites)
         a[:] = UNKNOWN_ALLELE
-        assert len(focal_sites) == 1
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
         self.__build_ancestor_sites(focal_site, sites, a)

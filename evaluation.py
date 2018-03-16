@@ -811,9 +811,11 @@ def run_ancestor_comparison(args):
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
+    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break, method="C")
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
+    estimated_anc_num_focal = (
+        estimated_anc.focal_sites_offset[1:] - estimated_anc.focal_sites_offset[:-1])
 
     print(estimated_anc)
 
@@ -821,6 +823,8 @@ def run_ancestor_comparison(args):
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
     exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
+    exact_anc_num_focal = (
+        exact_anc.focal_sites_offset[1:] - exact_anc.focal_sites_offset[:-1])
 
     print(exact_anc)
 
@@ -833,14 +837,32 @@ def run_ancestor_comparison(args):
     plt.savefig(name_format.format("length-dist"))
     plt.clf()
 
+    # Because we have different numbers of ancestors, we need to rescale time
+    # somehow to display them on the same axis. We just map time linearly into
+    # 0,1. Possibly this is misleading.
     nbins = 100
-    plt.plot(running_mean(exact_anc_length, nbins), label="Exact")
-    plt.plot(running_mean(estimated_anc_length, nbins), label="Estimated")
-    plt.xlabel("Time (oldest to yougest2)")
+    x = running_mean(exact_anc_length, nbins)
+    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
+    x = running_mean(estimated_anc_length, nbins)
+    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
+    plt.xlabel("Time (oldest to youngest)")
     plt.ylabel("Length")
     plt.legend()
     plt.savefig(name_format.format("length-time"))
     plt.clf()
+
+    nbins = 100
+    x = running_mean(exact_anc_num_focal, nbins)
+    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
+    x = running_mean(estimated_anc_num_focal, nbins)
+    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
+    plt.xlabel("Time (oldest to youngest)")
+    plt.ylabel("Number of focal sites")
+    plt.legend()
+    plt.savefig(name_format.format("num_focal"))
+    plt.clf()
+
+
 
 def multiple_recombinations(ts):
     """

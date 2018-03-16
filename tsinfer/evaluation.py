@@ -238,7 +238,7 @@ def get_ancestor_descriptors(A):
         new_sites = np.where(masked)[0]
         mask[new_sites] = 0
         segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
-        # Skip any ancestors that are entirely unknown.
+        # Skip any ancestors that are entirely unknown
         if segment.shape[0] > 0:
             s = segment[0]
             e = segment[-1] + 1
