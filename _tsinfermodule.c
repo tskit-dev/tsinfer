@@ -1289,7 +1289,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    if (observation_error) {
+    if (extended_checks) {
         flags = TSI_EXTENDED_CHECKS;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
