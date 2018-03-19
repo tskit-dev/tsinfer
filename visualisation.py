@@ -360,16 +360,16 @@ def run_viz(
 
 def main():
 
-    np.set_printoptions(linewidth=20000)
-    np.set_printoptions(threshold=20000000)
+    # np.set_printoptions(linewidth=20000)
+    # np.set_printoptions(threshold=20000000)
 
     # import daiquiri
     # import sys
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        10, 1000, 0.0005, 7, mutation_rate=0.006, perfect_ancestors=True,
-        perfect_mutations=True, time_chunking=True, method="P", path_compression=False)
+        8, 1000, 0.0005, 10, mutation_rate=0.006, perfect_ancestors=False,
+        perfect_mutations=False, time_chunking=True, method="P", path_compression=False)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")

@@ -91,7 +91,6 @@ def infer(
         genotype_quality=sample_error, path_compression=path_compression)
     return inferred_ts
 
-
 def build_ancestors(
         input_data, ancestor_data, progress=False, method="C", num_threads=None):
 
@@ -113,30 +112,28 @@ def build_ancestors(
     progress_monitor.close()
     logger.info("Finished adding sites")
 
+    # Flatten the ancestor descriptors
     descriptors = ancestor_builder.ancestor_descriptors()
     num_ancestors = len(descriptors) + 1
     if num_ancestors > 1:
         logger.info("Starting build for {} ancestors".format(num_ancestors))
         ultimate_ancestor_time = descriptors[0][0] + 1
         a = np.zeros(num_sites, dtype=np.uint8)
-        # FIXME quick hack to make sure that the ultimate ancestor is always
-        # defined. This should be addressed more elegantly within the matching
-        # code, as we now assume that there must be this single "meta-ancestor"
-        # for the algorithm to work.
+        # Add the ultimate ancestor.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=ultimate_ancestor_time + 1,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
-        # Add the ultimate ancestor.
+        # Hack to ensure we always have a root with zeros at every position.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=ultimate_ancestor_time,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
-
         progress_monitor = tqdm.tqdm(
             total=num_ancestors, initial=1, disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
             s, e = ancestor_builder.make_ancestor(focal_sites, a)
+            # print(freq, focal_sites, s, e)
             assert np.all(a[s: e] != UNKNOWN_ALLELE)
             assert np.all(a[:s] == UNKNOWN_ALLELE)
             assert np.all(a[e:] == UNKNOWN_ALLELE)

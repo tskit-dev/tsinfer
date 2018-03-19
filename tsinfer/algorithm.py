@@ -68,7 +68,7 @@ class AncestorBuilder(object):
         print("Sites = ")
         for j in range(self.num_sites):
             site = self.sites[j]
-            print(site.frequency, "\t", site.genotypes)
+            print(j, site.frequency, site.genotypes, sep="\t")
         print("Frequency map")
         for f in range(self.num_samples):
             pattern_map = self.frequency_map[f]
@@ -83,11 +83,17 @@ class AncestorBuilder(object):
         a and b into two separate ancestors.
         """
         index = np.where(samples == 1)[0]
+        # TODO experimental code where we break if up ancestors if we don't
+        # have any older ancestors. leads to poor looking results for small
+        # examples, but may be better for large samples.
+        older_site_found = False
         for j in range(a + 1, b):
             if self.sites[j].frequency > self.sites[a].frequency:
+                older_site_found = True
                 gj = self.sites[j].genotypes[index]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
+        # return not older_site_found
         return False
 
     def ancestor_descriptors(self):
@@ -118,9 +124,11 @@ class AncestorBuilder(object):
         # print("__build_ancestor_sites", focal_site, sites)
         g = self.sites[focal_site].genotypes
         samples = np.where(g == 1)[0]
+        last_older_site = focal_site
         for l in sites:
             # print("\tl = ", l)
             if self.sites[l].frequency > self.sites[focal_site].frequency:
+                last_older_site = l
                 # print("\texamining:", self.sites[l], self.sites[focal_site].frequency)
                 # print("\tsamples = ", samples)
                 num_ones = np.sum(self.sites[l].genotypes[samples])
@@ -132,16 +140,19 @@ class AncestorBuilder(object):
                     break
             else:
                 a[l] = 0
+        return last_older_site
 
     def make_ancestor(self, focal_sites, a):
         # print("MAKE ANC", focal_sites)
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
-        self.__build_ancestor_sites(focal_site, sites, a)
+        last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
+        a[last_older_site + 1:] = UNKNOWN_ALLELE
         focal_site = focal_sites[-1]
         sites = range(focal_sites[0] - 1, -1, -1)
-        self.__build_ancestor_sites(focal_site, sites, a)
+        last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
+        a[:last_older_site] = UNKNOWN_ALLELE
         for j in range(focal_sites[0], focal_sites[-1] + 1):
             if j in focal_sites:
                 a[j] = 1
@@ -631,9 +642,9 @@ class AncestorMatcher(object):
                 v = self.parent[v]
         assert np.all(path_cache == -1)
 
+        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
         self.compress_likelihoods()
         self.normalise_likelihoods()
-        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def normalise_likelihoods(self, allow_zeros=False):
         assert len(self.likelihood_nodes) > 0

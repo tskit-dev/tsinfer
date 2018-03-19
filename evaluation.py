@@ -447,9 +447,7 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
-def run_infer(
-        ts, num_threads=1, path_compression=True, exact_ancestors=False,
-        fgt_break=True):
+def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -464,7 +462,7 @@ def run_infer(
     if exact_ancestors:
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
     else:
-        tsinfer.build_ancestors(sample_data, ancestor_data, fgt_break=fgt_break)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
@@ -476,7 +474,7 @@ def run_infer(
     return inferred_ts
 
 def edges_performance_worker(args):
-    simulation_args, tree_metrics, fgt_break = args
+    simulation_args, tree_metrics = args
     before = time.perf_counter()
     smc_ts = msprime.simulate(**simulation_args)
     sim_time = time.perf_counter() - before
@@ -487,7 +485,7 @@ def edges_performance_worker(args):
         return {}
 
     before = time.perf_counter()
-    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False, fgt_break=fgt_break)
+    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
     estimated_ancestors_time = time.perf_counter() - before
 
     before = time.perf_counter()
@@ -497,7 +495,6 @@ def edges_performance_worker(args):
         "sim_time": sim_time,
         "estimated_anc_time": estimated_ancestors_time,
         "exact_anc_time": exact_ancestors_time,
-        "fgt_break": fgt_break,
         "num_sites": smc_ts.num_sites,
         "source_num_trees": smc_ts.num_trees,
         "estimated_anc_trees": estimated_ancestors_ts.num_trees,
@@ -552,7 +549,7 @@ def run_edges_performance(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, args.compute_tree_metrics, not args.no_fgt_break))
+            work.append((sim_args, args.compute_tree_metrics))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -575,9 +572,8 @@ def run_edges_performance(args):
 
     name_format = os.path.join(
         args.destination_dir,
-        "ancestors_n={}_L={}_mu={}_rho={}_fgt_break={}_{{}}.png".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-            int(not args.no_fgt_break)))
+        "ancestors_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
 
     plt.plot(
         dfg.num_sites, dfg.estimated_anc_edges / dfg.source_edges,
@@ -642,7 +638,7 @@ def run_edges_performance(args):
 
 
 def ancestor_properties_worker(args):
-    simulation_args, fgt_break, compute_exact = args
+    simulation_args, compute_exact = args
     ts = msprime.simulate(**simulation_args)
 
     sample_data = tsinfer.SampleData.initialise(
@@ -653,7 +649,7 @@ def ancestor_properties_worker(args):
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break)
+    tsinfer.build_ancestors(sample_data, estimated_anc)
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
     focal_sites = estimated_anc.focal_sites[:]
@@ -665,7 +661,6 @@ def ancestor_properties_worker(args):
             estimated_anc_focal_distance[j] = focal[-1] - focal[0]
 
     results = {
-        "fgt_break": fgt_break,
         "num_sites": ts.num_sites,
         "num_trees": ts.num_trees,
         "estimated_anc_num": estimated_anc.num_ancestors,
@@ -714,7 +709,7 @@ def run_ancestor_properties(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, not args.no_fgt_break, not args.skip_exact))
+            work.append((sim_args, not args.skip_exact))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -735,9 +730,8 @@ def run_ancestor_properties(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_fgt={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-        int(not args.no_fgt_break)))
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
 
     # plt.plot(
     #     dfg.num_sites, dfg.exact_anc_num / dfg.estimated_anc_num,
@@ -789,7 +783,6 @@ def running_mean(x, N):
 
 def run_ancestor_comparison(args):
     MB = 10**6
-    fgt_break = not args.no_fgt_break
     rng = random.Random()
     if args.random_seed is not None:
         rng.seed(args.random_seed)
@@ -811,7 +804,7 @@ def run_ancestor_comparison(args):
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, fgt_break=fgt_break, method="C")
+    tsinfer.build_ancestors(sample_data, estimated_anc, method="P")
     estimated_anc.finalise()
     estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
     estimated_anc_num_focal = (
@@ -829,9 +822,8 @@ def run_ancestor_comparison(args):
     print(exact_anc)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_fgt={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-        int(not args.no_fgt_break)))
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
     plt.legend()
     plt.savefig(name_format.format("length-dist"))
@@ -840,10 +832,12 @@ def run_ancestor_comparison(args):
     # Because we have different numbers of ancestors, we need to rescale time
     # somehow to display them on the same axis. We just map time linearly into
     # 0,1. Possibly this is misleading.
-    nbins = 100
+    nbins = 1000
     x = running_mean(exact_anc_length, nbins)
+    # x = exact_anc_length
     plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
     x = running_mean(estimated_anc_length, nbins)
+    # x = estimated_anc_length
     plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
     plt.xlabel("Time (oldest to youngest)")
     plt.ylabel("Length")
@@ -965,9 +959,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
-    parser.add_argument(
-        "--no-fgt-break", "-F", action="store_true",
-        help="Disable the four-gamete test breaking")
 
     parser = subparsers.add_parser(
         "ancestor-properties", aliases=["ap"],
@@ -991,9 +982,6 @@ if __name__ == "__main__":
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
     parser.add_argument(
-        "--no-fgt-break", "-F", action="store_true",
-        help="Disable the four-gamete test breaking")
-    parser.add_argument(
         "--skip-exact", "-S", action="store_true",
         help="Skip computing the exact ancestors")
 
@@ -1013,9 +1001,6 @@ if __name__ == "__main__":
         help="Mutation rate")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
-    parser.add_argument(
-        "--no-fgt-break", "-F", action="store_true",
-        help="Disable the four-gamete test breaking")
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
