@@ -44,28 +44,24 @@ class AncestorBuilder(object):
     """
     Builds inferred ancestors.
     """
-    def __init__(self, num_samples, num_sites, fgt_break=True):
+    def __init__(self, num_samples, num_sites):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
         self.frequency_map = [{} for _ in range(self.num_samples + 1)]
-        self.fgt_break = fgt_break
 
     def add_site(self, site_id, frequency, genotypes):
         """
         Adds a new site at the specified ID and allele pattern to the builder.
         """
+        assert frequency > 1
         self.sites[site_id] = Site(site_id, frequency, genotypes)
-        if frequency > 1:
-            pattern_map = self.frequency_map[frequency]
-            # Each unique pattern gets added to the list
-            key = genotypes.tobytes()
-            if key not in pattern_map:
-                pattern_map[key] = []
-            pattern_map[key].append(site_id)
-        else:
-            # Save some memory as we'll never look at these
-            self.sites[site_id].genotypes = None
+        pattern_map = self.frequency_map[frequency]
+        # Each unique pattern gets added to the list
+        key = genotypes.tobytes()
+        if key not in pattern_map:
+            pattern_map[key] = []
+        pattern_map[key].append(site_id)
 
     def print_state(self):
         print("Ancestor builder")
@@ -81,14 +77,6 @@ class AncestorBuilder(object):
                 for pattern, sites in pattern_map.items():
                     print("\t", pattern, ":", sites)
 
-    def get_genotype_pairs(self, a, b):
-        """
-        Returns the set of pair bit patterns between the specified sites.
-        """
-        ga = self.sites[a].genotypes
-        gb = self.sites[b].genotypes
-        return set(zip(ga, gb))
-
     def break_ancestor(self, a, b, samples):
         """
         Returns True if we should split the ancestor with focal sites at
@@ -98,15 +86,8 @@ class AncestorBuilder(object):
         for j in range(a + 1, b):
             if self.sites[j].frequency > self.sites[a].frequency:
                 gj = self.sites[j].genotypes[index]
-                if len(set(gj)) != 1:
+                if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
-        # print("index = ", index)
-        # for j in range(a, b + 1):
-        #     gj = self.sites[j].genotypes[index]
-        #     for k in range(j + 1, b + 1):
-        #         gk = self.sites[k].genotypes[index]
-        #         if len(set(zip(gj, gk))) == 4:
-        #             return True
         return False
 
     def ancestor_descriptors(self):
@@ -135,49 +116,22 @@ class AncestorBuilder(object):
 
     def __build_ancestor_sites(self, focal_site, sites, a):
         # print("__build_ancestor_sites", focal_site, sites)
-        samples = set()
         g = self.sites[focal_site].genotypes
-        for j in range(self.num_samples):
-            if g[j] == 1:
-                samples.add(j)
-        for j, l in enumerate(sites):
-            if self.fgt_break:
-                # Look for any FGT violation between sites that we've examined.
-                for k in [focal_site] + list(sites[:j]):
-                    fgt_patterns = self.get_genotype_pairs(k, l)
-                    if len(fgt_patterns) == 4:
-                        break
-            a[l] = 0
+        samples = np.where(g == 1)[0]
+        for l in sites:
             # print("\tl = ", l)
             if self.sites[l].frequency > self.sites[focal_site].frequency:
                 # print("\texamining:", self.sites[l], self.sites[focal_site].frequency)
                 # print("\tsamples = ", samples)
-                num_ones = 0
-                num_zeros = 0
-                for j in samples:
-                    if self.sites[l].genotypes[j] == 1:
-                        num_ones += 1
-                    else:
-                        num_zeros += 1
-                # print("\tnum= ", num_ones, num_zeros)
-                if num_ones == len(samples):
+                num_ones = np.sum(self.sites[l].genotypes[samples])
+                if num_ones == samples.shape[0]:
                     a[l] = 1
-                elif num_zeros == len(samples):
+                elif num_ones == 0:
                     a[l] = 0
                 else:
-                    # print("\tEND")
                     break
-                # # TODO choose a branch uniformly if we have equality.
-                # if num_ones >= num_zeros:
-                #     a[l] = 1
-                #     samples = set(j for j in samples if self.sites[l].genotypes[j] == 1)
-                # else:
-                #     samples = set(j for j in samples if self.sites[l].genotypes[j] == 0)
-            # if len(samples) != self.sites[focal_site].frequency:
-                # break
-            # if len(samples) == 1:
-                # print("BREAK")
-                # break
+            else:
+                a[l] = 0
 
     def make_ancestor(self, focal_sites, a):
         # print("MAKE ANC", focal_sites)

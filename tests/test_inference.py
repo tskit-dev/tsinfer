@@ -135,13 +135,13 @@ class TestMutationProperties(unittest.TestCase):
                 self.assertEqual(mutation.parent, -1)
 
     def test_error(self):
-        num_sites = 30
+        num_sites = 50
         np.random.seed(100)
-        S, positions = get_random_data_example(5, num_sites)
+        S, positions = get_random_data_example(15, num_sites)
         for method in ["python", "c"]:
             ts = tsinfer.infer(
                 genotypes=S, positions=positions, sequence_length=num_sites,
-                recombination_rate=1e-9, sample_error=0.2, method=method)
+                recombination_rate=1e-9, sample_error=0.8, method=method)
             self.assertEqual(ts.num_sites, num_sites)
             self.assertGreater(ts.num_mutations, num_sites)
             back_mutation = False
@@ -234,25 +234,24 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
             sample_data.add_variant(j, ["0", "1"], genotypes[j])
         sample_data.finalise()
 
-        for fgt_break in [False]: #, True]:
-            adc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-            tsinfer.build_ancestors(sample_data, adc, method="C", fgt_break=fgt_break)
-            adc.finalise()
+        adc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, adc, method="C")
+        adc.finalise()
 
-            adp = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-            tsinfer.build_ancestors(sample_data, adp, method="P", fgt_break=fgt_break)
-            adp.finalise()
+        adp = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, adp, method="P")
+        adp.finalise()
 
-            # np.set_printoptions(linewidth=20000)
-            # np.set_printoptions(threshold=20000000)
-            # A = adp.genotypes[:]
-            # B = adc.genotypes[:]
-            # print(A)
-            # print(B)
-            # print(np.all(A == B))
-            # print((A == B).astype(np.int))
+        # np.set_printoptions(linewidth=20000)
+        # np.set_printoptions(threshold=20000000)
+        # A = adp.genotypes[:]
+        # B = adc.genotypes[:]
+        # print(A)
+        # print(B)
+        # print(np.all(A == B))
+        # print((A == B).astype(np.int))
 
-            self.assertTrue(adp.data_equal(adc))
+        self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
         ts = msprime.simulate(

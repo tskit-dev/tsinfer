@@ -361,8 +361,7 @@ def debug_pathological():
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         genotype_quality=0, method="C", log_level="WARNING",
-        debug=True, progress=False, path_compression=True,
-        fgt_break=True):
+        debug=True, progress=False, path_compression=True):
 
     np.random.seed(seed)
     random.seed(seed)
@@ -392,7 +391,7 @@ def tsinfer_dev(
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data)
     tsinfer.build_ancestors(
-        sample_data, ancestor_data, method=method, fgt_break=fgt_break)
+        sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
@@ -941,7 +940,7 @@ if __name__ == "__main__":
     #         resolve_shared_recombinations=False)
 
     tsinfer_dev(8, 0.2, seed=6, num_threads=0,
-            genotype_quality=0.0, method="P", fgt_break=False) #, log_level="WARNING")
+            genotype_quality=0.0, method="P") #, log_level="WARNING")
 
     # tsinfer_dev(400, 20, seed=84, num_threads=0, method="C",
     #         genotype_quality=0.001)

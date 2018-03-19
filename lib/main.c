@@ -321,8 +321,7 @@ run_generate(const char *input_file, int verbose)
 
     read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
             &recombination_rate);
-    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
-            TSI_FGT_BREAK);
+    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
     }
@@ -348,8 +347,9 @@ run_generate(const char *input_file, int verbose)
     if (ret != 0) {
         fatal_error("builder finalise");
     }
+    ancestor_builder_print_state(&ancestor_builder, stdout);
 
-    printf("EXITING because rest is broken");
+    printf("EXITING because rest is broken\n");
     exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;

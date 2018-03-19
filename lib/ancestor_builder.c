@@ -6,7 +6,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "uthash.h"
 #include "avl.h"
 
 typedef struct {
@@ -43,13 +42,8 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     self->sites = calloc(num_sites, sizeof(site_t));
     self->frequency_map = calloc(num_samples + 1, sizeof(avl_tree_t));
     self->descriptors = calloc(num_sites, sizeof(ancestor_descriptor_t));
-    /* Note that this means that we cannot use threads to build multiple
-     * ancestors at the same time!! Will need to add a num_threads
-     * argument here and a thread index or something. */
-    self->consistent_samples_mem = malloc(self->num_samples
-            * sizeof(ancestor_id_hash_t));
     if (self->sites == NULL || self->frequency_map == NULL
-            || self->descriptors == NULL || self->consistent_samples_mem == NULL) {
+            || self->descriptors == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -70,93 +64,53 @@ ancestor_builder_free(ancestor_builder_t *self)
     tsi_safe_free(self->sites);
     tsi_safe_free(self->frequency_map);
     tsi_safe_free(self->descriptors);
-    tsi_safe_free(self->consistent_samples_mem);
     block_allocator_free(&self->allocator);
     return 0;
 }
 
-static inline uint8_t
-ancestor_builder_get_fgt_patterns(ancestor_builder_t *self, site_id_t focal_site_id,
-        site_id_t site_id, ancestor_id_hash_t **consistent_samples)
+static inline void
+ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t site,
+        node_id_t *samples, size_t *num_samples)
 {
-    allele_t *restrict focal_genotypes = self->sites[focal_site_id].genotypes;
-    allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
-    uint8_t fgt_patterns = 0;
-    int index;
-    allele_t a, b;
-    ancestor_id_hash_t *s, *tmp;
+    node_id_t j, k;
+    allele_t *restrict genotypes = self->sites[site].genotypes;
 
-    /* for (j = 0; j < (int) self->num_samples; j++) { */
-    HASH_ITER(hh, *consistent_samples, s, tmp) {
-        a = focal_genotypes[s->value];
-        b = site_genotypes[s->value];
-        /* Unrank the bit pattern 00, 01, 10, 11 to an index 0,...,3
-         * and set the correponding bit in ret */
-        index = a * 2 + b;
-        fgt_patterns = fgt_patterns | (1 << index);
-        /* printf("\t %d %d = %d -> %d\n", a, b, a * 2 + b, ret); */
+    k = 0;
+    for (j = 0; j < (node_id_t) self->num_samples; j++) {
+        if (genotypes[j] == 1) {
+            samples[k] = j;
+            k++;
+        }
     }
-    return fgt_patterns;
+    *num_samples = (size_t) k;
 }
 
 static inline bool
 ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
-        site_id_t site_id, bool remove_inconsistent,
-        ancestor_id_hash_t **consistent_samples, allele_t *ancestor)
+        site_id_t site_id, node_id_t *restrict consistent_samples,
+        size_t num_consistent_samples, allele_t *ancestor)
 {
-    bool ret = true;
-    size_t ones;
-    const  site_t focal_site = self->sites[focal_site_id];;
+    size_t j, ones;
+    const site_t focal_site = self->sites[focal_site_id];
     allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
-    ancestor_id_hash_t *s, *tmp;
+    bool ret = true;
 
-    ancestor[site_id] = 0;
-    /* printf("make site %d %d: count = %d\n", focal_site_id, site_id, HASH_COUNT(*consistent_samples)); */
     if (self->sites[site_id].frequency > focal_site.frequency) {
         ones = 0;
-        HASH_ITER(hh, *consistent_samples, s, tmp) {
-            ones += site_genotypes[s->value];
-            /* printf("\t\tsample %d\n", s->value); */
+        for (j = 0; j < num_consistent_samples; j++) {
+            ones += site_genotypes[consistent_samples[j]];
         }
-        if (ones == HASH_COUNT(*consistent_samples))  {
+        if (ones == num_consistent_samples) {
             ancestor[site_id] = 1;
         } else if (ones == 0) {
             ancestor[site_id] = 0;
         } else {
             ret = false;
         }
-        /* printf("\t\tExamining site %d: ones=%d, zeros=%d\n", (int) site_id, */
-        /*         (int) ones, (int) zeros); */
-        /* if (remove_inconsistent) { */
-        /*     HASH_ITER(hh, *consistent_samples, s, tmp) { */
-        /*         if (site_genotypes[s->value] != ancestor[site_id]) { */
-        /*             HASH_DEL(*consistent_samples, s); */
-        /*         } */
-        /*     } */
-        /* } */
+    } else {
+        ancestor[site_id] = 0;
     }
     return ret;
-}
-
-static inline void
-ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t focal_site_id,
-        ancestor_id_hash_t **consistent_samples)
-{
-    size_t j, k;
-    ancestor_id_hash_t *s;
-    allele_t *restrict genotypes = self->sites[focal_site_id].genotypes;
-
-    k = 0;
-    for (j = 0; j < self->num_samples; j++) {
-        /* if (self->haplotypes[j * self->num_sites + focal_site_id] == 1) { */
-        if (genotypes[j] == 1) {
-            s = self->consistent_samples_mem + k;
-            k++;
-            assert(k <= self->num_samples);
-            s->value = (ancestor_id_t) j;
-            HASH_ADD(hh, *consistent_samples, value, sizeof(ancestor_id_t), s);
-        }
-    }
 }
 
 /* Build the ancestors for sites in the specified focal sites */
@@ -167,94 +121,61 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
 {
     int ret = 0;
     int64_t l;
-    site_id_t focal_site, start, end;
-    site_id_t j, k;
+    site_id_t j, k, focal_site, start, end;
+    size_t num_consistent_samples = 0;
     size_t num_sites = self->num_sites;
-    uint8_t fgt_patterns;
-    /* We map the four gametes to the first four bits of the fgt_patterns
-     * variable. If all four are set, this is equal to 15. */
-    const uint8_t fgt_all = 15;
-    bool fgt_break = self->flags & TSI_FGT_BREAK;
-    ancestor_id_hash_t *consistent_samples = NULL;
+    node_id_t *consistent_samples = malloc(self->num_samples * sizeof(node_id_t));
     bool consistent;
 
+    if (consistent_samples == NULL) {
+        goto out;
+    }
     // TODO proper error checking.
     assert(num_focal_sites > 0);
-    /* printf("FOCAL SITES (%d)", (int) num_focal_sites); */
-    for (j = 0; j < (site_id_t) num_focal_sites; j++) {
-        /* printf("%d, ", focal_sites[j]); */
-        assert(focal_sites[j] < (site_id_t) self->num_sites);
-        assert(self->sites[focal_sites[j]].frequency > 1);
-        if (j > 0) {
-            assert(focal_sites[j - 1] < focal_sites[j]);
-        }
-    }
-    /* printf("\n"); */
+
+    ancestor_builder_get_consistent_samples(self, focal_sites[0], consistent_samples,
+            &num_consistent_samples);
+    assert(num_consistent_samples == self->sites[focal_sites[0]].frequency);
 
     /* Set any unknown values to -1 */
     memset(ancestor, 0xff, num_sites * sizeof(allele_t));
 
-    /* Fill in the sites within the bounds of the focal sites */
-    ancestor_builder_get_consistent_samples(self, focal_sites[0], &consistent_samples);
-    ancestor[focal_sites[0]] = 1;
-    /* assert(num_focal_sites == 1); */
-
+    /* Fill in the sites within the bounds of the focal sites. We have previously
+     * checked that there is no disagreement among the consistent_samples, so we
+     * just take the value from one of the samples */
+    focal_site = focal_sites[0];
+    ancestor[focal_site] = 1;
     for (j = 1; j < (site_id_t) num_focal_sites; j++) {
         for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) {
-            ancestor_builder_make_site(self, focal_sites[j], k, false,
-                    &consistent_samples, ancestor);
-        }
-        /* printf("Setting %d: %d\n", focal_sites[j], HASH_COUNT(consistent_samples)); */
-        ancestor[focal_sites[j]] = 1;
-    }
-    /* printf("DONE INTER\n"); */
-    /* fflush(stdout); */
-
-    /* Work leftwards from the first focal site */
-    fgt_patterns = 0;
-    focal_site = focal_sites[0];
-    /* printf("focal site = %d\n", focal_site); */
-    consistent = true;
-    for (l = ((int64_t) focal_site) - 1; l >= 0 && consistent; l--) {
-            /* && HASH_COUNT(consistent_samples) > 1; l--) { */
-        /* printf("LEFT: l = %d, count = %d fgt=%d\n", (int) l, */
-        /*         HASH_COUNT(consistent_samples), fgt_patterns); */
-        if (fgt_break) {
-            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l,
-                    &consistent_samples);
-            if (fgt_patterns == fgt_all) {
-                break;
+            ancestor[k] = 0;
+            if (self->sites[k].frequency > self->sites[focal_site].frequency) {
+                ancestor[k] = self->sites[k].genotypes[consistent_samples[0]];
             }
         }
-        consistent = ancestor_builder_make_site(self, focal_site, l, true,
-                &consistent_samples, ancestor);
+        ancestor[focal_sites[j]] = 1;
     }
-    start = l + 1;
-    HASH_CLEAR(hh, consistent_samples);
+    /* Work leftwards from the first focal site */
+    focal_site = focal_sites[0];
+    consistent = true;
+    for (l = ((int64_t) focal_site) - 1; l >= 0 && consistent; l--) {
+        consistent = ancestor_builder_make_site(self, focal_site, l,
+                consistent_samples, num_consistent_samples, ancestor);
+    }
+    start = l + 1 + (int) !consistent;
 
     /* Work rightwards from the last focal site */
     consistent = true;
-    fgt_patterns = 0;
     focal_site = focal_sites[num_focal_sites - 1];
-    ancestor_builder_get_consistent_samples(self, focal_site, &consistent_samples);
     for (l = focal_site + 1; l < (int64_t) num_sites && consistent; l++) {
-            /* && HASH_COUNT(consistent_samples) > 1; l++) { */
-        /* printf("RIGHT: l = %d, count = %d fgt=%d\n", (int) l, */
-        /*         HASH_COUNT(consistent_samples), fgt_patterns); */
-        if (fgt_break) {
-            fgt_patterns |= ancestor_builder_get_fgt_patterns(self, focal_site, l,
-                    &consistent_samples);
-            if (fgt_patterns == fgt_all) {
-                break;
-            }
-        }
-        consistent = ancestor_builder_make_site(self, focal_site, l, true,
-                &consistent_samples, ancestor);
+        consistent = ancestor_builder_make_site(self, focal_site, l,
+                consistent_samples, num_consistent_samples, ancestor);
     }
-    end = l;
-    HASH_CLEAR(hh, consistent_samples);
+    end = l - (int) !consistent;
+
     *ret_start = start;
     *ret_end = end;
+out:
+    tsi_safe_free(consistent_samples);
     return ret;
 }
 
@@ -397,50 +318,23 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
  * site a to focal site b */
 static bool
 ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
-        site_id_t b)
+        site_id_t b, node_id_t *restrict samples, size_t num_samples)
 {
-
     bool ret = false;
-    site_id_t j;
-    ancestor_id_hash_t *consistent_samples = NULL;
-    ancestor_builder_get_consistent_samples(self, a, &consistent_samples);
-    ancestor_id_hash_t *s, *tmp;
+    site_id_t j, k;
     size_t ones;
 
     for (j = a + 1; j < b && !ret; j++) {
         if (self->sites[j].frequency > self->sites[a].frequency) {
             ones = 0;
-            HASH_ITER(hh, consistent_samples, s, tmp) {
-                ones += self->sites[j].genotypes[s->value];
-                /* printf("\t\tsample %d\n", s->value); */
+            for (k = 0; k < (site_id_t) num_samples; k++) {
+                ones += self->sites[j].genotypes[samples[k]];
             }
-            if (ones != HASH_COUNT(consistent_samples) && ones != 0) {
+            if (ones != num_samples && ones != 0) {
                 ret = true;
             }
         }
     }
-    /* bool ret = false; */
-    /* site_id_t j, k; */
-    /* const uint8_t fgt_all = 15; */
-    /* uint8_t fgt_patterns; */
-    /* ancestor_id_hash_t *consistent_samples = NULL; */
-    /* ancestor_builder_get_consistent_samples(self, a, &consistent_samples); */
-    /* for (j = a; j <= b && !ret; j++) { */
-     /*    if (self->sites[j].frequency > 1) { */
-     /*        for (k = j + 1; k <= b; k++) { */
-     /*            if (self->sites[k].frequency > 1) { */
-     /*                fgt_patterns = ancestor_builder_get_fgt_patterns( */
-     /*                        self, j, k, &consistent_samples); */
-     /*                if (fgt_patterns == fgt_all) { */
-     /*                    /1* printf("Consider %d - %d = %d\n", j, k, fgt_patterns); *1/ */
-     /*                    ret = true; */
-     /*                    break; */
-     /*                } */
-     /*            } */
-     /*        } */
-     /*    } */
-    /* } */
-    HASH_CLEAR(hh, consistent_samples);
     return ret;
 }
 
@@ -448,14 +342,20 @@ int
 ancestor_builder_finalise(ancestor_builder_t *self)
 {
     int ret = 0;
-    size_t j, k;
+    size_t j, k, num_consistent_samples;
     avl_node_t *a;
     pattern_map_t *map_elem;
     site_list_t *s;
     ancestor_descriptor_t *descriptor;
     site_id_t *focal_sites = NULL;
     site_id_t *p;
+    site_id_t *consistent_samples = malloc(self->num_samples * sizeof(node_id_t));
 
+    if (consistent_samples == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    num_consistent_samples = 0;  /* Keep the compiler happy */
     self->num_ancestors = 0;
     for (j = self->num_samples; j > 1; j--) {
         for (a = self->frequency_map[j].head; a != NULL; a = a->next) {
@@ -478,9 +378,15 @@ ancestor_builder_finalise(ancestor_builder_t *self)
             }
             /* Now check to see if we need to split this ancestor up
              * further */
+            if (map_elem->num_sites > 1) {
+                ancestor_builder_get_consistent_samples(self, focal_sites[0],
+                        consistent_samples, &num_consistent_samples);
+                assert(num_consistent_samples == descriptor->frequency);
+            }
             for (k = 0; k < map_elem->num_sites - 1; k++) {
                 if (ancestor_builder_break_ancestor(
-                        self, focal_sites[k], focal_sites[k + 1])) {
+                        self, focal_sites[k], focal_sites[k + 1],
+                        consistent_samples, num_consistent_samples)) {
                     p = focal_sites + k + 1;
                     descriptor->num_focal_sites = p - descriptor->focal_sites;
                     descriptor = self->descriptors + self->num_ancestors;
@@ -493,5 +399,6 @@ ancestor_builder_finalise(ancestor_builder_t *self)
         }
     }
 out:
+    tsi_safe_free(consistent_samples);
     return ret;
 }

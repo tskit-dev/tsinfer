@@ -93,17 +93,16 @@ def infer(
 
 
 def build_ancestors(
-        input_data, ancestor_data, progress=False, method="C", num_threads=None,
-        fgt_break=False):
+        input_data, ancestor_data, progress=False, method="C", num_threads=None):
 
     num_sites = input_data.num_variant_sites
     num_samples = input_data.num_samples
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
-        ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites, fgt_break)
+        ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
     else:
         logger.debug("Using Python AncestorBuilder implementation")
-        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites, fgt_break)
+        ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     frequency = input_data.frequency[:]
@@ -138,6 +137,9 @@ def build_ancestors(
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
             s, e = ancestor_builder.make_ancestor(focal_sites, a)
+            assert np.all(a[s: e] != UNKNOWN_ALLELE)
+            assert np.all(a[:s] == UNKNOWN_ALLELE)
+            assert np.all(a[e:] == UNKNOWN_ALLELE)
             duration = time.perf_counter() - before
             logger.debug(
                 "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(

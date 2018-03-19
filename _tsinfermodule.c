@@ -74,23 +74,19 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_samples", "num_sites", "fgt_break", NULL};
+    static char *kwlist[] = {"num_samples", "num_sites", NULL};
     int num_samples, num_sites;
-    int fgt_break = 1;
     int flags = 0;
 
     self->builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii|i", kwlist,
-                &num_samples, &num_sites, &fgt_break)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii", kwlist,
+                &num_samples, &num_sites)) {
         goto out;
     }
     self->builder = PyMem_Malloc(sizeof(ancestor_builder_t));
     if (self->builder == NULL) {
         PyErr_NoMemory();
         goto out;
-    }
-    if (fgt_break) {
-        flags |= TSI_FGT_BREAK;
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_alloc(self->builder, num_samples, num_sites, flags);
