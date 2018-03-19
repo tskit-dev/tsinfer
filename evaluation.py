@@ -832,7 +832,7 @@ def run_ancestor_comparison(args):
     # Because we have different numbers of ancestors, we need to rescale time
     # somehow to display them on the same axis. We just map time linearly into
     # 0,1. Possibly this is misleading.
-    nbins = 1000
+    nbins = 100
     x = running_mean(exact_anc_length, nbins)
     # x = exact_anc_length
     plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")

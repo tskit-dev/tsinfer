@@ -368,7 +368,7 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        8, 1000, 0.0005, 10, mutation_rate=0.006, perfect_ancestors=False,
+        15, 1000, 0.0005, 10, mutation_rate=0.006, perfect_ancestors=False,
         perfect_mutations=False, time_chunking=True, method="P", path_compression=False)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
