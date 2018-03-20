@@ -15,7 +15,7 @@ import numpy as np
 import tqdm
 import humanize
 import msprime
-import pyinter
+# import pyinter
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -118,17 +118,17 @@ def build_ancestors(
         roots = []
         a = np.zeros(num_sites, dtype=np.uint8)
         # Generate the ancestors until we can find all roots.
-        logger.info("Finding roots")
-        unrooted = pyinter.IntervalSet([pyinter.interval.openclosed(0, num_sites)])
-        for _, focal_sites in descriptors:
-            start, end = ancestor_builder.make_ancestor(focal_sites, a)
-            interval = pyinter.IntervalSet([pyinter.interval.openclosed(start, end)])
-            for v in unrooted.intersection(interval):
-                if v.lower_value != v.upper_value:
-                    roots.append((v.lower_value, v.upper_value))
-            unrooted = unrooted.difference(interval)
-            if len(unrooted) == 0:
-                break
+        # logger.info("Finding roots")
+        # unrooted = pyinter.IntervalSet([pyinter.interval.openclosed(0, num_sites)])
+        # for _, focal_sites in descriptors:
+        #     start, end = ancestor_builder.make_ancestor(focal_sites, a)
+        #     interval = pyinter.IntervalSet([pyinter.interval.openclosed(start, end)])
+        #     for v in unrooted.intersection(interval):
+        #         if v.lower_value != v.upper_value:
+        #             roots.append((v.lower_value, v.upper_value))
+        #     unrooted = unrooted.difference(interval)
+        #     if len(unrooted) == 0:
+        #         break
 
         num_ancestors = len(descriptors)
         logger.info("Starting build for {} ancestors".format(num_ancestors))
@@ -143,10 +143,10 @@ def build_ancestors(
             ancestor_data.add_ancestor(
                 start=start, end=end, time=root_time,
                 focal_sites=[], haplotype=a)
-        # # Hack to ensure we always have a root with zeros at every position.
-        # ancestor_data.add_ancestor(
-        #     start=0, end=num_sites, time=root_time,
-        #     focal_sites=np.array([], dtype=np.int32), haplotype=a)
+        # Hack to ensure we always have a root with zeros at every position.
+        ancestor_data.add_ancestor(
+            start=0, end=num_sites, time=root_time,
+            focal_sites=np.array([], dtype=np.int32), haplotype=a)
         progress_monitor = tqdm.tqdm(total=len(descriptors), disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()

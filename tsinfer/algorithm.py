@@ -128,7 +128,6 @@ class AncestorBuilder(object):
         for l in sites:
             # print("\tl = ", l)
             if self.sites[l].frequency > self.sites[focal_site].frequency:
-                last_older_site = l
                 # print("\texamining:", self.sites[l], self.sites[focal_site].frequency)
                 # print("\tsamples = ", samples)
                 num_ones = np.sum(self.sites[l].genotypes[samples])
@@ -138,6 +137,7 @@ class AncestorBuilder(object):
                     a[l] = 0
                 else:
                     break
+                last_older_site = l
             else:
                 a[l] = 0
         return last_older_site
@@ -148,11 +148,12 @@ class AncestorBuilder(object):
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
         last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
-        a[last_older_site + 1:] = UNKNOWN_ALLELE
+        # Disabling last_older_sites stuff for now. Remove if we don't end up using it.
+        # a[last_older_site + 1:] = UNKNOWN_ALLELE
         focal_site = focal_sites[-1]
         sites = range(focal_sites[0] - 1, -1, -1)
         last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
-        a[:last_older_site] = UNKNOWN_ALLELE
+        # a[:last_older_site] = UNKNOWN_ALLELE
         for j in range(focal_sites[0], focal_sites[-1] + 1):
             if j in focal_sites:
                 a[j] = 1
