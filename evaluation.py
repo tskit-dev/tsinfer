@@ -487,10 +487,19 @@ def edges_performance_worker(args):
     before = time.perf_counter()
     estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
     estimated_ancestors_time = time.perf_counter() - before
+    num_children = []
+    for edgeset in estimated_ancestors_ts.edgesets():
+        num_children.append(len(edgeset.children))
+    estimated_ancestors_num_children = np.array(num_children)
 
     before = time.perf_counter()
     exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
     exact_ancestors_time = time.perf_counter() - before
+    num_children = []
+    for edgeset in exact_ancestors_ts.edgesets():
+        num_children.append(len(edgeset.children))
+    exact_ancestors_num_children = np.array(num_children)
+
     results = {
         "sim_time": sim_time,
         "estimated_anc_time": estimated_ancestors_time,
@@ -502,6 +511,12 @@ def edges_performance_worker(args):
         "source_edges": smc_ts.num_edges,
         "estimated_anc_edges": estimated_ancestors_ts.num_edges,
         "exact_anc_edges": exact_ancestors_ts.num_edges,
+        "estimated_anc_max_children": np.max(estimated_ancestors_num_children),
+        "estimated_anc_mean_children":
+            np.mean(estimated_ancestors_num_children),
+        "exact_anc_max_children": np.max(exact_ancestors_num_children),
+        "exact_anc_mean_children":
+            np.mean(exact_ancestors_num_children),
     }
     results.update(simulation_args)
     if tree_metrics:
@@ -589,6 +604,32 @@ def run_edges_performance(args):
     plt.legend()
     plt.savefig(name_format.format("edges"))
     plt.clf()
+
+    plt.plot(
+        dfg.num_sites, dfg.estimated_anc_mean_children,
+        label="estimated ancestors mean", color="blue")
+    plt.plot(
+        dfg.num_sites, dfg.estimated_anc_max_children,
+        label="estimated ancestors max", color="blue", linestyle=":")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    plt.plot(
+        dfg.num_sites, dfg.exact_anc_mean_children,
+        label="exact ancestors mean", color="red")
+    plt.plot(
+        dfg.num_sites, dfg.exact_anc_max_children,
+        label="exact ancestors max", color="red", linestyle=":")
+    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+        args.sample_size, args.mutation_rate, args.recombination_rate,
+        args.num_replicates))
+    plt.ylabel("num_children")
+    plt.xlabel("Num sites")
+    plt.legend()
+    plt.savefig(name_format.format("num_children"))
+    plt.clf()
+
+
 
     if args.compute_tree_metrics:
         plt.plot(
