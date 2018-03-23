@@ -447,7 +447,7 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
-def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
+def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -467,10 +467,10 @@ def run_infer(ts, num_threads=1, path_compression=True, exact_ancestors=False):
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
-        num_threads=num_threads)
+        method=method)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, path_compression=path_compression,
-        num_threads=num_threads)
+        method=method)
     return inferred_ts
 
 def edges_performance_worker(args):
@@ -898,6 +898,71 @@ def run_ancestor_comparison(args):
     plt.clf()
 
 
+def get_node_degree_by_depth(ts):
+    """
+    Returns a tuple (degree, depth) for each node in each tree in the
+    specified tree sequence.
+    """
+    degree = []
+    depth = []
+    for tree in ts.trees():
+        stack = [(tree.root, 0)]
+        while len(stack) > 0:
+            u, d = stack.pop()
+            if len(tree.children(u)) > 0:
+                degree.append(len(tree.children(u)))
+                depth.append(d)
+            for v in tree.children(u):
+                stack.append((v, d + 1))
+    return np.array(degree), np.array(depth)
+
+
+def run_node_degree(args):
+    MB = 10**6
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    sim_args = {
+        "sample_size": args.sample_size,
+        "length": args.length * MB,
+        "recombination_rate": args.recombination_rate,
+        "mutation_rate": args.mutation_rate,
+        "Ne": 10**4,
+        "model": "smc_prime",
+        "random_seed": rng.randint(1, 2**30)}
+    smc_ts = msprime.simulate(**sim_args)
+
+    method= "C"
+    df = pd.DataFrame()
+    for path_compression in [True, False]:
+        estimated_ancestors_ts = run_infer(
+            smc_ts, method=method, exact_ancestors=False, path_compression=path_compression)
+        degree, depth = get_node_degree_by_depth(estimated_ancestors_ts)
+        df = df.append(pd.DataFrame({
+            "degree": degree, "depth": depth, "type":"estimated",
+            "path_compression": path_compression}))
+        exact_ancestors_ts = run_infer(
+            smc_ts, method=method, exact_ancestors=True, path_compression=path_compression)
+        degree, depth = get_node_degree_by_depth(exact_ancestors_ts)
+        df = df.append(pd.DataFrame({
+            "degree": degree, "depth": depth, "type":"exact",
+            "path_compression": path_compression}))
+
+    name_format = os.path.join(
+        args.destination_dir, "node-degree_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+    print(df.describe())
+
+    sns.factorplot(x="depth", y="degree",
+            hue="path_compression", col="type",
+            data=df, kind="bar")
+    plt.savefig(name_format.format("path-compression"))
+    plt.clf()
+
+    sns.barplot(x="depth", y="degree", hue="type", data=df[df.path_compression])
+    plt.savefig(name_format.format("length"))
+    plt.clf()
+
 
 def multiple_recombinations(ts):
     """
@@ -1031,6 +1096,23 @@ if __name__ == "__main__":
         help="Runs plots comparing the real and simulated ancestors for a single instance.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_comparison)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+
+    parser = subparsers.add_parser(
+        "node-degree", aliases=["nd"],
+        help="Plots node degree vs depth in the tree.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_node_degree)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")

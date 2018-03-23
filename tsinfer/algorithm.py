@@ -631,7 +631,7 @@ class AncestorMatcher(object):
         #         if self.likelihood[v] == -1:
         #             stack.append((v, depth + 1))
         #         v = self.right_sib[v]
-        # print("done; max_depth = ", max_depth, max_L_node)
+        # # print("done; max_depth = ", max_depth, max_L_node)
 
         self.max_likelihood_node[site] = max_L_node
 
