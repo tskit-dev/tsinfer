@@ -616,6 +616,9 @@ class AncestorMatcher(object):
         # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
         # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
+        # NOTE: while this strategy seems sensible, it breaks the perfect ancestors
+        # inference. We can therefore remove this code at some point when doing a
+        # cleanup.
         # Traverse downwards and choose the deepest matching node.
         # stack = [(max_L_node, 0)]
         # max_depth = -1

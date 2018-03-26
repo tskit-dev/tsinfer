@@ -428,12 +428,12 @@ class TestBuildAncestors(unittest.TestCase):
         self.verify_ancestors(sample_data, ancestor_data)
 
 
-class TestAlgorithmsExactlyEqual(unittest.TestCase):
+class AlgorithmsExactlyEqualMixin(object):
     """
     For small example tree sequences, check that the Python and C implementations
     return precisely the same tree sequence when fed with perfect mutations.
     """
-    def infer(self, ts, method):
+    def infer(self, ts, method, path_compression=False):
         sample_data = tsinfer.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length,
             compressor=None)
@@ -445,25 +445,35 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, method=method, path_compression=False,
-            extended_checks=True)
+            sample_data, ancestor_data, method=method,
+            path_compression=path_compression, extended_checks=True)
         inferred_ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, method=method, simplify=False,
-            path_compression=False, extended_checks=True)
+            sample_data, ancestors_ts, method=method, simplify=True,
+            path_compression=path_compression, extended_checks=True)
         return inferred_ts
 
     def verify(self, ts):
-        tsp = self.infer(ts, "P")
-        tsc = self.infer(ts, "C")
+        tsp = self.infer(ts, "P", path_compression=self.path_compression_enabled)
+        tsc = self.infer(ts, "C", path_compression=self.path_compression_enabled)
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
-        tables_p = tsp.dump_tables()
-        tables_c = tsc.dump_tables()
-        self.assertEqual(tables_p.nodes, tables_c.nodes)
-        self.assertEqual(tables_p.edges, tables_c.edges)
-        self.assertEqual(tables_p.sites, tables_c.sites)
-        self.assertEqual(tables_p.mutations, tables_c.mutations)
+        if self.path_compression_enabled:
+            # With path compression we have to check the tree metrics.
+            p_breakpoints, distance = tsinfer.compare(ts, tsp)
+            self.assertTrue(np.all(distance == 0))
+            c_breakpoints, distance = tsinfer.compare(ts, tsc)
+            self.assertTrue(np.all(distance == 0))
+            self.assertTrue(np.all(p_breakpoints == c_breakpoints))
+        else:
+            # Without path compression we're guaranteed to return precisely the
+            # same tree sequences.
+            tables_p = tsp.dump_tables()
+            tables_c = tsc.dump_tables()
+            self.assertEqual(tables_p.nodes, tables_c.nodes)
+            self.assertEqual(tables_p.edges, tables_c.edges)
+            self.assertEqual(tables_p.sites, tables_c.sites)
+            self.assertEqual(tables_p.mutations, tables_c.mutations)
 
     def test_single_tree(self):
         for seed in range(10):
@@ -509,6 +519,16 @@ class TestAlgorithmsExactlyEqual(unittest.TestCase):
                 model="smc_prime")
             ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
             self.verify(ts)
+
+
+class TestAlgorithmsExactlyEqualNoPathCompression(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    path_compression_enabled = False
+
+
+class TestAlgorithmsExactlyEqualPathCompression(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    path_compression_enabled = True
 
 
 class TestPartialAncestorMatching(unittest.TestCase):

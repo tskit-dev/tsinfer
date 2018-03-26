@@ -105,16 +105,21 @@ def draw_ancestors(ts, width=800, height=600):
     return dwg.tostring()
 
 
-
 class Visualiser(object):
 
     def __init__(self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8):
         self.box_size = box_size
         self.sample_data = sample_data
+        self.original_ts = original_ts
+        self.inferred_ts = inferred_ts
         self.ancestor_data = ancestor_data
         self.samples = original_ts.genotype_matrix().T
+        self.num_samples = self.original_ts.num_samples
+        self.num_sites = self.ancestor_data.num_sites
+        node_time = inferred_ts.tables.nodes.time
+        self.num_ancestors = np.where(node_time > 0)[0].shape[0]
         self.ancestors = np.zeros(
-            (ancestor_data.num_ancestors, original_ts.num_sites), dtype=np.uint8)
+            (self.num_ancestors, original_ts.num_sites), dtype=np.uint8)
         start = ancestor_data.start[:]
         end = ancestor_data.end[:]
         variant_sites = np.hstack(
@@ -124,10 +129,12 @@ class Visualiser(object):
             self.ancestors[j, variant_sites[:-1]] = A[:, j]
             self.ancestors[j, :variant_sites[start[j]]] = tsinfer.UNKNOWN_ALLELE
             self.ancestors[j, variant_sites[end[j]]:] = tsinfer.UNKNOWN_ALLELE
-        self.original_ts = original_ts
-        self.inferred_ts = inferred_ts
-        self.num_samples = self.original_ts.num_samples
-        self.num_sites = self.ancestors.shape[1]
+
+        # TODO This only partially works for extra ancestors created by path
+        # compression. We'll get -1 lines for extra ancestors created from
+        # ancestors. However, extra ancestors created from matching samples
+        # will break this code. We really need to just match node IDs to
+        # y coordinates. Breaking up into samples and ancestors is awkward.
 
         # Find the site indexes for the true breakpoints
         breakpoints = list(original_ts.breakpoints())
@@ -152,7 +159,9 @@ class Visualiser(object):
         # Make the haplotype box
         num_haplotype_rows = 1
         self.row_map = {0: 0}
-        self.num_ancestors = self.ancestors.shape[0]
+
+        print(inferred_ts.tables.nodes)
+        print("Ancestors = ", self.ancestors.shape, self.num_ancestors)
 
         num_haplotype_rows += 1
         for j in range(self.num_ancestors):
@@ -368,8 +377,8 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        15, 1000, 0.0005, 10, mutation_rate=0.006, perfect_ancestors=False,
-        perfect_mutations=False, time_chunking=True, method="P", path_compression=False)
+        6, 1000, 0.0007, 22, mutation_rate=0.006, perfect_ancestors=True,
+        perfect_mutations=True, time_chunking=True, method="C", path_compression=True)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")

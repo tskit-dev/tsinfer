@@ -985,15 +985,22 @@ def run_perfect_inference(args):
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
             base_ts, num_threads=args.num_threads, progress=args.progress,
-            extended_checks=args.extended_checks,
-            time_chunking=not args.no_time_chunking)
+            method="C", extended_checks=args.extended_checks,
+            time_chunking=not args.no_time_chunking,
+            path_compression=args.path_compression)
         print("n={} num_trees={} num_sites={}".format(
             ts.num_samples, ts.num_trees, ts.num_sites))
-        assert ts.tables.edges == inferred_ts.tables.edges
-        assert ts.tables.sites == inferred_ts.tables.sites
-        assert ts.tables.mutations == inferred_ts.tables.mutations
-        assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
-        assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
+        assert ts.num_samples == inferred_ts.num_samples
+        assert ts.num_sites == inferred_ts.num_sites
+        if args.path_compression:
+            _, distances = tsinfer.compare(ts, inferred_ts)
+            assert np.all(distances == 0)
+        else:
+            assert ts.tables.edges == inferred_ts.tables.edges
+            assert ts.tables.sites == inferred_ts.tables.sites
+            assert ts.tables.mutations == inferred_ts.tables.mutations
+            assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
+            assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
 
 
 def setup_logging(args):
@@ -1040,6 +1047,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-time-chunking", action="store_true",
         help="Disable time-chunking to give each ancestor a distinct time.")
+    parser.add_argument(
+        "--path-compression", "-c", action="store_true",
+        help="Turn on path compression. Makes verification much slower.")
 
     parser = subparsers.add_parser(
         "edges-performance", aliases=["ep"],

@@ -24,7 +24,6 @@ def kc_distance(tree1, tree2):
         raise ValueError("Trees must have the same samples")
     k = samples.shape[0]
     n = (k * (k - 1)) // 2
-    trees = [tree1, tree2]
     M = [np.ones(n + k), np.ones(n + k)]
     for tree_index, tree in enumerate([tree1, tree2]):
         stack = [(tree.root, 0)]
@@ -373,7 +372,8 @@ def run_perfect_inference(
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-    build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=time_chunking)
+    build_simulated_ancestors(
+        sample_data, ancestor_data, ts, time_chunking=time_chunking)
     ancestor_data.finalise()
 
     ancestors_ts = inference.match_ancestors(
@@ -384,5 +384,5 @@ def run_perfect_inference(
     inferred_ts = inference.match_samples(
         sample_data, ancestors_ts, method=method, path_compression=path_compression,
         num_threads=num_threads, extended_checks=extended_checks, progress=progress,
-        stabilise_node_ordering=time_chunking)
+        stabilise_node_ordering=time_chunking and not path_compression)
     return ts, inferred_ts

@@ -507,14 +507,25 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, method=method)
             self.verify_perfect_inference(ts, inferred_ts)
 
-    @unittest.skip("Path compression breaks perfect inference")
     def test_small_smc_path_compression(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
         self.assertGreater(base_ts.num_trees, 1)
         for method in ["P", "C"]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, method=method, path_compression=True)
-            self.verify_perfect_inference(ts, inferred_ts)
+            # We can't just compare tables when doing path compression because
+            # we'll find different ways of expressing the same trees.
+            breakpoints, distances = tsinfer.compare(ts, inferred_ts)
+            self.assertTrue(np.all(distances == 0))
+
+    def test_sample_20_smc_path_compression(self):
+        base_ts = get_smc_simulation(20, L=5, recombination_rate=10, seed=111)
+        self.assertGreater(base_ts.num_trees, 5)
+        ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, path_compression=True)
+        # We can't just compare tables when doing path compression because
+        # we'll find different ways of expressing the same trees.
+        breakpoints, distances = tsinfer.compare(ts, inferred_ts)
+        self.assertTrue(np.all(distances == 0))
 
     def test_small_smc_threads(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
