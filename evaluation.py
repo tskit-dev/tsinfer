@@ -18,6 +18,7 @@ mp.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 import tqdm
+import scipy.stats
 
 
 import tsinfer
@@ -447,7 +448,9 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
-def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
+def run_infer(
+        ts, method="C", path_compression=True, exact_ancestors=False,
+        recombination_map=None):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -467,10 +470,10 @@ def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
-        method=method)
+        method=method, recombination_map=recombination_map)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, path_compression=path_compression,
-        method=method)
+        method=method, recombination_map=recombination_map)
     return inferred_ts
 
 def edges_performance_worker(args):
@@ -676,6 +679,65 @@ def run_edges_performance(args):
         plt.legend()
         plt.savefig(name_format.format("perfect_trees"))
         plt.clf()
+
+
+
+def run_hotspot_analysis(args):
+    MB = 10**6
+    L = args.length * MB
+
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+
+    breakpoints = np.linspace(0, L, args.num_hotspots + 2)
+    end = breakpoints[1:-1] + L * args.hotspot_width
+    breakpoints = np.hstack([breakpoints, end])
+    breakpoints.sort()
+    rates = np.zeros_like(breakpoints)
+    rates[:-1] = args.recombination_rate
+    # Set the odd elements of the array to be hotspots.
+    rates[1::2] *= args.hotspot_intensity
+    recomb_map = msprime.RecombinationMap(list(breakpoints), list(rates))
+
+    sim_args = {
+        "sample_size": args.sample_size,
+        "recombination_map": recomb_map,
+        "mutation_rate": args.mutation_rate,
+        "Ne": 10**4,
+        "random_seed": rng.randint(1, 2**30)}
+    ts = msprime.simulate(**sim_args)
+    print("simulated ", ts.num_trees, "trees and", ts.num_sites, "sites")
+
+    flat_ts = run_infer(ts)
+    map_ts = run_infer(ts, recombination_map=recomb_map)
+
+    num_bins = 100
+
+    for x in breakpoints[1:-1]:
+        plt.axvline(x=x, color="k", ls=":")
+
+    breakpoints = np.array(list(ts.breakpoints()))
+    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
+    plt.plot(bin_edges[:-1], v, label="source")
+    breakpoints = np.array(list(flat_ts.breakpoints()))
+    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
+    plt.plot(bin_edges[:-1], v, label="flat rate")
+    breakpoints = np.array(list(map_ts.breakpoints()))
+    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
+    plt.plot(bin_edges[:-1], v, "--", label="input map")
+
+    plt.ylabel("Breakpoint density")
+    plt.legend()
+
+    name_format = os.path.join(
+        args.destination_dir,
+        "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+            args.num_hotspots, args.hotspot_intensity, args.hotspot_width))
+    plt.savefig(name_format.format("breakpoints"))
+    plt.clf()
+
 
 
 def ancestor_properties_worker(args):
@@ -1072,6 +1134,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--compute-tree-metrics", "-T", action="store_true",
         help="Compute tree metrics")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
+        "hotspot-analysis", aliases=["ha"],
+        help="Runs plots analysing the effects of recombination hotspots.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_hotspot_analysis)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument(
+        "--num-hotspots", "-N", type=int, default=1,
+        help="Number of hotspots")
+    parser.add_argument(
+        "--hotspot-intensity", "-I", type=float, default=10,
+        help="Intensity of hotspots relative to background.")
+    parser.add_argument(
+        "--hotspot-width", "-W", type=float, default=0.01,
+        help="Width of hotspots as a fraction of total genome length.")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")

@@ -53,7 +53,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.num_sites, ts.num_sites)
 
         self.assertEqual(input_file.genotypes.dtype, np.uint8)
-        self.assertEqual(input_file.recombination_rate.dtype, np.float64)
         self.assertEqual(input_file.position.dtype, np.float64)
         self.assertEqual(input_file.frequency.dtype, np.uint32)
         self.assertEqual(input_file.ancestral_state.dtype, np.int8)
@@ -69,7 +68,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         genotypes = input_file.genotypes[:]
         position = input_file.position[:]
         frequency = input_file.frequency[:]
-        recombination_rate = input_file.recombination_rate[:]
         ancestral_states = msprime.unpack_strings(
             input_file.ancestral_state[:], input_file.ancestral_state_offset[:])
         derived_states = msprime.unpack_strings(
@@ -94,7 +92,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             elif 0 < f < ts.num_samples:
                 variant_sites.append(variant.site.id)
                 self.assertTrue(np.array_equal(genotypes[j], variant.genotypes))
-                self.assertGreaterEqual(recombination_rate[j], 0)
                 j += 1
             else:
                 invariant_sites.append(variant.site.id)
@@ -126,7 +123,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.invariant_site.compressor, compressor)
         self.assertEqual(input_file.singleton_site.compressor, compressor)
         self.assertEqual(input_file.singleton_sample.compressor, compressor)
-        self.assertEqual(input_file.recombination_rate.compressor, compressor)
         self.assertEqual(input_file.genotypes.compressor, compressor)
 
     def test_chunk_size(self):
@@ -194,7 +190,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(input_file.invariant_site.compressor, compressor)
             self.assertEqual(input_file.singleton_site.compressor, compressor)
             self.assertEqual(input_file.singleton_sample.compressor, compressor)
-            self.assertEqual(input_file.recombination_rate.compressor, compressor)
             self.assertEqual(input_file.genotypes.compressor, compressor)
 
     def test_multichar_alleles(self):

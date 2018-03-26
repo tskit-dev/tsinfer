@@ -265,7 +265,7 @@ class SampleData(DataContainer):
     Class representing the data stored about our input samples.
     """
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (0, 2)
+    FORMAT_VERSION = (0, 3)
 
     @property
     def num_samples(self):
@@ -332,10 +332,6 @@ class SampleData(DataContainer):
         return self.data["variants/genotypes"]
 
     @property
-    def recombination_rate(self):
-        return self.data["variants/recombination_rate"]
-
-    @property
     def variant_site(self):
         return self.data["variants/site"]
 
@@ -362,7 +358,6 @@ class SampleData(DataContainer):
             ("derived_state", zarr_summary(self.derived_state)),
             ("derived_state_offset", zarr_summary(self.derived_state_offset)),
             ("variant_site", zarr_summary(self.variant_site)),
-            ("recombination_rate", zarr_summary(self.recombination_rate)),
             ("singleton_site", zarr_summary(self.singleton_site)),
             ("invariant_site", zarr_summary(self.invariant_site)),
             ("singleton_sample", zarr_summary(self.singleton_sample)),
@@ -396,7 +391,6 @@ class SampleData(DataContainer):
             np.array_equal(self.invariant_site[:], other.invariant_site[:]) and
             np.array_equal(self.singleton_site[:], other.singleton_site[:]) and
             np.array_equal(self.singleton_sample[:], other.singleton_sample[:]) and
-            np.array_equal(self.recombination_rate[:], other.recombination_rate[:]) and
             np.array_equal(self.genotypes[:], other.genotypes[:]))
 
     ####################################
@@ -405,7 +399,7 @@ class SampleData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, num_samples=None, sequence_length=None, recombination_map=None,
+            cls, num_samples=None, sequence_length=None,
             filename=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
@@ -416,9 +410,6 @@ class SampleData(DataContainer):
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["num_samples"] = int(num_samples)
 
-        # TODO recombination map should be either a string or an
-        # instance of msprime.RecombinationMap or None
-        self.recombination_map = recombination_map
         self.site_buffer = []
         self.genotypes_buffer = np.empty((chunk_size, num_samples), dtype=np.uint8)
         self.genotypes_buffer_offset = 0
@@ -525,16 +516,10 @@ class SampleData(DataContainer):
         self.data.attrs["num_singleton_sites"] = num_singletons
         self.data.attrs["num_invariant_sites"] = num_invariants
 
-        # TODO work out the recombination rates according to a map.
-        recombination_rate = np.ones(num_variant_sites)
-
         chunks = max(num_variant_sites, 1),
         self.variants_group.create_dataset(
             "site", shape=(num_variant_sites,), chunks=chunks,
             dtype=np.int32, data=variant_sites, compressor=self.compressor)
-        self.variants_group.create_dataset(
-            "recombination_rate", shape=(num_variant_sites,), chunks=chunks,
-            data=recombination_rate, compressor=self.compressor)
 
         self.genotypes.append(self.genotypes_buffer[:self.genotypes_buffer_offset])
         self.site_buffer = None

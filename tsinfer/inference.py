@@ -171,7 +171,7 @@ def build_ancestors(
 def match_ancestors(
         sample_data, ancestor_data, output_path=None, method="C", progress=False,
         num_threads=0, path_compression=True, output_interval=None, resume=False,
-        traceback_file_pattern=None, extended_checks=False):
+        traceback_file_pattern=None, extended_checks=False, recombination_map=None):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -181,7 +181,7 @@ def match_ancestors(
         progress=progress, path_compression=path_compression,
         num_threads=num_threads, output_interval=output_interval,
         resume=resume, traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks)
+        extended_checks=extended_checks, recombination_map=recombination_map)
     return matcher.match_ancestors()
 
 
@@ -219,13 +219,13 @@ def match_samples(
         sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
         traceback_file_pattern=None, extended_checks=False,
-        stabilise_node_ordering=False):
+        stabilise_node_ordering=False, recombination_map=None):
     manager = SampleMatcher(
         sample_data, ancestors_ts, error_probability=genotype_quality,
         path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
         traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks)
+        extended_checks=extended_checks, recombination_map=recombination_map)
     manager.match_samples()
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering)
@@ -240,7 +240,7 @@ class Matcher(object):
     def __init__(
             self, sample_data, error_probability=0, num_threads=1, method="C",
             path_compression=True, progress=False, traceback_file_pattern=None,
-            extended_checks=False):
+            extended_checks=False, recombination_map=None):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
@@ -248,10 +248,23 @@ class Matcher(object):
         self.num_sites = self.sample_data.num_variant_sites
         self.sequence_length = self.sample_data.sequence_length
         self.positions = self.sample_data.position[:][self.sample_data.variant_site]
-        self.recombination_rate = self.sample_data.recombination_rate
+        self.recombination_rate = np.ones(self.num_sites)
         self.progress = progress
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
+
+        if recombination_map is not None:
+            last_genetic_x = recombination_map.physical_to_genetic(self.positions[0])
+            self.recombination_rate[0] = 0
+            num_loci = recombination_map.get_num_loci()
+            for j in range(1, self.num_sites):
+                genetic_x = recombination_map.physical_to_genetic(self.positions[j])
+                phys_dist = self.positions[j] - self.positions[j - 1]
+                genetic_dist = (genetic_x - last_genetic_x) / num_loci
+                # print(phys_dist, genetic_dist, genetic_dist / phys_dist)
+                last_genetic_x = genetic_x
+                self.recombination_rate[j] = genetic_dist / phys_dist
+
         if method == "C":
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
