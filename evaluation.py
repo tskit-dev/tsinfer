@@ -9,6 +9,7 @@ import concurrent.futures
 import time
 import warnings
 import os.path
+import colorsys
 
 import numpy as np
 import pandas as pd
@@ -16,9 +17,11 @@ import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
 mp.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib import collections as mc
 import seaborn as sns
 import tqdm
 import scipy.stats
+import colorutils
 
 
 import tsinfer
@@ -681,6 +684,39 @@ def run_edges_performance(args):
         plt.clf()
 
 
+def unrank(samples, n):
+    """
+    Unranks the specified set of samples from a possible n into its position
+    in a lexicographically sorted list of bitstrings.
+    """
+    bitstring = np.zeros(n, dtype=int)
+    for s in samples:
+        bitstring[s] = 1
+    mult = 2**np.arange(n, dtype=int)
+    unranked = np.sum(mult * bitstring)
+    return unranked
+
+
+def edge_plot(ts, filename):
+    n = ts.num_samples
+    pallete = sns.color_palette("husl", 2**n - 1)
+    lines = []
+    colours = []
+    for tree in ts.trees():
+        left, right = tree.interval
+        for u in tree.nodes():
+            for c in tree.children(u):
+                lines.append([(left, c), (right, c)])
+                colours.append(pallete[unrank(tree.samples(c), n)])
+
+    lc = mc.LineCollection(lines, linewidths=2, colors=colours)
+    fig, ax = plt.subplots()
+    ax.add_collection(lc)
+    ax.autoscale()
+    plt.savefig(filename)
+    plt.clf()
+
+
 
 def run_hotspot_analysis(args):
     MB = 10**6
@@ -713,30 +749,35 @@ def run_hotspot_analysis(args):
     map_ts = run_infer(ts, recombination_map=recomb_map)
 
     num_bins = 100
+    hotspot_breakpoints = breakpoints
 
-    for x in breakpoints[1:-1]:
-        plt.axvline(x=x, color="k", ls=":")
+    for density in [True, False]:
+        for x in hotspot_breakpoints[1:-1]:
+            plt.axvline(x=x, color="k", ls=":")
+        breakpoints = np.array(list(flat_ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, label="flat rate")
+        breakpoints = np.array(list(map_ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, "--", label="input map")
+        breakpoints = np.array(list(ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, label="source")
+        plt.ylabel("Number of breakpoints")
+        plt.legend()
 
-    breakpoints = np.array(list(ts.breakpoints()))
-    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
-    plt.plot(bin_edges[:-1], v, label="source")
-    breakpoints = np.array(list(flat_ts.breakpoints()))
-    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
-    plt.plot(bin_edges[:-1], v, label="flat rate")
-    breakpoints = np.array(list(map_ts.breakpoints()))
-    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
-    plt.plot(bin_edges[:-1], v, "--", label="input map")
+        name_format = os.path.join(
+            args.destination_dir,
+            "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}.png".format(
+                args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+                args.num_hotspots, args.hotspot_intensity, args.hotspot_width))
+        plt.savefig(name_format.format("breakpoints_density={}".format(density)))
+        plt.clf()
 
-    plt.ylabel("Breakpoint density")
-    plt.legend()
+    print("Generating edge plots")
+    edge_plot(ts, name_format.format("source_edges"))
+    edge_plot(flat_ts, name_format.format("dest_edges"))
 
-    name_format = os.path.join(
-        args.destination_dir,
-        "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}.png".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-            args.num_hotspots, args.hotspot_intensity, args.hotspot_width))
-    plt.savefig(name_format.format("breakpoints"))
-    plt.clf()
 
 
 
