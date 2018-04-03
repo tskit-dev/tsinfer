@@ -775,9 +775,100 @@ def run_hotspot_analysis(args):
         plt.clf()
 
     print("Generating edge plots")
+    # TODO add option for colour mapping.
     edge_plot(ts, name_format.format("source_edges"))
     edge_plot(flat_ts, name_format.format("dest_edges"))
 
+
+def error_analysis_worker(args):
+    simulation_args, input_error, inference_error = args
+    before = time.perf_counter()
+    ts = msprime.simulate(**simulation_args)
+
+    V = tsinfer.generate_errors(ts, input_error)
+    inferred_ts = tsinfer.infer(
+        V, [site.position for site in ts.sites()], sample_error=inference_error,
+        sequence_length=ts.sequence_length,
+        recombination_rate=simulation_args["recombination_rate"])
+
+    results = {
+        "input_error": input_error,
+        "inference_error": inference_error,
+        "num_sites": ts.num_sites,
+        "source_num_trees": ts.num_trees,
+        "inferred_num_trees": inferred_ts.num_trees,
+        "source_edges": ts.num_edges,
+        "inferred_edges": inferred_ts.num_edges,
+    }
+    results.update(simulation_args)
+
+    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
+    d = breakpoints[1:] - breakpoints[:-1]
+    d /= breakpoints[-1]
+    kc_distance_weighted = np.sum(kc_distance * d)
+    kc_mean = np.mean(kc_distance)
+    results.update({
+        "kc_distance_weighted": kc_distance_weighted,
+        "kc_mean": kc_mean,
+    })
+    return results
+
+
+def run_error_analysis(args):
+    MB = 10**6
+    L = args.length * MB
+
+    work = []
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    for e in np.linspace(0, 5 * args.error_probability, 10):
+        for _ in range(args.num_replicates):
+            sim_args = {
+                "sample_size": args.sample_size,
+                "length": L,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": 10**4,
+                "random_seed": rng.randint(1, 2**30)}
+            work.append((sim_args, args.error_probability, e))
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(error_analysis_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
+    progress.close()
+
+    df = pd.DataFrame(results)
+    dfg = df.groupby(df.inference_error).mean()
+    print(dfg)
+
+    name_format = os.path.join(
+        args.destination_dir,
+        "error_n={}_L={}_mu={}_rho={}_e={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate,
+            args.recombination_rate, args.error_probability))
+
+    plt.plot(dfg.inferred_edges / dfg.source_edges)
+    plt.axvline(args.error_probability, ls="--")
+    plt.ylabel("inferred # edges / source # edges")
+    plt.xlabel("Error parameter")
+    plt.savefig(name_format.format("edges"))
+    plt.clf()
+
+    plt.plot(dfg.kc_mean)
+    plt.axvline(args.error_probability, ls="--")
+    plt.ylabel("KC distance")
+    plt.xlabel("Error parameter")
+    plt.savefig(name_format.format("kc"))
+    plt.clf()
 
 
 
@@ -1202,6 +1293,31 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hotspot-width", "-W", type=float, default=0.01,
         help="Width of hotspots as a fraction of total genome length.")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
+        "error-analysis", aliases=["ea"],
+        help="Runs plots analysing the effects of inserted errors.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_error_analysis)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument(
+        "--error-probability", "-e", type=float, default=0.01,
+        help="Probability of errors.")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-P", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
