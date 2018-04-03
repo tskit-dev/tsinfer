@@ -323,11 +323,11 @@ def visualise(
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, method=method, path_compression=path_compression,
-        extended_checks=True)
+        extended_checks=True, recombination_rate=0.49)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=False,
         path_compression=path_compression, extended_checks=True,
-        genotype_quality=error_rate)
+        genotype_quality=error_rate, recombination_rate=recombination_rate)
 
     prefix = "tmp__NOBACKUP__/"
     visualiser = Visualiser(
@@ -338,7 +338,7 @@ def visualise(
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, method=method, simplify=True,
         path_compression=False, stabilise_node_ordering=True,
-        genotype_quality=error_rate)
+        genotype_quality=error_rate, recombination_rate=recombination_rate)
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
     sys.stdout.flush()
@@ -372,7 +372,7 @@ def run_viz(
     with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
         f.write(draw_ancestors(ts))
     visualise(
-        ts, 1e-9, error_rate, method=method, box_size=26, perfect_ancestors=perfect_ancestors,
+        ts, rate, error_rate, method=method, box_size=26, perfect_ancestors=perfect_ancestors,
         path_compression=path_compression, time_chunking=time_chunking)
 
 
@@ -387,9 +387,9 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        6, 1000, 0.0007, 12, mutation_rate=0.006, perfect_ancestors=False,
+        10, 1000, 0.0007, 12, mutation_rate=0.006, perfect_ancestors=False,
         perfect_mutations=False, time_chunking=True, method="P", path_compression=False,
-        error_rate=0.001)
+        error_rate=0.1)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")

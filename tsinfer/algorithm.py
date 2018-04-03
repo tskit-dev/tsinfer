@@ -535,10 +535,19 @@ class AncestorMatcher(object):
         err = self.error_rate
 
         r = 1 - np.exp(-recombination_rate[site] / n)
-        recomb_proba = r / n
-        no_recomb_proba = 1 - r + r / n
+        # recomb_proba = r / n
+        # no_recomb_proba = 1 - r + r / n
+        # recomb_proba = recombination_rate[site]
+        # no_recomb_proba = 1 - recombination_rate[site]
+        # Just sticking in a value here. Without error, any value here will
+        # work once it's < 0.5. TODO when we have error, is there a value
+        # for the recombination rate which will have the effect of minimising
+        # the number of recombinations, given the probability of a genotype
+        # being incorrect?
+        recomb_proba = 0.000045
+        no_recomb_proba = 1 - recomb_proba
 
-        # print("update_site", site, state)
+        print("update_site", site, state, recombination_rate[site], recomb_proba, no_recomb_proba)
 
         if site not in self.tree_sequence_builder.mutations:
             mutation_node = msprime.NULL_NODE
@@ -556,8 +565,8 @@ class AncestorMatcher(object):
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
         distance = 1
-        if site > 0:
-            distance = self.positions[site] - self.positions[site - 1]
+        # if site > 0:
+        #     distance = self.positions[site] - self.positions[site - 1]
         # Update the likelihoods for this site.
         # print("Site ", site, "distance = ", distance)
         # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
@@ -583,7 +592,7 @@ class AncestorMatcher(object):
 
             L_no_recomb = self.likelihood[u] * no_recomb_proba * distance
             assert L_no_recomb >= 0
-            L_recomb = recomb_proba * distance
+            L_recomb = recomb_proba  * distance
             eps = 1e-14
             # Only recombine if the likelihood of recombination is more than delta
             # bigger than the likelihood of no recombination. This avoids issues
@@ -594,6 +603,7 @@ class AncestorMatcher(object):
             # TODO This has caused subtle numerical problems, where all the
             # likelihoods ended up being less than epsilon. Definitely need
             # a better way of doing this!!!
+            print("\t", u, L_no_recomb, L_recomb)
             if L_recomb > L_no_recomb + eps:
                 z = L_recomb
                 self.traceback[site][u] = True
@@ -609,32 +619,13 @@ class AncestorMatcher(object):
                 else:
                     emission_p = err * d + (1 - err) * (not d)
             self.likelihood[u] = z * emission_p
+            print("\t", u, z, emission_p, z * emission_p)
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
-        # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
-
-        # NOTE: while this strategy seems sensible, it breaks the perfect ancestors
-        # inference. We can therefore remove this code at some point when doing a
-        # cleanup.
-        # Traverse downwards and choose the deepest matching node.
-        # stack = [(max_L_node, 0)]
-        # max_depth = -1
-        # # print("Starting traversal at ", max_L_node)
-        # while len(stack) > 0:
-        #     u, depth = stack.pop()
-        #     # print("  " * depth, "visit", u)
-        #     if depth > max_depth:
-        #         max_L_node = u
-        #         max_depth = depth
-        #     v = self.left_child[u]
-        #     while v != -1:
-        #         if self.likelihood[v] == -1:
-        #             stack.append((v, depth + 1))
-        #         v = self.right_sib[v]
-        # # print("done; max_depth = ", max_depth, max_L_node)
+        print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
+        print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
         self.max_likelihood_node[site] = max_L_node
 
@@ -759,7 +750,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        # print("MATCH: start=", start, "end = ", end, "h = ", h)
+        print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
