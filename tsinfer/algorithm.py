@@ -534,7 +534,7 @@ class AncestorMatcher(object):
         recombination_rate = self.tree_sequence_builder.recombination_rate
         err = self.error_rate
 
-        r = 1 - np.exp(-recombination_rate[site] / n)
+        # r = 1 - np.exp(-recombination_rate[site] / n)
         # recomb_proba = r / n
         # no_recomb_proba = 1 - r + r / n
         # recomb_proba = recombination_rate[site]
@@ -544,10 +544,9 @@ class AncestorMatcher(object):
         # for the recombination rate which will have the effect of minimising
         # the number of recombinations, given the probability of a genotype
         # being incorrect?
-        recomb_proba = 0.000045
+        recomb_proba = 0.25
         no_recomb_proba = 1 - recomb_proba
 
-        print("update_site", site, state, recombination_rate[site], recomb_proba, no_recomb_proba)
 
         if site not in self.tree_sequence_builder.mutations:
             mutation_node = msprime.NULL_NODE
@@ -562,6 +561,7 @@ class AncestorMatcher(object):
                 self.likelihood_nodes.append(mutation_node)
                 # print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
+        print("update_site", site, state, mutation_node, recomb_proba, err)
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
         distance = 1
@@ -603,7 +603,8 @@ class AncestorMatcher(object):
             # TODO This has caused subtle numerical problems, where all the
             # likelihoods ended up being less than epsilon. Definitely need
             # a better way of doing this!!!
-            print("\t", u, L_no_recomb, L_recomb)
+            print("\tu=", u, "L[u]=", self.likelihood[u], "L_no_recomb=",
+                    L_no_recomb, "L_recomb=", L_recomb)
             if L_recomb > L_no_recomb + eps:
                 z = L_recomb
                 self.traceback[site][u] = True
@@ -611,6 +612,8 @@ class AncestorMatcher(object):
                 z = L_no_recomb
                 self.traceback[site][u] = False
 
+            # TODO do we need this case? Isn't this the same as saying we
+            # are not a descendent??
             if mutation_node == -1:
                 emission_p = 1 - err
             else:
@@ -619,7 +622,7 @@ class AncestorMatcher(object):
                 else:
                     emission_p = err * d + (1 - err) * (not d)
             self.likelihood[u] = z * emission_p
-            print("\t", u, z, emission_p, z * emission_p)
+            print("\t\tz=", z, "emission=", emission_p, "L_new = ", z * emission_p)
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
@@ -637,9 +640,9 @@ class AncestorMatcher(object):
                 v = self.parent[v]
         assert np.all(path_cache == -1)
 
-        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
         self.compress_likelihoods()
         self.normalise_likelihoods()
+        print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def normalise_likelihoods(self, allow_zeros=False):
         assert len(self.likelihood_nodes) > 0
