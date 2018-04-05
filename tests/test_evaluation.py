@@ -30,7 +30,6 @@ def kc_distance(tree1, tree2):
         raise ValueError("Trees must have the same samples")
     k = samples.shape[0]
     n = (k * (k - 1)) // 2
-    trees = [tree1, tree2]
     M = [np.ones(n + k), np.ones(n + k)]
     for tree_index, tree in enumerate([tree1, tree2]):
         for j, (a, b) in enumerate(itertools.combinations(samples, 2)):
@@ -106,7 +105,7 @@ class TestKCMetric(unittest.TestCase):
             self.assertTrue(found)
             tree1 = ts.first()
 
-            ts  = msprime.simulate(
+            ts = msprime.simulate(
                 n, random_seed=seed + 1, demographic_events=demographic_events)
             tree2 = ts.first()
             self.assertAlmostEqual(
@@ -542,3 +541,55 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, method=method, time_chunking=False)
             self.verify_perfect_inference(ts, inferred_ts)
+
+
+class TestErrors(unittest.TestCase):
+    """
+    Tests for the error generation code.
+    """
+    def test_zero_error(self):
+        ts = msprime.simulate(
+            10, mutation_rate=10, recombination_rate=10, random_seed=1)
+        self.assertTrue(ts.num_sites > 1)
+        self.assertTrue(ts.num_trees > 1)
+        tsp = tsinfer.insert_errors(ts, 0)
+        t1 = ts.tables
+        t2 = tsp.tables
+        self.assertEqual(t1.nodes, t2.nodes)
+        self.assertEqual(t1.edges, t2.edges)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.mutations, t2.mutations)
+
+    def verify(self, ts, tsp):
+        """
+        Verifies that the specified tree sequence tsp is correctly
+        derived from ts.
+        """
+        t1 = ts.tables
+        t2 = tsp.tables
+        self.assertEqual(t1.nodes, t2.nodes)
+        self.assertEqual(t1.edges, t2.edges)
+        self.assertEqual(t1.sites, t2.sites)
+        for site1, site2 in zip(ts.sites(), tsp.sites()):
+            mut1 = site1.mutations[0]
+            mut2 = site2.mutations[0]
+            self.assertEqual(mut1.site, mut2.site)
+            self.assertEqual(mut1.node, mut2.node)
+            self.assertEqual(mut1.derived_state, mut2.derived_state)
+            node = ts.node(mut1.node)
+            for mut in site2.mutations[1:]:
+                node = ts.node(mut.node)
+                self.assertTrue(node.is_sample())
+        for v1, v2 in zip(ts.variants(), tsp.variants()):
+            diffs = np.sum(v1.genotypes != v2.genotypes)
+            self.assertEqual(diffs, len(v2.site.mutations) - 1)
+
+    def test_simple_error(self):
+        ts = msprime.simulate(
+            10, mutation_rate=10, recombination_rate=10, random_seed=2)
+        self.assertTrue(ts.num_sites > 1)
+        self.assertTrue(ts.num_trees > 1)
+        tsp = tsinfer.insert_errors(ts, 0.1)
+        # We should have some extra mutations
+        self.assertGreater(tsp.num_mutations, ts.num_mutations)
+        self.verify(ts, tsp)

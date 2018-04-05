@@ -52,11 +52,13 @@ def draw_edges(ts, width=800, height=600):
         lines.add(dwg.line(a, b))
 
     for site in ts.sites():
-        assert len(site.mutations) == 1
+        assert len(site.mutations) >= 1
         mutation = site.mutations[0]
         a = x_trans(site.position), y_trans(mutation.node)
         dwg.add(dwg.circle(center=a, r=1, fill="red"))
-
+        for mutation in site.mutations[1:]:
+            a = x_trans(site.position), y_trans(mutation.node)
+            dwg.add(dwg.circle(center=a, r=1, fill="blue"))
 
     return dwg.tostring()
 
@@ -98,10 +100,12 @@ def draw_ancestors(ts, width=800, height=600):
         lines.add(dwg.line(a, b))
 
     for site in ts.sites():
-        assert len(site.mutations) == 1
         mutation = site.mutations[0]
         a = x_trans(site.position), y_trans(mutation.node)
         dwg.add(dwg.circle(center=a, r=1, fill="red"))
+        for mutation in site.mutations[1:]:
+            a = x_trans(site.position), y_trans(mutation.node)
+            dwg.add(dwg.circle(center=a, r=1, fill="blue"))
     return dwg.tostring()
 
 
@@ -364,7 +368,7 @@ def run_viz(
     if perfect_mutations:
         ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
     else:
-        ts = tsinfer.strip_singletons(ts)
+        ts = tsinfer.insert_errors(ts, error_rate)
     print("num_sites = ", ts.num_sites)
 
     with open("tmp__NOBACKUP__/edges.svg", "w") as f:
