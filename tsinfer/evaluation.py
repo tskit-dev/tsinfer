@@ -135,16 +135,23 @@ def strip_singletons(ts):
     """
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
+    dropped_mutations = 0
     for variant in ts.variants():
         if np.sum(variant.genotypes) > 1:
             site_id = sites.add_row(
                 position=variant.site.position,
                 ancestral_state=variant.site.ancestral_state)
-            for mutation in variant.site.mutations:
-                assert mutation.parent == -1  # No back mutations
+            assert len(variant.site.mutations) >= 1
+            mutation = variant.site.mutations[0]
+            parent_id = mutations.add_row(
+                site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+            for error in variant.site.mutations[1:]:
+                parent = -1
+                if error.parent != -1:
+                    parent = parent_id
                 mutations.add_row(
-                    site=site_id, node=mutation.node,
-                    derived_state=mutation.derived_state)
+                    site=site_id, node=error.node, derived_state=error.derived_state,
+                    parent=parent)
     tables = ts.dump_tables()
     return msprime.load_tables(
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)

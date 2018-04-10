@@ -744,6 +744,10 @@ def run_effective_recombination(args):
 
     df = pd.DataFrame(results)
     df.length /= MB
+    df.source_sample_edges -= df.sample_size
+    df.estimated_anc_sample_edges -= df.sample_size
+    df.exact_anc_sample_edges -= df.sample_size
+
     dfg = df.groupby(df.sample_size).mean()
     print(dfg)
 
@@ -755,7 +759,7 @@ def run_effective_recombination(args):
     plt.plot(dfg.source_sample_edges, label="source")
     plt.plot(dfg.estimated_anc_sample_edges, label="estimated ancestors")
     plt.plot(dfg.exact_anc_sample_edges, label="exact ancestors")
-    plt.ylabel("Number of sample edges")
+    plt.ylabel("Number of sample edges - n")
     plt.xlabel("Sample size")
     plt.legend()
     plt.savefig(name_format.format("sample_edges"))
@@ -863,9 +867,11 @@ def error_analysis_worker(args):
     before = time.perf_counter()
     ts = msprime.simulate(**simulation_args)
 
-    V = tsinfer.generate_errors(ts, input_error)
+    # V = generate_samples(ts, input_error)
+    ts = tsinfer.insert_errors(ts, inference_error)
+    V = ts.genotype_matrix()
     inferred_ts = tsinfer.infer(
-        V, [site.position for site in ts.sites()], sample_error=inference_error,
+        V, [site.position for site in ts.sites()], sample_error=0,
         sequence_length=ts.sequence_length,
         recombination_rate=simulation_args["recombination_rate"])
 
@@ -900,7 +906,10 @@ def run_error_analysis(args):
     rng = random.Random()
     if args.random_seed is not None:
         rng.seed(args.random_seed)
-    for e in np.linspace(0, 5 * args.error_probability, 10):
+    inference_errors = [
+        0, args.error_probability / 10, args.error_probability,
+        args.error_probability * 10]
+    for e in inference_errors:
         for _ in range(args.num_replicates):
             sim_args = {
                 "sample_size": args.sample_size,
@@ -925,8 +934,6 @@ def run_error_analysis(args):
     progress.close()
 
     df = pd.DataFrame(results)
-    dfg = df.groupby(df.inference_error).mean()
-    print(dfg)
 
     name_format = os.path.join(
         args.destination_dir,
@@ -934,19 +941,25 @@ def run_error_analysis(args):
             args.sample_size, args.length, args.mutation_rate,
             args.recombination_rate, args.error_probability))
 
-    plt.plot(dfg.inferred_edges / dfg.source_edges)
-    plt.axvline(args.error_probability, ls="--")
-    plt.ylabel("inferred # edges / source # edges")
-    plt.xlabel("Error parameter")
-    plt.savefig(name_format.format("edges"))
-    plt.clf()
-
-    plt.plot(dfg.kc_mean)
-    plt.axvline(args.error_probability, ls="--")
+    sns.boxplot(x="inference_error", y="kc_mean", data=df)
     plt.ylabel("KC distance")
     plt.xlabel("Error parameter")
     plt.savefig(name_format.format("kc"))
     plt.clf()
+
+    # plt.plot(dfg.inferred_edges / dfg.source_edges)
+    # plt.axvline(args.error_probability, ls="--")
+    # plt.ylabel("inferred # edges / source # edges")
+    # plt.xlabel("Error parameter")
+    # plt.savefig(name_format.format("edges"))
+    # plt.clf()
+
+    # plt.plot(dfg.kc_mean)
+    # plt.axvline(args.error_probability, ls="--")
+    # plt.ylabel("KC distance")
+    # plt.xlabel("Error parameter")
+    # plt.savefig(name_format.format("kc"))
+    # plt.clf()
 
 
 
@@ -1096,9 +1109,7 @@ def running_mean(x, N):
 
 def run_ancestor_comparison(args):
     MB = 10**6
-    rng = random.Random()
-    if args.random_seed is not None:
-        rng.seed(args.random_seed)
+    rng = random.Random(args.random_seed)
     sim_args = {
         "sample_size": args.sample_size,
         "length": args.length * MB,
@@ -1109,11 +1120,16 @@ def run_ancestor_comparison(args):
         "random_seed": rng.randint(1, 2**30)}
     ts = msprime.simulate(**sim_args)
 
+    # ts  = tsinfer.insert_errors(ts, args.error_probability, seed=args.random_seed)
+    V = generate_samples(ts, args.error_probability)
+
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
-    for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    for j, v in enumerate(V):
+        sample_data.add_variant(j, ["0", "1"], v)
+    # for v in ts.variants():
+    #     sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
@@ -1135,11 +1151,19 @@ def run_ancestor_comparison(args):
     print(exact_anc)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+        args.error_probability))
     plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
     plt.legend()
     plt.savefig(name_format.format("length-dist"))
+    plt.clf()
+
+    frequency = estimated_anc.time[:][1:]
+    print(estimated_anc_length[frequency==2])
+    plt.hist(estimated_anc_length[frequency==2], bins=50)
+    plt.xlabel("doubleton ancestor length")
+    plt.savefig(name_format.format("doubleton-length-dist"))
     plt.clf()
 
     # Because we have different numbers of ancestors, we need to rescale time
@@ -1465,6 +1489,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mutation-rate", "-u", type=float, default=1e-8,
         help="Mutation rate")
+    parser.add_argument(
+        "--error-probability", "-e", type=float, default=0,
+        help="Error probability")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
 
