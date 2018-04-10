@@ -377,8 +377,8 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        6, 1000, 0.0007, 22, mutation_rate=0.006, perfect_ancestors=True,
-        perfect_mutations=True, time_chunking=True, method="C", path_compression=True)
+        8, 1000, 0.0007, 23, mutation_rate=0.006, perfect_ancestors=False,
+        perfect_mutations=False, time_chunking=True, method="C", path_compression=False)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
     # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")
