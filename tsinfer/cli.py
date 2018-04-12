@@ -101,6 +101,7 @@ def run_match_ancestors(args):
     tsinfer.match_ancestors(
         sample_data, ancestor_data, output_path=ancestors_ts,
         num_threads=args.num_threads, progress=args.progress,
+        path_compression=not args.no_path_compression,
         output_interval=args.output_interval, resume=args.resume)
 
 
@@ -114,7 +115,8 @@ def run_match_samples(args):
     ancestors_ts = msprime.load(ancestors_ts)
     ts = tsinfer.match_samples(
         sample_data, ancestors_ts, num_threads=args.num_threads,
-        genotype_quality=args.genotype_quality, progress=args.progress)
+        genotype_quality=args.genotype_quality, progress=args.progress,
+        path_compression=not args.no_path_compression)
     logger.info("Writing output tree sequence to {}".format(output_ts))
     ts.dump(output_ts)
 
@@ -173,6 +175,12 @@ def add_progress_argument(parser):
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")
+
+
+def add_path_compression_argument(parser):
+    parser.add_argument(
+        "--no-path-compression", action="store_true",
+        help="Disable path compression")
 
 
 def add_logging_arguments(parser):
@@ -245,6 +253,7 @@ def get_tsinfer_parser():
     add_output_interval_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    add_path_compression_argument(parser)
     parser.add_argument(
         "--resume", "-r", default=False, action="store_true",
         help="Resume an existing build")
@@ -259,6 +268,7 @@ def get_tsinfer_parser():
     add_input_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_ts_argument(parser)
+    add_path_compression_argument(parser)
     parser.add_argument(
         "--genotype-quality", "-Q", type=float, default=0,
         help=(

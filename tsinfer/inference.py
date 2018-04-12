@@ -710,6 +710,9 @@ class SampleMatcher(Matcher):
                 self.__match_samples_single_threaded()
             else:
                 self.__match_samples_multi_threaded()
+            self.progress_monitor.close()
+            progress_monitor = tqdm.tqdm(
+                desc="update paths", total=self.num_samples, disable=not self.progress)
             for j in range(self.num_samples):
                 sample_id = int(self.sample_ids[j])
                 left, right, parent = self.results.get_path(sample_id)
@@ -717,6 +720,8 @@ class SampleMatcher(Matcher):
                     sample_id, left, right, parent, compress=self.path_compression)
                 site, derived_state = self.results.get_mutations(sample_id)
                 self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
+                progress_monitor.update()
+            progress_monitor.close()
         logger.info("Finished sample matching")
 
     def finalise(self, simplify=True, stabilise_node_ordering=False):
