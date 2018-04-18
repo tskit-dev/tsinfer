@@ -173,7 +173,7 @@ class DataContainer(object):
     @classmethod
     def load(cls, filename):
         self = cls()
-        self.store = zarr.DirectoryStore(filename)
+        self.store = zarr.LMDBStore(filename, readonly=True, subdir=False, lock=False)
         self.data = zarr.open_group(store=self.store)
         self.check_format()
         return self
@@ -201,7 +201,7 @@ class DataContainer(object):
         self.store = None
         self.data = zarr.group()
         if filename is not None:
-            self.store = zarr.DirectoryStore(filename)
+            self.store = zarr.LMDBStore(filename, lock=False, subdir=False)
             self.data = zarr.open_group(store=self.store)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION

@@ -147,7 +147,7 @@ def build_profile_inputs(n, num_megabases):
     input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.hdf5".format(
             n, num_megabases)
     ts.dump(input_file)
-    filename = "tmp__NOBACKUP__/profile-n={}_m={}.samples".format(n, num_megabases)
+    filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         shutil.rmtree(filename)
     sample_data = tsinfer.SampleData.initialise(
@@ -168,54 +168,6 @@ def build_profile_inputs(n, num_megabases):
 #     tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
 #     ancestor_data.finalise()
 
-
-def build_1kg_sim():
-    n = 5008
-    chrom = "22"
-    infile = "data/hapmap/genetic_map_GRCh37_chr{}.txt".format(chrom)
-    recomb_map = msprime.RecombinationMap.read_hapmap(infile)
-
-    # ts = msprime.simulate(
-    #     sample_size=n, Ne=10**4, recombination_map=recomb_map,
-    #     mutation_rate=5*1e-8)
-
-    # print("simulated chr{} with {} sites".format(chrom, ts.num_sites))
-
-    prefix = "tmp__NOBACKUP__/sim1kg_chr{}".format(chrom)
-    outfile = prefix + ".source.ts"
-    # ts.dump(outfile)
-    ts = msprime.load(outfile)
-
-    V = ts.genotype_matrix()
-    print("Built variant matrix: {:.2f} MiB".format(V.nbytes / (1024 * 1024)))
-    positions = np.array([site.position for site in ts.sites()])
-    recombination_rates = np.zeros_like(positions)
-    last_physical_pos = 0
-    last_genetic_pos = 0
-    for site in ts.sites():
-        physical_pos = site.position
-        genetic_pos = recomb_map.physical_to_genetic(physical_pos)
-        physical_dist = physical_pos - last_physical_pos
-        genetic_dist = genetic_pos - last_genetic_pos
-        scaled_recomb_rate = 0
-        if genetic_dist > 0:
-            scaled_recomb_rate = physical_dist / genetic_dist
-        recombination_rates[site.index] = scaled_recomb_rate
-        last_physical_pos = physical_pos
-        last_genetic_pos = genetic_pos
-
-    input_file = prefix + ".tsinf"
-    if os.path.exists(input_file):
-        os.unlink(input_file)
-    input_hdf5 = zarr.DBMStore(input_file, open=bsddb3.btopen)
-    root = zarr.group(store=input_hdf5, overwrite=True)
-    tsinfer.InputFile.build(
-        root, genotypes=V, position=positions,
-        recombination_rate=recombination_rates, sequence_length=ts.sequence_length)
-    input_hdf5.close()
-    print("Wrote", input_file)
-
-
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -224,11 +176,11 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(1000, 10)
-    # build_profile_inputs(1000, 100)
+    build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    tsinfer_dev(8, 0.1, seed=6, num_threads=0, method="C")
+    # tsinfer_dev(8, 0.1, seed=6, num_threads=0, method="C")
 
 #     for seed in range(1, 10000):
 #         print(seed)
