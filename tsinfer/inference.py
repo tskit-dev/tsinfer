@@ -25,47 +25,6 @@ import tsinfer.threads as threads
 logger = logging.getLogger(__name__)
 
 UNKNOWN_ALLELE = 255
-PHRED_MAX = 255
-
-
-def proba_to_phred(probability, min_value=1e-10):
-    """
-    Returns the specfied array of probability values in phred
-    encoding, i.e., -10 log(p, 10) rounded to the nearest integer.
-    If the input probability is zero then this is encoded as a phred score of 255.
-    """
-    P = np.array(probability, copy=True)
-    scalar_input = False
-    if P.ndim == 0:
-        P = P[None]  # Makes P 1D
-        scalar_input = True
-    if np.any(P > 1):
-        raise ValueError("Values > 1 not permitted")
-    zeros = np.where(P <= min_value)[0]
-    P[zeros] = 1  # Avoid division by zero warnings.
-    ret = -10 * np.log10(P)
-    ret[zeros] = PHRED_MAX
-    ret = np.round(ret).astype(np.uint8)
-    if scalar_input:
-        return np.squeeze(ret)
-    return ret
-
-
-def phred_to_proba(phred_score):
-    """
-    Returns the specified phred score as a probability, i.e., 10^{-Q / 10}.
-    """
-    Q = np.asarray(phred_score, dtype=np.float64)
-    scalar_input = False
-    if Q.ndim == 0:
-        Q = Q[None]  # Makes Q 1D
-        scalar_input = True
-    zeros = np.where(Q >= PHRED_MAX)[0]
-    ret = 10**(-Q / 10)
-    ret[zeros] = 0
-    if scalar_input:
-        return np.squeeze(ret)
-    return ret
 
 
 def infer(

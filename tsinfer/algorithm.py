@@ -561,7 +561,7 @@ class AncestorMatcher(object):
                 self.likelihood_nodes.append(mutation_node)
                 # print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
-        print("update_site", site, state, mutation_node, recomb_proba, err)
+        # print("update_site", site, state, mutation_node, recomb_proba, err)
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
         distance = 1
@@ -603,8 +603,8 @@ class AncestorMatcher(object):
             # TODO This has caused subtle numerical problems, where all the
             # likelihoods ended up being less than epsilon. Definitely need
             # a better way of doing this!!!
-            print("\tu=", u, "L[u]=", self.likelihood[u], "L_no_recomb=",
-                    L_no_recomb, "L_recomb=", L_recomb)
+            # print("\tu=", u, "L[u]=", self.likelihood[u], "L_no_recomb=",
+            #         L_no_recomb, "L_recomb=", L_recomb)
             if L_recomb > L_no_recomb + eps:
                 z = L_recomb
                 self.traceback[site][u] = True
@@ -622,13 +622,13 @@ class AncestorMatcher(object):
                 else:
                     emission_p = err * d + (1 - err) * (not d)
             self.likelihood[u] = z * emission_p
-            print("\t\tz=", z, "emission=", emission_p, "L_new = ", z * emission_p)
+            # print("\t\tz=", z, "emission=", emission_p, "L_new = ", z * emission_p)
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
-        print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
+        # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
+        # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
         self.max_likelihood_node[site] = max_L_node
 
@@ -642,7 +642,7 @@ class AncestorMatcher(object):
 
         self.compress_likelihoods()
         self.normalise_likelihoods()
-        print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
+        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def normalise_likelihoods(self, allow_zeros=False):
         assert len(self.likelihood_nodes) > 0
@@ -753,7 +753,7 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        print("MATCH: start=", start, "end = ", end, "h = ", h)
+        # print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0

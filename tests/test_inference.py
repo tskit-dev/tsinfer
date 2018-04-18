@@ -176,52 +176,6 @@ class TestThreads(TsinferTestCase):
         self.assertTreeSequencesEqual(ts1, ts2)
 
 
-class TestPhredEncoding(unittest.TestCase):
-    """
-    Test cases for Phred encoding.
-    """
-    def test_zero_proba(self):
-        q = tsinfer.proba_to_phred(0)
-        self.assertEqual(q, tsinfer.PHRED_MAX)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 0)
-
-    def test_tiny_proba(self):
-        q = tsinfer.proba_to_phred(1e-200)
-        self.assertEqual(q, tsinfer.PHRED_MAX)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 0)
-
-    def test_one_proba(self):
-        q = tsinfer.proba_to_phred(1)
-        self.assertEqual(q, 0)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 1)
-
-    def test_exact_values(self):
-        for k in range(1, 20):
-            p = 10**(-k)
-            q = tsinfer.proba_to_phred(p, min_value=1e-21)
-            self.assertEqual(q, 10 * k)
-            self.assertEqual(tsinfer.phred_to_proba(q), p)
-
-    def test_numpy_array(self):
-        p = [0.1, 0.01, 0.001, 0.0001]
-        q = tsinfer.proba_to_phred(p)
-        self.assertTrue(np.array_equal(q, np.array([10, 20, 30, 40], dtype=np.uint8)))
-        self.assertTrue(np.array_equal(p, tsinfer.phred_to_proba(q)))
-
-    def test_non_base_10(self):
-        for p in [0.125, 0.333, 0.99]:
-            q = tsinfer.proba_to_phred(p)
-            self.assertAlmostEqual(p, float(tsinfer.phred_to_proba(q)), 1)
-
-    def test_p_greater_than_one(self):
-        for p in [1.0001, 10000, 1e200]:
-            self.assertRaises(ValueError, tsinfer.proba_to_phred, p)
-            self.assertRaises(ValueError, tsinfer.proba_to_phred, [0.1, p])
-
-
 class TestAncestorGeneratorsEquivalant(unittest.TestCase):
     """
     Tests for the ancestor generation process.
