@@ -412,73 +412,30 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
 {
     int ret = -1;
     int err;
-    PyObject *position = NULL;
-    PyArrayObject *position_array = NULL;
-    PyObject *recombination_rate = NULL;
-    PyArrayObject *recombination_rate_array = NULL;
-    size_t num_sites;
-    double sequence_length;
+    unsigned long num_sites;
     unsigned long max_nodes;
     unsigned long max_edges;
-    static char *kwlist[] = {"sequence_length", "position",
-        "recombination_rate", "max_nodes", "max_edges", NULL};
+    static char *kwlist[] = {"num_sites", "max_nodes", "max_edges", NULL};
     int flags = 0;
-    npy_intp *shape;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dOOkk", kwlist,
-                &sequence_length, &position, &recombination_rate,
-                &max_nodes, &max_edges)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kkk", kwlist,
+                &num_sites, &max_nodes, &max_edges)) {
         goto out;
     }
-    /* position */
-    position_array = (PyArrayObject *) PyArray_FROM_OTF(position, NPY_FLOAT64,
-            NPY_ARRAY_IN_ARRAY);
-    if (position_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(position_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(position_array);
-    num_sites = shape[0];
-
-    /* recombination_rate */
-    recombination_rate_array = (PyArrayObject *) PyArray_FROM_OTF(recombination_rate, NPY_FLOAT64,
-            NPY_ARRAY_IN_ARRAY);
-    if (recombination_rate_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(recombination_rate_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(recombination_rate_array);
-    if (shape[0] != num_sites) {
-        PyErr_SetString(PyExc_ValueError, "recombation_rate must have same size as position");
-        goto out;
-    }
-
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
     if (self->tree_sequence_builder == NULL) {
         PyErr_NoMemory();
         goto out;
     }
-
     err = tree_sequence_builder_alloc(self->tree_sequence_builder,
-            sequence_length, num_sites,
-            (double *) PyArray_DATA(position_array),
-            (double *) PyArray_DATA(recombination_rate_array),
-            max_nodes, max_edges, flags);
+            num_sites, max_nodes, max_edges, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
     ret = 0;
 out:
-    Py_XDECREF(recombination_rate_array);
-    Py_XDECREF(position_array);
     return ret;
 }
 
@@ -1262,17 +1219,15 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
-    static char *kwlist[] = {"tree_sequence_builder",
-        "observation_error", "extended_checks", NULL};
+    static char *kwlist[] = {"tree_sequence_builder", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
-    double observation_error;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!d|i", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!i", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &observation_error, &extended_checks)) {
+                &extended_checks)) {
         goto out;
     }
     self->tree_sequence_builder = tree_sequence_builder;
@@ -1289,8 +1244,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         flags = TSI_EXTENDED_CHECKS;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
-            self->tree_sequence_builder->tree_sequence_builder, observation_error,
-            flags);
+            self->tree_sequence_builder->tree_sequence_builder, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;

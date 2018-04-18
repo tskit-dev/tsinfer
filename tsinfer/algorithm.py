@@ -169,14 +169,9 @@ class AncestorBuilder(object):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(
-            self, sequence_length, positions, recombination_rate,
-            max_nodes, max_edges):
+    def __init__(self, num_sites, max_nodes, max_edges):
+        self.num_sites = num_sites
         self.num_nodes = 0
-        self.sequence_length = sequence_length
-        self.positions = positions
-        self.recombination_rate = recombination_rate
-        self.num_sites = positions.shape[0]
         self.time = []
         self.flags = []
         self.mutations = collections.defaultdict(list)
@@ -418,7 +413,6 @@ class TreeSequenceBuilder(object):
 
     def print_state(self):
         print("TreeSequenceBuilder state")
-        print("num_sites = ", self.num_sites)
         print("num_nodes = ", self.num_nodes)
         nodes = msprime.NodeTable()
         flags, time = self.dump_nodes()
@@ -494,12 +488,10 @@ def is_descendant(pi, u, v):
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, error_rate=0, extended_checks=False):
+    def __init__(self, tree_sequence_builder, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
-        self.error_rate = error_rate
         self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
-        self.positions = tree_sequence_builder.positions
         self.parent = None
         self.left_child = None
         self.right_sib = None
@@ -531,8 +523,7 @@ class AncestorMatcher(object):
 
     def update_site(self, site, state):
         n = self.tree_sequence_builder.num_nodes
-        recombination_rate = self.tree_sequence_builder.recombination_rate
-        err = self.error_rate
+        err = 0
 
         # r = 1 - np.exp(-recombination_rate[site] / n)
         # recomb_proba = r / n

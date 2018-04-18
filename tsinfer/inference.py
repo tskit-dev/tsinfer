@@ -27,15 +27,21 @@ logger = logging.getLogger(__name__)
 UNKNOWN_ALLELE = 255
 
 
+# TODO figure out what this function is really for, and how we should
+# parameterise it. At the moment it's just used as a convenience for
+# round trip testing.
 def infer(
-        genotypes, positions, sequence_length, recombination_rate, sample_error=0,
+        genotypes, positions=None, sequence_length=None,
         method="C", num_threads=0, progress=False, path_compression=True):
 
     num_sites, num_samples = genotypes.shape
     sample_data = formats.SampleData.initialise(
         num_samples=num_samples, sequence_length=sequence_length, compressor=None)
     for j in range(num_sites):
-        sample_data.add_variant(positions[j], ["0", "1"], genotypes[j])
+        pos = j
+        if positions is not None:
+            pos = positions[j]
+        sample_data.add_variant(pos, ["0", "1"], genotypes[j])
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
@@ -48,7 +54,7 @@ def infer(
 
     inferred_ts = match_samples(
         sample_data, ancestors_ts, method=method, num_threads=num_threads,
-        genotype_quality=sample_error, path_compression=path_compression)
+        path_compression=path_compression)
     return inferred_ts
 
 
@@ -130,7 +136,7 @@ def build_ancestors(
 def match_ancestors(
         sample_data, ancestor_data, output_path=None, method="C", progress=False,
         num_threads=0, path_compression=True, output_interval=None, resume=False,
-        traceback_file_pattern=None, extended_checks=False, recombination_rate=1):
+        traceback_file_pattern=None, extended_checks=False):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -140,7 +146,7 @@ def match_ancestors(
         progress=progress, path_compression=path_compression,
         num_threads=num_threads, output_interval=output_interval,
         resume=resume, traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks, recombination_rate=recombination_rate)
+        extended_checks=extended_checks)
     return matcher.match_ancestors()
 
 
@@ -175,16 +181,15 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 
 
 def match_samples(
-        sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
+        sample_data, ancestors_ts, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
         traceback_file_pattern=None, extended_checks=False,
-        stabilise_node_ordering=False, recombination_rate=1):
+        stabilise_node_ordering=False):
     manager = SampleMatcher(
-        sample_data, ancestors_ts, error_probability=genotype_quality,
-        path_compression=path_compression,
+        sample_data, ancestors_ts, path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
         traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks, recombination_rate=recombination_rate)
+        extended_checks=extended_checks)
     manager.match_samples()
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering)
@@ -197,17 +202,14 @@ class Matcher(object):
     progress_bar_description = None
 
     def __init__(
-            self, sample_data, error_probability=0, num_threads=1, method="C",
+            self, sample_data, num_threads=1, method="C",
             path_compression=True, progress=False, traceback_file_pattern=None,
-            extended_checks=False, recombination_rate=1):
+            extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = self.sample_data.num_variant_sites
-        self.sequence_length = self.sample_data.sequence_length
-        self.positions = self.sample_data.position[:][self.sample_data.variant_site]
-        self.recombination_rate = np.ones(self.num_sites) * recombination_rate
         self.progress = progress
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
@@ -232,8 +234,7 @@ class Matcher(object):
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.sequence_length, self.positions, self.recombination_rate,
-            max_nodes=max_nodes, max_edges=max_edges)
+            num_sites=self.num_sites, max_nodes=max_nodes, max_edges=max_edges)
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 
@@ -243,11 +244,9 @@ class Matcher(object):
         self.results = ResultBuffer()
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
-        logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, error_probability,
-                extended_checks=self.extended_checks)
+                self.tree_sequence_builder, extended_checks=self.extended_checks)
             for _ in range(num_threads)]
         # The progress monitor is allocated later by subclasses.
         self.progress_monitor = None
@@ -338,9 +337,13 @@ class Matcher(object):
 
         left, right, parent, child = tsb.dump_edges()
         if rescale_positions:
-            sequence_length = self.sequence_length
-            position = self.positions
-            x = np.hstack([self.positions, [self.sequence_length]])
+            position = self.sample_data.position[:]
+            sequence_length = self.sample_data.sequence_length
+            if sequence_length is None or sequence_length < position[-1]:
+                sequence_length = position[-1] + 1
+            # Subset down to the variants.
+            position = position[self.sample_data.variant_site[:]]
+            x = np.hstack([position, [sequence_length]])
             x[0] = 0
             left = x[left]
             right = x[right]

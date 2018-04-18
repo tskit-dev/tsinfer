@@ -39,9 +39,7 @@ class TestRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data tsinfer.
     """
-    def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, recombination_rate=1e-9,
-            sample_error=0):
+    def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         # import daiquiri
@@ -49,40 +47,33 @@ class TestRoundTrip(unittest.TestCase):
         for method in ["python", "C"]:
             ts = tsinfer.infer(
                 genotypes=genotypes, positions=positions,
-                sequence_length=sequence_length, recombination_rate=recombination_rate,
-                sample_error=sample_error, method=method)
+                sequence_length=sequence_length, method=method)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
                 self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
 
-    def verify_round_trip(self, ts, rho):
+    def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
-        self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, 1e-9)
+        self.verify_data_round_trip(ts.genotype_matrix(), positions, ts.sequence_length)
 
     def test_simple_example(self):
         rho = 2
         ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=rho, random_seed=1)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, rho)
+        self.verify_round_trip(ts)
 
     def test_single_locus(self):
         ts = msprime.simulate(5, mutation_rate=1, recombination_rate=0, random_seed=2)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, 1e-9)
+        self.verify_round_trip(ts)
 
     def test_single_locus_two_samples(self):
         ts = msprime.simulate(2, mutation_rate=1, recombination_rate=0, random_seed=3)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, 1e-9)
-
-    def test_random_data_high_recombination(self):
-        G, positions = get_random_data_example(20, 30)
-        # Force recombination to do all the matching.
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_round_trip(ts)
 
     def test_random_data_invariant_sites_ancestral_state(self):
         G, positions = get_random_data_example(24, 35)
@@ -91,8 +82,7 @@ class TestRoundTrip(unittest.TestCase):
         G[15, :] = 0
         G[20, :] = 0
         G[22, :] = 0
-        # Force recombination to do all the matching.
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_data_round_trip(G, positions)
 
     @unittest.skip("invariant site state")
     def test_random_data_invariant_sites(self):
@@ -102,15 +92,18 @@ class TestRoundTrip(unittest.TestCase):
         G[15, :] = 0
         G[20, :] = 1
         G[22, :] = 0
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_data_round_trip(G, positions)
 
-    def test_random_data_no_recombination(self):
+    def test_random_data_large_example(self):
+        G, positions = get_random_data_example(20, 30)
+        self.verify_data_round_trip(G, positions)
+
+    def test_random_data_small_examples(self):
         np.random.seed(4)
         num_random_tests = 10
         for _ in range(num_random_tests):
             S, positions = get_random_data_example(5, 10)
-            self.verify_data_round_trip(
-                S, positions, recombination_rate=1e-10, sample_error=0.1)
+            self.verify_data_round_trip(S, positions)
 
 
 class TestMutationProperties(unittest.TestCase):
@@ -124,7 +117,7 @@ class TestMutationProperties(unittest.TestCase):
         for method in ["python", "c"]:
             ts = tsinfer.infer(
                 genotypes=G, positions=positions, sequence_length=num_sites,
-                recombination_rate=0.5, sample_error=0, method=method)
+                method=method)
             self.assertEqual(ts.num_sites, num_sites)
             self.assertEqual(ts.num_mutations, num_sites)
             for site in ts.sites():
@@ -133,31 +126,6 @@ class TestMutationProperties(unittest.TestCase):
                 mutation = site.mutations[0]
                 self.assertEqual(mutation.derived_state, "1")
                 self.assertEqual(mutation.parent, -1)
-
-    def test_error(self):
-        num_sites = 50
-        np.random.seed(100)
-        S, positions = get_random_data_example(15, num_sites)
-        for method in ["python", "c"]:
-            ts = tsinfer.infer(
-                genotypes=S, positions=positions, sequence_length=num_sites,
-                recombination_rate=1e-9, sample_error=0.8, method=method)
-            self.assertEqual(ts.num_sites, num_sites)
-            self.assertGreater(ts.num_mutations, num_sites)
-            back_mutation = False
-            recurrent_mutation = False
-            for site in ts.sites():
-                self.assertEqual(site.ancestral_state, "0")
-                for mutation in site.mutations:
-                    if mutation.derived_state == "0":
-                        back_mutation = True
-                        self.assertEqual(mutation.parent, site.mutations[0].id)
-                    else:
-                        self.assertEqual(mutation.parent, -1)
-                        if mutation != site.mutations[0]:
-                            recurrent_mutation = True
-            self.assertTrue(back_mutation)
-            self.assertTrue(recurrent_mutation)
 
 
 class TestThreads(TsinferTestCase):
@@ -169,10 +137,10 @@ class TestThreads(TsinferTestCase):
         positions = [site.position for site in ts.sites()]
         ts1 = tsinfer.infer(
             genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            recombination_rate=1e-9, num_threads=1)
+            num_threads=1)
         ts2 = tsinfer.infer(
             genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            recombination_rate=1e-9, num_threads=5)
+            num_threads=5)
         self.assertTreeSequencesEqual(ts1, ts2)
 
 

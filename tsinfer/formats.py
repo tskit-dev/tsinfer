@@ -399,7 +399,7 @@ class SampleData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, num_samples=None, sequence_length=None,
+            cls, num_samples=None, sequence_length=0,
             filename=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
@@ -432,8 +432,10 @@ class SampleData(DataContainer):
             raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
             raise ValueError("Must have num_samples genotypes.")
-        if position < 0 or position >= self.sequence_length:
-            raise ValueError("position must be between 0 and sequence_length")
+        if position < 0:
+            raise ValueError("position must be > 0")
+        if self.sequence_length > 0 and position >= self.sequence_length:
+            raise ValueError("If sequence_length is set, sites positions must be less.")
 
         frequency = np.sum(genotypes)
         if frequency == 1:

@@ -88,8 +88,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, double observation_error,
-        int flags)
+        tree_sequence_builder_t *tree_sequence_builder, int flags)
 {
     int ret = 0;
     /* TODO make these input parameters. */
@@ -100,7 +99,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->flags = flags;
     self->max_nodes = 0;
     self->tree_sequence_builder = tree_sequence_builder;
-    self->observation_error = observation_error;
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->max_num_mismatches = self->num_sites; /* Ditto here */
@@ -258,16 +256,12 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         const node_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
-    const double n = (double) self->num_nodes;
-    const double rho = self->tree_sequence_builder->sites.recombination_rate[site];
-    /* FIXME! Hack to ensure we always have nonzero recombination proba. */
-    const double r = TSI_MAX(1 - exp(-rho / n), 1e-200);
-    const double err = self->observation_error;
+    const double err = 0;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
     const node_id_t *restrict L_nodes = self->likelihood_nodes;
     int8_t *restrict recombination_required = self->recombination_required;
-    double recomb_proba = r / n;
-    double no_recomb_proba = 1 - r + r / n;
+    double recomb_proba = 0.25;
+    double no_recomb_proba = 0.75;
     double y, max_L, emission, L_recomb, L_no_recomb;
     int8_t *restrict path_cache = self->path_cache;
     int j;
@@ -276,8 +270,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     double distance = 1;
 
     if (site > 0) {
-        distance = self->tree_sequence_builder->sites.position[site] -
-                self->tree_sequence_builder->sites.position[site - 1];
+        distance = 1;
     }
     /* TODO make an error here; distance must be > 0, and we should return an error
      * early in the process */
