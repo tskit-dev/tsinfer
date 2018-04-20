@@ -1281,7 +1281,7 @@ def run_perfect_inference(args):
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
             base_ts, num_threads=args.num_threads, progress=args.progress,
-            method="C", extended_checks=args.extended_checks,
+            method=args.method, extended_checks=args.extended_checks,
             time_chunking=not args.no_time_chunking,
             path_compression=args.path_compression)
         print("n={} num_trees={} num_sites={}".format(
@@ -1329,6 +1329,7 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
+    parser.add_argument("--method", default="C")
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")

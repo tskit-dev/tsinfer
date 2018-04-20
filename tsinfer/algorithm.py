@@ -485,8 +485,18 @@ def is_descendant(pi, u, v):
     # print("IS_DESCENDENT(", u, v, ") = ", ret)
     return ret
 
+# We have a 3 valued number system for match likelihoods, plus two
+# more values to indicate compressed paths tree and nodes that are
+# currently not in the tree.
+
+MISMATCH = 0
+RECOMB_REQUIRED = 1
+MATCH = 2
+COMPRESSED = -1
+MISSING = -2
 
 class AncestorMatcher(object):
+
 
     def __init__(self, tree_sequence_builder, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
@@ -523,44 +533,22 @@ class AncestorMatcher(object):
 
     def update_site(self, site, state):
         n = self.tree_sequence_builder.num_nodes
-        err = 0
 
-        # r = 1 - np.exp(-recombination_rate[site] / n)
-        # recomb_proba = r / n
-        # no_recomb_proba = 1 - r + r / n
-        # recomb_proba = recombination_rate[site]
-        # no_recomb_proba = 1 - recombination_rate[site]
-        # Just sticking in a value here. Without error, any value here will
-        # work once it's < 0.5. TODO when we have error, is there a value
-        # for the recombination rate which will have the effect of minimising
-        # the number of recombinations, given the probability of a genotype
-        # being incorrect?
-        recomb_proba = 0.25
-        no_recomb_proba = 1 - recomb_proba
-
-
-        if site not in self.tree_sequence_builder.mutations:
-            mutation_node = msprime.NULL_NODE
-        else:
+        mutation_node = msprime.NULL_NODE
+        if site in self.tree_sequence_builder.mutations:
             mutation_node = self.tree_sequence_builder.mutations[site][0][0]
             # Insert an new L-value for the mutation node if needed.
-            if self.likelihood[mutation_node] == -1:
+            if self.likelihood[mutation_node] == COMPRESSED:
                 u = mutation_node
-                while self.likelihood[u] == -1:
+                while self.likelihood[u] == COMPRESSED:
                     u = self.parent[u]
                 self.likelihood[mutation_node] = self.likelihood[u]
                 self.likelihood_nodes.append(mutation_node)
                 # print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
-        # print("update_site", site, state, mutation_node, recomb_proba, err)
+        # print("update_site", site, state, mutation_node)
         # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
 
-        distance = 1
-        # if site > 0:
-        #     distance = self.positions[site] - self.positions[site - 1]
-        # Update the likelihoods for this site.
-        # print("Site ", site, "distance = ", distance)
-        # print("Computing likelihoods for ", mutation_node, self.likelihood_nodes)
         path_cache = np.zeros(n, dtype=np.int8) - 1
         max_L = -1
         max_L_node = -1
@@ -581,46 +569,23 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-            L_no_recomb = self.likelihood[u] * no_recomb_proba * distance
-            assert L_no_recomb >= 0
-            L_recomb = recomb_proba  * distance
-            eps = 1e-14
-            # Only recombine if the likelihood of recombination is more than delta
-            # bigger than the likelihood of no recombination. This avoids issues
-            # with numerical jitter when comparing the values, which results in
-            # spurious recombinations.
-            # TODO the constant is a hack; should really be a function of the
-            # recombination rate in some way.
-            # TODO This has caused subtle numerical problems, where all the
-            # likelihoods ended up being less than epsilon. Definitely need
-            # a better way of doing this!!!
-            # print("\tu=", u, "L[u]=", self.likelihood[u], "L_no_recomb=",
-            #         L_no_recomb, "L_recomb=", L_recomb)
-            if L_recomb > L_no_recomb + eps:
-                z = L_recomb
+            if self.likelihood[u] != MATCH:
+                self.likelihood[u] = RECOMB_REQUIRED
                 self.traceback[site][u] = True
             else:
-                z = L_no_recomb
                 self.traceback[site][u] = False
+            if mutation_node != -1 and int(d) != state:
+                self.likelihood[u] = MISMATCH
 
-            # TODO do we need this case? Isn't this the same as saying we
-            # are not a descendent??
-            if mutation_node == -1:
-                emission_p = 1 - err
-            else:
-                if state == 1:
-                    emission_p = (1 - err) * d + err * (not d)
-                else:
-                    emission_p = err * d + (1 - err) * (not d)
-            self.likelihood[u] = z * emission_p
             # print("\t\tz=", z, "emission=", emission_p, "L_new = ", z * emission_p)
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # print("\tsite=", site, "Max L = ", max_L, "node = ", max_L_node)
-        # print("\tL = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
-
+        if max_L != MATCH:
+            for u in self.likelihood_nodes:
+                if self.likelihood[u] == max_L:
+                    self.likelihood[u] = MATCH
         self.max_likelihood_node[site] = max_L_node
 
         # Reset the path cache
@@ -632,22 +597,8 @@ class AncestorMatcher(object):
         assert np.all(path_cache == -1)
 
         self.compress_likelihoods()
-        self.normalise_likelihoods()
+        # self.normalise_likelihoods()
         # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
-
-    def normalise_likelihoods(self, allow_zeros=False):
-        assert len(self.likelihood_nodes) > 0
-        max_L = max(self.likelihood[u] for u in self.likelihood_nodes)
-        if not allow_zeros:
-            assert max_L > 0
-        max_val = 0.0
-        if max_L != 0.0:
-            max_val = 1.0
-        for u in self.likelihood_nodes:
-            if self.likelihood[u] == max_L:
-                self.likelihood[u] = max_val
-            else:
-                self.likelihood[u] /= max_L
 
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1
@@ -720,12 +671,6 @@ class AncestorMatcher(object):
     def is_nonzero_root(self, u):
         return u != 0 and self.parent[u] == -1 and self.left_child[u] == -1
 
-    def approximately_equal(self, a, b):
-        # Based on Python is_close, https://www.python.org/dev/peps/pep-0485/
-        rel_tol = 1e-9
-        abs_tol = 0.0
-        return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
-
     def find_path(self, h, start, end, match):
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
@@ -740,7 +685,7 @@ class AncestorMatcher(object):
         self.traceback = [{} for _ in range(m)]
         self.max_likelihood_node = np.zeros(m, dtype=int) - 1
 
-        self.likelihood = np.zeros(n) - 2
+        self.likelihood = np.zeros(n, dtype=np.int8) - 2
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
@@ -777,7 +722,7 @@ class AncestorMatcher(object):
             last_root = self.left_child[0]
             assert self.right_sib[last_root] == -1
         self.likelihood_nodes.append(last_root)
-        self.likelihood[last_root] = 1
+        self.likelihood[last_root] = MATCH
 
         remove_start = k
         while left < end:
@@ -787,7 +732,7 @@ class AncestorMatcher(object):
                 edge = Ir.peekitem(l)[1]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
-                        self.likelihood[u] = -2
+                        self.likelihood[u] = MISSING
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
             root = 0
@@ -797,16 +742,13 @@ class AncestorMatcher(object):
 
             if root != last_root:
                 if last_root == 0:
-                    self.likelihood[last_root] = -2
+                    self.likelihood[last_root] = MISSING
                     self.likelihood_nodes.remove(last_root)
-                if self.likelihood[root] == -2:
+                if self.likelihood[root] == MISSING:
                     self.likelihood[root] = 0
                     self.likelihood_nodes.append(root)
                 last_root = root
 
-            # We can have situations where we've removed the only nonzero likelihood.
-            # Then all values are equally likely.
-            self.normalise_likelihoods(allow_zeros=True)
             if self.extended_checks:
                 self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
@@ -851,8 +793,8 @@ class AncestorMatcher(object):
                 # There's no point in compressing the likelihood tree here as we'll be
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
-                    if u != 0 and self.likelihood[u] == -2:
-                        self.likelihood[u] = 0
+                    if u != 0 and self.likelihood[u] == MISSING:
+                        self.likelihood[u] = MISMATCH
                         self.likelihood_nodes.append(u)
             right = m
             if j < M:
@@ -964,130 +906,3 @@ class AncestorMatcher(object):
             parent[j] = e.parent
 
         return left, right, parent
-
-
-class MatrixAncestorMatcher(object):
-
-    def __init__(self, tree_sequence_builder, error_rate=0):
-        self.tree_sequence_builder = tree_sequence_builder
-        self.error_rate = error_rate
-        self.num_sites = tree_sequence_builder.num_sites
-        self.positions = tree_sequence_builder.positions
-        # Just to given the right API.
-        self.mean_traceback_size = 0
-        self.total_memory = 0
-
-    def ancestor_matrix(self):
-        tsb = self.tree_sequence_builder
-        flags, time = tsb.dump_nodes()
-        nodes = msprime.NodeTable()
-        nodes.set_columns(flags=flags, time=time)
-
-        left, right, parent, child = tsb.dump_edges()
-        position = np.arange(tsb.num_sites)
-        sequence_length = tsb.num_sites
-
-        edges = msprime.EdgeTable()
-        edges.set_columns(left=left, right=right, parent=parent, child=child)
-
-        sites = msprime.SiteTable()
-        sites.set_columns(
-            position=position,
-            ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
-            ancestral_state_length=np.ones(tsb.num_sites, dtype=np.uint32))
-        mutations = msprime.MutationTable()
-        site = np.zeros(tsb.num_mutations, dtype=np.int32)
-        node = np.zeros(tsb.num_mutations, dtype=np.int32)
-        parent = np.zeros(tsb.num_mutations, dtype=np.int32)
-        derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
-        site, node, derived_state, parent = tsb.dump_mutations()
-        derived_state += ord('0')
-        mutations.set_columns(
-            site=site, node=node, derived_state=derived_state,
-            derived_state_length=np.ones(tsb.num_mutations, dtype=np.uint32),
-            parent=parent)
-        msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
-        ts = msprime.load_tables(
-            nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length)
-        n = 0
-        if len(edges) > 0:
-            n = np.max(edges.child)
-        H = ts.genotype_matrix().T[:n + 1]
-
-        mask = np.zeros_like(H)
-        # Set all the edges
-        for edge in ts.edges():
-            mask[edge.child, int(edge.left): int(edge.right)] = 1
-        mask[0,:] = 1
-        H[mask == 0] = -1
-        return H
-
-
-    def find_path(self, h, start, end, match):
-        H = self.ancestor_matrix().astype(np.int8)
-        print("H = ")
-        print(H)
-        print("Find path", start, end)
-        print(h)
-        recombination_rate = 1
-        mutations = self.tree_sequence_builder.mutations
-
-        n, m = H.shape
-        r = 1 - np.exp(-recombination_rate / n)
-        recomb_proba = r / n
-        no_recomb_proba = 1 - r + r / n
-        L = np.ones(n)
-        T = [set() for _ in range(m)]
-        T_dest = np.zeros(m, dtype=int)
-        match[:] = -1
-
-        for l in range(start, end):
-            L_next = np.zeros(n)
-            for j in range(n):
-                x = L[j] * no_recomb_proba
-                y = recomb_proba
-                if x > y:
-                    z = x
-                else:
-                    z = y
-                    T[l].add(j)
-                if H[j, l] == -1:
-                    # Can never match to the missing data.
-                    emission_p = 0
-                else:
-                    if l in mutations:
-                        emission_p = int(H[j, l] == h[l])
-                    else:
-                        emission_p = 1
-                L_next[j] = z * emission_p
-            # Find the max and renormalise
-            L = L_next
-            j = np.argmax(L)
-            T_dest[l] = j
-            L /= L[j]
-            print(l, ":", L)
-        print("T_dest = ", T_dest)
-        print("T = ", T)
-
-        p = T_dest[end - 1]
-        parent = [p]
-        left = []
-        right = [end]
-        for l in range(end - 1, start - 1, -1):
-            print("TB: l = ", l, "p  = " ,p)
-            match[l] = H[p, l]
-            if p in T[l]:
-                assert l != 0
-                print("SWITCH")
-                p = T_dest[l - 1]
-                parent.append(p)
-                right.append(l)
-                left.append(l)
-        left.append(start)
-        return (
-            np.array(left, dtype=np.int32),
-            np.array(right, dtype=np.int32),
-            np.array(parent, dtype=np.int32))
-
-

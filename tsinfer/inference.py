@@ -482,11 +482,9 @@ class AncestorMatcher(Matcher):
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
                 ancestor_id, start, end, focal_sites.shape[0]))
-        assert np.all(haplotype[focal_sites] == 1)
+        haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
-        haplotype[focal_sites] = 0
-
         assert np.all(self.match[thread_index] == haplotype)
 
     def __complete_epoch(self, epoch_index):
