@@ -16,7 +16,6 @@ _tsinfer_module = Extension(
         d + "avl.c"],
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
-    libraries=["m"],
     extra_compile_args=["-std=c99"],
     include_dirs=[get_numpy_includes()],
 )

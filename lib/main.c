@@ -353,12 +353,11 @@ run_generate(const char *input_file, int verbose)
     exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;
-    ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
-            num_sites, positions, recombination_rate, 10, 10, flags);
+    ret = tree_sequence_builder_alloc(&ts_builder, num_sites, 10, 10, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.0, 0);
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -508,7 +507,6 @@ run_generate(const char *input_file, int verbose)
     total_edges = 0;
     total_mutations = 0;
     /* Copy samples */
-    matcher.observation_error = 0.001;
     for (j = 0; j < num_samples; j++) {
         sample = haplotypes + j * num_sites;
         child = ts_builder.num_nodes + j;

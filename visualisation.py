@@ -397,7 +397,6 @@ def run_viz(
         path_compression=path_compression, time_chunking=time_chunking)
 
 
-
 def main():
 
     # np.set_printoptions(linewidth=20000)
@@ -408,8 +407,8 @@ def main():
     # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
 
     run_viz(
-        5, 1000, 0.0007, 12, mutation_rate=0.006, perfect_ancestors=True,
-        perfect_mutations=True, time_chunking=True, method="P", path_compression=False,
+        15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=False,
+        perfect_mutations=False, time_chunking=True, method="C", path_compression=False,
         error_rate=0.00)
 
     # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)

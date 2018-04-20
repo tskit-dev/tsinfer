@@ -490,7 +490,7 @@ def is_descendant(pi, u, v):
 # currently not in the tree.
 
 MISMATCH = 0
-RECOMB_REQUIRED = 1
+RECOMB = 1
 MATCH = 2
 COMPRESSED = -1
 MISSING = -2
@@ -547,13 +547,14 @@ class AncestorMatcher(object):
                 # print("inserted likelihood for ", mutation_node, self.likelihood[u])
 
         # print("update_site", site, state, mutation_node)
-        # print("Site ", site, "mutation = ", mutation_node, "state = ", state)
+        # print("Site ", site, "mutation = ", mutation_node, "state = ", state,
+        #         {u:self.likelihood[u] for u in self.likelihood_nodes})
 
         path_cache = np.zeros(n, dtype=np.int8) - 1
         max_L = -1
         max_L_node = -1
         for u in self.likelihood_nodes:
-            d = False
+            d = 0
             if mutation_node != -1:
                 v = u
                 while v != -1 and v != mutation_node and path_cache[v] == -1:
@@ -561,7 +562,7 @@ class AncestorMatcher(object):
                 if v != -1 and path_cache[v] != -1:
                     d = path_cache[v]
                 else:
-                    d = v == mutation_node
+                    d = int(v == mutation_node)
                 assert d == is_descendant(self.parent, u, mutation_node)
                 # Insert this path into the cache.
                 v = u
@@ -569,15 +570,14 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-            if self.likelihood[u] != MATCH:
-                self.likelihood[u] = RECOMB_REQUIRED
+            self.traceback[site][u] = False
+            if self.likelihood[u] == MISMATCH:
                 self.traceback[site][u] = True
-            else:
-                self.traceback[site][u] = False
-            if mutation_node != -1 and int(d) != state:
+            if mutation_node != -1 and d != state:
                 self.likelihood[u] = MISMATCH
+            elif self.likelihood[u] == MISMATCH:
+                self.likelihood[u] = RECOMB
 
-            # print("\t\tz=", z, "emission=", emission_p, "L_new = ", z * emission_p)
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
@@ -595,10 +595,7 @@ class AncestorMatcher(object):
                 path_cache[v] = -1
                 v = self.parent[v]
         assert np.all(path_cache == -1)
-
         self.compress_likelihoods()
-        # self.normalise_likelihoods()
-        # print("\tafter L = ", {u: self.likelihood[u] for u in self.likelihood_nodes})
 
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1
