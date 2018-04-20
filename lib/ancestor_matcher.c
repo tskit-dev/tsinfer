@@ -751,6 +751,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     if (in != NULL && start < edge_left(in)) {
         right = edge_left(in);
     }
+    /* TODO there's probably quite a big gain to made here by seeking
+     * directly to the tree that we're interested in. */
     while (in != NULL && out != NULL && edge_left(in) <= start) {
         while (out != NULL && (edge = get_edge(out)).right == pos) {
             remove_edge(edge, parent, left_child, right_child,
