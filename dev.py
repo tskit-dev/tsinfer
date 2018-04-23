@@ -168,35 +168,9 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    import zarr
-
-    z = zarr.empty(shape=(0,), dtype="array:i4")
-    print(z)
-    z.append([[0], [1, 2], [3, 4, 5]])
-    print(z[:])
-
-    # z = zarr.empty(shape=(0,), dtype="array:i4")
-    # print(z)
-    # z.append([[0, 1], [1, 2], [3, 4]])
-    # print(z[:])
-
-    b = np.array([np.array([0, 1]), np.array([1, 2]), np.array([3, 4])], dtype="object")
-    a = np.empty(3, dtype=np.object)
-
-    a[:] = b
-
-    # a[0] = [0, 1]
-    # a[1] = [0, 1]
-
-    print(a)
-    print(a.dtype)
-    print(a.shape)
-
-
-
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
-    # build_profile_inputs(1000, 100)
+    build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 

@@ -10,6 +10,7 @@ import itertools
 
 import numpy as np
 import zarr
+import lmdb
 import humanize
 import numcodecs.blosc as blosc
 import msprime
@@ -158,12 +159,15 @@ class DataContainer(object):
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
-    @classmethod
-    def load(cls, filename):
-        self = cls()
+    def _open(self, filename):
         self.store = zarr.LMDBStore(filename, readonly=True, subdir=False, lock=False)
         self.data = zarr.open_group(store=self.store)
         self.check_format()
+
+    @classmethod
+    def load(cls, filename):
+        self = cls()
+        self._open(filename)
         return self
 
     def check_format(self):
@@ -201,6 +205,23 @@ class DataContainer(object):
         is present.
         """
         self.data.attrs[FINALISED_KEY] = True
+        if self.store is not None:
+            filename = self.store.path
+            self.store.close()
+            logger.debug("Fixing up LMDB file size")
+            with lmdb.open(
+                    self.store.path, subdir=False, lock=False, writemap=True) as db:
+                # LMDB maps a very large amount of space by default. While this
+                # doesn't do any harm, it's annoying because we can't use ls to
+                # see the file sizes and the amount of RAM we're mapping can
+                # look like it's very large. So, we fix this up so that the
+                # map size is equal to the number of pages in use.
+                num_pages = db.info()["last_pgno"]
+                page_size = db.stat()["psize"]
+                db.set_mapsize(num_pages * page_size)
+            # Reopen the data in read-only mode.
+            self.data = None
+            self._open(filename)
 
     @property
     def format_name(self):
@@ -663,7 +684,6 @@ class AncestorData(DataContainer):
         """
         Flushes the buffered ancestors to the data file.
         """
-        # print("num_buffered = ", self.num_buffered)
         logger.debug("Flush ancestor buffer")
         self.start.append(self.buffered_start[:self.num_buffered])
         self.end.append(self.buffered_end[:self.num_buffered])
@@ -727,4 +747,4 @@ class AncestorData(DataContainer):
             if j % chunk_size == 0:
                 chunk = self.ancestor[j: j + chunk_size][:]
             a = chunk[j % chunk_size]
-            yield  a
+            yield a
