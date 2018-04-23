@@ -140,19 +140,6 @@ class BufferedSite(object):
         self.alleles = alleles
 
 
-class BufferedAncestor(object):
-    """
-    Simple container to hold ancestor information while being buffered during
-    addition.
-    """
-    def __init__(self, start, end, time_, focal_sites, ancestor):
-        self.start = start
-        self.end = end
-        self.time = time_
-        self.focal_sites = focal_sites
-        self.ancestor = ancestor
-
-
 def zarr_summary(array):
     """
     Returns a string with a brief summary of the specified zarr array.
@@ -628,7 +615,7 @@ class AncestorData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, input_data, filename=None, chunk_size=8192,
+            cls, input_data, filename=None, chunk_size=1024,
             compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
@@ -660,31 +647,31 @@ class AncestorData(DataContainer):
             "ancestor", shape=(0,), chunks=chunks,
             dtype="array:u1", compressor=self.compressor)
         self.chunk_size = chunk_size
-        self.ancestor_buffer = []
+        # Allocate the buffers.
+        self.buffered_start = np.empty(chunk_size, dtype=np.int32)
+        self.buffered_end = np.empty(chunk_size, dtype=np.int32)
+        self.buffered_time = np.empty(chunk_size, dtype=np.uint32)
+        # Note: it's essential that we use np.object here as we'll get obscure
+        # errors later when trying to add rectangular arrays to the main
+        # arrays otherwise.
+        self.buffered_focal_sites = np.empty(chunk_size, dtype=np.object)
+        self.buffered_ancestor = np.empty(chunk_size, dtype=np.object)
+        self.num_buffered = 0
         return self
 
     def flush_buffer(self):
         """
         Flushes the buffered ancestors to the data file.
         """
-        num_ancestors = len(self.ancestor_buffer)
-        start = np.empty(num_ancestors, dtype=np.int32)
-        end = np.empty(num_ancestors, dtype=np.int32)
-        time = np.empty(num_ancestors, dtype=np.uint32)
-        focal_sites = zarr.empty(num_ancestors, dtype="array:i4")
-        ancestors = zarr.empty(num_ancestors, dtype="array:u1")
-        for j, ancestor in enumerate(self.ancestor_buffer):
-            start[j] = ancestor.start
-            end[j] = ancestor.end
-            time[j] = ancestor.time
-            focal_sites[j] = ancestor.focal_sites
-            ancestors[j] = ancestor.ancestor
-        self.start.append(start)
-        self.end.append(end)
-        self.time.append(time)
-        self.focal_sites.append(focal_sites)
-        self.ancestor.append(ancestors)
-        self.ancestor_buffer = []
+        # print("num_buffered = ", self.num_buffered)
+        logger.debug("Flush ancestor buffer")
+        self.start.append(self.buffered_start[:self.num_buffered])
+        self.end.append(self.buffered_end[:self.num_buffered])
+        self.time.append(self.buffered_time[:self.num_buffered])
+        self.focal_sites.append(self.buffered_focal_sites[:self.num_buffered])
+        self.ancestor.append(self.buffered_ancestor[:self.num_buffered])
+        logger.debug("Done")
+        self.num_buffered = 0
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
@@ -711,14 +698,20 @@ class AncestorData(DataContainer):
             raise ValueError("focal sites must be between start and end")
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
-        if len(self.ancestor_buffer) == self.chunk_size:
+        if self.num_buffered == self.chunk_size:
             self.flush_buffer()
-        self.ancestor_buffer.append(BufferedAncestor(
-            start, end, time, focal_sites, haplotype[start:end].copy()))
+
+        ancestor = haplotype[start:end].copy()
+        self.buffered_start[self.num_buffered] = start
+        self.buffered_end[self.num_buffered] = end
+        self.buffered_time[self.num_buffered] = time
+        self.buffered_focal_sites[self.num_buffered] = focal_sites
+        self.buffered_ancestor[self.num_buffered] = ancestor
+        self.num_buffered += 1
 
     def finalise(self):
-        if self.ancestor_buffer is None:
-            raise ValueError("Cannot call finalise in read-mode")
+        # if self.num_buffered is None:
+        #     raise ValueError("Cannot call finalise in read-mode")
         self.flush_buffer()
         self.data.attrs["num_ancestors"] = self.start.shape[0]
         self.ancestor_buffer = None

@@ -130,17 +130,21 @@ def tsinfer_dev(
 
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
-    ts = msprime.simulate(
-        n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
-        random_seed=10)
-    print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
-            "num_trees =", ts.num_trees)
     input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.hdf5".format(
             n, num_megabases)
-    ts.dump(input_file)
+    if os.path.exists(input_file):
+        ts = msprime.load(input_file)
+    else:
+        ts = msprime.simulate(
+            n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=10)
+        print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
+                "num_trees =", ts.num_trees)
+        ts.dump(input_file)
     filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
+    daiquiri.setup(level="DEBUG")
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         filename=filename)
@@ -164,6 +168,31 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
+    import zarr
+
+    z = zarr.empty(shape=(0,), dtype="array:i4")
+    print(z)
+    z.append([[0], [1, 2], [3, 4, 5]])
+    print(z[:])
+
+    # z = zarr.empty(shape=(0,), dtype="array:i4")
+    # print(z)
+    # z.append([[0, 1], [1, 2], [3, 4]])
+    # print(z[:])
+
+    b = np.array([np.array([0, 1]), np.array([1, 2]), np.array([3, 4])], dtype="object")
+    a = np.empty(3, dtype=np.object)
+
+    a[:] = b
+
+    # a[0] = [0, 1]
+    # a[1] = [0, 1]
+
+    print(a)
+    print(a.dtype)
+    print(a.shape)
+
+
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
@@ -171,7 +200,7 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    tsinfer_dev(18, 0.3, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    # tsinfer_dev(18, 30, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):
