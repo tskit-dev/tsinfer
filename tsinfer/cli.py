@@ -100,8 +100,7 @@ def run_match_ancestors(args):
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
     tsinfer.match_ancestors(
         sample_data, ancestor_data, output_path=ancestors_ts,
-        num_threads=args.num_threads, progress=args.progress,
-        output_interval=args.output_interval, resume=args.resume)
+        num_threads=args.num_threads, progress=args.progress)
 
 
 def run_match_samples(args):
@@ -193,14 +192,6 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
-def add_output_interval_argument(parser):
-    parser.add_argument(
-        "--output-interval", "-I", type=float, default=None,
-        help=(
-            "The interval in minutes between output auto-saves. By default the "
-            "output is only saved at the end of the run"))
-
-
 def add_compression_argument(parser):
     parser.add_argument(
         "--compression", "-z", choices=["gzip", "lzf", "none"], default="gzip",
@@ -242,12 +233,8 @@ def get_tsinfer_parser():
     add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_ts_argument(parser)
-    add_output_interval_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
-    parser.add_argument(
-        "--resume", "-r", default=False, action="store_true",
-        help="Resume an existing build")
     parser.set_defaults(runner=run_match_ancestors)
 
     parser = subparsers.add_parser(

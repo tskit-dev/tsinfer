@@ -121,20 +121,11 @@ def tsinfer_dev(
     ancestor_data = tsinfer.AncestorData.initialise(sample_data)
     tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
+    print(ancestor_data)
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
     print("inferred_num_edges = ", output_ts.num_edges)
-
-    A = ancestor_data.genotypes[:].T
-    A[A == 255] = 0
-    for v in ancestors_ts.variants():
-        assert np.array_equal(v.genotypes, A[:, v.index])
-
-    assert output_ts.num_samples == ts.num_samples
-    assert output_ts.num_sites == ts.num_sites
-    assert output_ts.sequence_length == ts.sequence_length
-    assert np.array_equal(G, output_ts.genotype_matrix())
 
 
 def build_profile_inputs(n, num_megabases):
@@ -149,7 +140,7 @@ def build_profile_inputs(n, num_megabases):
     ts.dump(input_file)
     filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
-        shutil.rmtree(filename)
+        os.unlink(filename)
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         filename=filename)
@@ -175,12 +166,13 @@ if __name__ == "__main__":
 
 
     # build_profile_inputs(10, 1)
-    build_profile_inputs(100, 10)
+    # build_profile_inputs(100, 10)
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    # tsinfer_dev(18, 0.2, seed=6, num_threads=0, method="P", recombination_rate=1e-8)
+    tsinfer_dev(18, 0.3, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+
 
 #     for seed in range(1, 10000):
 #         print(seed)

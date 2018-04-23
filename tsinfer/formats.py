@@ -6,7 +6,7 @@ import uuid
 import logging
 import time
 import queue
-import dbm
+import itertools
 
 import numpy as np
 import zarr
@@ -145,11 +145,12 @@ class BufferedAncestor(object):
     Simple container to hold ancestor information while being buffered during
     addition.
     """
-    def __init__(self, start, end, time_, focal_sites):
+    def __init__(self, start, end, time_, focal_sites, ancestor):
         self.start = start
         self.end = end
         self.time = time_
         self.focal_sites = focal_sites
+        self.ancestor = ancestor
 
 
 def zarr_summary(array):
@@ -552,13 +553,10 @@ class AncestorData(DataContainer):
 
     def __str__(self):
         path = None
-        store = None
         if self.store is not None:
             path = self.store.path
-            store = dbm.whichdb(path)
         values = [
             ("path", path),
-            ("store", store),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("uuid", self.uuid),
@@ -569,8 +567,7 @@ class AncestorData(DataContainer):
             ("end", zarr_summary(self.end)),
             ("time", zarr_summary(self.time)),
             ("focal_sites", zarr_summary(self.focal_sites)),
-            ("focal_sites_offset", zarr_summary(self.focal_sites_offset)),
-            ("genotypes", zarr_summary(self.genotypes))]
+            ("ancestor", zarr_summary(self.ancestor))]
         return self._format_str(values)
 
     def data_equal(self, other):
@@ -587,10 +584,11 @@ class AncestorData(DataContainer):
             self.num_sites == other.num_sites and
             np.array_equal(self.start[:], other.start[:]) and
             np.array_equal(self.end[:], other.end[:]) and
-            np.array_equal(self.focal_sites[:], other.focal_sites[:]) and
-            np.array_equal(
-                self.focal_sites_offset[:], other.focal_sites_offset[:]) and
-            np.array_equal(self.genotypes[:], other.genotypes[:]))
+            # Need to take a different approach with np object arrays.
+            all(itertools.starmap(np.array_equal, zip(
+                self.focal_sites[:], other.focal_sites[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.ancestor[:], other.ancestor[:]))))
 
     @property
     def sample_data_uuid(self):
@@ -606,27 +604,23 @@ class AncestorData(DataContainer):
 
     @property
     def start(self):
-        return self.data["ancestors/start"]
+        return self.data["start"]
 
     @property
     def end(self):
-        return self.data["ancestors/end"]
+        return self.data["end"]
 
     @property
     def time(self):
-        return self.data["ancestors/time"]
+        return self.data["time"]
 
     @property
     def focal_sites(self):
-        return self.data["ancestors/focal_sites"]
+        return self.data["focal_sites"]
 
     @property
-    def focal_sites_offset(self):
-        return self.data["ancestors/focal_sites_offset"]
-
-    @property
-    def genotypes(self):
-        return self.data["ancestors/genotypes"]
+    def ancestor(self):
+        return self.data["ancestor"]
 
     ####################################
     # Write mode
@@ -648,18 +642,49 @@ class AncestorData(DataContainer):
 
         num_sites = self.input_data.num_variant_sites
         self.data.attrs["num_sites"] = num_sites
-        self.ancestor_buffer = []
-        self.genotypes_buffer = np.empty((num_sites, chunk_size), dtype=np.uint8)
-        self.genotypes_buffer[:] = UNKNOWN_ALLELE
-        self.genotypes_buffer_offset = 0
 
-        self.ancestors_group = self.data.create_group("ancestors")
-        x_chunk = max(1, min(chunk_size, num_sites))
-        y_chunk = chunk_size
-        self.ancestors_group.create_dataset(
-            "genotypes", shape=(num_sites, 0), chunks=(x_chunk, y_chunk),
-            dtype=np.uint8, compressor=self.compressor)
+        chunks = max(1, chunk_size),
+        self.data.create_dataset(
+            "start", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "end", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "time", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.uint32)
+        self.data.create_dataset(
+            "focal_sites", shape=(0,), chunks=chunks,
+            dtype="array:i4", compressor=self.compressor)
+        self.data.create_dataset(
+            "ancestor", shape=(0,), chunks=chunks,
+            dtype="array:u1", compressor=self.compressor)
+        self.chunk_size = chunk_size
+        self.ancestor_buffer = []
         return self
+
+    def flush_buffer(self):
+        """
+        Flushes the buffered ancestors to the data file.
+        """
+        num_ancestors = len(self.ancestor_buffer)
+        start = np.empty(num_ancestors, dtype=np.int32)
+        end = np.empty(num_ancestors, dtype=np.int32)
+        time = np.empty(num_ancestors, dtype=np.uint32)
+        focal_sites = zarr.empty(num_ancestors, dtype="array:i4")
+        ancestors = zarr.empty(num_ancestors, dtype="array:u1")
+        for j, ancestor in enumerate(self.ancestor_buffer):
+            start[j] = ancestor.start
+            end[j] = ancestor.end
+            time[j] = ancestor.time
+            focal_sites[j] = ancestor.focal_sites
+            ancestors[j] = ancestor.ancestor
+        self.start.append(start)
+        self.end.append(end)
+        self.time.append(time)
+        self.focal_sites.append(focal_sites)
+        self.ancestor.append(ancestors)
+        self.ancestor_buffer = []
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
@@ -686,57 +711,27 @@ class AncestorData(DataContainer):
             raise ValueError("focal sites must be between start and end")
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
-        j = self.genotypes_buffer_offset
-        N = self.genotypes_buffer.shape[1]
-        self.genotypes_buffer[start: end, j] = haplotype[start: end]
-        if j == N - 1:
-            self.genotypes.append(self.genotypes_buffer, axis=1)
-            self.genotypes_buffer_offset = -1
-            self.genotypes_buffer[:] = UNKNOWN_ALLELE
-        self.genotypes_buffer_offset += 1
-        self.ancestor_buffer.append(BufferedAncestor(start, end, time, focal_sites))
+        if len(self.ancestor_buffer) == self.chunk_size:
+            self.flush_buffer()
+        self.ancestor_buffer.append(BufferedAncestor(
+            start, end, time, focal_sites, haplotype[start:end].copy()))
 
     def finalise(self):
         if self.ancestor_buffer is None:
             raise ValueError("Cannot call finalise in read-mode")
-        total_focal_sites = sum(
-            ancestor.focal_sites.shape[0] for ancestor in self.ancestor_buffer)
-        num_ancestors = len(self.ancestor_buffer)
-        self.data.attrs["num_ancestors"] = num_ancestors
-        start = np.empty(num_ancestors, dtype=np.int32)
-        end = np.empty(num_ancestors, dtype=np.int32)
-        time = np.empty(num_ancestors, dtype=np.uint32)
-        focal_sites = np.empty(total_focal_sites, dtype=np.int32)
-        focal_sites_offset = np.zeros(num_ancestors + 1, dtype=np.uint32)
-        for j, ancestor in enumerate(self.ancestor_buffer):
-            start[j] = ancestor.start
-            end[j] = ancestor.end
-            time[j] = ancestor.time
-            focal_sites_offset[j + 1] = (
-                focal_sites_offset[j] + ancestor.focal_sites.shape[0])
-            focal_sites[
-                focal_sites_offset[j]: focal_sites_offset[j + 1]] = ancestor.focal_sites
-        chunks = max(num_ancestors, 1),
-        self.ancestors_group.create_dataset(
-            "start", shape=(num_ancestors,), chunks=chunks, data=start,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "end", shape=(num_ancestors,), chunks=chunks, data=end,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "time", shape=(num_ancestors,), chunks=chunks, data=time,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "focal_sites_offset", shape=(num_ancestors + 1,),
-            chunks=(num_ancestors + 1,), data=focal_sites_offset,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "focal_sites", shape=(total_focal_sites,),
-            chunks=(max(total_focal_sites, 1)), data=focal_sites,
-            compressor=self.compressor)
-
-        self.genotypes.append(
-            self.genotypes_buffer[:, :self.genotypes_buffer_offset], axis=1)
+        self.flush_buffer()
+        self.data.attrs["num_ancestors"] = self.start.shape[0]
         self.ancestor_buffer = None
-        self.genotypes_buffer = None
         super(AncestorData, self).finalise()
+
+    def ancestors(self):
+        """
+        Returns an iterator over all the ancestors.
+        """
+        chunk = None
+        chunk_size = self.ancestor.chunks[0]
+        for j in range(self.num_ancestors):
+            if j % chunk_size == 0:
+                chunk = self.ancestor[j: j + chunk_size][:]
+            a = chunk[j % chunk_size]
+            yield  a

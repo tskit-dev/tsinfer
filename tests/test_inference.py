@@ -221,13 +221,18 @@ class TestGeneratedAncestors(unittest.TestCase):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
-        A = ancestor_data.genotypes[:]
-        # Need to set all missing values to 0 for matching.
-        A[A == tsinfer.UNKNOWN_ALLELE] = 0
-
+        A = np.zeros(
+            (ancestor_data.num_sites, ancestor_data.num_ancestors), dtype=np.uint8)
+        start = ancestor_data.start[:]
+        end = ancestor_data.end[:]
+        ancestors = ancestor_data.ancestor[:]
+        for j in range(ancestor_data.num_ancestors):
+            A[start[j]: end[j], j] = ancestors[j]
         for method in ["P", "C"]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data, ancestor_data, method=method)
+            self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
+            self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
             self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
                 sample_data, ancestors_ts, method=method)
@@ -273,40 +278,33 @@ class TestBuildAncestors(unittest.TestCase):
         return sample_data, ancestor_data
 
     def verify_ancestors(self, sample_data, ancestor_data):
-        ancestor_haplotypes = ancestor_data.genotypes[:].T
+        ancestors = ancestor_data.ancestor[:]
         sample_genotypes = sample_data.genotypes[:]
         start = ancestor_data.start[:]
         end = ancestor_data.end[:]
         time = ancestor_data.time[:]
-        offset = ancestor_data.focal_sites_offset[:]
-        flattened = ancestor_data.focal_sites[:]
-        focal_sites = [
-            flattened[offset[j]: offset[j + 1]]
-            for j in range(ancestor_data.num_ancestors)]
+        focal_sites = ancestor_data.focal_sites[:]
 
-        self.assertEqual(ancestor_data.num_ancestors, ancestor_haplotypes.shape[0])
-        self.assertEqual(ancestor_data.num_sites, ancestor_haplotypes.shape[1])
+        self.assertEqual(ancestor_data.num_ancestors, ancestors.shape[0])
         self.assertEqual(ancestor_data.num_sites, sample_data.num_variant_sites)
         self.assertEqual(ancestor_data.num_ancestors, time.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, start.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, end.shape[0])
-        self.assertEqual(
-            ancestor_data.focal_sites_offset.shape, (ancestor_data.num_ancestors + 1,))
-        self.assertEqual(
-            ancestor_data.focal_sites.shape, (sample_data.num_variant_sites,))
+        self.assertEqual(ancestor_data.num_ancestors, focal_sites.shape[0])
         # The first ancestor must be all zeros.
         self.assertEqual(start[0], 0)
         self.assertEqual(end[0], ancestor_data.num_sites)
         self.assertEqual(time[0], 2 + max(
             np.sum(genotypes) for genotypes in sample_genotypes))
         self.assertEqual(list(focal_sites[0]), [])
-        self.assertTrue(np.all(ancestor_haplotypes[0] == 0))
+        self.assertTrue(np.all(ancestors[0] == 0))
 
         used_sites = []
         for j in range(ancestor_data.num_ancestors):
-            h = ancestor_haplotypes[j]
-            self.assertTrue(np.all(h[:start[j]] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(h[end[j]:] == tsinfer.UNKNOWN_ALLELE))
+            a = ancestors[j]
+            self.assertEqual(a.shape[0], end[j] - start[j])
+            h = np.zeros(ancestor_data.num_sites, dtype=np.uint8)
+            h[start[j]: end[j]] = a
             self.assertTrue(np.all(h[start[j]:end[j]] != tsinfer.UNKNOWN_ALLELE))
             self.assertTrue(np.all(h[focal_sites[j]] == 1))
             used_sites.extend(focal_sites[j])
@@ -332,9 +330,10 @@ class TestBuildAncestors(unittest.TestCase):
         self.assertGreater(ts.num_sites, 10)
         sample_data, ancestor_data = self.get_simulated_example(ts)
         self.verify_ancestors(sample_data, ancestor_data)
-        ancestor_genotypes = ancestor_data.genotypes[:]
-        # Make sure there is at least one UNKNOWN_ALLELE value here.
-        self.assertIn(tsinfer.UNKNOWN_ALLELE, ancestor_genotypes)
+        # Make sure we have at least one partial ancestor.
+        start = ancestor_data.start[:]
+        end = ancestor_data.end[:]
+        self.assertLess(np.min(end - start), ancestor_data.num_sites)
 
     def test_random_data(self):
         n = 20

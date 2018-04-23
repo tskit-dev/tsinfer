@@ -374,22 +374,19 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(ancestor_data.num_sites, sample_data.num_variant_sites)
         self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
 
-        haplotypes = list(ancestor_data.haplotypes())
+        ancestors_list = list(ancestor_data.ancestors())
         stored_start = ancestor_data.start[:]
         stored_end = ancestor_data.end[:]
         stored_time = ancestor_data.time[:]
-        stored_genotypes = ancestor_data.genotypes[:]
+        stored_ancestors = ancestor_data.ancestor[:]
         stored_focal_sites = ancestor_data.focal_sites[:]
-        offset = ancestor_data.focal_sites_offset[:]
         for j, (start, end, time, focal_sites, haplotype) in enumerate(ancestors):
             self.assertEqual(stored_start[j], start)
             self.assertEqual(stored_end[j], end)
             self.assertEqual(stored_time[j], time)
-            self.assertTrue(np.array_equal(stored_genotypes[:, j], haplotype))
-            self.assertTrue(np.array_equal(
-                focal_sites,
-                stored_focal_sites[offset[j]: offset[j + 1]]))
-            self.assertTrue(np.array_equal(haplotypes[j], haplotype))
+            self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
+            self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
+            self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
 
     def test_defaults(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
@@ -400,8 +397,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(ancestor_data.end.compressor, compressor)
         self.assertEqual(ancestor_data.time.compressor, compressor)
         self.assertEqual(ancestor_data.focal_sites.compressor, compressor)
-        self.assertEqual(ancestor_data.focal_sites_offset.compressor, compressor)
-        self.assertEqual(ancestor_data.genotypes.compressor, compressor)
+        self.assertEqual(ancestor_data.ancestor.compressor, compressor)
 
     def test_chunk_size(self):
         N = 20
@@ -411,9 +407,12 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ancestor_data = tsinfer.AncestorData.initialise(
                 sample_data, chunk_size=chunk_size)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-            self.assertEqual(
-                ancestor_data.genotypes.chunks,
-                (min(ancestor_data.num_sites, chunk_size), chunk_size))
+            self.assertEqual(ancestor_data.ancestor.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.focal_sites.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.start.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.end.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.time.chunks, (chunk_size,))
+
 
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
@@ -439,8 +438,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
                 ancestor_data = tsinfer.AncestorData.initialise(
                     sample_data, filename=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-                self.assertEqual(
-                    ancestor_data.genotypes.chunks, (chunk_size, chunk_size))
+                self.assertEqual(ancestor_data.ancestor.chunks, (chunk_size,))
             # Now reload the files and check they are equal
             file0 = formats.AncestorData.load(files[0])
             file1 = formats.AncestorData.load(files[1])

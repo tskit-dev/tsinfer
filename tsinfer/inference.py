@@ -6,7 +6,6 @@ TODO module docs.
 import collections
 import queue
 import time
-import datetime
 import pickle
 import logging
 import threading
@@ -135,8 +134,8 @@ def build_ancestors(
 
 def match_ancestors(
         sample_data, ancestor_data, output_path=None, method="C", progress=False,
-        num_threads=0, path_compression=True, output_interval=None, resume=False,
-        traceback_file_pattern=None, extended_checks=False):
+        num_threads=0, path_compression=True, traceback_file_pattern=None,
+        extended_checks=False):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -144,8 +143,7 @@ def match_ancestors(
     matcher = AncestorMatcher(
         sample_data, ancestor_data, output_path=output_path, method=method,
         progress=progress, path_compression=path_compression,
-        num_threads=num_threads, output_interval=output_interval,
-        resume=resume, traceback_file_pattern=traceback_file_pattern,
+        num_threads=num_threads, traceback_file_pattern=traceback_file_pattern,
         extended_checks=extended_checks)
     return matcher.match_ancestors()
 
@@ -403,22 +401,14 @@ class Matcher(object):
 class AncestorMatcher(Matcher):
     progress_bar_description = "match-ancestors"
 
-    def __init__(
-            self, sample_data, ancestor_data, output_path, output_interval=None,
-            resume=False, **kwargs):
+    def __init__(self, sample_data, ancestor_data, output_path, **kwargs):
         super().__init__(sample_data, **kwargs)
-        self.output_interval = 2**32  # Arbitrary very large number of minutes.
-        if output_interval is not None:
-            self.output_interval = output_interval
         self.output_path = output_path
         self.last_output_time = time.time()
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.time[:]
-        off = self.ancestor_data.focal_sites_offset[:]
-        focal_sites = self.ancestor_data.focal_sites[:]
-        self.focal_sites = [
-            focal_sites[off[j]: off[j + 1]] for j in range(self.num_ancestors)]
+        self.focal_sites = self.ancestor_data.focal_sites[:]
         self.start = self.ancestor_data.start[:]
         self.end = self.ancestor_data.end[:]
 
@@ -433,26 +423,16 @@ class AncestorMatcher(Matcher):
             self.num_epochs = self.epoch_slices.shape[0]
         first_ancestor = 1
         self.start_epoch = 1
-        if resume:
-            assert False, "Resume is current broken. Need to find youngest edge"
-            logger.info("Resuming build from {}".format(self.output_path))
-            ancestor_ts = msprime.load(self.output_path)
-            self.restore_tree_sequence_builder(ancestor_ts)
-            first_ancestor = ancestor_ts.num_samples
-            # TODO This is probably an off-by-one caused elsewhere. Will break
-            # when we fix the time of the last ancestor to be one.
-            self.start_epoch = self.num_epochs - self.epoch[first_ancestor] + 1
-            logger.info("Resuming at epoch {} ancestor {}".format(
-                self.start_epoch, first_ancestor))
-        else:
-            # Add nodes for all the ancestors so that the ancestor IDs are equal
-            # to the node IDs.
-            for ancestor_id in range(self.num_ancestors):
-                self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
+        # Add nodes for all the ancestors so that the ancestor IDs are equal
+        # to the node IDs.
+        for ancestor_id in range(self.num_ancestors):
+            self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
-        # This is an iterator over all ancestral haplotypes.
-        self.haplotypes = self.ancestor_data.haplotypes(start=first_ancestor)
+        self.ancestors = self.ancestor_data.ancestors()
         if self.num_epochs > 0:
+            # Consume the first ancestor.
+            a = next(self.ancestors)
+            assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
             self.allocate_progress_monitor(
                 self.num_ancestors, initial=first_ancestor,
                 postfix=self.__epoch_info_dict(self.start_epoch - 1))
@@ -471,11 +451,14 @@ class AncestorMatcher(Matcher):
         """
         self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
-    def __ancestor_find_path(self, ancestor_id, haplotype, thread_index=0):
+    def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
+        haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
         focal_sites = self.focal_sites[ancestor_id]
         start = self.start[ancestor_id]
         end = self.end[ancestor_id]
         self.results.set_mutations(ancestor_id, focal_sites)
+        assert ancestor.shape[0] == (end - start)
+        haplotype[start: end] = ancestor
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
@@ -514,22 +497,13 @@ class AncestorMatcher(Matcher):
         self.mean_traceback_size[:] = 0
         self.num_matches[:] = 0
         self.results.clear()
-        # Output the current state if appropriate
-        delta = datetime.timedelta(seconds=time.time() - self.last_output_time)
-        if delta.total_seconds() >= self.output_interval * 60:
-            # TODO We need some way of indicating that the output is incomplete.
-            # Probably simplest is to read it back into h5py and stick in an
-            # attribute just saying it's a partial read.
-            self.store_output()
-            self.last_output_time = time.time()
-            logger.info("Saved checkpoint {}".format(self.output_path))
 
     def __match_ancestors_single_threaded(self):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
-                a = next(self.haplotypes)
+                a = next(self.ancestors)
                 self.__ancestor_find_path(ancestor_id, a)
             self.__complete_epoch(j)
 
@@ -562,7 +536,7 @@ class AncestorMatcher(Matcher):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
-                a = next(self.haplotypes)
+                a = next(self.ancestors)
                 match_queue.put((ancestor_id, a))
             # Block until all matches have completed.
             match_queue.join()
