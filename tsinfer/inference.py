@@ -14,7 +14,6 @@ import numpy as np
 import tqdm
 import humanize
 import msprime
-# import pyinter
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -57,8 +56,7 @@ def infer(
     return inferred_ts
 
 
-def build_ancestors(
-        input_data, ancestor_data, progress=False, method="C", num_threads=None):
+def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
 
     num_sites = input_data.num_variant_sites
     num_samples = input_data.num_samples
@@ -80,34 +78,18 @@ def build_ancestors(
 
     descriptors = ancestor_builder.ancestor_descriptors()
     if len(descriptors) > 0:
-        roots = []
-        a = np.zeros(num_sites, dtype=np.uint8)
-        # Generate the ancestors until we can find all roots.
-        # logger.info("Finding roots")
-        # unrooted = pyinter.IntervalSet([pyinter.interval.openclosed(0, num_sites)])
-        # for _, focal_sites in descriptors:
-        #     start, end = ancestor_builder.make_ancestor(focal_sites, a)
-        #     interval = pyinter.IntervalSet([pyinter.interval.openclosed(start, end)])
-        #     for v in unrooted.intersection(interval):
-        #         if v.lower_value != v.upper_value:
-        #             roots.append((v.lower_value, v.upper_value))
-        #     unrooted = unrooted.difference(interval)
-        #     if len(unrooted) == 0:
-        #         break
-
         num_ancestors = len(descriptors)
         logger.info("Starting build for {} ancestors".format(num_ancestors))
-        a[:] = 0
+        a = np.zeros(num_sites, dtype=np.uint8)
         root_time = descriptors[0][0] + 1
         ultimate_ancestor_time = root_time + 1
-        # Add the ultimate ancestor.
+        # Add the ultimate ancestor. This is an awkward hack really; we don't
+        # ever insert this ancestor. The only reason to add it here is that
+        # it makes sure that the ancestor IDs we have in the ancestor file are
+        # the same as in the ancestor tree sequence. This seems worthwhile.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=ultimate_ancestor_time,
             focal_sites=[], haplotype=a)
-        for start, end in roots:
-            ancestor_data.add_ancestor(
-                start=start, end=end, time=root_time,
-                focal_sites=[], haplotype=a)
         # Hack to ensure we always have a root with zeros at every position.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=root_time,
@@ -117,7 +99,6 @@ def build_ancestors(
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
             s, e = ancestor_builder.make_ancestor(focal_sites, a)
-            # print(freq, focal_sites, s, e)
             assert np.all(a[s: e] != UNKNOWN_ALLELE)
             assert np.all(a[:s] == UNKNOWN_ALLELE)
             assert np.all(a[e:] == UNKNOWN_ALLELE)

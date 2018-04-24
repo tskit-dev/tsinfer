@@ -56,9 +56,7 @@ def run_infer(args):
     sample_data = tsinfer.SampleData.load(args.input)
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
@@ -79,15 +77,11 @@ def run_build_ancestors(args):
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     if os.path.exists(ancestors_path):
         # TODO add error and only do this on --force
-        # shutil.rmtree(ancestors_path)
         os.unlink(ancestors_path)
-
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, filename=ancestors_path)
-    tsinfer.build_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+        sample_data, filename=ancestors_path, num_flush_threads=args.num_threads)
+    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise()
 
 

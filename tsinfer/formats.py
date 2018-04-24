@@ -162,15 +162,25 @@ class DataContainer(object):
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
-    def _open(self, filename):
-        self.store = zarr.LMDBStore(filename, readonly=True, subdir=False, lock=False)
+    def _open_readonly(self, filename):
+        # We set the mapsize here because LMBD will map 1TB of virtual memory if
+        # we don't, making it hard to figure out how much memory we're actually
+        # using.
+        map_size = None
+        try:
+            map_size = os.path.getsize(filename)
+        except OSError:
+            # Ignore any exceptions here and let LMDB handle them.
+            pass
+        self.store = zarr.LMDBStore(
+            filename, map_size=map_size, readonly=True, subdir=False, lock=False)
         self.data = zarr.open_group(store=self.store)
         self.check_format()
 
     @classmethod
     def load(cls, filename):
         self = cls()
-        self._open(filename)
+        self._open_readonly(filename)
         return self
 
     def check_format(self):
@@ -228,7 +238,7 @@ class DataContainer(object):
                 os.unlink(lockfile)
             # Reopen the data in read-only mode.
             self.data = None
-            self._open(filename)
+            self._open_readonly(filename)
 
     @property
     def format_name(self):
@@ -644,11 +654,13 @@ class AncestorData(DataContainer):
     @classmethod
     def initialise(
             cls, input_data, filename=None, chunk_size=1024,
-            compressor=DEFAULT_COMPRESSOR):
+            num_flush_threads=1, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_ancestor method.
         """
+        if num_flush_threads <= 0:
+            num_flush_threads = 1
         self = cls()
         super(cls, self)._initialise(filename)
         self.input_data = input_data
@@ -680,7 +692,7 @@ class AncestorData(DataContainer):
         # and buffers that are waiting to be flushed are on the flush_queue.
         # In the worst case we need n threads flushing n buffers while the main
         # thread waits for a free buffer to write to.
-        self.num_buffers = 4
+        self.num_buffers = num_flush_threads
         self.num_threads = self.num_buffers
         self.buffered_start = [
             np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
