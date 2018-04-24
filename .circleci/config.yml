@@ -5,26 +5,37 @@ jobs:
       - image: circleci/python:3.6-stretch
     steps:
       - checkout
+      # Cache based  on https://circleci.com/docs/2.0/language-python/
+      - restore_cache: 
+          key: deps1-{{ .Branch }}-{{ checksum "requirements/development.txt" }}
       - run:
           name: Install dependencies and set path
           command: |
-            # Need hdf5 and gsl-dev for msprime. When we move to tskit we should 
-            # be able to remove these.
-            sudo apt-get install libcap-dev libnuma-dev libhdf5-dev libgsl-dev
-            pip install --user -r requirements/development.txt
-            echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
+              # Need hdf5 and gsl-dev for msprime. When we move to tskit we should 
+              # be able to remove these.
+              sudo apt-get install libcap-dev libnuma-dev libhdf5-dev libgsl-dev
+              python3 -m venv venv
+              . venv/bin/activate
+              pip install -r requirements/development.txt
+      - save_cache: # special step to save dependency cache
+          key: deps1-{{ .Branch }}-{{ checksum "requirements/development.txt" }}
+          paths:
+            - "venv"
       - run:
           name: Compile Python
           command: |
-            CFLAGS=--coverage python setup.py build_ext --inplace
+              . venv/bin/activate
+              CFLAGS=--coverage python setup.py build_ext --inplace
       - run:
           name: Lint Python
           command: |
-            flake8 --max-line-length 89 tsinfer setup.py tests
+              . venv/bin/activate
+              flake8 --max-line-length 89 tsinfer setup.py tests
       - run:
           name: Run Python tests 
           command: |
-            nosetests -v --with-coverage --cover-package tsinfer \
-              --cover-branches --cover-erase --cover-xml \
-              --cover-inclusive python/tests
-            # python3 -m codecov -F python
+              . venv/bin/activate
+              nosetests -v --with-coverage --cover-package tsinfer \
+                  --cover-branches --cover-erase --cover-xml \
+                  --cover-inclusive tests
+              # python3 -m codecov -F python
