@@ -1,3 +1,21 @@
+#
+# Copyright (C) 2018 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 Tests for the data files.
 """
@@ -401,8 +419,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
     def test_chunk_size(self):
         N = 20
-        # for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
-        for chunk_size in [4]:
+        for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
             sample_data, ancestors = self.get_example_data(6, 1, N)
             self.assertGreater(sample_data.num_variant_sites, 2 * N)
             ancestor_data = tsinfer.AncestorData.initialise(
@@ -413,7 +430,6 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(ancestor_data.start.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.end.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.time.chunks, (chunk_size,))
-
 
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
