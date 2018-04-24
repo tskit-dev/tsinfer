@@ -9,6 +9,7 @@ import concurrent.futures
 import time
 import warnings
 import os.path
+import colorsys
 
 import numpy as np
 import pandas as pd
@@ -16,8 +17,11 @@ import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
 mp.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib import collections as mc
 import seaborn as sns
 import tqdm
+import scipy.stats
+import colorutils
 
 
 import tsinfer
@@ -678,6 +682,287 @@ def run_edges_performance(args):
         plt.clf()
 
 
+def get_num_sample_edges(ts):
+    """
+    Returns the number of edges where the child is a sample.
+    """
+    count = 0
+    for e in ts.edges():
+        node = ts.node(e.child)
+        count += node.is_sample()
+    return count
+
+
+def effective_recombination_worker(args):
+    simulation_args = args
+    smc_ts = msprime.simulate(**simulation_args)
+    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
+    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
+    results = {
+        "num_sites": smc_ts.num_sites,
+        "source_num_trees": smc_ts.num_trees,
+        "source_sample_edges": get_num_sample_edges(smc_ts),
+        "estimated_anc_sample_edges": get_num_sample_edges(estimated_ancestors_ts),
+        "exact_anc_sample_edges": get_num_sample_edges(exact_ancestors_ts),
+    }
+    results.update(simulation_args)
+    return results
+
+
+def run_effective_recombination(args):
+    num_sample_sizes = 10
+    MB = 10**6
+
+    work = []
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    for n in np.linspace(0, args.sample_size, num_sample_sizes + 1)[1:].astype(int):
+        for _ in range(args.num_replicates):
+            sim_args = {
+                "sample_size": n,
+                "length": args.length * MB,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": 10**4,
+                "model": "smc_prime",
+                "random_seed": rng.randint(1, 2**30)}
+            work.append(sim_args)
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(effective_recombination_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
+    progress.close()
+
+    df = pd.DataFrame(results)
+    df.length /= MB
+    df.source_sample_edges -= df.sample_size
+    df.estimated_anc_sample_edges -= df.sample_size
+    df.exact_anc_sample_edges -= df.sample_size
+
+    dfg = df.groupby(df.sample_size).mean()
+    print(dfg)
+
+    name_format = os.path.join(
+        args.destination_dir,
+        "effective_recombination_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+
+    plt.plot(dfg.source_sample_edges, label="source")
+    plt.plot(dfg.estimated_anc_sample_edges, label="estimated ancestors")
+    plt.plot(dfg.exact_anc_sample_edges, label="exact ancestors")
+    plt.ylabel("Number of sample edges - n")
+    plt.xlabel("Sample size")
+    plt.legend()
+    plt.savefig(name_format.format("sample_edges"))
+    plt.clf()
+
+
+def unrank(samples, n):
+    """
+    Unranks the specified set of samples from a possible n into its position
+    in a lexicographically sorted list of bitstrings.
+    """
+    bitstring = np.zeros(n, dtype=int)
+    for s in samples:
+        bitstring[s] = 1
+    mult = 2**np.arange(n, dtype=int)
+    unranked = np.sum(mult * bitstring)
+    return unranked
+
+
+def edge_plot(ts, filename):
+    n = ts.num_samples
+    pallete = sns.color_palette("husl", 2**n - 1)
+    lines = []
+    colours = []
+    for tree in ts.trees():
+        left, right = tree.interval
+        for u in tree.nodes():
+            for c in tree.children(u):
+                lines.append([(left, c), (right, c)])
+                colours.append(pallete[unrank(tree.samples(c), n)])
+
+    lc = mc.LineCollection(lines, linewidths=2, colors=colours)
+    fig, ax = plt.subplots()
+    ax.add_collection(lc)
+    ax.autoscale()
+    plt.savefig(filename)
+    plt.clf()
+
+
+
+def run_hotspot_analysis(args):
+    MB = 10**6
+    L = args.length * MB
+
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+
+    breakpoints = np.linspace(0, L, args.num_hotspots + 2)
+    end = breakpoints[1:-1] + L * args.hotspot_width
+    breakpoints = np.hstack([breakpoints, end])
+    breakpoints.sort()
+    rates = np.zeros_like(breakpoints)
+    rates[:-1] = args.recombination_rate
+    # Set the odd elements of the array to be hotspots.
+    rates[1::2] *= args.hotspot_intensity
+    recomb_map = msprime.RecombinationMap(list(breakpoints), list(rates))
+
+    sim_args = {
+        "sample_size": args.sample_size,
+        "recombination_map": recomb_map,
+        "mutation_rate": args.mutation_rate,
+        "Ne": 10**4,
+        "random_seed": rng.randint(1, 2**30)}
+    ts = msprime.simulate(**sim_args)
+    print("simulated ", ts.num_trees, "trees and", ts.num_sites, "sites")
+
+    flat_ts = run_infer(ts)
+    map_ts = run_infer(ts, recombination_map=recomb_map)
+
+    num_bins = 100
+    hotspot_breakpoints = breakpoints
+
+    for density in [True, False]:
+        for x in hotspot_breakpoints[1:-1]:
+            plt.axvline(x=x, color="k", ls=":")
+        breakpoints = np.array(list(flat_ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, label="flat rate")
+        breakpoints = np.array(list(map_ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, "--", label="input map")
+        breakpoints = np.array(list(ts.breakpoints()))
+        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
+        plt.plot(bin_edges[:-1], v, label="source")
+        plt.ylabel("Number of breakpoints")
+        plt.legend()
+
+        name_format = os.path.join(
+            args.destination_dir,
+            "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}.png".format(
+                args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+                args.num_hotspots, args.hotspot_intensity, args.hotspot_width))
+        plt.savefig(name_format.format("breakpoints_density={}".format(density)))
+        plt.clf()
+
+    print("Generating edge plots")
+    # TODO add option for colour mapping.
+    edge_plot(ts, name_format.format("source_edges"))
+    edge_plot(flat_ts, name_format.format("dest_edges"))
+
+
+def error_analysis_worker(args):
+    simulation_args, input_error, inference_error = args
+    before = time.perf_counter()
+    ts = msprime.simulate(**simulation_args)
+
+    # V = generate_samples(ts, input_error)
+    ts = tsinfer.insert_errors(ts, inference_error)
+    V = ts.genotype_matrix()
+    inferred_ts = tsinfer.infer(
+        V, [site.position for site in ts.sites()], sample_error=0,
+        sequence_length=ts.sequence_length,
+        recombination_rate=simulation_args["recombination_rate"])
+
+    results = {
+        "input_error": input_error,
+        "inference_error": inference_error,
+        "num_sites": ts.num_sites,
+        "source_num_trees": ts.num_trees,
+        "inferred_num_trees": inferred_ts.num_trees,
+        "source_edges": ts.num_edges,
+        "inferred_edges": inferred_ts.num_edges,
+    }
+    results.update(simulation_args)
+
+    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
+    d = breakpoints[1:] - breakpoints[:-1]
+    d /= breakpoints[-1]
+    kc_distance_weighted = np.sum(kc_distance * d)
+    kc_mean = np.mean(kc_distance)
+    results.update({
+        "kc_distance_weighted": kc_distance_weighted,
+        "kc_mean": kc_mean,
+    })
+    return results
+
+
+def run_error_analysis(args):
+    MB = 10**6
+    L = args.length * MB
+
+    work = []
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    inference_errors = [
+        0, args.error_probability / 10, args.error_probability,
+        args.error_probability * 10]
+    for e in inference_errors:
+        for _ in range(args.num_replicates):
+            sim_args = {
+                "sample_size": args.sample_size,
+                "length": L,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": 10**4,
+                "random_seed": rng.randint(1, 2**30)}
+            work.append((sim_args, args.error_probability, e))
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(error_analysis_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
+    progress.close()
+
+    df = pd.DataFrame(results)
+
+    name_format = os.path.join(
+        args.destination_dir,
+        "error_n={}_L={}_mu={}_rho={}_e={}_{{}}.png".format(
+            args.sample_size, args.length, args.mutation_rate,
+            args.recombination_rate, args.error_probability))
+
+    sns.boxplot(x="inference_error", y="kc_mean", data=df)
+    plt.ylabel("KC distance")
+    plt.xlabel("Error parameter")
+    plt.savefig(name_format.format("kc"))
+    plt.clf()
+
+    # plt.plot(dfg.inferred_edges / dfg.source_edges)
+    # plt.axvline(args.error_probability, ls="--")
+    # plt.ylabel("inferred # edges / source # edges")
+    # plt.xlabel("Error parameter")
+    # plt.savefig(name_format.format("edges"))
+    # plt.clf()
+
+    # plt.plot(dfg.kc_mean)
+    # plt.axvline(args.error_probability, ls="--")
+    # plt.ylabel("KC distance")
+    # plt.xlabel("Error parameter")
+    # plt.savefig(name_format.format("kc"))
+    # plt.clf()
+
+
+
 def ancestor_properties_worker(args):
     simulation_args, compute_exact = args
     ts = msprime.simulate(**simulation_args)
@@ -824,9 +1109,7 @@ def running_mean(x, N):
 
 def run_ancestor_comparison(args):
     MB = 10**6
-    rng = random.Random()
-    if args.random_seed is not None:
-        rng.seed(args.random_seed)
+    rng = random.Random(args.random_seed)
     sim_args = {
         "sample_size": args.sample_size,
         "length": args.length * MB,
@@ -837,11 +1120,16 @@ def run_ancestor_comparison(args):
         "random_seed": rng.randint(1, 2**30)}
     ts = msprime.simulate(**sim_args)
 
+    # ts  = tsinfer.insert_errors(ts, args.error_probability, seed=args.random_seed)
+    V = generate_samples(ts, args.error_probability)
+
     sample_data = tsinfer.SampleData.initialise(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
-    for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+    for j, v in enumerate(V):
+        sample_data.add_variant(j, ["0", "1"], v)
+    # for v in ts.variants():
+    #     sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
@@ -863,11 +1151,19 @@ def run_ancestor_comparison(args):
     print(exact_anc)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-        args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}.png".format(
+        args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+        args.error_probability))
     plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
     plt.legend()
     plt.savefig(name_format.format("length-dist"))
+    plt.clf()
+
+    frequency = estimated_anc.time[:][1:]
+    print(estimated_anc_length[frequency==2])
+    plt.hist(estimated_anc_length[frequency==2], bins=50)
+    plt.xlabel("doubleton ancestor length")
+    plt.savefig(name_format.format("doubleton-length-dist"))
     plt.clf()
 
     # Because we have different numbers of ancestors, we need to rescale time
@@ -985,7 +1281,7 @@ def run_perfect_inference(args):
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
             base_ts, num_threads=args.num_threads, progress=args.progress,
-            method="C", extended_checks=args.extended_checks,
+            method=args.method, extended_checks=args.extended_checks,
             time_chunking=not args.no_time_chunking,
             path_compression=args.path_compression)
         print("n={} num_trees={} num_sites={}".format(
@@ -1033,6 +1329,7 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
+    parser.add_argument("--method", default="C")
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
@@ -1077,6 +1374,84 @@ if __name__ == "__main__":
         help="Show a progress monitor.")
 
     parser = subparsers.add_parser(
+        "effective-recombination", aliases=["er"],
+        help="Shows the effective recombination rate against sample size.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_effective_recombination)
+    parser.add_argument("--sample-size", "-n", type=int, default=1000)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
+        "hotspot-analysis", aliases=["ha"],
+        help="Runs plots analysing the effects of recombination hotspots.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_hotspot_analysis)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument(
+        "--num-hotspots", "-N", type=int, default=1,
+        help="Number of hotspots")
+    parser.add_argument(
+        "--hotspot-intensity", "-I", type=float, default=10,
+        help="Intensity of hotspots relative to background.")
+    parser.add_argument(
+        "--hotspot-width", "-W", type=float, default=0.01,
+        help="Width of hotspots as a fraction of total genome length.")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
+        "error-analysis", aliases=["ea"],
+        help="Runs plots analysing the effects of inserted errors.")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_error_analysis)
+    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument(
+        "--error-probability", "-e", type=float, default=0.01,
+        help="Probability of errors.")
+    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--progress", "-p", action="store_true",
+        help="Show a progress monitor.")
+
+    parser = subparsers.add_parser(
         "ancestor-properties", aliases=["ap"],
         help="Runs plots showing the properties of estimated ancestors.")
     cli.add_logging_arguments(parser)
@@ -1115,6 +1490,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mutation-rate", "-u", type=float, default=1e-8,
         help="Mutation rate")
+    parser.add_argument(
+        "--error-probability", "-e", type=float, default=0,
+        help="Error probability")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
 

@@ -1,3 +1,22 @@
+/*
+** Copyright (C) 2018 University of Oxford
+**
+** This file is part of tsinfer.
+**
+** tsinfer is free software: you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation, either version 3 of the License, or
+** (at your option) any later version.
+**
+** tsinfer is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+** GNU General Public License for more details.
+**
+** You should have received a copy of the GNU General Public License
+** along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include "tsinfer.h"
 #include "err.h"
 
@@ -192,16 +211,13 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        double sequence_length, size_t num_sites, double *position,
-        double *recombination_rate, size_t nodes_chunk_size,
-        size_t edges_chunk_size, int flags)
+        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
 {
     int ret = 0;
     memset(self, 0, sizeof(tree_sequence_builder_t));
 
     assert(num_sites < INT32_MAX);
 
-    self->sequence_length = sequence_length;
     self->num_sites = num_sites;
     self->nodes_chunk_size = nodes_chunk_size;
     self->edges_chunk_size = edges_chunk_size;
@@ -213,17 +229,11 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
     self->path = calloc(self->max_nodes, sizeof(edge_t *));
     self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
-    self->sites.position = malloc(self->num_sites * sizeof(double));
-    self->sites.recombination_rate = malloc(self->num_sites * sizeof(double));
     if (self->time == NULL || self->node_flags == NULL || self->path == NULL
-            || self->sites.mutations == NULL || self->sites.position == NULL
-            || self->sites.recombination_rate == NULL)  {
+            || self->sites.mutations == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    memcpy(self->sites.position, position, self->num_sites * sizeof(double));
-    memcpy(self->sites.recombination_rate, recombination_rate,
-            self->num_sites * sizeof(double));
     ret = object_heap_init(&self->avl_node_heap, sizeof(avl_node_t),
             self->edges_chunk_size, NULL);
     if (ret != 0) {
@@ -254,8 +264,6 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->path);
     tsi_safe_free(self->node_flags);
     tsi_safe_free(self->sites.mutations);
-    tsi_safe_free(self->sites.position);
-    tsi_safe_free(self->sites.recombination_rate);
     block_allocator_free(&self->block_allocator);
     object_heap_free(&self->avl_node_heap);
     object_heap_free(&self->edge_heap);

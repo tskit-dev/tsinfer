@@ -1,4 +1,21 @@
-# TODO copyright and license.
+#
+# Copyright (C) 2018 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 TODO module docs.
 """
@@ -6,7 +23,6 @@ TODO module docs.
 import collections
 import queue
 import time
-import datetime
 import pickle
 import logging
 import threading
@@ -15,7 +31,6 @@ import numpy as np
 import tqdm
 import humanize
 import msprime
-# import pyinter
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -25,58 +40,23 @@ import tsinfer.threads as threads
 logger = logging.getLogger(__name__)
 
 UNKNOWN_ALLELE = 255
-PHRED_MAX = 255
 
 
-def proba_to_phred(probability, min_value=1e-10):
-    """
-    Returns the specfied array of probability values in phred
-    encoding, i.e., -10 log(p, 10) rounded to the nearest integer.
-    If the input probability is zero then this is encoded as a phred score of 255.
-    """
-    P = np.array(probability, copy=True)
-    scalar_input = False
-    if P.ndim == 0:
-        P = P[None]  # Makes P 1D
-        scalar_input = True
-    if np.any(P > 1):
-        raise ValueError("Values > 1 not permitted")
-    zeros = np.where(P <= min_value)[0]
-    P[zeros] = 1  # Avoid division by zero warnings.
-    ret = -10 * np.log10(P)
-    ret[zeros] = PHRED_MAX
-    ret = np.round(ret).astype(np.uint8)
-    if scalar_input:
-        return np.squeeze(ret)
-    return ret
-
-
-def phred_to_proba(phred_score):
-    """
-    Returns the specified phred score as a probability, i.e., 10^{-Q / 10}.
-    """
-    Q = np.asarray(phred_score, dtype=np.float64)
-    scalar_input = False
-    if Q.ndim == 0:
-        Q = Q[None]  # Makes Q 1D
-        scalar_input = True
-    zeros = np.where(Q >= PHRED_MAX)[0]
-    ret = 10**(-Q / 10)
-    ret[zeros] = 0
-    if scalar_input:
-        return np.squeeze(ret)
-    return ret
-
-
+# TODO figure out what this function is really for, and how we should
+# parameterise it. At the moment it's just used as a convenience for
+# round trip testing.
 def infer(
-        genotypes, positions, sequence_length, recombination_rate, sample_error=0,
+        genotypes, positions=None, sequence_length=None,
         method="C", num_threads=0, progress=False, path_compression=True):
 
     num_sites, num_samples = genotypes.shape
     sample_data = formats.SampleData.initialise(
         num_samples=num_samples, sequence_length=sequence_length, compressor=None)
     for j in range(num_sites):
-        sample_data.add_variant(positions[j], ["0", "1"], genotypes[j])
+        pos = j
+        if positions is not None:
+            pos = positions[j]
+        sample_data.add_variant(pos, ["0", "1"], genotypes[j])
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
@@ -89,12 +69,11 @@ def infer(
 
     inferred_ts = match_samples(
         sample_data, ancestors_ts, method=method, num_threads=num_threads,
-        genotype_quality=sample_error, path_compression=path_compression)
+        path_compression=path_compression)
     return inferred_ts
 
 
-def build_ancestors(
-        input_data, ancestor_data, progress=False, method="C", num_threads=None):
+def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
 
     num_sites = input_data.num_variant_sites
     num_samples = input_data.num_samples
@@ -116,34 +95,18 @@ def build_ancestors(
 
     descriptors = ancestor_builder.ancestor_descriptors()
     if len(descriptors) > 0:
-        roots = []
-        a = np.zeros(num_sites, dtype=np.uint8)
-        # Generate the ancestors until we can find all roots.
-        # logger.info("Finding roots")
-        # unrooted = pyinter.IntervalSet([pyinter.interval.openclosed(0, num_sites)])
-        # for _, focal_sites in descriptors:
-        #     start, end = ancestor_builder.make_ancestor(focal_sites, a)
-        #     interval = pyinter.IntervalSet([pyinter.interval.openclosed(start, end)])
-        #     for v in unrooted.intersection(interval):
-        #         if v.lower_value != v.upper_value:
-        #             roots.append((v.lower_value, v.upper_value))
-        #     unrooted = unrooted.difference(interval)
-        #     if len(unrooted) == 0:
-        #         break
-
         num_ancestors = len(descriptors)
         logger.info("Starting build for {} ancestors".format(num_ancestors))
-        a[:] = 0
+        a = np.zeros(num_sites, dtype=np.uint8)
         root_time = descriptors[0][0] + 1
         ultimate_ancestor_time = root_time + 1
-        # Add the ultimate ancestor.
+        # Add the ultimate ancestor. This is an awkward hack really; we don't
+        # ever insert this ancestor. The only reason to add it here is that
+        # it makes sure that the ancestor IDs we have in the ancestor file are
+        # the same as in the ancestor tree sequence. This seems worthwhile.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=ultimate_ancestor_time,
             focal_sites=[], haplotype=a)
-        for start, end in roots:
-            ancestor_data.add_ancestor(
-                start=start, end=end, time=root_time,
-                focal_sites=[], haplotype=a)
         # Hack to ensure we always have a root with zeros at every position.
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=root_time,
@@ -153,7 +116,6 @@ def build_ancestors(
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
             s, e = ancestor_builder.make_ancestor(focal_sites, a)
-            # print(freq, focal_sites, s, e)
             assert np.all(a[s: e] != UNKNOWN_ALLELE)
             assert np.all(a[:s] == UNKNOWN_ALLELE)
             assert np.all(a[e:] == UNKNOWN_ALLELE)
@@ -170,8 +132,8 @@ def build_ancestors(
 
 def match_ancestors(
         sample_data, ancestor_data, output_path=None, method="C", progress=False,
-        num_threads=0, path_compression=True, output_interval=None, resume=False,
-        traceback_file_pattern=None, extended_checks=False):
+        num_threads=0, path_compression=True, traceback_file_pattern=None,
+        extended_checks=False):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
@@ -179,8 +141,7 @@ def match_ancestors(
     matcher = AncestorMatcher(
         sample_data, ancestor_data, output_path=output_path, method=method,
         progress=progress, path_compression=path_compression,
-        num_threads=num_threads, output_interval=output_interval,
-        resume=resume, traceback_file_pattern=traceback_file_pattern,
+        num_threads=num_threads, traceback_file_pattern=traceback_file_pattern,
         extended_checks=extended_checks)
     return matcher.match_ancestors()
 
@@ -216,13 +177,12 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
 
 
 def match_samples(
-        sample_data, ancestors_ts, genotype_quality=0, method="C", progress=False,
+        sample_data, ancestors_ts, method="C", progress=False,
         num_threads=0, path_compression=True, simplify=True,
         traceback_file_pattern=None, extended_checks=False,
         stabilise_node_ordering=False):
     manager = SampleMatcher(
-        sample_data, ancestors_ts, error_probability=genotype_quality,
-        path_compression=path_compression,
+        sample_data, ancestors_ts, path_compression=path_compression,
         method=method, progress=progress, num_threads=num_threads,
         traceback_file_pattern=traceback_file_pattern,
         extended_checks=extended_checks)
@@ -238,7 +198,7 @@ class Matcher(object):
     progress_bar_description = None
 
     def __init__(
-            self, sample_data, error_probability=0, num_threads=1, method="C",
+            self, sample_data, num_threads=1, method="C",
             path_compression=True, progress=False, traceback_file_pattern=None,
             extended_checks=False):
         self.sample_data = sample_data
@@ -246,12 +206,10 @@ class Matcher(object):
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = self.sample_data.num_variant_sites
-        self.sequence_length = self.sample_data.sequence_length
-        self.positions = self.sample_data.position[:][self.sample_data.variant_site]
-        self.recombination_rate = self.sample_data.recombination_rate
         self.progress = progress
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
+
         if method == "C":
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
@@ -272,8 +230,7 @@ class Matcher(object):
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            self.sequence_length, self.positions, self.recombination_rate,
-            max_nodes=max_nodes, max_edges=max_edges)
+            num_sites=self.num_sites, max_nodes=max_nodes, max_edges=max_edges)
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 
@@ -283,11 +240,9 @@ class Matcher(object):
         self.results = ResultBuffer()
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
-        logger.info("Setting match error probability to {}".format(error_probability))
         self.matcher = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, error_probability,
-                extended_checks=self.extended_checks)
+                self.tree_sequence_builder, extended_checks=self.extended_checks)
             for _ in range(num_threads)]
         # The progress monitor is allocated later by subclasses.
         self.progress_monitor = None
@@ -378,9 +333,13 @@ class Matcher(object):
 
         left, right, parent, child = tsb.dump_edges()
         if rescale_positions:
-            sequence_length = self.sequence_length
-            position = self.positions
-            x = np.hstack([self.positions, [self.sequence_length]])
+            position = self.sample_data.position[:]
+            sequence_length = self.sample_data.sequence_length
+            if sequence_length is None or sequence_length < position[-1]:
+                sequence_length = position[-1] + 1
+            # Subset down to the variants.
+            position = position[self.sample_data.variant_site[:]]
+            x = np.hstack([position, [sequence_length]])
             x[0] = 0
             left = x[left]
             right = x[right]
@@ -440,22 +399,14 @@ class Matcher(object):
 class AncestorMatcher(Matcher):
     progress_bar_description = "match-ancestors"
 
-    def __init__(
-            self, sample_data, ancestor_data, output_path, output_interval=None,
-            resume=False, **kwargs):
+    def __init__(self, sample_data, ancestor_data, output_path, **kwargs):
         super().__init__(sample_data, **kwargs)
-        self.output_interval = 2**32  # Arbitrary very large number of minutes.
-        if output_interval is not None:
-            self.output_interval = output_interval
         self.output_path = output_path
         self.last_output_time = time.time()
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.time[:]
-        off = self.ancestor_data.focal_sites_offset[:]
-        focal_sites = self.ancestor_data.focal_sites[:]
-        self.focal_sites = [
-            focal_sites[off[j]: off[j + 1]] for j in range(self.num_ancestors)]
+        self.focal_sites = self.ancestor_data.focal_sites[:]
         self.start = self.ancestor_data.start[:]
         self.end = self.ancestor_data.end[:]
 
@@ -470,26 +421,16 @@ class AncestorMatcher(Matcher):
             self.num_epochs = self.epoch_slices.shape[0]
         first_ancestor = 1
         self.start_epoch = 1
-        if resume:
-            assert False, "Resume is current broken. Need to find youngest edge"
-            logger.info("Resuming build from {}".format(self.output_path))
-            ancestor_ts = msprime.load(self.output_path)
-            self.restore_tree_sequence_builder(ancestor_ts)
-            first_ancestor = ancestor_ts.num_samples
-            # TODO This is probably an off-by-one caused elsewhere. Will break
-            # when we fix the time of the last ancestor to be one.
-            self.start_epoch = self.num_epochs - self.epoch[first_ancestor] + 1
-            logger.info("Resuming at epoch {} ancestor {}".format(
-                self.start_epoch, first_ancestor))
-        else:
-            # Add nodes for all the ancestors so that the ancestor IDs are equal
-            # to the node IDs.
-            for ancestor_id in range(self.num_ancestors):
-                self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
+        # Add nodes for all the ancestors so that the ancestor IDs are equal
+        # to the node IDs.
+        for ancestor_id in range(self.num_ancestors):
+            self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
-        # This is an iterator over all ancestral haplotypes.
-        self.haplotypes = self.ancestor_data.haplotypes(start=first_ancestor)
+        self.ancestors = self.ancestor_data.ancestors()
         if self.num_epochs > 0:
+            # Consume the first ancestor.
+            a = next(self.ancestors)
+            assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
             self.allocate_progress_monitor(
                 self.num_ancestors, initial=first_ancestor,
                 postfix=self.__epoch_info_dict(self.start_epoch - 1))
@@ -508,22 +449,23 @@ class AncestorMatcher(Matcher):
         """
         self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
-    def __ancestor_find_path(self, ancestor_id, haplotype, thread_index=0):
+    def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
+        haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
         focal_sites = self.focal_sites[ancestor_id]
         start = self.start[ancestor_id]
         end = self.end[ancestor_id]
         self.results.set_mutations(ancestor_id, focal_sites)
+        assert ancestor.shape[0] == (end - start)
+        haplotype[start: end] = ancestor
         assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
         assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
                 ancestor_id, start, end, focal_sites.shape[0]))
-        assert np.all(haplotype[focal_sites] == 1)
+        haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
-        haplotype[focal_sites] = 0
-
         assert np.all(self.match[thread_index] == haplotype)
 
     def __complete_epoch(self, epoch_index):
@@ -553,22 +495,13 @@ class AncestorMatcher(Matcher):
         self.mean_traceback_size[:] = 0
         self.num_matches[:] = 0
         self.results.clear()
-        # Output the current state if appropriate
-        delta = datetime.timedelta(seconds=time.time() - self.last_output_time)
-        if delta.total_seconds() >= self.output_interval * 60:
-            # TODO We need some way of indicating that the output is incomplete.
-            # Probably simplest is to read it back into h5py and stick in an
-            # attribute just saying it's a partial read.
-            self.store_output()
-            self.last_output_time = time.time()
-            logger.info("Saved checkpoint {}".format(self.output_path))
 
     def __match_ancestors_single_threaded(self):
         for j in range(self.start_epoch, self.num_epochs):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
-                a = next(self.haplotypes)
+                a = next(self.ancestors)
                 self.__ancestor_find_path(ancestor_id, a)
             self.__complete_epoch(j)
 
@@ -601,7 +534,7 @@ class AncestorMatcher(Matcher):
             self.__update_progress_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
-                a = next(self.haplotypes)
+                a = next(self.ancestors)
                 match_queue.put((ancestor_id, a))
             # Block until all matches have completed.
             match_queue.join()

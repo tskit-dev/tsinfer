@@ -39,9 +39,7 @@ class TestRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data tsinfer.
     """
-    def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, recombination_rate=1e-9,
-            sample_error=0):
+    def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         # import daiquiri
@@ -49,40 +47,33 @@ class TestRoundTrip(unittest.TestCase):
         for method in ["python", "C"]:
             ts = tsinfer.infer(
                 genotypes=genotypes, positions=positions,
-                sequence_length=sequence_length, recombination_rate=recombination_rate,
-                sample_error=sample_error, method=method)
+                sequence_length=sequence_length, method=method)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
                 self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
 
-    def verify_round_trip(self, ts, rho):
+    def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
-        self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, 1e-9)
+        self.verify_data_round_trip(ts.genotype_matrix(), positions, ts.sequence_length)
 
     def test_simple_example(self):
         rho = 2
         ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=rho, random_seed=1)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, rho)
+        self.verify_round_trip(ts)
 
     def test_single_locus(self):
         ts = msprime.simulate(5, mutation_rate=1, recombination_rate=0, random_seed=2)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, 1e-9)
+        self.verify_round_trip(ts)
 
     def test_single_locus_two_samples(self):
         ts = msprime.simulate(2, mutation_rate=1, recombination_rate=0, random_seed=3)
         self.assertGreater(ts.num_sites, 0)
-        self.verify_round_trip(ts, 1e-9)
-
-    def test_random_data_high_recombination(self):
-        G, positions = get_random_data_example(20, 30)
-        # Force recombination to do all the matching.
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_round_trip(ts)
 
     def test_random_data_invariant_sites_ancestral_state(self):
         G, positions = get_random_data_example(24, 35)
@@ -91,8 +82,7 @@ class TestRoundTrip(unittest.TestCase):
         G[15, :] = 0
         G[20, :] = 0
         G[22, :] = 0
-        # Force recombination to do all the matching.
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_data_round_trip(G, positions)
 
     @unittest.skip("invariant site state")
     def test_random_data_invariant_sites(self):
@@ -102,15 +92,18 @@ class TestRoundTrip(unittest.TestCase):
         G[15, :] = 0
         G[20, :] = 1
         G[22, :] = 0
-        self.verify_data_round_trip(G, positions, recombination_rate=1)
+        self.verify_data_round_trip(G, positions)
 
-    def test_random_data_no_recombination(self):
+    def test_random_data_large_example(self):
+        G, positions = get_random_data_example(20, 30)
+        self.verify_data_round_trip(G, positions)
+
+    def test_random_data_small_examples(self):
         np.random.seed(4)
         num_random_tests = 10
         for _ in range(num_random_tests):
             S, positions = get_random_data_example(5, 10)
-            self.verify_data_round_trip(
-                S, positions, recombination_rate=1e-10, sample_error=0.1)
+            self.verify_data_round_trip(S, positions)
 
 
 class TestMutationProperties(unittest.TestCase):
@@ -124,7 +117,7 @@ class TestMutationProperties(unittest.TestCase):
         for method in ["python", "c"]:
             ts = tsinfer.infer(
                 genotypes=G, positions=positions, sequence_length=num_sites,
-                recombination_rate=0.5, sample_error=0, method=method)
+                method=method)
             self.assertEqual(ts.num_sites, num_sites)
             self.assertEqual(ts.num_mutations, num_sites)
             for site in ts.sites():
@@ -133,31 +126,6 @@ class TestMutationProperties(unittest.TestCase):
                 mutation = site.mutations[0]
                 self.assertEqual(mutation.derived_state, "1")
                 self.assertEqual(mutation.parent, -1)
-
-    def test_error(self):
-        num_sites = 50
-        np.random.seed(100)
-        S, positions = get_random_data_example(15, num_sites)
-        for method in ["python", "c"]:
-            ts = tsinfer.infer(
-                genotypes=S, positions=positions, sequence_length=num_sites,
-                recombination_rate=1e-9, sample_error=0.8, method=method)
-            self.assertEqual(ts.num_sites, num_sites)
-            self.assertGreater(ts.num_mutations, num_sites)
-            back_mutation = False
-            recurrent_mutation = False
-            for site in ts.sites():
-                self.assertEqual(site.ancestral_state, "0")
-                for mutation in site.mutations:
-                    if mutation.derived_state == "0":
-                        back_mutation = True
-                        self.assertEqual(mutation.parent, site.mutations[0].id)
-                    else:
-                        self.assertEqual(mutation.parent, -1)
-                        if mutation != site.mutations[0]:
-                            recurrent_mutation = True
-            self.assertTrue(back_mutation)
-            self.assertTrue(recurrent_mutation)
 
 
 class TestThreads(TsinferTestCase):
@@ -169,57 +137,11 @@ class TestThreads(TsinferTestCase):
         positions = [site.position for site in ts.sites()]
         ts1 = tsinfer.infer(
             genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            recombination_rate=1e-9, num_threads=1)
+            num_threads=1)
         ts2 = tsinfer.infer(
             genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            recombination_rate=1e-9, num_threads=5)
+            num_threads=5)
         self.assertTreeSequencesEqual(ts1, ts2)
-
-
-class TestPhredEncoding(unittest.TestCase):
-    """
-    Test cases for Phred encoding.
-    """
-    def test_zero_proba(self):
-        q = tsinfer.proba_to_phred(0)
-        self.assertEqual(q, tsinfer.PHRED_MAX)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 0)
-
-    def test_tiny_proba(self):
-        q = tsinfer.proba_to_phred(1e-200)
-        self.assertEqual(q, tsinfer.PHRED_MAX)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 0)
-
-    def test_one_proba(self):
-        q = tsinfer.proba_to_phred(1)
-        self.assertEqual(q, 0)
-        p = tsinfer.phred_to_proba(q)
-        self.assertEqual(p, 1)
-
-    def test_exact_values(self):
-        for k in range(1, 20):
-            p = 10**(-k)
-            q = tsinfer.proba_to_phred(p, min_value=1e-21)
-            self.assertEqual(q, 10 * k)
-            self.assertEqual(tsinfer.phred_to_proba(q), p)
-
-    def test_numpy_array(self):
-        p = [0.1, 0.01, 0.001, 0.0001]
-        q = tsinfer.proba_to_phred(p)
-        self.assertTrue(np.array_equal(q, np.array([10, 20, 30, 40], dtype=np.uint8)))
-        self.assertTrue(np.array_equal(p, tsinfer.phred_to_proba(q)))
-
-    def test_non_base_10(self):
-        for p in [0.125, 0.333, 0.99]:
-            q = tsinfer.proba_to_phred(p)
-            self.assertAlmostEqual(p, float(tsinfer.phred_to_proba(q)), 1)
-
-    def test_p_greater_than_one(self):
-        for p in [1.0001, 10000, 1e200]:
-            self.assertRaises(ValueError, tsinfer.proba_to_phred, p)
-            self.assertRaises(ValueError, tsinfer.proba_to_phred, [0.1, p])
 
 
 class TestAncestorGeneratorsEquivalant(unittest.TestCase):
@@ -299,13 +221,18 @@ class TestGeneratedAncestors(unittest.TestCase):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
-        A = ancestor_data.genotypes[:]
-        # Need to set all missing values to 0 for matching.
-        A[A == tsinfer.UNKNOWN_ALLELE] = 0
-
+        A = np.zeros(
+            (ancestor_data.num_sites, ancestor_data.num_ancestors), dtype=np.uint8)
+        start = ancestor_data.start[:]
+        end = ancestor_data.end[:]
+        ancestors = ancestor_data.ancestor[:]
+        for j in range(ancestor_data.num_ancestors):
+            A[start[j]: end[j], j] = ancestors[j]
         for method in ["P", "C"]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data, ancestor_data, method=method)
+            self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
+            self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
             self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
                 sample_data, ancestors_ts, method=method)
@@ -351,40 +278,33 @@ class TestBuildAncestors(unittest.TestCase):
         return sample_data, ancestor_data
 
     def verify_ancestors(self, sample_data, ancestor_data):
-        ancestor_haplotypes = ancestor_data.genotypes[:].T
+        ancestors = ancestor_data.ancestor[:]
         sample_genotypes = sample_data.genotypes[:]
         start = ancestor_data.start[:]
         end = ancestor_data.end[:]
         time = ancestor_data.time[:]
-        offset = ancestor_data.focal_sites_offset[:]
-        flattened = ancestor_data.focal_sites[:]
-        focal_sites = [
-            flattened[offset[j]: offset[j + 1]]
-            for j in range(ancestor_data.num_ancestors)]
+        focal_sites = ancestor_data.focal_sites[:]
 
-        self.assertEqual(ancestor_data.num_ancestors, ancestor_haplotypes.shape[0])
-        self.assertEqual(ancestor_data.num_sites, ancestor_haplotypes.shape[1])
+        self.assertEqual(ancestor_data.num_ancestors, ancestors.shape[0])
         self.assertEqual(ancestor_data.num_sites, sample_data.num_variant_sites)
         self.assertEqual(ancestor_data.num_ancestors, time.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, start.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, end.shape[0])
-        self.assertEqual(
-            ancestor_data.focal_sites_offset.shape, (ancestor_data.num_ancestors + 1,))
-        self.assertEqual(
-            ancestor_data.focal_sites.shape, (sample_data.num_variant_sites,))
+        self.assertEqual(ancestor_data.num_ancestors, focal_sites.shape[0])
         # The first ancestor must be all zeros.
         self.assertEqual(start[0], 0)
         self.assertEqual(end[0], ancestor_data.num_sites)
         self.assertEqual(time[0], 2 + max(
             np.sum(genotypes) for genotypes in sample_genotypes))
         self.assertEqual(list(focal_sites[0]), [])
-        self.assertTrue(np.all(ancestor_haplotypes[0] == 0))
+        self.assertTrue(np.all(ancestors[0] == 0))
 
         used_sites = []
         for j in range(ancestor_data.num_ancestors):
-            h = ancestor_haplotypes[j]
-            self.assertTrue(np.all(h[:start[j]] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(h[end[j]:] == tsinfer.UNKNOWN_ALLELE))
+            a = ancestors[j]
+            self.assertEqual(a.shape[0], end[j] - start[j])
+            h = np.zeros(ancestor_data.num_sites, dtype=np.uint8)
+            h[start[j]: end[j]] = a
             self.assertTrue(np.all(h[start[j]:end[j]] != tsinfer.UNKNOWN_ALLELE))
             self.assertTrue(np.all(h[focal_sites[j]] == 1))
             used_sites.extend(focal_sites[j])
@@ -410,9 +330,10 @@ class TestBuildAncestors(unittest.TestCase):
         self.assertGreater(ts.num_sites, 10)
         sample_data, ancestor_data = self.get_simulated_example(ts)
         self.verify_ancestors(sample_data, ancestor_data)
-        ancestor_genotypes = ancestor_data.genotypes[:]
-        # Make sure there is at least one UNKNOWN_ALLELE value here.
-        self.assertIn(tsinfer.UNKNOWN_ALLELE, ancestor_genotypes)
+        # Make sure we have at least one partial ancestor.
+        start = ancestor_data.start[:]
+        end = ancestor_data.end[:]
+        self.assertLess(np.min(end - start), ancestor_data.num_sites)
 
     def test_random_data(self):
         n = 20

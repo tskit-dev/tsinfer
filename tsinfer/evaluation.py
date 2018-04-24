@@ -1,15 +1,78 @@
+#
+# Copyright (C) 2018 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 Tools for evaluating the algorithm.
 """
 import collections
 import itertools
 import bisect
+import random
 
 import numpy as np
 import msprime
 
 import tsinfer.inference as inference
 import tsinfer.formats as formats
+
+
+def insert_errors(ts, probability, seed=None):
+    """
+    Each site has a probability p of generating an error. Errors
+    are imposed by choosing a sample and inverting its state with
+    a back/recurrent mutation as necessary. Errors resulting in
+    fixation of either allele are rejected.
+    """
+    rng = random.Random(seed)
+    mutations = msprime.MutationTable()
+    samples = ts.samples()
+    for tree in ts.trees():
+        for site in tree.sites():
+            assert len(site.mutations) == 1
+            mutation_node = site.mutations[0].node
+            mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
+            for sample in samples:
+                # We disallow any fixations. There are two possibilities:
+                # (1) We have a singleton and the sample
+                # we choose is the mutation node; (2) we have a (n-1)-ton
+                # and the sample we choose is on the other root branch.
+                if mutation_node == sample:
+                    continue
+                if {mutation_node, sample} == set(tree.children(tree.root)):
+                    continue
+                # If the input probability is very high we can still get fixations
+                # though by placing a mutation over every sample.
+                if rng.random() < probability:
+                    # If sample is a descendent of the mutation node we
+                    # change the state to 0, otherwise change state to 1.
+                    u = sample
+                    while u != mutation_node and u != msprime.NULL_NODE:
+                        u = tree.parent(u)
+                    derived_state = str(int(u == msprime.NULL_NODE))
+                    parent = msprime.NULL_MUTATION
+                    if u == msprime.NULL_NODE:
+                        parent = len(mutations) - 1
+                    mutations.add_row(
+                        site=site.id, node=sample, parent=parent, derived_state=derived_state)
+
+    tables = ts.dump_tables()
+    tables.mutations = mutations
+    return msprime.load_tables(**tables.asdict())
 
 
 def kc_distance(tree1, tree2):
@@ -90,16 +153,23 @@ def strip_singletons(ts):
     """
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
+    dropped_mutations = 0
     for variant in ts.variants():
         if np.sum(variant.genotypes) > 1:
             site_id = sites.add_row(
                 position=variant.site.position,
                 ancestral_state=variant.site.ancestral_state)
-            for mutation in variant.site.mutations:
-                assert mutation.parent == -1  # No back mutations
+            assert len(variant.site.mutations) >= 1
+            mutation = variant.site.mutations[0]
+            parent_id = mutations.add_row(
+                site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+            for error in variant.site.mutations[1:]:
+                parent = -1
+                if error.parent != -1:
+                    parent = parent_id
                 mutations.add_row(
-                    site=site_id, node=mutation.node,
-                    derived_state=mutation.derived_state)
+                    site=site_id, node=error.node, derived_state=error.derived_state,
+                    parent=parent)
     tables = ts.dump_tables()
     return msprime.load_tables(
         nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)

@@ -1,3 +1,22 @@
+/*
+** Copyright (C) 2018 University of Oxford
+**
+** This file is part of tsinfer.
+**
+** tsinfer is free software: you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation, either version 3 of the License, or
+** (at your option) any later version.
+**
+** tsinfer is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+** GNU General Public License for more details.
+**
+** You should have received a copy of the GNU General Public License
+** along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,8 +26,15 @@
 #include "object_heap.h"
 #include "avl.h"
 
+/* We have a 3 valued number system for match likelihoods, plus two
+ * values to a compressed path (NULL_LIKELIHOOD) and to mark a node
+ * that isn't currently in the tree */
+#define MISMATCH_LIKELIHOOD (0)
+#define RECOMB_LIKELIHOOD (1)
+#define MATCH_LIKELIHOOD (2)
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
+
 #define NULL_NODE (-1)
 #define CACHE_UNSET (-1)
 
@@ -104,11 +130,8 @@ typedef struct {
 
 typedef struct {
     int flags;
-    double sequence_length;
     size_t num_sites;
     struct {
-        double *position;
-        double *recombination_rate;
         mutation_list_node_t **mutations;
     } sites;
     /* TODO add nodes struct */
@@ -131,8 +154,6 @@ typedef struct {
 typedef struct {
     int flags;
     tree_sequence_builder_t *tree_sequence_builder;
-    double *recombination_rate;
-    double observation_error;
     size_t num_nodes;
     size_t num_sites;
     size_t max_nodes;
@@ -142,8 +163,8 @@ typedef struct {
     node_id_t *right_child;
     node_id_t *left_sib;
     node_id_t *right_sib;
-    double *likelihood;
-    double *likelihood_cache;
+    int8_t *likelihood;
+    int8_t *likelihood_cache;
     int8_t *path_cache;
     int num_likelihood_nodes;
     /* At each site, record a node with the maximum likelihood. */
@@ -155,9 +176,6 @@ typedef struct {
     node_state_list_t *traceback;
     block_allocator_t traceback_allocator;
     size_t total_traceback_size;
-    /* Some better nameing is needed here. The 'output' struct here
-     * is really the 'path', and mismatches are also output. Perhaps
-     * we should put both into the output struct? */
     struct {
         site_id_t *left;
         site_id_t *right;
@@ -165,9 +183,6 @@ typedef struct {
         size_t size;
         size_t max_size;
     } output;
-    size_t num_mismatches;
-    size_t max_num_mismatches;
-    site_id_t *mismatches;
 } ancestor_matcher_t;
 
 int ancestor_builder_alloc(ancestor_builder_t *self,
@@ -182,8 +197,7 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
 int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder,
-        double observation_error, int flags);
+        tree_sequence_builder_t *tree_sequence_builder, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self,
         site_id_t start, site_id_t end, allele_t *haplotype,
@@ -194,9 +208,7 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        double sequence_length, size_t num_sites, double *position,
-        double *recombination_rate, size_t nodes_chunk_size,
-        size_t edges_chunk_size, int flags);
+        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,

@@ -1,4 +1,21 @@
-# TODO copyright headers.
+#
+# Copyright (C) 2018 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 Command line interfaces to tsinfer.
 """
@@ -56,9 +73,7 @@ def run_infer(args):
     sample_data = tsinfer.SampleData.load(args.input)
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise()
 
     ancestors_ts = tsinfer.match_ancestors(
@@ -79,15 +94,11 @@ def run_build_ancestors(args):
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     if os.path.exists(ancestors_path):
         # TODO add error and only do this on --force
-        # shutil.rmtree(ancestors_path)
         os.unlink(ancestors_path)
-
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, filename=ancestors_path)
-    tsinfer.build_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+        sample_data, filename=ancestors_path, num_flush_threads=args.num_threads)
+    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise()
 
 
@@ -101,8 +112,7 @@ def run_match_ancestors(args):
     tsinfer.match_ancestors(
         sample_data, ancestor_data, output_path=ancestors_ts,
         num_threads=args.num_threads, progress=args.progress,
-        path_compression=not args.no_path_compression,
-        output_interval=args.output_interval, resume=args.resume)
+        path_compression=not args.no_path_compression)
 
 
 def run_match_samples(args):
@@ -115,8 +125,8 @@ def run_match_samples(args):
     ancestors_ts = msprime.load(ancestors_ts)
     ts = tsinfer.match_samples(
         sample_data, ancestors_ts, num_threads=args.num_threads,
-        genotype_quality=args.genotype_quality, progress=args.progress,
-        path_compression=not args.no_path_compression)
+        path_compression=not args.no_path_compression,
+        progress=args.progress)
     logger.info("Writing output tree sequence to {}".format(output_ts))
     ts.dump(output_ts)
 
@@ -201,14 +211,6 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
-def add_output_interval_argument(parser):
-    parser.add_argument(
-        "--output-interval", "-I", type=float, default=None,
-        help=(
-            "The interval in minutes between output auto-saves. By default the "
-            "output is only saved at the end of the run"))
-
-
 def add_compression_argument(parser):
     parser.add_argument(
         "--compression", "-z", choices=["gzip", "lzf", "none"], default="gzip",
@@ -250,13 +252,9 @@ def get_tsinfer_parser():
     add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_ts_argument(parser)
-    add_output_interval_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_path_compression_argument(parser)
-    parser.add_argument(
-        "--resume", "-r", default=False, action="store_true",
-        help="Resume an existing build")
     parser.set_defaults(runner=run_match_ancestors)
 
     parser = subparsers.add_parser(
@@ -269,12 +267,6 @@ def get_tsinfer_parser():
     add_logging_arguments(parser)
     add_ancestors_ts_argument(parser)
     add_path_compression_argument(parser)
-    parser.add_argument(
-        "--genotype-quality", "-Q", type=float, default=0,
-        help=(
-            "Sets the global genotype quality value to the specified value. This "
-            "is the probablity that an observed genotype is incorrect. Note that "
-            "this is NOT phred scaled. Default=0."))
     add_output_ts_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)

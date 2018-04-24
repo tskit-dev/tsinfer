@@ -1,3 +1,22 @@
+/*
+** Copyright (C) 2018 University of Oxford
+**
+** This file is part of tsinfer.
+**
+** tsinfer is free software: you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation, either version 3 of the License, or
+** (at your option) any later version.
+**
+** tsinfer is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+** GNU General Public License for more details.
+**
+** You should have received a copy of the GNU General Public License
+** along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #define _GNU_SOURCE
 
 #include <assert.h>
@@ -353,12 +372,11 @@ run_generate(const char *input_file, int verbose)
     exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;
-    ret = tree_sequence_builder_alloc(&ts_builder, positions[num_sites - 1] + 1,
-            num_sites, positions, recombination_rate, 10, 10, flags);
+    ret = tree_sequence_builder_alloc(&ts_builder, num_sites, 10, 10, flags);
     if (ret != 0) {
         fatal_error("alloc error");
     }
-    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0.0, 0);
+    ret = ancestor_matcher_alloc(&matcher, &ts_builder, 0);
     if (ret != 0) {
         fatal_error("alloc error");
     }
@@ -508,7 +526,6 @@ run_generate(const char *input_file, int verbose)
     total_edges = 0;
     total_mutations = 0;
     /* Copy samples */
-    matcher.observation_error = 0.001;
     for (j = 0; j < num_samples; j++) {
         sample = haplotypes + j * num_sites;
         child = ts_builder.num_nodes + j;
@@ -640,7 +657,6 @@ main(int argc, char** argv)
         }
     }
     arg_freetable(argtable1, sizeof(argtable1) / sizeof(argtable1[0]));
-
 
     return exitcode;
 }

@@ -1,4 +1,21 @@
-# TODO copyright and license.
+#
+# Copyright (C) 2018 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 Manage tsinfer's various HDF5 file formats.
 """
@@ -6,10 +23,14 @@ import uuid
 import logging
 import time
 import queue
-import dbm
+import itertools
+import os
+import os.path
+import threading
 
 import numpy as np
 import zarr
+import lmdb
 import humanize
 import numcodecs.blosc as blosc
 import msprime
@@ -140,18 +161,6 @@ class BufferedSite(object):
         self.alleles = alleles
 
 
-class BufferedAncestor(object):
-    """
-    Simple container to hold ancestor information while being buffered during
-    addition.
-    """
-    def __init__(self, start, end, time_, focal_sites):
-        self.start = start
-        self.end = end
-        self.time = time_
-        self.focal_sites = focal_sites
-
-
 def zarr_summary(array):
     """
     Returns a string with a brief summary of the specified zarr array.
@@ -170,12 +179,25 @@ class DataContainer(object):
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
+    def _open_readonly(self, filename):
+        # We set the mapsize here because LMBD will map 1TB of virtual memory if
+        # we don't, making it hard to figure out how much memory we're actually
+        # using.
+        map_size = None
+        try:
+            map_size = os.path.getsize(filename)
+        except OSError:
+            # Ignore any exceptions here and let LMDB handle them.
+            pass
+        self.store = zarr.LMDBStore(
+            filename, map_size=map_size, readonly=True, subdir=False, lock=False)
+        self.data = zarr.open_group(store=self.store)
+        self.check_format()
+
     @classmethod
     def load(cls, filename):
         self = cls()
-        self.store = zarr.DirectoryStore(filename)
-        self.data = zarr.open_group(store=self.store)
-        self.check_format()
+        self._open_readonly(filename)
         return self
 
     def check_format(self):
@@ -201,7 +223,7 @@ class DataContainer(object):
         self.store = None
         self.data = zarr.group()
         if filename is not None:
-            self.store = zarr.DirectoryStore(filename)
+            self.store = zarr.LMDBStore(filename, subdir=False)
             self.data = zarr.open_group(store=self.store)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
@@ -213,6 +235,27 @@ class DataContainer(object):
         is present.
         """
         self.data.attrs[FINALISED_KEY] = True
+        if self.store is not None:
+            filename = self.store.path
+            self.store.close()
+            logger.debug("Fixing up LMDB file size")
+            with lmdb.open(
+                    self.store.path, subdir=False, lock=False, writemap=True) as db:
+                # LMDB maps a very large amount of space by default. While this
+                # doesn't do any harm, it's annoying because we can't use ls to
+                # see the file sizes and the amount of RAM we're mapping can
+                # look like it's very large. So, we fix this up so that the
+                # map size is equal to the number of pages in use.
+                num_pages = db.info()["last_pgno"]
+                page_size = db.stat()["psize"]
+                db.set_mapsize(num_pages * page_size)
+            # Remove the lock file as we don't need it after this point.
+            lockfile = filename + "-lock"
+            if os.path.exists(lockfile):
+                os.unlink(lockfile)
+            # Reopen the data in read-only mode.
+            self.data = None
+            self._open_readonly(filename)
 
     @property
     def format_name(self):
@@ -265,7 +308,7 @@ class SampleData(DataContainer):
     Class representing the data stored about our input samples.
     """
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (0, 2)
+    FORMAT_VERSION = (0, 3)
 
     @property
     def num_samples(self):
@@ -332,10 +375,6 @@ class SampleData(DataContainer):
         return self.data["variants/genotypes"]
 
     @property
-    def recombination_rate(self):
-        return self.data["variants/recombination_rate"]
-
-    @property
     def variant_site(self):
         return self.data["variants/site"]
 
@@ -362,7 +401,6 @@ class SampleData(DataContainer):
             ("derived_state", zarr_summary(self.derived_state)),
             ("derived_state_offset", zarr_summary(self.derived_state_offset)),
             ("variant_site", zarr_summary(self.variant_site)),
-            ("recombination_rate", zarr_summary(self.recombination_rate)),
             ("singleton_site", zarr_summary(self.singleton_site)),
             ("invariant_site", zarr_summary(self.invariant_site)),
             ("singleton_sample", zarr_summary(self.singleton_sample)),
@@ -396,7 +434,6 @@ class SampleData(DataContainer):
             np.array_equal(self.invariant_site[:], other.invariant_site[:]) and
             np.array_equal(self.singleton_site[:], other.singleton_site[:]) and
             np.array_equal(self.singleton_sample[:], other.singleton_sample[:]) and
-            np.array_equal(self.recombination_rate[:], other.recombination_rate[:]) and
             np.array_equal(self.genotypes[:], other.genotypes[:]))
 
     ####################################
@@ -405,7 +442,7 @@ class SampleData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, num_samples=None, sequence_length=None, recombination_map=None,
+            cls, num_samples=None, sequence_length=0,
             filename=None, chunk_size=8192, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
@@ -416,9 +453,6 @@ class SampleData(DataContainer):
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["num_samples"] = int(num_samples)
 
-        # TODO recombination map should be either a string or an
-        # instance of msprime.RecombinationMap or None
-        self.recombination_map = recombination_map
         self.site_buffer = []
         self.genotypes_buffer = np.empty((chunk_size, num_samples), dtype=np.uint8)
         self.genotypes_buffer_offset = 0
@@ -441,8 +475,10 @@ class SampleData(DataContainer):
             raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
             raise ValueError("Must have num_samples genotypes.")
-        if position < 0 or position >= self.sequence_length:
-            raise ValueError("position must be between 0 and sequence_length")
+        if position < 0:
+            raise ValueError("position must be > 0")
+        if self.sequence_length > 0 and position >= self.sequence_length:
+            raise ValueError("If sequence_length is set, sites positions must be less.")
 
         frequency = np.sum(genotypes)
         if frequency == 1:
@@ -525,16 +561,10 @@ class SampleData(DataContainer):
         self.data.attrs["num_singleton_sites"] = num_singletons
         self.data.attrs["num_invariant_sites"] = num_invariants
 
-        # TODO work out the recombination rates according to a map.
-        recombination_rate = np.ones(num_variant_sites)
-
         chunks = max(num_variant_sites, 1),
         self.variants_group.create_dataset(
             "site", shape=(num_variant_sites,), chunks=chunks,
             dtype=np.int32, data=variant_sites, compressor=self.compressor)
-        self.variants_group.create_dataset(
-            "recombination_rate", shape=(num_variant_sites,), chunks=chunks,
-            data=recombination_rate, compressor=self.compressor)
 
         self.genotypes.append(self.genotypes_buffer[:self.genotypes_buffer_offset])
         self.site_buffer = None
@@ -565,13 +595,10 @@ class AncestorData(DataContainer):
 
     def __str__(self):
         path = None
-        store = None
         if self.store is not None:
             path = self.store.path
-            store = dbm.whichdb(path)
         values = [
             ("path", path),
-            ("store", store),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("uuid", self.uuid),
@@ -582,8 +609,7 @@ class AncestorData(DataContainer):
             ("end", zarr_summary(self.end)),
             ("time", zarr_summary(self.time)),
             ("focal_sites", zarr_summary(self.focal_sites)),
-            ("focal_sites_offset", zarr_summary(self.focal_sites_offset)),
-            ("genotypes", zarr_summary(self.genotypes))]
+            ("ancestor", zarr_summary(self.ancestor))]
         return self._format_str(values)
 
     def data_equal(self, other):
@@ -600,10 +626,11 @@ class AncestorData(DataContainer):
             self.num_sites == other.num_sites and
             np.array_equal(self.start[:], other.start[:]) and
             np.array_equal(self.end[:], other.end[:]) and
-            np.array_equal(self.focal_sites[:], other.focal_sites[:]) and
-            np.array_equal(
-                self.focal_sites_offset[:], other.focal_sites_offset[:]) and
-            np.array_equal(self.genotypes[:], other.genotypes[:]))
+            # Need to take a different approach with np object arrays.
+            all(itertools.starmap(np.array_equal, zip(
+                self.focal_sites[:], other.focal_sites[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.ancestor[:], other.ancestor[:]))))
 
     @property
     def sample_data_uuid(self):
@@ -619,27 +646,23 @@ class AncestorData(DataContainer):
 
     @property
     def start(self):
-        return self.data["ancestors/start"]
+        return self.data["start"]
 
     @property
     def end(self):
-        return self.data["ancestors/end"]
+        return self.data["end"]
 
     @property
     def time(self):
-        return self.data["ancestors/time"]
+        return self.data["time"]
 
     @property
     def focal_sites(self):
-        return self.data["ancestors/focal_sites"]
+        return self.data["focal_sites"]
 
     @property
-    def focal_sites_offset(self):
-        return self.data["ancestors/focal_sites_offset"]
-
-    @property
-    def genotypes(self):
-        return self.data["ancestors/genotypes"]
+    def ancestor(self):
+        return self.data["ancestor"]
 
     ####################################
     # Write mode
@@ -647,12 +670,14 @@ class AncestorData(DataContainer):
 
     @classmethod
     def initialise(
-            cls, input_data, filename=None, chunk_size=8192,
-            compressor=DEFAULT_COMPRESSOR):
+            cls, input_data, filename=None, chunk_size=1024,
+            num_flush_threads=1, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_ancestor method.
         """
+        if num_flush_threads <= 0:
+            num_flush_threads = 1
         self = cls()
         super(cls, self)._initialise(filename)
         self.input_data = input_data
@@ -661,18 +686,109 @@ class AncestorData(DataContainer):
 
         num_sites = self.input_data.num_variant_sites
         self.data.attrs["num_sites"] = num_sites
-        self.ancestor_buffer = []
-        self.genotypes_buffer = np.empty((num_sites, chunk_size), dtype=np.uint8)
-        self.genotypes_buffer[:] = UNKNOWN_ALLELE
-        self.genotypes_buffer_offset = 0
 
-        self.ancestors_group = self.data.create_group("ancestors")
-        x_chunk = max(1, min(chunk_size, num_sites))
-        y_chunk = chunk_size
-        self.ancestors_group.create_dataset(
-            "genotypes", shape=(num_sites, 0), chunks=(x_chunk, y_chunk),
-            dtype=np.uint8, compressor=self.compressor)
+        chunks = max(1, chunk_size),
+        self.data.create_dataset(
+            "start", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "end", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "time", shape=(0,), chunks=chunks, compressor=self.compressor,
+            dtype=np.uint32)
+        self.data.create_dataset(
+            "focal_sites", shape=(0,), chunks=chunks,
+            dtype="array:i4", compressor=self.compressor)
+        self.data.create_dataset(
+            "ancestor", shape=(0,), chunks=chunks,
+            dtype="array:u1", compressor=self.compressor)
+        self.chunk_size = chunk_size
+        # Allocate the buffers. We allocate n buffers and n flush threads.
+        # Buffer indexes that have been flushed are placed on the write_queue,
+        # and buffers that are waiting to be flushed are on the flush_queue.
+        # In the worst case we need n threads flushing n buffers while the main
+        # thread waits for a free buffer to write to.
+        self.num_buffers = num_flush_threads
+        self.num_threads = self.num_buffers
+        self.buffered_start = [
+            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
+        self.buffered_end = [
+            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
+        self.buffered_time = [
+            np.empty(chunk_size, dtype=np.uint32) for _ in range(self.num_buffers)]
+        # Note: it's essential that we use np.object here as we'll get obscure
+        # errors later when trying to add rectangular arrays to the main
+        # arrays otherwise.
+        self.buffered_focal_sites = [
+            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
+        self.buffered_ancestor = [
+            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
+        # The current write buffer.
+        self.write_buffer = 0
+        # The total number of ancestors added so far.
+        self.total_ancestors = 0
+        self.last_flushed = 0
+        # The number of records currently in the write buffer.
+        self.num_buffered = 0
+        self.write_queue = queue.Queue()
+        self.flush_queue = queue.Queue()
+        for j in range(1, self.num_buffers):
+            self.write_queue.put(j)
+        # This lock must be held when resizing the underlying arrays.
+        self.resize_lock = threading.Lock()
+        # Make the flush threads.
+        self.flush_threads = [
+            threads.queue_consumer_thread(
+                self.flush_worker, self.flush_queue, name="flush-worker-{}".format(j))
+            for j in range(self.num_threads)]
+        logger.info("Started {} flush worker threads".format(self.num_threads))
         return self
+
+    def flush_worker(self, thread_index):
+        """
+        Thread worker responsible for flushing buffers. Read a buffer index and
+        size from the flush_queue and write it to disk. Push the index back on
+        to the write queue to allow it be reused.
+        """
+        while True:
+            work = self.flush_queue.get()
+            if work is None:
+                break
+            flush_buffer, start_offset, num_buffered = work
+            logger.debug("Flushing buffer {}: start={} n={}".format(
+                flush_buffer, start_offset, num_buffered))
+            n = start_offset
+            m = start_offset + num_buffered
+            with self.resize_lock:
+                if m > self.start.shape[0]:
+                    self.start.resize(m)
+                    self.end.resize(m)
+                    self.time.resize(m)
+                    self.focal_sites.resize(m)
+                    self.ancestor.resize(m)
+            self.start[n: m] = self.buffered_start[flush_buffer][:num_buffered]
+            self.end[n: m] = self.buffered_end[flush_buffer][:num_buffered]
+            self.time[n: m] = self.buffered_time[flush_buffer][:num_buffered]
+            self.focal_sites[n: m] = self.buffered_focal_sites[
+                    flush_buffer][:num_buffered]
+            self.ancestor[n: m] = self.buffered_ancestor[flush_buffer][:num_buffered]
+            logger.debug("Done flushing {}".format(flush_buffer))
+            self.flush_queue.task_done()
+            self.write_queue.put(flush_buffer)
+        self.flush_queue.task_done()
+
+    def flush_buffer(self):
+        """
+        Flushes the buffered ancestors to the data file.
+        """
+        flush_buffer = self.write_buffer
+        num_buffered = self.num_buffered
+        logger.debug("Pushing buffer {} to flush queue".format(flush_buffer))
+        self.flush_queue.put((flush_buffer, self.last_flushed, num_buffered))
+        self.write_buffer = self.write_queue.get()
+        self.num_buffered = 0
+        self.last_flushed = self.total_ancestors
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
@@ -699,57 +815,39 @@ class AncestorData(DataContainer):
             raise ValueError("focal sites must be between start and end")
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
-        j = self.genotypes_buffer_offset
-        N = self.genotypes_buffer.shape[1]
-        self.genotypes_buffer[start: end, j] = haplotype[start: end]
-        if j == N - 1:
-            self.genotypes.append(self.genotypes_buffer, axis=1)
-            self.genotypes_buffer_offset = -1
-            self.genotypes_buffer[:] = UNKNOWN_ALLELE
-        self.genotypes_buffer_offset += 1
-        self.ancestor_buffer.append(BufferedAncestor(start, end, time, focal_sites))
+        if self.num_buffered == self.chunk_size:
+            self.flush_buffer()
+
+        ancestor = haplotype[start:end].copy()
+        self.buffered_start[self.write_buffer][self.num_buffered] = start
+        self.buffered_end[self.write_buffer][self.num_buffered] = end
+        self.buffered_time[self.write_buffer][self.num_buffered] = time
+        self.buffered_focal_sites[self.write_buffer][self.num_buffered] = focal_sites
+        self.buffered_ancestor[self.write_buffer][self.num_buffered] = ancestor
+        self.num_buffered += 1
+        self.total_ancestors += 1
 
     def finalise(self):
-        if self.ancestor_buffer is None:
-            raise ValueError("Cannot call finalise in read-mode")
-        total_focal_sites = sum(
-            ancestor.focal_sites.shape[0] for ancestor in self.ancestor_buffer)
-        num_ancestors = len(self.ancestor_buffer)
-        self.data.attrs["num_ancestors"] = num_ancestors
-        start = np.empty(num_ancestors, dtype=np.int32)
-        end = np.empty(num_ancestors, dtype=np.int32)
-        time = np.empty(num_ancestors, dtype=np.uint32)
-        focal_sites = np.empty(total_focal_sites, dtype=np.int32)
-        focal_sites_offset = np.zeros(num_ancestors + 1, dtype=np.uint32)
-        for j, ancestor in enumerate(self.ancestor_buffer):
-            start[j] = ancestor.start
-            end[j] = ancestor.end
-            time[j] = ancestor.time
-            focal_sites_offset[j + 1] = (
-                focal_sites_offset[j] + ancestor.focal_sites.shape[0])
-            focal_sites[
-                focal_sites_offset[j]: focal_sites_offset[j + 1]] = ancestor.focal_sites
-        chunks = max(num_ancestors, 1),
-        self.ancestors_group.create_dataset(
-            "start", shape=(num_ancestors,), chunks=chunks, data=start,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "end", shape=(num_ancestors,), chunks=chunks, data=end,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "time", shape=(num_ancestors,), chunks=chunks, data=time,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "focal_sites_offset", shape=(num_ancestors + 1,),
-            chunks=(num_ancestors + 1,), data=focal_sites_offset,
-            compressor=self.compressor)
-        self.ancestors_group.create_dataset(
-            "focal_sites", shape=(total_focal_sites,),
-            chunks=(max(total_focal_sites, 1)), data=focal_sites,
-            compressor=self.compressor)
+        self.flush_buffer()
 
-        self.genotypes.append(
-            self.genotypes_buffer[:, :self.genotypes_buffer_offset], axis=1)
+        # Stop the the worker threads.
+        for j in range(self.num_threads):
+            self.flush_queue.put(None)
+        for j in range(self.num_threads):
+            self.flush_threads[j].join()
+
+        self.data.attrs["num_ancestors"] = self.total_ancestors
         self.ancestor_buffer = None
-        self.genotypes_buffer = None
         super(AncestorData, self).finalise()
+
+    def ancestors(self):
+        """
+        Returns an iterator over all the ancestors.
+        """
+        chunk = None
+        chunk_size = self.ancestor.chunks[0]
+        for j in range(self.num_ancestors):
+            if j % chunk_size == 0:
+                chunk = self.ancestor[j: j + chunk_size][:]
+            a = chunk[j % chunk_size]
+            yield a
