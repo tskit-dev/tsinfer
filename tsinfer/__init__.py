@@ -34,6 +34,6 @@ try:
 except ImportError:
     pass
 
-from .inference import *
-from .formats import *
-from .evaluation import *
+from .inference import *  # NOQA
+from .formats import *  # NOQA
+from .evaluation import *  # NOQA

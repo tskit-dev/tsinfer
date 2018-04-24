@@ -26,13 +26,13 @@ updates made to the low-level C engine should be made here
 first.
 """
 import collections
-import itertools
 
 import numpy as np
 import msprime
 import sortedcontainers
 
 UNKNOWN_ALLELE = 255
+
 
 class Edge(object):
 
@@ -99,17 +99,11 @@ class AncestorBuilder(object):
         a and b into two separate ancestors.
         """
         index = np.where(samples == 1)[0]
-        # TODO experimental code where we break if up ancestors if we don't
-        # have any older ancestors. leads to poor looking results for small
-        # examples, but may be better for large samples.
-        older_site_found = False
         for j in range(a + 1, b):
             if self.sites[j].frequency > self.sites[a].frequency:
-                older_site_found = True
                 gj = self.sites[j].genotypes[index]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
-        # return not older_site_found
         return False
 
     def ancestor_descriptors(self):
@@ -125,7 +119,8 @@ class AncestorBuilder(object):
             # We sort by the genotype patterns
             keys = sorted(self.frequency_map[frequency].keys())
             for key in keys:
-                focal_sites= np.array(self.frequency_map[frequency][key], dtype=np.int32)
+                focal_sites = np.array(
+                    self.frequency_map[frequency][key], dtype=np.int32)
                 samples = np.frombuffer(key, dtype=np.uint8)
                 # print("focal_sites = ", key, samples, focal_sites)
                 start = 0
@@ -163,13 +158,10 @@ class AncestorBuilder(object):
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
-        last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
-        # Disabling last_older_sites stuff for now. Remove if we don't end up using it.
-        # a[last_older_site + 1:] = UNKNOWN_ALLELE
+        self.__build_ancestor_sites(focal_site, sites, a)
         focal_site = focal_sites[-1]
         sites = range(focal_sites[0] - 1, -1, -1)
-        last_older_site = self.__build_ancestor_sites(focal_site, sites, a)
-        # a[:last_older_site] = UNKNOWN_ALLELE
+        self.__build_ancestor_sites(focal_site, sites, a)
         for j in range(focal_sites[0], focal_sites[-1] + 1):
             if j in focal_sites:
                 a[j] = 1
@@ -222,7 +214,7 @@ class TreeSequenceBuilder(object):
         Indexes the edges for the specified node ID.
         """
         edge = self.path[node_id]
-        while edge != None:
+        while edge is not None:
             self.index_edge(edge)
             edge = edge.next
 
@@ -254,7 +246,8 @@ class TreeSequenceBuilder(object):
         prev = head
         x = head.next
         while x is not None:
-            if prev.right == x.left and prev.child == x.child and prev.parent == x.parent:
+            if prev.right == x.left and prev.child == x.child \
+                    and prev.parent == x.parent:
                 prev.right = x.right
                 prev.next = x.next
             else:
@@ -279,7 +272,7 @@ class TreeSequenceBuilder(object):
         self.check_state()
 
     def add_path(self, child, left, right, parent, compress=True):
-        assert self.path[child] == None
+        assert self.path[child] is None
         prev = None
         head = None
         for l, r, p in reversed(list(zip(left, right, parent))):
@@ -370,7 +363,8 @@ class TreeSequenceBuilder(object):
             key = (edge.left, edge.right, edge.parent, -1)
             index = self.path_index.bisect(key)
             if index < len(self.path_index) \
-                    and self.path_index.iloc[index][:3] == (edge.left, edge.right, edge.parent):
+                    and self.path_index.iloc[index][:3] == (
+                            edge.left, edge.right, edge.parent):
                 match = self.path_index.peekitem(index)[1]
                 matches.append((edge, match))
             edge = edge.next
@@ -505,14 +499,15 @@ def is_descendant(pi, u, v):
 # more values to indicate compressed paths tree and nodes that are
 # currently not in the tree.
 
+
 MISMATCH = 0
 RECOMB = 1
 MATCH = 2
 COMPRESSED = -1
 MISSING = -2
 
-class AncestorMatcher(object):
 
+class AncestorMatcher(object):
 
     def __init__(self, tree_sequence_builder, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
@@ -895,12 +890,6 @@ class AncestorMatcher(object):
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
         # print("match = ", match)
         # for j, e in enumerate(output_edges):
-
-        #     assert self.max_likelihood_node[e.right - 1] == e.parent
-        #     max_right = e.right
-        #     while max_right < self.num_sites and self.max_likelihood_node[max_right - 1] == e.parent:
-        #         max_right += 1
-        #     print("\tmax_right = ", max_right)
 
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
