@@ -68,7 +68,8 @@ def insert_errors(ts, probability, seed=None):
                     if u == msprime.NULL_NODE:
                         parent = len(mutations) - 1
                     mutations.add_row(
-                        site=site.id, node=sample, parent=parent, derived_state=derived_state)
+                        site=site.id, node=sample, parent=parent,
+                        derived_state=derived_state)
 
     tables = ts.dump_tables()
     tables.mutations = mutations
@@ -153,7 +154,6 @@ def strip_singletons(ts):
     """
     sites = msprime.SiteTable()
     mutations = msprime.MutationTable()
-    dropped_mutations = 0
     for variant in ts.variants():
         if np.sum(variant.genotypes) > 1:
             site_id = sites.add_row(
