@@ -24,10 +24,15 @@ Python 3 only.
 
 import sys
 
-__version__ = "0.5.0"
-
 if sys.version_info[0] < 3:
     raise Exception("Python 3 only")
+
+__version__ = "undefined"
+try:
+    from . import _version
+    __version__ = _version.version
+except ImportError:
+    pass
 
 from .inference import *
 from .formats import *
