@@ -1,0 +1,14 @@
+codecov
+coverage
+flake8
+nose
+numpy
+six
+tqdm
+humanize
+msprime
+zarr
+lmdb
+# Optional extras for debugging threads
+python-prctl
+numa
