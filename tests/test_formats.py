@@ -401,7 +401,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
     def test_chunk_size(self):
         N = 20
-        for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
+        # for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
+        for chunk_size in [4]:
             sample_data, ancestors = self.get_example_data(6, 1, N)
             self.assertGreater(sample_data.num_variant_sites, 2 * N)
             ancestor_data = tsinfer.AncestorData.initialise(

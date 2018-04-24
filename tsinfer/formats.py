@@ -7,6 +7,9 @@ import logging
 import time
 import queue
 import itertools
+import os
+import os.path
+import threading
 
 import numpy as np
 import zarr
@@ -193,7 +196,7 @@ class DataContainer(object):
         self.store = None
         self.data = zarr.group()
         if filename is not None:
-            self.store = zarr.LMDBStore(filename, lock=False, subdir=False)
+            self.store = zarr.LMDBStore(filename, subdir=False)
             self.data = zarr.open_group(store=self.store)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
@@ -219,6 +222,10 @@ class DataContainer(object):
                 num_pages = db.info()["last_pgno"]
                 page_size = db.stat()["psize"]
                 db.set_mapsize(num_pages * page_size)
+            # Remove the lock file as we don't need it after this point.
+            lockfile = filename + "-lock"
+            if os.path.exists(lockfile):
+                os.unlink(lockfile)
             # Reopen the data in read-only mode.
             self.data = None
             self._open(filename)
@@ -668,30 +675,91 @@ class AncestorData(DataContainer):
             "ancestor", shape=(0,), chunks=chunks,
             dtype="array:u1", compressor=self.compressor)
         self.chunk_size = chunk_size
-        # Allocate the buffers.
-        self.buffered_start = np.empty(chunk_size, dtype=np.int32)
-        self.buffered_end = np.empty(chunk_size, dtype=np.int32)
-        self.buffered_time = np.empty(chunk_size, dtype=np.uint32)
+        # Allocate the buffers. We allocate n buffers and n flush threads.
+        # Buffer indexes that have been flushed are placed on the write_queue,
+        # and buffers that are waiting to be flushed are on the flush_queue.
+        # In the worst case we need n threads flushing n buffers while the main
+        # thread waits for a free buffer to write to.
+        self.num_buffers = 4
+        self.num_threads = self.num_buffers
+        self.buffered_start = [
+            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
+        self.buffered_end = [
+            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
+        self.buffered_time = [
+            np.empty(chunk_size, dtype=np.uint32) for _ in range(self.num_buffers)]
         # Note: it's essential that we use np.object here as we'll get obscure
         # errors later when trying to add rectangular arrays to the main
         # arrays otherwise.
-        self.buffered_focal_sites = np.empty(chunk_size, dtype=np.object)
-        self.buffered_ancestor = np.empty(chunk_size, dtype=np.object)
+        self.buffered_focal_sites = [
+            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
+        self.buffered_ancestor = [
+            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
+        # The current write buffer.
+        self.write_buffer = 0
+        # The total number of ancestors added so far.
+        self.total_ancestors = 0
+        self.last_flushed = 0
+        # The number of records currently in the write buffer.
         self.num_buffered = 0
+        self.write_queue = queue.Queue()
+        self.flush_queue = queue.Queue()
+        for j in range(1, self.num_buffers):
+            self.write_queue.put(j)
+        # This lock must be held when resizing the underlying arrays.
+        self.resize_lock = threading.Lock()
+        # Make the flush threads.
+        self.flush_threads = [
+            threads.queue_consumer_thread(
+                self.flush_worker, self.flush_queue, name="flush-worker-{}".format(j))
+            for j in range(self.num_threads)]
+        logger.info("Started {} flush worker threads".format(self.num_threads))
         return self
+
+    def flush_worker(self, thread_index):
+        """
+        Thread worker responsible for flushing buffers. Read a buffer index and
+        size from the flush_queue and write it to disk. Push the index back on
+        to the write queue to allow it be reused.
+        """
+        while True:
+            work = self.flush_queue.get()
+            if work is None:
+                break
+            flush_buffer, start_offset, num_buffered = work
+            logger.debug("Flushing buffer {}: start={} n={}".format(
+                flush_buffer, start_offset, num_buffered))
+            n = start_offset
+            m = start_offset + num_buffered
+            with self.resize_lock:
+                if m > self.start.shape[0]:
+                    self.start.resize(m)
+                    self.end.resize(m)
+                    self.time.resize(m)
+                    self.focal_sites.resize(m)
+                    self.ancestor.resize(m)
+            self.start[n: m] = self.buffered_start[flush_buffer][:num_buffered]
+            self.end[n: m] = self.buffered_end[flush_buffer][:num_buffered]
+            self.time[n: m] = self.buffered_time[flush_buffer][:num_buffered]
+            self.focal_sites[n: m] = self.buffered_focal_sites[
+                    flush_buffer][:num_buffered]
+            self.ancestor[n: m] = self.buffered_ancestor[flush_buffer][:num_buffered]
+            logger.debug("Done flushing {}".format(flush_buffer))
+            self.flush_queue.task_done()
+            self.write_queue.put(flush_buffer)
+        self.flush_queue.task_done()
 
     def flush_buffer(self):
         """
         Flushes the buffered ancestors to the data file.
         """
-        logger.debug("Flush ancestor buffer")
-        self.start.append(self.buffered_start[:self.num_buffered])
-        self.end.append(self.buffered_end[:self.num_buffered])
-        self.time.append(self.buffered_time[:self.num_buffered])
-        self.focal_sites.append(self.buffered_focal_sites[:self.num_buffered])
-        self.ancestor.append(self.buffered_ancestor[:self.num_buffered])
-        logger.debug("Done")
+        flush_buffer = self.write_buffer
+        num_buffered = self.num_buffered
+        logger.debug("Pushing buffer {} to flush queue".format(flush_buffer))
+        self.flush_queue.put((flush_buffer, self.last_flushed, num_buffered))
+        self.write_buffer = self.write_queue.get()
         self.num_buffered = 0
+        self.last_flushed = self.total_ancestors
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
@@ -722,18 +790,24 @@ class AncestorData(DataContainer):
             self.flush_buffer()
 
         ancestor = haplotype[start:end].copy()
-        self.buffered_start[self.num_buffered] = start
-        self.buffered_end[self.num_buffered] = end
-        self.buffered_time[self.num_buffered] = time
-        self.buffered_focal_sites[self.num_buffered] = focal_sites
-        self.buffered_ancestor[self.num_buffered] = ancestor
+        self.buffered_start[self.write_buffer][self.num_buffered] = start
+        self.buffered_end[self.write_buffer][self.num_buffered] = end
+        self.buffered_time[self.write_buffer][self.num_buffered] = time
+        self.buffered_focal_sites[self.write_buffer][self.num_buffered] = focal_sites
+        self.buffered_ancestor[self.write_buffer][self.num_buffered] = ancestor
         self.num_buffered += 1
+        self.total_ancestors += 1
 
     def finalise(self):
-        # if self.num_buffered is None:
-        #     raise ValueError("Cannot call finalise in read-mode")
         self.flush_buffer()
-        self.data.attrs["num_ancestors"] = self.start.shape[0]
+
+        # Stop the the worker threads.
+        for j in range(self.num_threads):
+            self.flush_queue.put(None)
+        for j in range(self.num_threads):
+            self.flush_threads[j].join()
+
+        self.data.attrs["num_ancestors"] = self.total_ancestors
         self.ancestor_buffer = None
         super(AncestorData, self).finalise()
 
