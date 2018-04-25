@@ -117,8 +117,10 @@ def tsinfer_dev(
     for site, genotypes in zip(ts.sites(), G):
         sample_data.add_variant(site.position, ["0", "1"], genotypes)
     sample_data.finalise()
+    print("START")
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
+    print("INIT DONE")
     tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
     print(ancestor_data)
@@ -175,7 +177,6 @@ if __name__ == "__main__":
     # build_profile_inputs(10**5, 100)
 
     tsinfer_dev(18, 0.1, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
-
 
 #     for seed in range(1, 10000):
 #         print(seed)

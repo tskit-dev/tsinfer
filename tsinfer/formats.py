@@ -51,6 +51,114 @@ FINALISED_KEY = "finalised"
 
 DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
 
+
+class BufferedItemWriter(object):
+    """
+    Class that writes items sequentially into a set of zarr arrays,
+    buffering writes and flushing them to the destination arrays
+    asynchronosly using threads.
+    """
+    def __init__(self, array_map, num_buffers=2):
+        self.chunk_size = -1
+        for key, array in array_map.items():
+            if self.chunk_size == -1:
+                self.chunk_size = array.chunks[0]
+            else:
+                if array.chunks[0] != self.chunk_size:
+                    raise ValueError("Chunk sizes must be equal")
+        self.arrays = array_map
+        # In worst case we want one thread per buffer.
+        self.num_buffers = num_buffers
+        self.num_threads = num_buffers
+        self.buffers = {}
+        self.current_size = 0
+        self.total_items = 0
+        for key, array in self.arrays.items():
+            self.buffers[key] = [
+                zarr.empty_like(array, compressor=None) for _ in range(self.num_buffers)]
+            for buff_array in self.buffers[key]:
+                buff_array.resize(self.chunk_size)
+                # print(buff_array.info)
+        self.start_offset = [0 for _ in range(self.num_buffers)]
+        self.num_buffered_items = [0 for _ in range(self.num_buffers)]
+        # Buffer indexes are placed in the queues. The current write buffer
+        # is obtained from the write_queue. Flush worker threads pull buffer
+        # indexes from the flush queue, and push them back on to the write
+        # queue when the buffer has been flushed.
+        self.write_queue = queue.Queue()
+        self.flush_queue = queue.Queue()
+        # The initial write buffer is 0; place the others on the queue.
+        self.write_buffer = 0
+        for j in range(1, self.num_buffers):
+            self.write_queue.put(j)
+        # This lock must be held when resizing the underlying arrays.
+        self.resize_lock = threading.Lock()
+        # Make the flush threads.
+        self.flush_threads = [
+            threads.queue_consumer_thread(
+                self._flush_worker, self.flush_queue, name="flush-worker-{}".format(j))
+            for j in range(self.num_threads)]
+        logger.info("Started {} flush worker threads".format(self.num_threads))
+
+    def _commit_write_buffer(self, write_buffer):
+        start = self.start_offset[write_buffer]
+        n = self.num_buffered_items[write_buffer]
+        end = start + n
+        logger.debug("Flushing buffer {}: start={} n={}".format(write_buffer, start, n))
+        with self.resize_lock:
+            if self.current_size < end:
+                self.current_size = end
+                for key, array in self.arrays.items():
+                    array.resize(self.current_size)
+        for key, array in self.arrays.items():
+            array[start: end] = self.buffers[key][write_buffer][:n]
+        logger.debug("Buffer {} flush done".format(write_buffer))
+
+    def _flush_worker(self, thread_index):
+        """
+        Thread worker responsible for flushing buffers. Read a buffer index
+        from flush_queue and write it to disk. Push the index back on
+        to the write queue to allow it be reused.
+        """
+        while True:
+            buffer_index = self.flush_queue.get()
+            if buffer_index is None:
+                break
+            self._commit_write_buffer(buffer_index)
+            self.flush_queue.task_done()
+            self.write_queue.put(buffer_index)
+        self.flush_queue.task_done()
+
+    def _queue_flush_buffer(self):
+        """
+        Flushes the buffered ancestors to the data file.
+        """
+        flush_buffer = self.write_buffer
+        logger.debug("Pushing buffer {} to flush queue".format(flush_buffer))
+        self.flush_queue.put(flush_buffer)
+        self.write_buffer = self.write_queue.get()
+        self.num_buffered_items[self.write_buffer] = 0
+        self.start_offset[self.write_buffer] = self.total_items
+
+    def add_item(self, **kwargs):
+        if self.num_buffered_items[self.write_buffer] == self.chunk_size:
+            self._queue_flush_buffer()
+        offset = self.num_buffered_items[self.write_buffer]
+        for key, value in kwargs.items():
+            # print("add", key, value)
+            self.buffers[key][self.write_buffer][offset] = value
+        self.num_buffered_items[self.write_buffer] += 1
+        self.total_items += 1
+
+    def flush(self):
+        self._queue_flush_buffer()
+        # Stop the the worker threads.
+        for j in range(self.num_threads):
+            self.flush_queue.put(None)
+        for j in range(self.num_threads):
+            self.flush_threads[j].join()
+
+
 # These functions don't really do what they are supposed to now. Should
 # decouple the iteration functions from the data classes below. Also
 # need to simplify the logic and introduce a simpler double buffered
@@ -684,6 +792,7 @@ class AncestorData(DataContainer):
         self.compressor = compressor
         self.data.attrs["sample_data_uuid"] = input_data.uuid
 
+        # TODO: Also do we need this attribute??
         num_sites = self.input_data.num_variant_sites
         self.data.attrs["num_sites"] = num_sites
 
@@ -703,92 +812,12 @@ class AncestorData(DataContainer):
         self.data.create_dataset(
             "ancestor", shape=(0,), chunks=chunks,
             dtype="array:u1", compressor=self.compressor)
-        self.chunk_size = chunk_size
-        # Allocate the buffers. We allocate n buffers and n flush threads.
-        # Buffer indexes that have been flushed are placed on the write_queue,
-        # and buffers that are waiting to be flushed are on the flush_queue.
-        # In the worst case we need n threads flushing n buffers while the main
-        # thread waits for a free buffer to write to.
-        self.num_buffers = num_flush_threads
-        self.num_threads = self.num_buffers
-        self.buffered_start = [
-            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
-        self.buffered_end = [
-            np.empty(chunk_size, dtype=np.int32) for _ in range(self.num_buffers)]
-        self.buffered_time = [
-            np.empty(chunk_size, dtype=np.uint32) for _ in range(self.num_buffers)]
-        # Note: it's essential that we use np.object here as we'll get obscure
-        # errors later when trying to add rectangular arrays to the main
-        # arrays otherwise.
-        self.buffered_focal_sites = [
-            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
-        self.buffered_ancestor = [
-            np.empty(chunk_size, dtype=np.object) for _ in range(self.num_buffers)]
-        # The current write buffer.
-        self.write_buffer = 0
-        # The total number of ancestors added so far.
-        self.total_ancestors = 0
-        self.last_flushed = 0
-        # The number of records currently in the write buffer.
-        self.num_buffered = 0
-        self.write_queue = queue.Queue()
-        self.flush_queue = queue.Queue()
-        for j in range(1, self.num_buffers):
-            self.write_queue.put(j)
-        # This lock must be held when resizing the underlying arrays.
-        self.resize_lock = threading.Lock()
-        # Make the flush threads.
-        self.flush_threads = [
-            threads.queue_consumer_thread(
-                self.flush_worker, self.flush_queue, name="flush-worker-{}".format(j))
-            for j in range(self.num_threads)]
-        logger.info("Started {} flush worker threads".format(self.num_threads))
+
+        self.item_writer = BufferedItemWriter({
+            "start": self.start, "end": self.end, "time": self.time,
+            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
+            num_buffers=num_flush_threads)
         return self
-
-    def flush_worker(self, thread_index):
-        """
-        Thread worker responsible for flushing buffers. Read a buffer index and
-        size from the flush_queue and write it to disk. Push the index back on
-        to the write queue to allow it be reused.
-        """
-        while True:
-            work = self.flush_queue.get()
-            if work is None:
-                break
-            flush_buffer, start_offset, num_buffered = work
-            logger.debug("Flushing buffer {}: start={} n={}".format(
-                flush_buffer, start_offset, num_buffered))
-            n = start_offset
-            m = start_offset + num_buffered
-            with self.resize_lock:
-                if m > self.start.shape[0]:
-                    self.start.resize(m)
-                    self.end.resize(m)
-                    self.time.resize(m)
-                    self.focal_sites.resize(m)
-                    self.ancestor.resize(m)
-            self.start[n: m] = self.buffered_start[flush_buffer][:num_buffered]
-            self.end[n: m] = self.buffered_end[flush_buffer][:num_buffered]
-            self.time[n: m] = self.buffered_time[flush_buffer][:num_buffered]
-            self.focal_sites[n: m] = self.buffered_focal_sites[
-                    flush_buffer][:num_buffered]
-            self.ancestor[n: m] = self.buffered_ancestor[flush_buffer][:num_buffered]
-            logger.debug("Done flushing {}".format(flush_buffer))
-            self.flush_queue.task_done()
-            self.write_queue.put(flush_buffer)
-        self.flush_queue.task_done()
-
-    def flush_buffer(self):
-        """
-        Flushes the buffered ancestors to the data file.
-        """
-        flush_buffer = self.write_buffer
-        num_buffered = self.num_buffered
-        logger.debug("Pushing buffer {} to flush queue".format(flush_buffer))
-        self.flush_queue.put((flush_buffer, self.last_flushed, num_buffered))
-        self.write_buffer = self.write_queue.get()
-        self.num_buffered = 0
-        self.last_flushed = self.total_ancestors
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
@@ -815,29 +844,18 @@ class AncestorData(DataContainer):
             raise ValueError("focal sites must be between start and end")
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
-        if self.num_buffered == self.chunk_size:
-            self.flush_buffer()
-
         ancestor = haplotype[start:end].copy()
-        self.buffered_start[self.write_buffer][self.num_buffered] = start
-        self.buffered_end[self.write_buffer][self.num_buffered] = end
-        self.buffered_time[self.write_buffer][self.num_buffered] = time
-        self.buffered_focal_sites[self.write_buffer][self.num_buffered] = focal_sites
-        self.buffered_ancestor[self.write_buffer][self.num_buffered] = ancestor
-        self.num_buffered += 1
-        self.total_ancestors += 1
+        self.item_writer.add_item(
+            start=start, end=end, time=time, focal_sites=focal_sites,
+            ancestor=ancestor)
 
     def finalise(self):
-        self.flush_buffer()
+        self.item_writer.flush()
+        self.item_writer = None
 
-        # Stop the the worker threads.
-        for j in range(self.num_threads):
-            self.flush_queue.put(None)
-        for j in range(self.num_threads):
-            self.flush_threads[j].join()
-
-        self.data.attrs["num_ancestors"] = self.total_ancestors
-        self.ancestor_buffer = None
+        # TODO get rid of this attribute and derive it from the shape in the
+        # property above.
+        self.data.attrs["num_ancestors"] = self.ancestor.shape[0]
         super(AncestorData, self).finalise()
 
     def ancestors(self):
