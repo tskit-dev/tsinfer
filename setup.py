@@ -1,9 +1,15 @@
 from setuptools import setup, Extension
+from setuptools.command.build_ext import build_ext as _build_ext
 
 
-def get_numpy_includes():
-    import numpy as np
-    return np.get_include()
+# Obscure magic required to allow numpy be used as an 'setup_requires'.
+class build_ext(_build_ext):
+    def finalize_options(self):
+        super(build_ext, self).finalize_options()
+        # Prevent numpy from thinking it is still in its setup process:
+        __builtins__.__NUMPY_SETUP__ = False
+        import numpy
+        self.include_dirs.append(numpy.get_include())
 
 
 d = "lib/"
@@ -17,7 +23,6 @@ _tsinfer_module = Extension(
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
     extra_compile_args=["-std=c99"],
-    include_dirs=[get_numpy_includes()],
 )
 
 long_description = "TODO"
@@ -37,6 +42,8 @@ setup(
             'tsinfer=tsinfer.cli:tsinfer_main',
         ]
     },
+    setup_requires=['setuptools_scm', 'numpy'],
+    cmdclass={'build_ext': build_ext},
     install_requires=[
         "numpy",
         "six",
@@ -64,6 +71,5 @@ setup(
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
-    setup_requires=['setuptools_scm', 'numpy'],
     use_scm_version={"write_to": "tsinfer/_version.py"},
 )

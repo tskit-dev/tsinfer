@@ -5,36 +5,38 @@ jobs:
       - image: circleci/python:3.6-stretch
     steps:
       - checkout
-      # Cache based  on https://circleci.com/docs/2.0/language-python/
-      - restore_cache: 
-          key: deps1-{{ .Branch }}-{{ checksum "requirements/development.txt" }}
       - run:
-          name: Install dependencies and set path
+          name: Install dependencies and set PATH
           command: |
               # Need hdf5 and gsl-dev for msprime. When we move to tskit we should 
               # be able to remove these.
               sudo apt-get install libcap-dev libnuma-dev libhdf5-dev libgsl-dev
-              python3 -m venv venv
-              . venv/bin/activate
-              pip install -r requirements/development.txt
-      - save_cache: # special step to save dependency cache
-          key: deps1-{{ .Branch }}-{{ checksum "requirements/development.txt" }}
-          paths:
-            - "venv"
+              # way to set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
+              echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
+      - run:
+          name: Install package and test basic usage.
+          command: |
+              # Need to install numpy first or msprime doesn't build correctly.
+              # Remove this when msprime fully depends on numpy.
+              pip install numpy --user
+              pip install . --user 
+              tsinfer --help
+              pip uninstall tsinfer --yes
       - run:
           name: Compile Python
           command: |
-              . venv/bin/activate
-              CFLAGS=--coverage python setup.py build_ext --inplace
+              python setup.py build_ext --inplace
+      - run:
+          name: Install development dependencies
+          command: |
+              pip install -r requirements/development.txt --user
       - run:
           name: Lint Python
           command: |
-              . venv/bin/activate
               flake8 --max-line-length 89 tsinfer setup.py tests
       - run:
           name: Run Python tests 
           command: |
-              . venv/bin/activate
               nosetests -v --with-coverage --cover-package tsinfer \
                   --cover-branches --cover-erase --cover-xml \
                   --cover-inclusive tests
