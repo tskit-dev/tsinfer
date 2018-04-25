@@ -37,7 +37,17 @@ setup(
             'tsinfer=tsinfer.cli:tsinfer_main',
         ]
     },
-    install_requires=[],
+    install_requires=[
+        "numpy",
+        "six",
+        "tqdm",
+        "humanize",
+        "daiquiri",
+        "msprime",
+        "zarr",
+        "lmdb",
+        "sortedcontainers"
+    ],
     ext_modules=[_tsinfer_module],
     keywords=[],
     license="GNU GPLv3+",
