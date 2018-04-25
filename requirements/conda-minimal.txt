@@ -1,0 +1,9 @@
+nose
+numpy
+six
+tqdm
+humanize
+msprime
+zarr
+lmdb
+sortedcontainers
