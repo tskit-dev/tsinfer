@@ -27,6 +27,7 @@ import itertools
 import os
 import os.path
 import threading
+import warnings
 
 import numpy as np
 import zarr
@@ -74,10 +75,15 @@ class BufferedItemWriter(object):
         self.current_size = 0
         self.total_items = 0
         for key, array in self.arrays.items():
-            self.buffers[key] = [
-                zarr.empty_like(array, compressor=None) for _ in range(self.num_buffers)]
-            for buff_array in self.buffers[key]:
-                buff_array.resize(self.chunk_size)
+            self.buffers[key] = [None for _ in range(self.num_buffers)]
+            for j in range(self.num_buffers):
+                # 2018-04-18 Zarr current emits a warning when calling empty_like on
+                # object arrays. See https://github.com/zarr-developers/zarr/issues/257
+                # Remove this catch_warnings when the bug is fixed.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    self.buffers[key][j] = zarr.empty_like(array, compressor=None)
+                self.buffers[key][j].resize(self.chunk_size)
                 # print(buff_array.info)
         self.start_offset = [0 for _ in range(self.num_buffers)]
         self.num_buffered_items = [0 for _ in range(self.num_buffers)]
