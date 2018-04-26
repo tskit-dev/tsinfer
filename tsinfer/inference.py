@@ -51,12 +51,15 @@ def infer(
 
     num_sites, num_samples = genotypes.shape
     sample_data = formats.SampleData.initialise(
-        num_samples=num_samples, sequence_length=sequence_length, compressor=None)
+        sequence_length=sequence_length, compressor=None)
+    sample_data.add_population()
+    for j in range(num_samples):
+        sample_data.add_sample()
     for j in range(num_sites):
         pos = j
         if positions is not None:
             pos = positions[j]
-        sample_data.add_variant(pos, ["0", "1"], genotypes[j])
+        sample_data.add_site(pos, ["0", "1"], genotypes[j])
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
@@ -75,8 +78,9 @@ def infer(
 
 def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
 
-    num_sites = input_data.num_variant_sites
+    num_sites = input_data.num_inference_sites
     num_samples = input_data.num_samples
+
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
@@ -85,10 +89,10 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
-    frequency = input_data.frequency[:]
     logger.info("Starting site addition")
-    for j, (site_id, genotypes) in enumerate(input_data.variants()):
-        ancestor_builder.add_site(j, int(frequency[site_id]), genotypes)
+    for j, (site_id, genotypes) in enumerate(input_data.inference_site_genotypes()):
+        frequency = np.sum(genotypes)
+        ancestor_builder.add_site(j, int(frequency), genotypes)
         progress_monitor.update()
     progress_monitor.close()
     logger.info("Finished adding sites")
@@ -205,7 +209,7 @@ class Matcher(object):
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
-        self.num_sites = self.sample_data.num_variant_sites
+        self.num_sites = self.sample_data.num_inference_sites
         self.progress = progress
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
@@ -333,12 +337,14 @@ class Matcher(object):
 
         left, right, parent, child = tsb.dump_edges()
         if rescale_positions:
-            position = self.sample_data.position[:]
+            inference_sites = self.sample_data.site_inference[:]
+            position = self.sample_data.site_position[:]
             sequence_length = self.sample_data.sequence_length
             if sequence_length is None or sequence_length < position[-1]:
                 sequence_length = position[-1] + 1
-            # Subset down to the variants.
-            position = position[self.sample_data.variant_site[:]]
+
+            # Subset down to the inference sites
+            position = position[inference_sites == 1]
             x = np.hstack([position, [sequence_length]])
             x[0] = 0
             left = x[left]
@@ -367,28 +373,16 @@ class Matcher(object):
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
         if all_sites:
-            # Append the sites and mutations for each singleton.
-            num_singletons = self.sample_data.num_singleton_sites
-            singleton_site = self.sample_data.singleton_site[:]
-            singleton_sample = self.sample_data.singleton_sample[:]
-            pos = self.sample_data.position[:]
-            new_sites = np.arange(
-                len(sites), len(sites) + num_singletons, dtype=np.int32)
-            sites.append_columns(
-                position=pos[singleton_site],
-                ancestral_state=np.zeros(num_singletons, dtype=np.int8) + ord('0'),
-                ancestral_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
-            mutations.append_columns(
-                site=new_sites, node=self.sample_ids[singleton_sample],
-                derived_state=np.zeros(num_singletons, dtype=np.int8) + ord('1'),
-                derived_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
-            # Get the invariant sites
-            num_invariants = self.sample_data.num_invariant_sites
-            invariant_site = self.sample_data.invariant_site[:]
-            sites.append_columns(
-                position=pos[invariant_site],
-                ancestral_state=np.zeros(num_invariants, dtype=np.int8) + ord('0'),
-                ancestral_state_offset=np.arange(num_invariants + 1, dtype=np.uint32))
+            position = self.sample_data.site_position[:]
+            for site_id, genotypes in self.sample_data.non_inference_site_genotypes():
+                new_site = sites.add_row(position[site_id], "0")
+                count = np.sum(genotypes)
+                if count == 1:
+                    sample = np.where(genotypes == 1)[0]
+                    mutations.add_row(
+                        site=new_site, node=self.sample_ids[sample], derived_state="1")
+                elif count != self.sample_data.num_samples:
+                    raise ValueError("Only singletons and fixations supported now")
 
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
         return msprime.load_tables(
@@ -638,7 +632,7 @@ class SampleMatcher(Matcher):
 
     def match_samples(self):
         logger.info("Started matching for {} samples".format(self.num_samples))
-        if self.sample_data.num_variant_sites > 0:
+        if self.sample_data.num_inference_sites > 0:
             if self.num_threads <= 0:
                 self.__match_samples_single_threaded()
             else:

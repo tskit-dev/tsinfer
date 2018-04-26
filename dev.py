@@ -113,17 +113,27 @@ def tsinfer_dev(
 
     G = generate_samples(ts, error_rate)
     sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        sequence_length=ts.sequence_length, chunk_size=10)
+    sample_data.add_population(metadata={"name": "pop0"})
+    for j in range(ts.num_samples):
+        sample_data.add_sample(population=0, metadata={"name": "sample_{}".format(j)})
     for site, genotypes in zip(ts.sites(), G):
-        sample_data.add_variant(site.position, ["0", "1"], genotypes)
+        sample_data.add_site(site.position, ["0", "1"], genotypes)
     sample_data.finalise()
-    print("START")
+
+    # # print(sample_data)
+    # print(sample_data.data.tree())
+    # print(sample_data.data.info)
+    # print(sample_data.site_inference.info)
+    # print(sample_data.site_inference[:])
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
-    print("INIT DONE")
     tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
-    print(ancestor_data)
+
+    print(ancestor_data.data.tree())
+    print(ancestor_data.data.info)
+    # print(ancestor_data)
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
@@ -146,13 +156,18 @@ def build_profile_inputs(n, num_megabases):
     filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
-    daiquiri.setup(level="DEBUG")
+    # daiquiri.setup(level="DEBUG")
     sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        filename=filename)
+        sequence_length=ts.sequence_length, filename=filename)
+    sample_data.add_population({"name": "pop0"})
+    progress_monitor = tqdm.tqdm(total=ts.num_samples)
+    for j in range(ts.num_samples):
+        sample_data.add_sample(population=0, metadata={"name": "sample_{}".format(j)})
+        progress_monitor.update()
+    progress_monitor.close()
     progress_monitor = tqdm.tqdm(total=ts.num_sites)
     for variant in ts.variants():
-        sample_data.add_variant(
+        sample_data.add_site(
             variant.site.position, variant.alleles, variant.genotypes)
         progress_monitor.update()
     sample_data.finalise()
@@ -176,7 +191,8 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    tsinfer_dev(18, 0.1, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    tsinfer_dev(38, 2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+
 
 #     for seed in range(1, 10000):
 #         print(seed)

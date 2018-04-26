@@ -352,13 +352,13 @@ def assert_single_recombination(ts):
 def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=False):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
-    assert sample_data.num_variant_sites > 0
+    assert sample_data.num_inference_sites > 0
     A = get_ancestral_haplotypes(ts)
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
-    # We also only want the variant sites
-    A = A[:, sample_data.variant_site]
+    # We also only want the inference sites
+    A = A[:, sample_data.site_inference[:] == 1]
 
     # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
@@ -438,7 +438,7 @@ def run_perfect_inference(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)

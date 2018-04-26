@@ -73,7 +73,7 @@ class TestCommandsDefaults(unittest.TestCase):
             sequence_length=self.input_ts.sequence_length,
             compressor=None, filename=self.sample_file)
         for var in self.input_ts.variants():
-            sample_data.add_variant(var.site.position, var.alleles, var.genotypes)
+            sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
 
     def verify_output(self, output_path):
