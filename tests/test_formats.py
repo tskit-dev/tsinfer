@@ -76,44 +76,32 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.site_genotypes.dtype, np.uint8)
         self.assertEqual(input_file.site_position.dtype, np.float64)
 
-        # Take copies to avoid decompressing the data repeatedly.
-        genotypes = input_file.site_genotypes[:]
-        position = input_file.site_position[:]
         # TODO fix this when the remaining issues have been fixed.
-        j = 0
-        variant_sites = []
-        invariant_sites = []
-        singleton_sites = []
-        singleton_samples = []
-        for variant in ts.variants():
-            f = np.sum(variant.genotypes)
-            self.assertEqual(variant.site.position, position[variant.site.id])
-            self.assertEqual(f, frequency[variant.site.id])
-            self.assertEqual(variant.alleles[0], ancestral_states[variant.site.id])
-            if len(variant.alleles) > 1:
-                self.assertEqual(variant.alleles[1], derived_states[variant.site.id])
-            else:
-                self.assertEqual(derived_states[variant.site.id], "")
-            if f == 1:
-                singleton_sites.append(variant.site.id)
-                singleton_samples.append(np.where(variant.genotypes == 1)[0][0])
-            elif 0 < f < ts.num_samples:
-                variant_sites.append(variant.site.id)
-                self.assertTrue(np.array_equal(genotypes[j], variant.genotypes))
-                j += 1
-            else:
-                invariant_sites.append(variant.site.id)
-        self.assertEqual(input_file.num_variant_sites, j)
-        self.assertEqual(input_file.num_singleton_sites, len(singleton_sites))
-        self.assertEqual(input_file.num_invariant_sites, len(invariant_sites))
-        self.assertTrue(np.array_equal(
-            input_file.variant_site[:], np.array(variant_sites, dtype=np.int32)))
-        self.assertTrue(np.array_equal(
-            input_file.invariant_site[:], np.array(invariant_sites, dtype=np.int32)))
-        self.assertTrue(np.array_equal(
-            input_file.singleton_site[:], np.array(singleton_sites, dtype=np.int32)))
-        self.assertTrue(np.array_equal(
-            input_file.singleton_sample[:], np.array(singleton_samples, dtype=np.int32)))
+
+        # Take copies to avoid decompressing the data repeatedly.
+        # genotypes = input_file.site_genotypes[:]
+        # position = input_file.site_position[:]
+        # j = 0
+        # variant_sites = []
+        # invariant_sites = []
+        # singleton_sites = []
+        # singleton_samples = []
+        # for variant in ts.variants():
+        #     self.assertEqual(variant.site.position, position[variant.site.id])
+        #     self.assertEqual(variant.alleles[0], ancestral_states[variant.site.id])
+        #     if len(variant.alleles) > 1:
+        #         self.assertEqual(variant.alleles[1], derived_states[variant.site.id])
+        #     else:
+        #         self.assertEqual(derived_states[variant.site.id], "")
+        #     if f == 1:
+        #         singleton_sites.append(variant.site.id)
+        #         singleton_samples.append(np.where(variant.genotypes == 1)[0][0])
+        #     elif 0 < f < ts.num_samples:
+        #         variant_sites.append(variant.site.id)
+        #         self.assertTrue(np.array_equal(genotypes[j], variant.genotypes))
+        #         j += 1
+        #     else:
+        #         invariant_sites.append(variant.site.id)
 
     def test_defaults(self):
         ts = self.get_example_ts(10, 10)
@@ -497,11 +485,11 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             haplotype=np.zeros(num_sites, dtype=np.uint8))
 
 
-class TestBufferedItemWriter(unittest.TestCase):
+class BufferedItemWriterMixin(object):
     """
     Tests to ensure that the buffered item writer works as expected.
     """
-    def verify_round_trip(self, source, num_threads=2):
+    def verify_round_trip(self, source):
         """
         Verify that we can round trip the specified mapping of arrays
         using the buffered item writer.
@@ -515,7 +503,7 @@ class TestBufferedItemWriter(unittest.TestCase):
                 num_rows = array.shape[0]
             assert num_rows == array.shape[0]
         assert num_rows != -1
-        writer = formats.BufferedItemWriter(dest, num_threads=num_threads)
+        writer = formats.BufferedItemWriter(dest, num_threads=self.num_threads)
         for j in range(num_rows):
             row = {key: array[j] for key, array in source.items()}
             writer.add(**row)
@@ -568,22 +556,6 @@ class TestBufferedItemWriter(unittest.TestCase):
 
     def test_mixed_dtypes_chunk_size_10000(self):
         self.verify_dtypes(10000)
-
-    def test_num_threads_1(self):
-        source = {"a": zarr.array(np.arange(1000))}
-        self.verify_round_trip(source, num_threads=1)
-
-    def test_num_threads_2(self):
-        source = {"a": zarr.array(np.arange(1000))}
-        self.verify_round_trip(source, num_threads=2)
-
-    def test_num_threads_3(self):
-        source = {"a": zarr.array(np.arange(1000))}
-        self.verify_round_trip(source, num_threads=3)
-
-    def test_num_threads_20(self):
-        source = {"a": zarr.array(np.arange(1000))}
-        self.verify_round_trip(source, num_threads=20)
 
     def test_2d_array(self):
         a = zarr.array(np.arange(100).reshape((10, 10)))
@@ -675,9 +647,18 @@ class TestBufferedItemWriter(unittest.TestCase):
         source = {"a": zarr.zeros(10, chunks=(1,)), "b": zarr.zeros(10, chunks=(2,))}
         self.assertRaises(ValueError, formats.BufferedItemWriter, source)
 
-    def test_bad_num_threads(self):
-        source = {"a": zarr.zeros(10, chunks=(1,))}
-        for bad_num_threads in [-1000, -1, 0]:
-            self.assertRaises(
-                ValueError, formats.BufferedItemWriter, source,
-                num_threads=bad_num_threads)
+
+class TestBufferedItemWriterSynchronous(unittest.TestCase, BufferedItemWriterMixin):
+    num_threads = 0
+
+
+class TestBufferedItemWriterThreads1(unittest.TestCase, BufferedItemWriterMixin):
+    num_threads = 1
+
+
+class TestBufferedItemWriterThreads2(unittest.TestCase, BufferedItemWriterMixin):
+    num_threads = 2
+
+
+class TestBufferedItemWriterThreads20(unittest.TestCase, BufferedItemWriterMixin):
+    num_threads = 20

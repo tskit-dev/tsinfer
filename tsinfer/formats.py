@@ -21,7 +21,6 @@ Manage tsinfer's various HDF5 file formats.
 """
 import uuid
 import logging
-import time
 import queue
 import itertools
 import os
@@ -60,7 +59,7 @@ class BufferedItemWriter(object):
     buffering writes and flushing them to the destination arrays
     asynchronosly using threads.
     """
-    def __init__(self, array_map, num_threads=2):
+    def __init__(self, array_map, num_threads=0):
         self.chunk_size = -1
         for key, array in array_map.items():
             if self.chunk_size == -1:
@@ -68,12 +67,15 @@ class BufferedItemWriter(object):
             else:
                 if array.chunks[0] != self.chunk_size:
                     raise ValueError("Chunk sizes must be equal")
-        if num_threads < 1:
-            raise ValueError("Must have at least one flush thread")
         self.arrays = array_map
-        # One buffer for each thread. Buffers are referred to by their indexes.
-        self.num_buffers = num_threads
-        self.num_threads = num_threads
+        if num_threads <= 0:
+            # Use a syncronous algorithm.
+            self.num_threads = 0
+            self.num_buffers = 1
+        else:
+            # One buffer for each thread. Buffers are referred to by their indexes.
+            self.num_buffers = num_threads
+            self.num_threads = num_threads
         self.buffers = {}
         self.current_size = 0
         self.total_items = 0
@@ -95,24 +97,28 @@ class BufferedItemWriter(object):
                 self.buffers[key][j].resize(*chunks)
         self.start_offset = [0 for _ in range(self.num_buffers)]
         self.num_buffered_items = [0 for _ in range(self.num_buffers)]
-        # Buffer indexes are placed in the queues. The current write buffer
-        # is obtained from the write_queue. Flush worker threads pull buffer
-        # indexes from the flush queue, and push them back on to the write
-        # queue when the buffer has been flushed.
-        self.write_queue = queue.Queue()
-        self.flush_queue = queue.Queue()
-        # The initial write buffer is 0; place the others on the queue.
         self.write_buffer = 0
-        for j in range(1, self.num_buffers):
-            self.write_queue.put(j)
         # This lock must be held when resizing the underlying arrays.
+        # This is no-op when using a single-threaded algorithm, but it's
+        # not worth removing and complicating the logic.
         self.resize_lock = threading.Lock()
-        # Make the flush threads.
-        self.flush_threads = [
-            threads.queue_consumer_thread(
-                self._flush_worker, self.flush_queue, name="flush-worker-{}".format(j))
-            for j in range(self.num_threads)]
-        logger.info("Started {} flush worker threads".format(self.num_threads))
+        if self.num_threads > 0:
+            # Buffer indexes are placed in the queues. The current write buffer
+            # is obtained from the write_queue. Flush worker threads pull buffer
+            # indexes from the flush queue, and push them back on to the write
+            # queue when the buffer has been flushed.
+            self.write_queue = queue.Queue()
+            self.flush_queue = queue.Queue()
+            # The initial write buffer is 0; place the others on the queue.
+            for j in range(1, self.num_buffers):
+                self.write_queue.put(j)
+            # Make the flush threads.
+            self.flush_threads = [
+                threads.queue_consumer_thread(
+                    self._flush_worker, self.flush_queue,
+                    name="flush-worker-{}".format(j))
+                for j in range(self.num_threads)]
+            logger.info("Started {} flush worker threads".format(self.num_threads))
 
     def _commit_write_buffer(self, write_buffer):
         start = self.start_offset[write_buffer]
@@ -127,10 +133,6 @@ class BufferedItemWriter(object):
                     shape[0] = self.current_size
                     array.resize(*shape)
         for key, array in self.arrays.items():
-            # print("commit", key)
-            # print("dest\n", array.info)
-            # print("buff\n", self.buffers[key][write_buffer].info)
-
             array[start: end] = self.buffers[key][write_buffer][:n]
         logger.debug("Buffer {} flush done".format(write_buffer))
 
@@ -153,9 +155,13 @@ class BufferedItemWriter(object):
         """
         Flushes the buffered ancestors to the data file.
         """
-        logger.debug("Pushing buffer {} to flush queue".format(self.write_buffer))
-        self.flush_queue.put(self.write_buffer)
-        self.write_buffer = self.write_queue.get()
+        if self.num_threads > 0:
+            logger.debug("Pushing buffer {} to flush queue".format(self.write_buffer))
+            self.flush_queue.put(self.write_buffer)
+            self.write_buffer = self.write_queue.get()
+        else:
+            logger.debug("Syncronously flushing buffer")
+            self._commit_write_buffer(self.write_buffer)
         self.num_buffered_items[self.write_buffer] = 0
         self.start_offset[self.write_buffer] = self.total_items
 
@@ -187,104 +193,6 @@ class BufferedItemWriter(object):
         for j in range(self.num_threads):
             self.flush_threads[j].join()
         self.buffers = None
-
-
-# These functions don't really do what they are supposed to now. Should
-# decouple the iteration functions from the data classes below. Also
-# need to simplify the logic and introduce a simpler double buffered
-# method.
-
-
-def threaded_row_iterator(array, start=0, queue_size=2):
-    """
-    Returns an iterator over the rows in the specified 2D array of
-    genotypes.
-    """
-    chunk_size = array.chunks[0]
-    num_rows = array.shape[0]
-    num_chunks = num_rows // chunk_size
-    logger.info("Loading genotypes for {} columns in {} chunks; size={}".format(
-        num_rows, num_chunks, array.chunks))
-
-    # Note: got rid of the threaded version of this because it was causing a
-    # memory leak. Probably we're better off using a simple double buffered
-    # approach here rather than using queues.
-
-    j = 0
-    for chunk in range(num_chunks):
-        if j + chunk_size >= start:
-            before = time.perf_counter()
-            A = array[j: j + chunk_size]
-            duration = time.perf_counter() - before
-            logger.debug("Loaded {:.2f}MiB chunk start={} in {:.2f} seconds".format(
-                A.nbytes / 1024**2, j, duration))
-            for index in range(chunk_size):
-                if j + index >= start:
-                    # Yielding a copy here because we end up keeping a second copy
-                    # of the matrix when we threads accessing it. Probably not an
-                    # issue if we use a simple double buffer though.
-                    yield A[index][:]
-        else:
-            logger.debug("Skipping genotype chunk {}".format(j))
-        j += chunk_size
-    # TODO this isn't correctly checking for start.
-    last_chunk = num_rows % chunk_size
-    if last_chunk != 0:
-        before = time.perf_counter()
-        A = array[-last_chunk:]
-        duration = time.perf_counter() - before
-        logger.debug(
-            "Loaded final genotype chunk in {:.2f} seconds".format(duration))
-        for row in A:
-            yield row
-
-
-def transposed_threaded_row_iterator(array, queue_size=4):
-    """
-    Returns an iterator over the transposed columns in the specified 2D array of
-    genotypes.
-    """
-    chunk_size = array.chunks[1]
-    num_cols = array.shape[1]
-    num_chunks = num_cols // chunk_size
-    logger.info("Loading genotypes for {} columns in {} chunks {}".format(
-        num_cols, num_chunks, array.chunks))
-    decompressed_queue = queue.Queue(queue_size)
-
-    # NOTE Get rid of this; see notes about memory leak above.
-
-    def decompression_worker(thread_index):
-        j = 0
-        for chunk in range(num_chunks):
-            before = time.perf_counter()
-            A = array[:, j: j + chunk_size][:].T
-            duration = time.perf_counter() - before
-            logger.debug("Loaded genotype chunk in {:.2f} seconds".format(duration))
-            decompressed_queue.put(A)
-            j += chunk_size
-        last_chunk = num_cols % chunk_size
-        if last_chunk != 0:
-            before = time.perf_counter()
-            A = array[:, -last_chunk:][:].T
-            duration = time.perf_counter() - before
-            logger.debug("Loaded final genotype chunk in {:.2f} seconds".format(
-                duration))
-            decompressed_queue.put(A)
-        decompressed_queue.put(None)
-
-    decompression_thread = threads.queue_producer_thread(
-        decompression_worker, decompressed_queue, name="genotype-decompression")
-
-    while True:
-        chunk = decompressed_queue.get()
-        if chunk is None:
-            break
-        logger.debug("Got genotype chunk shape={} from queue (depth={})".format(
-            chunk.shape, decompressed_queue.qsize()))
-        for row in chunk:
-            yield row
-        decompressed_queue.task_done()
-    decompression_thread.join()
 
 
 def zarr_summary(array):
@@ -342,11 +250,12 @@ class DataContainer(object):
             raise ValueError("Format version {} too new. Current version = {}".format(
                 format_version, self.FORMAT_VERSION))
 
-    def _initialise(self, filename=None):
+    def _initialise(self, filename=None, num_flush_threads=0):
         """
         Initialise the basic state of the data container.
         """
         self.store = None
+        self._num_flush_threads = 0
         self.data = zarr.group()
         if filename is not None:
             self.store = zarr.LMDBStore(filename, subdir=False)
@@ -486,74 +395,6 @@ class SampleData(DataContainer):
     def site_inference(self):
         return self.data["sites/inference"]
 
-    # @property
-    # def num_samples(self):
-    #     return self.data.samples[
-    # @property
-    # def num_samples(self):
-    #     return self.data.samples[
-
-    # @property
-    # def num_sites(self):
-    #     return self.data.attrs["num_sites"]
-
-    # #############################################
-    # @property
-    # def num_variant_sites(self):
-    #     return self.data.attrs["num_variant_sites"]
-
-    # @property
-    # def num_singleton_sites(self):
-    #     return self.data.attrs["num_singleton_sites"]
-
-    # @property
-    # def num_invariant_sites(self):
-    #     return self.data.attrs["num_invariant_sites"]
-
-    # @property
-    # def position(self):
-    #     return self.data["sites/position"]
-
-    # @property
-    # def ancestral_state(self):
-    #     return self.data["sites/ancestral_state"]
-
-    # @property
-    # def ancestral_state_offset(self):
-    #     return self.data["sites/ancestral_state_offset"]
-
-    # @property
-    # def derived_state(self):
-    #     return self.data["sites/derived_state"]
-
-    # @property
-    # def derived_state_offset(self):
-    #     return self.data["sites/derived_state_offset"]
-
-    # @property
-    # def frequency(self):
-    #     return self.data["sites/frequency"]
-
-    # @property
-    # def invariant_site(self):
-    #     return self.data["invariants/site"]
-
-    # @property
-    # def singleton_site(self):
-    #     return self.data["singletons/site"]
-
-    # @property
-    # def singleton_sample(self):
-    #     return self.data["singletons/sample"]
-
-    # @property
-    # def genotypes(self):
-    #     return self.data["variants/genotypes"]
-
-    # @property
-    # def variant_site(self):
-    #     return self.data["variants/site"]
-
     def __str__(self):
         path = None
         if self.store is not None:
@@ -619,16 +460,15 @@ class SampleData(DataContainer):
     @classmethod
     def initialise(
             cls, sequence_length=0, filename=None, chunk_size=1024,
-            compressor=DEFAULT_COMPRESSOR, num_flush_threads=2, num_samples=None):
+            compressor=DEFAULT_COMPRESSOR, num_flush_threads=0, num_samples=None):
         """
         Initialises a new SampleData object.
         """
         self = cls()
-        super(cls, self)._initialise(filename)
+        super(cls, self)._initialise(filename, num_flush_threads)
 
         self.data.attrs["sequence_length"] = float(sequence_length)
 
-        self._num_flush_threads = num_flush_threads
         chunk_size = max(1, chunk_size)
         chunks = chunk_size,
         metadata_codec = numcodecs.JSON()
@@ -742,25 +582,12 @@ class SampleData(DataContainer):
     # Read mode
     ####################################
 
-    def inference_site_genotypes(self):
+    def genotypes(self, inference_sites=None):
         """
-        Returns an iterator over all the (site_id, genotypes) pairs that have
-        been marked for inference.
-        """
-        inference = self.site_inference[:]
-        chunk = None
-        chunk_size = self.site_genotypes.chunks[0]
-        for j in range(self.num_sites):
-            if j % chunk_size == 0:
-                chunk = self.site_genotypes[j: j + chunk_size][:]
-            a = chunk[j % chunk_size]
-            if inference[j] == 1:
-                yield j, a
-
-    def non_inference_site_genotypes(self):
-        """
-        Returns an iterator over all the (site_id, genotypes) pairs that have
-        not been marked for inference.
+        Returns an iterator over the sample (sites_id, genotypes) pairs.
+        If inference_sites is None, return all genotypes. If it is True,
+        return only genotypes at sites that have been marked for inference.
+        If False, return only genotypes at sites that are not marked for inference.
         """
         inference = self.site_inference[:]
         chunk = None
@@ -769,7 +596,7 @@ class SampleData(DataContainer):
             if j % chunk_size == 0:
                 chunk = self.site_genotypes[j: j + chunk_size][:]
             a = chunk[j % chunk_size]
-            if inference[j] == 0:
+            if inference_sites is None or inference[j] == inference_sites:
                 yield j, a
 
     def haplotypes(self):
@@ -871,15 +698,13 @@ class AncestorData(DataContainer):
     @classmethod
     def initialise(
             cls, input_data, filename=None, chunk_size=1024,
-            num_flush_threads=1, compressor=DEFAULT_COMPRESSOR):
+            num_flush_threads=0, compressor=DEFAULT_COMPRESSOR):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_ancestor method.
         """
-        if num_flush_threads <= 0:
-            num_flush_threads = 1
         self = cls()
-        super(cls, self)._initialise(filename)
+        super(cls, self)._initialise(filename, num_flush_threads)
         self.input_data = input_data
         self.compressor = compressor
         self.data.attrs["sample_data_uuid"] = input_data.uuid
@@ -947,6 +772,7 @@ class AncestorData(DataContainer):
         """
         Returns an iterator over all the ancestors.
         """
+        # TODO this is basically the same as the genotypes iterator above. Abstract.
         chunk = None
         chunk_size = self.ancestor.chunks[0]
         for j in range(self.num_ancestors):

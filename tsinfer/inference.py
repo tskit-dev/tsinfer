@@ -90,7 +90,7 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
     logger.info("Starting site addition")
-    for j, (site_id, genotypes) in enumerate(input_data.inference_site_genotypes()):
+    for j, (site_id, genotypes) in enumerate(input_data.genotypes(inference_sites=True)):
         frequency = np.sum(genotypes)
         ancestor_builder.add_site(j, int(frequency), genotypes)
         progress_monitor.update()
@@ -374,7 +374,7 @@ class Matcher(object):
             parent=parent)
         if all_sites:
             position = self.sample_data.site_position[:]
-            for site_id, genotypes in self.sample_data.non_inference_site_genotypes():
+            for site_id, genotypes in self.sample_data.genotypes(inference_sites=False):
                 new_site = sites.add_row(position[site_id], "0")
                 count = np.sum(genotypes)
                 if count == 1:
