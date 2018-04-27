@@ -86,13 +86,17 @@ class BufferedItemWriter(object):
             array.resize(*shape)
             self.buffers[key] = [None for _ in range(self.num_buffers)]
             for j in range(self.num_buffers):
+                chunks = list(array.shape)
+                # For the buffer we must set the chunk size to 1, or we will
+                # reencode the buffer each time we update.
+                chunks[0] = 1
                 # 2018-04-18 Zarr current emits a warning when calling empty_like on
                 # object arrays. See https://github.com/zarr-developers/zarr/issues/257
                 # Remove this catch_warnings when the bug is fixed.
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    self.buffers[key][j] = zarr.empty_like(array, compressor=None)
-                chunks = list(array.shape)
+                    self.buffers[key][j] = zarr.empty_like(
+                        array, compressor=None, chunks=chunks)
                 chunks[0] = self.chunk_size
                 self.buffers[key][j].resize(*chunks)
         self.start_offset = [0 for _ in range(self.num_buffers)]
@@ -255,7 +259,7 @@ class DataContainer(object):
         Initialise the basic state of the data container.
         """
         self.store = None
-        self._num_flush_threads = 0
+        self._num_flush_threads = num_flush_threads
         self.data = zarr.group()
         if filename is not None:
             self.store = zarr.LMDBStore(filename, subdir=False)
