@@ -38,6 +38,36 @@ import numcodecs.blosc as blosc
 
 import tsinfer.threads as threads
 
+
+####################
+# Monkey patch zarr's JSON codec to fix bug.
+# https://github.com/zarr-developers/numcodecs/issues/76
+def encode(self, buf):
+    buf = np.asanyarray(buf)
+    items = buf.tolist()
+    items.append(buf.dtype.str)
+    items.append(buf.shape)
+    return self._encoder.encode(items).encode(self._text_encoding)
+
+
+def decode(self, buf, out=None):
+    buf = numcodecs.compat.buffer_tobytes(buf)
+    items = self._decoder.decode(buf.decode(self._text_encoding))
+    dec = np.empty(items[-1], dtype=items[-2])
+    dec[:] = items[:-2]
+    if out is not None:
+        np.copyto(out, dec)
+        return out
+    else:
+        return dec
+
+
+numcodecs.json.JSON.encode = encode
+numcodecs.json.JSON.decode = decode
+
+####################
+
+
 # FIXME need some global place to keep these constants
 UNKNOWN_ALLELE = 255
 
@@ -208,6 +238,18 @@ def zarr_summary(array):
         array.dtype)
 
 
+def chunk_iterator(array):
+    """
+    Utility to iterate over the rows in the specified array efficiently
+    by accessing one chunk at a time.
+    """
+    chunk_size = array.chunks[0]
+    for j in range(array.shape[0]):
+        if j % chunk_size == 0:
+            chunk = array[j: j + chunk_size][:]
+        yield chunk[j % chunk_size]
+
+
 class DataContainer(object):
     """
     Superclass of objects used to represent a collection of related
@@ -334,6 +376,18 @@ class DataContainer(object):
             ret = self.uuid == other.uuid and self.data_equal(other)
         return ret
 
+    def arrays(self):
+        """
+        Returns a list of all the zarr arrays in this DataContainer.
+        """
+        ret = []
+
+        def visitor(name, obj):
+            if isinstance(obj, zarr.Array):
+                ret.append((name, obj))
+        self.data.visititems(visitor)
+        return ret
+
 
 class SampleData(DataContainer):
     """
@@ -352,51 +406,51 @@ class SampleData(DataContainer):
     @property
     def num_inference_sites(self):
         if self._num_inference_sites is None:
-            self._num_inference_sites = int(np.sum(self.site_inference[:]))
+            self._num_inference_sites = int(np.sum(self.sites_inference[:]))
         return self._num_inference_sites
 
     @property
     def num_populations(self):
-        return self.population_metadata.shape[0]
+        return self.populations_metadata.shape[0]
 
     @property
     def num_samples(self):
-        return self.sample_metadata.shape[0]
+        return self.samples_metadata.shape[0]
 
     @property
     def num_sites(self):
-        return self.site_position.shape[0]
+        return self.sites_position.shape[0]
 
     @property
-    def population_metadata(self):
+    def populations_metadata(self):
         return self.data["population/metadata"]
 
     @property
-    def sample_population(self):
+    def samples_population(self):
         return self.data["samples/population"]
 
     @property
-    def sample_metadata(self):
+    def samples_metadata(self):
         return self.data["samples/metadata"]
 
     @property
-    def site_genotypes(self):
+    def sites_genotypes(self):
         return self.data["sites/genotypes"]
 
     @property
-    def site_position(self):
+    def sites_position(self):
         return self.data["sites/position"]
 
     @property
-    def site_alleles(self):
+    def sites_alleles(self):
         return self.data["sites/alleles"]
 
     @property
-    def site_metadata(self):
+    def sites_metadata(self):
         return self.data["sites/metadata"]
 
     @property
-    def site_inference(self):
+    def sites_inference(self):
         return self.data["sites/inference"]
 
     def __str__(self):
@@ -409,23 +463,19 @@ class SampleData(DataContainer):
             ("format_version", self.format_version),
             ("finalised", self.finalised),
             ("uuid", self.uuid),
+            ("sequence_length", self.sequence_length),
+            ("num_populations", self.num_populations),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
-            ("num_variant_sites", self.num_variant_sites),
-            ("num_singleton_sites", self.num_singleton_sites),
-            ("num_invariant_sites", self.num_invariant_sites),
-            ("sequence_length", self.sequence_length),
-            ("position", zarr_summary(self.position)),
-            ("frequency", zarr_summary(self.frequency)),
-            ("ancestral_state", zarr_summary(self.ancestral_state)),
-            ("ancestral_state_offset", zarr_summary(self.ancestral_state_offset)),
-            ("derived_state", zarr_summary(self.derived_state)),
-            ("derived_state_offset", zarr_summary(self.derived_state_offset)),
-            ("variant_site", zarr_summary(self.variant_site)),
-            ("singleton_site", zarr_summary(self.singleton_site)),
-            ("invariant_site", zarr_summary(self.invariant_site)),
-            ("singleton_sample", zarr_summary(self.singleton_sample)),
-            ("genotypes", zarr_summary(self.genotypes))]
+            ("num_inference_sites", self.num_inference_sites),
+            ("populations/metadata", zarr_summary(self.populations_metadata)),
+            ("samples/population", zarr_summary(self.samples_population)),
+            ("samples/metadata", zarr_summary(self.samples_metadata)),
+            ("sites/position", zarr_summary(self.sites_position)),
+            ("sites/alleles", zarr_summary(self.sites_alleles)),
+            ("sites/inference", zarr_summary(self.sites_inference)),
+            ("sites/genotypes", zarr_summary(self.sites_genotypes)),
+            ("sites/metadata", zarr_summary(self.sites_metadata))]
         return self._format_str(values)
 
     def data_equal(self, other):
@@ -437,25 +487,23 @@ class SampleData(DataContainer):
         return (
             self.format_name == other.format_name and
             self.format_version == other.format_version and
+            self.num_populations == other.num_populations and
             self.num_samples == other.num_samples and
             self.num_sites == other.num_sites and
-            self.num_variant_sites == other.num_variant_sites and
-            self.num_singleton_sites == other.num_singleton_sites and
-            self.num_invariant_sites == other.num_invariant_sites and
-            self.sequence_length == other.sequence_length and
-            np.array_equal(self.position[:], other.position[:]) and
-            np.array_equal(self.frequency[:], other.frequency[:]) and
-            np.array_equal(self.ancestral_state[:], other.ancestral_state[:]) and
-            np.array_equal(
-                self.ancestral_state_offset[:], other.ancestral_state_offset[:]) and
-            np.array_equal(self.derived_state[:], other.derived_state[:]) and
-            np.array_equal(
-                self.derived_state_offset[:], other.derived_state_offset[:]) and
-            np.array_equal(self.variant_site[:], other.variant_site[:]) and
-            np.array_equal(self.invariant_site[:], other.invariant_site[:]) and
-            np.array_equal(self.singleton_site[:], other.singleton_site[:]) and
-            np.array_equal(self.singleton_sample[:], other.singleton_sample[:]) and
-            np.array_equal(self.genotypes[:], other.genotypes[:]))
+            self.num_inference_sites == other.num_inference_sites and
+            np.all(self.samples_population[:] == other.samples_population[:]) and
+            np.all(self.sites_position[:] == other.sites_position[:]) and
+            np.all(self.sites_inference[:] == other.sites_inference[:]) and
+            np.all(self.sites_genotypes[:] == other.sites_genotypes[:]) and
+            # Need to take a different approach with np object arrays.
+            all(itertools.starmap(np.array_equal, zip(
+                self.populations_metadata[:], other.populations_metadata[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.samples_metadata[:], other.samples_metadata[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.sites_metadata[:], other.sites_metadata[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.sites_alleles[:], other.sites_alleles[:]))))
 
     ####################################
     # Write mode
@@ -521,13 +569,13 @@ class SampleData(DataContainer):
         return self
 
     def _alloc_site_writer(self):
-        self.site_genotypes.resize(0, self.num_samples)
+        self.sites_genotypes.resize(0, self.num_samples)
         arrays = {
-            "position": self.site_position,
-            "genotypes": self.site_genotypes,
-            "alleles": self.site_alleles,
-            "metadata": self.site_metadata,
-            "inference": self.site_inference,
+            "position": self.sites_position,
+            "genotypes": self.sites_genotypes,
+            "alleles": self.sites_alleles,
+            "metadata": self.sites_metadata,
+            "inference": self.sites_inference,
         }
         self._sites_writer = BufferedItemWriter(
                 arrays, num_threads=self._num_flush_threads)
@@ -569,13 +617,11 @@ class SampleData(DataContainer):
         if self.sequence_length > 0 and position >= self.sequence_length:
             raise ValueError("If sequence_length is set, sites positions must be less.")
         count = np.sum(genotypes)
-        # Have to leave 'alleles' out for the moment as it's causing problems in zarr.
-        # https://github.com/zarr-developers/zarr/issues/258
         inference_site = count > 1 and count < self.num_samples
         self._sites_writer.add(
             position=position, genotypes=genotypes,
             metadata=self._check_metadata(metadata),
-            inference=inference_site)
+            inference=inference_site, alleles=alleles)
 
     def finalise(self):
         self._sites_writer.flush()
@@ -593,28 +639,31 @@ class SampleData(DataContainer):
         return only genotypes at sites that have been marked for inference.
         If False, return only genotypes at sites that are not marked for inference.
         """
-        inference = self.site_inference[:]
-        chunk = None
-        chunk_size = self.site_genotypes.chunks[0]
-        for j in range(self.num_sites):
-            if j % chunk_size == 0:
-                chunk = self.site_genotypes[j: j + chunk_size][:]
-            a = chunk[j % chunk_size]
+        inference = self.sites_inference[:]
+        for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
             if inference_sites is None or inference[j] == inference_sites:
                 yield j, a
 
-    def haplotypes(self):
+    def haplotypes(self, inference_sites=None):
         """
-        Returns an iterator over the sample haplotypes.
+        Returns an iterator over the sample haplotypes. If inference_sites is
+        None, return for all sites. If inference_sites is False, return for
+        sites that are not selected for inference. If True, return states
+        for sites that are selected for inference.
         """
-        inference_sites = self.site_inference[:] == 1
-        chunk = None
-        chunk_size = self.site_genotypes.chunks[1]
+        if inference_sites is not None:
+            selection = self.sites_inference[:] == int(inference_sites)
+        # We iterate over chunks vertically here, and it's not worth complicating
+        # the chunk iterator to handle this.
+        chunk_size = self.sites_genotypes.chunks[1]
         for j in range(self.num_samples):
             if j % chunk_size == 0:
-                chunk = self.site_genotypes[:, j: j + chunk_size].T
+                chunk = self.sites_genotypes[:, j: j + chunk_size].T
             a = chunk[j % chunk_size]
-            yield a[inference_sites]
+            if inference_sites is None:
+                yield a
+            else:
+                yield a[selection]
 
 
 class AncestorData(DataContainer):
@@ -776,11 +825,5 @@ class AncestorData(DataContainer):
         """
         Returns an iterator over all the ancestors.
         """
-        # TODO this is basically the same as the genotypes iterator above. Abstract.
-        chunk = None
-        chunk_size = self.ancestor.chunks[0]
-        for j in range(self.num_ancestors):
-            if j % chunk_size == 0:
-                chunk = self.ancestor[j: j + chunk_size][:]
-            a = chunk[j % chunk_size]
+        for a in chunk_iterator(self.ancestor):
             yield a

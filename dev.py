@@ -173,6 +173,8 @@ def build_profile_inputs(n, num_megabases):
     sample_data.finalise()
     progress_monitor.close()
 
+    print(sample_data)
+
 #     filename = "tmp__NOBACKUP__/profile-n={}_m={}.ancestors".format(n, num_megabases)
 #     if os.path.exists(filename):
 #         os.unlink(filename)
@@ -185,10 +187,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # build_profile_inputs(10, 1)
+    build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
-    build_profile_inputs(1000, 100)
-    build_profile_inputs(10**4, 100)
+    # build_profile_inputs(1000, 100)
+    # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
     # tsinfer_dev(38, 2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)

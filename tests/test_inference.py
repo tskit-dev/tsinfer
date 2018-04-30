@@ -165,7 +165,6 @@ class TestThreads(TsinferTestCase):
         self.assertTreeSequencesEqual(ts1, ts2)
 
 
-@unittest.skip("fix formats")
 class TestAncestorGeneratorsEquivalant(unittest.TestCase):
     """
     Tests for the ancestor generation process.
@@ -188,16 +187,6 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         adp = tsinfer.AncestorData.initialise(sample_data, compressor=None)
         tsinfer.build_ancestors(sample_data, adp, method="P")
         adp.finalise()
-
-        # np.set_printoptions(linewidth=20000)
-        # np.set_printoptions(threshold=20000000)
-        # A = adp.genotypes[:]
-        # B = adc.genotypes[:]
-        # print(A)
-        # print(B)
-        # print(np.all(A == B))
-        # print((A == B).astype(np.int))
-
         self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
@@ -304,8 +293,8 @@ class TestBuildAncestors(unittest.TestCase):
 
     def verify_ancestors(self, sample_data, ancestor_data):
         ancestors = ancestor_data.ancestor[:]
-        inference_sites = sample_data.site_inference[:]
-        sample_genotypes = sample_data.site_genotypes[:][inference_sites == 1, :]
+        inference_sites = sample_data.sites_inference[:]
+        sample_genotypes = sample_data.sites_genotypes[:][inference_sites == 1, :]
         start = ancestor_data.start[:]
         end = ancestor_data.end[:]
         time = ancestor_data.time[:]
@@ -385,7 +374,7 @@ class AlgorithmsExactlyEqualMixin(object):
             num_samples=ts.num_samples, sequence_length=ts.sequence_length,
             compressor=None)
         for v in ts.variants():
-            sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+            sample_data.add_site(v.site.position, v.alleles, v.genotypes)
         sample_data.finalise()
 
         ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
@@ -468,13 +457,11 @@ class AlgorithmsExactlyEqualMixin(object):
             self.verify(ts)
 
 
-@unittest.skip("fix formats")
 class TestAlgorithmsExactlyEqualNoPathCompression(
         unittest.TestCase, AlgorithmsExactlyEqualMixin):
     path_compression_enabled = False
 
 
-@unittest.skip("fix formats")
 class TestAlgorithmsExactlyEqualPathCompression(
         unittest.TestCase, AlgorithmsExactlyEqualMixin):
     path_compression_enabled = True

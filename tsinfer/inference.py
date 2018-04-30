@@ -167,7 +167,7 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
         total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
 
     count = 0
-    for g1, v in zip(ancestor_data.site_genotypes(), ancestors_ts.variants()):
+    for g1, v in zip(ancestor_data.sites_genotypes(), ancestors_ts.variants()):
         g2 = v.genotypes
         # Set anything unknown to 0
         g1[g1 == UNKNOWN_ALLELE] = 0
@@ -337,8 +337,8 @@ class Matcher(object):
 
         left, right, parent, child = tsb.dump_edges()
         if rescale_positions:
-            inference_sites = self.sample_data.site_inference[:]
-            position = self.sample_data.site_position[:]
+            inference_sites = self.sample_data.sites_inference[:]
+            position = self.sample_data.sites_position[:]
             sequence_length = self.sample_data.sequence_length
             if sequence_length is None or sequence_length < position[-1]:
                 sequence_length = position[-1] + 1
@@ -373,7 +373,7 @@ class Matcher(object):
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
         if all_sites:
-            position = self.sample_data.site_position[:]
+            position = self.sample_data.sites_position[:]
             for site_id, genotypes in self.sample_data.genotypes(inference_sites=False):
                 new_site = sites.add_row(position[site_id], "0")
                 count = np.sum(genotypes)
@@ -568,19 +568,13 @@ class SampleMatcher(Matcher):
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
-        self.sample_haplotypes = self.sample_data.haplotypes()
+        self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
         self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
-        # print("process sample", haplotype)
-        # print("mutated_sites = ", self.mutated_sites)
-        # mask = np.zeros(self.num_sites, dtype=np.uint8)
-        # mask[self.mutated_sites] = 1
-        # h = np.logical_and(haplotype, mask).astype(np.uint8)
-        # diffs = np.where(h != haplotype)[0]
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
         match = self.match[thread_index]
         diffs = np.where(haplotype != match)[0]

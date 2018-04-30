@@ -35,6 +35,35 @@ import tsinfer
 import tsinfer.formats as formats
 
 
+####################
+# Monkey patch zarr's JSON codec to fix bug.
+# https://github.com/zarr-developers/numcodecs/issues/76
+def encode(self, buf):
+    buf = np.asanyarray(buf)
+    items = buf.tolist()
+    items.append(buf.dtype.str)
+    items.append(buf.shape)
+    return self._encoder.encode(items).encode(self._text_encoding)
+
+
+def decode(self, buf, out=None):
+    buf = numcodecs.compat.buffer_tobytes(buf)
+    items = self._decoder.decode(buf.decode(self._text_encoding))
+    dec = np.empty(items[-1], dtype=items[-2])
+    dec[:] = items[:-2]
+    if out is not None:
+        np.copyto(out, dec)
+        return out
+    else:
+        return dec
+
+
+numcodecs.json.JSON.encode = encode
+numcodecs.json.JSON.decode = decode
+
+####################
+
+
 class DataContainerMixin(object):
     """
     Common tests for the the data container classes."
@@ -51,7 +80,6 @@ class DataContainerMixin(object):
             self.assertRaises(lmdb.Error, formats.SampleData.load, bad_format_file)
 
 
-@unittest.skip("Sample data file format tests out of date")
 class TestSampleData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.
@@ -73,35 +101,16 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.num_samples, ts.num_samples)
         self.assertEqual(input_file.sequence_length, ts.sequence_length)
         self.assertEqual(input_file.num_sites, ts.num_sites)
-        self.assertEqual(input_file.site_genotypes.dtype, np.uint8)
-        self.assertEqual(input_file.site_position.dtype, np.float64)
-
-        # TODO fix this when the remaining issues have been fixed.
-
+        self.assertEqual(input_file.sites_genotypes.dtype, np.uint8)
+        self.assertEqual(input_file.sites_position.dtype, np.float64)
         # Take copies to avoid decompressing the data repeatedly.
-        # genotypes = input_file.site_genotypes[:]
-        # position = input_file.site_position[:]
-        # j = 0
-        # variant_sites = []
-        # invariant_sites = []
-        # singleton_sites = []
-        # singleton_samples = []
-        # for variant in ts.variants():
-        #     self.assertEqual(variant.site.position, position[variant.site.id])
-        #     self.assertEqual(variant.alleles[0], ancestral_states[variant.site.id])
-        #     if len(variant.alleles) > 1:
-        #         self.assertEqual(variant.alleles[1], derived_states[variant.site.id])
-        #     else:
-        #         self.assertEqual(derived_states[variant.site.id], "")
-        #     if f == 1:
-        #         singleton_sites.append(variant.site.id)
-        #         singleton_samples.append(np.where(variant.genotypes == 1)[0][0])
-        #     elif 0 < f < ts.num_samples:
-        #         variant_sites.append(variant.site.id)
-        #         self.assertTrue(np.array_equal(genotypes[j], variant.genotypes))
-        #         j += 1
-        #     else:
-        #         invariant_sites.append(variant.site.id)
+        genotypes = input_file.sites_genotypes[:]
+        position = input_file.sites_position[:]
+        alleles = input_file.sites_alleles[:]
+        for j, variant in enumerate(ts.variants()):
+            self.assertEqual(variant.site.position, position[j])
+            self.assertTrue(np.all(variant.genotypes == genotypes[j]))
+            self.assertEqual(alleles[j], list(variant.alleles))
 
     def test_defaults(self):
         ts = self.get_example_ts(10, 10)
@@ -109,17 +118,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
         compressor = formats.DEFAULT_COMPRESSOR
-        self.assertEqual(input_file.position.compressor, compressor)
-        self.assertEqual(input_file.frequency.compressor, compressor)
-        self.assertEqual(input_file.ancestral_state.compressor, compressor)
-        self.assertEqual(input_file.ancestral_state_offset.compressor, compressor)
-        self.assertEqual(input_file.derived_state.compressor, compressor)
-        self.assertEqual(input_file.derived_state_offset.compressor, compressor)
-        self.assertEqual(input_file.variant_site.compressor, compressor)
-        self.assertEqual(input_file.invariant_site.compressor, compressor)
-        self.assertEqual(input_file.singleton_site.compressor, compressor)
-        self.assertEqual(input_file.singleton_sample.compressor, compressor)
-        self.assertEqual(input_file.genotypes.compressor, compressor)
+        for _, array in input_file.arrays():
+            self.assertEqual(array.compressor, compressor)
 
     def test_chunk_size(self):
         ts = self.get_example_ts(4, 2)
@@ -129,9 +129,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 num_samples=ts.num_samples, sequence_length=ts.sequence_length,
                 chunk_size=chunk_size)
             self.verify_data_round_trip(ts, input_file)
-            self.assertEqual(
-                input_file.site_genotypes.chunks,
-                (chunk_size, min(chunk_size, ts.num_samples)))
+            for name, array in input_file.arrays():
+                self.assertEqual(array.chunks[0], chunk_size)
+                if name.endswith("genotypes"):
+                    self.assertEqual(array.chunks[1], chunk_size)
 
     def test_filename(self):
         ts = self.get_example_ts(14, 15)
@@ -158,7 +159,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     num_samples=ts.num_samples, sequence_length=ts.sequence_length,
                     filename=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(ts, input_file)
-                self.assertEqual(input_file.genotypes.chunks, (chunk_size, chunk_size))
+                self.assertEqual(
+                    input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
             # Now reload the files and check they are equal
             input_file0 = formats.SampleData.load(files[0])
             input_file1 = formats.SampleData.load(files[1])
@@ -176,17 +178,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 num_samples=ts.num_samples, sequence_length=ts.sequence_length,
                 compressor=compressor)
             self.verify_data_round_trip(ts, input_file)
-            self.assertEqual(input_file.position.compressor, compressor)
-            self.assertEqual(input_file.frequency.compressor, compressor)
-            self.assertEqual(input_file.ancestral_state.compressor, compressor)
-            self.assertEqual(input_file.ancestral_state_offset.compressor, compressor)
-            self.assertEqual(input_file.derived_state.compressor, compressor)
-            self.assertEqual(input_file.derived_state_offset.compressor, compressor)
-            self.assertEqual(input_file.variant_site.compressor, compressor)
-            self.assertEqual(input_file.invariant_site.compressor, compressor)
-            self.assertEqual(input_file.singleton_site.compressor, compressor)
-            self.assertEqual(input_file.singleton_sample.compressor, compressor)
-            self.assertEqual(input_file.genotypes.compressor, compressor)
+            for _, array in input_file.arrays():
+                self.assertEqual(array.compressor, compressor)
 
     def test_multichar_alleles(self):
         ts = self.get_example_ts(5, 17)
@@ -202,14 +195,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         input_file = formats.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
-        self.assertTrue(np.array_equal(
-            t.sites.ancestral_state, input_file.ancestral_state[:]))
-        self.assertTrue(np.array_equal(
-            t.sites.ancestral_state_offset, input_file.ancestral_state_offset[:]))
-        self.assertTrue(np.array_equal(
-            t.mutations.derived_state, input_file.derived_state[:]))
-        self.assertTrue(np.array_equal(
-            t.mutations.derived_state_offset, input_file.derived_state_offset[:]))
 
     def test_str(self):
         ts = self.get_example_ts(5, 3)
@@ -250,25 +235,66 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             ValueError, input_file.add_site, position=1,
             alleles=["0", "1"], genotypes=np.array([0, 2], dtype=np.int8))
 
-    def test_variants(self):
+    def test_genotypes(self):
         ts = self.get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)
         input_file = formats.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
-        variants = []
         for v in ts.variants():
             input_file.add_site(v.site.position, v.alleles, v.genotypes)
-            if 1 < np.sum(v.genotypes) < ts.num_samples:
-                variants.append(v)
         input_file.finalise()
-        self.assertGreater(len(variants), 0)
-        self.assertEqual(input_file.num_inference_sites, len(variants))
+
+        self.assertLess(np.sum(input_file.sites_inference[:]), ts.num_sites)
+        all_genotypes = input_file.genotypes()
+        for v in ts.variants():
+            site_id, g = next(all_genotypes)
+            self.assertEqual(site_id, v.site.id)
+            self.assertTrue(np.array_equal(g, v.genotypes))
+        self.assertIsNone(next(all_genotypes, None), None)
+
+        inference_genotypes = input_file.genotypes(inference_sites=True)
+        non_inference_genotypes = input_file.genotypes(inference_sites=False)
+        for v in ts.variants():
+            freq = np.sum(v.genotypes)
+            if 1 < freq < ts.num_samples:
+                site_id, g = next(inference_genotypes)
+                self.assertEqual(site_id, v.site.id)
+                self.assertTrue(np.array_equal(g, v.genotypes))
+            else:
+                site_id, g = next(non_inference_genotypes)
+                self.assertEqual(site_id, v.site.id)
+                self.assertTrue(np.array_equal(g, v.genotypes))
+        self.assertIsNone(next(inference_genotypes, None), None)
+
+    def test_haplotypes(self):
+        ts = self.get_example_ts(13, 12)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        for v in ts.variants():
+            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+        input_file.finalise()
+
+        G = ts.genotype_matrix()
         j = 0
-        for site_id, genotypes in input_file.inference_site_genotypes():
-            self.assertEqual(variants[j].site.id, site_id)
-            self.assertTrue(np.array_equal(variants[j].genotypes, genotypes))
+        for h in input_file.haplotypes():
+            self.assertTrue(np.array_equal(h, G[:, j]))
             j += 1
-        self.assertEqual(j, len(variants))
+        self.assertEqual(j, ts.num_samples)
+
+        selection = input_file.sites_inference[:] == 1
+        j = 0
+        for h in input_file.haplotypes(inference_sites=True):
+            self.assertTrue(np.array_equal(h, G[selection, j]))
+            j += 1
+        self.assertEqual(j, ts.num_samples)
+
+        selection = input_file.sites_inference[:] == 0
+        j = 0
+        for h in input_file.haplotypes(inference_sites=False):
+            self.assertTrue(np.array_equal(h, G[selection, j]))
+            j += 1
+        self.assertEqual(j, ts.num_samples)
 
     def test_invariant_sites(self):
         n = 10
@@ -279,11 +305,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             for j in range(m):
                 input_file.add_site(j, ["0", "1"], G[j])
             input_file.finalise()
-            self.assertEqual(input_file.num_variant_sites, 0)
-            self.assertEqual(input_file.num_invariant_sites, m)
             self.assertEqual(input_file.num_sites, m)
-            self.assertTrue(np.array_equal(
-                input_file.invariant_site, np.arange(m, dtype=np.int32)))
+            self.assertTrue(
+                np.all(input_file.sites_inference[:] == np.zeros(m, dtype=int)))
 
     def test_ts_with_invariant_sites(self):
         ts = self.get_example_ts(5, 3)
@@ -635,12 +659,9 @@ class BufferedItemWriterMixin(object):
         print(z[:])
         self.verify_round_trip({"z": z})
 
-    @unittest.skip("Strange zarr error.")
     def test_empty_string_list(self):
         z = zarr.empty(1, dtype=object, object_codec=numcodecs.JSON(), chunks=(2,))
-        print(z[:])
         z[0] = ["", ""]
-        print(z[:])
         self.verify_round_trip({"z": z})
 
     def test_mixed_chunk_sizes(self):

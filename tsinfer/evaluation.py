@@ -358,7 +358,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
     # We also only want the inference sites
-    A = A[:, sample_data.site_inference[:] == 1]
+    A = A[:, sample_data.sites_inference[:] == 1]
 
     # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
