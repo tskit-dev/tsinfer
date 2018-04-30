@@ -20,6 +20,9 @@
 Tests for the inference code.
 """
 import unittest
+import random
+import string
+import json
 
 import numpy as np
 import msprime
@@ -125,6 +128,79 @@ class TestRoundTrip(unittest.TestCase):
         for _ in range(num_random_tests):
             S, positions = get_random_data_example(5, 10)
             self.verify_data_round_trip(S, positions)
+
+
+def random_string(rng, max_len=10):
+    """
+    Uses the specified random generator to generate a random string.
+    """
+    s = ""
+    for _ in range(rng.randint(0, max_len)):
+        s += rng.choice(string.ascii_letters)
+    return s
+
+
+class TestMetadataRoundTrip(unittest.TestCase):
+    """
+    Tests if we can round-trip various forms of metadata.
+    """
+
+    def test_multichar_alleles(self):
+        ts = msprime.simulate(
+            10, mutation_rate=10, recombination_rate=1, random_seed=5)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=1, compressor=None)
+        rng = random.Random(32)
+        all_alleles = []
+        for variant in ts.variants():
+            ancestral = random_string(rng)
+            derived = ancestral
+            while derived == ancestral:
+                derived = random_string(rng)
+            alleles = ancestral, derived
+            sample_data.add_site(variant.site.position, alleles, variant.genotypes)
+            all_alleles.append(alleles)
+        sample_data.finalise()
+
+        for j, alleles in enumerate(sample_data.sites_alleles[:]):
+            self.assertEqual(all_alleles[j], tuple(alleles))
+
+        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        inferred_alleles = [variant.alleles for variant in output_ts.variants()]
+        self.assertEqual(inferred_alleles, all_alleles)
+
+    def test_site_metadata(self):
+        ts = msprime.simulate(
+            11, mutation_rate=5, recombination_rate=2, random_seed=15)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=1, compressor=None)
+        rng = random.Random(32)
+        all_metadata = []
+        for variant in ts.variants():
+            metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
+            sample_data.add_site(
+                variant.site.position, ["A", "T"], variant.genotypes,
+                metadata=metadata)
+            all_metadata.append(metadata)
+        sample_data.finalise()
+
+        for j, metadata in enumerate(sample_data.sites_metadata[:]):
+            self.assertEqual(all_metadata[j], metadata)
+
+        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        output_metadata = [
+            json.loads(site.metadata.decode()) for site in output_ts.sites()]
+        self.assertEqual(all_metadata, output_metadata)
 
 
 class TestMutationProperties(unittest.TestCase):

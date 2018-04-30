@@ -505,11 +505,26 @@ class TestPerfectInference(unittest.TestCase):
     """
     def verify_perfect_inference(self, ts, inferred_ts):
         self.assertEqual(ts.sequence_length, inferred_ts.sequence_length)
-        self.assertEqual(ts.tables.edges, inferred_ts.tables.edges)
-        self.assertEqual(ts.tables.sites, inferred_ts.tables.sites)
-        self.assertEqual(ts.tables.mutations, inferred_ts.tables.mutations)
-        self.assertTrue(
-            np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags))
+        inferred = inferred_ts.dump_tables()
+        source = ts.dump_tables()
+        self.assertEqual(source.edges, inferred.edges)
+        # The metadata column will be different in the tables so we have to check
+        # column by column for therest.
+        self.assertTrue(np.array_equal(source.nodes.flags, inferred.nodes.flags))
+        self.assertTrue(np.array_equal(source.sites.position, inferred.sites.position))
+        self.assertTrue(np.array_equal(
+            source.sites.ancestral_state, inferred.sites.ancestral_state))
+        self.assertTrue(np.array_equal(
+            source.sites.ancestral_state_offset, inferred.sites.ancestral_state_offset))
+        self.assertTrue(np.array_equal(source.mutations.site, inferred.mutations.site))
+        self.assertTrue(np.array_equal(source.mutations.node, inferred.mutations.node))
+        self.assertTrue(np.array_equal(
+            source.mutations.parent, inferred.mutations.parent))
+        self.assertTrue(np.array_equal(
+            source.mutations.derived_state, inferred.mutations.derived_state))
+        self.assertTrue(np.array_equal(
+            source.mutations.derived_state_offset,
+            inferred.mutations.derived_state_offset))
 
     def test_single_tree_defaults(self):
         base_ts = msprime.simulate(5, random_seed=234)

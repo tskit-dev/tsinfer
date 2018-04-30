@@ -233,6 +233,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(
             ValueError, input_file.add_site, position=1,
             alleles=["0", "1"], genotypes=np.array([0, 2], dtype=np.int8))
+        self.assertRaises(
+            ValueError, input_file.add_site, position=1,
+            alleles=["0", "0"], genotypes=np.array([0, 2], dtype=np.int8))
 
     def test_genotypes(self):
         ts = self.get_example_ts(13, 12)

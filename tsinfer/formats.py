@@ -640,6 +640,8 @@ class SampleData(DataContainer):
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
+        if len(set(alleles)) != len(alleles):
+            raise ValueError("Alleles must be distinct")
         if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
             raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
