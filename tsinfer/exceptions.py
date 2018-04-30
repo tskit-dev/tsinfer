@@ -17,24 +17,23 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Tree sequence inference.
-
-Python 3 only.
+Exceptions raised by tsinfer.
 """
 
-import sys
 
-if sys.version_info[0] < 3:
-    raise Exception("Python 3 only")
+class TsinferException(Exception):
+    """
+    Superclass of all exceptions thrown by tsinfer.
+    """
 
-__version__ = "undefined"
-try:
-    from . import _version
-    __version__ = _version.version
-except ImportError:
-    pass
 
-from .inference import *  # NOQA
-from .formats import *  # NOQA
-from .evaluation import *  # NOQA
-from .exceptions import *  # NOQA
+class FileError(TsinferException):
+    """
+    Exception raised when some non-specific error happens during file handling.
+    """
+
+
+class FileFormatError(FileError):
+    """
+    Exception raised when a malformed file is encountered.
+    """

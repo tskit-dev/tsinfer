@@ -28,11 +28,11 @@ import numpy as np
 import msprime
 import numcodecs
 import numcodecs.blosc as blosc
-import lmdb
 import zarr
 
 import tsinfer
 import tsinfer.formats as formats
+import tsinfer.exceptions as exceptions
 
 
 ####################
@@ -69,15 +69,14 @@ class DataContainerMixin(object):
     Common tests for the the data container classes."
     """
     def test_load(self):
-        # TODO there seems to be a bug in zarr in which we an exception occurs
-        # during the handling of this one.
         bad_files = ["/", "/file/does/not/exist"]
         for bad_file in bad_files:
-            self.assertRaises(lmdb.Error, self.tested_class.load, bad_file)
+            self.assertRaises(exceptions.FileError, self.tested_class.load, bad_file)
         bad_format_files = ["LICENSE"]
         for bad_format_file in bad_format_files:
             self.assertTrue(os.path.exists(bad_format_file))
-            self.assertRaises(lmdb.Error, formats.SampleData.load, bad_format_file)
+            self.assertRaises(
+                exceptions.FileFormatError, formats.SampleData.load, bad_format_file)
 
 
 class TestSampleData(unittest.TestCase, DataContainerMixin):

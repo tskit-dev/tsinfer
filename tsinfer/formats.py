@@ -37,6 +37,7 @@ import numcodecs
 import numcodecs.blosc as blosc
 
 import tsinfer.threads as threads
+import tsinfer.exceptions as exceptions
 
 
 ####################
@@ -233,9 +234,8 @@ def zarr_summary(array):
     """
     Returns a string with a brief summary of the specified zarr array.
     """
-    return "shape={};chunks={};size={};dtype={}".format(
-        array.shape, array.chunks, humanize.naturalsize(array.nbytes),
-        array.dtype)
+    return "shape={}; uncompressed size={}".format(
+        array.shape, humanize.naturalsize(array.nbytes))
 
 
 def chunk_iterator(array):
@@ -269,8 +269,14 @@ class DataContainer(object):
         except OSError:
             # Ignore any exceptions here and let LMDB handle them.
             pass
-        self.store = zarr.LMDBStore(
-            filename, map_size=map_size, readonly=True, subdir=False, lock=False)
+        try:
+            self.store = zarr.LMDBStore(
+                filename, map_size=map_size, readonly=True, subdir=False, lock=False)
+        except lmdb.InvalidError as e:
+            raise exceptions.FileFormatError(
+                    "Unknown file format:{}".format(str(e))) from e
+        except lmdb.Error as e:
+            raise exceptions.FileError(str(e)) from e
         self.data = zarr.open(store=self.store, mode="r")
         self.check_format()
 
@@ -285,16 +291,19 @@ class DataContainer(object):
             format_name = self.format_name
             format_version = self.format_version
         except KeyError:
-            raise ValueError("Incorrect file format")
+            raise exceptions.FileFormatError("Incorrect file format")
         if format_name != self.FORMAT_NAME:
-            raise ValueError("Incorrect file format: expected '{}' got '{}'".format(
-                self.FORMAT_VERSION, format_version))
+            raise exceptions.FileFormatError(
+                "Incorrect file format: expected '{}' got '{}'".format(
+                    self.FORMAT_NAME, format_name))
         if format_version[0] < self.FORMAT_VERSION[0]:
-            raise ValueError("Format version {} too old. Current version = {}".format(
-                format_version, self.FORMAT_VERSION))
+            raise exceptions.FileFormatError(
+                "Format version {} too old. Current version = {}".format(
+                    format_version, self.FORMAT_VERSION))
         if format_version[0] > self.FORMAT_VERSION[0]:
-            raise ValueError("Format version {} too new. Current version = {}".format(
-                format_version, self.FORMAT_VERSION))
+            raise exceptions.FileFormatError(
+                "Format version {} too new. Current version = {}".format(
+                    format_version, self.FORMAT_VERSION))
 
     def _initialise(self, filename=None, num_flush_threads=0):
         """
@@ -309,6 +318,17 @@ class DataContainer(object):
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
         self.data.attrs["uuid"] = str(uuid.uuid4())
+
+    @property
+    def file_size(self):
+        """
+        Returns the size of the underlying file, or -1 if we do not have a
+        file associated.
+        """
+        ret = -1
+        if self.store is not None:
+            ret = os.path.getsize(self.store.path)
+        return ret
 
     def finalise(self):
         """
@@ -388,6 +408,17 @@ class DataContainer(object):
         self.data.visititems(visitor)
         return ret
 
+    @property
+    def info(self):
+        """
+        Returns a string containing the zarr info for each array.
+        """
+        s = str(self.data.info)
+        for _, array in self.arrays():
+            s += ("-" * 80) + "\n"
+            s += str(array.info)
+        return s
+
 
 class SampleData(DataContainer):
     """
@@ -459,6 +490,7 @@ class SampleData(DataContainer):
             path = self.store.path
         values = [
             ("path", path),
+            ("file_size", humanize.naturalsize(self.file_size, binary=True)),
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("finalised", self.finalised),

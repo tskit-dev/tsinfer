@@ -28,6 +28,9 @@ import daiquiri
 import msprime
 
 import tsinfer
+import tsinfer.formats as formats
+import tsinfer.exceptions as exceptions
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,33 @@ def setup_logging(args):
         daiquiri.setup(level="WARN")
         logger = logging.getLogger(args.log_section)
         logger.setLevel(log_level)
+
+
+def run_list(args):
+    setup_logging(args)
+    tsinfer_file = None
+    try:
+        logger.debug("Trying SampleData file")
+        tsinfer_file = formats.SampleData.load(args.filename)
+        logger.debug("Loaded SampleData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+    try:
+        logger.debug("Trying AncestorData file")
+        tsinfer_file = formats.AncestorData.load(args.filename)
+        logger.debug("Loaded AncestorData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+
+    if tsinfer_file is None:
+        raise exceptions.FileFormatError(
+            "Unrecognised file format. Try running with -vv and check the log "
+            "for more details on what went wrong")
+
+    if args.storage:
+        print(tsinfer_file.info)
+    else:
+        print(tsinfer_file)
 
 
 def run_infer(args):
@@ -294,6 +324,19 @@ def get_tsinfer_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_infer)
+
+    parser = subparsers.add_parser(
+        "list",
+        aliases=["ls"],
+        help=(
+            "Show a summary of the specified tsinfer related file."))
+    add_logging_arguments(parser)
+    parser.add_argument(
+        "filename", help="The tsinfer file to show information about.")
+    parser.add_argument(
+        "--storage", "-s", action="store_true",
+        help="Show detailed information about data storage.")
+    parser.set_defaults(runner=run_list)
 
     return top_parser
 
