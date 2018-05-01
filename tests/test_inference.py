@@ -414,12 +414,11 @@ class TestBuildAncestors(unittest.TestCase):
         # The first ancestor must be all zeros.
         self.assertEqual(start[0], 0)
         self.assertEqual(end[0], ancestor_data.num_sites)
-        self.assertEqual(time[0], 2 + max(
-            np.sum(genotypes) for genotypes in sample_genotypes))
         self.assertEqual(list(focal_sites[0]), [])
         self.assertTrue(np.all(ancestors[0] == 0))
 
         used_sites = []
+        frequency_time_map = {}
         for j in range(ancestor_data.num_ancestors):
             a = ancestors[j]
             self.assertEqual(a.shape[0], end[j] - start[j])
@@ -432,10 +431,12 @@ class TestBuildAncestors(unittest.TestCase):
             if j > 0:
                 self.assertGreaterEqual(time[j - 1], time[j])
             for site in focal_sites[j]:
-                # The time value should be equal to the original frequency of the
-                # site in question.
+                # The time value should be the same for all sites with the same
+                # frequency
                 freq = np.sum(sample_genotypes[site])
-                self.assertEqual(freq, time[j])
+                if freq not in frequency_time_map:
+                    frequency_time_map[freq] = time[j]
+                self.assertEqual(frequency_time_map[freq], time[j])
         self.assertEqual(sorted(used_sites), list(range(ancestor_data.num_sites)))
 
     def test_simulated_no_recombination(self):

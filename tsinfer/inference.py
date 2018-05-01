@@ -98,9 +98,14 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
     descriptors = ancestor_builder.ancestor_descriptors()
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
+        # Build the map from frequencies to time.
+        time_map = {}
+        for freq, _ in reversed(descriptors):
+            if freq not in time_map:
+                time_map[freq] = len(time_map) + 1
         logger.info("Starting build for {} ancestors".format(num_ancestors))
         a = np.zeros(num_sites, dtype=np.uint8)
-        root_time = descriptors[0][0] + 1
+        root_time = len(time_map) + 1
         ultimate_ancestor_time = root_time + 1
         # Add the ultimate ancestor. This is an awkward hack really; we don't
         # ever insert this ancestor. The only reason to add it here is that
@@ -126,7 +131,8 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
                 "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
                     focal_sites.shape[0], e - s, duration))
             ancestor_data.add_ancestor(
-                start=s, end=e, time=freq, focal_sites=focal_sites, haplotype=a)
+                start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
+                haplotype=a)
             progress_monitor.update()
         progress_monitor.close()
     logger.info("Finished building ancestors")
@@ -364,10 +370,11 @@ class Matcher(object):
         nodes = msprime.NodeTable()
         flags, time = tsb.dump_nodes()
 
-        nodes.set_columns(flags=flags, time=time)
-        # Add in the nodes up to the first sample efficiently.
-        first_sample = self.sample_ids[0]
-        nodes.set_columns(flags=flags[:first_sample], time=time[:first_sample])
+        logger.debug("Adding tree sequence nodes")
+        # TODO add an option for encoding ancestor metadata in with the nodes here.
+        # Add in the nodes up to for the ancestors.
+        for u in range(self.sample_ids[0]):
+            nodes.add_row(flags=flags[u], time=time[u])
         # Now add in the sample nodes with metadata, etc.
         sample_metadata = self.sample_data.samples_metadata[:]
         sample_population = self.sample_data.samples_population[:]
@@ -378,11 +385,10 @@ class Matcher(object):
                 population=population,
                 metadata=self.encode_metadata(metadata))
         # Add in the remaining synthetic nodes.
-        synthetic_metadata = self.encode_metadata({"synthetic": True})
         for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
-            nodes.add_row(
-                flags=flags[u], time=time[u], metadata=synthetic_metadata)
+            nodes.add_row(flags=flags[u], time=time[u])
 
+        logger.debug("Adding tree sequence edges")
         left, right, parent, child = tsb.dump_edges()
         inference_sites = self.sample_data.sites_inference[:]
         position = self.sample_data.sites_position[:]
@@ -398,6 +404,7 @@ class Matcher(object):
         edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
+        logger.debug("Adding tree sequence sites & mutations")
         alleles = self.sample_data.sites_alleles[:][inference_sites == 1]
         metadata = self.sample_data.sites_metadata[:][inference_sites == 1]
         sites = msprime.SiteTable()
@@ -512,7 +519,6 @@ class AncestorMatcher(Matcher):
         nodes_before = self.tree_sequence_builder.num_nodes
 
         for child_id in range(start, end):
-            # TODO we should be adding the ancestor ID here as well as metadata.
             left, right, parent = self.results.get_path(child_id)
             self.tree_sequence_builder.add_path(
                 child_id, left, right, parent, compress=self.path_compression)
