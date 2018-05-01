@@ -98,6 +98,10 @@ class TestRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 0)
         self.verify_round_trip(ts)
 
+    @unittest.skip("Degenerate case not handled.")
+    def test_two_samples_one_site(self):
+        self.verify_data_round_trip(np.array([[1, 1]]), [0])
+
     @unittest.skip("invariant site state")
     def test_random_data_invariant_sites_ancestral_state(self):
         G, positions = get_random_data_example(24, 35)
@@ -202,6 +206,34 @@ class TestMetadataRoundTrip(unittest.TestCase):
             json.loads(site.metadata.decode()) for site in output_ts.sites()]
         self.assertEqual(all_metadata, output_metadata)
 
+    def test_sample_metadata(self):
+        ts = msprime.simulate(11, mutation_rate=5, random_seed=16)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData.initialise(sequence_length=1, compressor=None)
+        rng = random.Random(32)
+        all_metadata = []
+        for j in range(ts.num_samples):
+            metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
+            sample_data.add_sample(metadata=metadata)
+            all_metadata.append(metadata)
+        for variant in ts.variants():
+            sample_data.add_site(
+                variant.site.position, variant.alleles, variant.genotypes)
+        sample_data.finalise()
+
+        for j, metadata in enumerate(sample_data.samples_metadata[:]):
+            self.assertEqual(all_metadata[j], metadata)
+
+        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        output_metadata = [
+            json.loads(node.metadata.decode()) for node in output_ts.nodes()
+            if node.is_sample()]
+        self.assertEqual(all_metadata, output_metadata)
+
 
 class TestMutationProperties(unittest.TestCase):
     """
@@ -248,10 +280,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def verify_ancestor_generator(self, genotypes):
         m, n = genotypes.shape
-        sample_data = tsinfer.SampleData.initialise(compressor=None)
-        sample_data.add_population()
-        for j in range(n):
-            sample_data.add_sample()
+        sample_data = tsinfer.SampleData.initialise(num_samples=n, compressor=None)
         for j in range(m):
             sample_data.add_site(j, ["0", "1"], genotypes[j])
         sample_data.finalise()
@@ -560,10 +589,7 @@ class TestPartialAncestorMatching(unittest.TestCase):
 
     def test_easy_case(self):
         num_sites = 6
-        sample_data = tsinfer.SampleData.initialise()
-        sample_data.add_population()
-        for j in range(3):
-            sample_data.add_sample()
+        sample_data = tsinfer.SampleData.initialise(num_samples=3)
         for j in range(num_sites):
             sample_data.add_site(j, ["0", "1"], [0, 1, 1])
         sample_data.finalise()
@@ -592,10 +618,7 @@ class TestPartialAncestorMatching(unittest.TestCase):
 
     def test_partial_overlap(self):
         num_sites = 7
-        sample_data = tsinfer.SampleData.initialise()
-        sample_data.add_population()
-        for j in range(3):
-            sample_data.add_sample()
+        sample_data = tsinfer.SampleData.initialise(num_samples=3)
         for j in range(num_sites):
             sample_data.add_site(j, ["0", "1"], [0, 1, 1])
         sample_data.finalise()

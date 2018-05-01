@@ -237,6 +237,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             ValueError, input_file.add_site, position=1,
             alleles=["0", "0"], genotypes=np.array([0, 2], dtype=np.int8))
 
+    def test_insufficient_samples(self):
+        sample_data = formats.SampleData.initialise(sequence_length=10)
+        self.assertRaises(
+            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
+            genotypes=[])
+        sample_data = formats.SampleData.initialise(
+                num_samples=1, sequence_length=10)
+        self.assertRaises(
+            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
+            genotypes=[0])
+
     def test_genotypes(self):
         ts = self.get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)

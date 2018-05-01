@@ -544,7 +544,8 @@ class SampleData(DataContainer):
     @classmethod
     def initialise(
             cls, sequence_length=0, filename=None, chunk_size=1024,
-            compressor=DEFAULT_COMPRESSOR, num_flush_threads=0, num_samples=None):
+            compressor=DEFAULT_COMPRESSOR, num_flush_threads=0,
+            num_samples=None):
         """
         Initialises a new SampleData object.
         """
@@ -557,6 +558,8 @@ class SampleData(DataContainer):
         chunks = chunk_size,
         metadata_codec = numcodecs.JSON()
 
+        # We don't actually support population metadata yet, but keep the
+        # infrastucture around for when we do.
         self.populations_group = self.data.create_group("population")
         metadata = self.populations_group.create_dataset(
             "metadata", shape=(0,), chunks=chunks, compressor=compressor,
@@ -593,14 +596,18 @@ class SampleData(DataContainer):
             dtype=object, object_codec=metadata_codec)
 
         self._sites_writer = None
+        # For now we just add one population. We can't round-trip the data
+        # in tskit for now anyway, so there's no point in complicating things.
+        self._add_population()
         if num_samples is not None:
             # Add in the default population and samples.
-            self.add_population()
             for _ in range(num_samples):
                 self.add_sample()
         return self
 
     def _alloc_site_writer(self):
+        if self.num_samples < 2:
+            raise ValueError("Must have at least 2 samples")
         self.sites_genotypes.resize(0, self.num_samples)
         arrays = {
             "position": self.sites_position,
@@ -620,10 +627,14 @@ class SampleData(DataContainer):
             raise TypeError("Metadata must be a JSON-like dictionary")
         return ret
 
-    def add_population(self, metadata=None):
+    def _add_population(self, metadata=None):
         self._populations_writer.add(metadata=self._check_metadata(metadata))
 
-    def add_sample(self, population=-1, metadata=None):
+    def add_sample(self, metadata=None):
+        # Fixing this to 0 for now as we can't support population metadata in tskit
+        # yet. When the PopulationTable gets added, add a population argument to
+        # this method.
+        population = 0
         if self._populations_writer is not None:
             self._populations_writer.flush()
             self._populations_writer = None

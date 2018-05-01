@@ -52,10 +52,7 @@ def infer(
 
     num_sites, num_samples = genotypes.shape
     sample_data = formats.SampleData.initialise(
-        sequence_length=sequence_length, compressor=None)
-    sample_data.add_population()
-    for j in range(num_samples):
-        sample_data.add_sample()
+        sequence_length=sequence_length, compressor=None, num_samples=num_samples)
     for j in range(num_sites):
         pos = j
         if positions is not None:
@@ -364,9 +361,27 @@ class Matcher(object):
         ancestors will have the sample node flag set.
         """
         tsb = self.tree_sequence_builder
-        flags, time = tsb.dump_nodes()
         nodes = msprime.NodeTable()
+        flags, time = tsb.dump_nodes()
+
         nodes.set_columns(flags=flags, time=time)
+        # Add in the nodes up to the first sample efficiently.
+        first_sample = self.sample_ids[0]
+        nodes.set_columns(flags=flags[:first_sample], time=time[:first_sample])
+        # Now add in the sample nodes with metadata, etc.
+        sample_metadata = self.sample_data.samples_metadata[:]
+        sample_population = self.sample_data.samples_population[:]
+        for sample_id, metadata, population in zip(
+                self.sample_ids, sample_metadata, sample_population):
+            nodes.add_row(
+                flags=flags[sample_id], time=time[sample_id],
+                population=population,
+                metadata=self.encode_metadata(metadata))
+        # Add in the remaining synthetic nodes.
+        synthetic_metadata = self.encode_metadata({"synthetic": True})
+        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
+            nodes.add_row(
+                flags=flags[u], time=time[u], metadata=synthetic_metadata)
 
         left, right, parent, child = tsb.dump_edges()
         inference_sites = self.sample_data.sites_inference[:]
