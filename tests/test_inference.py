@@ -98,11 +98,12 @@ class TestRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 0)
         self.verify_round_trip(ts)
 
-    @unittest.skip("Degenerate case not handled.")
     def test_two_samples_one_site(self):
         self.verify_data_round_trip(np.array([[1, 1]]), [0])
 
-    @unittest.skip("invariant site state")
+    def test_two_samples_two_sites(self):
+        self.verify_data_round_trip(np.array([[1, 1], [0, 1]]), [0, 1])
+
     def test_random_data_invariant_sites_ancestral_state(self):
         G, positions = get_random_data_example(24, 35)
         # Set some sites to be invariant for the ancestral state
@@ -112,7 +113,6 @@ class TestRoundTrip(unittest.TestCase):
         G[22, :] = 0
         self.verify_data_round_trip(G, positions)
 
-    @unittest.skip("invariant site state")
     def test_random_data_invariant_sites(self):
         G, positions = get_random_data_example(39, 25)
         # Set some sites to be invariant
@@ -121,6 +121,19 @@ class TestRoundTrip(unittest.TestCase):
         G[20, :] = 1
         G[22, :] = 0
         self.verify_data_round_trip(G, positions)
+
+    def test_all_ancestral(self):
+        G = np.ones((10, 10), dtype=int)
+        self.verify_data_round_trip(G, np.arange(G.shape[0]))
+
+    def test_all_derived(self):
+        G = np.zeros((10, 10), dtype=int)
+        self.verify_data_round_trip(G, np.arange(G.shape[0]))
+
+    def test_all_derived_or_ancestral(self):
+        G = np.zeros((10, 10), dtype=int)
+        G[::2] = 1
+        self.verify_data_round_trip(G, np.arange(G.shape[0]))
 
     def test_random_data_large_example(self):
         G, positions = get_random_data_example(20, 30)
@@ -132,6 +145,68 @@ class TestRoundTrip(unittest.TestCase):
         for _ in range(num_random_tests):
             S, positions = get_random_data_example(5, 10)
             self.verify_data_round_trip(S, positions)
+
+
+class TestNonInferenceSitesRoundTrip(unittest.TestCase):
+    """
+    Test that we can round-trip data when we have various combinations
+    of inference and non inference sites.
+    """
+    def verify_round_trip(self, genotypes, inference):
+        self.assertEqual(genotypes.shape[0], inference.shape[0])
+        sample_data = tsinfer.SampleData.initialise(
+            num_samples=genotypes.shape[1], compressor=None)
+        for j in range(genotypes.shape[0]):
+            sample_data.add_site(j, ["0", "1"], genotypes[j], inference=inference[j])
+        sample_data.finalise()
+
+        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+
+        self.assertTrue(np.array_equal(genotypes, output_ts.genotype_matrix()))
+
+    def test_simple_single_tree(self):
+        ts = msprime.simulate(10, mutation_rate=5, random_seed=10)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        inference = np.sum(genotypes, axis=1) > 1
+        self.verify_round_trip(genotypes, inference)
+
+    def test_half_sites_single_tree(self):
+        ts = msprime.simulate(10, mutation_rate=5, random_seed=20)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        inference = np.sum(genotypes, axis=1) > 1
+        inference[::2] = False
+        self.verify_round_trip(genotypes, inference)
+
+    def test_simple_many_trees(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=10)
+        self.assertGreater(ts.num_trees, 2)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        inference = np.sum(genotypes, axis=1) > 1
+        self.verify_round_trip(genotypes, inference)
+
+    def test_half_sites_many_trees(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=11)
+        self.assertGreater(ts.num_trees, 2)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        inference = np.sum(genotypes, axis=1) > 1
+        inference[::2] = False
+        self.verify_round_trip(genotypes, inference)
+
+    def test_zero_inference_sites(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        inference = np.sum(genotypes, axis=1) > 1
+        inference[:] = False
+        self.verify_round_trip(genotypes, inference)
 
 
 def random_string(rng, max_len=10):

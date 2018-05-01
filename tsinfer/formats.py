@@ -643,11 +643,12 @@ class SampleData(DataContainer):
         self._samples_writer.add(
             population=population, metadata=self._check_metadata(metadata))
 
-    def add_site(self, position, alleles, genotypes, metadata=None):
+    def add_site(self, position, alleles, genotypes, metadata=None, inference=None):
         if self._samples_writer is not None:
             self._samples_writer.flush()
             self._samples_writer = None
             self._alloc_site_writer()
+            self._last_position = -1
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
@@ -661,12 +662,24 @@ class SampleData(DataContainer):
             raise ValueError("position must be > 0")
         if self.sequence_length > 0 and position >= self.sequence_length:
             raise ValueError("If sequence_length is set, sites positions must be less.")
+        if position <= self._last_position:
+            raise ValueError(
+                "Sites positions must be unique and added in increasing order")
         count = np.sum(genotypes)
-        inference_site = count > 1 and count < self.num_samples
+        if count > 1 and count < self.num_samples:
+            if inference is None:
+                inference = True
+        else:
+            if inference is None:
+                inference = False
+            if inference:
+                raise ValueError(
+                    "Cannot specify singletons or fixed sites for inference")
         self._sites_writer.add(
             position=position, genotypes=genotypes,
             metadata=self._check_metadata(metadata),
-            inference=inference_site, alleles=alleles)
+            inference=inference, alleles=alleles)
+        self._last_position = position
 
     def finalise(self):
         self._sites_writer.flush()

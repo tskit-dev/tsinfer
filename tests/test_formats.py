@@ -237,6 +237,66 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             ValueError, input_file.add_site, position=1,
             alleles=["0", "0"], genotypes=np.array([0, 2], dtype=np.int8))
 
+    def test_invalid_inference_sites(self):
+        # Trying to add singletons or fixed sites as inference sites
+        # raise and error
+        input_file = formats.SampleData.initialise(num_samples=3)
+        alleles = ["0", "1"]
+        # Make sure this is OK
+        input_file.add_site(0, alleles, [0, 1, 1], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, alleles=alleles, genotypes=[0, 0, 0], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, alleles=alleles, genotypes=[1, 0, 0], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, alleles=alleles, genotypes=[1, 1, 1], inference=True)
+        input_file.add_site(
+            position=1, alleles=alleles, genotypes=[1, 0, 1], inference=True)
+
+    def test_duplicate_sites(self):
+        # Duplicate sites are not accepted.
+        input_file = formats.SampleData.initialise(num_samples=3)
+        alleles = ["0", "1"]
+        genotypes = [0, 1, 1]
+        input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=0, alleles=alleles,
+            genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=0, alleles=alleles,
+            genotypes=genotypes)
+        input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=1, alleles=alleles,
+            genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=1, alleles=alleles,
+            genotypes=genotypes)
+
+    def test_unordered_sites(self):
+        # Sites must be specified in sorted order.
+        input_file = formats.SampleData.initialise(num_samples=3)
+        alleles = ["0", "1"]
+        genotypes = [0, 1, 1]
+        input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
+        input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=0.5, alleles=alleles,
+            genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=0.9999, alleles=alleles,
+            genotypes=genotypes)
+        input_file.add_site(position=2, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=0.5, alleles=alleles,
+            genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site, position=1.88, alleles=alleles,
+            genotypes=genotypes)
+
     def test_insufficient_samples(self):
         sample_data = formats.SampleData.initialise(sequence_length=10)
         self.assertRaises(

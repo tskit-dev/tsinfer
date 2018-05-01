@@ -361,6 +361,85 @@ class Matcher(object):
     def encode_metadata(self, value):
         return json.dumps(value).encode()
 
+    def locate_mutations_on_tree(self, tree, site, genotypes, alleles, mutations):
+        """
+        Find the most parsimonious way to place mutations to define the specified
+        genotypes on the specified tree, and update the mutation table accordingly.
+        """
+        samples = np.where(genotypes == 1)[0]
+        num_samples = len(samples)
+        logger.debug("Locating mutations for site {}; n = {}".format(site, num_samples))
+        # Nothing to do if this site is fixed for the ancestral state.
+        if num_samples == 0:
+            return
+
+        count = np.zeros(tree.tree_sequence.num_nodes, dtype=int)
+        for sample in samples:
+            u = self.sample_ids[sample]
+            while u != msprime.NULL_NODE:
+                count[u] += 1
+                u = tree.parent(u)
+        # Go up the tree until we find the first node ancestral to all samples.
+        mutation_node = self.sample_ids[samples[0]]
+        while count[mutation_node] < num_samples:
+            mutation_node = tree.parent(mutation_node)
+        assert count[mutation_node] == num_samples
+
+        parent_mutation = mutations.add_row(
+            site=site, node=mutation_node, derived_state=alleles[1])
+        # Traverse down the tree to find any leaves that do not have this
+        # mutation and insert back mutations.
+        for node in tree.nodes(mutation_node):
+            if tree.is_leaf(node) and count[node] == 0:
+                mutations.add_row(
+                    site=site, node=node, derived_state=alleles[0],
+                    parent=parent_mutation)
+
+    def locate_mutations_over_samples(self, site, genotypes, alleles, mutations):
+        """
+        Place mutations directly over all the samples in the specified site.
+        """
+        for sample in np.where(genotypes == 1)[0]:
+            node = self.sample_ids[sample]
+            mutations.add_row(
+                site=site, node=node, derived_state=alleles[1])
+
+    def insert_sites(self, ts, sites, mutations):
+        """
+        Insert the sites in the sample data that were not marked for inference,
+        updating the specified site and mutation tables. This is done by
+        iterating over the trees
+        """
+        alleles = self.sample_data.sites_alleles[:]
+        inference = self.sample_data.sites_inference[:]
+        metadata = self.sample_data.sites_metadata[:]
+        position = self.sample_data.sites_position[:]
+        _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        inferred_site = 0
+        trees = ts.trees()
+        tree = next(trees)
+        for site_id, genotypes in self.sample_data.genotypes():
+            x = position[site_id]
+            while tree.interval[1] <= x:
+                tree = next(trees)
+            assert tree.interval[0] <= x < tree.interval[1]
+            sites.add_row(
+                position=x,
+                ancestral_state=alleles[site_id][0],
+                metadata=self.encode_metadata(metadata[site_id]))
+            if inference[site_id] == 1:
+                mutations.add_row(
+                    site=site_id, node=node[inferred_site],
+                    derived_state=alleles[site_id][derived_state[inferred_site]])
+                inferred_site += 1
+            elif ts.num_edges > 0:
+                self.locate_mutations_on_tree(
+                    tree, site_id, genotypes, alleles[site_id], mutations)
+            else:
+                # If we have no tree topology this is all we can do.
+                self.locate_mutations_over_samples(
+                    site_id, genotypes, alleles[site_id], mutations)
+
     def get_samples_tree_sequence(self):
         """
         Returns the current state of the build tree sequence. All samples and
@@ -404,37 +483,13 @@ class Matcher(object):
         edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
-        logger.debug("Adding tree sequence sites & mutations")
-        alleles = self.sample_data.sites_alleles[:][inference_sites == 1]
-        metadata = self.sample_data.sites_metadata[:][inference_sites == 1]
+        logger.debug("Sorting and building intermediate tree sequence.")
+        msprime.sort_tables(nodes, edges)
+        ts = msprime.load_tables(
+            nodes=nodes, edges=edges, sequence_length=sequence_length)
         sites = msprime.SiteTable()
         mutations = msprime.MutationTable()
-        for site, node, derived_state, parent in zip(*tsb.dump_mutations()):
-            sites.add_row(
-                position=position[site],
-                ancestral_state=alleles[site][0],
-                metadata=self.encode_metadata(metadata[site]))
-            mutations.add_row(
-                site=site, node=node, derived_state=alleles[site][derived_state])
-
-        # Now add in the non inference sites.
-        position = self.sample_data.sites_position[:]
-        alleles = self.sample_data.sites_alleles[:]
-        metadata = self.sample_data.sites_metadata[:]
-        for site_id, genotypes in self.sample_data.genotypes(inference_sites=False):
-            new_site = sites.add_row(
-                position=position[site_id], ancestral_state=alleles[site_id][0],
-                metadata=self.encode_metadata(metadata[site_id]))
-            count = np.sum(genotypes)
-            if count == 1:
-                sample = np.where(genotypes == 1)[0]
-                mutations.add_row(
-                    site=new_site, node=self.sample_ids[sample],
-                    derived_state=alleles[site_id][1])
-            elif count != self.sample_data.num_samples:
-                raise ValueError("Only singletons and fixations supported now")
-
-        msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        self.insert_sites(ts, sites, mutations)
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
             sequence_length=sequence_length)

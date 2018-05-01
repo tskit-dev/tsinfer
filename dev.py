@@ -114,25 +114,21 @@ def tsinfer_dev(
     G = generate_samples(ts, error_rate)
     sample_data = tsinfer.SampleData.initialise(
         sequence_length=ts.sequence_length, chunk_size=10)
-    sample_data.add_population(metadata={"name": "pop0"})
     for j in range(ts.num_samples):
-        sample_data.add_sample(population=0, metadata={"name": "sample_{}".format(j)})
+        sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
     for site, genotypes in zip(ts.sites(), G):
-        sample_data.add_site(site.position, ["0", "1"], genotypes)
+        sample_data.add_site(
+            site.position, ["0", "1"], genotypes,
+            inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
     sample_data.finalise()
 
-    # # print(sample_data)
-    # print(sample_data.data.tree())
-    # print(sample_data.data.info)
-    # print(sample_data.site_inference.info)
-    # print(sample_data.site_inference[:])
-
+    print(sample_data)
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
     tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
 
-    print(ancestor_data.data.tree())
-    print(ancestor_data.data.info)
+    # print(ancestor_data.data.tree())
+    # print(ancestor_data.data.info)
     # print(ancestor_data)
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
@@ -159,7 +155,6 @@ def build_profile_inputs(n, num_megabases):
     # daiquiri.setup(level="DEBUG")
     sample_data = tsinfer.SampleData.initialise(
         sequence_length=ts.sequence_length, filename=filename, num_flush_threads=4)
-    sample_data.add_population({"name": "pop0"})
     progress_monitor = tqdm.tqdm(total=ts.num_samples)
     for j in range(ts.num_samples):
         sample_data.add_sample(population=0, metadata={"name": "sample_{}".format(j)})
@@ -187,13 +182,13 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    build_profile_inputs(10, 1)
-    build_profile_inputs(100, 10)
-    build_profile_inputs(1000, 100)
-    build_profile_inputs(10**4, 100)
+    # build_profile_inputs(10, 1)
+    # build_profile_inputs(100, 10)
+    # build_profile_inputs(1000, 100)
+    # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    # tsinfer_dev(38, 2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    tsinfer_dev(10, 0.2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):
