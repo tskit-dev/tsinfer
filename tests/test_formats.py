@@ -140,7 +140,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             filename = os.path.join(tempdir, "samples.tmp")
             input_file = formats.SampleData.initialise(
                 num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-                filename=filename)
+                path=filename)
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(ts, input_file)
@@ -157,7 +157,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 files.append(filename)
                 input_file = formats.SampleData.initialise(
                     num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-                    filename=filename, chunk_size=chunk_size)
+                    path=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(ts, input_file)
                 self.assertEqual(
                     input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
@@ -431,6 +431,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
 
+    def test_copy_error_wrong_mode(self):
+        data = formats.SampleData()
+        self.assertRaises(ValueError, data.copy)
+        data = formats.SampleData.initialise()
+        self.assertRaises(ValueError, data.copy)
+        data = formats.SampleData.initialise(num_samples=2)
+        data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1])
+        data.finalise()
+        copy = data.copy()
+        self.assertRaises(ValueError, copy.copy)
+
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
@@ -534,7 +545,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
             ancestor_data = tsinfer.AncestorData.initialise(
-                sample_data, filename=filename)
+                sample_data, path=filename)
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
@@ -551,7 +562,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
                 ancestor_data = tsinfer.AncestorData.initialise(
-                    sample_data, filename=filename, chunk_size=chunk_size)
+                    sample_data, path=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
                 self.assertEqual(ancestor_data.ancestor.chunks, (chunk_size,))
             # Now reload the files and check they are equal

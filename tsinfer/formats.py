@@ -257,38 +257,147 @@ class DataContainer(object):
     Superclass of objects used to represent a collection of related
     data. Each datacontainer in a wrapper around a zarr group.
     """
+    READ_MODE = 0
+    BUILD_MODE = 1
+    EDIT_MODE = 2
+
     # Must be defined by subclasses.
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
-    def _open_readonly(self, filename):
+    def __init__(self):
+        self._mode = -1
+        self.path = None
+        self.data = None
+
+    def _open_lmbd_readonly(self):
         # We set the mapsize here because LMBD will map 1TB of virtual memory if
         # we don't, making it hard to figure out how much memory we're actually
         # using.
         map_size = None
         try:
-            map_size = os.path.getsize(filename)
-        except OSError:
-            # Ignore any exceptions here and let LMDB handle them.
-            pass
+            map_size = os.path.getsize(self.path)
+        except OSError as e:
+            raise exceptions.FileFormatError(str(e)) from e
         try:
-            self.store = zarr.LMDBStore(
-                filename, map_size=map_size, readonly=True, subdir=False, lock=False)
+            store = zarr.LMDBStore(
+                self.path, map_size=map_size, readonly=True, subdir=False, lock=False)
         except lmdb.InvalidError as e:
             raise exceptions.FileFormatError(
                     "Unknown file format:{}".format(str(e))) from e
         except lmdb.Error as e:
-            raise exceptions.FileError(str(e)) from e
-        self.data = zarr.open(store=self.store, mode="r")
-        self.check_format()
+            raise exceptions.FileFormatError(str(e)) from e
+        return store
+
+    def _open_readonly(self):
+        if self.path is not None:
+            store = self._open_lmbd_readonly()
+        else:
+            # This happens when we finalise an in-memory container.
+            store = self.data.store
+        self.data = zarr.open(store=store, mode="r")
+        self._check_format()
+        self._mode = self.READ_MODE
+
+    def _new_lmdb_store(self):
+        if os.path.exists(self.path):
+            os.unlink(self.path)
+        return zarr.LMDBStore(self.path, subdir=False)
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, path):
         self = cls()
-        self._open_readonly(filename)
+        self.path = path
+        self._open_readonly()
         return self
 
-    def check_format(self):
+    def copy(self, path=None):
+        """
+        Returns a copy of this DataContainer opened in 'edit' mode. If path
+        is specified, this must not be equal to the path of the current
+        data container. The new container will have a different UUID to the
+        current.
+        """
+        if self._mode != self.READ_MODE:
+            raise ValueError("Cannot copy unless in read mode.")
+        if path is not None and self.path is not None:
+            if os.path.abspath(path) == os.path.abspath(self.path):
+                raise ValueError("Cannot copy to the same file")
+        other = type(self)()
+        other.path = path
+        if path is None:
+            store = zarr.DictStore()
+        else:
+            store = self._new_lmdb_store()
+        zarr.copy_store(self.data.store, store)
+        other.data = zarr.group(store)
+        # Set a new UUID
+        other.data.attrs["uuid"] = str(uuid.uuid4())
+        other.data.attrs[FINALISED_KEY] = False
+        other._mode = self.EDIT_MODE
+        return other
+
+    def finalise(self, command=None, parameters=None):
+        """
+        Ensures that the state of the data is flushed and writes the
+        provenance for the current operation. The specified 'command' is used
+        to fill the corresponding entry in the provenance dictionary.
+        """
+        self._check_write_modes()
+        timestamp = datetime.datetime.now().isoformat()
+        record = provenance.get_provenance_dict(command=command, parameters=parameters)
+        self.add_provenance(timestamp, record)
+        self.data.attrs[FINALISED_KEY] = True
+        if self.path is not None:
+            store = self.data.store
+            store.close()
+            logger.debug("Fixing up LMDB file size")
+            with lmdb.open(
+                    self.path, subdir=False, lock=False, writemap=True) as db:
+                # LMDB maps a very large amount of space by default. While this
+                # doesn't do any harm, it's annoying because we can't use ls to
+                # see the file sizes and the amount of RAM we're mapping can
+                # look like it's very large. So, we fix this up so that the
+                # map size is equal to the number of pages in use.
+                num_pages = db.info()["last_pgno"]
+                page_size = db.stat()["psize"]
+                db.set_mapsize(num_pages * page_size)
+            # Remove the lock file as we don't need it after this point.
+            lockfile = self.path + "-lock"
+            if os.path.exists(lockfile):
+                os.unlink(lockfile)
+        self._open_readonly()
+
+    def _initialise(
+            self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
+            chunk_size=1024):
+        """
+        Initialise the basic state of the data container.
+        """
+        self._num_flush_threads = num_flush_threads
+        self._chunk_size = max(1, chunk_size)
+        self._metadata_codec = numcodecs.JSON()
+        self._compressor = compressor
+        self.data = zarr.group()
+        self.path = path
+        if path is not None:
+            store = self._new_lmdb_store()
+            self.data = zarr.open_group(store=store, mode="w")
+        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
+        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
+        self.data.attrs["uuid"] = str(uuid.uuid4())
+
+        chunks = self._chunk_size
+        provenances_group = self.data.create_group("provenances")
+        provenances_group.create_dataset(
+            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        provenances_group.create_dataset(
+            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._mode = self.BUILD_MODE
+
+    def _check_format(self):
         try:
             format_name = self.format_name
             format_version = self.format_version
@@ -307,35 +416,17 @@ class DataContainer(object):
                 "Format version {} too new. Current version = {}".format(
                     format_version, self.FORMAT_VERSION))
 
-    def _initialise(
-            self, filename=None, num_flush_threads=0,
-            compressor=DEFAULT_COMPRESSOR, chunk_size=1024):
-        """
-        Initialise the basic state of the data container.
-        """
-        self.store = None
-        self._num_flush_threads = num_flush_threads
-        self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = numcodecs.JSON()
-        self._compressor = compressor
-        self.data = zarr.group()
-        if filename is not None:
-            self.store = zarr.LMDBStore(filename, subdir=False)
-            self.data = zarr.open_group(store=self.store, mode="w")
-        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
-        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
-        self.data.attrs["uuid"] = str(uuid.uuid4())
+    def _check_build_mode(self):
+        if self._mode != self.BUILD_MODE:
+            raise ValueError("Invalid opertion: must be in build mode")
 
-        chunks = self._chunk_size
-        provenances_group = self.data.create_group("provenances")
-        timestamp = provenances_group.create_dataset(
-            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        record = provenances_group.create_dataset(
-            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._provenances_writer = BufferedItemWriter(
-            {"timestamp": timestamp, "record": record}, num_threads=0)
+    def _check_edit_mode(self):
+        if self._mode != self.EDIT_MODE:
+            raise ValueError("Invalid opertion: must be in edit mode")
+
+    def _check_write_modes(self):
+        if self._mode not in (self.EDIT_MODE, self.BUILD_MODE):
+            raise ValueError("Invalid opertion: must be in edit or build mode")
 
     @property
     def file_size(self):
@@ -344,8 +435,8 @@ class DataContainer(object):
         file associated.
         """
         ret = -1
-        if self.store is not None:
-            ret = os.path.getsize(self.store.path)
+        if self.path is not None:
+            ret = os.path.getsize(self.path)
         return ret
 
     def _check_metadata(self, metadata):
@@ -362,45 +453,15 @@ class DataContainer(object):
         Timestamps should ISO8601 formatted, and record is some JSON encodable
         object.
         """
-        self._provenances_writer.add(
-            timestamp=timestamp, record=self._check_metadata(record))
-
-    def finalise(self, command=None, parameters=None):
-        """
-        Ensures that the state of the data is flushed and writes the
-        provenance for the current operation. The specified 'command' is used
-        to fill the corresponding entry in the provenance dictionary.
-        """
-        timestamp = datetime.datetime.now().isoformat()
-        record = provenance.get_provenance_dict(command=command, parameters=parameters)
-        self.add_provenance(timestamp, record)
-        self._provenances_writer.flush()
-        self._provenances_writer = None
-        self.data.attrs[FINALISED_KEY] = True
-        if self.store is not None:
-            filename = self.store.path
-            self.store.close()
-            logger.debug("Fixing up LMDB file size")
-            with lmdb.open(
-                    self.store.path, subdir=False, lock=False, writemap=True) as db:
-                # LMDB maps a very large amount of space by default. While this
-                # doesn't do any harm, it's annoying because we can't use ls to
-                # see the file sizes and the amount of RAM we're mapping can
-                # look like it's very large. So, we fix this up so that the
-                # map size is equal to the number of pages in use.
-                num_pages = db.info()["last_pgno"]
-                page_size = db.stat()["psize"]
-                db.set_mapsize(num_pages * page_size)
-            # Remove the lock file as we don't need it after this point.
-            lockfile = filename + "-lock"
-            if os.path.exists(lockfile):
-                os.unlink(lockfile)
-            # Reopen the data in read-only mode.
-            self.data = None
-            self._open_readonly(filename)
-        else:
-            # Reopen the group in read-only mode.
-            self.data = zarr.open(self.data.store, mode='r')
+        if self._mode not in (self.BUILD_MODE, self.EDIT_MODE):
+            raise ValueError(
+                "Invalid operation: cannot add provenances unless in BUILD "
+                "or EDIT mode")
+        n = self.num_provenances
+        self.provenances_timestamp.resize(n + 1)
+        self.provenances_record.resize(n + 1)
+        self.provenances_timestamp[n] = timestamp
+        self.provenances_record[n] = record
 
     @property
     def format_name(self):
@@ -414,7 +475,7 @@ class DataContainer(object):
     def finalised(self):
         ret = False
         if FINALISED_KEY in self.data.attrs:
-            ret = True
+            ret = self.data.attrs[FINALISED_KEY]
         return ret
 
     @property
@@ -449,6 +510,20 @@ class DataContainer(object):
             ret = self.uuid == other.uuid and self.data_equal(other)
         return ret
 
+    def __str__(self):
+        values = [
+            ("path", self.path),
+            ("file_size", humanize.naturalsize(self.file_size, binary=True)),
+            ("format_name", self.format_name),
+            ("format_version", self.format_version),
+            ("finalised", self.finalised),
+            ("uuid", self.uuid),
+            ("num_provenances", self.num_provenances),
+            ("num_provenances", self.num_provenances),
+            ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
+            ("provenances/record", zarr_summary(self.provenances_record))]
+        return self._format_str(values)
+
     def arrays(self):
         """
         Returns a list of all the zarr arrays in this DataContainer.
@@ -481,6 +556,7 @@ class SampleData(DataContainer):
     FORMAT_VERSION = (0, 3)
 
     def __init__(self):
+        super(SampleData, self).__init__()
         self._num_inference_sites = None
 
     @property
@@ -538,24 +614,12 @@ class SampleData(DataContainer):
         return self.data["sites/inference"]
 
     def __str__(self):
-        path = None
-        if self.store is not None:
-            path = self.store.path
         values = [
-            ("path", path),
-            ("file_size", humanize.naturalsize(self.file_size, binary=True)),
-            ("format_name", self.format_name),
-            ("format_version", self.format_version),
-            ("finalised", self.finalised),
-            ("uuid", self.uuid),
             ("sequence_length", self.sequence_length),
-            ("num_provenances", self.num_provenances),
             ("num_populations", self.num_populations),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
             ("num_inference_sites", self.num_inference_sites),
-            ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
-            ("provenances/record", zarr_summary(self.provenances_record)),
             ("populations/metadata", zarr_summary(self.populations_metadata)),
             ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
@@ -564,7 +628,7 @@ class SampleData(DataContainer):
             ("sites/inference", zarr_summary(self.sites_inference)),
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
             ("sites/metadata", zarr_summary(self.sites_metadata))]
-        return self._format_str(values)
+        return super(SampleData, self).__str__() + self._format_str(values)
 
     def data_equal(self, other):
         """
@@ -670,9 +734,11 @@ class SampleData(DataContainer):
                 arrays, num_threads=self._num_flush_threads)
 
     def _add_population(self, metadata=None):
+        self._check_build_mode()
         self._populations_writer.add(metadata=self._check_metadata(metadata))
 
     def add_sample(self, metadata=None):
+        self._check_build_mode()
         # Fixing this to 0 for now as we can't support population metadata in tskit
         # yet. When the PopulationTable gets added, add a population argument to
         # this method.
@@ -686,6 +752,7 @@ class SampleData(DataContainer):
             population=population, metadata=self._check_metadata(metadata))
 
     def add_site(self, position, alleles, genotypes, metadata=None, inference=None):
+        self._check_build_mode()
         if self._samples_writer is not None:
             self._samples_writer.flush()
             self._samples_writer = None
@@ -724,8 +791,9 @@ class SampleData(DataContainer):
         self._last_position = position
 
     def finalise(self, **kwargs):
-        self._sites_writer.flush()
-        self._sites_writer = None
+        if self._mode == self.BUILD_MODE:
+            self._sites_writer.flush()
+            self._sites_writer = None
         super(SampleData, self).finalise(**kwargs)
 
     ####################################
@@ -774,26 +842,16 @@ class AncestorData(DataContainer):
     FORMAT_VERSION = (0, 2)
 
     def __str__(self):
-        path = None
-        if self.store is not None:
-            path = self.store.path
         values = [
-            ("path", path),
-            ("format_name", self.format_name),
-            ("format_version", self.format_version),
-            ("uuid", self.uuid),
             ("sample_data_uuid", self.sample_data_uuid),
             ("num_ancestors", self.num_ancestors),
             ("num_sites", self.num_sites),
-            ("num_provenances", self.num_provenances),
-            ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
-            ("provenances/record", zarr_summary(self.provenances_record)),
             ("start", zarr_summary(self.start)),
             ("end", zarr_summary(self.end)),
             ("time", zarr_summary(self.time)),
             ("focal_sites", zarr_summary(self.focal_sites)),
             ("ancestor", zarr_summary(self.ancestor))]
-        return self._format_str(values)
+        return super(AncestorData, self).__str__() + self._format_str(values)
 
     def data_equal(self, other):
         """
@@ -892,6 +950,7 @@ class AncestorData(DataContainer):
         over the interval [start:end], that is associated with the specfied time
         and has new mutations at the specified list of focal sites.
         """
+        self._check_build_mode()
         num_sites = self.input_data.num_inference_sites
         haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
         focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
@@ -917,8 +976,9 @@ class AncestorData(DataContainer):
             ancestor=ancestor)
 
     def finalise(self, **kwargs):
-        self.item_writer.flush()
-        self.item_writer = None
+        if self._mode == self.BUILD_MODE:
+            self.item_writer.flush()
+            self.item_writer = None
         super(AncestorData, self).finalise(**kwargs)
 
     def ancestors(self):

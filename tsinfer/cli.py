@@ -76,13 +76,13 @@ def run_list(args):
     tsinfer_file = None
     try:
         logger.debug("Trying SampleData file")
-        tsinfer_file = formats.SampleData.load(args.filename)
+        tsinfer_file = formats.SampleData.load(args.path)
         logger.debug("Loaded SampleData file")
     except exceptions.FileFormatError as e:
         logger.debug("SampleData load failed: {}".format(e))
     try:
         logger.debug("Trying AncestorData file")
-        tsinfer_file = formats.AncestorData.load(args.filename)
+        tsinfer_file = formats.AncestorData.load(args.path)
         logger.debug("Loaded AncestorData file")
     except exceptions.FileFormatError as e:
         logger.debug("SampleData load failed: {}".format(e))
@@ -127,7 +127,7 @@ def run_build_ancestors(args):
         os.unlink(ancestors_path)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, filename=ancestors_path, num_flush_threads=args.num_threads)
+        sample_data, path=ancestors_path, num_flush_threads=args.num_threads)
     tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
 
@@ -332,7 +332,7 @@ def get_tsinfer_parser():
             "Show a summary of the specified tsinfer related file."))
     add_logging_arguments(parser)
     parser.add_argument(
-        "filename", help="The tsinfer file to show information about.")
+        "path", help="The tsinfer file to show information about.")
     parser.add_argument(
         "--storage", "-s", action="store_true",
         help="Show detailed information about data storage.")

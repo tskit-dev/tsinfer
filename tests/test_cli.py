@@ -75,12 +75,12 @@ class TestCli(unittest.TestCase):
         sample_data = tsinfer.SampleData.initialise(
             num_samples=self.input_ts.num_samples,
             sequence_length=self.input_ts.sequence_length,
-            compressor=None, filename=self.sample_file)
+            compressor=None, path=self.sample_file)
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
         ancestor_data = tsinfer.AncestorData.initialise(
-            sample_data, chunk_size=10, filename=self.ancestor_file)
+            sample_data, chunk_size=10, path=self.ancestor_file)
         tsinfer.build_ancestors(sample_data, ancestor_data)
         ancestor_data.finalise()
 

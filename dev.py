@@ -123,20 +123,25 @@ def tsinfer_dev(
     sample_data.finalise()
 
     print(sample_data)
-    print(sample_data.provenances_timestamp[:])
-    print(sample_data.provenances_record[:])
+    # print(sample_data.provenances_timestamp[:])
+    # print(sample_data.provenances_record[:])
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
-    tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
-    ancestor_data.finalise()
+    copy = sample_data.copy("tmp.samples")
+    print(copy)
+    copy.finalise()
+    print(copy)
 
-    print(ancestor_data)
-    print(ancestor_data.provenances_timestamp[:])
-    print(ancestor_data.provenances_record[:])
+    # ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
+    # tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
+    # ancestor_data.finalise()
 
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
-    print("inferred_num_edges = ", output_ts.num_edges)
+    # print(ancestor_data)
+    # print(ancestor_data.provenances_timestamp[:])
+    # print(ancestor_data.provenances_record[:])
+
+    # ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
+    # print("inferred_num_edges = ", output_ts.num_edges)
 
 
 def build_profile_inputs(n, num_megabases):
@@ -180,6 +185,15 @@ def build_profile_inputs(n, num_megabases):
 #     tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
 #     ancestor_data.finalise()
 
+def copy_1kg():
+    source = "tmp__NOBACKUP__/1kg_chr22.samples"
+    sample_data = tsinfer.SampleData.load(source)
+    copy = sample_data.copy("tmp__NOBACKUP__/1kg_chr22_copy.samples")
+    copy.finalise()
+    print(sample_data)
+    print("copy = ")
+    print(copy)
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
@@ -191,7 +205,8 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    tsinfer_dev(10, 0.2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    # tsinfer_dev(10, 0.2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    copy_1kg()
 
 
 #     for seed in range(1, 10000):
