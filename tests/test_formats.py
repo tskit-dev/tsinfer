@@ -23,6 +23,7 @@ Tests for the data files.
 import unittest
 import tempfile
 import os.path
+import datetime
 
 import numpy as np
 import msprime
@@ -210,6 +211,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertTrue(input_file == input_file)
         self.assertFalse(input_file == [])
         self.assertFalse({} == input_file)
+
+    def test_provenance(self):
+        ts = self.get_example_ts(4, 3)
+        input_file = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+        self.assertEqual(input_file.num_provenances, 1)
+        timestamp = input_file.provenances_timestamp[0]
+        iso = datetime.datetime.now().isoformat()
+        self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
+        record = input_file.provenances_record[0]
+        self.assertEqual(record["software"], "tsinfer")
 
     def test_variant_errors(self):
         input_file = formats.SampleData.initialise(num_samples=2, sequence_length=10)
@@ -490,6 +503,17 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(ancestor_data.time.compressor, compressor)
         self.assertEqual(ancestor_data.focal_sites.compressor, compressor)
         self.assertEqual(ancestor_data.ancestor.compressor, compressor)
+
+    def test_provenance(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
+        self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+        self.assertEqual(ancestor_data.num_provenances, 1)
+        timestamp = ancestor_data.provenances_timestamp[0]
+        iso = datetime.datetime.now().isoformat()
+        self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
+        record = ancestor_data.provenances_record[0]
+        self.assertEqual(record["software"], "tsinfer")
 
     def test_chunk_size(self):
         N = 20

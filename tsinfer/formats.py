@@ -19,15 +19,16 @@
 """
 Manage tsinfer's various HDF5 file formats.
 """
-import uuid
-import logging
-import queue
+import collections.abc as abc
+import datetime
 import itertools
+import logging
 import os
 import os.path
+import queue
 import threading
+import uuid
 import warnings
-import collections.abc as abc
 
 import numpy as np
 import zarr
@@ -37,6 +38,7 @@ import numcodecs
 import numcodecs.blosc as blosc
 
 import tsinfer.threads as threads
+import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
 
 
@@ -305,12 +307,17 @@ class DataContainer(object):
                 "Format version {} too new. Current version = {}".format(
                     format_version, self.FORMAT_VERSION))
 
-    def _initialise(self, filename=None, num_flush_threads=0):
+    def _initialise(
+            self, filename=None, num_flush_threads=0,
+            compressor=DEFAULT_COMPRESSOR, chunk_size=1024):
         """
         Initialise the basic state of the data container.
         """
         self.store = None
         self._num_flush_threads = num_flush_threads
+        self._chunk_size = max(1, chunk_size)
+        self._metadata_codec = numcodecs.JSON()
+        self._compressor = compressor
         self.data = zarr.group()
         if filename is not None:
             self.store = zarr.LMDBStore(filename, subdir=False)
@@ -318,6 +325,17 @@ class DataContainer(object):
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
         self.data.attrs["uuid"] = str(uuid.uuid4())
+
+        chunks = self._chunk_size
+        provenances_group = self.data.create_group("provenances")
+        timestamp = provenances_group.create_dataset(
+            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        record = provenances_group.create_dataset(
+            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._provenances_writer = BufferedItemWriter(
+            {"timestamp": timestamp, "record": record}, num_threads=0)
 
     @property
     def file_size(self):
@@ -330,11 +348,34 @@ class DataContainer(object):
             ret = os.path.getsize(self.store.path)
         return ret
 
-    def finalise(self):
+    def _check_metadata(self, metadata):
+        ret = metadata
+        if metadata is None:
+            ret = {}
+        elif not isinstance(metadata, abc.Mapping):
+            raise TypeError("Metadata must be a JSON-like dictionary")
+        return ret
+
+    def add_provenance(self, timestamp, record):
         """
-        Ensures that the state of the data is flushed to file if a store
-        is present.
+        Adds a new provenance record with the specified timestamp and record.
+        Timestamps should ISO8601 formatted, and record is some JSON encodable
+        object.
         """
+        self._provenances_writer.add(
+            timestamp=timestamp, record=self._check_metadata(record))
+
+    def finalise(self, command=None, parameters=None):
+        """
+        Ensures that the state of the data is flushed and writes the
+        provenance for the current operation. The specified 'command' is used
+        to fill the corresponding entry in the provenance dictionary.
+        """
+        timestamp = datetime.datetime.now().isoformat()
+        record = provenance.get_provenance_dict(command=command, parameters=parameters)
+        self.add_provenance(timestamp, record)
+        self._provenances_writer.flush()
+        self._provenances_writer = None
         self.data.attrs[FINALISED_KEY] = True
         if self.store is not None:
             filename = self.store.path
@@ -379,6 +420,18 @@ class DataContainer(object):
     @property
     def uuid(self):
         return str(self.data.attrs["uuid"])
+
+    @property
+    def num_provenances(self):
+        return self.provenances_timestamp.shape[0]
+
+    @property
+    def provenances_timestamp(self):
+        return self.data["provenances/timestamp"]
+
+    @property
+    def provenances_record(self):
+        return self.data["provenances/record"]
 
     def _format_str(self, values):
         """
@@ -496,10 +549,13 @@ class SampleData(DataContainer):
             ("finalised", self.finalised),
             ("uuid", self.uuid),
             ("sequence_length", self.sequence_length),
+            ("num_provenances", self.num_provenances),
             ("num_populations", self.num_populations),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
             ("num_inference_sites", self.num_inference_sites),
+            ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
+            ("provenances/record", zarr_summary(self.provenances_record)),
             ("populations/metadata", zarr_summary(self.populations_metadata)),
             ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
@@ -514,7 +570,7 @@ class SampleData(DataContainer):
         """
         Returns True if all the data attributes of this input file and the
         specified input file are equal. This compares every attribute except
-        the UUID.
+        the UUID and provenance.
         """
         return (
             self.format_name == other.format_name and
@@ -542,58 +598,52 @@ class SampleData(DataContainer):
     ####################################
 
     @classmethod
-    def initialise(
-            cls, sequence_length=0, filename=None, chunk_size=1024,
-            compressor=DEFAULT_COMPRESSOR, num_flush_threads=0,
-            num_samples=None):
+    def initialise(cls, sequence_length=0, num_samples=None, **kwargs):
         """
         Initialises a new SampleData object.
         """
         self = cls()
-        super(cls, self)._initialise(filename, num_flush_threads)
+        super(cls, self)._initialise(**kwargs)
 
         self.data.attrs["sequence_length"] = float(sequence_length)
 
-        chunk_size = max(1, chunk_size)
-        chunks = chunk_size,
-        metadata_codec = numcodecs.JSON()
-
+        chunks = self._chunk_size,
         # We don't actually support population metadata yet, but keep the
         # infrastucture around for when we do.
-        self.populations_group = self.data.create_group("population")
-        metadata = self.populations_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=compressor,
-            dtype=object, object_codec=metadata_codec)
+        populations_group = self.data.create_group("population")
+        metadata = populations_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
         self._populations_writer = BufferedItemWriter(
-            {"metadata": metadata}, num_threads=num_flush_threads)
+            {"metadata": metadata}, num_threads=self._num_flush_threads)
 
-        self.samples_group = self.data.create_group("samples")
-        population = self.samples_group.create_dataset(
-            "population", shape=(0,), chunks=chunks, compressor=compressor,
+        samples_group = self.data.create_group("samples")
+        population = samples_group.create_dataset(
+            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
-        metadata = self.samples_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=compressor,
-            dtype=object, object_codec=metadata_codec)
+        metadata = samples_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
         self._samples_writer = BufferedItemWriter(
             {"population": population, "metadata": metadata},
-            num_threads=num_flush_threads)
+            num_threads=self._num_flush_threads)
 
-        self.sites_group = self.data.create_group("sites")
-        self.sites_group.create_dataset(
-            "position", shape=(0,), chunks=chunks, compressor=compressor,
+        sites_group = self.data.create_group("sites")
+        sites_group.create_dataset(
+            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.float64)
-        self.sites_group.create_dataset(
-            "genotypes", shape=(0, 0), chunks=(chunk_size, chunk_size),
-            compressor=compressor, dtype=np.uint8)
-        self.sites_group.create_dataset(
-            "inference", shape=(0,), chunks=chunks, compressor=compressor,
+        sites_group.create_dataset(
+            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
+            compressor=self._compressor, dtype=np.uint8)
+        sites_group.create_dataset(
+            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.uint8)
-        self.sites_group.create_dataset(
-            "alleles", shape=(0,), chunks=chunks, compressor=compressor,
-            dtype=object, object_codec=metadata_codec)
-        self.sites_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=compressor,
-            dtype=object, object_codec=metadata_codec)
+        sites_group.create_dataset(
+            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        sites_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
 
         self._sites_writer = None
         # For now we just add one population. We can't round-trip the data
@@ -618,14 +668,6 @@ class SampleData(DataContainer):
         }
         self._sites_writer = BufferedItemWriter(
                 arrays, num_threads=self._num_flush_threads)
-
-    def _check_metadata(self, metadata):
-        ret = metadata
-        if metadata is None:
-            ret = {}
-        elif not isinstance(metadata, abc.Mapping):
-            raise TypeError("Metadata must be a JSON-like dictionary")
-        return ret
 
     def _add_population(self, metadata=None):
         self._populations_writer.add(metadata=self._check_metadata(metadata))
@@ -681,10 +723,10 @@ class SampleData(DataContainer):
             inference=inference, alleles=alleles)
         self._last_position = position
 
-    def finalise(self):
+    def finalise(self, **kwargs):
         self._sites_writer.flush()
         self._sites_writer = None
-        super(SampleData, self).finalise()
+        super(SampleData, self).finalise(**kwargs)
 
     ####################################
     # Read mode
@@ -743,6 +785,9 @@ class AncestorData(DataContainer):
             ("sample_data_uuid", self.sample_data_uuid),
             ("num_ancestors", self.num_ancestors),
             ("num_sites", self.num_sites),
+            ("num_provenances", self.num_provenances),
+            ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
+            ("provenances/record", zarr_summary(self.provenances_record)),
             ("start", zarr_summary(self.start)),
             ("end", zarr_summary(self.end)),
             ("time", zarr_summary(self.time)),
@@ -807,41 +852,38 @@ class AncestorData(DataContainer):
     ####################################
 
     @classmethod
-    def initialise(
-            cls, input_data, filename=None, chunk_size=1024,
-            num_flush_threads=0, compressor=DEFAULT_COMPRESSOR):
+    def initialise(cls, input_data, **kwargs):
         """
         Initialises a new SampleData object. Data can be added to
         this object using the add_ancestor method.
         """
         self = cls()
-        super(cls, self)._initialise(filename, num_flush_threads)
+        super(cls, self)._initialise(**kwargs)
         self.input_data = input_data
-        self.compressor = compressor
         self.data.attrs["sample_data_uuid"] = input_data.uuid
         self.data.attrs["num_sites"] = self.input_data.num_inference_sites
 
-        chunks = max(1, chunk_size),
+        chunks = self._chunk_size
         self.data.create_dataset(
-            "start", shape=(0,), chunks=chunks, compressor=self.compressor,
+            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         self.data.create_dataset(
-            "end", shape=(0,), chunks=chunks, compressor=self.compressor,
+            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         self.data.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self.compressor,
+            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.uint32)
         self.data.create_dataset(
             "focal_sites", shape=(0,), chunks=chunks,
-            dtype="array:i4", compressor=self.compressor)
+            dtype="array:i4", compressor=self._compressor)
         self.data.create_dataset(
             "ancestor", shape=(0,), chunks=chunks,
-            dtype="array:u1", compressor=self.compressor)
+            dtype="array:u1", compressor=self._compressor)
 
         self.item_writer = BufferedItemWriter({
             "start": self.start, "end": self.end, "time": self.time,
             "focal_sites": self.focal_sites, "ancestor": self.ancestor},
-            num_threads=num_flush_threads)
+            num_threads=self._num_flush_threads)
         return self
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
@@ -874,10 +916,10 @@ class AncestorData(DataContainer):
             start=start, end=end, time=time, focal_sites=focal_sites,
             ancestor=ancestor)
 
-    def finalise(self):
+    def finalise(self, **kwargs):
         self.item_writer.flush()
         self.item_writer = None
-        super(AncestorData, self).finalise()
+        super(AncestorData, self).finalise(**kwargs)
 
     def ancestors(self):
         """

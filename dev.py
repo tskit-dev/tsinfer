@@ -123,13 +123,16 @@ def tsinfer_dev(
     sample_data.finalise()
 
     print(sample_data)
+    print(sample_data.provenances_timestamp[:])
+    print(sample_data.provenances_record[:])
+
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
     tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
     ancestor_data.finalise()
 
-    # print(ancestor_data.data.tree())
-    # print(ancestor_data.data.info)
-    # print(ancestor_data)
+    print(ancestor_data)
+    print(ancestor_data.provenances_timestamp[:])
+    print(ancestor_data.provenances_record[:])
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)

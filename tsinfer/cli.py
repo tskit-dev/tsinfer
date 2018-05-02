@@ -129,7 +129,7 @@ def run_build_ancestors(args):
     ancestor_data = tsinfer.AncestorData.initialise(
         sample_data, filename=ancestors_path, num_flush_threads=args.num_threads)
     tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
-    ancestor_data.finalise()
+    ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
 
 
 def run_match_ancestors(args):
