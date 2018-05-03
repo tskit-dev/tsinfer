@@ -6,6 +6,7 @@ import subprocess
 import multiprocessing
 import os
 import shutil
+import sys
 
 import numpy as np
 import msprime
@@ -92,7 +93,7 @@ def convert(vcf_file, output_file, max_variants=None, show_progress=False):
     if max_variants is None:
         max_variants = 2**32  # Arbitrary, but > defined max for VCF
 
-    sample_data = tsinfer.SampleData.initialise(filename=output_file)
+    sample_data = tsinfer.SampleData.initialise(path=output_file, num_flush_threads=2)
     vcf = cyvcf2.VCF(vcf_file)
     for sample in vcf.samples:
         metadata = {"name": sample}
@@ -104,9 +105,8 @@ def convert(vcf_file, output_file, max_variants=None, show_progress=False):
         sample_data.add_site(site.position, site.alleles, site.genotypes, site.metadata)
         if index == max_variants:
             break
+    sample_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
 
-    sample_data.finalise()
-    print("Wrote", output_file)
 
 def worker(t):
     vcf, output, max_variants = t
