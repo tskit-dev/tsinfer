@@ -36,35 +36,6 @@ import tsinfer.formats as formats
 import tsinfer.exceptions as exceptions
 
 
-####################
-# Monkey patch zarr's JSON codec to fix bug.
-# https://github.com/zarr-developers/numcodecs/issues/76
-def encode(self, buf):
-    buf = np.asanyarray(buf)
-    items = buf.tolist()
-    items.append(buf.dtype.str)
-    items.append(buf.shape)
-    return self._encoder.encode(items).encode(self._text_encoding)
-
-
-def decode(self, buf, out=None):
-    buf = numcodecs.compat.buffer_tobytes(buf)
-    items = self._decoder.decode(buf.decode(self._text_encoding))
-    dec = np.empty(items[-1], dtype=items[-2])
-    dec[:] = items[:-2]
-    if out is not None:
-        np.copyto(out, dec)
-        return out
-    else:
-        return dec
-
-
-numcodecs.json.JSON.encode = encode
-numcodecs.json.JSON.decode = decode
-
-####################
-
-
 class DataContainerMixin(object):
     """
     Common tests for the the data container classes."
@@ -743,7 +714,7 @@ class BufferedItemWriterMixin(object):
         for chunks in [1, 2, 5, 10, 100]:
             n = 10
             z = zarr.empty(
-                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,))
+                n, dtype=object, object_codec=formats.TempJSON(), chunks=(chunks,))
             for j in range(n):
                 z[j] = {str(k): k for k in range(j)}
             self.verify_round_trip({"z": z})
@@ -768,7 +739,7 @@ class BufferedItemWriterMixin(object):
         self.verify_round_trip({"z": z})
 
     def test_empty_string_list(self):
-        z = zarr.empty(1, dtype=object, object_codec=numcodecs.JSON(), chunks=(2,))
+        z = zarr.empty(1, dtype=object, object_codec=formats.TempJSON(), chunks=(2,))
         z[0] = ["", ""]
         self.verify_round_trip({"z": z})
 

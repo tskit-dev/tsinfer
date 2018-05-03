@@ -43,33 +43,36 @@ import tsinfer.exceptions as exceptions
 
 
 ####################
-# Monkey patch zarr's JSON codec to fix bug.
-# https://github.com/zarr-developers/numcodecs/issues/76
-def encode(self, buf):
-    buf = np.asanyarray(buf)
-    items = buf.tolist()
-    items.append(buf.dtype.str)
-    items.append(buf.shape)
-    return self._encoder.encode(items).encode(self._text_encoding)
+
+# Temporary implemention of the fixed JSON codec implemented here:
+# https://github.com/zarr-developers/numcodecs/pull/77
+# Remove once this has been released.
+class TempJSON(numcodecs.JSON):
+
+    codec_id = "json2"
+
+    def encode(self, buf):
+        buf = np.asanyarray(buf)
+        items = buf.tolist()
+        items.append(buf.dtype.str)
+        items.append(buf.shape)
+        return self._encoder.encode(items).encode(self._text_encoding)
+
+    def decode(self, buf, out=None):
+        buf = numcodecs.compat.buffer_tobytes(buf)
+        items = self._decoder.decode(buf.decode(self._text_encoding))
+        dec = np.empty(items[-1], dtype=items[-2])
+        dec[:] = items[:-2]
+        if out is not None:
+            np.copyto(out, dec)
+            return out
+        else:
+            return dec
 
 
-def decode(self, buf, out=None):
-    buf = numcodecs.compat.buffer_tobytes(buf)
-    items = self._decoder.decode(buf.decode(self._text_encoding))
-    dec = np.empty(items[-1], dtype=items[-2])
-    dec[:] = items[:-2]
-    if out is not None:
-        np.copyto(out, dec)
-        return out
-    else:
-        return dec
-
-
-numcodecs.json.JSON.encode = encode
-numcodecs.json.JSON.decode = decode
+numcodecs.register_codec(TempJSON)
 
 ####################
-
 
 # FIXME need some global place to keep these constants
 UNKNOWN_ALLELE = 255
@@ -376,7 +379,7 @@ class DataContainer(object):
         """
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = numcodecs.JSON()
+        self._metadata_codec = TempJSON()
         self._compressor = compressor
         self.data = zarr.group()
         self.path = path
