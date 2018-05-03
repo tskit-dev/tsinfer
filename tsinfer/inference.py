@@ -26,6 +26,7 @@ import time
 import pickle
 import logging
 import threading
+import json
 
 import numpy as np
 import tqdm
@@ -51,12 +52,12 @@ def infer(
 
     num_sites, num_samples = genotypes.shape
     sample_data = formats.SampleData.initialise(
-        num_samples=num_samples, sequence_length=sequence_length, compressor=None)
+        sequence_length=sequence_length, compressor=None, num_samples=num_samples)
     for j in range(num_sites):
         pos = j
         if positions is not None:
             pos = positions[j]
-        sample_data.add_variant(pos, ["0", "1"], genotypes[j])
+        sample_data.add_site(pos, ["0", "1"], genotypes[j])
     sample_data.finalise()
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
@@ -75,8 +76,9 @@ def infer(
 
 def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
 
-    num_sites = input_data.num_variant_sites
+    num_sites = input_data.num_inference_sites
     num_samples = input_data.num_samples
+
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
@@ -85,10 +87,10 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
     progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
-    frequency = input_data.frequency[:]
     logger.info("Starting site addition")
-    for j, (site_id, genotypes) in enumerate(input_data.variants()):
-        ancestor_builder.add_site(j, int(frequency[site_id]), genotypes)
+    for j, (site_id, genotypes) in enumerate(input_data.genotypes(inference_sites=True)):
+        frequency = np.sum(genotypes)
+        ancestor_builder.add_site(j, int(frequency), genotypes)
         progress_monitor.update()
     progress_monitor.close()
     logger.info("Finished adding sites")
@@ -96,9 +98,14 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
     descriptors = ancestor_builder.ancestor_descriptors()
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
+        # Build the map from frequencies to time.
+        time_map = {}
+        for freq, _ in reversed(descriptors):
+            if freq not in time_map:
+                time_map[freq] = len(time_map) + 1
         logger.info("Starting build for {} ancestors".format(num_ancestors))
         a = np.zeros(num_sites, dtype=np.uint8)
-        root_time = descriptors[0][0] + 1
+        root_time = len(time_map) + 1
         ultimate_ancestor_time = root_time + 1
         # Add the ultimate ancestor. This is an awkward hack really; we don't
         # ever insert this ancestor. The only reason to add it here is that
@@ -124,7 +131,8 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
                 "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
                     focal_sites.shape[0], e - s, duration))
             ancestor_data.add_ancestor(
-                start=s, end=e, time=freq, focal_sites=focal_sites, haplotype=a)
+                start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
+                haplotype=a)
             progress_monitor.update()
         progress_monitor.close()
     logger.info("Finished building ancestors")
@@ -163,7 +171,7 @@ def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
         total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
 
     count = 0
-    for g1, v in zip(ancestor_data.site_genotypes(), ancestors_ts.variants()):
+    for g1, v in zip(ancestor_data.sites_genotypes(), ancestors_ts.variants()):
         g2 = v.genotypes
         # Set anything unknown to 0
         g1[g1 == UNKNOWN_ALLELE] = 0
@@ -205,7 +213,7 @@ class Matcher(object):
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
-        self.num_sites = self.sample_data.num_variant_sites
+        self.num_sites = self.sample_data.num_inference_sites
         self.progress = progress
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
@@ -318,79 +326,170 @@ class Matcher(object):
                 ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
                 len(mutations)))
 
-    def get_tree_sequence(self, rescale_positions=True, all_sites=False):
+    def get_ancestors_tree_sequence(self):
         """
-        Returns the current state of the build tree sequence. All samples and
-        ancestors will have the sample node flag set.
+        Return the ancestors tree sequence. In this tree sequence the coordinates
+        are measured in units of site indexes and all ancestral and derived states
+        are 0/1. All nodes have the sample flag bit set.
         """
-        # TODO Change the API here to ask whether we want a final tree sequence
-        # or not. In the latter case we also need to translate the ancestral
-        # and derived states to the input values.
         tsb = self.tree_sequence_builder
         flags, time = tsb.dump_nodes()
         nodes = msprime.NodeTable()
         nodes.set_columns(flags=flags, time=time)
-
         left, right, parent, child = tsb.dump_edges()
-        if rescale_positions:
-            position = self.sample_data.position[:]
-            sequence_length = self.sample_data.sequence_length
-            if sequence_length is None or sequence_length < position[-1]:
-                sequence_length = position[-1] + 1
-            # Subset down to the variants.
-            position = position[self.sample_data.variant_site[:]]
-            x = np.hstack([position, [sequence_length]])
-            x[0] = 0
-            left = x[left]
-            right = x[right]
-        else:
-            position = np.arange(tsb.num_sites)
-            sequence_length = max(1, tsb.num_sites)
-
+        position = np.arange(tsb.num_sites)
+        sequence_length = max(1, tsb.num_sites)
         edges = msprime.EdgeTable()
         edges.set_columns(left=left, right=right, parent=parent, child=child)
-
         sites = msprime.SiteTable()
         sites.set_columns(
             position=position,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
             ancestral_state_offset=np.arange(tsb.num_sites + 1, dtype=np.uint32))
         mutations = msprime.MutationTable()
-        site = np.zeros(tsb.num_mutations, dtype=np.int32)
-        node = np.zeros(tsb.num_mutations, dtype=np.int32)
-        parent = np.zeros(tsb.num_mutations, dtype=np.int32)
-        derived_state = np.zeros(tsb.num_mutations, dtype=np.int8)
         site, node, derived_state, parent = tsb.dump_mutations()
         derived_state += ord('0')
         mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
-        if all_sites:
-            # Append the sites and mutations for each singleton.
-            num_singletons = self.sample_data.num_singleton_sites
-            singleton_site = self.sample_data.singleton_site[:]
-            singleton_sample = self.sample_data.singleton_sample[:]
-            pos = self.sample_data.position[:]
-            new_sites = np.arange(
-                len(sites), len(sites) + num_singletons, dtype=np.int32)
-            sites.append_columns(
-                position=pos[singleton_site],
-                ancestral_state=np.zeros(num_singletons, dtype=np.int8) + ord('0'),
-                ancestral_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
-            mutations.append_columns(
-                site=new_sites, node=self.sample_ids[singleton_sample],
-                derived_state=np.zeros(num_singletons, dtype=np.int8) + ord('1'),
-                derived_state_offset=np.arange(num_singletons + 1, dtype=np.uint32))
-            # Get the invariant sites
-            num_invariants = self.sample_data.num_invariant_sites
-            invariant_site = self.sample_data.invariant_site[:]
-            sites.append_columns(
-                position=pos[invariant_site],
-                ancestral_state=np.zeros(num_invariants, dtype=np.int8) + ord('0'),
-                ancestral_state_offset=np.arange(num_invariants + 1, dtype=np.uint32))
-
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        return msprime.load_tables(
+            nodes=nodes, edges=edges, sites=sites, mutations=mutations,
+            sequence_length=sequence_length)
+
+    def encode_metadata(self, value):
+        return json.dumps(value).encode()
+
+    def locate_mutations_on_tree(self, tree, site, genotypes, alleles, mutations):
+        """
+        Find the most parsimonious way to place mutations to define the specified
+        genotypes on the specified tree, and update the mutation table accordingly.
+        """
+        samples = np.where(genotypes == 1)[0]
+        num_samples = len(samples)
+        logger.debug("Locating mutations for site {}; n = {}".format(site, num_samples))
+        # Nothing to do if this site is fixed for the ancestral state.
+        if num_samples == 0:
+            return
+
+        count = np.zeros(tree.tree_sequence.num_nodes, dtype=int)
+        for sample in samples:
+            u = self.sample_ids[sample]
+            while u != msprime.NULL_NODE:
+                count[u] += 1
+                u = tree.parent(u)
+        # Go up the tree until we find the first node ancestral to all samples.
+        mutation_node = self.sample_ids[samples[0]]
+        while count[mutation_node] < num_samples:
+            mutation_node = tree.parent(mutation_node)
+        assert count[mutation_node] == num_samples
+
+        parent_mutation = mutations.add_row(
+            site=site, node=mutation_node, derived_state=alleles[1])
+        # Traverse down the tree to find any leaves that do not have this
+        # mutation and insert back mutations.
+        for node in tree.nodes(mutation_node):
+            if tree.is_leaf(node) and count[node] == 0:
+                mutations.add_row(
+                    site=site, node=node, derived_state=alleles[0],
+                    parent=parent_mutation)
+
+    def locate_mutations_over_samples(self, site, genotypes, alleles, mutations):
+        """
+        Place mutations directly over all the samples in the specified site.
+        """
+        for sample in np.where(genotypes == 1)[0]:
+            node = self.sample_ids[sample]
+            mutations.add_row(
+                site=site, node=node, derived_state=alleles[1])
+
+    def insert_sites(self, ts, sites, mutations):
+        """
+        Insert the sites in the sample data that were not marked for inference,
+        updating the specified site and mutation tables. This is done by
+        iterating over the trees
+        """
+        alleles = self.sample_data.sites_alleles[:]
+        inference = self.sample_data.sites_inference[:]
+        metadata = self.sample_data.sites_metadata[:]
+        position = self.sample_data.sites_position[:]
+        _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        inferred_site = 0
+        trees = ts.trees()
+        tree = next(trees)
+        for site_id, genotypes in self.sample_data.genotypes():
+            x = position[site_id]
+            while tree.interval[1] <= x:
+                tree = next(trees)
+            assert tree.interval[0] <= x < tree.interval[1]
+            sites.add_row(
+                position=x,
+                ancestral_state=alleles[site_id][0],
+                metadata=self.encode_metadata(metadata[site_id]))
+            if inference[site_id] == 1:
+                mutations.add_row(
+                    site=site_id, node=node[inferred_site],
+                    derived_state=alleles[site_id][derived_state[inferred_site]])
+                inferred_site += 1
+            elif ts.num_edges > 0:
+                self.locate_mutations_on_tree(
+                    tree, site_id, genotypes, alleles[site_id], mutations)
+            else:
+                # If we have no tree topology this is all we can do.
+                self.locate_mutations_over_samples(
+                    site_id, genotypes, alleles[site_id], mutations)
+
+    def get_samples_tree_sequence(self):
+        """
+        Returns the current state of the build tree sequence. All samples and
+        ancestors will have the sample node flag set.
+        """
+        tsb = self.tree_sequence_builder
+        nodes = msprime.NodeTable()
+        flags, time = tsb.dump_nodes()
+
+        logger.debug("Adding tree sequence nodes")
+        # TODO add an option for encoding ancestor metadata in with the nodes here.
+        # Add in the nodes up to for the ancestors.
+        for u in range(self.sample_ids[0]):
+            nodes.add_row(flags=flags[u], time=time[u])
+        # Now add in the sample nodes with metadata, etc.
+        sample_metadata = self.sample_data.samples_metadata[:]
+        sample_population = self.sample_data.samples_population[:]
+        for sample_id, metadata, population in zip(
+                self.sample_ids, sample_metadata, sample_population):
+            nodes.add_row(
+                flags=flags[sample_id], time=time[sample_id],
+                population=population,
+                metadata=self.encode_metadata(metadata))
+        # Add in the remaining synthetic nodes.
+        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
+            nodes.add_row(flags=flags[u], time=time[u])
+
+        logger.debug("Adding tree sequence edges")
+        left, right, parent, child = tsb.dump_edges()
+        inference_sites = self.sample_data.sites_inference[:]
+        position = self.sample_data.sites_position[:]
+        sequence_length = self.sample_data.sequence_length
+        if sequence_length < position[-1]:
+            sequence_length = position[-1] + 1
+
+        # Subset down to the inference sites and map back to the site indexes.
+        position = position[inference_sites == 1]
+        pos_map = np.hstack([position, [sequence_length]])
+        pos_map[0] = 0
+        edges = msprime.EdgeTable()
+        edges.set_columns(
+            left=pos_map[left], right=pos_map[right], parent=parent, child=child)
+
+        logger.debug("Sorting and building intermediate tree sequence.")
+        msprime.sort_tables(nodes, edges)
+        ts = msprime.load_tables(
+            nodes=nodes, edges=edges, sequence_length=sequence_length)
+        sites = msprime.SiteTable()
+        mutations = msprime.MutationTable()
+        self.insert_sites(ts, sites, mutations)
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
             sequence_length=sequence_length)
@@ -475,7 +574,6 @@ class AncestorMatcher(Matcher):
         nodes_before = self.tree_sequence_builder.num_nodes
 
         for child_id in range(start, end):
-            # TODO we should be adding the ancestor ID here as well as metadata.
             left, right, parent = self.results.get_path(child_id)
             self.tree_sequence_builder.add_path(
                 child_id, left, right, parent, compress=self.path_compression)
@@ -558,7 +656,7 @@ class AncestorMatcher(Matcher):
 
     def store_output(self):
         if self.num_ancestors > 0:
-            ts = self.get_tree_sequence(rescale_positions=False)
+            ts = self.get_ancestors_tree_sequence()
         else:
             # Allocate an empty tree sequence.
             ts = msprime.load_tables(
@@ -574,19 +672,13 @@ class SampleMatcher(Matcher):
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
-        self.sample_haplotypes = self.sample_data.haplotypes()
+        self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
         self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
-        # print("process sample", haplotype)
-        # print("mutated_sites = ", self.mutated_sites)
-        # mask = np.zeros(self.num_sites, dtype=np.uint8)
-        # mask[self.mutated_sites] = 1
-        # h = np.logical_and(haplotype, mask).astype(np.uint8)
-        # diffs = np.where(h != haplotype)[0]
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
         match = self.match[thread_index]
         diffs = np.where(haplotype != match)[0]
@@ -638,7 +730,7 @@ class SampleMatcher(Matcher):
 
     def match_samples(self):
         logger.info("Started matching for {} samples".format(self.num_samples))
-        if self.sample_data.num_variant_sites > 0:
+        if self.sample_data.num_inference_sites > 0:
             if self.num_threads <= 0:
                 self.__match_samples_single_threaded()
             else:
@@ -659,7 +751,7 @@ class SampleMatcher(Matcher):
 
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
-        ts = self.get_tree_sequence(all_sites=True)
+        ts = self.get_samples_tree_sequence()
         if simplify:
             logger.info("Running simplify on {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))

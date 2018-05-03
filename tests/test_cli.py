@@ -59,23 +59,36 @@ def capture_output(func, *args, **kwargs):
     return stdout_output, stderr_output
 
 
-class TestCommandsDefaults(unittest.TestCase):
+class TestCli(unittest.TestCase):
     """
-    Tests that the basic commands work if we provide the default arguments.
+    Parent of all CLI test cases.
     """
+    # TODO add a setupClass this runs the inference and copy the files
+    # from the source directory into the tempdir for each case. Otherwise
+    # we'll do a lot of inferring for nothing.
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
         self.sample_file = os.path.join(self.tempdir.name, "samples")
+        self.ancestor_file = os.path.join(self.tempdir.name, "ancestors")
         self.input_ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=10)
         sample_data = tsinfer.SampleData.initialise(
             num_samples=self.input_ts.num_samples,
             sequence_length=self.input_ts.sequence_length,
-            compressor=None, filename=self.sample_file)
+            compressor=None, path=self.sample_file)
         for var in self.input_ts.variants():
-            sample_data.add_variant(var.site.position, var.alleles, var.genotypes)
+            sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
+        ancestor_data = tsinfer.AncestorData.initialise(
+            sample_data, chunk_size=10, path=self.ancestor_file)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
 
+
+class TestCommandsDefaults(TestCli):
+    """
+    Tests that the basic commands work if we provide the default arguments.
+    """
     def verify_output(self, output_path):
         output_ts = msprime.load(output_path)
         self.assertEqual(output_ts.num_samples, self.input_ts.num_samples)
@@ -89,7 +102,7 @@ class TestCommandsDefaults(unittest.TestCase):
     # in later tests.
     @mock.patch("tsinfer.cli.setup_logging")
     def run_command(self, command, mock_setup_logging):
-        stderr, stdout = capture_output(cli.tsinfer_main, command)
+        stdout, stderr = capture_output(cli.tsinfer_main, command)
         self.assertEqual(stderr, "")
         self.assertEqual(stdout, "")
         self.assertTrue(mock_setup_logging.called)
@@ -105,3 +118,52 @@ class TestCommandsDefaults(unittest.TestCase):
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["match-samples", self.sample_file, "-O", output_ts])
         self.verify_output(output_ts)
+
+
+class TestList(TestCli):
+    """
+    Tests cases for the list command.
+    """
+    # Need to mock out setup_logging here or we spew logging to the console
+    # in later tests.
+    @mock.patch("tsinfer.cli.setup_logging")
+    def run_command(self, command, mock_setup_logging):
+        stdout, stderr = capture_output(cli.tsinfer_main, command)
+        self.assertEqual(stderr, "")
+        self.assertTrue(mock_setup_logging.called)
+        return stdout
+
+    def test_list_samples(self):
+        output1 = self.run_command(["list", self.sample_file])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["ls", self.sample_file])
+        self.assertEqual(output1, output2)
+
+    def test_list_samples_storage(self):
+        output1 = self.run_command(["list", "-s", self.sample_file])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["list", "--storage", self.sample_file])
+        self.assertEqual(output1, output2)
+
+    def test_list_ancestors(self):
+        output1 = self.run_command(["list", self.ancestor_file])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["ls", self.ancestor_file])
+        self.assertEqual(output1, output2)
+
+    def test_list_ancestors_storage(self):
+        output1 = self.run_command(["list", "-s", self.ancestor_file])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["list", "--storage", self.ancestor_file])
+        self.assertEqual(output1, output2)
+
+    @unittest.skip("Add tests for unknown files")
+    def test_list_unknown_files(self):
+        pass
+        # zero_file = os.path.join(self.tempdir.name, "zeros")
+        # with open(zero_file, "wb") as f:
+        #     f.write(bytearray(100))
+        # self.assertRaises(
+        #     lmdb.Error, capture_output(cli.tsinfer_main, ["list", "/"]))
+        # for bad_file in ["/", zero_file]:
+        #     print(stderr)

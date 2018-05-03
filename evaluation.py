@@ -459,7 +459,7 @@ def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
     ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
@@ -971,7 +971,7 @@ def ancestor_properties_worker(args):
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
@@ -1127,9 +1127,7 @@ def run_ancestor_comparison(args):
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
     for j, v in enumerate(V):
-        sample_data.add_variant(j, ["0", "1"], v)
-    # for v in ts.variants():
-    #     sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
+        sample_data.add_site(j, ["0", "1"], v)
     sample_data.finalise()
 
     estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)

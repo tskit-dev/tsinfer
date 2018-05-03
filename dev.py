@@ -113,19 +113,35 @@ def tsinfer_dev(
 
     G = generate_samples(ts, error_rate)
     sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        sequence_length=ts.sequence_length, chunk_size=10)
+    for j in range(ts.num_samples):
+        sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
     for site, genotypes in zip(ts.sites(), G):
-        sample_data.add_variant(site.position, ["0", "1"], genotypes)
+        sample_data.add_site(
+            site.position, ["0", "1"], genotypes,
+            inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
     sample_data.finalise()
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
-    ancestor_data.finalise()
-    print(ancestor_data)
+    print(sample_data)
+    # print(sample_data.provenances_timestamp[:])
+    # print(sample_data.provenances_record[:])
 
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
-    print("inferred_num_edges = ", output_ts.num_edges)
+    copy = sample_data.copy("tmp.samples")
+    print(copy)
+    copy.finalise()
+    print(copy)
+
+    # ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
+    # tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
+    # ancestor_data.finalise()
+
+    # print(ancestor_data)
+    # print(ancestor_data.provenances_timestamp[:])
+    # print(ancestor_data.provenances_record[:])
+
+    # ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
+    # print("inferred_num_edges = ", output_ts.num_edges)
 
 
 def build_profile_inputs(n, num_megabases):
@@ -144,17 +160,23 @@ def build_profile_inputs(n, num_megabases):
     filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
-    daiquiri.setup(level="DEBUG")
+    # daiquiri.setup(level="DEBUG")
     sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        filename=filename)
+        sequence_length=ts.sequence_length, filename=filename, num_flush_threads=4)
+    progress_monitor = tqdm.tqdm(total=ts.num_samples)
+    for j in range(ts.num_samples):
+        sample_data.add_sample(population=0, metadata={"name": "sample_{}".format(j)})
+        progress_monitor.update()
+    progress_monitor.close()
     progress_monitor = tqdm.tqdm(total=ts.num_sites)
     for variant in ts.variants():
-        sample_data.add_variant(
+        sample_data.add_site(
             variant.site.position, variant.alleles, variant.genotypes)
         progress_monitor.update()
     sample_data.finalise()
     progress_monitor.close()
+
+    print(sample_data)
 
 #     filename = "tmp__NOBACKUP__/profile-n={}_m={}.ancestors".format(n, num_megabases)
 #     if os.path.exists(filename):
@@ -162,6 +184,15 @@ def build_profile_inputs(n, num_megabases):
 #     ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
 #     tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
 #     ancestor_data.finalise()
+
+def copy_1kg():
+    source = "tmp__NOBACKUP__/1kg_chr22.samples"
+    sample_data = tsinfer.SampleData.load(source)
+    copy = sample_data.copy("tmp__NOBACKUP__/1kg_chr22_copy.samples")
+    copy.finalise()
+    print(sample_data)
+    print("copy = ")
+    print(copy)
 
 if __name__ == "__main__":
 
@@ -174,7 +205,8 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    tsinfer_dev(18, 0.1, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    # tsinfer_dev(10, 0.2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    copy_1kg()
 
 
 #     for seed in range(1, 10000):

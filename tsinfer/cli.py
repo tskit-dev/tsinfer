@@ -28,6 +28,9 @@ import daiquiri
 import msprime
 
 import tsinfer
+import tsinfer.formats as formats
+import tsinfer.exceptions as exceptions
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,33 @@ def setup_logging(args):
         logger.setLevel(log_level)
 
 
+def run_list(args):
+    setup_logging(args)
+    tsinfer_file = None
+    try:
+        logger.debug("Trying SampleData file")
+        tsinfer_file = formats.SampleData.load(args.path)
+        logger.debug("Loaded SampleData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+    try:
+        logger.debug("Trying AncestorData file")
+        tsinfer_file = formats.AncestorData.load(args.path)
+        logger.debug("Loaded AncestorData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+
+    if tsinfer_file is None:
+        raise exceptions.FileFormatError(
+            "Unrecognised file format. Try running with -vv and check the log "
+            "for more details on what went wrong")
+
+    if args.storage:
+        print(tsinfer_file.info)
+    else:
+        print(tsinfer_file)
+
+
 def run_infer(args):
     setup_logging(args)
     sample_data = tsinfer.SampleData.load(args.input)
@@ -97,9 +127,9 @@ def run_build_ancestors(args):
         os.unlink(ancestors_path)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, filename=ancestors_path, num_flush_threads=args.num_threads)
+        sample_data, path=ancestors_path, num_flush_threads=args.num_threads)
     tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
-    ancestor_data.finalise()
+    ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
 
 
 def run_match_ancestors(args):
@@ -294,6 +324,19 @@ def get_tsinfer_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_infer)
+
+    parser = subparsers.add_parser(
+        "list",
+        aliases=["ls"],
+        help=(
+            "Show a summary of the specified tsinfer related file."))
+    add_logging_arguments(parser)
+    parser.add_argument(
+        "path", help="The tsinfer file to show information about.")
+    parser.add_argument(
+        "--storage", "-s", action="store_true",
+        help="Show detailed information about data storage.")
+    parser.set_defaults(runner=run_list)
 
     return top_parser
 
