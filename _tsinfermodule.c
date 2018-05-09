@@ -483,21 +483,25 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
     int child;
     size_t num_edges;
     npy_intp *shape;
-    int compress = true;
+    int compress = 1;
+    int extended_checks = 0;
 
-
-    static char *kwlist[] = {"child", "left", "right", "parent", "compress", NULL};
+    static char *kwlist[] = {"child", "left", "right", "parent",
+        "compress", "extended_checks", NULL};
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOO|i", kwlist,
-            &child, &left, &right, &parent, &compress)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kOOO|ii", kwlist,
+            &child, &left, &right, &parent, &compress, &extended_checks)) {
         goto out;
     }
 
     if (compress) {
         flags = TSI_COMPRESS_PATH;
+    }
+    if (extended_checks) {
+        flags |= TSI_EXTENDED_CHECKS;
     }
 
     /* left */
