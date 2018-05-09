@@ -24,10 +24,10 @@ import unittest
 import tempfile
 import os.path
 import datetime
+import warnings
 
 import numpy as np
 import msprime
-import numcodecs
 import numcodecs.blosc as blosc
 import zarr
 
@@ -592,6 +592,15 @@ class BufferedItemWriterMixin(object):
     """
     Tests to ensure that the buffered item writer works as expected.
     """
+    def filter_warnings_verify_round_trip(self, source):
+        # Zarr currently emits an error when dealing with object arrays.
+        # https://github.com/zarr-developers/zarr/issues/257
+        # As a workaround, we filter this warning.
+        # This should be removed when the bug has been fixed upstream.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.verify_round_trip(source)
+
     def verify_round_trip(self, source):
         """
         Verify that we can round trip the specified mapping of arrays
@@ -701,14 +710,14 @@ class BufferedItemWriterMixin(object):
         z = zarr.empty(n, dtype="array:i4")
         for j in range(n):
             z[j] = np.arange(j)
-        self.verify_round_trip({"z": z})
+        self.filter_warnings_verify_round_trip({"z": z})
 
     def test_square_object_array_int32(self):
         n = 10
         z = zarr.empty(n, dtype="array:i4")
         for j in range(n):
             z[j] = np.arange(n)
-        self.verify_round_trip({"z": z})
+        self.filter_warnings_verify_round_trip({"z": z})
 
     def test_json_object_array(self):
         for chunks in [1, 2, 5, 10, 100]:
@@ -717,31 +726,12 @@ class BufferedItemWriterMixin(object):
                 n, dtype=object, object_codec=formats.TempJSON(), chunks=(chunks,))
             for j in range(n):
                 z[j] = {str(k): k for k in range(j)}
-            self.verify_round_trip({"z": z})
-
-    @unittest.skip("Skip msgpack arrays unless we need them")
-    def test_msgpack_object_array(self):
-        for chunks in [1, 2, 5, 10, 100]:
-            n = 10
-            z = zarr.empty(
-                n, dtype=object, object_codec=numcodecs.MsgPack(), chunks=(chunks,))
-            for j in range(n):
-                z[j] = {str(k): k for k in range(j)}
-            self.verify_round_trip({"z": z})
-
-    @unittest.skip("Skip msgpack arrays unless we need them")
-    def test_string_list(self):
-        n = 10
-        z = zarr.empty(n, dtype=object, object_codec=numcodecs.MsgPack(), chunks=(2,))
-        for j in range(n):
-            z[j] = ["a" * k for k in range(j)]
-        print(z[:])
-        self.verify_round_trip({"z": z})
+            self.filter_warnings_verify_round_trip({"z": z})
 
     def test_empty_string_list(self):
         z = zarr.empty(1, dtype=object, object_codec=formats.TempJSON(), chunks=(2,))
         z[0] = ["", ""]
-        self.verify_round_trip({"z": z})
+        self.filter_warnings_verify_round_trip({"z": z})
 
     def test_mixed_chunk_sizes(self):
         source = {"a": zarr.zeros(10, chunks=(1,)), "b": zarr.zeros(10, chunks=(2,))}

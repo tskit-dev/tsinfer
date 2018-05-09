@@ -35,7 +35,6 @@ import zarr
 import lmdb
 import humanize
 import numcodecs
-import numcodecs.blosc as blosc
 
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
@@ -77,8 +76,6 @@ numcodecs.register_codec(TempJSON)
 # FIXME need some global place to keep these constants
 UNKNOWN_ALLELE = 255
 
-# We don't want blosc to spin up extra threads for compression.
-blosc.use_threads = False
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +83,9 @@ FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
 FINALISED_KEY = "finalised"
 
-DEFAULT_COMPRESSOR = blosc.Blosc(cname='zstd', clevel=9, shuffle=blosc.BITSHUFFLE)
+# We use the zstd compressor because it allows for compression of buffers
+# bigger than 2GB, which can occur in a larger instances.
+DEFAULT_COMPRESSOR = numcodecs.Zstd()
 
 
 class BufferedItemWriter(object):

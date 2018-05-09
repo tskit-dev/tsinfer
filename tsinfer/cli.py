@@ -35,26 +35,22 @@ import tsinfer.exceptions as exceptions
 logger = logging.getLogger(__name__)
 
 
-# TODO Need better names/extensions for these files.
+def get_default_path(path, input_path, extension):
+    if path is None:
+        path = os.path.splitext(input_path)[0] + extension
+    return path
+
 
 def get_ancestors_path(path, input_path):
-    if path is None:
-        path = os.path.splitext(input_path)[0] + ".tsanc"
-    return path
+    return get_default_path(path, input_path, ".ancestors")
 
 
-def get_ancestors_ts(path, input_path):
-    # FIXME!!
-    if path is None:
-        path = os.path.splitext(input_path)[0] + ".tsancts"
-    return path
+def get_ancestors_trees_path(path, input_path):
+    return get_default_path(path, input_path, ".ancestors.trees")
 
 
-def get_output_ts(path, input_path):
-    # FIXME!!
-    if path is None:
-        path = os.path.splitext(input_path)[0] + ".ts"
-    return path
+def get_output_trees_path(path, input_path):
+    return get_default_path(path, input_path, ".trees")
 
 
 def setup_logging(args):
@@ -106,21 +102,19 @@ def run_infer(args):
     tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
     ancestor_data.finalise()
 
-    ancestors_ts = tsinfer.match_ancestors(
+    ancestors_trees = tsinfer.match_ancestors(
         sample_data, ancestor_data, num_threads=args.num_threads,
         progress=args.progress)
-    output_ts = get_output_ts(args.output_ts, args.input)
+    output_trees = get_output_trees_path(args.output_trees, args.input)
     ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, num_threads=args.num_threads,
+        sample_data, ancestors_trees, num_threads=args.num_threads,
         progress=args.progress)
-    logger.info("Writing output tree sequence to {}".format(output_ts))
-    ts.dump(output_ts)
+    logger.info("Writing output tree sequence to {}".format(output_trees))
+    ts.dump(output_trees)
 
 
 def run_build_ancestors(args):
     setup_logging(args)
-    if args.compression == "none":
-        args.compression = None
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     if os.path.exists(ancestors_path):
         # TODO add error and only do this on --force
@@ -136,11 +130,11 @@ def run_match_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     logger.info("Loading ancestral haplotypes from {}".format(ancestors_path))
-    ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
+    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
     tsinfer.match_ancestors(
-        sample_data, ancestor_data, output_path=ancestors_ts,
+        sample_data, ancestor_data, output_path=ancestors_trees,
         num_threads=args.num_threads, progress=args.progress,
         path_compression=not args.no_path_compression)
 
@@ -149,66 +143,64 @@ def run_match_samples(args):
     setup_logging(args)
 
     sample_data = tsinfer.SampleData.load(args.input)
-    ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
-    output_ts = get_output_ts(args.output_ts, args.input)
-    logger.info("Loading ancestral genealogies from {}".format(ancestors_ts))
-    ancestors_ts = msprime.load(ancestors_ts)
+    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
+    output_trees = get_output_trees_path(args.output_trees, args.input)
+    logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
+    ancestors_trees = msprime.load(ancestors_trees)
     ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, num_threads=args.num_threads,
+        sample_data, ancestors_trees, num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
         progress=args.progress)
-    logger.info("Writing output tree sequence to {}".format(output_ts))
-    ts.dump(output_ts)
+    logger.info("Writing output tree sequence to {}".format(output_trees))
+    ts.dump(output_trees)
 
 
-def run_verify(args):
-    setup_logging(args)
-    print("FIXME!!!")
-    sys.exit(1)
-
-#     input_container = zarr.DBMStore(args.input, open=bsddb3.btopen)
-#     input_root = zarr.open_group(store=input_container)
-#     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-#     ancestors_container = zarr.DBMStore(ancestors_path, open=bsddb3.btopen)
-
-#     ancestors_root = zarr.open_group(store=ancestors_container)
-#     ancestors_ts = get_ancestors_ts(args.ancestors_ts, args.input)
-#     output_ts = get_output_ts(args.output_ts, args.input)
-#     logger.info("Loading ancestral genealogies from {}".format(ancestors_ts))
-#     ancestors_ts = msprime.load(ancestors_ts)
-#     tsinfer.verify(input_root, ancestors_root, ancestors_ts, progress=args.progress)
+# def run_verify(args):
+#     setup_logging(args)
+#     print("FIXME!!!")
+#     sys.exit(1)
 
 
 def add_input_file_argument(parser):
     parser.add_argument(
-        "input", help="The input data in tsinfer input HDF5 format.")
+        "input",
+        help=(
+            "The input sample data in tsinfer 'samples' format. Please see the "
+            "documentation at http://tsinfer.readthedocs.io/ for information on "
+            "how to import data into this format."))
 
 
-# TODO there are very poor names. Need to think of something more descriptive than
-# 'file' and 'ts'. One is the ancestor-source and the ancestor-genealogies or
-# something?
 def add_ancestors_file_argument(parser):
     parser.add_argument(
         "-a", "--ancestors", default=None,
         help=(
-            "The path to the ancestors HDF5 file. If not specified, this "
-            "defaults to the input file stem with the extension '.tsanc'. "
-            "For example, if '1kg-chr1.tsinf' is the input file then the "
-            "default ancestors file would be 1kg-chr1.tsanc"))
+            "The path to the ancestor data file in tsinfer 'ancestors' format. "
+            "If not specified, this defaults to the input samples file stem "
+            "with the extension '.ancestors'. For example, if '1kg-chr1.samples' "
+            "is the input file then the default ancestors file would be "
+            "'1kg-chr1.ancestors'"))
 
 
-def add_ancestors_ts_argument(parser):
+def add_ancestors_trees_argument(parser):
     parser.add_argument(
-        # Again, this is really bad. Need a much better name.
-        "-A", "--ancestors-ts", default=None,
-        help=("TODO DOCUMENT"))
+        "-A", "--ancestors-trees", default=None,
+        help=(
+            "The path to the ancestor trees file in tskit '.trees' format. "
+            "If not specified, this defaults to the input samples file stem "
+            "with the extension '.ancestors.trees'. For example, if '1kg-chr1.samples' "
+            "is the input file then the default ancestors file would be "
+            "'1kg-chr1.ancestors.trees'"))
 
 
-def add_output_ts_argument(parser):
+def add_output_trees_argument(parser):
     parser.add_argument(
-        # Again, this is really bad. Need a much better name.
-        "-O", "--output-ts", default=None,
-        help=("TODO DOCUMENT"))
+        "-O", "--output-trees", default=None,
+        help=(
+            "The path to the output trees file in tskit '.trees' format. "
+            "If not specified, this defaults to the input samples file stem "
+            "with the extension '.trees'. For example, if '1kg-chr1.samples' "
+            "is the input file then the default output file would be "
+            "'1kg-chr1.trees'"))
 
 
 def add_progress_argument(parser):
@@ -241,12 +233,6 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
-def add_compression_argument(parser):
-    parser.add_argument(
-        "--compression", "-z", choices=["gzip", "lzf", "none"], default="gzip",
-        help="Enable HDF5 compression on datasets.")
-
-
 def get_tsinfer_parser():
     top_parser = argparse.ArgumentParser(
         description="Command line interface for tsinfer.")
@@ -261,11 +247,10 @@ def get_tsinfer_parser():
         "build-ancestors",
         aliases=["ba"],
         help=(
-            "Builds a set of ancestors from the input haplotype data and stores "
-            "the results in an output HDF5 file."))
+            "Builds a set of ancestors from the input sample data and stores "
+            "the results in a tsinfer ancestors file."))
     add_input_file_argument(parser)
     add_ancestors_file_argument(parser)
-    add_compression_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_logging_arguments(parser)
@@ -277,11 +262,11 @@ def get_tsinfer_parser():
         help=(
             "Matches the ancestors built by the 'build-ancestors' command against "
             "each other using the model information specified in the input file "
-            "and writes the output to a tree sequence HDF5 file."))
+            "and writes the output to a tskit .trees file."))
     add_input_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
-    add_ancestors_ts_argument(parser)
+    add_ancestors_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_path_compression_argument(parser)
@@ -295,24 +280,24 @@ def get_tsinfer_parser():
             "by the match-ancestors command"))
     add_input_file_argument(parser)
     add_logging_arguments(parser)
-    add_ancestors_ts_argument(parser)
+    add_ancestors_trees_argument(parser)
     add_path_compression_argument(parser)
-    add_output_ts_argument(parser)
+    add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_match_samples)
 
-    parser = subparsers.add_parser(
-        "verify",
-        help=(
-            "Verifies the integrity of the files associated with a build."))
-    add_input_file_argument(parser)
-    add_logging_arguments(parser)
-    add_ancestors_file_argument(parser)
-    add_ancestors_ts_argument(parser)
-    add_output_ts_argument(parser)
-    add_progress_argument(parser)
-    parser.set_defaults(runner=run_verify)
+    # parser = subparsers.add_parser(
+    #     "verify",
+    #     help=(
+    #         "Verifies the integrity of the files associated with a build."))
+    # add_input_file_argument(parser)
+    # add_logging_arguments(parser)
+    # add_ancestors_file_argument(parser)
+    # add_ancestors_trees_argument(parser)
+    # add_output_trees_argument(parser)
+    # add_progress_argument(parser)
+    # parser.set_defaults(runner=run_verify)
 
     parser = subparsers.add_parser(
         "infer",
@@ -320,7 +305,7 @@ def get_tsinfer_parser():
             "TODO: document"))
     add_input_file_argument(parser)
     add_logging_arguments(parser)
-    add_output_ts_argument(parser)
+    add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     parser.set_defaults(runner=run_infer)
