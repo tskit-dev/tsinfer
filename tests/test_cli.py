@@ -22,6 +22,7 @@ Tests for the tsinfer CLI.
 
 import io
 import os.path
+import pathlib
 import sys
 import tempfile
 import unittest
@@ -32,6 +33,7 @@ import msprime
 
 import tsinfer
 import tsinfer.cli as cli
+import tsinfer.exceptions as exceptions
 
 
 def capture_output(func, *args, **kwargs):
@@ -59,17 +61,36 @@ def capture_output(func, *args, **kwargs):
     return stdout_output, stderr_output
 
 
+class TestDefaultPaths(unittest.TestCase):
+    """
+    Tests for the default path creation routines.
+    """
+    def test_get_default_path(self):
+        # The second argument is ignored if the input path is specified.
+        for path in ["a", "a/b/c", "a.stuff"]:
+            self.assertEqual(cli.get_default_path(path, "a", "b"), path)
+        self.assertEqual(cli.get_default_path(None, "a", ".x"), "a.x")
+        self.assertEqual(cli.get_default_path(None, "a.y", ".z"), "a.z")
+        self.assertEqual(cli.get_default_path(None, "a/b/c/a.y", ".z"), "a/b/c/a.z")
+
+    def test_get_ancestors_path(self):
+        self.assertEqual(cli.get_ancestors_path(None, "a"), "a.ancestors")
+
+    def test_get_ancestors_trees_path(self):
+        self.assertEqual(cli.get_ancestors_trees_path(None, "a"), "a.ancestors.trees")
+
+    def test_get_output_trees_path(self):
+        self.assertEqual(cli.get_output_trees_path(None, "a"), "a.trees")
+
+
 class TestCli(unittest.TestCase):
     """
     Parent of all CLI test cases.
     """
-    # TODO add a setupClass this runs the inference and copy the files
-    # from the source directory into the tempdir for each case. Otherwise
-    # we'll do a lot of inferring for nothing.
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
-        self.sample_file = os.path.join(self.tempdir.name, "samples")
-        self.ancestor_file = os.path.join(self.tempdir.name, "ancestors")
+        self.sample_file = str(pathlib.Path(self.tempdir.name, "input-data.samples"))
+        self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
         self.input_ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=10)
         sample_data = tsinfer.SampleData.initialise(
@@ -90,13 +111,13 @@ class TestCommandsDefaults(TestCli):
     Tests that the basic commands work if we provide the default arguments.
     """
     def verify_output(self, output_path):
-        output_ts = msprime.load(output_path)
-        self.assertEqual(output_ts.num_samples, self.input_ts.num_samples)
-        self.assertEqual(output_ts.sequence_length, self.input_ts.sequence_length)
-        self.assertEqual(output_ts.num_sites, self.input_ts.num_sites)
-        self.assertGreater(output_ts.num_sites, 1)
+        output_trees = msprime.load(output_path)
+        self.assertEqual(output_trees.num_samples, self.input_ts.num_samples)
+        self.assertEqual(output_trees.sequence_length, self.input_ts.sequence_length)
+        self.assertEqual(output_trees.num_sites, self.input_ts.num_sites)
+        self.assertGreater(output_trees.num_sites, 1)
         self.assertTrue(np.array_equal(
-            output_ts.genotype_matrix(), self.input_ts.genotype_matrix()))
+            output_trees.genotype_matrix(), self.input_ts.genotype_matrix()))
 
     # Need to mock out setup_logging here or we spew logging to the console
     # in later tests.
@@ -108,16 +129,16 @@ class TestCommandsDefaults(TestCli):
         self.assertTrue(mock_setup_logging.called)
 
     def test_infer(self):
-        output_ts = os.path.join(self.tempdir.name, "output.ts")
-        self.run_command(["infer", self.sample_file, "-O", output_ts])
-        self.verify_output(output_ts)
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+        self.verify_output(output_trees)
 
     def test_nominal_chain(self):
-        output_ts = os.path.join(self.tempdir.name, "output.ts")
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["build-ancestors", self.sample_file])
         self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["match-samples", self.sample_file, "-O", output_ts])
-        self.verify_output(output_ts)
+        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
+        self.verify_output(output_trees)
 
 
 class TestList(TestCli):
@@ -157,13 +178,11 @@ class TestList(TestCli):
         output2 = self.run_command(["list", "--storage", self.ancestor_file])
         self.assertEqual(output1, output2)
 
-    @unittest.skip("Add tests for unknown files")
     def test_list_unknown_files(self):
-        pass
-        # zero_file = os.path.join(self.tempdir.name, "zeros")
-        # with open(zero_file, "wb") as f:
-        #     f.write(bytearray(100))
-        # self.assertRaises(
-        #     lmdb.Error, capture_output(cli.tsinfer_main, ["list", "/"]))
-        # for bad_file in ["/", zero_file]:
-        #     print(stderr)
+        zero_file = os.path.join(self.tempdir.name, "zeros")
+        with open(zero_file, "wb") as f:
+            f.write(bytearray(100))
+        for bad_file in ["/", zero_file]:
+            self.assertRaises(
+                exceptions.FileFormatError, capture_output, cli.tsinfer_main,
+                ["list", bad_file])
