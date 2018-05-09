@@ -200,8 +200,8 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    # build_profile_inputs(10, 1)
-    build_profile_inputs(100, 10)
+    build_profile_inputs(10, 1)
+    # build_profile_inputs(100, 10)
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
