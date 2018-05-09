@@ -226,15 +226,6 @@ class TreeSequenceBuilder(object):
         # path compression.
         del self.path_index[(edge.left, edge.right, edge.parent, edge.child)]
 
-    def unindex_edges(self, node_id):
-        """
-        Removes the edges for the specified node from all the indexes.
-        """
-        edge = self.path[node_id]
-        while edge is not None:
-            self.unindex_edge(edge)
-            edge = edge.next
-
     def squash_edges(self, head):
         """
         Squashes any edges in the specified chain that are redundant and
@@ -246,14 +237,44 @@ class TreeSequenceBuilder(object):
         prev = head
         x = head.next
         while x is not None:
-            if prev.right == x.left and prev.child == x.child \
-                    and prev.parent == x.parent:
+            assert prev.child == x.child
+            if prev.right == x.left and prev.parent == x.parent:
                 prev.right = x.right
                 prev.next = x.next
             else:
                 prev = x
             x = x.next
         # self.print_chain(head)
+        return head
+
+    def squash_edges_indexed(self, head, child_id):
+        """
+        Works as squash_edges above, but is aware that some of the edges are
+        indexed and some are not. Edges that have been unindexed are marked
+        with a child value of -1.
+        """
+        prev = head
+        x = head.next
+        while x is not None:
+            if prev.right == x.left and prev.parent == x.parent:
+                if prev.child != -1:
+                    self.unindex_edge(prev)
+                    prev.child = -1
+                if x.child != -1:
+                    self.unindex_edge(x)
+                prev.right = x.right
+                prev.next = x.next
+            else:
+                prev = x
+            x = x.next
+
+        # Now go through and index all the remaining edges.
+        x = head
+        while x is not None:
+            if x.child == -1:
+                x.child = child_id
+                self.index_edge(x)
+            x = x.next
         return head
 
     def restore_edges(self, left, right, parent, child):
@@ -271,7 +292,7 @@ class TreeSequenceBuilder(object):
 
         self.check_state()
 
-    def add_path(self, child, left, right, parent, compress=True):
+    def add_path(self, child, left, right, parent, compress=True, extended_checks=False):
         assert self.path[child] is None
         prev = None
         head = None
@@ -290,7 +311,8 @@ class TreeSequenceBuilder(object):
         self.path[child] = head
         self.index_edges(child)
         # self.print_state()
-        self.check_state()
+        if extended_checks:
+            self.check_state()
 
     def update_node_time(self, node_id):
         """
@@ -319,15 +341,15 @@ class TreeSequenceBuilder(object):
                 new.parent = child_id
 
     def create_synthetic_node(self, child_id, matches):
-
         # If we have more than one edge matching to a given path, then we create
         # synthetic ancestor for this path.
         # Create a new node for this synthetic ancestor.
         synthetic_node = self.add_node(-1, is_sample=False)
-        self.unindex_edges(child_id)
         synthetic_head = None
         synthetic_prev = None
-        # print("NEW SYNTHETIC FOR ", child_id, "->", mapped)
+        # print("NEW SYNTHETIC FOR ", child_id)
+        # print("BEFORE")
+        # self.print_chain(self.path[child_id])
         for new, old in matches:
             if old.child == child_id:
                 # print("\t", new, "\t", old)
@@ -339,13 +361,19 @@ class TreeSequenceBuilder(object):
                     synthetic_head = synthetic_edge
                 synthetic_prev = synthetic_edge
                 new.parent = synthetic_node
+                self.unindex_edge(old)
+                # We are modifying this existing edge, so remove it from the
+                # index. Also mark it as unindexed by setting the child_id to -1.
+                # We check for this in squash_edges_indexed and make sure it
+                # is indexed afterwards.
                 old.parent = synthetic_node
+                old.child = -1
         # print("END of match loop")
         self.path[synthetic_node] = self.squash_edges(synthetic_head)
-        self.path[child_id] = self.squash_edges(self.path[child_id])
+        self.path[child_id] = self.squash_edges_indexed(self.path[child_id], child_id)
         self.update_node_time(synthetic_node)
         self.index_edges(synthetic_node)
-        self.index_edges(child_id)
+        # print("AFTER")
         # self.print_chain(synthetic_head)
         # self.print_chain(self.path[child_id])
         # self.print_chain(head)

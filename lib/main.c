@@ -63,104 +63,46 @@ read_hdf5_dimensions(hid_t file_id, size_t *num_samples, size_t *num_sites)
     htri_t exists;
     int rank;
     hsize_t dims[2];
-    const char *name = "/samples/haplotypes";
+    const char *name = "/haplotypes";
 
     exists = H5Lexists(file_id, name, H5P_DEFAULT);
     if (exists < 0) {
-        fatal_hdf5_error("error reading samples/haplotypes");
+        fatal_hdf5_error("error reading /haplotypes");
     }
     if (!exists) {
-        fatal_error("cannot find samples/haplotypes");
+        fatal_error("cannot find /haplotypes");
     }
 
     dataset_id = H5Dopen(file_id, name, H5P_DEFAULT);
     if (dataset_id < 0) {
-        fatal_hdf5_error("Reading samples/haplotypes");
+        fatal_hdf5_error("Reading /haplotypes");
     }
     dataspace_id = H5Dget_space(dataset_id);
     if (dataspace_id < 0) {
-        fatal_hdf5_error("Reading samples/haplotypes");
+        fatal_hdf5_error("Reading /haplotypes");
     }
     rank = H5Sget_simple_extent_ndims(dataspace_id);
     if (rank != 2) {
-        fatal_error("samples/haplotypes not 2D");
+        fatal_error("/haplotypes not 2D");
     }
     status = H5Sget_simple_extent_dims(dataspace_id, dims, NULL);
     if (status < 0) {
-        fatal_hdf5_error("Reading samples/haplotypes");
+        fatal_hdf5_error("Reading /haplotypes");
     }
     status = H5Sclose(dataspace_id);
     if (status < 0) {
-        fatal_hdf5_error("Reading samples/haplotypes");
+        fatal_hdf5_error("Reading /haplotypes");
     }
     status = H5Dclose(dataset_id);
     if (status < 0) {
-        fatal_hdf5_error("Reading samples/haplotypes");
+        fatal_hdf5_error("Reading /haplotypes");
     }
     *num_samples = dims[0];
     *num_sites = dims[1];
 }
 
 static void
-check_hdf5_dimensions(hid_t file_id, size_t num_samples, size_t num_sites)
-{
-    hid_t dataset_id, dataspace_id;
-    herr_t status;
-    int rank;
-    hsize_t dims[2];
-    htri_t exists;
-    struct _dimension_check {
-        const char *name;
-        size_t size;
-    };
-    struct _dimension_check fields[] = {
-        {"/sites/position", num_sites},
-        {"/sites/recombination_rate", num_sites},
-    };
-    size_t num_fields = sizeof(fields) / sizeof(struct _dimension_check);
-    size_t j;
-
-    for (j = 0; j < num_fields; j++) {
-        exists = H5Lexists(file_id, fields[j].name, H5P_DEFAULT);
-        if (exists < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        if (! exists) {
-            fatal_error("Cannot find field '%s'", fields[j].name);
-        }
-        dataset_id = H5Dopen(file_id, fields[j].name, H5P_DEFAULT);
-        if (dataset_id < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        dataspace_id = H5Dget_space(dataset_id);
-        if (dataspace_id < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        rank = H5Sget_simple_extent_ndims(dataspace_id);
-        if (rank != 1) {
-            fatal_error("dimension != 1");
-        }
-        status = H5Sget_simple_extent_dims(dataspace_id, dims, NULL);
-        if (status < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        status = H5Sclose(dataspace_id);
-        if (status < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        status = H5Dclose(dataset_id);
-        if (status < 0) {
-            fatal_hdf5_error("read_dimensions");
-        }
-        if (dims[0] != fields[j].size) {
-            fatal_error("size mismatch for '%s'", fields[j].name);
-        }
-    }
-}
-
-static void
-read_hdf5_data(hid_t file_id, allele_t *haplotypes, double *position,
-        double *recombination_rate)
+read_hdf5_data(hid_t file_id, allele_t *haplotypes)
 {
     herr_t status;
     hid_t dataset_id;
@@ -171,9 +113,7 @@ read_hdf5_data(hid_t file_id, allele_t *haplotypes, double *position,
         void *dest;
     };
     struct _hdf5_field_read fields[] = {
-        {"/sites/recombination_rate", H5T_NATIVE_DOUBLE, recombination_rate},
-        {"/sites/position", H5T_NATIVE_DOUBLE, position},
-        {"/samples/haplotypes", H5T_NATIVE_CHAR, haplotypes},
+        {"/haplotypes", H5T_NATIVE_CHAR, haplotypes},
     };
     size_t num_fields = sizeof(fields) / sizeof(struct _hdf5_field_read);
     size_t j;
@@ -204,29 +144,24 @@ read_hdf5_data(hid_t file_id, allele_t *haplotypes, double *position,
 
 static void
 read_input(const char *filename, size_t *r_num_samples, size_t *r_num_sites,
-        allele_t **r_haplotypes, double **r_position, double **r_recombination_rate)
+        allele_t **r_haplotypes)
 {
 
     hid_t file_id = -1;
     herr_t status;
     size_t num_sites, num_samples;
     allele_t *haplotypes;
-    double *position, *recombination_rate;
 
     file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file_id < 0) {
         fatal_hdf5_error("Opening HDF5 file");
     }
-    /* TODO read metadata attributes and sequence length */
     read_hdf5_dimensions(file_id, &num_samples, &num_sites);
-    check_hdf5_dimensions(file_id, num_samples, num_sites);
-    position = malloc(num_sites * sizeof(double));
-    recombination_rate = malloc(num_sites * sizeof(double));
     haplotypes = malloc(num_samples * num_sites * sizeof(allele_t));
-    if (position == NULL || recombination_rate == NULL || haplotypes == NULL) {
+    if (haplotypes == NULL) {
         fatal_error("malloc failure");
     }
-    read_hdf5_data(file_id, haplotypes, position, recombination_rate);
+    read_hdf5_data(file_id, haplotypes);
     status = H5Fclose(file_id);
     if (status < 0) {
         fatal_hdf5_error("Closing HDF5 file");
@@ -235,8 +170,6 @@ read_input(const char *filename, size_t *r_num_samples, size_t *r_num_sites,
     *r_num_samples = num_samples;
     *r_num_sites = num_sites;
     *r_haplotypes = haplotypes;
-    *r_position = position;
-    *r_recombination_rate = recombination_rate;
 }
 
 static void
@@ -300,14 +233,12 @@ output_ts(tree_sequence_builder_t *ts_builder)
 }
 
 static void
-run_generate(const char *input_file, int verbose)
+run_generate(const char *input_file, int verbose, int path_compression)
 {
     size_t num_samples, num_sites, j, k, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *genotypes = NULL;
     site_id_t *focal_sites = NULL;
-    double *positions = NULL;
-    double *recombination_rate = NULL;
     site_id_t l, start, end;
     size_t num_focal_sites;
     ancestor_builder_t ancestor_builder;
@@ -335,11 +266,14 @@ run_generate(const char *input_file, int verbose)
     avl_node_t *avl_node;
     pattern_map_t *map_elem;
     site_list_t *s;
+    int add_path_flags = 0;
 
+    if (path_compression) {
+        add_path_flags = TSI_COMPRESS_PATH;
+    }
     flags = 0;
 
-    read_input(input_file, &num_samples, &num_sites, &haplotypes, &positions,
-            &recombination_rate);
+    read_input(input_file, &num_samples, &num_sites, &haplotypes);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     if (ret != 0) {
         fatal_error("Builder alloc error.");
@@ -366,10 +300,6 @@ run_generate(const char *input_file, int verbose)
     if (ret != 0) {
         fatal_error("builder finalise");
     }
-    ancestor_builder_print_state(&ancestor_builder, stdout);
-
-    printf("EXITING because rest is broken\n");
-    exit(0);
 
     num_ancestors = ancestor_builder.num_ancestors;
     ret = tree_sequence_builder_alloc(&ts_builder, num_sites, 10, 10, flags);
@@ -407,13 +337,20 @@ run_generate(const char *input_file, int verbose)
             || derived_state_buffer == NULL) {
         fatal_error("alloc");
     }
+
+    /* Add the ultimate ancestor */
+    ret = tree_sequence_builder_add_node(&ts_builder, num_samples + 1, true);
+    if (ret < 0) {
+        fatal_error("add node");
+    }
+    /* Add the root ancestor */
+    ret = tree_sequence_builder_add_node(&ts_builder, num_samples, true);
+    if (ret < 0) {
+        fatal_error("add node");
+    }
     /* Add the ancestor nodes */
-    for (frequency = num_samples; frequency > 0; frequency--) {
-        if (frequency == num_samples) {
-            num_ancestors = 1;
-        } else {
-            num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
-        }
+    for (frequency = num_samples - 1; frequency > 0; frequency--) {
+        num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         for (j = 0; j < num_ancestors; j++) {
             ret = tree_sequence_builder_add_node(&ts_builder, frequency, true);
             if (ret < 0) {
@@ -422,7 +359,17 @@ run_generate(const char *input_file, int verbose)
         }
     }
 
-    child = 1;
+    /* Add the path for the root ancestor */
+    left_buffer[0] = 0;
+    right_buffer[0] = num_sites;
+    parent_buffer[0] = 0;
+    ret = tree_sequence_builder_add_path(&ts_builder, 1, 1,
+            left_buffer, right_buffer, parent_buffer, 0);
+    if (ret != 0) {
+        fatal_error("add_root_path");
+    }
+
+    child = 2;
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
         num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         if (verbose > 0) {
@@ -508,7 +455,7 @@ run_generate(const char *input_file, int verbose)
             ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
                     num_edges_buffer[j], left_buffer + edge_offset,
                     right_buffer + edge_offset, parent_buffer + edge_offset,
-                    TSI_COMPRESS_PATH);
+                    add_path_flags);
             if (ret != 0) {
                 fatal_error("add_path");
             }
@@ -585,7 +532,7 @@ run_generate(const char *input_file, int verbose)
         ret = tree_sequence_builder_add_path(&ts_builder, child_buffer[j],
                 num_edges_buffer[j], left_buffer + edge_offset,
                 right_buffer + edge_offset, parent_buffer + edge_offset,
-                TSI_COMPRESS_PATH);
+                add_path_flags);
         if (ret != 0) {
             fatal_error("add_path");
         }
@@ -599,10 +546,9 @@ run_generate(const char *input_file, int verbose)
         mutation_offset += num_mutations_buffer[j];
     }
 
-    if (1) {
+    if (0) {
         output_ts(&ts_builder);
     }
-
 
     ancestor_builder_free(&ancestor_builder);
     tree_sequence_builder_free(&ts_builder);
@@ -610,8 +556,6 @@ run_generate(const char *input_file, int verbose)
     tsi_safe_free(genotypes);
     tsi_safe_free(focal_sites);
     tsi_safe_free(haplotypes);
-    tsi_safe_free(positions);
-    tsi_safe_free(recombination_rate);
     tsi_safe_free(a);
     tsi_safe_free(match);
     tsi_safe_free(left_buffer);
@@ -632,9 +576,10 @@ main(int argc, char** argv)
     /* SYNTAX 1: generate [-v] <input-file> <output-file> */
     struct arg_rex *cmd1 = arg_rex1(NULL, NULL, "generate", NULL, REG_ICASE, NULL);
     struct arg_lit *verbose1 = arg_lit0("v", "verbose", NULL);
+    struct arg_lit *path_compression1 = arg_lit0("p", "path-compression", NULL);
     struct arg_file *sample_file1 = arg_file1(NULL, NULL, NULL, NULL);
     struct arg_end *end1 = arg_end(20);
-    void* argtable1[] = {cmd1, verbose1, sample_file1, end1};
+    void* argtable1[] = {cmd1, verbose1, path_compression1, sample_file1, end1};
     int nerrors1;
 
     int exitcode = EXIT_SUCCESS;
@@ -643,7 +588,7 @@ main(int argc, char** argv)
     nerrors1 = arg_parse(argc, argv, argtable1);
 
     if (nerrors1 == 0) {
-        run_generate(sample_file1->filename[0], verbose1->count);
+        run_generate(sample_file1->filename[0], verbose1->count, path_compression1->count);
     } else {
         /* We get here if the command line matched none of the possible syntaxes */
         if (cmd1->count > 0) {

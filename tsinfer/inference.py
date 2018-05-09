@@ -576,7 +576,9 @@ class AncestorMatcher(Matcher):
         for child_id in range(start, end):
             left, right, parent = self.results.get_path(child_id)
             self.tree_sequence_builder.add_path(
-                child_id, left, right, parent, compress=self.path_compression)
+                child_id, left, right, parent,
+                compress=self.path_compression,
+                extended_checks=self.extended_checks)
             site, derived_state = self.results.get_mutations(child_id)
             self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 

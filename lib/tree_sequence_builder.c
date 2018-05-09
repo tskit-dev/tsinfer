@@ -88,46 +88,29 @@ print_edge_path(edge_t *head, FILE *out)
     fprintf(out, "\n");
 }
 
-#if 0
-/* Sorts edges by (left, right, parent, child) order. */
-static int
-cmp_edge_lrpc(const void *a, const void *b) {
-    const edge_t *ca = (const edge_t *) a;
-    const edge_t *cb = (const edge_t *) b;
+static void
+tree_sequence_builder_check_index_integrity(tree_sequence_builder_t *self)
+{
+    avl_node_t *avl_node;
+    edge_t *edge;
+    size_t j;
 
-    int ret = (ca->left > cb->left) - (ca->left < cb->left);
-    if (ret == 0) {
-        ret = (ca->right > cb->right) - (ca->right < cb->right);
-        if (ret == 0) {
-            ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
-            if (ret == 0) {
-                ret = (ca->child > cb->child) - (ca->child < cb->child);
-            }
+    for (j = 0; j < self->num_nodes; j++) {
+        for (edge = self->path[j]; edge != NULL; edge = edge->next) {
+            avl_node = avl_search(&self->left_index, edge);
+            assert(avl_node != NULL);
+            assert(avl_node->item == (void *) edge);
+
+            avl_node = avl_search(&self->right_index, edge);
+            assert(avl_node != NULL);
+            assert(avl_node->item == (void *) edge);
+
+            avl_node = avl_search(&self->path_index, edge);
+            assert(avl_node != NULL);
+            assert(avl_node->item == (void *) edge);
         }
     }
-    return ret;
 }
-
-/* Sorts edges by (child, left, right, parent) order. */
-static int
-cmp_edge_clrp(const void *a, const void *b) {
-    const edge_t *ca = (const edge_t *) a;
-    const edge_t *cb = (const edge_t *) b;
-
-    int ret = (ca->child > cb->child) - (ca->child < cb->child);
-    if (ret == 0) {
-        ret = (ca->left > cb->left) - (ca->left < cb->left);
-        if (ret == 0) {
-            ret = (ca->right > cb->right) - (ca->right < cb->right);
-            if (ret == 0) {
-                ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
-            }
-        }
-    }
-    return ret;
-}
-#endif
-
 
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
@@ -141,7 +124,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             total_edges++;
             assert(edge->child == child);
             if (edge->next != NULL) {
-                /* contiguity can be violated for synethetic nodes */
+                /* contiguity can be violated for synthetic nodes */
                 if (self->node_flags[edge->child] != 0) {
                     assert(edge->next->left == edge->right);
                 }
@@ -153,6 +136,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
     assert(avl_count(&self->path_index) == total_edges);
     assert(total_edges == object_heap_get_num_allocated(&self->edge_heap));
     assert(3 * total_edges == object_heap_get_num_allocated(&self->avl_node_heap));
+    tree_sequence_builder_check_index_integrity(self);
 }
 
 int
@@ -252,7 +236,6 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     avl_init_tree(&self->left_index, cmp_edge_left_increasing_time, NULL);
     avl_init_tree(&self->right_index, cmp_edge_right_decreasing_time, NULL);
     avl_init_tree(&self->path_index, cmp_edge_path, NULL);
-
 out:
     return ret;
 }
@@ -416,451 +399,6 @@ out:
     return ret;
 }
 
-
-#if 0
-
-typedef struct {
-    site_id_t start;
-    site_id_t end;
-} edge_group_t;
-
-/* Returns true if the specified pair of paths through the specified set
- * of edges are considered equal. */
-static bool
-paths_equal(edge_t *edges, edge_group_t p1, edge_group_t p2)
-{
-    bool ret = false;
-    site_id_t len = p1.end - p1.start;
-    site_id_t j;
-    edge_t edge1, edge2;
-
-    if (len == (p2.end - p2.start)) {
-        ret = true;
-        for (j = 0; j < len; j++) {
-            edge1 = edges[p1.start + j];
-            edge2 = edges[p2.start + j];
-            if (edge1.left != edge2.left || edge1.right != edge2.right
-                    || edge1.parent != edge2.parent) {
-                ret = false;
-                break;
-            }
-        }
-    }
-    return ret;
-}
-
-
-static int
-tree_sequence_builder_resolve_shared_recombs(tree_sequence_builder_t *self)
-{
-    int ret = 0;
-    /* These are both probably way too much, but should be safe upper bounds */
-    size_t max_edges = 2 * self->num_edges;
-    size_t max_paths = self->num_edges;
-    size_t j, k, num_output, num_active, num_filtered, num_paths, num_matches;
-    size_t num_shared_recombinations = 0;
-    site_id_t l;
-    edge_t *active = NULL;
-    edge_t *filtered = NULL;
-    edge_t *output = NULL;
-    edge_group_t *paths = NULL;
-    edge_group_t path;
-    bool *match_found = NULL;
-    bool *marked = NULL;
-    size_t *matches = NULL;
-    size_t **shared_recombinations = NULL;
-    edge_t *tmp;
-    bool prev_cond, next_cond;
-    double parent_time, children_time, new_time;
-    site_id_t left, right;
-    node_id_t new_node;
-
-    active = malloc(max_edges * sizeof(edge_t));
-    filtered = malloc(max_edges * sizeof(edge_t));
-    output = malloc(max_edges * sizeof(edge_t));
-    paths = malloc(max_paths * sizeof(edge_group_t));
-    if (active == NULL || filtered == NULL || output == NULL || paths == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
-        goto out;
-    }
-
-    /* Take a copy of all the extant edges and put them into the active buffer */
-    for (j = 0; j < self->num_edges; j++) {
-        active[j] = self->edges[j];
-        assert(self->time[active[j].child] < self->time[active[j].parent]);
-    }
-
-    num_active = self->num_edges;
-    num_filtered = 0;
-    num_output = 0;
-    num_paths = 0;
-    /* First filter out all edges covering the full interval */
-    for (j = 0; j < num_active; j++) {
-        if (! (active[j].left == 0 && active[j].right == (site_id_t) self->num_sites)) {
-            filtered[num_filtered] = active[j];
-            num_filtered++;
-        } else {
-            output[num_output] = active[j];
-            num_output++;
-        }
-    }
-    tmp = active;
-    active = filtered;
-    filtered = tmp;
-    num_active = num_filtered;
-    num_filtered = 0;
-
-    if (num_active > 0) {
-        /* Sort by (l, r, p, c) to group together all identical (l, r, p) values. */
-        qsort(active, num_active, sizeof(edge_t), cmp_edge_lrpc);
-        prev_cond = false;
-        for (j = 0; j < num_active - 1; j++) {
-            next_cond = (
-                active[j].left == active[j + 1].left &&
-                active[j].right == active[j + 1].right &&
-                active[j].parent == active[j + 1].parent);
-            if (prev_cond || next_cond) {
-                filtered[num_filtered] = active[j];
-                num_filtered++;
-            } else {
-                output[num_output] = active[j];
-                num_output++;
-            }
-            prev_cond = next_cond;
-        }
-        j = num_active - 1;
-        if (prev_cond) {
-            filtered[num_filtered] = active[j];
-            num_filtered++;
-        } else {
-            output[num_output] = active[j];
-            num_output++;
-        }
-
-        tmp = active;
-        active = filtered;
-        filtered = tmp;
-        num_active = num_filtered;
-        num_filtered = 0;
-    }
-
-    if (num_active > 0) {
-        /* sort by (child, left, right) to group together all contiguous */
-        /* TODO comparing by right and parent is probably redundant given the
-         * previous filtering step */
-        qsort(active, num_active, sizeof(edge_t), cmp_edge_clrp);
-        prev_cond = false;
-        for (j = 0; j < num_active - 1; j++) {
-            next_cond = (
-                active[j].right == active[j + 1].left &&
-                active[j].child == active[j + 1].child);
-            if (prev_cond || next_cond) {
-                filtered[num_filtered] = active[j];
-                num_filtered++;
-            } else {
-                output[num_output] = active[j];
-                num_output++;
-            }
-            prev_cond = next_cond;
-        }
-        j = num_active - 1;
-        if (prev_cond) {
-            filtered[num_filtered] = active[j];
-            num_filtered++;
-        } else {
-            output[num_output] = active[j];
-            num_output++;
-        }
-
-        tmp = active;
-        active = filtered;
-        filtered = tmp;
-        num_active = num_filtered;
-        num_filtered = 0;
-    }
-
-    if (num_active > 0) {
-        /* TODO is this step really necessary?? */
-        /* In any case, this block is identical to the one above so it should
-         * be abstracted out .*/
-
-        /* We sort by left, right, parent again to find identical edges.
-         * Remove any that there is only one of. */
-        qsort(active, num_active, sizeof(edge_t), cmp_edge_lrpc);
-        prev_cond = false;
-        for (j = 0; j < num_active - 1; j++) {
-            next_cond = (
-                active[j].left == active[j + 1].left &&
-                active[j].right == active[j + 1].right &&
-                active[j].parent == active[j + 1].parent);
-            if (prev_cond || next_cond) {
-                filtered[num_filtered] = active[j];
-                num_filtered++;
-            } else {
-                output[num_output] = active[j];
-                num_output++;
-            }
-            prev_cond = next_cond;
-        }
-        j = num_active - 1;
-        if (prev_cond) {
-            filtered[num_filtered] = active[j];
-            num_filtered++;
-        } else {
-            output[num_output] = active[j];
-            num_output++;
-        }
-
-        tmp = active;
-        active = filtered;
-        filtered = tmp;
-        num_active = num_filtered;
-        num_filtered = 0;
-    }
-
-    if (num_active > 0) {
-        assert(num_active + num_output == self->num_edges);
-        /* Sort by the child, left again so that we can find the contiguous paths */
-        qsort(active, num_active, sizeof(edge_t), cmp_edge_clrp);
-        paths[0].start = 0;
-        for (j = 1; j < num_active; j++) {
-            if (active[j - 1].right != active[j].left ||
-                    active[j - 1].child != active[j].child) {
-                if (j - paths[num_paths].start > 1) {
-                    paths[num_paths].end = j;
-                    num_paths++;
-                    assert(num_paths < max_paths);
-                }
-                paths[num_paths].start = j;
-            }
-        }
-        j = num_active;
-        if (j - paths[num_paths].start > 1) {
-            paths[num_paths].end = j;
-            num_paths++;
-            assert(num_paths < max_paths);
-        }
-    }
-
-    if (num_paths > 0) {
-        match_found = calloc(num_paths, sizeof(bool));
-        matches = malloc(num_paths * sizeof(size_t));
-        shared_recombinations = calloc(num_paths, sizeof(size_t *));
-        if (match_found == NULL || matches == NULL || shared_recombinations == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
-        for (j = 0; j < num_paths; j++) {
-            num_matches = 0;
-            if (! match_found[j]) {
-                for (k = j + 1; k < num_paths; k++) {
-                    if ((!match_found[k])
-                            && paths_equal(active, paths[j], paths[k])) {
-                        match_found[k] = true;
-                        matches[num_matches] = k;
-                        num_matches++;
-                    }
-                }
-            }
-            if (num_matches > 0) {
-                shared_recombinations[num_shared_recombinations] = malloc(
-                        (num_matches + 2) * sizeof(size_t));
-                if (shared_recombinations[num_shared_recombinations] == NULL) {
-                    ret = TSI_ERR_NO_MEMORY;
-                    goto out;
-                }
-                shared_recombinations[num_shared_recombinations][0] = j;
-                for (k = 0; k < num_matches; k++) {
-                    shared_recombinations[num_shared_recombinations][k + 1] = matches[k];
-                }
-                /* Insert the sentinel */
-                shared_recombinations[num_shared_recombinations][num_matches + 1] = -1;
-                num_shared_recombinations++;
-            }
-        }
-    }
-
-    if (num_shared_recombinations > 0) {
-
-        /* printf("Active  = \n"); */
-        /* for (j = 0; j < num_active; j++) { */
-        /*     printf("\t%d\t%d\t%d\t%d\n", active[j].left, active[j].right, */
-        /*             active[j].parent, active[j].child); */
-        /* } */
-        /* printf("Paths:\n"); */
-        /* for (j = 0; j < num_paths; j++) { */
-        /*     printf("Path %d (%d, %d)\n", (int) j, paths[j].start, paths[j].end); */
-        /*     for (k = paths[j].start; k < paths[j].end; k++) { */
-        /*         printf("\t\t%d\t%d\t%d\t%d\n", active[k].left, active[k].right, */
-        /*                 active[k].parent, active[k].child); */
-        /*         assert(self->time[active[k].child] < self->time[active[k].parent]); */
-        /*     } */
-        /* } */
-        /* printf("%d shared recombinations \n", (int) num_shared_recombinations); */
-        /* for (j = 0; j < num_shared_recombinations; j++) { */
-        /*     for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) { */
-        /*         printf("%d, ", (int) shared_recombinations[j][k]); */
-        /*     } */
-        /*     printf("\n"); */
-        /* } */
-
-        marked = calloc(num_active, sizeof(bool));
-        if (marked == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
-        for (j = 0; j < num_shared_recombinations; j++) {
-            /* printf("SHARED RECOMBINATION\n"); */
-            /* for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) { */
-            /*     path = paths[shared_recombinations[j][k]]; */
-            /*     printf("%d: (%d, %d)\n", (int) shared_recombinations[j][k], */
-            /*             path.start, path.end); */
-            /*     for (l = path.start; l < path.end; l++) { */
-            /*         printf("\t%d\t%d\t%d\t%d\t:%.14f %.14f:%d %d\n", active[l].left, active[l].right, */
-            /*                 active[l].parent, active[l].child, */
-            /*                 self->time[active[l].parent], self->time[active[l].child], */
-            /*                 self->node_flags[active[l].parent], self->node_flags[active[l].child]); */
-            /*         assert(self->time[active[l].child] < self->time[active[l].parent]); */
-            /*     } */
-            /* } */
-            /* check if we have a synthetic child on any of the paths */
-            node_id_t synthetic_child = -1;
-            for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                path = paths[shared_recombinations[j][k]];
-                if (self->node_flags[active[path.start].child] == 0) {
-                    synthetic_child = active[path.start].child;
-                }
-            }
-            if (synthetic_child != -1) {
-                /* If we have a synthetic child, the we already have a path covering
-                 * the region. Update all other paths to use this existing path.
-                 */
-                /* printf("synthetic child = %d\n", synthetic_child); */
-
-                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                    path = paths[shared_recombinations[j][k]];
-                    left = active[path.start].left;
-                    right = active[path.end - 1].right;
-                    parent_time = self->time[synthetic_child];
-                    node_id_t child = active[path.start].child;
-                    /* We can have situations where multiple paths occur at the same
-                     * time. Easiest to just skip these */
-                    double child_time = self->time[child];
-                    if (child != synthetic_child && parent_time > child_time) {
-                        /* Mark these edges as unused */
-                        for (l = path.start; l < path.end; l++) {
-                            assert(!marked[l]);
-                            marked[l] = true;
-                        }
-                        l = path.start;
-                        assert(num_output < max_edges);
-                        output[num_output].left = left;
-                        output[num_output].right = right;
-                        output[num_output].parent = synthetic_child;
-                        output[num_output].child = child;
-                        /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */
-                        /*         output[num_output].right, */
-                        /*         output[num_output].parent, output[num_output].child); */
-                        num_output++;
-                    }
-                }
-            } else {
-
-                /* Mark these edges as used */
-                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                    path = paths[shared_recombinations[j][k]];
-                    for (l = path.start; l < path.end; l++) {
-                        assert(!marked[l]);
-                        marked[l] = true;
-                    }
-                }
-                path = paths[shared_recombinations[j][0]];
-                left = active[path.start].left;
-                right = active[path.end - 1].right;
-                /* The parents from the first path */
-                parent_time = self->time[0] + 1;
-                for (l = path.start; l < path.end; l++) {
-                     parent_time = TSI_MIN(parent_time, self->time[active[l].parent]);
-                }
-                /* Get the chilren time from the first edge in each path. */
-                children_time = -1;
-                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                    path = paths[shared_recombinations[j][k]];
-                    children_time = TSI_MAX(children_time, self->time[active[path.start].child]);
-                }
-                new_time = children_time + (parent_time - children_time) / 2;
-                new_node = tree_sequence_builder_add_node(self, new_time, false);
-                if (new_node < 0) {
-                    ret = new_node;
-                    goto out;
-                }
-                /* printf("parent_time = %f, children_time = %f node_time=%.14f node=%d\n", */
-                /*         parent_time, children_time, new_time, new_node); */
-                /* For each edge in the path, add a new edge with the new node as the
-                 * child. */
-                path = paths[shared_recombinations[j][0]];
-                for (l = path.start; l < path.end; l++) {
-                    assert(num_output < max_edges);
-                    output[num_output].left = active[l].left;
-                    output[num_output].right = active[l].right;
-                    output[num_output].parent = active[l].parent;
-                    output[num_output].child = new_node;
-                    /* printf("\tADD x %d\t%d\t%d\t%d\n", output[num_output].left, */
-                    /*         output[num_output].right, */
-                    /*         output[num_output].parent, output[num_output].child); */
-                    num_output++;
-                }
-                /* For each child add a new edge covering the whole interval */
-                for (k = 0; shared_recombinations[j][k] != (size_t) (-1); k++) {
-                    path = paths[shared_recombinations[j][k]];
-                    l = path.start;
-                    assert(num_output < max_edges);
-                    output[num_output].left = left;
-                    output[num_output].right = right;
-                    output[num_output].parent = new_node;
-                    output[num_output].child = active[l].child;
-                    /* printf("\tADD y %d\t%d\t%d\t%d\n", output[num_output].left, */
-                    /*         output[num_output].right, */
-                    /*         output[num_output].parent, output[num_output].child); */
-                    num_output++;
-                }
-            }
-        }
-
-        /* Finally append any unmarked edges to the output and save */
-        for (j = 0; j < num_active; j++) {
-            if (! marked[j]) {
-                assert(num_output < max_edges);
-                output[num_output] = active[j];
-                num_output++;
-            }
-        }
-        /* printf("OUTPUT\n"); */
-        /* for (j = 0; j < num_output; j++) { */
-        /*     printf("%d\t%d\t%d\t%d\n", output[j].left, output[j].right, */
-        /*             output[j].parent, output[j].child); */
-
-        /* } */
-        memcpy(self->edges, output, num_output * sizeof(edge_t));
-        self->num_edges = num_output;
-    }
-
-out:
-    tsi_safe_free(active);
-    tsi_safe_free(filtered);
-    tsi_safe_free(output);
-    tsi_safe_free(paths);
-    tsi_safe_free(match_found);
-    tsi_safe_free(matches);
-    tsi_safe_free(marked);
-    for (j = 0; j < num_shared_recombinations; j++) {
-        tsi_safe_free(shared_recombinations[j]);
-    }
-    tsi_safe_free(shared_recombinations);
-    return ret;
-}
-#endif
-
 static int WARN_UNUSED
 tree_sequence_builder_unindex_edge(tree_sequence_builder_t *self, edge_t *edge)
 {
@@ -913,22 +451,6 @@ tree_sequence_builder_index_edge(tree_sequence_builder_t *self, edge_t *edge)
     }
     avl_node = avl_insert_node(&self->path_index, avl_node);
     assert(avl_node != NULL);
-out:
-    return ret;
-}
-
-static int WARN_UNUSED
-tree_sequence_builder_unindex_edges(tree_sequence_builder_t *self, node_id_t node)
-{
-    int ret = 0;
-    edge_t *edge;
-
-    for (edge = self->path[node]; edge != NULL; edge = edge->next) {
-        ret = tree_sequence_builder_unindex_edge(self, edge);
-        if (ret != 0) {
-            goto out;
-        }
-    }
 out:
     return ret;
 }
@@ -1028,8 +550,8 @@ tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node
     x = prev->next;
     while (x != NULL) {
         next = x->next;
-        if (prev->right == x->left && prev->child == x->child
-                && prev->parent == x->parent) {
+        assert(x->child == node);
+        if (prev->right == x->left && prev->parent == x->parent) {
             prev->right = x->right;
             prev->next = next;
             tree_sequence_builder_free_edge(self, x);
@@ -1038,6 +560,59 @@ tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node
         }
         x = next;
     }
+}
+
+/* Squash edges that can be squashed, but take into account that any modified
+ * edges must be re-indexed. Some edges in the input chain may already be unindexed,
+ * which are marked with a child value of NULL_NODE. */
+static int WARN_UNUSED
+tree_sequence_builder_squash_indexed_edges(tree_sequence_builder_t *self, node_id_t node)
+{
+    int ret = 0;
+    edge_t *x, *prev, *next;
+
+    prev = self->path[node];
+    assert(prev != NULL);
+    x = prev->next;
+    while (x != NULL) {
+        next = x->next;
+        if (prev->right == x->left && prev->parent == x->parent) {
+            /* We are pulling x out of the chain and extending prev to cover
+             * the corresponding interval. Therefore, we must unindex prev and x. */
+            if (prev->child != NULL_NODE) {
+                ret = tree_sequence_builder_unindex_edge(self, prev);
+                if (ret != 0) {
+                    goto out;
+                }
+                prev->child = NULL_NODE;
+            }
+            if (x->child != NULL_NODE) {
+                ret = tree_sequence_builder_unindex_edge(self, x);
+                if (ret != 0) {
+                    goto out;
+                }
+            }
+            prev->right = x->right;
+            prev->next = next;
+            tree_sequence_builder_free_edge(self, x);
+        } else {
+            prev = x;
+        }
+        x = next;
+    }
+
+    /* Now index all the edges that have been unindexed */
+    for (x = self->path[node]; x != NULL; x = x->next) {
+        if (x->child == NULL_NODE) {
+            x->child = node;
+            ret = tree_sequence_builder_index_edge(self, x);
+            if (ret != 0) {
+                goto out;
+            }
+        }
+    }
+out:
+    return ret;
 }
 
 /* Create a new synthetic ancestor which consists of the shared path
@@ -1053,11 +628,6 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
     edge_t *prev = NULL;
     double min_parent_time;
     int j;
-
-    ret = tree_sequence_builder_unindex_edges(self, mapped_child);
-    if (ret != 0) {
-        goto out;
-    }
 
     min_parent_time = self->time[0] + 1;
     for (j = 0; j < num_mapped; j++) {
@@ -1090,18 +660,24 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
             }
             prev = edge;
             mapped[j].source->parent = synthetic_node;
+            /* We are modifying the existing edge, so we must remove it
+             * from the indexes. Mark that it is unindexed by setting the
+             * child value to NULL_NODE. */
+            ret = tree_sequence_builder_unindex_edge(self, mapped[j].dest);
+            if (ret != 0) {
+                goto out;
+            }
             mapped[j].dest->parent = synthetic_node;
+            mapped[j].dest->child = NULL_NODE;
         }
     }
     self->path[synthetic_node] = head;
     tree_sequence_builder_squash_edges(self, synthetic_node);
-    tree_sequence_builder_squash_edges(self, mapped_child);
-
-    ret = tree_sequence_builder_index_edges(self, synthetic_node);
+    ret = tree_sequence_builder_squash_indexed_edges(self, mapped_child);
     if (ret != 0) {
         goto out;
     }
-    ret = tree_sequence_builder_index_edges(self, mapped_child);
+    ret = tree_sequence_builder_index_edges(self, synthetic_node);
     if (ret != 0) {
         goto out;
     }
@@ -1131,8 +707,6 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    /* printf("Compressing path:%d: ", child); */
-    /* print_edge_path(self->path[child], stdout); */
 
     for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
         /* Can we find a match for this edge? */
@@ -1156,20 +730,9 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
         }
         child_count[k].node = mapped_child;
         child_count[k].count++;
-
-        /* printf("mapped (%d, %d, %d, %d) to (%d, %d, %d, %d)\n", */
-        /*         mapped[j].source->left, */
-        /*         mapped[j].source->right, */
-        /*         mapped[j].source->parent, */
-        /*         mapped[j].source->child, */
-        /*         mapped[j].dest->left, */
-        /*         mapped[j].dest->right, */
-        /*         mapped[j].dest->parent, */
-        /*         mapped[j].dest->child); */
     }
-    /* printf("num_mapped_children = %d\n", num_mapped_children); */
+
     for (k = 0; k < num_mapped_children; k++) {
-        /* printf("%d -> %d\n", child_count[k].node, child_count[k].count); */
         if (child_count[k].count > 1) {
             mapped_child = child_count[k].node;
             if (self->node_flags[mapped_child] == 0) {
@@ -1202,7 +765,6 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     edge_t *edge;
     int j;
 
-    /* printf("adding %d edges for child = %d\n", (int) num_edges, child); */
     /* Edges must be provided in reverese order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
         edge = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
@@ -1230,9 +792,9 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         }
     }
     ret = tree_sequence_builder_index_edges(self, child);
-
-    /* tree_sequence_builder_check_state(self); */
-    /* tree_sequence_builder_print_state(self, stdout); */
+    if (flags & TSI_EXTENDED_CHECKS) {
+        tree_sequence_builder_check_state(self);
+    }
 out:
     return ret;
 }

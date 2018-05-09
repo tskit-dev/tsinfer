@@ -123,26 +123,14 @@ def tsinfer_dev(
             inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
     sample_data.finalise()
 
-    print(sample_data)
-    # print(sample_data.provenances_timestamp[:])
-    # print(sample_data.provenances_record[:])
+    ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
+    tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
+    ancestor_data.finalise()
 
-    copy = sample_data.copy("tmp.samples")
-    print(copy)
-    copy.finalise()
-    print(copy)
-
-    # ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
-    # tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
-    # ancestor_data.finalise()
-
-    # print(ancestor_data)
-    # print(ancestor_data.provenances_timestamp[:])
-    # print(ancestor_data.provenances_record[:])
-
-    # ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
-    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
-    # print("inferred_num_edges = ", output_ts.num_edges)
+    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
+    # print(output_ts.tables.provenances)
+    print("inferred_num_edges = ", output_ts.num_edges)
 
 
 def build_profile_inputs(n, num_megabases):
@@ -201,12 +189,13 @@ if __name__ == "__main__":
     np.set_printoptions(threshold=20000000)
 
     # build_profile_inputs(10, 1)
-    build_profile_inputs(100, 10)
+    # build_profile_inputs(100, 10)
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    # tsinfer_dev(10, 0.2, seed=6, num_threads=0, method="C", recombination_rate=1e-8)
+    for j in range(1, 100):
+        tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
     # copy_1kg()
 
 
