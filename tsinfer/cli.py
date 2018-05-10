@@ -50,8 +50,10 @@ class ProgressMonitor(object):
             self.num_bars += 1
         if match_samples:
             self.num_bars += 3
-
-        self.current_bar = 0
+        self.current_count = 0
+        self.current_instance = None
+        # Only show extra detail if we are runing match-ancestors by itself.
+        self.show_detail = self.num_bars == 1
         self.descriptions = {
             "ga_add_sites": "ga-add",
             "ga_generate": "ga-gen",
@@ -61,17 +63,22 @@ class ProgressMonitor(object):
             "ms_sites": "ms-sites",
         }
 
+    def set_detail(self, info):
+        if self.show_detail:
+            self.current_instance.set_postfix(info)
+
     def get(self, key, total):
-        self.current_bar += 1
+        self.current_count += 1
         desc = "{:<8} ({}/{})".format(
-            self.descriptions[key], self.current_bar, self.num_bars)
+            self.descriptions[key], self.current_count, self.num_bars)
         bar_format = (
             "{desc}{percentage:3.0f}%|{bar}"
             "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
-        progress = tqdm.tqdm(
+        self.current_instance = tqdm.tqdm(
             desc=desc, total=total, disable=not self.enabled,
-            bar_format=bar_format, dynamic_ncols=True, smoothing=0.01)
-        return progress
+            bar_format=bar_format, dynamic_ncols=True, smoothing=0.01,
+            unit_scale=True)
+        return self.current_instance
 
 
 def get_default_path(path, input_path, extension):

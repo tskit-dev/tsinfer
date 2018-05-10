@@ -55,9 +55,6 @@ class DummyProgress(object):
     def close(self):
         pass
 
-    def set_postfix(self, *args, **kwargs):
-        pass
-
 
 class DummyProgressMonitor(object):
     """
@@ -65,6 +62,9 @@ class DummyProgressMonitor(object):
     """
     def get(self, key, total):
         return DummyProgress()
+
+    def set_detail(self, info):
+        pass
 
 
 def _get_progress_monitor(progress_monitor):
@@ -535,7 +535,7 @@ class AncestorMatcher(Matcher):
             ("epoch", str(self.epoch[start])),
             ("nanc", str(end - start))
         ])
-        self.match_progress.set_postfix(info)
+        self.progress_monitor.set_detail(info)
         self.tree_sequence_builder.freeze_indexes()
 
     def __complete_epoch(self, epoch_index):
