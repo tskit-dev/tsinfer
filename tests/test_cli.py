@@ -100,10 +100,7 @@ class TestCli(unittest.TestCase):
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData.initialise(
-            sample_data, chunk_size=10, path=self.ancestor_file)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        tsinfer.build_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
 
 
 class TestCommandsDefaults(TestCli):

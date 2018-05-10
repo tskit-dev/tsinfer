@@ -372,11 +372,12 @@ class DataContainer(object):
         self._open_readonly()
 
     def _initialise(
-            self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
-            chunk_size=1024):
+            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
         """
         Initialise the basic state of the data container.
         """
+        if path is not None and compressor is None:
+            compressor = DEFAULT_COMPRESSOR
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
         self._metadata_codec = TempJSON()

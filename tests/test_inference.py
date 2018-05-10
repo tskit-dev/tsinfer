@@ -59,8 +59,7 @@ class TestRoundTrip(unittest.TestCase):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         sample_data = formats.SampleData.initialise(
-            num_samples=genotypes.shape[1], compressor=None,
-            sequence_length=sequence_length)
+            num_samples=genotypes.shape[1], sequence_length=sequence_length)
         for j in range(genotypes.shape[0]):
             sample_data.add_site(positions[j], ["0", "1"], genotypes[j])
         sample_data.finalise()
@@ -150,8 +149,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     """
     def verify_round_trip(self, genotypes, inference):
         self.assertEqual(genotypes.shape[0], inference.shape[0])
-        sample_data = tsinfer.SampleData.initialise(
-            num_samples=genotypes.shape[1], compressor=None)
+        sample_data = tsinfer.SampleData.initialise(num_samples=genotypes.shape[1])
         for j in range(genotypes.shape[0]):
             sample_data.add_site(j, ["0", "1"], genotypes[j], inference=inference[j])
         sample_data.finalise()
@@ -219,7 +217,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
             10, mutation_rate=10, recombination_rate=1, random_seed=5)
         self.assertGreater(ts.num_sites, 2)
         sample_data = tsinfer.SampleData.initialise(
-            num_samples=ts.num_samples, sequence_length=1, compressor=None)
+            num_samples=ts.num_samples, sequence_length=1)
         rng = random.Random(32)
         all_alleles = []
         for variant in ts.variants():
@@ -235,9 +233,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, alleles in enumerate(sample_data.sites_alleles[:]):
             self.assertEqual(all_alleles[j], tuple(alleles))
 
-        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
         inferred_alleles = [variant.alleles for variant in output_ts.variants()]
@@ -248,7 +244,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
             11, mutation_rate=5, recombination_rate=2, random_seed=15)
         self.assertGreater(ts.num_sites, 2)
         sample_data = tsinfer.SampleData.initialise(
-            num_samples=ts.num_samples, sequence_length=1, compressor=None)
+            num_samples=ts.num_samples, sequence_length=1)
         rng = random.Random(32)
         all_metadata = []
         for variant in ts.variants():
@@ -262,9 +258,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, metadata in enumerate(sample_data.sites_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
 
-        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
         output_metadata = [
@@ -274,7 +268,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
     def test_sample_metadata(self):
         ts = msprime.simulate(11, mutation_rate=5, random_seed=16)
         self.assertGreater(ts.num_sites, 2)
-        sample_data = tsinfer.SampleData.initialise(sequence_length=1, compressor=None)
+        sample_data = tsinfer.SampleData.initialise(sequence_length=1)
         rng = random.Random(32)
         all_metadata = []
         for j in range(ts.num_samples):
@@ -289,9 +283,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, metadata in enumerate(sample_data.samples_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
 
-        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
         output_metadata = [
@@ -318,18 +310,13 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def verify_ancestor_generator(self, genotypes):
         m, n = genotypes.shape
-        sample_data = tsinfer.SampleData.initialise(num_samples=n, compressor=None)
+        sample_data = tsinfer.SampleData.initialise(num_samples=n)
         for j in range(m):
             sample_data.add_site(j, ["0", "1"], genotypes[j])
         sample_data.finalise()
 
-        adc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, adc, engine=tsinfer.C_ENGINE)
-        adc.finalise()
-
-        adp = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, adp, engine=tsinfer.PY_ENGINE)
-        adp.finalise()
+        adc = tsinfer.build_ancestors(sample_data, engine=tsinfer.C_ENGINE)
+        adp = tsinfer.build_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
         self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
@@ -368,13 +355,12 @@ class TestGeneratedAncestors(unittest.TestCase):
         # using the generated ancestors. NOTE: this must be an SMC
         # consistent tree sequence!
         sample_data = formats.SampleData.initialise(
-            num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-            compressor=None)
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         for v in ts.variants():
             sample_data.add_site(v.position, v.alleles, v.genotypes)
         sample_data.finalise()
 
-        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+        ancestor_data = formats.AncestorData.initialise(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
@@ -429,9 +415,7 @@ class TestBuildAncestors(unittest.TestCase):
             sample_data.add_site(
                 variant.site.position, variant.alleles, variant.genotypes)
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         return sample_data, ancestor_data
 
     def verify_ancestors(self, sample_data, ancestor_data):
@@ -502,9 +486,7 @@ class TestBuildAncestors(unittest.TestCase):
         for genotypes, position in zip(G, positions):
             sample_data.add_site(position, ["0", "1"], genotypes)
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         self.verify_ancestors(sample_data, ancestor_data)
 
 
@@ -515,13 +497,12 @@ class AlgorithmsExactlyEqualMixin(object):
     """
     def infer(self, ts, engine, path_compression=False):
         sample_data = tsinfer.SampleData.initialise(
-            num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-            compressor=None)
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         for v in ts.variants():
             sample_data.add_site(v.site.position, v.alleles, v.genotypes)
         sample_data.finalise()
 
-        ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        ancestor_data = tsinfer.AncestorData.initialise(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
@@ -751,17 +732,13 @@ class TestBadEngine(unittest.TestCase):
 
     def test_generate_ancestors(self):
         sample_data = self.get_example()
-        ancestor_data = formats.AncestorData.initialise(sample_data)
         for bad_engine in self.bad_engines:
             self.assertRaises(
-                ValueError, tsinfer.build_ancestors, sample_data, ancestor_data,
-                engine=bad_engine)
+                ValueError, tsinfer.build_ancestors, sample_data, engine=bad_engine)
 
     def test_match_ancestors(self):
         sample_data = self.get_example()
-        ancestor_data = formats.AncestorData.initialise(sample_data)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         for bad_engine in self.bad_engines:
             self.assertRaises(
                 ValueError, tsinfer.match_ancestors, sample_data, ancestor_data,
@@ -769,9 +746,7 @@ class TestBadEngine(unittest.TestCase):
 
     def test_match_samples(self):
         sample_data = self.get_example()
-        ancestor_data = formats.AncestorData.initialise(sample_data)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
+        ancestor_data = tsinfer.build_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         for bad_engine in self.bad_engines:
             self.assertRaises(

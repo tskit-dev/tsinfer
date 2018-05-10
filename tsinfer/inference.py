@@ -74,12 +74,10 @@ def _get_progress_monitor(progress_monitor):
 
 
 def infer(
-        sample_data, progress_monitor=None, num_threads=0,
-        path_compression=True, engine=C_ENGINE):
-    ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-    build_ancestors(
-        sample_data, ancestor_data, engine=engine, progress_monitor=progress_monitor)
-    ancestor_data.finalise()
+        sample_data, progress_monitor=None, num_threads=0, path_compression=True,
+        engine=C_ENGINE):
+    ancestor_data = build_ancestors(
+        sample_data, engine=engine, progress_monitor=progress_monitor)
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
         path_compression=path_compression, progress_monitor=progress_monitor)
@@ -89,8 +87,9 @@ def infer(
     return inferred_ts
 
 
-def build_ancestors(sample_data, ancestor_data, progress_monitor=None, engine=C_ENGINE):
+def build_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
 
+    ancestor_data = formats.AncestorData.initialise(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
     num_sites = sample_data.num_inference_sites
     num_samples = sample_data.num_samples
@@ -155,12 +154,13 @@ def build_ancestors(sample_data, ancestor_data, progress_monitor=None, engine=C_
             progress.update()
         progress.close()
     logger.info("Finished building ancestors")
+    ancestor_data.finalise()
+    return ancestor_data
 
 
 def match_ancestors(
-        sample_data, ancestor_data,
-        progress_monitor=None, num_threads=0, path_compression=True,
-        extended_checks=False, engine=C_ENGINE):
+        sample_data, ancestor_data, progress_monitor=None, num_threads=0,
+        path_compression=True, extended_checks=False, engine=C_ENGINE):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.

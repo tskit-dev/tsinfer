@@ -83,14 +83,25 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.all(variant.genotypes == genotypes[j]))
             self.assertEqual(alleles[j], list(variant.alleles))
 
-    def test_defaults(self):
+    def test_defaults_with_path(self):
+        ts = self.get_example_ts(10, 10)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            input_file = formats.SampleData.initialise(
+                num_samples=ts.num_samples, path=filename,
+                sequence_length=ts.sequence_length)
+            self.verify_data_round_trip(ts, input_file)
+            compressor = formats.DEFAULT_COMPRESSOR
+            for _, array in input_file.arrays():
+                self.assertEqual(array.compressor, compressor)
+
+    def test_defaults_no_path(self):
         ts = self.get_example_ts(10, 10)
         input_file = formats.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
-        compressor = formats.DEFAULT_COMPRESSOR
         for _, array in input_file.arrays():
-            self.assertEqual(array.compressor, compressor)
+            self.assertEqual(array.compressor, None)
 
     def test_from_tree_sequence(self):
         ts = self.get_example_ts(10, 10)
@@ -542,16 +553,22 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
 
-    def test_defaults(self):
+    def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         ancestor_data = tsinfer.AncestorData.initialise(sample_data)
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-        compressor = formats.DEFAULT_COMPRESSOR
-        self.assertEqual(ancestor_data.start.compressor, compressor)
-        self.assertEqual(ancestor_data.end.compressor, compressor)
-        self.assertEqual(ancestor_data.time.compressor, compressor)
-        self.assertEqual(ancestor_data.focal_sites.compressor, compressor)
-        self.assertEqual(ancestor_data.ancestor.compressor, compressor)
+        for _, array in ancestor_data.arrays():
+            self.assertEqual(array.compressor, None)
+
+    def test_defaults_with_path(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "ancestors.tmp")
+            ancestor_data = tsinfer.AncestorData.initialise(sample_data, path=filename)
+            self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+            compressor = formats.DEFAULT_COMPRESSOR
+            for _, array in ancestor_data.arrays():
+                self.assertEqual(array.compressor, compressor)
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)

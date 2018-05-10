@@ -151,11 +151,9 @@ def run_build_ancestors(args):
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
     progress_monitor = ProgressMonitor(enabled=args.progress, build_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.input)
-    ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, path=ancestors_path, num_flush_threads=args.num_threads)
-    tsinfer.build_ancestors(
-        sample_data, ancestor_data, progress_monitor=progress_monitor)
-    ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
+    ancestor_data = tsinfer.build_ancestors(
+        sample_data, progress_monitor=progress_monitor, path=ancestors_path,
+        num_flush_threads=args.num_threads)
 
 
 def run_match_ancestors(args):
