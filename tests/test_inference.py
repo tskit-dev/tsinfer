@@ -64,12 +64,10 @@ class TestRoundTrip(unittest.TestCase):
         for j in range(genotypes.shape[0]):
             sample_data.add_site(positions[j], ["0", "1"], genotypes[j])
         sample_data.finalise()
-        for method in ["python", "C"]:
-            ts = tsinfer.infer(sample_data, method=method)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts = tsinfer.infer(sample_data, engine=engine)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
-            # print(genotypes)
-            # print(ts.genotype_matrix())
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
                 self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
@@ -326,11 +324,11 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         sample_data.finalise()
 
         adc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, adc, method="C")
+        tsinfer.build_ancestors(sample_data, adc, engine=tsinfer.C_ENGINE)
         adc.finalise()
 
         adp = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, adp, method="P")
+        tsinfer.build_ancestors(sample_data, adp, engine=tsinfer.PY_ENGINE)
         adp.finalise()
         self.assertTrue(adp.data_equal(adc))
 
@@ -387,14 +385,14 @@ class TestGeneratedAncestors(unittest.TestCase):
         ancestors = ancestor_data.ancestor[:]
         for j in range(ancestor_data.num_ancestors):
             A[start[j]: end[j], j] = ancestors[j]
-        for method in ["P", "C"]:
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ancestors_ts = tsinfer.match_ancestors(
-                sample_data, ancestor_data, method=method)
+                sample_data, ancestor_data, engine=engine)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
             self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
-                sample_data, ancestors_ts, method=method)
+                sample_data, ancestors_ts, engine=engine)
             self.assertTrue(np.array_equal(
                 inferred_ts.genotype_matrix(), ts.genotype_matrix()))
 
@@ -515,7 +513,7 @@ class AlgorithmsExactlyEqualMixin(object):
     For small example tree sequences, check that the Python and C implementations
     return precisely the same tree sequence when fed with perfect mutations.
     """
-    def infer(self, ts, method, path_compression=False):
+    def infer(self, ts, engine, path_compression=False):
         sample_data = tsinfer.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length,
             compressor=None)
@@ -527,16 +525,18 @@ class AlgorithmsExactlyEqualMixin(object):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, method=method,
+            sample_data, ancestor_data, engine=engine,
             path_compression=path_compression, extended_checks=True)
         inferred_ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, method=method, simplify=True,
+            sample_data, ancestors_ts, engine=engine, simplify=True,
             path_compression=path_compression, extended_checks=True)
         return inferred_ts
 
     def verify(self, ts):
-        tsp = self.infer(ts, "P", path_compression=self.path_compression_enabled)
-        tsc = self.infer(ts, "C", path_compression=self.path_compression_enabled)
+        tsp = self.infer(
+            ts, tsinfer.PY_ENGINE, path_compression=self.path_compression_enabled)
+        tsc = self.infer(
+            ts, tsinfer.C_ENGINE, path_compression=self.path_compression_enabled)
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
@@ -623,8 +623,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
         def key(e):
             return (e.left, e.right, e.parent, e.child)
 
-        for method in ["C", "P"]:
-            ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
+        for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
+            ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
             self.assertEqual(
                 sorted(expected_edges, key=key), sorted(ts.edges(), key=key))
 
@@ -732,3 +732,48 @@ class TestPartialAncestorMatching(unittest.TestCase):
             msprime.Edge(4, 8, 5, 7),
             msprime.Edge(8, 12, 1, 7)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
+
+
+class TestBadEngine(unittest.TestCase):
+    """
+    Check that we catch bad engines parameters.
+    """
+    bad_engines = ["CCCC", "c", "p", "Py", "python"]
+
+    def get_example(self):
+        ts = msprime.simulate(10, mutation_rate=2, random_seed=3)
+        return formats.SampleData.from_tree_sequence(ts)
+
+    def test_infer(self):
+        sample_data = self.get_example()
+        for bad_engine in self.bad_engines:
+            self.assertRaises(ValueError, tsinfer.infer, sample_data, engine=bad_engine)
+
+    def test_generate_ancestors(self):
+        sample_data = self.get_example()
+        ancestor_data = formats.AncestorData.initialise(sample_data)
+        for bad_engine in self.bad_engines:
+            self.assertRaises(
+                ValueError, tsinfer.build_ancestors, sample_data, ancestor_data,
+                engine=bad_engine)
+
+    def test_match_ancestors(self):
+        sample_data = self.get_example()
+        ancestor_data = formats.AncestorData.initialise(sample_data)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        for bad_engine in self.bad_engines:
+            self.assertRaises(
+                ValueError, tsinfer.match_ancestors, sample_data, ancestor_data,
+                engine=bad_engine)
+
+    def test_match_samples(self):
+        sample_data = self.get_example()
+        ancestor_data = formats.AncestorData.initialise(sample_data)
+        tsinfer.build_ancestors(sample_data, ancestor_data)
+        ancestor_data.finalise()
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        for bad_engine in self.bad_engines:
+            self.assertRaises(
+                ValueError, tsinfer.match_samples, sample_data, ancestors_ts,
+                engine=bad_engine)

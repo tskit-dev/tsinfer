@@ -166,10 +166,12 @@ def run_match_ancestors(args):
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
-    tsinfer.match_ancestors(
-        sample_data, ancestor_data, output_path=ancestors_trees,
+    ts = tsinfer.match_ancestors(
+        sample_data, ancestor_data,
         num_threads=args.num_threads, progress_monitor=progress_monitor,
         path_compression=not args.no_path_compression)
+    logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
+    ts.dump(ancestors_trees)
 
 
 def run_match_samples(args):

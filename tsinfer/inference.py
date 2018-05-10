@@ -17,9 +17,10 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-TODO module docs.
+Central module for high-level inference. The actual implementation of
+of the core tasks like ancestor generation and matching are delegated
+to other modules.
 """
-
 import collections
 import queue
 import time
@@ -40,6 +41,8 @@ import tsinfer.provenance as provenance
 logger = logging.getLogger(__name__)
 
 UNKNOWN_ALLELE = 255
+C_ENGINE = "C"
+PY_ENGINE = "P"
 
 
 class DummyProgress(object):
@@ -71,34 +74,35 @@ def _get_progress_monitor(progress_monitor):
 
 
 def infer(
-        sample_data, progress_monitor=None, method="C", num_threads=0,
-        path_compression=True):
-
+        sample_data, progress_monitor=None, num_threads=0,
+        path_compression=True, engine=C_ENGINE):
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
     build_ancestors(
-        sample_data, ancestor_data, method=method, progress_monitor=progress_monitor)
+        sample_data, ancestor_data, engine=engine, progress_monitor=progress_monitor)
     ancestor_data.finalise()
     ancestors_ts = match_ancestors(
-        sample_data, ancestor_data, method=method, num_threads=num_threads,
+        sample_data, ancestor_data, engine=engine, num_threads=num_threads,
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
-        sample_data, ancestors_ts, method=method, num_threads=num_threads,
+        sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
         path_compression=path_compression, progress_monitor=progress_monitor)
     return inferred_ts
 
 
-def build_ancestors(sample_data, ancestor_data, progress_monitor=None, method="C"):
+def build_ancestors(sample_data, ancestor_data, progress_monitor=None, engine=C_ENGINE):
 
     progress_monitor = _get_progress_monitor(progress_monitor)
     num_sites = sample_data.num_inference_sites
     num_samples = sample_data.num_samples
 
-    if method == "C":
+    if engine == C_ENGINE:
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
-    else:
+    elif engine == PY_ENGINE:
         logger.debug("Using Python AncestorBuilder implementation")
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
+    else:
+        raise ValueError("Unknown engine:{}".format(engine))
 
     progress = progress_monitor.get("ba_add_sites", num_sites)
     logger.info("Starting site addition")
@@ -154,27 +158,27 @@ def build_ancestors(sample_data, ancestor_data, progress_monitor=None, method="C
 
 
 def match_ancestors(
-        sample_data, ancestor_data, output_path=None, method="C",
+        sample_data, ancestor_data,
         progress_monitor=None, num_threads=0, path_compression=True,
-        extended_checks=False):
+        extended_checks=False, engine=C_ENGINE):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
     """
     matcher = AncestorMatcher(
-        sample_data, ancestor_data, output_path=output_path, method=method,
+        sample_data, ancestor_data, engine=engine,
         progress_monitor=progress_monitor, path_compression=path_compression,
         num_threads=num_threads, extended_checks=extended_checks)
     return matcher.match_ancestors()
 
 
 def match_samples(
-        sample_data, ancestors_ts, method="C", progress_monitor=None,
-        num_threads=0, path_compression=True, simplify=True,
-        extended_checks=False, stabilise_node_ordering=False):
+        sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
+        path_compression=True, simplify=True, extended_checks=False,
+        stabilise_node_ordering=False, engine=C_ENGINE):
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
-        method=method, progress_monitor=progress_monitor, num_threads=num_threads,
+        engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
         extended_checks=extended_checks)
     manager.match_samples()
     ts = manager.finalise(
@@ -185,7 +189,7 @@ def match_samples(
 class Matcher(object):
 
     def __init__(
-            self, sample_data, num_threads=1, method="C",
+            self, sample_data, num_threads=1, engine=C_ENGINE,
             path_compression=True, progress_monitor=None, extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -195,18 +199,17 @@ class Matcher(object):
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
-        self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
 
-        if method == "C":
+        if engine == C_ENGINE:
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
-        elif method == "Py-matrix":
-            logger.debug("Using Python matrix implementation")
-            self.ancestor_matcher_class = algorithm.MatrixAncestorMatcher
-        else:
+        elif engine == PY_ENGINE:
             logger.debug("Using Python matcher implementation")
+            self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
+        else:
+            raise ValueError("Unknown engine:{}".format(engine))
         self.tree_sequence_builder = None
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
@@ -470,12 +473,9 @@ class Matcher(object):
 
 
 class AncestorMatcher(Matcher):
-    progress_bar_description = "match-ancestors"
 
-    def __init__(self, sample_data, ancestor_data, output_path, **kwargs):
+    def __init__(self, sample_data, ancestor_data, **kwargs):
         super().__init__(sample_data, **kwargs)
-        self.output_path = output_path
-        self.last_output_time = time.time()
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.time[:]
@@ -633,13 +633,10 @@ class AncestorMatcher(Matcher):
             # Allocate an empty tree sequence.
             ts = msprime.load_tables(
                 nodes=msprime.NodeTable(), edges=msprime.EdgeTable(), sequence_length=1)
-        if self.output_path is not None:
-            ts.dump(self.output_path)
         return ts
 
 
 class SampleMatcher(Matcher):
-    progress_bar_description = "match-samples"
 
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
@@ -650,7 +647,6 @@ class SampleMatcher(Matcher):
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
         self.match_progress = self.progress_monitor.get("ms_match", self.num_samples)
-        # self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)

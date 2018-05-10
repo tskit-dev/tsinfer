@@ -149,7 +149,7 @@ class TestKCMetric(unittest.TestCase):
 
 class TestTreeSequenceCompare(unittest.TestCase):
     """
-    Tests of the method to compare to tree sequences.
+    Tests of the engine to compare to tree sequences.
     """
     def test_same_ts(self):
         n = 15
@@ -196,7 +196,7 @@ class TestTreeSequenceCompare(unittest.TestCase):
 
 class TestTreePairs(unittest.TestCase):
     """
-    Tests of the method to compare to tree sequences.
+    Tests of the engine to compare to tree sequences.
     """
     def test_same_ts(self):
         n = 15
@@ -289,7 +289,7 @@ class TestTreePairs(unittest.TestCase):
 
 class TestGetAncestralHaplotypes(unittest.TestCase):
     """
-    Tests for the method to the actual ancestors from a simulation.
+    Tests for the engine to the actual ancestors from a simulation.
     """
     def get_matrix(self, ts):
         """
@@ -501,7 +501,7 @@ class TestInsertPerfectMutations(unittest.TestCase):
 
 class TestPerfectInference(unittest.TestCase):
     """
-    Test cases for the method to run perfect inference on an input tree sequence.
+    Test cases for the engine to run perfect inference on an input tree sequence.
     """
     def verify_perfect_inference(self, ts, inferred_ts):
         self.assertEqual(ts.sequence_length, inferred_ts.sequence_length)
@@ -528,23 +528,23 @@ class TestPerfectInference(unittest.TestCase):
 
     def test_single_tree_defaults(self):
         base_ts = msprime.simulate(5, random_seed=234)
-        for method in ["P", "C"]:
-            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, method=method)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, engine=engine)
             self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
         self.assertGreater(base_ts.num_trees, 1)
-        for method in ["P", "C"]:
-            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, method=method)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, engine=engine)
             self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc_path_compression(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
         self.assertGreater(base_ts.num_trees, 1)
-        for method in ["P", "C"]:
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
-                base_ts, method=method, path_compression=True)
+                base_ts, engine=engine, path_compression=True)
             # We can't just compare tables when doing path compression because
             # we'll find different ways of expressing the same trees.
             breakpoints, distances = tsinfer.compare(ts, inferred_ts)
@@ -562,17 +562,17 @@ class TestPerfectInference(unittest.TestCase):
     def test_small_smc_threads(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
         self.assertGreater(base_ts.num_trees, 1)
-        for method in ["P", "C"]:
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
-                base_ts, method=method, num_threads=4)
+                base_ts, engine=engine, num_threads=4)
             self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc_no_time_chunking(self):
         base_ts = get_smc_simulation(10, L=1, recombination_rate=10, seed=113)
         self.assertGreater(base_ts.num_trees, 1)
-        for method in ["P", "C"]:
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
-                base_ts, method=method, time_chunking=False)
+                base_ts, engine=engine, time_chunking=False)
             self.verify_perfect_inference(ts, inferred_ts)
 
 
