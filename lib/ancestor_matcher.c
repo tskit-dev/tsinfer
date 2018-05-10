@@ -515,8 +515,6 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     self->num_nodes = self->tree_sequence_builder->num_nodes;
     assert(self->num_nodes <= self->max_nodes);
 
-    memset(self->traceback, 0, self->num_sites * sizeof(node_state_list_t));
-    memset(self->max_likelihood_node, 0xff, self->num_sites * sizeof(node_id_t));
     memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));
     ret = block_allocator_reset(&self->traceback_allocator);
     if (ret != 0) {
@@ -572,15 +570,15 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     int ret = 0;
     site_id_t l;
     edge_t edge;
-    node_id_t *restrict parent = self->parent;
-    int8_t *restrict recombination_required = self->recombination_required;
     node_id_t u, max_likelihood_node;
     site_id_t left, right, pos;
     mutation_list_node_t *mut_list;
+    node_id_t *restrict parent = self->parent;
+    int8_t *restrict recombination_required = self->recombination_required;
     const edge_t *restrict in = self->tree_sequence_builder->right_index_edges;
     const edge_t *restrict out = self->tree_sequence_builder->left_index_edges;
-    int32_t in_index = (int32_t) self->tree_sequence_builder->num_edges - 1;
-    int32_t out_index = (int32_t) self->tree_sequence_builder->num_edges - 1;
+    int_fast32_t in_index = (int_fast32_t) self->tree_sequence_builder->num_edges - 1;
+    int_fast32_t out_index = (int_fast32_t) self->tree_sequence_builder->num_edges - 1;
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
@@ -594,11 +592,9 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     assert(self->output.parent[self->output.size] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
-    memset(match, 0, self->num_sites * sizeof(allele_t));
-    memset(match, 0xff, start * sizeof(allele_t));
-    memset(match + end , 0xff, (self->num_sites - end) * sizeof(allele_t));
-    memset(parent, 0xff, self->num_nodes * sizeof(node_id_t));
-    memset(recombination_required, 0xff, self->num_nodes * sizeof(int8_t));
+    memset(parent, 0xff, self->num_nodes * sizeof(*parent));
+    memset(recombination_required, 0xff,
+            self->num_nodes * sizeof(*recombination_required));
     pos = self->num_sites;
 
     while (pos > start) {
@@ -622,10 +618,9 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         }
         pos = left;
 
+        /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
-
         for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
-
             match[l] = 0;
             u = self->output.parent[self->output.size];
             /* Set the state of the matched haplotype */
@@ -642,7 +637,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
              * meed tells us whether we need to recombine */
             while (u != 0 && recombination_required[u] == -1) {
                 u = parent[u];
-                /* printf("\ttraverse up %d -> %d\n", u, recombination_required[u]); */
                 assert(u != NULL_NODE);
             }
             if (recombination_required[u] && l > start) {
@@ -660,6 +654,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
             ancestor_matcher_unset_recombination_required(self, l, recombination_required);
         }
     }
+
     self->output.left[self->output.size] = start;
     self->output.size++;
     assert(self->output.right[self->output.size - 1] != start);
@@ -671,12 +666,11 @@ remove_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
         node_id_t *restrict right_child, node_id_t *restrict left_sib,
         node_id_t *restrict right_sib)
 {
-    node_id_t p = edge.parent;
-    node_id_t c = edge.child;
-    node_id_t lsib = left_sib[c];
-    node_id_t rsib = right_sib[c];
+    const node_id_t p = edge.parent;
+    const node_id_t c = edge.child;
+    const node_id_t lsib = left_sib[c];
+    const node_id_t rsib = right_sib[c];
 
-    /* printf("REMOVE EDGE %d\t%d\t%d\t%d\n", edge.left, edge.right, edge.parent, edge.child); */
     if (lsib == NULL_NODE) {
         left_child[p] = rsib;
     } else {
@@ -697,10 +691,9 @@ insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
         node_id_t *restrict right_child, node_id_t *restrict left_sib,
         node_id_t *restrict right_sib)
 {
-    node_id_t p = edge.parent;
-    node_id_t c = edge.child;
-    node_id_t u = right_child[p];
-    /* printf("INSERT EDGE %d\t%d\t%d\t%d\n", edge.left, edge.right, edge.parent, edge.child); */
+    const node_id_t p = edge.parent;
+    const node_id_t c = edge.child;
+    const node_id_t u = right_child[p];
 
     parent[c] = p;
     if (u == NULL_NODE) {
@@ -738,8 +731,8 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     site_id_t pos, left, right;
     const edge_t *restrict in = self->tree_sequence_builder->left_index_edges;
     const edge_t *restrict out = self->tree_sequence_builder->right_index_edges;
-    const size_t M = self->tree_sequence_builder->num_edges;
-    size_t in_index, out_index, l, remove_start;
+    const int_fast32_t M = (site_id_t) self->tree_sequence_builder->num_edges;
+    int_fast32_t in_index, out_index, l, remove_start;
 
     /* Load the tree for start */
     left = 0;
@@ -750,8 +743,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     if (in_index < M && start < in[in_index].left) {
         right = in[in_index].left;
     }
+
     /* TODO there's probably quite a big gain to made here by seeking
-     * directly to the tree that we're interested in. */
+     * directly to the tree that we're interested in rather than just
+     * building the trees sequentially */
     while (in_index < M && out_index < M && in[in_index].left <= start) {
         while (out_index < M && out[out_index].right == pos) {
             remove_edge(out[out_index], parent, left_child, right_child,
@@ -785,11 +780,6 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             L[u] = NONZERO_ROOT_LIKELIHOOD;
         }
     }
-
-    /* printf("initial tree %d-%d\n", left, right); */
-    /* printf("in_index = %d out_index = %d\n", in_index, out_index); */
-    /* ancestor_matcher_print_state(self, stdout); */
-
     if (self->flags & TSI_EXTENDED_CHECKS) {
         ancestor_matcher_check_state(self);
     }
@@ -842,8 +832,9 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             last_root = root;
         }
 
-        /* ancestor_matcher_print_state(self, stdout); */
-        /* ancestor_matcher_check_state(self); */
+        if (self->flags & TSI_EXTENDED_CHECKS) {
+            ancestor_matcher_check_state(self);
+        }
         for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
                     parent, L, L_cache);
@@ -931,7 +922,6 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
 {
     int ret = 0;
 
-    /* printf("FIND PATH: start=%d end=%d\n", start, end); */
     ret = ancestor_matcher_reset(self);
     if (ret != 0) {
         goto out;
@@ -945,6 +935,11 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
     if (ret != 0) {
         goto out;
     }
+    /* Reset some memory for the next call */
+    memset(self->traceback + start, 0, (end - start) * sizeof(*self->traceback));
+    memset(self->max_likelihood_node + start, 0xff,
+            (end - start) * sizeof(*self->max_likelihood_node));
+
     *left_output = self->output.left;
     *right_output = self->output.right;
     *parent_output = self->output.parent;

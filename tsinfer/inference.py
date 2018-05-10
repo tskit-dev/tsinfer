@@ -556,8 +556,6 @@ class AncestorMatcher(Matcher):
         self.results.set_mutations(ancestor_id, focal_sites)
         assert ancestor.shape[0] == (end - start)
         haplotype[start: end] = ancestor
-        assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
-        assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
@@ -565,7 +563,7 @@ class AncestorMatcher(Matcher):
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
-        assert np.all(self.match[thread_index] == haplotype)
+        assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
         self.__update_progress_epoch(epoch_index)
