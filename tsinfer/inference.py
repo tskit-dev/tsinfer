@@ -37,6 +37,7 @@ import _tsinfer
 import tsinfer.formats as formats
 import tsinfer.algorithm as algorithm
 import tsinfer.threads as threads
+import tsinfer.provenance as provenance
 
 logger = logging.getLogger(__name__)
 
@@ -353,10 +354,18 @@ class Matcher(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
+        provenances = msprime.ProvenanceTable()
+        for timestamp, record in self.sample_data.provenances():
+            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        for timestamp, record in self.ancestor_data.provenances():
+            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        record = provenance.get_provenance_dict(
+            command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
+        provenances.add_row(record=json.dumps(record))
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length)
+            provenances=provenances, sequence_length=sequence_length)
 
     def encode_metadata(self, value):
         return json.dumps(value).encode()
@@ -490,9 +499,18 @@ class Matcher(object):
         sites = msprime.SiteTable()
         mutations = msprime.MutationTable()
         self.insert_sites(ts, sites, mutations)
+
+        provenances = msprime.ProvenanceTable()
+        for prov in self.ancestors_ts.provenances():
+            provenances.add_row(timestamp=prov.timestamp, record=prov.record)
+        # We don't have a source here because tree sequence files don't have a
+        # UUID yet.
+        record = provenance.get_provenance_dict(command="match-samples")
+        provenances.add_row(record=json.dumps(record))
+
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length)
+            sequence_length=sequence_length, provenances=provenances)
 
 
 class AncestorMatcher(Matcher):
@@ -676,6 +694,7 @@ class SampleMatcher(Matcher):
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
+        self.ancestors_ts = ancestors_ts
         self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):

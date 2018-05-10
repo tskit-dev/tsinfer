@@ -339,7 +339,7 @@ class DataContainer(object):
         other._mode = self.EDIT_MODE
         return other
 
-    def finalise(self, command=None, parameters=None):
+    def finalise(self, command=None, parameters=None, source=None):
         """
         Ensures that the state of the data is flushed and writes the
         provenance for the current operation. The specified 'command' is used
@@ -347,7 +347,8 @@ class DataContainer(object):
         """
         self._check_write_modes()
         timestamp = datetime.datetime.now().isoformat()
-        record = provenance.get_provenance_dict(command=command, parameters=parameters)
+        record = provenance.get_provenance_dict(
+            command=command, parameters=parameters, source=source)
         self.add_provenance(timestamp, record)
         self.data.attrs[FINALISED_KEY] = True
         if self.path is not None:
@@ -548,6 +549,16 @@ class DataContainer(object):
             s += ("-" * 80) + "\n"
             s += str(array.info)
         return s
+
+    def provenances(self):
+        """
+        Returns an iterator over the (timestamp, record) pairs representing
+        the provenances for this data container.
+        """
+        timestamp = self.provenances_timestamp[:]
+        record = self.provenances_record[:]
+        for j in range(self.num_provenances):
+            yield timestamp[j], record[j]
 
 
 class SampleData(DataContainer):
@@ -981,7 +992,8 @@ class AncestorData(DataContainer):
         if self._mode == self.BUILD_MODE:
             self.item_writer.flush()
             self.item_writer = None
-        super(AncestorData, self).finalise(**kwargs)
+        source = {"uuid": self.sample_data_uuid}
+        super(AncestorData, self).finalise(source=source, **kwargs)
 
     def ancestors(self):
         """

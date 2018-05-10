@@ -194,6 +194,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
         record = input_file.provenances_record[0]
         self.assertEqual(record["software"], "tsinfer")
+        l = list(input_file.provenances())
+        self.assertEqual(len(l), 1)
+        self.assertEqual(l[0][0], timestamp)
+        self.assertEqual(l[0][1], record)
 
     def test_variant_errors(self):
         input_file = formats.SampleData.initialise(num_samples=2, sequence_length=10)
@@ -496,6 +500,10 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
         record = ancestor_data.provenances_record[0]
         self.assertEqual(record["software"], "tsinfer")
+        l = list(ancestor_data.provenances())
+        self.assertEqual(len(l), 1)
+        self.assertEqual(l[0][0], timestamp)
+        self.assertEqual(l[0][1], record)
 
     def test_chunk_size(self):
         N = 20

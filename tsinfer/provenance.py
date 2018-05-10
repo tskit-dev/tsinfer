@@ -26,6 +26,7 @@ import platform
 import zarr
 import numcodecs
 import lmdb
+import msprime
 
 
 __version__ = "undefined"
@@ -52,6 +53,9 @@ def get_environment():
             "lmdb": {
                 "version": lmdb.__version__
             },
+            "msprime": {
+                "version": msprime.__version__
+            },
         },
         "os": {
             "system": platform.system(),
@@ -68,7 +72,7 @@ def get_environment():
     return env
 
 
-def get_provenance_dict(command, parameters=None):
+def get_provenance_dict(command, parameters=None, source=None):
     """
     Returns a dictionary encoding an execution of tsinfer.
 
@@ -79,6 +83,7 @@ def get_provenance_dict(command, parameters=None):
         "version": __version__,
         "command": command,
         "parameters": parameters,
+        "source": source,
         "environment": get_environment()
     }
     return document

@@ -1,4 +1,5 @@
 #
+
 # Copyright (C) 2018 University of Oxford
 #
 # This file is part of tsinfer.
@@ -76,6 +77,7 @@ class TestRoundTrip(unittest.TestCase):
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
                 self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+            self.assertGreater(ts.num_provenances, 0)
 
     def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
