@@ -22,10 +22,13 @@ Command line interfaces to tsinfer.
 import argparse
 import os.path
 import logging
+import resource
 
 import daiquiri
 import msprime
 import tqdm
+import humanize
+import time
 
 import tsinfer
 import tsinfer.formats as formats
@@ -79,6 +82,20 @@ class ProgressMonitor(object):
             bar_format=bar_format, dynamic_ncols=True, smoothing=0.01,
             unit_scale=True)
         return self.current_instance
+
+
+__before = time.clock()
+
+
+def summarise_usage():
+    wall_time = humanize.naturaldelta(time.clock() - __before)
+    rusage = resource.getrusage(resource.RUSAGE_SELF)
+    user_time = humanize.naturaldelta(rusage.ru_utime)
+    sys_time = rusage.ru_stime
+    max_rss = humanize.naturalsize(rusage.ru_maxrss * 1024, binary=True)
+    logger.info("wall time = {}".format(wall_time))
+    logger.info("rusage: user={}; sys={:.2f}s; max_rss={}".format(
+        user_time, sys_time, max_rss))
 
 
 def get_default_path(path, input_path, extension):
@@ -150,6 +167,7 @@ def run_infer(args):
     output_trees = get_output_trees_path(args.output_trees, args.input)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
+    summarise_usage()
 
 
 def run_generate_ancestors(args):
@@ -160,6 +178,7 @@ def run_generate_ancestors(args):
     tsinfer.generate_ancestors(
         sample_data, progress_monitor=progress_monitor, path=ancestors_path,
         num_flush_threads=args.num_threads)
+    summarise_usage()
 
 
 def run_match_ancestors(args):
@@ -176,6 +195,7 @@ def run_match_ancestors(args):
         path_compression=not args.no_path_compression)
     logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
     ts.dump(ancestors_trees)
+    summarise_usage()
 
 
 def run_match_samples(args):
@@ -193,6 +213,7 @@ def run_match_samples(args):
         progress_monitor=progress_monitor)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
+    summarise_usage()
 
 
 # def run_verify(args):

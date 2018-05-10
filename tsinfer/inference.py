@@ -104,7 +104,7 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
         raise ValueError("Unknown engine:{}".format(engine))
 
     progress = progress_monitor.get("ga_add_sites", num_sites)
-    logger.info("Starting site addition")
+    logger.info("Starting addition of {} sites".format(num_sites))
     for j, (site_id, genotypes) in enumerate(
             sample_data.genotypes(inference_sites=True)):
         frequency = np.sum(genotypes)
@@ -285,8 +285,10 @@ class Matcher(object):
         are measured in units of site indexes and all ancestral and derived states
         are 0/1. All nodes have the sample flag bit set.
         """
+        logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
         flags, time = tsb.dump_nodes()
+        num_synthetic_nodes = np.sum(flags == 0)
         nodes = msprime.NodeTable()
         nodes.set_columns(flags=flags, time=time)
         left, right, parent, child = tsb.dump_edges()
@@ -314,7 +316,14 @@ class Matcher(object):
         record = provenance.get_provenance_dict(
             command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
         provenances.add_row(record=json.dumps(record))
+        logger.debug("Sorting ancestors tree sequence")
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        logger.debug("Sorting ancestors tree sequence done")
+        logger.info(
+            "Built ancestors tree sequence: {} nodes ({} synthetic); {} edges; "
+            "{} sites; {} mutations".format(
+                len(nodes), num_synthetic_nodes, len(edges),
+                len(mutations), len(sites)))
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
             provenances=provenances, sequence_length=sequence_length)
@@ -371,9 +380,6 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
-        # progress_monitor = tqdm.tqdm(
-        #     desc="place mutations", total=self.sample_data.num_sites,
-        #     disable=not self.progress)
         num_sites = self.sample_data.num_sites
         progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
         alleles = self.sample_data.sites_alleles[:]
@@ -381,6 +387,9 @@ class Matcher(object):
         metadata = self.sample_data.sites_metadata[:]
         position = self.sample_data.sites_position[:]
         _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        logger.info(
+            "Starting mutation positioning for {} non inference sites".format(
+                np.sum(inference == 0)))
         inferred_site = 0
         trees = ts.trees()
         tree = next(trees)
@@ -416,6 +425,7 @@ class Matcher(object):
         tsb = self.tree_sequence_builder
         nodes = msprime.NodeTable()
         flags, time = tsb.dump_nodes()
+        num_synthetic_nodes = np.sum(flags == 0)
 
         logger.debug("Adding tree sequence nodes")
         # TODO add an option for encoding ancestor metadata in with the nodes here.
@@ -467,6 +477,11 @@ class Matcher(object):
         record = provenance.get_provenance_dict(command="match-samples")
         provenances.add_row(record=json.dumps(record))
 
+        logger.info(
+            "Built samples tree sequence: {} nodes ({} synthetic); {} edges; "
+            "{} sites; {} mutations".format(
+                len(nodes), num_synthetic_nodes, len(edges),
+                len(mutations), len(sites)))
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
             sequence_length=sequence_length, provenances=provenances)
@@ -553,8 +568,7 @@ class AncestorMatcher(Matcher):
             site, derived_state = self.results.get_mutations(child_id)
             self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
-        extra_nodes = (
-            self.tree_sequence_builder.num_nodes - nodes_before - num_ancestors_in_epoch)
+        extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
             "Finished epoch {} with {} ancestors; {} extra nodes inserted; "
@@ -706,6 +720,8 @@ class SampleMatcher(Matcher):
             else:
                 self.__match_samples_multi_threaded()
             self.match_progress.close()
+            logger.info("Inserting sample paths: {} edges in total".format(
+                self.results.total_edges))
             progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
             for j in range(self.num_samples):
                 sample_id = int(self.sample_ids[j])
@@ -716,7 +732,6 @@ class SampleMatcher(Matcher):
                 self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
-        logger.info("Finished sample matching")
 
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
@@ -753,6 +768,7 @@ class ResultBuffer(object):
         self.paths = {}
         self.mutations = {}
         self.lock = threading.Lock()
+        self.total_edges = 0
 
     def clear(self):
         """
@@ -760,11 +776,13 @@ class ResultBuffer(object):
         """
         self.paths.clear()
         self.mutations.clear()
+        self.total_edges = 0
 
     def set_path(self, node_id, left, right, parent):
         with self.lock:
             assert node_id not in self.paths
             self.paths[node_id] = left, right, parent
+            self.total_edges += len(left)
 
     def set_mutations(self, node_id, site, derived_state=None):
         if derived_state is None:

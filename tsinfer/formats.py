@@ -311,6 +311,7 @@ class DataContainer(object):
         self = cls()
         self.path = path
         self._open_readonly()
+        logger.info("Loaded {}".format(self.summary()))
         return self
 
     def copy(self, path=None):
@@ -572,6 +573,10 @@ class SampleData(DataContainer):
     def __init__(self):
         super(SampleData, self).__init__()
         self._num_inference_sites = None
+
+    def summary(self):
+        return "SampleData(num_samples={}, num_sites={})".format(
+            self.num_samples, self.num_sites)
 
     @property
     def sequence_length(self):
@@ -875,6 +880,10 @@ class AncestorData(DataContainer):
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)
+
+    def summary(self):
+        return "AncestorData(num_ancestors={}, num_sites={})".format(
+            self.num_ancestors, self.num_sites)
 
     def __str__(self):
         values = [
