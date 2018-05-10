@@ -371,6 +371,10 @@ run_generate(const char *input_file, int verbose, int path_compression)
 
     child = 2;
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
+        ret = tree_sequence_builder_freeze_indexes(&ts_builder);
+        if (ret != 0) {
+            fatal_error("freeze");
+        }
         num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         if (verbose > 0) {
             printf("Generating for frequency class frequency = %d num_ancestors = %d\n",
@@ -411,7 +415,7 @@ run_generate(const char *input_file, int verbose, int path_compression)
             for (l = 0; l < (site_id_t) num_focal_sites; l++) {
                 a[focal_sites[l]] = 0;
             }
-            for (l = 0; l < (site_id_t) num_sites; l++) {
+            for (l = start; l < end; l++) {
                 assert(a[l] == match[l]);
             }
             if (total_edges + num_edges > max_edges) {
@@ -602,6 +606,5 @@ main(int argc, char** argv)
         }
     }
     arg_freetable(argtable1, sizeof(argtable1) / sizeof(argtable1[0]));
-
     return exitcode;
 }

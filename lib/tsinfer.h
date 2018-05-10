@@ -48,15 +48,18 @@ typedef int8_t allele_t;
 typedef int32_t site_id_t;
 typedef int32_t mutation_id_t;
 
-typedef struct _edge_t {
+typedef struct {
     site_id_t left;
     site_id_t right;
-    site_id_t end;
     node_id_t parent;
     node_id_t child;
-    double time;
-    struct _edge_t *next;
 } edge_t;
+
+typedef struct _indexed_edge_t {
+    edge_t edge;
+    double time;
+    struct _indexed_edge_t *next;
+} indexed_edge_t;
 
 typedef struct _node_segment_list_node_t {
     ancestor_id_t start;
@@ -136,7 +139,7 @@ typedef struct {
     /* TODO add nodes struct */
     double *time;
     uint32_t *node_flags;
-    edge_t **path;
+    indexed_edge_t **path;
     size_t nodes_chunk_size;
     size_t edges_chunk_size;
     size_t max_nodes;
@@ -145,9 +148,17 @@ typedef struct {
     block_allocator_t block_allocator;
     object_heap_t avl_node_heap;
     object_heap_t edge_heap;
+    /* Dynamic edge indexes used for tree generation and path compression. The
+     * AVL trees are used to keep the indexes updated without needing to perform
+     * repeated sorting */
     avl_tree_t left_index;
     avl_tree_t right_index;
     avl_tree_t path_index;
+    /* The static tree generation indexes. We populate these at the end of each
+     * epoch using the order defined by the AVL trees. */
+    edge_t *left_index_edges;
+    edge_t *right_index_edges;
+    size_t num_edges; /* the number of edges in the frozen indexes */
 } tree_sequence_builder_t;
 
 typedef struct {
@@ -217,6 +228,7 @@ int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         node_id_t *parent, int flags);
 int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
         node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state);
+int tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_edges(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_mutations(tree_sequence_builder_t *self);

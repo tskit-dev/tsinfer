@@ -565,25 +565,6 @@ ancestor_matcher_unset_recombination_required(ancestor_matcher_t *self, site_id_
     recombination_required[0] = -1;
 }
 
-static inline edge_t
-get_edge(const avl_node_t *restrict avl_node)
-{
-    return *((edge_t *) avl_node->item);
-}
-
-static inline site_id_t
-edge_left(const avl_node_t *restrict avl_node)
-{
-    return ((edge_t *) avl_node->item)->left;
-}
-
-static inline site_id_t
-edge_right(const avl_node_t *restrict avl_node)
-{
-    return ((edge_t *) avl_node->item)->right;
-}
-
-
 static int WARN_UNUSED
 ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         site_id_t end, allele_t *haplotype, allele_t *match)
@@ -596,11 +577,10 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     node_id_t u, max_likelihood_node;
     site_id_t left, right, pos;
     mutation_list_node_t *mut_list;
-    avl_node_t *restrict in = self->tree_sequence_builder->right_index.tail;
-    avl_node_t *restrict out = self->tree_sequence_builder->left_index.tail;
-
-    /* printf("START TRACEBACK\n"); */
-    /* ancestor_matcher_print_state(self, stdout); */
+    const edge_t *restrict in = self->tree_sequence_builder->right_index_edges;
+    const edge_t *restrict out = self->tree_sequence_builder->left_index_edges;
+    int32_t in_index = (int32_t) self->tree_sequence_builder->num_edges - 1;
+    int32_t out_index = (int32_t) self->tree_sequence_builder->num_edges - 1;
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
@@ -622,21 +602,23 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     pos = self->num_sites;
 
     while (pos > start) {
-        while (out != NULL && (edge = get_edge(out)).left == pos) {
-            out = out->prev;
+        while (out_index >= 0 && out[out_index].left == pos) {
+            edge = out[out_index];
+            out_index--;
             parent[edge.child] = NULL_NODE;
         }
-        while (in != NULL && (edge = get_edge(in)).right == pos) {
-            in = in->prev;
+        while (in_index >= 0 && in[in_index].right == pos) {
+            edge = in[in_index];
+            in_index--;
             parent[edge.child] = edge.parent;
         }
         right = pos;
         left = 0;
-        if (out != NULL) {
-            left = TSI_MAX(left, edge_left(out));
+        if (out_index >= 0) {
+            left = TSI_MAX(left, out[out_index].left);
         }
-        if (in != NULL) {
-            left = TSI_MAX(left, edge_right(in));
+        if (in_index >= 0) {
+            left = TSI_MAX(left, in[in_index].right);
         }
         pos = left;
 
@@ -646,7 +628,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 
             match[l] = 0;
             u = self->output.parent[self->output.size];
-            /* printf("TB Site = %d u = %d\n", l, u); */
             /* Set the state of the matched haplotype */
             mut_list = self->tree_sequence_builder->sites.mutations[l];
             if (mut_list != NULL) {
@@ -666,10 +647,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
             }
             if (recombination_required[u] && l > start) {
                 max_likelihood_node = self->max_likelihood_node[l - 1];
-                /* printf("Recombining! site = %d new node = %d\n", l, max_likelihood_node); */
-                /* if (max_likelihood_node == self->output.parent[self->output.size]) { */
-                /*     ancestor_matcher_print_state(self, stdout); */
-                /* } */
                 assert(max_likelihood_node != self->output.parent[self->output.size]);
                 assert(max_likelihood_node != NULL_NODE);
                 self->output.left[self->output.size] = l;
@@ -759,37 +736,40 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     node_id_t *restrict left_sib = self->left_sib;
     node_id_t *restrict right_sib = self->right_sib;
     site_id_t pos, left, right;
-    avl_node_t *avl_node, *remove_start;
-    avl_node_t *restrict in = self->tree_sequence_builder->left_index.head;
-    avl_node_t *restrict out = self->tree_sequence_builder->right_index.head;
+    const edge_t *restrict in = self->tree_sequence_builder->left_index_edges;
+    const edge_t *restrict out = self->tree_sequence_builder->right_index_edges;
+    const size_t M = self->tree_sequence_builder->num_edges;
+    size_t in_index, out_index, l, remove_start;
 
     /* Load the tree for start */
     left = 0;
     pos = 0;
+    in_index = 0;
+    out_index = 0;
     right = self->num_sites;
-    if (in != NULL && start < edge_left(in)) {
-        right = edge_left(in);
+    if (in_index < M && start < in[in_index].left) {
+        right = in[in_index].left;
     }
     /* TODO there's probably quite a big gain to made here by seeking
      * directly to the tree that we're interested in. */
-    while (in != NULL && out != NULL && edge_left(in) <= start) {
-        while (out != NULL && (edge = get_edge(out)).right == pos) {
-            remove_edge(edge, parent, left_child, right_child,
+    while (in_index < M && out_index < M && in[in_index].left <= start) {
+        while (out_index < M && out[out_index].right == pos) {
+            remove_edge(out[out_index], parent, left_child, right_child,
                     left_sib, right_sib);
-            out = out->next;
+            out_index++;
         }
-        while (in != NULL && (edge = get_edge(in)).left == pos) {
-            insert_edge(edge, parent, left_child, right_child,
+        while (in_index < M && in[in_index].left == pos) {
+            insert_edge(in[in_index], parent, left_child, right_child,
                     left_sib, right_sib);
-            in = in->next;
+            in_index++;
         }
         left = pos;
         right = self->num_sites;
-        if (in != NULL) {
-            right = TSI_MIN(right, edge_left(in));
+        if (in_index < M) {
+            right = TSI_MIN(right, in[in_index].left);
         }
-        if (out != NULL) {
-            right = TSI_MIN(right, edge_right(out));
+        if (out_index < M) {
+            right = TSI_MIN(right, out[out_index].right);
         }
         pos = right;
     }
@@ -807,7 +787,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     }
 
     /* printf("initial tree %d-%d\n", left, right); */
-    /* printf("j = %d k = %d\n", j, k); */
+    /* printf("in_index = %d out_index = %d\n", in_index, out_index); */
     /* ancestor_matcher_print_state(self, stdout); */
 
     if (self->flags & TSI_EXTENDED_CHECKS) {
@@ -822,15 +802,14 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     self->likelihood_nodes[0] = last_root;
     self->num_likelihood_nodes = 1;
 
-    remove_start = out;
+    remove_start = out_index;
     while (left < end) {
         assert(left < right);
-        /* printf("NEW TREE %d-%d\n", left, right); */
 
         /* Remove the likelihoods for any nonzero roots that have just left
          * the tree */
-        for (avl_node = remove_start; avl_node != out; avl_node = avl_node->next) {
-            edge = get_edge(avl_node);
+        for (l = remove_start; l < out_index; l++) {
+            edge = out[l];
             if (unlikely(is_nonzero_root(edge.child, parent, left_child))) {
                 if (L[edge.child] >= 0 ) {
                     ancestor_matcher_delete_likelihood(self, edge.child, L);
@@ -874,11 +853,11 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         }
 
         /* Move on to the next tree */
-        /* remove_start = k; */
-        remove_start = out;
-        while (out != NULL && (edge = get_edge(out)).right == right) {
+        remove_start = out_index;
+        while (out_index < M && out[out_index].right == right) {
+            edge = out[out_index];
+            out_index++;
             remove_edge(edge, parent, left_child, right_child, left_sib, right_sib);
-            out = out->next;
             assert(L[edge.child] != NONZERO_ROOT_LIKELIHOOD);
             if (L[edge.child] == NULL_LIKELIHOOD) {
                 u = edge.parent;
@@ -893,22 +872,19 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 assert(L_child >= 0);
                 u = edge.parent;
                 /* Fill in the cache by traversing back upwards */
-                /* printf("Filling cache"); */
                 while (likely(L[u] == NULL_LIKELIHOOD)
                         && likely(L_cache[u] == CACHE_UNSET)) {
-                    /* printf("%d ", u); */
                     L_cache[u] = L_child;
                     u = parent[u];
                 }
-                /* printf("\n"); */
                 L[edge.child] = L_child;
                 self->likelihood_nodes[self->num_likelihood_nodes] = edge.child;
                 self->num_likelihood_nodes++;
             }
         }
         /* reset the L cache */
-        for (avl_node = remove_start; avl_node != out; avl_node = avl_node->next) {
-            edge = get_edge(avl_node);
+        for (l = remove_start; l < out_index; l++) {
+            edge = out[l];
             u = edge.parent;
             while (likely(L_cache[u] != CACHE_UNSET)) {
                 L_cache[u] = CACHE_UNSET;
@@ -917,10 +893,9 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         }
 
         left = right;
-        /* printf("Inserting for j = %d and left = %d (%d)\n", (int) j, (int) left, */
-        /*         edges[I[j]].left); */
-        while (in != NULL && (edge = get_edge(in)).left == left) {
-            in = in->next;
+        while (in_index < M && in[in_index].left == left) {
+            edge = in[in_index];
+            in_index++;
             insert_edge(edge, parent, left_child, right_child, left_sib, right_sib);
             /* Insert zero likelihoods for any nonzero roots that have entered
              * the tree. Note we don't bother trying to compress the tree here
@@ -937,11 +912,11 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             }
         }
         right = self->num_sites;
-        if (in != NULL) {
-            right = TSI_MIN(right, edge_left(in));
+        if (in_index < M) {
+            right = TSI_MIN(right, in[in_index].left);
         }
-        if (out != NULL) {
-            right = TSI_MIN(right, edge_right(out));
+        if (out_index < M) {
+            right = TSI_MIN(right, out[out_index].right);
         }
     }
 out:

@@ -190,13 +190,14 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
-    # build_profile_inputs(1000, 100)
+    build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    for j in range(1, 100):
-        tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
+    # for j in range(1, 100):
+    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
     # copy_1kg()
+    # tsinfer_dev(5, 0.3, seed=1, num_threads=0, method="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):

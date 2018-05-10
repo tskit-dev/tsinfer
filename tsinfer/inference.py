@@ -567,6 +567,10 @@ class AncestorMatcher(Matcher):
                 ancestor_id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index] == haplotype)
 
+    def __start_epoch(self, epoch_index):
+        self.__update_progress_epoch(epoch_index)
+        self.tree_sequence_builder.freeze_indexes()
+
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])
         num_ancestors_in_epoch = end - start
@@ -598,7 +602,7 @@ class AncestorMatcher(Matcher):
 
     def __match_ancestors_single_threaded(self):
         for j in range(self.start_epoch, self.num_epochs):
-            self.__update_progress_epoch(j)
+            self.__start_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
@@ -631,7 +635,7 @@ class AncestorMatcher(Matcher):
         logger.info("Started {} match worker threads".format(self.num_threads))
 
         for j in range(self.start_epoch, self.num_epochs):
-            self.__update_progress_epoch(j)
+            self.__start_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)

@@ -189,6 +189,10 @@ class TreeSequenceBuilder(object):
         self.path_index = sortedcontainers.SortedDict()
         self.path = []
 
+    def freeze_indexes(self):
+        # This is a no-op in this implementation.
+        pass
+
     def restore_nodes(self, time, flags):
         for t, flag in zip(time, flags):
             self.add_node(t, flag == 1)
