@@ -20,7 +20,6 @@
 Command line interfaces to tsinfer.
 """
 import argparse
-import sys
 import os.path
 import logging
 
@@ -41,11 +40,11 @@ class ProgressMonitor(object):
     Class responsible for managing in the tqdm progress monitors.
     """
     def __init__(
-            self, enabled=True, build_ancestors=False, match_ancestors=False,
+            self, enabled=True, generate_ancestors=False, match_ancestors=False,
             match_samples=False):
         self.enabled = enabled
         self.num_bars = 0
-        if build_ancestors:
+        if generate_ancestors:
             self.num_bars += 2
         if match_ancestors:
             self.num_bars += 1
@@ -54,8 +53,8 @@ class ProgressMonitor(object):
 
         self.current_bar = 0
         self.descriptions = {
-            "ba_add_sites": "ba-add",
-            "ba_generate": "ba-gen",
+            "ga_add_sites": "ga-add",
+            "ga_generate": "ga-gen",
             "ma_match": "ma-match",
             "ms_match": "ms-match",
             "ms_paths": "ms-paths",
@@ -137,7 +136,7 @@ def run_list(args):
 def run_infer(args):
     setup_logging(args)
     progress_monitor = ProgressMonitor(
-        enabled=args.progress, build_ancestors=True, match_ancestors=True,
+        enabled=args.progress, generate_ancestors=True, match_ancestors=True,
         match_samples=True)
     sample_data = tsinfer.SampleData.load(args.input)
     ts = tsinfer.infer(sample_data, progress_monitor=progress_monitor)
@@ -146,12 +145,12 @@ def run_infer(args):
     ts.dump(output_trees)
 
 
-def run_build_ancestors(args):
+def run_generate_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-    progress_monitor = ProgressMonitor(enabled=args.progress, build_ancestors=True)
+    progress_monitor = ProgressMonitor(enabled=args.progress, generate_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.input)
-    ancestor_data = tsinfer.build_ancestors(
+    tsinfer.generate_ancestors(
         sample_data, progress_monitor=progress_monitor, path=ancestors_path,
         num_flush_threads=args.num_threads)
 
@@ -278,8 +277,8 @@ def get_tsinfer_parser():
     subparsers.required = True
 
     parser = subparsers.add_parser(
-        "build-ancestors",
-        aliases=["ba"],
+        "generate-ancestors",
+        aliases=["ga"],
         help=(
             "Builds a set of ancestors from the input sample data and stores "
             "the results in a tsinfer ancestors file."))
@@ -288,7 +287,7 @@ def get_tsinfer_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_logging_arguments(parser)
-    parser.set_defaults(runner=run_build_ancestors)
+    parser.set_defaults(runner=run_generate_ancestors)
 
     parser = subparsers.add_parser(
         "match-ancestors",

@@ -100,7 +100,7 @@ class TestCli(unittest.TestCase):
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
-        tsinfer.build_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
+        tsinfer.generate_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
 
 
 class TestCommandsDefaults(TestCli):
@@ -132,7 +132,7 @@ class TestCommandsDefaults(TestCli):
 
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["build-ancestors", self.sample_file])
+        self.run_command(["generate-ancestors", self.sample_file])
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["match-samples", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)

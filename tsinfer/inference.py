@@ -76,7 +76,7 @@ def _get_progress_monitor(progress_monitor):
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
         engine=C_ENGINE):
-    ancestor_data = build_ancestors(
+    ancestor_data = generate_ancestors(
         sample_data, engine=engine, progress_monitor=progress_monitor)
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
@@ -87,7 +87,7 @@ def infer(
     return inferred_ts
 
 
-def build_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
+def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
 
     ancestor_data = formats.AncestorData.initialise(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
@@ -103,7 +103,7 @@ def build_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwarg
     else:
         raise ValueError("Unknown engine:{}".format(engine))
 
-    progress = progress_monitor.get("ba_add_sites", num_sites)
+    progress = progress_monitor.get("ga_add_sites", num_sites)
     logger.info("Starting site addition")
     for j, (site_id, genotypes) in enumerate(
             sample_data.genotypes(inference_sites=True)):
@@ -114,7 +114,7 @@ def build_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwarg
     logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
-    progress = progress_monitor.get("ba_generate", len(descriptors))
+    progress = progress_monitor.get("ga_generate", len(descriptors))
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
         # Build the map from frequencies to time.
