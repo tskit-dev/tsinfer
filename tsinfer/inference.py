@@ -103,8 +103,8 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
     else:
         raise ValueError("Unknown engine:{}".format(engine))
 
-    progress = progress_monitor.get("ga_add_sites", num_sites)
     logger.info("Starting addition of {} sites".format(num_sites))
+    progress = progress_monitor.get("ga_add_sites", num_sites)
     for j, (site_id, genotypes) in enumerate(
             sample_data.genotypes(inference_sites=True)):
         frequency = np.sum(genotypes)
@@ -114,15 +114,15 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
     logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
-    progress = progress_monitor.get("ga_generate", len(descriptors))
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
+        logger.info("Starting build for {} ancestors".format(num_ancestors))
+        progress = progress_monitor.get("ga_generate", num_ancestors)
         # Build the map from frequencies to time.
         time_map = {}
         for freq, _ in reversed(descriptors):
             if freq not in time_map:
                 time_map[freq] = len(time_map) + 1
-        logger.info("Starting build for {} ancestors".format(num_ancestors))
         a = np.zeros(num_sites, dtype=np.uint8)
         root_time = len(time_map) + 1
         ultimate_ancestor_time = root_time + 1
@@ -153,7 +153,7 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
                 haplotype=a)
             progress.update()
         progress.close()
-    logger.info("Finished building ancestors")
+        logger.info("Finished building ancestors")
     ancestor_data.finalise()
     return ancestor_data
 
@@ -381,7 +381,6 @@ class Matcher(object):
         iterating over the trees
         """
         num_sites = self.sample_data.num_sites
-        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
         alleles = self.sample_data.sites_alleles[:]
         inference = self.sample_data.sites_inference[:]
         metadata = self.sample_data.sites_metadata[:]
@@ -390,6 +389,7 @@ class Matcher(object):
         logger.info(
             "Starting mutation positioning for {} non inference sites".format(
                 np.sum(inference == 0)))
+        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
         inferred_site = 0
         trees = ts.trees()
         tree = next(trees)
@@ -497,7 +497,6 @@ class AncestorMatcher(Matcher):
         self.focal_sites = self.ancestor_data.focal_sites[:]
         self.start = self.ancestor_data.start[:]
         self.end = self.ancestor_data.end[:]
-        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
 
         # Create a list of all ID ranges in each epoch.
         if self.start.shape[0] == 0:
@@ -612,7 +611,7 @@ class AncestorMatcher(Matcher):
                 match_worker, match_queue, name="match-worker-{}".format(j),
                 index=j)
             for j in range(self.num_threads)]
-        logger.info("Started {} match worker threads".format(self.num_threads))
+        logger.debug("Started {} match worker threads".format(self.num_threads))
 
         for j in range(self.start_epoch, self.num_epochs):
             self.__start_epoch(j)
@@ -632,11 +631,13 @@ class AncestorMatcher(Matcher):
 
     def match_ancestors(self):
         logger.info("Starting ancestor matching for {} epochs".format(self.num_epochs))
+        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
         if self.num_threads <= 0:
             self.__match_ancestors_single_threaded()
         else:
             self.__match_ancestors_multi_threaded()
         ts = self.store_output()
+        self.match_progress.close()
         logger.info("Finished ancestor matching")
         return ts
 
@@ -660,7 +661,6 @@ class SampleMatcher(Matcher):
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
-        self.match_progress = self.progress_monitor.get("ms_match", self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -701,7 +701,7 @@ class SampleMatcher(Matcher):
                 match_worker, match_queue, name="match-worker-{}".format(j),
                 index=j)
             for j in range(self.num_threads)]
-        logger.info("Started {} match worker threads".format(self.num_threads))
+        logger.debug("Started {} match worker threads".format(self.num_threads))
 
         for sample_id, a in zip(self.sample_ids, self.sample_haplotypes):
             match_queue.put((sample_id, a))
@@ -715,6 +715,8 @@ class SampleMatcher(Matcher):
     def match_samples(self):
         logger.info("Started matching for {} samples".format(self.num_samples))
         if self.sample_data.num_inference_sites > 0:
+            self.match_progress = self.progress_monitor.get(
+                    "ms_match", self.num_samples)
             if self.num_threads <= 0:
                 self.__match_samples_single_threaded()
             else:

@@ -20,6 +20,7 @@
 Command line interfaces to tsinfer.
 """
 import argparse
+import os
 import os.path
 import logging
 import resource
@@ -89,6 +90,8 @@ __before = time.clock()
 
 def summarise_usage():
     wall_time = humanize.naturaldelta(time.clock() - __before)
+    # TODO this should be giving the sum of CPU times over all threads but
+    # seems to just be the same as the wall time.
     rusage = resource.getrusage(resource.RUSAGE_SELF)
     user_time = humanize.naturaldelta(rusage.ru_utime)
     sys_time = rusage.ru_stime
@@ -163,7 +166,8 @@ def run_infer(args):
         enabled=args.progress, generate_ancestors=True, match_ancestors=True,
         match_samples=True)
     sample_data = tsinfer.SampleData.load(args.input)
-    ts = tsinfer.infer(sample_data, progress_monitor=progress_monitor)
+    ts = tsinfer.infer(
+        sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads)
     output_trees = get_output_trees_path(args.output_trees, args.input)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
