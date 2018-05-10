@@ -92,6 +92,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for _, array in input_file.arrays():
             self.assertEqual(array.compressor, compressor)
 
+    def test_from_tree_sequence(self):
+        ts = self.get_example_ts(10, 10)
+        sd1 = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+            compressor=None)
+        self.verify_data_round_trip(ts, sd1)
+        sd2 = formats.SampleData.from_tree_sequence(ts, compressor=None)
+        self.assertTrue(sd1.data_equal(sd2))
+
     def test_chunk_size(self):
         ts = self.get_example_ts(4, 2)
         self.assertGreater(ts.num_sites, 50)

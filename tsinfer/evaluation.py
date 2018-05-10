@@ -429,7 +429,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
 
 def run_perfect_inference(
         base_ts, method="C", num_threads=1, path_compression=False,
-        extended_checks=True, time_chunking=True, progress=False):
+        extended_checks=True, time_chunking=True, progress_monitor=None):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -448,11 +448,13 @@ def run_perfect_inference(
 
     ancestors_ts = inference.match_ancestors(
         sample_data, ancestor_data, method=method, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks, progress=progress)
+        num_threads=num_threads, extended_checks=extended_checks,
+        progress_monitor=progress_monitor)
     # If time_chunking is turned on we need to stabilise the node ordering in the output
     # to ensure that the node IDs are comparable.
     inferred_ts = inference.match_samples(
         sample_data, ancestors_ts, method=method, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks, progress=progress,
+        num_threads=num_threads, extended_checks=extended_checks,
+        progress_monitor=progress_monitor,
         stabilise_node_ordering=time_chunking and not path_compression)
     return ts, inferred_ts

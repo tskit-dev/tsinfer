@@ -23,13 +23,11 @@ TODO module docs.
 import collections
 import queue
 import time
-import pickle
 import logging
 import threading
 import json
 
 import numpy as np
-import tqdm
 import humanize
 import msprime
 
@@ -44,41 +42,56 @@ logger = logging.getLogger(__name__)
 UNKNOWN_ALLELE = 255
 
 
-# TODO figure out what this function is really for, and how we should
-# parameterise it. At the moment it's just used as a convenience for
-# round trip testing.
-def infer(
-        genotypes, positions=None, sequence_length=None,
-        method="C", num_threads=0, progress=False, path_compression=True):
+class DummyProgress(object):
+    """
+    Class that mimics the subset of the tqdm API that we use in this module.
+    """
+    def update(self):
+        pass
 
-    num_sites, num_samples = genotypes.shape
-    sample_data = formats.SampleData.initialise(
-        sequence_length=sequence_length, compressor=None, num_samples=num_samples)
-    for j in range(num_sites):
-        pos = j
-        if positions is not None:
-            pos = positions[j]
-        sample_data.add_site(pos, ["0", "1"], genotypes[j])
-    sample_data.finalise()
+    def close(self):
+        pass
+
+    def set_postfix(self, *args, **kwargs):
+        pass
+
+
+class DummyProgressMonitor(object):
+    """
+    Simple class to mimic the interface of the real progress monitor.
+    """
+    def get(self, key, total):
+        return DummyProgress()
+
+
+def _get_progress_monitor(progress_monitor):
+    if progress_monitor is None:
+        progress_monitor = DummyProgressMonitor()
+    return progress_monitor
+
+
+def infer(
+        sample_data, progress_monitor=None, method="C", num_threads=0,
+        path_compression=True):
 
     ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-    build_ancestors(sample_data, ancestor_data, method=method)
+    build_ancestors(
+        sample_data, ancestor_data, method=method, progress_monitor=progress_monitor)
     ancestor_data.finalise()
-
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, method=method, num_threads=num_threads,
-        path_compression=path_compression)
-
+        path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
         sample_data, ancestors_ts, method=method, num_threads=num_threads,
-        path_compression=path_compression)
+        path_compression=path_compression, progress_monitor=progress_monitor)
     return inferred_ts
 
 
-def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
+def build_ancestors(sample_data, ancestor_data, progress_monitor=None, method="C"):
 
-    num_sites = input_data.num_inference_sites
-    num_samples = input_data.num_samples
+    progress_monitor = _get_progress_monitor(progress_monitor)
+    num_sites = sample_data.num_inference_sites
+    num_samples = sample_data.num_samples
 
     if method == "C":
         logger.debug("Using C AncestorBuilder implementation")
@@ -87,16 +100,18 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
         logger.debug("Using Python AncestorBuilder implementation")
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
 
-    progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
+    progress = progress_monitor.get("ba_add_sites", num_sites)
     logger.info("Starting site addition")
-    for j, (site_id, genotypes) in enumerate(input_data.genotypes(inference_sites=True)):
+    for j, (site_id, genotypes) in enumerate(
+            sample_data.genotypes(inference_sites=True)):
         frequency = np.sum(genotypes)
         ancestor_builder.add_site(j, int(frequency), genotypes)
-        progress_monitor.update()
-    progress_monitor.close()
+        progress.update()
+    progress.close()
     logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
+    progress = progress_monitor.get("ba_generate", len(descriptors))
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
         # Build the map from frequencies to time.
@@ -119,7 +134,6 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=root_time,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
-        progress_monitor = tqdm.tqdm(total=len(descriptors), disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
@@ -134,14 +148,14 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
             ancestor_data.add_ancestor(
                 start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
                 haplotype=a)
-            progress_monitor.update()
-        progress_monitor.close()
+            progress.update()
+        progress.close()
     logger.info("Finished building ancestors")
 
 
 def match_ancestors(
-        sample_data, ancestor_data, output_path=None, method="C", progress=False,
-        num_threads=0, path_compression=True, traceback_file_pattern=None,
+        sample_data, ancestor_data, output_path=None, method="C",
+        progress_monitor=None, num_threads=0, path_compression=True,
         extended_checks=False):
     """
     Runs the copying process of the specified input and ancestors and returns
@@ -149,51 +163,18 @@ def match_ancestors(
     """
     matcher = AncestorMatcher(
         sample_data, ancestor_data, output_path=output_path, method=method,
-        progress=progress, path_compression=path_compression,
-        num_threads=num_threads, traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks)
+        progress_monitor=progress_monitor, path_compression=path_compression,
+        num_threads=num_threads, extended_checks=extended_checks)
     return matcher.match_ancestors()
 
 
-def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
-    """
-    Runs the copying process of the specified input and ancestors and returns
-    the resulting tree sequence.
-    """
-    input_file = formats.InputFile(input_hdf5)
-    ancestor_data = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
-    # TODO change these value errors to VerificationErrors or something.
-    if ancestors_ts.num_nodes != ancestor_data.num_ancestors:
-        raise ValueError("Incorrect number of ancestors")
-    if ancestors_ts.num_sites != input_file.num_sites:
-        raise ValueError("Incorrect number of sites")
-
-    progress_monitor = tqdm.tqdm(
-        total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
-
-    count = 0
-    for g1, v in zip(ancestor_data.sites_genotypes(), ancestors_ts.variants()):
-        g2 = v.genotypes
-        # Set anything unknown to 0
-        g1[g1 == UNKNOWN_ALLELE] = 0
-        if not np.array_equal(g1, g2):
-            raise ValueError("Unequal genotypes at site", v.id)
-        progress_monitor.update()
-        count += 1
-    if count != ancestors_ts.num_sites:
-        raise ValueError("Iteration stopped early")
-    progress_monitor.close()
-
-
 def match_samples(
-        sample_data, ancestors_ts, method="C", progress=False,
+        sample_data, ancestors_ts, method="C", progress_monitor=None,
         num_threads=0, path_compression=True, simplify=True,
-        traceback_file_pattern=None, extended_checks=False,
-        stabilise_node_ordering=False):
+        extended_checks=False, stabilise_node_ordering=False):
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
-        method=method, progress=progress, num_threads=num_threads,
-        traceback_file_pattern=traceback_file_pattern,
+        method=method, progress_monitor=progress_monitor, num_threads=num_threads,
         extended_checks=extended_checks)
     manager.match_samples()
     ts = manager.finalise(
@@ -203,19 +184,16 @@ def match_samples(
 
 class Matcher(object):
 
-    # The description for the progress monitor bar.
-    progress_bar_description = None
-
     def __init__(
             self, sample_data, num_threads=1, method="C",
-            path_compression=True, progress=False, traceback_file_pattern=None,
-            extended_checks=False):
+            path_compression=True, progress_monitor=None, extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = self.sample_data.num_inference_sites
-        self.progress = progress
+        self.progress_monitor = _get_progress_monitor(progress_monitor)
+        self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
         self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
 
@@ -230,9 +208,6 @@ class Matcher(object):
             logger.debug("Using Python matcher implementation")
             self.ancestor_matcher_class = algorithm.AncestorMatcher
         self.tree_sequence_builder = None
-        # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
-        # the tracebacks for each node ID and other debugging information.
-        self.traceback_file_pattern = traceback_file_pattern
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
@@ -253,17 +228,6 @@ class Matcher(object):
             self.ancestor_matcher_class(
                 self.tree_sequence_builder, extended_checks=self.extended_checks)
             for _ in range(num_threads)]
-        # The progress monitor is allocated later by subclasses.
-        self.progress_monitor = None
-
-    def allocate_progress_monitor(self, total, initial=0, postfix=None):
-        bar_format = (
-            "{desc}{percentage:3.0f}%|{bar}"
-            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
-        self.progress_monitor = tqdm.tqdm(
-            desc=self.progress_bar_description, bar_format=bar_format,
-            total=total, disable=not self.progress, initial=initial,
-            smoothing=0.01, postfix=postfix, dynamic_ncols=True)
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """
@@ -276,27 +240,12 @@ class Matcher(object):
         left, right, parent = matcher.find_path(haplotype, start, end, match)
         # print("Done")
         self.results.set_path(child_id, left, right, parent)
-        self.progress_monitor.update()
+        self.match_progress.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
         logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
-        if self.traceback_file_pattern is not None:
-            # Write out the traceback debug. WARNING: this will be huge!
-            filename = self.traceback_file_pattern.format(child_id)
-            traceback = [matcher.get_traceback(l) for l in range(self.num_sites)]
-            with open(filename, "wb") as f:
-                debug = {
-                    "child_id:": child_id,
-                    "haplotype": haplotype,
-                    "start": start,
-                    "end": end,
-                    "match": match,
-                    "traceback": traceback}
-                pickle.dump(debug, f)
-                logger.debug(
-                    "Dumped ancestor traceback debug to {}".format(filename))
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
@@ -419,6 +368,11 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
+        # progress_monitor = tqdm.tqdm(
+        #     desc="place mutations", total=self.sample_data.num_sites,
+        #     disable=not self.progress)
+        num_sites = self.sample_data.num_sites
+        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
         alleles = self.sample_data.sites_alleles[:]
         inference = self.sample_data.sites_inference[:]
         metadata = self.sample_data.sites_metadata[:]
@@ -448,6 +402,8 @@ class Matcher(object):
                 # If we have no tree topology this is all we can do.
                 self.locate_mutations_over_samples(
                     site_id, genotypes, alleles[site_id], mutations)
+            progress_monitor.update()
+        progress_monitor.close()
 
     def get_samples_tree_sequence(self):
         """
@@ -526,6 +482,7 @@ class AncestorMatcher(Matcher):
         self.focal_sites = self.ancestor_data.focal_sites[:]
         self.start = self.ancestor_data.start[:]
         self.end = self.ancestor_data.end[:]
+        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
 
         # Create a list of all ID ranges in each epoch.
         if self.start.shape[0] == 0:
@@ -536,7 +493,6 @@ class AncestorMatcher(Matcher):
             end = np.hstack([breaks + 1, [self.num_ancestors]])
             self.epoch_slices = np.vstack([start, end]).T
             self.num_epochs = self.epoch_slices.shape[0]
-        first_ancestor = 1
         self.start_epoch = 1
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
@@ -548,23 +504,13 @@ class AncestorMatcher(Matcher):
             # Consume the first ancestor.
             a = next(self.ancestors)
             assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
-            self.allocate_progress_monitor(
-                self.num_ancestors, initial=first_ancestor,
-                postfix=self.__epoch_info_dict(self.start_epoch - 1))
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
         return collections.OrderedDict([
-            ("edges", "{:.0G}".format(self.tree_sequence_builder.num_edges)),
             ("epoch", str(self.epoch[start])),
             ("nanc", str(end - start))
         ])
-
-    def __update_progress_epoch(self, epoch_index):
-        """
-        Updates the progress monitor to show information about the present epoch
-        """
-        self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
     def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
         haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
@@ -584,7 +530,12 @@ class AncestorMatcher(Matcher):
         assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
-        self.__update_progress_epoch(epoch_index)
+        start, end = self.epoch_slices[epoch_index]
+        info = collections.OrderedDict([
+            ("epoch", str(self.epoch[start])),
+            ("nanc", str(end - start))
+        ])
+        self.match_progress.set_postfix(info)
         self.tree_sequence_builder.freeze_indexes()
 
     def __complete_epoch(self, epoch_index):
@@ -629,7 +580,6 @@ class AncestorMatcher(Matcher):
         # See note on match samples multithreaded below. Should combine these
         # into a single function. Possibly when trying to make the thread
         # error handling more robust.
-
         queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
         match_queue = queue.Queue(queue_depth)
 
@@ -699,7 +649,8 @@ class SampleMatcher(Matcher):
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
-        self.allocate_progress_monitor(self.num_samples)
+        self.match_progress = self.progress_monitor.get("ms_match", self.num_samples)
+        # self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -758,9 +709,8 @@ class SampleMatcher(Matcher):
                 self.__match_samples_single_threaded()
             else:
                 self.__match_samples_multi_threaded()
-            self.progress_monitor.close()
-            progress_monitor = tqdm.tqdm(
-                desc="update paths", total=self.num_samples, disable=not self.progress)
+            self.match_progress.close()
+            progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
             for j in range(self.num_samples):
                 sample_id = int(self.sample_ids[j])
                 left, right, parent = self.results.get_path(sample_id)

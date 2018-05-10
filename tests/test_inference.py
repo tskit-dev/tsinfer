@@ -32,15 +32,9 @@ import tsinfer
 import tsinfer.formats as formats
 
 
-def get_random_data_example(num_samples, num_sites, remove_invariant_sites=True):
-    S = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
-    if remove_invariant_sites:
-        for j in range(num_sites):
-            if np.sum(S[j, :]) == 0:
-                S[j, 0] = 1
-            elif np.sum(S[j, :]) == num_samples:
-                S[j, 0] = 0
-    return S, np.arange(num_sites)
+def get_random_data_example(num_samples, num_sites):
+    G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
+    return G, np.arange(num_sites)
 
 
 class TsinferTestCase(unittest.TestCase):
@@ -64,12 +58,14 @@ class TestRoundTrip(unittest.TestCase):
     def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
-        # import daiquiri
-        # daiquiri.setup(level="DEBUG")
+        sample_data = formats.SampleData.initialise(
+            num_samples=genotypes.shape[1], compressor=None,
+            sequence_length=sequence_length)
+        for j in range(genotypes.shape[0]):
+            sample_data.add_site(positions[j], ["0", "1"], genotypes[j])
+        sample_data.finalise()
         for method in ["python", "C"]:
-            ts = tsinfer.infer(
-                genotypes=genotypes, positions=positions,
-                sequence_length=sequence_length, method=method)
+            ts = tsinfer.infer(sample_data, method=method)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             # print(genotypes)
@@ -161,13 +157,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         for j in range(genotypes.shape[0]):
             sample_data.add_site(j, ["0", "1"], genotypes[j], inference=inference[j])
         sample_data.finalise()
-
-        ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-        ancestor_data.finalise()
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
-
+        output_ts = tsinfer.infer(sample_data)
         self.assertTrue(np.array_equal(genotypes, output_ts.genotype_matrix()))
 
     def test_simple_single_tree(self):
@@ -312,41 +302,14 @@ class TestMetadataRoundTrip(unittest.TestCase):
         self.assertEqual(all_metadata, output_metadata)
 
 
-class TestMutationProperties(unittest.TestCase):
-    """
-    Tests to ensure that mutations have the properties that we expect.
-    """
-
-    def test_no_error(self):
-        num_sites = 10
-        G, positions = get_random_data_example(5, num_sites)
-        for method in ["python", "c"]:
-            ts = tsinfer.infer(
-                genotypes=G, positions=positions, sequence_length=num_sites,
-                method=method)
-            self.assertEqual(ts.num_sites, num_sites)
-            self.assertEqual(ts.num_mutations, num_sites)
-            for site in ts.sites():
-                self.assertEqual(site.ancestral_state, "0")
-                self.assertEqual(len(site.mutations), 1)
-                mutation = site.mutations[0]
-                self.assertEqual(mutation.derived_state, "1")
-                self.assertEqual(mutation.parent, -1)
-
-
 class TestThreads(TsinferTestCase):
 
     def test_equivalance(self):
         rho = 2
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
-        G = ts.genotype_matrix()
-        positions = [site.position for site in ts.sites()]
-        ts1 = tsinfer.infer(
-            genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            num_threads=1)
-        ts2 = tsinfer.infer(
-            genotypes=G, positions=positions, sequence_length=ts.sequence_length,
-            num_threads=5)
+        sample_data = formats.SampleData.from_tree_sequence(ts)
+        ts1 = tsinfer.infer(sample_data, num_threads=1)
+        ts2 = tsinfer.infer(sample_data, num_threads=5)
         self.assertTreeSequencesEqual(ts1, ts2)
 
 

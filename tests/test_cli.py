@@ -184,5 +184,4 @@ class TestList(TestCli):
             f.write(bytearray(100))
         for bad_file in ["/", zero_file]:
             self.assertRaises(
-                exceptions.FileFormatError, capture_output, cli.tsinfer_main,
-                ["list", bad_file])
+                exceptions.FileFormatError, self.run_command, ["list", bad_file])

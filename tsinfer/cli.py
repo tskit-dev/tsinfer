@@ -26,6 +26,7 @@ import logging
 
 import daiquiri
 import msprime
+import tqdm
 
 import tsinfer
 import tsinfer.formats as formats
@@ -33,6 +34,45 @@ import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)
+
+
+class ProgressMonitor(object):
+    """
+    Class responsible for managing in the tqdm progress monitors.
+    """
+    def __init__(
+            self, enabled=True, build_ancestors=False, match_ancestors=False,
+            match_samples=False):
+        self.enabled = enabled
+        self.num_bars = 0
+        if build_ancestors:
+            self.num_bars += 2
+        if match_ancestors:
+            self.num_bars += 1
+        if match_samples:
+            self.num_bars += 3
+
+        self.current_bar = 0
+        self.descriptions = {
+            "ba_add_sites": "ba-add",
+            "ba_generate": "ba-gen",
+            "ma_match": "ma-match",
+            "ms_match": "ms-match",
+            "ms_paths": "ms-paths",
+            "ms_sites": "ms-sites",
+        }
+
+    def get(self, key, total):
+        self.current_bar += 1
+        desc = "{:<8} ({}/{})".format(
+            self.descriptions[key], self.current_bar, self.num_bars)
+        bar_format = (
+            "{desc}{percentage:3.0f}%|{bar}"
+            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
+        progress = tqdm.tqdm(
+            desc=desc, total=total, disable=not self.enabled,
+            bar_format=bar_format, dynamic_ncols=True, smoothing=0.01)
+        return progress
 
 
 def get_default_path(path, input_path, extension):
@@ -96,19 +136,12 @@ def run_list(args):
 
 def run_infer(args):
     setup_logging(args)
+    progress_monitor = ProgressMonitor(
+        enabled=args.progress, build_ancestors=True, match_ancestors=True,
+        match_samples=True)
     sample_data = tsinfer.SampleData.load(args.input)
-
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
-    ancestor_data.finalise()
-
-    ancestors_trees = tsinfer.match_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+    ts = tsinfer.infer(sample_data, progress_monitor=progress_monitor)
     output_trees = get_output_trees_path(args.output_trees, args.input)
-    ts = tsinfer.match_samples(
-        sample_data, ancestors_trees, num_threads=args.num_threads,
-        progress=args.progress)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
 
@@ -116,13 +149,12 @@ def run_infer(args):
 def run_build_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-    if os.path.exists(ancestors_path):
-        # TODO add error and only do this on --force
-        os.unlink(ancestors_path)
+    progress_monitor = ProgressMonitor(enabled=args.progress, build_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.initialise(
         sample_data, path=ancestors_path, num_flush_threads=args.num_threads)
-    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
+    tsinfer.build_ancestors(
+        sample_data, ancestor_data, progress_monitor=progress_monitor)
     ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
 
 
@@ -133,9 +165,10 @@ def run_match_ancestors(args):
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
+    progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
     tsinfer.match_ancestors(
         sample_data, ancestor_data, output_path=ancestors_trees,
-        num_threads=args.num_threads, progress=args.progress,
+        num_threads=args.num_threads, progress_monitor=progress_monitor,
         path_compression=not args.no_path_compression)
 
 
@@ -147,10 +180,11 @@ def run_match_samples(args):
     output_trees = get_output_trees_path(args.output_trees, args.input)
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
     ancestors_trees = msprime.load(ancestors_trees)
+    progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
     ts = tsinfer.match_samples(
         sample_data, ancestors_trees, num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
-        progress=args.progress)
+        progress_monitor=progress_monitor)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
 

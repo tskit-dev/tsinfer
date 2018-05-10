@@ -683,6 +683,19 @@ class SampleData(DataContainer):
     ####################################
 
     @classmethod
+    def from_tree_sequence(cls, ts, **kwargs):
+        """
+        Returns a sample data object corresponding to the specified tree
+        sequence.
+        """
+        self = cls.initialise(
+            sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
+        for v in ts.variants():
+            self.add_site(v.site.position, v.alleles, v.genotypes)
+        self.finalise()
+        return self
+
+    @classmethod
     def initialise(cls, sequence_length=0, num_samples=None, **kwargs):
         """
         Initialises a new SampleData object.
