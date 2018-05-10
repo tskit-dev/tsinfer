@@ -626,6 +626,14 @@ class SampleData(DataContainer):
     def sites_inference(self):
         return self.data["sites/inference"]
 
+    @sites_inference.setter
+    def sites_inference(self, value):
+        self._check_edit_mode()
+        new_value = np.array(value, dtype=int)
+        if np.any(new_value > 1) or np.any(new_value < 0):
+            raise ValueError("Input values must be boolean 0/1")
+        self.data["sites/inference"][:] = new_value
+
     def __str__(self):
         values = [
             ("sequence_length", self.sequence_length),
