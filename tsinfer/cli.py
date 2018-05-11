@@ -296,7 +296,7 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
-def get_tsinfer_parser():
+def get_cli_parser():
     top_parser = argparse.ArgumentParser(
         description="Command line interface for tsinfer.")
     top_parser.add_argument(
@@ -380,6 +380,6 @@ def get_tsinfer_parser():
 
 
 def tsinfer_main(arg_list=None):
-    parser = get_tsinfer_parser()
+    parser = get_cli_parser()
     args = parser.parse_args(arg_list)
     args.runner(args)

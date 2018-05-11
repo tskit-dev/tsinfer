@@ -42,11 +42,15 @@ jobs:
                   --cover-inclusive tests
               # python3 -m codecov -F python
       - run:
-          name: Make sure the docs build.
-          command: make -C docs
-      - run:
-          name: Make sure we can build a distribution tarball.
+          name: Build the distribution tarball.
           command: python setup.py sdist
+      - run:
+          name: Test the docs will build on RTD minimal environment.
+          command: |
+               python -m venv docs-venv
+               source docs-venv/bin/activate 
+               pip install -r requirements/readthedocs.txt
+               make -C docs
       - run:
           name: Install from the distribution tarball
           command: |
