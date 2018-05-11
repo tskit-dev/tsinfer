@@ -17,6 +17,9 @@ summary of these files.
 Samples File
 ************
 
+The samples file is ``tsinfer's`` input format. Data must be converted into
+this format before it can be processes using the
+
 .. todo:: Document the structure of the samples file.
 
 .. _sec_file_formats_ancestors:
