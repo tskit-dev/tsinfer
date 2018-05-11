@@ -6,10 +6,22 @@
 Welcome to tsinfer's documentation!
 ===================================
 
+This is the documentation for ``tsinfer``, a method for inferring correlated
+genealogies from genetic variation data.
+
+Contents:
+=========
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
+   introduction
+   installation
+   tutorial
+   api
+   cli
+   development
 
 
 Indices and tables

@@ -85,13 +85,11 @@ class ProgressMonitor(object):
         return self.current_instance
 
 
-__before = time.clock()
+__before = time.time()
 
 
 def summarise_usage():
-    wall_time = humanize.naturaldelta(time.clock() - __before)
-    # TODO this should be giving the sum of CPU times over all threads but
-    # seems to just be the same as the wall time.
+    wall_time = humanize.naturaldelta(time.time() - __before)
     rusage = resource.getrusage(resource.RUSAGE_SELF)
     user_time = humanize.naturaldelta(rusage.ru_utime)
     sys_time = rusage.ru_stime

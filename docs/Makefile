@@ -2,11 +2,15 @@
 #
 
 # You can set these variables from the command line.
-SPHINXOPTS    =
+SPHINXOPTS    = -W
 SPHINXBUILD   = sphinx-build
 SPHINXPROJ    = tsinfer
 SOURCEDIR     = .
 BUILDDIR      = _build
+
+# JK: override the behaviour below, making html the default target.
+tsinferdefault: 
+	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 # Put it first so that "make" without argument is like "make help".
 help:
