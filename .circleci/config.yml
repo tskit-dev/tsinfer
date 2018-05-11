@@ -42,6 +42,9 @@ jobs:
                   --cover-inclusive tests
               # python3 -m codecov -F python
       - run:
+          name: Make sure the docs build.
+          command: make -C docs
+      - run:
           name: Make sure we can build a distribution tarball.
           command: python setup.py sdist
       - run:

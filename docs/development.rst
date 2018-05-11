@@ -1,7 +1,7 @@
-.. _sec-development:
+.. _sec_development:
 
 =======================
 Developer documentation
 =======================
 
-.. todo:: TODO
+.. todo:: Write developer documentation.

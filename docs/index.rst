@@ -19,8 +19,10 @@ Contents:
    introduction
    installation
    tutorial
+   inference
    api
    cli
+   file_formats
    development
 
 
