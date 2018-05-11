@@ -312,7 +312,7 @@ def get_tsinfer_parser():
         "generate-ancestors",
         aliases=["ga"],
         help=(
-            "Builds a set of ancestors from the input sample data and stores "
+            "Generates a set of ancestors from the input sample data and stores "
             "the results in a tsinfer ancestors file."))
     add_input_file_argument(parser)
     add_ancestors_file_argument(parser)
@@ -325,7 +325,7 @@ def get_tsinfer_parser():
         "match-ancestors",
         aliases=["ma"],
         help=(
-            "Matches the ancestors built by the 'build-ancestors' command against "
+            "Matches the ancestors built by the 'generate-ancestors' command against "
             "each other using the model information specified in the input file "
             "and writes the output to a tskit .trees file."))
     add_input_file_argument(parser)
@@ -352,22 +352,12 @@ def get_tsinfer_parser():
     add_progress_argument(parser)
     parser.set_defaults(runner=run_match_samples)
 
-    # parser = subparsers.add_parser(
-    #     "verify",
-    #     help=(
-    #         "Verifies the integrity of the files associated with a build."))
-    # add_input_file_argument(parser)
-    # add_logging_arguments(parser)
-    # add_ancestors_file_argument(parser)
-    # add_ancestors_trees_argument(parser)
-    # add_output_trees_argument(parser)
-    # add_progress_argument(parser)
-    # parser.set_defaults(runner=run_verify)
-
     parser = subparsers.add_parser(
         "infer",
         help=(
-            "TODO: document"))
+            "Runs the generate-ancestors, match-ancestors and match-samples "
+            "commands without write the intermediate files to disk. Not "
+            "recommended for large inferences."))
     add_input_file_argument(parser)
     add_logging_arguments(parser)
     add_output_trees_argument(parser)

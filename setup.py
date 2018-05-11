@@ -38,7 +38,7 @@ setup(
     url="http://pypi.python.org/pypi/tsinfer",
     entry_points={
         'console_scripts': [
-            'tsinfer=tsinfer.cli:tsinfer_main',
+            'tsinfer=tsinfer.__main__:main',
         ]
     },
     setup_requires=['setuptools_scm', 'numpy'],

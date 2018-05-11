@@ -33,6 +33,7 @@ import msprime
 
 import tsinfer
 import tsinfer.cli as cli
+import tsinfer.__main__ as main
 import tsinfer.exceptions as exceptions
 
 
@@ -59,6 +60,21 @@ def capture_output(func, *args, **kwargs):
         sys.stderr.close()
         sys.stderr = stderr
     return stdout_output, stderr_output
+
+
+class TestMain(unittest.TestCase):
+    """
+    Simple tests for the main function.
+    """
+    def test_cli_main(self):
+        with mock.patch("argparse.ArgumentParser.parse_args") as mocked_parse:
+            cli.tsinfer_main()
+            mocked_parse.assert_called_once_with(None)
+
+    def test_main(self):
+        with mock.patch("argparse.ArgumentParser.parse_args") as mocked_parse:
+            main.main()
+            mocked_parse.assert_called_once_with(None)
 
 
 class TestDefaultPaths(unittest.TestCase):
