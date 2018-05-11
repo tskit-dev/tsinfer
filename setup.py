@@ -49,8 +49,8 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        "msprime",
-        "zarr",
+        "msprime>=0.5",
+        "zarr>=2.2",
         "lmdb",
         "sortedcontainers"
     ],
