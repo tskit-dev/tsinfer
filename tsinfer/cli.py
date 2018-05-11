@@ -356,7 +356,7 @@ def get_tsinfer_parser():
         "infer",
         help=(
             "Runs the generate-ancestors, match-ancestors and match-samples "
-            "commands without write the intermediate files to disk. Not "
+            "commands without writing the intermediate files to disk. Not "
             "recommended for large inferences."))
     add_input_file_argument(parser)
     add_logging_arguments(parser)

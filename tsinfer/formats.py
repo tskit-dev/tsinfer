@@ -238,8 +238,12 @@ def zarr_summary(array):
     """
     Returns a string with a brief summary of the specified zarr array.
     """
-    return "shape={}; uncompressed size={}".format(
-        array.shape, humanize.naturalsize(array.nbytes))
+    dtype = str(array.dtype)
+    ret = "shape={}; dtype={};".format(array.shape, dtype)
+    if dtype != "object":
+        # nbytes doesn't work correctly for object arrays.
+        ret += "uncompressed size={}".format(humanize.naturalsize(array.nbytes))
+    return ret
 
 
 def chunk_iterator(array):
@@ -504,7 +508,8 @@ class DataContainer(object):
         Helper function for formatting __str__ output.
         """
         s = ""
-        max_key = max(len(k) for k, _ in values)
+        # Quick hack to make sure everything lines up.
+        max_key = len("provenances/timestamp")
         for k, v in values:
             s += "{:<{}} = {}\n".format(k, max_key, v)
         return s
@@ -523,7 +528,6 @@ class DataContainer(object):
             ("format_version", self.format_version),
             ("finalised", self.finalised),
             ("uuid", self.uuid),
-            ("num_provenances", self.num_provenances),
             ("num_provenances", self.num_provenances),
             ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
             ("provenances/record", zarr_summary(self.provenances_record))]
