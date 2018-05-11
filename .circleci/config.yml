@@ -41,3 +41,16 @@ jobs:
                   --cover-branches --cover-erase --cover-xml \
                   --cover-inclusive tests
               # python3 -m codecov -F python
+      - run:
+          name: Make sure the docs build.
+          command: make -C docs
+      - run:
+          name: Make sure we can build a distribution tarball.
+          command: python setup.py sdist
+      - run:
+          name: Install from the distribution tarball
+          command: |
+               python -m venv venv
+               source venv/bin/activate 
+               pip install --upgrade setuptools pip
+               pip install dist/*.tar.gz 

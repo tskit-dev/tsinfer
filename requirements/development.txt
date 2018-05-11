@@ -15,3 +15,8 @@ sortedcontainers
 # Optional extras for debugging threads
 python-prctl
 numa
+# Needed for building docs.
+sphinx
+sphinx-argparse
+sphinx_rtd_theme
+setuptools_scm
