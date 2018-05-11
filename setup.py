@@ -25,9 +25,8 @@ _tsinfer_module = Extension(
     extra_compile_args=["-std=c99"],
 )
 
-long_description = "TODO"
-# with open("README.txt") as f:
-#     long_description = f.read()
+with open("README.rst") as f:
+    long_description = f.read()
 
 setup(
     name="tsinfer",
@@ -63,6 +62,7 @@ setup(
         "Programming Language :: Python :: 3.3",
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
         "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"
         "Development Status :: 3 - Alpha",
         "Environment :: Other Environment",
