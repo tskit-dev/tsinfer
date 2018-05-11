@@ -14,7 +14,9 @@ import collections
 import itertools
 import tqdm
 import shutil
+import pprint
 import numpy as np
+import json
 
 import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
@@ -129,8 +131,15 @@ def tsinfer_dev(
 
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
-    # print(output_ts.tables.provenances)
-    print("inferred_num_edges = ", output_ts.num_edges)
+    dump_provenance(output_ts)
+
+
+def dump_provenance(ts):
+    print("dump provenance")
+    for p in ts.provenances():
+        print("-" * 50)
+        print(p.timestamp)
+        pprint.pprint(json.loads(p.record))
 
 
 def build_profile_inputs(n, num_megabases):
@@ -194,9 +203,10 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    for j in range(1, 100):
-        tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
+    # for j in range(1, 100):
+    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
     # copy_1kg()
+    tsinfer_dev(5, 0.3, seed=1, num_threads=0, method="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):

@@ -17,19 +17,18 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-TODO module docs.
+Central module for high-level inference. The actual implementation of
+of the core tasks like ancestor generation and matching are delegated
+to other modules.
 """
-
 import collections
 import queue
 import time
-import pickle
 import logging
 import threading
 import json
 
 import numpy as np
-import tqdm
 import humanize
 import msprime
 
@@ -37,73 +36,93 @@ import _tsinfer
 import tsinfer.formats as formats
 import tsinfer.algorithm as algorithm
 import tsinfer.threads as threads
+import tsinfer.provenance as provenance
 
 logger = logging.getLogger(__name__)
 
 UNKNOWN_ALLELE = 255
+C_ENGINE = "C"
+PY_ENGINE = "P"
 
 
-# TODO figure out what this function is really for, and how we should
-# parameterise it. At the moment it's just used as a convenience for
-# round trip testing.
+class DummyProgress(object):
+    """
+    Class that mimics the subset of the tqdm API that we use in this module.
+    """
+    def update(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class DummyProgressMonitor(object):
+    """
+    Simple class to mimic the interface of the real progress monitor.
+    """
+    def get(self, key, total):
+        return DummyProgress()
+
+    def set_detail(self, info):
+        pass
+
+
+def _get_progress_monitor(progress_monitor):
+    if progress_monitor is None:
+        progress_monitor = DummyProgressMonitor()
+    return progress_monitor
+
+
 def infer(
-        genotypes, positions=None, sequence_length=None,
-        method="C", num_threads=0, progress=False, path_compression=True):
-
-    num_sites, num_samples = genotypes.shape
-    sample_data = formats.SampleData.initialise(
-        sequence_length=sequence_length, compressor=None, num_samples=num_samples)
-    for j in range(num_sites):
-        pos = j
-        if positions is not None:
-            pos = positions[j]
-        sample_data.add_site(pos, ["0", "1"], genotypes[j])
-    sample_data.finalise()
-
-    ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
-    build_ancestors(sample_data, ancestor_data, method=method)
-    ancestor_data.finalise()
-
+        sample_data, progress_monitor=None, num_threads=0, path_compression=True,
+        engine=C_ENGINE):
+    ancestor_data = generate_ancestors(
+        sample_data, engine=engine, progress_monitor=progress_monitor)
     ancestors_ts = match_ancestors(
-        sample_data, ancestor_data, method=method, num_threads=num_threads,
-        path_compression=path_compression)
-
+        sample_data, ancestor_data, engine=engine, num_threads=num_threads,
+        path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
-        sample_data, ancestors_ts, method=method, num_threads=num_threads,
-        path_compression=path_compression)
+        sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
+        path_compression=path_compression, progress_monitor=progress_monitor)
     return inferred_ts
 
 
-def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
+def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
 
-    num_sites = input_data.num_inference_sites
-    num_samples = input_data.num_samples
+    ancestor_data = formats.AncestorData.initialise(sample_data, **kwargs)
+    progress_monitor = _get_progress_monitor(progress_monitor)
+    num_sites = sample_data.num_inference_sites
+    num_samples = sample_data.num_samples
 
-    if method == "C":
+    if engine == C_ENGINE:
         logger.debug("Using C AncestorBuilder implementation")
         ancestor_builder = _tsinfer.AncestorBuilder(num_samples, num_sites)
-    else:
+    elif engine == PY_ENGINE:
         logger.debug("Using Python AncestorBuilder implementation")
         ancestor_builder = algorithm.AncestorBuilder(num_samples, num_sites)
+    else:
+        raise ValueError("Unknown engine:{}".format(engine))
 
-    progress_monitor = tqdm.tqdm(total=num_sites, disable=not progress)
-    logger.info("Starting site addition")
-    for j, (site_id, genotypes) in enumerate(input_data.genotypes(inference_sites=True)):
+    logger.info("Starting addition of {} sites".format(num_sites))
+    progress = progress_monitor.get("ga_add_sites", num_sites)
+    for j, (site_id, genotypes) in enumerate(
+            sample_data.genotypes(inference_sites=True)):
         frequency = np.sum(genotypes)
         ancestor_builder.add_site(j, int(frequency), genotypes)
-        progress_monitor.update()
-    progress_monitor.close()
+        progress.update()
+    progress.close()
     logger.info("Finished adding sites")
 
     descriptors = ancestor_builder.ancestor_descriptors()
     if len(descriptors) > 0:
         num_ancestors = len(descriptors)
+        logger.info("Starting build for {} ancestors".format(num_ancestors))
+        progress = progress_monitor.get("ga_generate", num_ancestors)
         # Build the map from frequencies to time.
         time_map = {}
         for freq, _ in reversed(descriptors):
             if freq not in time_map:
                 time_map[freq] = len(time_map) + 1
-        logger.info("Starting build for {} ancestors".format(num_ancestors))
         a = np.zeros(num_sites, dtype=np.uint8)
         root_time = len(time_map) + 1
         ultimate_ancestor_time = root_time + 1
@@ -118,7 +137,6 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
         ancestor_data.add_ancestor(
             start=0, end=num_sites, time=root_time,
             focal_sites=np.array([], dtype=np.int32), haplotype=a)
-        progress_monitor = tqdm.tqdm(total=len(descriptors), disable=not progress)
         for freq, focal_sites in descriptors:
             before = time.perf_counter()
             # TODO: This is a read-only process so we can multithread it.
@@ -133,66 +151,34 @@ def build_ancestors(input_data, ancestor_data, progress=False, method="C"):
             ancestor_data.add_ancestor(
                 start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
                 haplotype=a)
-            progress_monitor.update()
-        progress_monitor.close()
-    logger.info("Finished building ancestors")
+            progress.update()
+        progress.close()
+        logger.info("Finished building ancestors")
+    ancestor_data.finalise()
+    return ancestor_data
 
 
 def match_ancestors(
-        sample_data, ancestor_data, output_path=None, method="C", progress=False,
-        num_threads=0, path_compression=True, traceback_file_pattern=None,
-        extended_checks=False):
+        sample_data, ancestor_data, progress_monitor=None, num_threads=0,
+        path_compression=True, extended_checks=False, engine=C_ENGINE):
     """
     Runs the copying process of the specified input and ancestors and returns
     the resulting tree sequence.
     """
     matcher = AncestorMatcher(
-        sample_data, ancestor_data, output_path=output_path, method=method,
-        progress=progress, path_compression=path_compression,
-        num_threads=num_threads, traceback_file_pattern=traceback_file_pattern,
-        extended_checks=extended_checks)
+        sample_data, ancestor_data, engine=engine,
+        progress_monitor=progress_monitor, path_compression=path_compression,
+        num_threads=num_threads, extended_checks=extended_checks)
     return matcher.match_ancestors()
 
 
-def verify(input_hdf5, ancestors_hdf5, ancestors_ts, progress=False):
-    """
-    Runs the copying process of the specified input and ancestors and returns
-    the resulting tree sequence.
-    """
-    input_file = formats.InputFile(input_hdf5)
-    ancestor_data = formats.AncestorFile(ancestors_hdf5, input_file, 'r')
-    # TODO change these value errors to VerificationErrors or something.
-    if ancestors_ts.num_nodes != ancestor_data.num_ancestors:
-        raise ValueError("Incorrect number of ancestors")
-    if ancestors_ts.num_sites != input_file.num_sites:
-        raise ValueError("Incorrect number of sites")
-
-    progress_monitor = tqdm.tqdm(
-        total=ancestors_ts.num_sites, disable=not progress, dynamic_ncols=True)
-
-    count = 0
-    for g1, v in zip(ancestor_data.sites_genotypes(), ancestors_ts.variants()):
-        g2 = v.genotypes
-        # Set anything unknown to 0
-        g1[g1 == UNKNOWN_ALLELE] = 0
-        if not np.array_equal(g1, g2):
-            raise ValueError("Unequal genotypes at site", v.id)
-        progress_monitor.update()
-        count += 1
-    if count != ancestors_ts.num_sites:
-        raise ValueError("Iteration stopped early")
-    progress_monitor.close()
-
-
 def match_samples(
-        sample_data, ancestors_ts, method="C", progress=False,
-        num_threads=0, path_compression=True, simplify=True,
-        traceback_file_pattern=None, extended_checks=False,
-        stabilise_node_ordering=False):
+        sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
+        path_compression=True, simplify=True, extended_checks=False,
+        stabilise_node_ordering=False, engine=C_ENGINE):
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
-        method=method, progress=progress, num_threads=num_threads,
-        traceback_file_pattern=traceback_file_pattern,
+        engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
         extended_checks=extended_checks)
     manager.match_samples()
     ts = manager.finalise(
@@ -202,36 +188,29 @@ def match_samples(
 
 class Matcher(object):
 
-    # The description for the progress monitor bar.
-    progress_bar_description = None
-
     def __init__(
-            self, sample_data, num_threads=1, method="C",
-            path_compression=True, progress=False, traceback_file_pattern=None,
-            extended_checks=False):
+            self, sample_data, num_threads=1, engine=C_ENGINE,
+            path_compression=True, progress_monitor=None, extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = self.sample_data.num_inference_sites
-        self.progress = progress
+        self.progress_monitor = _get_progress_monitor(progress_monitor)
+        self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
-        self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
 
-        if method == "C":
+        if engine == C_ENGINE:
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
-        elif method == "Py-matrix":
-            logger.debug("Using Python matrix implementation")
-            self.ancestor_matcher_class = algorithm.MatrixAncestorMatcher
-        else:
+        elif engine == PY_ENGINE:
             logger.debug("Using Python matcher implementation")
+            self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
+        else:
+            raise ValueError("Unknown engine:{}".format(engine))
         self.tree_sequence_builder = None
-        # Debugging. Set this to a file path like "traceback_{}.pkl" to store the
-        # the tracebacks for each node ID and other debugging information.
-        self.traceback_file_pattern = traceback_file_pattern
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
@@ -252,17 +231,6 @@ class Matcher(object):
             self.ancestor_matcher_class(
                 self.tree_sequence_builder, extended_checks=self.extended_checks)
             for _ in range(num_threads)]
-        # The progress monitor is allocated later by subclasses.
-        self.progress_monitor = None
-
-    def allocate_progress_monitor(self, total, initial=0, postfix=None):
-        bar_format = (
-            "{desc}{percentage:3.0f}%|{bar}"
-            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
-        self.progress_monitor = tqdm.tqdm(
-            desc=self.progress_bar_description, bar_format=bar_format,
-            total=total, disable=not self.progress, initial=initial,
-            smoothing=0.01, postfix=postfix, dynamic_ncols=True)
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """
@@ -275,27 +243,12 @@ class Matcher(object):
         left, right, parent = matcher.find_path(haplotype, start, end, match)
         # print("Done")
         self.results.set_path(child_id, left, right, parent)
-        self.progress_monitor.update()
+        self.match_progress.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
         logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
-        if self.traceback_file_pattern is not None:
-            # Write out the traceback debug. WARNING: this will be huge!
-            filename = self.traceback_file_pattern.format(child_id)
-            traceback = [matcher.get_traceback(l) for l in range(self.num_sites)]
-            with open(filename, "wb") as f:
-                debug = {
-                    "child_id:": child_id,
-                    "haplotype": haplotype,
-                    "start": start,
-                    "end": end,
-                    "match": match,
-                    "traceback": traceback}
-                pickle.dump(debug, f)
-                logger.debug(
-                    "Dumped ancestor traceback debug to {}".format(filename))
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
@@ -332,8 +285,10 @@ class Matcher(object):
         are measured in units of site indexes and all ancestral and derived states
         are 0/1. All nodes have the sample flag bit set.
         """
+        logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
         flags, time = tsb.dump_nodes()
+        num_synthetic_nodes = np.sum(flags == 0)
         nodes = msprime.NodeTable()
         nodes.set_columns(flags=flags, time=time)
         left, right, parent, child = tsb.dump_edges()
@@ -353,10 +308,25 @@ class Matcher(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
+        provenances = msprime.ProvenanceTable()
+        for timestamp, record in self.sample_data.provenances():
+            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        for timestamp, record in self.ancestor_data.provenances():
+            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        record = provenance.get_provenance_dict(
+            command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
+        provenances.add_row(record=json.dumps(record))
+        logger.debug("Sorting ancestors tree sequence")
         msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        logger.debug("Sorting ancestors tree sequence done")
+        logger.info(
+            "Built ancestors tree sequence: {} nodes ({} synthetic); {} edges; "
+            "{} sites; {} mutations".format(
+                len(nodes), num_synthetic_nodes, len(edges),
+                len(mutations), len(sites)))
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length)
+            provenances=provenances, sequence_length=sequence_length)
 
     def encode_metadata(self, value):
         return json.dumps(value).encode()
@@ -410,11 +380,16 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
+        num_sites = self.sample_data.num_sites
         alleles = self.sample_data.sites_alleles[:]
         inference = self.sample_data.sites_inference[:]
         metadata = self.sample_data.sites_metadata[:]
         position = self.sample_data.sites_position[:]
         _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        logger.info(
+            "Starting mutation positioning for {} non inference sites".format(
+                np.sum(inference == 0)))
+        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
         inferred_site = 0
         trees = ts.trees()
         tree = next(trees)
@@ -439,6 +414,8 @@ class Matcher(object):
                 # If we have no tree topology this is all we can do.
                 self.locate_mutations_over_samples(
                     site_id, genotypes, alleles[site_id], mutations)
+            progress_monitor.update()
+        progress_monitor.close()
 
     def get_samples_tree_sequence(self):
         """
@@ -448,6 +425,7 @@ class Matcher(object):
         tsb = self.tree_sequence_builder
         nodes = msprime.NodeTable()
         flags, time = tsb.dump_nodes()
+        num_synthetic_nodes = np.sum(flags == 0)
 
         logger.debug("Adding tree sequence nodes")
         # TODO add an option for encoding ancestor metadata in with the nodes here.
@@ -490,18 +468,29 @@ class Matcher(object):
         sites = msprime.SiteTable()
         mutations = msprime.MutationTable()
         self.insert_sites(ts, sites, mutations)
+
+        provenances = msprime.ProvenanceTable()
+        for prov in self.ancestors_ts.provenances():
+            provenances.add_row(timestamp=prov.timestamp, record=prov.record)
+        # We don't have a source here because tree sequence files don't have a
+        # UUID yet.
+        record = provenance.get_provenance_dict(command="match-samples")
+        provenances.add_row(record=json.dumps(record))
+
+        logger.info(
+            "Built samples tree sequence: {} nodes ({} synthetic); {} edges; "
+            "{} sites; {} mutations".format(
+                len(nodes), num_synthetic_nodes, len(edges),
+                len(mutations), len(sites)))
         return msprime.load_tables(
             nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length)
+            sequence_length=sequence_length, provenances=provenances)
 
 
 class AncestorMatcher(Matcher):
-    progress_bar_description = "match-ancestors"
 
-    def __init__(self, sample_data, ancestor_data, output_path, **kwargs):
+    def __init__(self, sample_data, ancestor_data, **kwargs):
         super().__init__(sample_data, **kwargs)
-        self.output_path = output_path
-        self.last_output_time = time.time()
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.time[:]
@@ -518,7 +507,6 @@ class AncestorMatcher(Matcher):
             end = np.hstack([breaks + 1, [self.num_ancestors]])
             self.epoch_slices = np.vstack([start, end]).T
             self.num_epochs = self.epoch_slices.shape[0]
-        first_ancestor = 1
         self.start_epoch = 1
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
@@ -530,23 +518,13 @@ class AncestorMatcher(Matcher):
             # Consume the first ancestor.
             a = next(self.ancestors)
             assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
-            self.allocate_progress_monitor(
-                self.num_ancestors, initial=first_ancestor,
-                postfix=self.__epoch_info_dict(self.start_epoch - 1))
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
         return collections.OrderedDict([
-            ("edges", "{:.0G}".format(self.tree_sequence_builder.num_edges)),
             ("epoch", str(self.epoch[start])),
             ("nanc", str(end - start))
         ])
-
-    def __update_progress_epoch(self, epoch_index):
-        """
-        Updates the progress monitor to show information about the present epoch
-        """
-        self.progress_monitor.set_postfix(self.__epoch_info_dict(epoch_index))
 
     def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
         haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
@@ -556,8 +534,6 @@ class AncestorMatcher(Matcher):
         self.results.set_mutations(ancestor_id, focal_sites)
         assert ancestor.shape[0] == (end - start)
         haplotype[start: end] = ancestor
-        assert np.all(haplotype[0: start] == UNKNOWN_ALLELE)
-        assert np.all(haplotype[end:] == UNKNOWN_ALLELE)
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
@@ -565,7 +541,16 @@ class AncestorMatcher(Matcher):
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
                 ancestor_id, haplotype, start, end, thread_index)
-        assert np.all(self.match[thread_index] == haplotype)
+        assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
+
+    def __start_epoch(self, epoch_index):
+        start, end = self.epoch_slices[epoch_index]
+        info = collections.OrderedDict([
+            ("epoch", str(self.epoch[start])),
+            ("nanc", str(end - start))
+        ])
+        self.progress_monitor.set_detail(info)
+        self.tree_sequence_builder.freeze_indexes()
 
     def __complete_epoch(self, epoch_index):
         start, end = map(int, self.epoch_slices[epoch_index])
@@ -582,8 +567,7 @@ class AncestorMatcher(Matcher):
             site, derived_state = self.results.get_mutations(child_id)
             self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
-        extra_nodes = (
-            self.tree_sequence_builder.num_nodes - nodes_before - num_ancestors_in_epoch)
+        extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
             "Finished epoch {} with {} ancestors; {} extra nodes inserted; "
@@ -598,7 +582,7 @@ class AncestorMatcher(Matcher):
 
     def __match_ancestors_single_threaded(self):
         for j in range(self.start_epoch, self.num_epochs):
-            self.__update_progress_epoch(j)
+            self.__start_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
@@ -609,7 +593,6 @@ class AncestorMatcher(Matcher):
         # See note on match samples multithreaded below. Should combine these
         # into a single function. Possibly when trying to make the thread
         # error handling more robust.
-
         queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
         match_queue = queue.Queue(queue_depth)
 
@@ -628,10 +611,10 @@ class AncestorMatcher(Matcher):
                 match_worker, match_queue, name="match-worker-{}".format(j),
                 index=j)
             for j in range(self.num_threads)]
-        logger.info("Started {} match worker threads".format(self.num_threads))
+        logger.debug("Started {} match worker threads".format(self.num_threads))
 
         for j in range(self.start_epoch, self.num_epochs):
-            self.__update_progress_epoch(j)
+            self.__start_epoch(j)
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
@@ -648,11 +631,13 @@ class AncestorMatcher(Matcher):
 
     def match_ancestors(self):
         logger.info("Starting ancestor matching for {} epochs".format(self.num_epochs))
+        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
         if self.num_threads <= 0:
             self.__match_ancestors_single_threaded()
         else:
             self.__match_ancestors_multi_threaded()
         ts = self.store_output()
+        self.match_progress.close()
         logger.info("Finished ancestor matching")
         return ts
 
@@ -663,22 +648,19 @@ class AncestorMatcher(Matcher):
             # Allocate an empty tree sequence.
             ts = msprime.load_tables(
                 nodes=msprime.NodeTable(), edges=msprime.EdgeTable(), sequence_length=1)
-        if self.output_path is not None:
-            ts.dump(self.output_path)
         return ts
 
 
 class SampleMatcher(Matcher):
-    progress_bar_description = "match-samples"
 
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
+        self.ancestors_ts = ancestors_ts
         self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
-        self.allocate_progress_monitor(self.num_samples)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -719,7 +701,7 @@ class SampleMatcher(Matcher):
                 match_worker, match_queue, name="match-worker-{}".format(j),
                 index=j)
             for j in range(self.num_threads)]
-        logger.info("Started {} match worker threads".format(self.num_threads))
+        logger.debug("Started {} match worker threads".format(self.num_threads))
 
         for sample_id, a in zip(self.sample_ids, self.sample_haplotypes):
             match_queue.put((sample_id, a))
@@ -733,13 +715,16 @@ class SampleMatcher(Matcher):
     def match_samples(self):
         logger.info("Started matching for {} samples".format(self.num_samples))
         if self.sample_data.num_inference_sites > 0:
+            self.match_progress = self.progress_monitor.get(
+                    "ms_match", self.num_samples)
             if self.num_threads <= 0:
                 self.__match_samples_single_threaded()
             else:
                 self.__match_samples_multi_threaded()
-            self.progress_monitor.close()
-            progress_monitor = tqdm.tqdm(
-                desc="update paths", total=self.num_samples, disable=not self.progress)
+            self.match_progress.close()
+            logger.info("Inserting sample paths: {} edges in total".format(
+                self.results.total_edges))
+            progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
             for j in range(self.num_samples):
                 sample_id = int(self.sample_ids[j])
                 left, right, parent = self.results.get_path(sample_id)
@@ -749,7 +734,6 @@ class SampleMatcher(Matcher):
                 self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
-        logger.info("Finished sample matching")
 
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
@@ -786,6 +770,7 @@ class ResultBuffer(object):
         self.paths = {}
         self.mutations = {}
         self.lock = threading.Lock()
+        self.total_edges = 0
 
     def clear(self):
         """
@@ -793,11 +778,13 @@ class ResultBuffer(object):
         """
         self.paths.clear()
         self.mutations.clear()
+        self.total_edges = 0
 
     def set_path(self, node_id, left, right, parent):
         with self.lock:
             assert node_id not in self.paths
             self.paths[node_id] = left, right, parent
+            self.total_edges += len(left)
 
     def set_mutations(self, node_id, site, derived_state=None):
         if derived_state is None:

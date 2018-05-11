@@ -20,12 +20,16 @@
 Command line interfaces to tsinfer.
 """
 import argparse
-import sys
+import os
 import os.path
 import logging
+import resource
 
 import daiquiri
 import msprime
+import tqdm
+import humanize
+import time
 
 import tsinfer
 import tsinfer.formats as formats
@@ -33,6 +37,68 @@ import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)
+
+
+class ProgressMonitor(object):
+    """
+    Class responsible for managing in the tqdm progress monitors.
+    """
+    def __init__(
+            self, enabled=True, generate_ancestors=False, match_ancestors=False,
+            match_samples=False):
+        self.enabled = enabled
+        self.num_bars = 0
+        if generate_ancestors:
+            self.num_bars += 2
+        if match_ancestors:
+            self.num_bars += 1
+        if match_samples:
+            self.num_bars += 3
+        self.current_count = 0
+        self.current_instance = None
+        # Only show extra detail if we are runing match-ancestors by itself.
+        self.show_detail = self.num_bars == 1
+        self.descriptions = {
+            "ga_add_sites": "ga-add",
+            "ga_generate": "ga-gen",
+            "ma_match": "ma-match",
+            "ms_match": "ms-match",
+            "ms_paths": "ms-paths",
+            "ms_sites": "ms-sites",
+        }
+
+    def set_detail(self, info):
+        if self.show_detail:
+            self.current_instance.set_postfix(info)
+
+    def get(self, key, total):
+        self.current_count += 1
+        desc = "{:<8} ({}/{})".format(
+            self.descriptions[key], self.current_count, self.num_bars)
+        bar_format = (
+            "{desc}{percentage:3.0f}%|{bar}"
+            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
+        self.current_instance = tqdm.tqdm(
+            desc=desc, total=total, disable=not self.enabled,
+            bar_format=bar_format, dynamic_ncols=True, smoothing=0.01,
+            unit_scale=True)
+        return self.current_instance
+
+
+__before = time.clock()
+
+
+def summarise_usage():
+    wall_time = humanize.naturaldelta(time.clock() - __before)
+    # TODO this should be giving the sum of CPU times over all threads but
+    # seems to just be the same as the wall time.
+    rusage = resource.getrusage(resource.RUSAGE_SELF)
+    user_time = humanize.naturaldelta(rusage.ru_utime)
+    sys_time = rusage.ru_stime
+    max_rss = humanize.naturalsize(rusage.ru_maxrss * 1024, binary=True)
+    logger.info("wall time = {}".format(wall_time))
+    logger.info("rusage: user={}; sys={:.2f}s; max_rss={}".format(
+        user_time, sys_time, max_rss))
 
 
 def get_default_path(path, input_path, extension):
@@ -96,34 +162,27 @@ def run_list(args):
 
 def run_infer(args):
     setup_logging(args)
+    progress_monitor = ProgressMonitor(
+        enabled=args.progress, generate_ancestors=True, match_ancestors=True,
+        match_samples=True)
     sample_data = tsinfer.SampleData.load(args.input)
-
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data)
-    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
-    ancestor_data.finalise()
-
-    ancestors_trees = tsinfer.match_ancestors(
-        sample_data, ancestor_data, num_threads=args.num_threads,
-        progress=args.progress)
+    ts = tsinfer.infer(
+        sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads)
     output_trees = get_output_trees_path(args.output_trees, args.input)
-    ts = tsinfer.match_samples(
-        sample_data, ancestors_trees, num_threads=args.num_threads,
-        progress=args.progress)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
+    summarise_usage()
 
 
-def run_build_ancestors(args):
+def run_generate_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.input)
-    if os.path.exists(ancestors_path):
-        # TODO add error and only do this on --force
-        os.unlink(ancestors_path)
+    progress_monitor = ProgressMonitor(enabled=args.progress, generate_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.input)
-    ancestor_data = tsinfer.AncestorData.initialise(
-        sample_data, path=ancestors_path, num_flush_threads=args.num_threads)
-    tsinfer.build_ancestors(sample_data, ancestor_data, progress=args.progress)
-    ancestor_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
+    tsinfer.generate_ancestors(
+        sample_data, progress_monitor=progress_monitor, path=ancestors_path,
+        num_flush_threads=args.num_threads)
+    summarise_usage()
 
 
 def run_match_ancestors(args):
@@ -133,10 +192,14 @@ def run_match_ancestors(args):
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
     sample_data = tsinfer.SampleData.load(args.input)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
-    tsinfer.match_ancestors(
-        sample_data, ancestor_data, output_path=ancestors_trees,
-        num_threads=args.num_threads, progress=args.progress,
+    progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
+    ts = tsinfer.match_ancestors(
+        sample_data, ancestor_data,
+        num_threads=args.num_threads, progress_monitor=progress_monitor,
         path_compression=not args.no_path_compression)
+    logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
+    ts.dump(ancestors_trees)
+    summarise_usage()
 
 
 def run_match_samples(args):
@@ -147,12 +210,14 @@ def run_match_samples(args):
     output_trees = get_output_trees_path(args.output_trees, args.input)
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
     ancestors_trees = msprime.load(ancestors_trees)
+    progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
     ts = tsinfer.match_samples(
         sample_data, ancestors_trees, num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
-        progress=args.progress)
+        progress_monitor=progress_monitor)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
+    summarise_usage()
 
 
 # def run_verify(args):
@@ -244,8 +309,8 @@ def get_tsinfer_parser():
     subparsers.required = True
 
     parser = subparsers.add_parser(
-        "build-ancestors",
-        aliases=["ba"],
+        "generate-ancestors",
+        aliases=["ga"],
         help=(
             "Builds a set of ancestors from the input sample data and stores "
             "the results in a tsinfer ancestors file."))
@@ -254,7 +319,7 @@ def get_tsinfer_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_logging_arguments(parser)
-    parser.set_defaults(runner=run_build_ancestors)
+    parser.set_defaults(runner=run_generate_ancestors)
 
     parser = subparsers.add_parser(
         "match-ancestors",

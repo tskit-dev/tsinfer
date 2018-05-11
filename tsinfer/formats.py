@@ -311,6 +311,7 @@ class DataContainer(object):
         self = cls()
         self.path = path
         self._open_readonly()
+        logger.info("Loaded {}".format(self.summary()))
         return self
 
     def copy(self, path=None):
@@ -339,7 +340,7 @@ class DataContainer(object):
         other._mode = self.EDIT_MODE
         return other
 
-    def finalise(self, command=None, parameters=None):
+    def finalise(self, command=None, parameters=None, source=None):
         """
         Ensures that the state of the data is flushed and writes the
         provenance for the current operation. The specified 'command' is used
@@ -347,7 +348,8 @@ class DataContainer(object):
         """
         self._check_write_modes()
         timestamp = datetime.datetime.now().isoformat()
-        record = provenance.get_provenance_dict(command=command, parameters=parameters)
+        record = provenance.get_provenance_dict(
+            command=command, parameters=parameters, source=source)
         self.add_provenance(timestamp, record)
         self.data.attrs[FINALISED_KEY] = True
         if self.path is not None:
@@ -371,11 +373,12 @@ class DataContainer(object):
         self._open_readonly()
 
     def _initialise(
-            self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
-            chunk_size=1024):
+            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
         """
         Initialise the basic state of the data container.
         """
+        if path is not None and compressor is None:
+            compressor = DEFAULT_COMPRESSOR
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
         self._metadata_codec = TempJSON()
@@ -549,6 +552,16 @@ class DataContainer(object):
             s += str(array.info)
         return s
 
+    def provenances(self):
+        """
+        Returns an iterator over the (timestamp, record) pairs representing
+        the provenances for this data container.
+        """
+        timestamp = self.provenances_timestamp[:]
+        record = self.provenances_record[:]
+        for j in range(self.num_provenances):
+            yield timestamp[j], record[j]
+
 
 class SampleData(DataContainer):
     """
@@ -560,6 +573,10 @@ class SampleData(DataContainer):
     def __init__(self):
         super(SampleData, self).__init__()
         self._num_inference_sites = None
+
+    def summary(self):
+        return "SampleData(num_samples={}, num_sites={})".format(
+            self.num_samples, self.num_sites)
 
     @property
     def sequence_length(self):
@@ -615,6 +632,14 @@ class SampleData(DataContainer):
     def sites_inference(self):
         return self.data["sites/inference"]
 
+    @sites_inference.setter
+    def sites_inference(self, value):
+        self._check_edit_mode()
+        new_value = np.array(value, dtype=int)
+        if np.any(new_value > 1) or np.any(new_value < 0):
+            raise ValueError("Input values must be boolean 0/1")
+        self.data["sites/inference"][:] = new_value
+
     def __str__(self):
         values = [
             ("sequence_length", self.sequence_length),
@@ -662,6 +687,19 @@ class SampleData(DataContainer):
     ####################################
     # Write mode
     ####################################
+
+    @classmethod
+    def from_tree_sequence(cls, ts, **kwargs):
+        """
+        Returns a sample data object corresponding to the specified tree
+        sequence.
+        """
+        self = cls.initialise(
+            sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
+        for v in ts.variants():
+            self.add_site(v.site.position, v.alleles, v.genotypes)
+        self.finalise()
+        return self
 
     @classmethod
     def initialise(cls, sequence_length=0, num_samples=None, **kwargs):
@@ -843,6 +881,10 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)
 
+    def summary(self):
+        return "AncestorData(num_ancestors={}, num_sites={})".format(
+            self.num_ancestors, self.num_sites)
+
     def __str__(self):
         values = [
             ("sample_data_uuid", self.sample_data_uuid),
@@ -981,7 +1023,8 @@ class AncestorData(DataContainer):
         if self._mode == self.BUILD_MODE:
             self.item_writer.flush()
             self.item_writer = None
-        super(AncestorData, self).finalise(**kwargs)
+        source = {"uuid": self.sample_data_uuid}
+        super(AncestorData, self).finalise(source=source, **kwargs)
 
     def ancestors(self):
         """

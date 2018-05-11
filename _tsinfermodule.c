@@ -1051,6 +1051,22 @@ out:
 }
 
 static PyObject *
+TreeSequenceBuilder_freeze_indexes(TreeSequenceBuilder *self)
+{
+    int err;
+    PyObject *ret = NULL;
+
+    err = tree_sequence_builder_freeze_indexes(self->tree_sequence_builder);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    return ret;
+}
+
+static PyObject *
 TreeSequenceBuilder_get_num_edges(TreeSequenceBuilder *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -1146,6 +1162,8 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
         "Dumps edgeset data into numpy arrays."},
     {"dump_mutations", (PyCFunction) TreeSequenceBuilder_dump_mutations, METH_NOARGS,
         "Dumps mutation data into numpy arrays."},
+    {"freeze_indexes", (PyCFunction) TreeSequenceBuilder_freeze_indexes, METH_NOARGS,
+        "Freezes the indexes used for ancestor matching."},
     {NULL}  /* Sentinel */
 };
 

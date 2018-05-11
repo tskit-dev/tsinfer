@@ -83,14 +83,34 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.all(variant.genotypes == genotypes[j]))
             self.assertEqual(alleles[j], list(variant.alleles))
 
-    def test_defaults(self):
+    def test_defaults_with_path(self):
+        ts = self.get_example_ts(10, 10)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            input_file = formats.SampleData.initialise(
+                num_samples=ts.num_samples, path=filename,
+                sequence_length=ts.sequence_length)
+            self.verify_data_round_trip(ts, input_file)
+            compressor = formats.DEFAULT_COMPRESSOR
+            for _, array in input_file.arrays():
+                self.assertEqual(array.compressor, compressor)
+
+    def test_defaults_no_path(self):
         ts = self.get_example_ts(10, 10)
         input_file = formats.SampleData.initialise(
             num_samples=ts.num_samples, sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
-        compressor = formats.DEFAULT_COMPRESSOR
         for _, array in input_file.arrays():
-            self.assertEqual(array.compressor, compressor)
+            self.assertEqual(array.compressor, None)
+
+    def test_from_tree_sequence(self):
+        ts = self.get_example_ts(10, 10)
+        sd1 = formats.SampleData.initialise(
+            num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+            compressor=None)
+        self.verify_data_round_trip(ts, sd1)
+        sd2 = formats.SampleData.from_tree_sequence(ts, compressor=None)
+        self.assertTrue(sd1.data_equal(sd2))
 
     def test_chunk_size(self):
         ts = self.get_example_ts(4, 2)
@@ -194,6 +214,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
         record = input_file.provenances_record[0]
         self.assertEqual(record["software"], "tsinfer")
+        a = list(input_file.provenances())
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0][0], timestamp)
+        self.assertEqual(a[0][1], record)
 
     def test_variant_errors(self):
         input_file = formats.SampleData.initialise(num_samples=2, sequence_length=10)
@@ -413,6 +437,60 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         copy = data.copy()
         self.assertRaises(ValueError, copy.copy)
 
+    def test_copy_new_uuid(self):
+        data = formats.SampleData.initialise(num_samples=2)
+        data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1])
+        data.finalise()
+        copy = data.copy()
+        copy.finalise()
+        self.assertNotEqual(copy.uuid, data.uuid)
+        self.assertTrue(copy.data_equal(data))
+
+    def test_copy_update_inference_sites(self):
+        data = formats.SampleData.initialise(num_samples=4)
+        for j in range(4):
+            data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        data.finalise()
+        self.assertEqual(list(data.sites_inference), [1, 1, 1, 1])
+        copy = data.copy()
+        copy.finalise()
+        self.assertTrue(copy.data_equal(data))
+
+        copy = data.copy()
+        inference = [0, 1, 0, 1]
+        copy.sites_inference = inference
+        copy.finalise()
+        self.assertFalse(copy.data_equal(data))
+        self.assertEqual(list(copy.sites_inference), inference)
+
+    def test_update_inference_sites_bad_data(self):
+        def set_value(data, value):
+            data.sites_inference = value
+
+        data = formats.SampleData.initialise(num_samples=4)
+        for j in range(4):
+            data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        data.finalise()
+        self.assertEqual(list(data.sites_inference), [1, 1, 1, 1])
+        copy = data.copy()
+        for bad_shape in [[], np.arange(100), np.zeros((2, 2))]:
+            self.assertRaises(ValueError, set_value, copy, bad_shape)
+        bad_data = [
+            ["a", "b", "c", "d"], [2**10 for _ in range(4)], [0, 1, 0, 2],
+            [0, 0, 0, -1]]
+        for a in bad_data:
+            self.assertRaises(ValueError, set_value, copy, a)
+
+    def test_update_inference_sites_non_copy_mode(self):
+        def set_value(data, value):
+            data.sites_inference = value
+
+        data = formats.SampleData.initialise(num_samples=4)
+        data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        self.assertRaises(ValueError, set_value, data, [])
+        data.finalise()
+        self.assertRaises(ValueError, set_value, data, [])
+
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
@@ -475,16 +553,22 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
 
-    def test_defaults(self):
+    def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         ancestor_data = tsinfer.AncestorData.initialise(sample_data)
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-        compressor = formats.DEFAULT_COMPRESSOR
-        self.assertEqual(ancestor_data.start.compressor, compressor)
-        self.assertEqual(ancestor_data.end.compressor, compressor)
-        self.assertEqual(ancestor_data.time.compressor, compressor)
-        self.assertEqual(ancestor_data.focal_sites.compressor, compressor)
-        self.assertEqual(ancestor_data.ancestor.compressor, compressor)
+        for _, array in ancestor_data.arrays():
+            self.assertEqual(array.compressor, None)
+
+    def test_defaults_with_path(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "ancestors.tmp")
+            ancestor_data = tsinfer.AncestorData.initialise(sample_data, path=filename)
+            self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+            compressor = formats.DEFAULT_COMPRESSOR
+            for _, array in ancestor_data.arrays():
+                self.assertEqual(array.compressor, compressor)
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
@@ -496,6 +580,10 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
         record = ancestor_data.provenances_record[0]
         self.assertEqual(record["software"], "tsinfer")
+        a = list(ancestor_data.provenances())
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0][0], timestamp)
+        self.assertEqual(a[0][1], record)
 
     def test_chunk_size(self):
         N = 20

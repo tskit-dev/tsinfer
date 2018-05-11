@@ -30,13 +30,13 @@
 
 static int
 cmp_edge_left_increasing_time(const void *a, const void *b) {
-    const edge_t *ca = (const edge_t *) a;
-    const edge_t *cb = (const edge_t *) b;
-    int ret = (ca->left > cb->left) - (ca->left < cb->left);
+    const indexed_edge_t *ca = (const indexed_edge_t *) a;
+    const indexed_edge_t *cb = (const indexed_edge_t *) b;
+    int ret = (ca->edge.left > cb->edge.left) - (ca->edge.left < cb->edge.left);
     if (ret == 0) {
         ret = (ca->time > cb->time) - (ca->time < cb->time);
         if (ret == 0) {
-            ret = (ca->child > cb->child) - (ca->child < cb->child);
+            ret = (ca->edge.child > cb->edge.child) - (ca->edge.child < cb->edge.child);
         }
     }
     return ret;
@@ -44,13 +44,13 @@ cmp_edge_left_increasing_time(const void *a, const void *b) {
 
 static int
 cmp_edge_right_decreasing_time(const void *a, const void *b) {
-    const edge_t *ca = (const edge_t *) a;
-    const edge_t *cb = (const edge_t *) b;
-    int ret = (ca->right > cb->right) - (ca->right < cb->right);
+    const indexed_edge_t *ca = (const indexed_edge_t *) a;
+    const indexed_edge_t *cb = (const indexed_edge_t *) b;
+    int ret = (ca->edge.right > cb->edge.right) - (ca->edge.right < cb->edge.right);
     if (ret == 0) {
         ret = (ca->time < cb->time) - (ca->time > cb->time);
         if (ret == 0) {
-            ret = (ca->child > cb->child) - (ca->child < cb->child);
+            ret = (ca->edge.child > cb->edge.child) - (ca->edge.child < cb->edge.child);
         }
     }
     return ret;
@@ -58,15 +58,15 @@ cmp_edge_right_decreasing_time(const void *a, const void *b) {
 
 static int
 cmp_edge_path(const void *a, const void *b) {
-    const edge_t *ca = (const edge_t *) a;
-    const edge_t *cb = (const edge_t *) b;
-    int ret = (ca->left > cb->left) - (ca->left < cb->left);
+    const indexed_edge_t *ca = (const indexed_edge_t *) a;
+    const indexed_edge_t *cb = (const indexed_edge_t *) b;
+    int ret = (ca->edge.left > cb->edge.left) - (ca->edge.left < cb->edge.left);
     if (ret == 0) {
-        ret = (ca->right > cb->right) - (ca->right < cb->right);
+        ret = (ca->edge.right > cb->edge.right) - (ca->edge.right < cb->edge.right);
         if (ret == 0) {
-            ret = (ca->parent > cb->parent) - (ca->parent < cb->parent);
+            ret = (ca->edge.parent > cb->edge.parent) - (ca->edge.parent < cb->edge.parent);
             if (ret == 0) {
-                ret = (ca->child > cb->child) - (ca->child < cb->child);
+                ret = (ca->edge.child > cb->edge.child) - (ca->edge.child < cb->edge.child);
             }
         }
     }
@@ -74,14 +74,14 @@ cmp_edge_path(const void *a, const void *b) {
 }
 
 static void
-print_edge_path(edge_t *head, FILE *out)
+print_edge_path(indexed_edge_t *head, FILE *out)
 {
-    edge_t *edge;
+    indexed_edge_t *e;
 
-    for (edge = head; edge != NULL; edge = edge->next) {
-        fprintf(out, "(%d, %d, %d, %d)", edge->left, edge->right, edge->parent,
-                edge->child);
-        if (edge->next != NULL) {
+    for (e = head; e != NULL; e = e->next) {
+        fprintf(out, "(%d, %d, %d, %d)", e->edge.left, e->edge.right, e->edge.parent,
+                e->edge.child);
+        if (e->next != NULL) {
             fprintf(out, "->");
         }
     }
@@ -92,7 +92,7 @@ static void
 tree_sequence_builder_check_index_integrity(tree_sequence_builder_t *self)
 {
     avl_node_t *avl_node;
-    edge_t *edge;
+    indexed_edge_t *edge;
     size_t j;
 
     for (j = 0; j < self->num_nodes; j++) {
@@ -116,17 +116,17 @@ static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
     node_id_t child;
-    edge_t *edge;
+    indexed_edge_t *e;
     size_t total_edges = 0;
 
     for (child = 0; child < (node_id_t) self->num_nodes; child++) {
-        for (edge = self->path[child]; edge != NULL; edge = edge->next) {
+        for (e = self->path[child]; e != NULL; e = e->next) {
             total_edges++;
-            assert(edge->child == child);
-            if (edge->next != NULL) {
+            assert(e->edge.child == child);
+            if (e->next != NULL) {
                 /* contiguity can be violated for synthetic nodes */
-                if (self->node_flags[edge->child] != 0) {
-                    assert(edge->next->left == edge->right);
+                if (self->node_flags[e->edge.child] != 0) {
+                    assert(e->next->edge.left == e->edge.right);
                 }
             }
         }
@@ -223,7 +223,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     if (ret != 0) {
         goto out;
     }
-    ret = object_heap_init(&self->edge_heap, sizeof(edge_t),
+    ret = object_heap_init(&self->edge_heap, sizeof(indexed_edge_t),
             self->edges_chunk_size, NULL);
     if (ret != 0) {
         goto out;
@@ -247,6 +247,8 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->path);
     tsi_safe_free(self->node_flags);
     tsi_safe_free(self->sites.mutations);
+    tsi_safe_free(self->left_index_edges);
+    tsi_safe_free(self->right_index_edges);
     block_allocator_free(&self->block_allocator);
     object_heap_free(&self->avl_node_heap);
     object_heap_free(&self->edge_heap);
@@ -254,7 +256,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
 }
 
 static inline avl_node_t * WARN_UNUSED
-tree_sequence_builder_alloc_avl_node(tree_sequence_builder_t *self, edge_t *edge)
+tree_sequence_builder_alloc_avl_node(tree_sequence_builder_t *self, indexed_edge_t *e)
 {
     avl_node_t *ret = NULL;
 
@@ -264,7 +266,7 @@ tree_sequence_builder_alloc_avl_node(tree_sequence_builder_t *self, edge_t *edge
         }
     }
     ret = (avl_node_t *) object_heap_alloc_object(&self->avl_node_heap);
-    avl_init_node(ret, edge);
+    avl_init_node(ret, e);
 out:
     return ret;
 }
@@ -275,12 +277,12 @@ tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *n
     object_heap_free_object(&self->avl_node_heap, node);
 }
 
-static inline edge_t * WARN_UNUSED
+static inline indexed_edge_t * WARN_UNUSED
 tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
         site_id_t left, site_id_t right, node_id_t parent, node_id_t child,
-        edge_t *next)
+        indexed_edge_t *next)
 {
-    edge_t *ret = NULL;
+    indexed_edge_t *ret = NULL;
 
     if (object_heap_empty(&self->edge_heap)) {
         if (object_heap_expand(&self->edge_heap) != 0) {
@@ -290,11 +292,11 @@ tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
     assert(parent < (node_id_t) self->num_nodes);
     assert(child < (node_id_t) self->num_nodes);
     assert(self->time[parent] > self->time[child]);
-    ret = (edge_t *) object_heap_alloc_object(&self->edge_heap);
-    ret->left = left;
-    ret->right = right;
-    ret->parent = parent;
-    ret->child = child;
+    ret = (indexed_edge_t *) object_heap_alloc_object(&self->edge_heap);
+    ret->edge.left = left;
+    ret->edge.right = right;
+    ret->edge.parent = parent;
+    ret->edge.child = child;
     ret->time = self->time[child];
     ret->next = next;
 out:
@@ -302,7 +304,7 @@ out:
 }
 
 static inline void
-tree_sequence_builder_free_edge(tree_sequence_builder_t *self, edge_t *edge)
+tree_sequence_builder_free_edge(tree_sequence_builder_t *self, indexed_edge_t *edge)
 {
     object_heap_free_object(&self->edge_heap, edge);
 }
@@ -400,7 +402,7 @@ out:
 }
 
 static int WARN_UNUSED
-tree_sequence_builder_unindex_edge(tree_sequence_builder_t *self, edge_t *edge)
+tree_sequence_builder_unindex_edge(tree_sequence_builder_t *self, indexed_edge_t *edge)
 {
     int ret = 0;
     avl_node_t *avl_node;
@@ -423,7 +425,7 @@ tree_sequence_builder_unindex_edge(tree_sequence_builder_t *self, edge_t *edge)
 }
 
 static int WARN_UNUSED
-tree_sequence_builder_index_edge(tree_sequence_builder_t *self, edge_t *edge)
+tree_sequence_builder_index_edge(tree_sequence_builder_t *self, indexed_edge_t *edge)
 {
     int ret = 0;
     avl_node_t *avl_node;
@@ -459,10 +461,10 @@ static int WARN_UNUSED
 tree_sequence_builder_index_edges(tree_sequence_builder_t *self, node_id_t node)
 {
     int ret = 0;
-    edge_t *edge;
+    indexed_edge_t *e;
 
-    for (edge = self->path[node]; edge != NULL; edge = edge->next) {
-        ret = tree_sequence_builder_index_edge(self, edge);
+    for (e = self->path[node]; e != NULL; e = e->next) {
+        ret = tree_sequence_builder_index_edge(self, e);
         if (ret != 0) {
             goto out;
         }
@@ -473,37 +475,40 @@ out:
 
 /* Looks up the path index to find a matching edge, and returns it.
  */
-static edge_t *
-tree_sequence_builder_find_match(tree_sequence_builder_t *self, edge_t *query)
+static indexed_edge_t *
+tree_sequence_builder_find_match(tree_sequence_builder_t *self, indexed_edge_t *query)
 {
-    edge_t *ret = NULL;
-    edge_t search, *found;
+    indexed_edge_t *ret = NULL;
+    indexed_edge_t search, *found;
     avl_node_t *avl_node;
 
-    search.left = query->left;
-    search.right = query->right;
-    search.parent = query->parent;
-    search.child = 0;
+    search.edge.left = query->edge.left;
+    search.edge.right = query->edge.right;
+    search.edge.parent = query->edge.parent;
+    search.edge.child = 0;
 
     avl_search_closest(&self->path_index, &search, &avl_node);
     if (avl_node != NULL) {
-        found = (edge_t *) avl_node->item;
-        if (found->left == query->left && found->right == query->right
-                && found->parent == query->parent) {
+        found = (indexed_edge_t *) avl_node->item;
+        if (found->edge.left == query->edge.left
+                && found->edge.right == query->edge.right
+                && found->edge.parent == query->edge.parent) {
             ret = found;
         } else {
             /* Check the adjacent nodes. */
             if (avl_node->prev != NULL) {
-                found = (edge_t *) avl_node->prev->item;
-                if (found->left == query->left && found->right == query->right
-                        && found->parent == query->parent) {
+                found = (indexed_edge_t *) avl_node->prev->item;
+                if (found->edge.left == query->edge.left
+                        && found->edge.right == query->edge.right
+                        && found->edge.parent == query->edge.parent) {
                     ret = found;
                 }
             }
             if (ret == NULL && avl_node->next != NULL) {
-                found = (edge_t *) avl_node->next->item;
-                if (found->left == query->left && found->right == query->right
-                        && found->parent == query->parent) {
+                found = (indexed_edge_t *) avl_node->next->item;
+                if (found->edge.left == query->edge.left
+                        && found->edge.right == query->edge.right
+                        && found->edge.parent == query->edge.parent) {
                     ret = found;
                 }
             }
@@ -513,8 +518,8 @@ tree_sequence_builder_find_match(tree_sequence_builder_t *self, edge_t *query)
 }
 
 typedef struct {
-    edge_t *source;
-    edge_t *dest;
+    indexed_edge_t *source;
+    indexed_edge_t *dest;
 } edge_map_t;
 
 typedef struct {
@@ -533,8 +538,8 @@ tree_sequence_builder_remap_synthetic(tree_sequence_builder_t *self,
     int j;
 
     for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->child == mapped_child) {
-            mapped[j].source->parent = mapped_child;
+        if (mapped[j].dest->edge.child == mapped_child) {
+            mapped[j].source->edge.parent = mapped_child;
         }
     }
     return ret;
@@ -543,16 +548,16 @@ tree_sequence_builder_remap_synthetic(tree_sequence_builder_t *self,
 static void
 tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node)
 {
-    edge_t *x, *prev, *next;
+    indexed_edge_t *x, *prev, *next;
 
     prev = self->path[node];
     assert(prev != NULL);
     x = prev->next;
     while (x != NULL) {
         next = x->next;
-        assert(x->child == node);
-        if (prev->right == x->left && prev->parent == x->parent) {
-            prev->right = x->right;
+        assert(x->edge.child == node);
+        if (prev->edge.right == x->edge.left && prev->edge.parent == x->edge.parent) {
+            prev->edge.right = x->edge.right;
             prev->next = next;
             tree_sequence_builder_free_edge(self, x);
         } else {
@@ -569,30 +574,30 @@ static int WARN_UNUSED
 tree_sequence_builder_squash_indexed_edges(tree_sequence_builder_t *self, node_id_t node)
 {
     int ret = 0;
-    edge_t *x, *prev, *next;
+    indexed_edge_t *x, *prev, *next;
 
     prev = self->path[node];
     assert(prev != NULL);
     x = prev->next;
     while (x != NULL) {
         next = x->next;
-        if (prev->right == x->left && prev->parent == x->parent) {
+        if (prev->edge.right == x->edge.left && prev->edge.parent == x->edge.parent) {
             /* We are pulling x out of the chain and extending prev to cover
              * the corresponding interval. Therefore, we must unindex prev and x. */
-            if (prev->child != NULL_NODE) {
+            if (prev->edge.child != NULL_NODE) {
                 ret = tree_sequence_builder_unindex_edge(self, prev);
                 if (ret != 0) {
                     goto out;
                 }
-                prev->child = NULL_NODE;
+                prev->edge.child = NULL_NODE;
             }
-            if (x->child != NULL_NODE) {
+            if (x->edge.child != NULL_NODE) {
                 ret = tree_sequence_builder_unindex_edge(self, x);
                 if (ret != 0) {
                     goto out;
                 }
             }
-            prev->right = x->right;
+            prev->edge.right = x->edge.right;
             prev->next = next;
             tree_sequence_builder_free_edge(self, x);
         } else {
@@ -603,8 +608,8 @@ tree_sequence_builder_squash_indexed_edges(tree_sequence_builder_t *self, node_i
 
     /* Now index all the edges that have been unindexed */
     for (x = self->path[node]; x != NULL; x = x->next) {
-        if (x->child == NULL_NODE) {
-            x->child = node;
+        if (x->edge.child == NULL_NODE) {
+            x->edge.child = node;
             ret = tree_sequence_builder_index_edge(self, x);
             if (ret != 0) {
                 goto out;
@@ -623,17 +628,17 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
 {
     int ret = 0;
     node_id_t synthetic_node;
-    edge_t *edge;
-    edge_t *head = NULL;
-    edge_t *prev = NULL;
+    indexed_edge_t *edge;
+    indexed_edge_t *head = NULL;
+    indexed_edge_t *prev = NULL;
     double min_parent_time;
     int j;
 
     min_parent_time = self->time[0] + 1;
     for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->child == mapped_child) {
+        if (mapped[j].dest->edge.child == mapped_child) {
             min_parent_time = TSI_MIN(
-                min_parent_time, self->time[mapped[j].source->parent]);
+                min_parent_time, self->time[mapped[j].source->edge.parent]);
         }
     }
     ret = tree_sequence_builder_add_node(self, min_parent_time - 0.125, false);
@@ -643,11 +648,11 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
     synthetic_node = ret;
 
     for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->child == mapped_child) {
+        if (mapped[j].dest->edge.child == mapped_child) {
             edge = tree_sequence_builder_alloc_edge(self,
-                    mapped[j].source->left,
-                    mapped[j].source->right,
-                    mapped[j].source->parent,
+                    mapped[j].source->edge.left,
+                    mapped[j].source->edge.right,
+                    mapped[j].source->edge.parent,
                     synthetic_node, NULL);
             if (edge == NULL) {
                 ret = TSI_ERR_NO_MEMORY;
@@ -659,7 +664,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
                 prev->next = edge;
             }
             prev = edge;
-            mapped[j].source->parent = synthetic_node;
+            mapped[j].source->edge.parent = synthetic_node;
             /* We are modifying the existing edge, so we must remove it
              * from the indexes. Mark that it is unindexed by setting the
              * child value to NULL_NODE. */
@@ -667,8 +672,8 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
             if (ret != 0) {
                 goto out;
             }
-            mapped[j].dest->parent = synthetic_node;
-            mapped[j].dest->child = NULL_NODE;
+            mapped[j].dest->edge.parent = synthetic_node;
+            mapped[j].dest->edge.child = NULL_NODE;
         }
     }
     self->path[synthetic_node] = head;
@@ -689,7 +694,7 @@ static int
 tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t child)
 {
     int ret = 0;
-    edge_t *c_edge, *match_edge;
+    indexed_edge_t *c_edge, *match_edge;
     edge_map_t *mapped = NULL;
     node_counter_t *child_count = NULL;
     size_t path_length = 0;
@@ -718,7 +723,7 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
         }
     }
     for (j = 0; j < num_mapped; j++) {
-        mapped_child = mapped[j].dest->child;
+        mapped_child = mapped[j].dest->edge.child;
         /* Increment the counter for this child. */
         for (k = 0; k < num_mapped_children; k++) {
             if (child_count[k].node == mapped_child) {
@@ -760,29 +765,29 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         node_id_t *parent, int flags)
 {
     int ret = 0;
-    edge_t *head = NULL;
-    edge_t *prev = NULL;
-    edge_t *edge;
+    indexed_edge_t *head = NULL;
+    indexed_edge_t *prev = NULL;
+    indexed_edge_t *e;
     int j;
 
     /* Edges must be provided in reverese order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
-        edge = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
+        e = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
                 child, NULL);
-        if (edge == NULL) {
+        if (e == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
         }
         if (head == NULL) {
-            head = edge;
+            head = e;
         } else {
-            prev->next = edge;
-            if (prev->right != edge->left) {
+            prev->next = e;
+            if (prev->edge.right != e->edge.left) {
                 ret = TSI_ERR_NONCONTIGUOUS_EDGES;
                 goto out;
             }
         }
-        prev = edge;
+        prev = e;
     }
     self->path[child] = head;
     if (flags & TSI_COMPRESS_PATH) {
@@ -816,6 +821,43 @@ out:
     return ret;
 }
 
+/* Freeze the tree traversal indexes from the state of the dynamic AVL
+ * tree based indexes. This is done because it is *much* more efficient
+ * to get the edges sequentially than to find the randomly around memory
+ */
+int
+tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self)
+{
+    int ret = 0;
+    avl_node_t *restrict a;
+    size_t j = 0;
+
+    tsi_safe_free(self->left_index_edges);
+    tsi_safe_free(self->right_index_edges);
+    self->num_edges = avl_count(&self->left_index);
+    assert(self->num_edges == avl_count(&self->right_index));
+
+    self->left_index_edges = malloc(self->num_edges * sizeof(*self->left_index_edges));
+    self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));
+    if (self->left_index_edges == NULL || self->right_index_edges == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    j = 0;
+    for (a = self->left_index.head; a != NULL; a = a->next) {
+        self->left_index_edges[j] = ((indexed_edge_t *) a->item)->edge;
+        j++;
+    }
+    j = 0;
+    for (a = self->right_index.head; a != NULL; a = a->next) {
+        self->right_index_edges[j] = ((indexed_edge_t *) a->item)->edge;
+        j++;
+    }
+out:
+    return ret;
+}
+
 int
 tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_nodes,
         uint32_t *flags, double *time)
@@ -840,7 +882,7 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
 {
     int ret = -1;
     size_t j;
-    edge_t *edge, *prev;
+    indexed_edge_t *e, *prev;
 
     prev = NULL;
     for (j = 0; j < num_edges; j++) {
@@ -848,28 +890,28 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
             ret = TSI_ERR_UNSORTED_EDGES;
             goto out;
         }
-        edge = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
+        e = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
                 child[j], NULL);
-        if (edge == NULL) {
+        if (e == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
         }
         if (self->path[child[j]] == NULL) {
-            self->path[child[j]] = edge;
+            self->path[child[j]] = e;
         } else {
-            if (prev->right > edge->left) {
+            if (prev->edge.right > e->edge.left) {
                 ret = TSI_ERR_UNSORTED_EDGES;
                 goto out;
             }
-            prev->next = edge;
+            prev->next = e;
         }
-        ret = tree_sequence_builder_index_edge(self, edge);
+        ret = tree_sequence_builder_index_edge(self, e);
         if (ret != 0) {
             goto out;
         }
-        prev = edge;
+        prev = e;
     }
-    ret = 0;
+    ret = tree_sequence_builder_freeze_indexes(self);
 out:
     return ret;
 }
@@ -911,16 +953,16 @@ tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 {
     int ret = 0;
     size_t j, u;
-    edge_t *e;
+    indexed_edge_t *e;
 
     j = 0;
     for (u = 0; u < self->num_nodes; u++) {
         e = self->path[u];
         while (e != NULL) {
-            left[j] = e->left;
-            right[j] = e->right;
-            parent[j] = e->parent;
-            child[j] = e->child;
+            left[j] = e->edge.left;
+            right[j] = e->edge.right;
+            parent[j] = e->edge.parent;
+            child[j] = e->edge.child;
             e = e->next;
             j++;
         }
