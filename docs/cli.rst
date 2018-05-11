@@ -37,8 +37,8 @@ Argument details
 ++++++++++++++++
 
 .. argparse::
-    :module: tsinfer.cli
-    :func: get_tsinfer_parser
+    :module: tsinfer
+    :func: get_cli_parser
     :prog: tsinfer
     :nodefault:
 
