@@ -110,9 +110,7 @@ class TestCli(unittest.TestCase):
         self.input_ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=10)
         sample_data = tsinfer.SampleData(
-            num_samples=self.input_ts.num_samples,
-            sequence_length=self.input_ts.sequence_length,
-            compressor=None, path=self.sample_file)
+            sequence_length=self.input_ts.sequence_length, path=self.sample_file)
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()

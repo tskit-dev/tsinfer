@@ -32,8 +32,6 @@ import humanize
 import time
 
 import tsinfer
-import tsinfer.formats as formats
-import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)

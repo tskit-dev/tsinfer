@@ -58,8 +58,7 @@ class TestRoundTrip(unittest.TestCase):
     def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
-        sample_data = formats.SampleData(
-            num_samples=genotypes.shape[1], sequence_length=sequence_length)
+        sample_data = formats.SampleData(sequence_length=sequence_length)
         for j in range(genotypes.shape[0]):
             sample_data.add_site(positions[j], ["0", "1"], genotypes[j])
         sample_data.finalise()
@@ -149,10 +148,9 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     """
     def verify_round_trip(self, genotypes, inference):
         self.assertEqual(genotypes.shape[0], inference.shape[0])
-        sample_data = tsinfer.SampleData(num_samples=genotypes.shape[1])
-        for j in range(genotypes.shape[0]):
-            sample_data.add_site(j, ["0", "1"], genotypes[j], inference=inference[j])
-        sample_data.finalise()
+        with tsinfer.SampleData() as sample_data:
+            for j in range(genotypes.shape[0]):
+                sample_data.add_site(j, ["0", "1"], genotypes[j], inference=inference[j])
         output_ts = tsinfer.infer(sample_data)
         self.assertTrue(np.array_equal(genotypes, output_ts.genotype_matrix()))
 
@@ -216,8 +214,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=1, random_seed=5)
         self.assertGreater(ts.num_sites, 2)
-        sample_data = tsinfer.SampleData(
-            num_samples=ts.num_samples, sequence_length=1)
+        sample_data = tsinfer.SampleData(sequence_length=1)
         rng = random.Random(32)
         all_alleles = []
         for variant in ts.variants():
@@ -243,8 +240,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         ts = msprime.simulate(
             11, mutation_rate=5, recombination_rate=2, random_seed=15)
         self.assertGreater(ts.num_sites, 2)
-        sample_data = tsinfer.SampleData(
-            num_samples=ts.num_samples, sequence_length=1)
+        sample_data = tsinfer.SampleData(sequence_length=1)
         rng = random.Random(32)
         all_metadata = []
         for variant in ts.variants():
@@ -310,10 +306,9 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def verify_ancestor_generator(self, genotypes):
         m, n = genotypes.shape
-        sample_data = tsinfer.SampleData(num_samples=n)
-        for j in range(m):
-            sample_data.add_site(j, ["0", "1"], genotypes[j])
-        sample_data.finalise()
+        with tsinfer.SampleData() as sample_data:
+            for j in range(m):
+                sample_data.add_site(j, ["0", "1"], genotypes[j])
 
         adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
@@ -354,11 +349,9 @@ class TestGeneratedAncestors(unittest.TestCase):
         # Verifies that we can round-trip the specified tree sequence
         # using the generated ancestors. NOTE: this must be an SMC
         # consistent tree sequence!
-        sample_data = formats.SampleData(
-            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
-        for v in ts.variants():
-            sample_data.add_site(v.position, v.alleles, v.genotypes)
-        sample_data.finalise()
+        with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
+            for v in ts.variants():
+                sample_data.add_site(v.position, v.alleles, v.genotypes)
 
         ancestor_data = formats.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
@@ -409,12 +402,10 @@ class TestBuildAncestors(unittest.TestCase):
     Tests for the generate_ancestors function.
     """
     def get_simulated_example(self, ts):
-        sample_data = tsinfer.SampleData(
-            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
-        for variant in ts.variants():
-            sample_data.add_site(
-                variant.site.position, variant.alleles, variant.genotypes)
-        sample_data.finalise()
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
+            for variant in ts.variants():
+                sample_data.add_site(
+                    variant.site.position, variant.alleles, variant.genotypes)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         return sample_data, ancestor_data
 
@@ -482,7 +473,7 @@ class TestBuildAncestors(unittest.TestCase):
         n = 20
         m = 50
         G, positions = get_random_data_example(n, m)
-        sample_data = tsinfer.SampleData(num_samples=n, sequence_length=m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
         for genotypes, position in zip(G, positions):
             sample_data.add_site(position, ["0", "1"], genotypes)
         sample_data.finalise()
@@ -496,8 +487,7 @@ class AlgorithmsExactlyEqualMixin(object):
     return precisely the same tree sequence when fed with perfect mutations.
     """
     def infer(self, ts, engine, path_compression=False):
-        sample_data = tsinfer.SampleData(
-            num_samples=ts.num_samples, sequence_length=ts.sequence_length)
+        sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
             sample_data.add_site(v.site.position, v.alleles, v.genotypes)
         sample_data.finalise()
@@ -611,7 +601,7 @@ class TestPartialAncestorMatching(unittest.TestCase):
 
     def test_easy_case(self):
         num_sites = 6
-        sample_data = tsinfer.SampleData(num_samples=3)
+        sample_data = tsinfer.SampleData()
         for j in range(num_sites):
             sample_data.add_site(j, ["0", "1"], [0, 1, 1])
         sample_data.finalise()
@@ -640,7 +630,7 @@ class TestPartialAncestorMatching(unittest.TestCase):
 
     def test_partial_overlap(self):
         num_sites = 7
-        sample_data = tsinfer.SampleData(num_samples=3)
+        sample_data = tsinfer.SampleData()
         for j in range(num_sites):
             sample_data.add_site(j, ["0", "1"], [0, 1, 1])
         sample_data.finalise()
@@ -670,10 +660,9 @@ class TestPartialAncestorMatching(unittest.TestCase):
 
     def test_edge_overlap_bug(self):
         num_sites = 12
-        sample_data = tsinfer.SampleData(num_samples=3)
-        for j in range(num_sites):
-            sample_data.add_site(j, ["0", "1"], [0, 1, 1])
-        sample_data.finalise()
+        with tsinfer.SampleData() as sample_data:
+            for j in range(num_sites):
+                sample_data.add_site(j, ["0", "1"], [0, 1, 1])
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0

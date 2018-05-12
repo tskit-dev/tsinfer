@@ -692,6 +692,7 @@ class SampleData(DataContainer):
         # For now we just add one population. We can't round-trip the data
         # in tskit for now anyway, so there's no point in complicating things.
         self._add_population()
+        self._sample_added = False
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
@@ -823,8 +824,7 @@ class SampleData(DataContainer):
     @classmethod
     def from_tree_sequence(cls, ts, **kwargs):
         self = cls.__new__(cls)
-        self.__init__(
-            sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
+        self.__init__(sequence_length=ts.sequence_length, **kwargs)
         for v in ts.variants():
             self.add_site(v.site.position, v.alleles, v.genotypes)
         self.finalise()
@@ -861,9 +861,10 @@ class SampleData(DataContainer):
             raise ValueError("population ID out of bounds")
         self._samples_writer.add(
             population=population, metadata=self._check_metadata(metadata))
+        self._sample_added = True
 
     def _finalise_samples(self, num_samples):
-        if self.num_samples == 0:
+        if not self._sample_added:
             # Add in the default samples for the genotypes.
             for _ in range(num_samples):
                 self.add_sample()
