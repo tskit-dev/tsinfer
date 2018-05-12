@@ -89,7 +89,7 @@ def infer(
 
 def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
 
-    ancestor_data = formats.AncestorData.initialise(sample_data, **kwargs)
+    ancestor_data = formats.AncestorData(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
     num_sites = sample_data.num_inference_sites
     num_samples = sample_data.num_samples

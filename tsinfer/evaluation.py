@@ -435,14 +435,14 @@ def run_perfect_inference(
     Runs the perfect inference process on the specified tree sequence.
     """
     ts = insert_perfect_mutations(base_ts)
-    sample_data = formats.SampleData.initialise(
+    sample_data = formats.SampleData(
         num_samples=ts.num_samples, sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
         sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
-    ancestor_data = formats.AncestorData.initialise(sample_data, compressor=None)
+    ancestor_data = formats.AncestorData(sample_data)
     build_simulated_ancestors(
         sample_data, ancestor_data, ts, time_chunking=time_chunking)
     ancestor_data.finalise()

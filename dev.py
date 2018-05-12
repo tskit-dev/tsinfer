@@ -30,7 +30,7 @@ import msprime
 
 
 def plot_breakpoints(ts, map_file, output_file):
-    # Read in the recombination map using the read_hapmap method,
+    # Read in the recombination map using the read_hapmap engine,
     recomb_map = msprime.RecombinationMap.read_hapmap(map_file)
 
     # Now we get the positions and rates from the recombination
@@ -97,7 +97,7 @@ def generate_samples(ts, error_p):
 
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
-        error_rate=0, method="C", log_level="WARNING",
+        error_rate=0, engine="C", log_level="WARNING",
         debug=True, progress=False, path_compression=True):
 
     np.random.seed(seed)
@@ -115,23 +115,46 @@ def tsinfer_dev(
     assert ts.num_sites > 0
 
     G = generate_samples(ts, error_rate)
-    sample_data = tsinfer.SampleData.initialise(
-        sequence_length=ts.sequence_length, chunk_size=10)
-    for j in range(ts.num_samples):
-        sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
-    for site, genotypes in zip(ts.sites(), G):
-        sample_data.add_site(
-            site.position, ["0", "1"], genotypes,
-            inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
-    sample_data.finalise()
+    with tsinfer.SampleData(
+            sequence_length=ts.sequence_length,
+            path="tmp.samples",
+            chunk_size=10) as sample_data:
+        for j in range(ts.num_samples):
+            sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
+        for site, genotypes in zip(ts.sites(), G):
+            sample_data.add_site(
+                site.position, ["0", "1"], genotypes,
+                inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, chunk_size=10)
-    tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
-    ancestor_data.finalise()
+    # print("sample_data")
+    # print(sample_data)
+    # # sample_data.close()
 
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, method=method)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, method=method)
-    dump_provenance(output_ts)
+
+    # with sample_data.copy() as other_data:
+    #     print("other_data = ")
+    #     print(other_data)
+    #     print("mode = ", other_data._mode)
+
+
+    # print("after")
+    # print(other_data)
+    # print("mode = ", other_data._mode)
+
+    # # print(sample_data)
+
+    # # sample_data.finalise()
+    # # print(sample_data)
+    # print("LOADED")
+    # with tsinfer.SampleData.load("tmp.samples") as sample_data:
+    #     print(sample_data)
+    # print(sample_data)
+
+    ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
+
+    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
+    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+    # dump_provenance(output_ts)
 
 
 def dump_provenance(ts):
@@ -204,11 +227,11 @@ if __name__ == "__main__":
     # build_profile_inputs(10**5, 100)
 
     # for j in range(1, 100):
-    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, method="P", recombination_rate=1e-8)
+    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(5, 0.3, seed=1, num_threads=0, method="C", recombination_rate=1e-8)
+    tsinfer_dev(5, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):
 #         print(seed)
-#         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, method="C")
+#         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, engine="C")

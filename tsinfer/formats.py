@@ -271,10 +271,41 @@ class DataContainer(object):
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
-    def __init__(self):
-        self._mode = -1
-        self.path = None
-        self.data = None
+    def __init__(
+            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
+        self._mode = self.BUILD_MODE
+        if path is not None and compressor is None:
+            compressor = DEFAULT_COMPRESSOR
+        self._num_flush_threads = num_flush_threads
+        self._chunk_size = max(1, chunk_size)
+        self._metadata_codec = TempJSON()
+        self._compressor = compressor
+        self.data = zarr.group()
+        self.path = path
+        if path is not None:
+            store = self._new_lmdb_store()
+            self.data = zarr.open_group(store=store, mode="w")
+        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
+        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
+        self.data.attrs["uuid"] = str(uuid.uuid4())
+
+        chunks = self._chunk_size
+        provenances_group = self.data.create_group("provenances")
+        provenances_group.create_dataset(
+            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        provenances_group.create_dataset(
+            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        if self._mode != self.READ_MODE:
+            self.finalise()
+        else:
+            self.close()
 
     def _open_lmbd_readonly(self):
         # We set the mapsize here because LMBD will map 1TB of virtual memory if
@@ -312,11 +343,24 @@ class DataContainer(object):
 
     @classmethod
     def load(cls, path):
-        self = cls()
+        self = cls.__new__(cls)
+        self.mode = self.READ_MODE
         self.path = path
         self._open_readonly()
         logger.info("Loaded {}".format(self.summary()))
         return self
+
+    def close(self):
+        """
+        Close this DataContainer. Any read or write operations attempted
+        after calling this will fail.
+        """
+        if self._mode != self.READ_MODE:
+            self.finalise()
+        if self.data.store is not None:
+            self.data.store.close()
+        self.data = None
+        self.mode = -1
 
     def copy(self, path=None):
         """
@@ -330,14 +374,21 @@ class DataContainer(object):
         if path is not None and self.path is not None:
             if os.path.abspath(path) == os.path.abspath(self.path):
                 raise ValueError("Cannot copy to the same file")
-        other = type(self)()
+        cls = type(self)
+        other = cls.__new__(cls)
         other.path = path
         if path is None:
-            store = zarr.DictStore()
+            # Have to work around a fairly weird bug in zarr where if we
+            # try to use copy_store on an in-memory array we end up
+            # overwriting the original values.
+            other.data = zarr.group()
+            zarr.copy_all(source=self.data, dest=other.data)
+            for key, value in self.data.attrs.items():
+                other.data.attrs[key] = value
         else:
-            store = self._new_lmdb_store()
-        zarr.copy_store(self.data.store, store)
-        other.data = zarr.group(store)
+            store = other._new_lmdb_store()
+            zarr.copy_store(self.data.store, store)
+            other.data = zarr.group(store)
         # Set a new UUID
         other.data.attrs["uuid"] = str(uuid.uuid4())
         other.data.attrs[FINALISED_KEY] = False
@@ -375,36 +426,6 @@ class DataContainer(object):
             if os.path.exists(lockfile):
                 os.unlink(lockfile)
         self._open_readonly()
-
-    def _initialise(
-            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
-        """
-        Initialise the basic state of the data container.
-        """
-        if path is not None and compressor is None:
-            compressor = DEFAULT_COMPRESSOR
-        self._num_flush_threads = num_flush_threads
-        self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = TempJSON()
-        self._compressor = compressor
-        self.data = zarr.group()
-        self.path = path
-        if path is not None:
-            store = self._new_lmdb_store()
-            self.data = zarr.open_group(store=store, mode="w")
-        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
-        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
-        self.data.attrs["uuid"] = str(uuid.uuid4())
-
-        chunks = self._chunk_size
-        provenances_group = self.data.create_group("provenances")
-        provenances_group.create_dataset(
-            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        provenances_group.create_dataset(
-            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._mode = self.BUILD_MODE
 
     def _check_format(self):
         try:
@@ -574,9 +595,55 @@ class SampleData(DataContainer):
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (0, 3)
 
-    def __init__(self):
-        super(SampleData, self).__init__()
-        self._num_inference_sites = None
+    def __init__(self, sequence_length=0, num_samples=None, **kwargs):
+        super().__init__(**kwargs)
+        self.data.attrs["sequence_length"] = float(sequence_length)
+        chunks = self._chunk_size,
+        # We don't actually support population metadata yet, but keep the
+        # infrastucture around for when we do.
+        populations_group = self.data.create_group("population")
+        metadata = populations_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._populations_writer = BufferedItemWriter(
+            {"metadata": metadata}, num_threads=self._num_flush_threads)
+
+        samples_group = self.data.create_group("samples")
+        population = samples_group.create_dataset(
+            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        metadata = samples_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._samples_writer = BufferedItemWriter(
+            {"population": population, "metadata": metadata},
+            num_threads=self._num_flush_threads)
+
+        sites_group = self.data.create_group("sites")
+        sites_group.create_dataset(
+            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.float64)
+        sites_group.create_dataset(
+            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
+            compressor=self._compressor, dtype=np.uint8)
+        sites_group.create_dataset(
+            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.uint8)
+        sites_group.create_dataset(
+            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        sites_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+
+        self._sites_writer = None
+        # For now we just add one population. We can't round-trip the data
+        # in tskit for now anyway, so there's no point in complicating things.
+        self._add_population()
+        if num_samples is not None:
+            # Add in the default population and samples.
+            for _ in range(num_samples):
+                self.add_sample()
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
@@ -588,9 +655,13 @@ class SampleData(DataContainer):
 
     @property
     def num_inference_sites(self):
-        if self._num_inference_sites is None:
-            self._num_inference_sites = int(np.sum(self.sites_inference[:]))
-        return self._num_inference_sites
+        if self._mode == self.READ_MODE:
+            # Cache the value as it's expensive to compute
+            if not hasattr(self, "__num_inference_sites"):
+                self.__num_inference_sites = int(np.sum(self.sites_inference[:]))
+            return self.__num_inference_sites
+        else:
+            return int(np.sum(self.sites_inference[:]))
 
     @property
     def num_populations(self):
@@ -698,69 +769,12 @@ class SampleData(DataContainer):
         Returns a sample data object corresponding to the specified tree
         sequence.
         """
-        self = cls.initialise(
+        self = cls.__new__(cls)
+        self.__init__(
             sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
         for v in ts.variants():
             self.add_site(v.site.position, v.alleles, v.genotypes)
         self.finalise()
-        return self
-
-    @classmethod
-    def initialise(cls, sequence_length=0, num_samples=None, **kwargs):
-        """
-        Initialises a new SampleData object.
-        """
-        self = cls()
-        super(cls, self)._initialise(**kwargs)
-
-        self.data.attrs["sequence_length"] = float(sequence_length)
-
-        chunks = self._chunk_size,
-        # We don't actually support population metadata yet, but keep the
-        # infrastucture around for when we do.
-        populations_group = self.data.create_group("population")
-        metadata = populations_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._populations_writer = BufferedItemWriter(
-            {"metadata": metadata}, num_threads=self._num_flush_threads)
-
-        samples_group = self.data.create_group("samples")
-        population = samples_group.create_dataset(
-            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        metadata = samples_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._samples_writer = BufferedItemWriter(
-            {"population": population, "metadata": metadata},
-            num_threads=self._num_flush_threads)
-
-        sites_group = self.data.create_group("sites")
-        sites_group.create_dataset(
-            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
-        sites_group.create_dataset(
-            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
-            compressor=self._compressor, dtype=np.uint8)
-        sites_group.create_dataset(
-            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint8)
-        sites_group.create_dataset(
-            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        sites_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-
-        self._sites_writer = None
-        # For now we just add one population. We can't round-trip the data
-        # in tskit for now anyway, so there's no point in complicating things.
-        self._add_population()
-        if num_samples is not None:
-            # Add in the default population and samples.
-            for _ in range(num_samples):
-                self.add_sample()
         return self
 
     def _alloc_site_writer(self):
@@ -885,6 +899,34 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)
 
+    def __init__(self, input_data, **kwargs):
+        super().__init__(**kwargs)
+        self.input_data = input_data
+        self.data.attrs["sample_data_uuid"] = input_data.uuid
+        self.data.attrs["num_sites"] = self.input_data.num_inference_sites
+
+        chunks = self._chunk_size
+        self.data.create_dataset(
+            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.uint32)
+        self.data.create_dataset(
+            "focal_sites", shape=(0,), chunks=chunks,
+            dtype="array:i4", compressor=self._compressor)
+        self.data.create_dataset(
+            "ancestor", shape=(0,), chunks=chunks,
+            dtype="array:u1", compressor=self._compressor)
+
+        self.item_writer = BufferedItemWriter({
+            "start": self.start, "end": self.end, "time": self.time,
+            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
+            num_threads=self._num_flush_threads)
+
     def summary(self):
         return "AncestorData(num_ancestors={}, num_sites={})".format(
             self.num_ancestors, self.num_sites)
@@ -956,41 +998,6 @@ class AncestorData(DataContainer):
     ####################################
     # Write mode
     ####################################
-
-    @classmethod
-    def initialise(cls, input_data, **kwargs):
-        """
-        Initialises a new SampleData object. Data can be added to
-        this object using the add_ancestor method.
-        """
-        self = cls()
-        super(cls, self)._initialise(**kwargs)
-        self.input_data = input_data
-        self.data.attrs["sample_data_uuid"] = input_data.uuid
-        self.data.attrs["num_sites"] = self.input_data.num_inference_sites
-
-        chunks = self._chunk_size
-        self.data.create_dataset(
-            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        self.data.create_dataset(
-            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        self.data.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint32)
-        self.data.create_dataset(
-            "focal_sites", shape=(0,), chunks=chunks,
-            dtype="array:i4", compressor=self._compressor)
-        self.data.create_dataset(
-            "ancestor", shape=(0,), chunks=chunks,
-            dtype="array:u1", compressor=self._compressor)
-
-        self.item_writer = BufferedItemWriter({
-            "start": self.start, "end": self.end, "time": self.time,
-            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
-            num_threads=self._num_flush_threads)
-        return self
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """

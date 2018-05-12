@@ -10,12 +10,12 @@ Toy example
 
 Suppose that we have observed the following data::
 
-    sample haplotype
-    0 AGCGAT
-    1 TGACAG
-    2 AGACAT
-    3 ACCGCT
-    4 ACCGCT
+    sample  haplotype
+    0       AGCGAT
+    1       TGACAG
+    2       AGACAT
+    3       ACCGCT
+    4       ACCGCT
 
 Here we have phased haplotype data for five samples at six sites. We wish to infer the
 genealogies that gave rise to this data set. To import the data into ``tsinfer`` we must know the
