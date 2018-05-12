@@ -94,6 +94,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             compressor = formats.DEFAULT_COMPRESSOR
             for _, array in input_file.arrays():
                 self.assertEqual(array.compressor, compressor)
+            with tsinfer.load(filename) as other:
+                self.assertEqual(other, input_file)
 
     def test_defaults_no_path(self):
         ts = self.get_example_ts(10, 10)
@@ -571,6 +573,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             compressor = formats.DEFAULT_COMPRESSOR
             for _, array in ancestor_data.arrays():
                 self.assertEqual(array.compressor, compressor)
+            with tsinfer.load(filename) as other:
+                self.assertEqual(other, ancestor_data)
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)

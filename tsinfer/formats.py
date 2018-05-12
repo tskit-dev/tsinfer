@@ -1043,3 +1043,27 @@ class AncestorData(DataContainer):
         """
         for a in chunk_iterator(self.ancestor):
             yield a
+
+
+def load(path):
+    # TODO This is pretty inelegant, but it works. Really we should call the
+    # load on the superclass which can dispatch to the registered subclasses
+    # for a given format_name.
+    tsinfer_file = None
+    try:
+        logger.debug("Trying SampleData file")
+        tsinfer_file = SampleData.load(path)
+        logger.debug("Loaded SampleData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+    try:
+        logger.debug("Trying AncestorData file")
+        tsinfer_file = AncestorData.load(path)
+        logger.debug("Loaded AncestorData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("AncestorData load failed: {}".format(e))
+    if tsinfer_file is None:
+        raise exceptions.FileFormatError(
+            "Unrecognised file format. Try running with -vv and check the log "
+            "for more details on what went wrong")
+    return tsinfer_file
