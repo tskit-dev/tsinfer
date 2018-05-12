@@ -109,14 +109,13 @@ class TestCli(unittest.TestCase):
         self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
         self.input_ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=10)
-        sample_data = tsinfer.SampleData.initialise(
-            num_samples=self.input_ts.num_samples,
-            sequence_length=self.input_ts.sequence_length,
-            compressor=None, path=self.sample_file)
+        sample_data = tsinfer.SampleData(
+            sequence_length=self.input_ts.sequence_length, path=self.sample_file)
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.alleles, var.genotypes)
         sample_data.finalise()
         tsinfer.generate_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
+        sample_data.close()
 
 
 class TestCommandsDefaults(TestCli):

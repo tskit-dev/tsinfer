@@ -271,10 +271,41 @@ class DataContainer(object):
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
-    def __init__(self):
-        self._mode = -1
-        self.path = None
-        self.data = None
+    def __init__(
+            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
+        self._mode = self.BUILD_MODE
+        if path is not None and compressor is None:
+            compressor = DEFAULT_COMPRESSOR
+        self._num_flush_threads = num_flush_threads
+        self._chunk_size = max(1, chunk_size)
+        self._metadata_codec = TempJSON()
+        self._compressor = compressor
+        self.data = zarr.group()
+        self.path = path
+        if path is not None:
+            store = self._new_lmdb_store()
+            self.data = zarr.open_group(store=store, mode="w")
+        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
+        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
+        self.data.attrs["uuid"] = str(uuid.uuid4())
+
+        chunks = self._chunk_size
+        provenances_group = self.data.create_group("provenances")
+        provenances_group.create_dataset(
+            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        provenances_group.create_dataset(
+            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        if self._mode != self.READ_MODE:
+            self.finalise()
+        else:
+            self.close()
 
     def _open_lmbd_readonly(self):
         # We set the mapsize here because LMBD will map 1TB of virtual memory if
@@ -312,11 +343,24 @@ class DataContainer(object):
 
     @classmethod
     def load(cls, path):
-        self = cls()
+        self = cls.__new__(cls)
+        self.mode = self.READ_MODE
         self.path = path
         self._open_readonly()
         logger.info("Loaded {}".format(self.summary()))
         return self
+
+    def close(self):
+        """
+        Close this DataContainer. Any read or write operations attempted
+        after calling this will fail.
+        """
+        if self._mode != self.READ_MODE:
+            self.finalise()
+        if self.data.store is not None:
+            self.data.store.close()
+        self.data = None
+        self.mode = -1
 
     def copy(self, path=None):
         """
@@ -330,14 +374,21 @@ class DataContainer(object):
         if path is not None and self.path is not None:
             if os.path.abspath(path) == os.path.abspath(self.path):
                 raise ValueError("Cannot copy to the same file")
-        other = type(self)()
+        cls = type(self)
+        other = cls.__new__(cls)
         other.path = path
         if path is None:
-            store = zarr.DictStore()
+            # Have to work around a fairly weird bug in zarr where if we
+            # try to use copy_store on an in-memory array we end up
+            # overwriting the original values.
+            other.data = zarr.group()
+            zarr.copy_all(source=self.data, dest=other.data)
+            for key, value in self.data.attrs.items():
+                other.data.attrs[key] = value
         else:
-            store = self._new_lmdb_store()
-        zarr.copy_store(self.data.store, store)
-        other.data = zarr.group(store)
+            store = other._new_lmdb_store()
+            zarr.copy_store(self.data.store, store)
+            other.data = zarr.group(store)
         # Set a new UUID
         other.data.attrs["uuid"] = str(uuid.uuid4())
         other.data.attrs[FINALISED_KEY] = False
@@ -375,36 +426,6 @@ class DataContainer(object):
             if os.path.exists(lockfile):
                 os.unlink(lockfile)
         self._open_readonly()
-
-    def _initialise(
-            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
-        """
-        Initialise the basic state of the data container.
-        """
-        if path is not None and compressor is None:
-            compressor = DEFAULT_COMPRESSOR
-        self._num_flush_threads = num_flush_threads
-        self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = TempJSON()
-        self._compressor = compressor
-        self.data = zarr.group()
-        self.path = path
-        if path is not None:
-            store = self._new_lmdb_store()
-            self.data = zarr.open_group(store=store, mode="w")
-        self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
-        self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
-        self.data.attrs["uuid"] = str(uuid.uuid4())
-
-        chunks = self._chunk_size
-        provenances_group = self.data.create_group("provenances")
-        provenances_group.create_dataset(
-            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        provenances_group.create_dataset(
-            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._mode = self.BUILD_MODE
 
     def _check_format(self):
         try:
@@ -569,14 +590,108 @@ class DataContainer(object):
 
 class SampleData(DataContainer):
     """
-    Class representing the data stored about our input samples.
+    SampleData(sequence_length=0, path=None, num_flush_threads=0, \
+    compressor=None, chunk_size=1024)
+
+    Class representing input sample data used for inference.
+    See sample data file format :ref:`specifications <sec_file_formats_samples>`
+    for details on the structure of this file.
+
+    The most common usage for this class will be to import data from some
+    external source and save it to file for later use. This will usually
+    follow a pattern like:
+
+    .. code-block:: python
+
+        sample_data = tsinfer.SampleData(path="mydata.samples")
+        sample_data.add_site(
+            position=1234, alleles=["G", "C"], genotypes=[0, 0, 1, 0])
+        sample_data.add_site(
+            position=5678, alleles=["A", "T"], genotypes=[1, 1, 1, 0])
+        sample_data.finalise()
+
+    This creates a sample data file for four samples and two sites, and
+    saves it in the file "mydata.samples". Note that the call to
+    :meth:`.finalise` is essential here to ensure that all data will be
+    correctly flushed to disk. For convenience, a context manager may
+    also be used to ensure this is done:
+
+    .. code-block:: python
+
+        with tsinfer.SampleData(path="mydata.samples") as sample_data:
+            sample_data.add_site(1234, ["G", "C"], [0, 0, 1, 0])
+            sample_data.add_site(5678, ["A", "T"], [1, 1, 1, 0])
+
+    :param float sequence_length: If specified, this is the sequence length
+        that will be associated with the tree sequence output by
+        :func:`tsinfer.infer` and :func:`tsinfer.match_samples`. If provided
+        site coordinates must be less than this value.
+    :param str path: The path of the file to store the sample data. If None,
+        the information is stored in memory and not persistent.
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
+        to use for compressing data. Any codec may be used, but
+        problems may occur with very large datasets on certain codecs as
+        they cannot compress buffers >2GB. If None, do not use any compression.
+        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
+        when data is written to a file, and no compression when data is
+        stored in memory.
+    :param int chunk_size: The chunk size used for
+        `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
+        compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (0, 3)
 
-    def __init__(self):
-        super(SampleData, self).__init__()
-        self._num_inference_sites = None
+    def __init__(self, sequence_length=0, **kwargs):
+
+        super().__init__(**kwargs)
+        self.data.attrs["sequence_length"] = float(sequence_length)
+        chunks = self._chunk_size,
+        # We don't actually support population metadata yet, but keep the
+        # infrastucture around for when we do.
+        populations_group = self.data.create_group("population")
+        metadata = populations_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._populations_writer = BufferedItemWriter(
+            {"metadata": metadata}, num_threads=self._num_flush_threads)
+
+        samples_group = self.data.create_group("samples")
+        population = samples_group.create_dataset(
+            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        metadata = samples_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        self._samples_writer = BufferedItemWriter(
+            {"population": population, "metadata": metadata},
+            num_threads=self._num_flush_threads)
+
+        sites_group = self.data.create_group("sites")
+        sites_group.create_dataset(
+            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.float64)
+        sites_group.create_dataset(
+            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
+            compressor=self._compressor, dtype=np.uint8)
+        sites_group.create_dataset(
+            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.uint8)
+        sites_group.create_dataset(
+            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        sites_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+
+        self._sites_writer = None
+        # For now we just add one population. We can't round-trip the data
+        # in tskit for now anyway, so there's no point in complicating things.
+        self._add_population()
+        self._sample_added = False
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
@@ -588,9 +703,13 @@ class SampleData(DataContainer):
 
     @property
     def num_inference_sites(self):
-        if self._num_inference_sites is None:
-            self._num_inference_sites = int(np.sum(self.sites_inference[:]))
-        return self._num_inference_sites
+        if self._mode == self.READ_MODE:
+            # Cache the value as it's expensive to compute
+            if not hasattr(self, "__num_inference_sites"):
+                self.__num_inference_sites = int(np.sum(self.sites_inference[:]))
+            return self.__num_inference_sites
+        else:
+            return int(np.sum(self.sites_inference[:]))
 
     @property
     def num_populations(self):
@@ -666,6 +785,15 @@ class SampleData(DataContainer):
         Returns True if all the data attributes of this input file and the
         specified input file are equal. This compares every attribute except
         the UUID and provenance.
+
+        To compare two :class:`SampleData`` instances for exact equality of
+        all data includeing UUIDs and provenance data, use ``s1 == s2``.
+
+        :param SampleData other: The other :class:`SampleData` instance to
+            compare with.
+        :return: ``True`` if the data held in this :class:`SampleData`
+            instance is identical to the date held in the other instacnce.
+        :rtype: bool
         """
         return (
             self.format_name == other.format_name and
@@ -694,73 +822,11 @@ class SampleData(DataContainer):
 
     @classmethod
     def from_tree_sequence(cls, ts, **kwargs):
-        """
-        Returns a sample data object corresponding to the specified tree
-        sequence.
-        """
-        self = cls.initialise(
-            sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
+        self = cls.__new__(cls)
+        self.__init__(sequence_length=ts.sequence_length, **kwargs)
         for v in ts.variants():
             self.add_site(v.site.position, v.alleles, v.genotypes)
         self.finalise()
-        return self
-
-    @classmethod
-    def initialise(cls, sequence_length=0, num_samples=None, **kwargs):
-        """
-        Initialises a new SampleData object.
-        """
-        self = cls()
-        super(cls, self)._initialise(**kwargs)
-
-        self.data.attrs["sequence_length"] = float(sequence_length)
-
-        chunks = self._chunk_size,
-        # We don't actually support population metadata yet, but keep the
-        # infrastucture around for when we do.
-        populations_group = self.data.create_group("population")
-        metadata = populations_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._populations_writer = BufferedItemWriter(
-            {"metadata": metadata}, num_threads=self._num_flush_threads)
-
-        samples_group = self.data.create_group("samples")
-        population = samples_group.create_dataset(
-            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        metadata = samples_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        self._samples_writer = BufferedItemWriter(
-            {"population": population, "metadata": metadata},
-            num_threads=self._num_flush_threads)
-
-        sites_group = self.data.create_group("sites")
-        sites_group.create_dataset(
-            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
-        sites_group.create_dataset(
-            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
-            compressor=self._compressor, dtype=np.uint8)
-        sites_group.create_dataset(
-            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint8)
-        sites_group.create_dataset(
-            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-        sites_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
-
-        self._sites_writer = None
-        # For now we just add one population. We can't round-trip the data
-        # in tskit for now anyway, so there's no point in complicating things.
-        self._add_population()
-        if num_samples is not None:
-            # Add in the default population and samples.
-            for _ in range(num_samples):
-                self.add_sample()
         return self
 
     def _alloc_site_writer(self):
@@ -794,15 +860,61 @@ class SampleData(DataContainer):
             raise ValueError("population ID out of bounds")
         self._samples_writer.add(
             population=population, metadata=self._check_metadata(metadata))
+        self._sample_added = True
+
+    def _finalise_samples(self, num_samples):
+        if not self._sample_added:
+            # Add in the default samples for the genotypes.
+            for _ in range(num_samples):
+                self.add_sample()
+        self._samples_writer.flush()
+        self._samples_writer = None
+        self._alloc_site_writer()
 
     def add_site(self, position, alleles, genotypes, metadata=None, inference=None):
+        """
+        Adds a new site to this :class:`.SampleData`. At a minimum, the new site
+        must specify the ``position``, ``alleles`` an ``genotypes``. Sites
+        must be added in increasing order of position; duplicate positions are
+        **not** supported. For each site a list of ``alleles`` must be supplied.
+        This list defines the ancestral and derived states at the site. For
+        example, if we set ``alleles=["A", "T"]`` then the ancestral state is
+        "A" and the derived state is "T". The observed state for each sample
+        is then encoded using the ``genotypes`` parameter. If have a haploid
+        sample size of ``n``, then this must be a one dimensional array-like
+        object with length ``n``. For a given array ``g`` and sample index
+        ``j``, ``g[j]`` should contain ``0`` if sample ``j`` carries the
+        ancestral state at this site and ``1`` if it carries the derived state.
+        All sites must have genotypes for the same number of samples.
+
+        :param float position: The floating point position of this site. Must be
+            less than the ``sequence_length`` if provided to the :class:`.SampleData`
+            constructor. Must be greater than all previously added sites.
+        :param list(str) alleles: A list of strings defining the alleles at this
+            site. The zeroth element of this list is the **ancestral state**
+            and the oneth element is the **derived state**. Only biallelic
+            sites are currently supported.
+        :param arraylike genotypes: An array-like object defining the sample
+            genotypes at this site. The array of genotypes corresponds to the
+            observed alleles for each sample, represented by indexes into the
+            alleles array. This input is converted to a numpy array with
+            dtype ``np.uint8``; therefore, for maximum efficiency ensure
+            that the input array is also of this type.
+        :param dict metadata: A JSON encodable dict-like object containing
+            metadata that is to be associated with this site.
+        :param bool inference: If True, use this site during the inference
+            process. If False, do not use this sites for inference; in this
+            case, :func:`match_samples` will place mutations on the existing
+            tree in a way that encodes the supplied sample genotypes. If
+            ``inference=None`` (the default), use any site in which the
+            number of samples carrying the derived state is greater than
+            1 and less than the number of samples.
+        """
         self._check_build_mode()
-        if self._samples_writer is not None:
-            self._samples_writer.flush()
-            self._samples_writer = None
-            self._alloc_site_writer()
-            self._last_position = -1
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
+        if self._samples_writer is not None:
+            self._finalise_samples(genotypes.shape[0])
+            self._last_position = -1
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
         if len(set(alleles)) != len(alleles):
@@ -836,6 +948,8 @@ class SampleData(DataContainer):
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
+            if self._sites_writer is None:
+                self._finalise_samples()
             self._sites_writer.flush()
             self._sites_writer = None
         super(SampleData, self).finalise(**kwargs)
@@ -846,10 +960,14 @@ class SampleData(DataContainer):
 
     def genotypes(self, inference_sites=None):
         """
-        Returns an iterator over the sample (sites_id, genotypes) pairs.
-        If inference_sites is None, return all genotypes. If it is True,
-        return only genotypes at sites that have been marked for inference.
-        If False, return only genotypes at sites that are not marked for inference.
+        Returns an iterator over the (site_id, genotypes) pairs.
+        If ``inference_sites`` is ``None``, return genotypes for all sites.
+        If ``inference_sites`` is ``True``, return only genotypes at sites that have
+        been marked for inference; if ``False``, return only genotypes at sites
+        that are not marked for inference.
+
+        :param bool inference_sites: Control the sites that we return genotypes
+            for.
         """
         inference = self.sites_inference[:]
         for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
@@ -857,12 +975,13 @@ class SampleData(DataContainer):
                 yield j, a
 
     def haplotypes(self, inference_sites=None):
-        """
-        Returns an iterator over the sample haplotypes. If inference_sites is
-        None, return for all sites. If inference_sites is False, return for
-        sites that are not selected for inference. If True, return states
-        for sites that are selected for inference.
-        """
+        # Undocumenting for now.
+        # """
+        # Returns an iterator over the sample haplotypes. If inference_sites is
+        # None, return for all sites. If inference_sites is False, return for
+        # sites that are not selected for inference. If True, return states
+        # for sites that are selected for inference.
+        # """
         if inference_sites is not None:
             selection = self.sites_inference[:] == int(inference_sites)
         # We iterate over chunks vertically here, and it's not worth complicating
@@ -880,10 +999,62 @@ class SampleData(DataContainer):
 
 class AncestorData(DataContainer):
     """
-    Class representing the data stored about our input samples.
+    AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
+    chunk_size=1024)
+
+    Class representing the stored ancestor data produced by
+    :func:`generate_ancestors`. See the samples file format
+    :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
+    of this file.
+
+    :param SampleData sample_data: The :class:`.SampleData` instance
+        that this ancestor data file was generated from.
+    :param str path: The path of the file to store the sample data. If None,
+        the information is stored in memory and not persistent.
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
+        to use for compressing data. Any codec may be used, but
+        problems may occur with very large datasets on certain codecs as
+        they cannot compress buffers >2GB. If None, do not use any compression.
+        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
+        when data is written to a file, and no compression when data is
+        stored in memory.
+    :param int chunk_size: The chunk size used for
+        `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
+        compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)
+
+    def __init__(self, sample_data, **kwargs):
+        super().__init__(**kwargs)
+        self.sample_data = sample_data
+        self.data.attrs["sample_data_uuid"] = sample_data.uuid
+        self.data.attrs["num_sites"] = self.sample_data.num_inference_sites
+
+        chunks = self._chunk_size
+        self.data.create_dataset(
+            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        self.data.create_dataset(
+            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.uint32)
+        self.data.create_dataset(
+            "focal_sites", shape=(0,), chunks=chunks,
+            dtype="array:i4", compressor=self._compressor)
+        self.data.create_dataset(
+            "ancestor", shape=(0,), chunks=chunks,
+            dtype="array:u1", compressor=self._compressor)
+
+        self.item_writer = BufferedItemWriter({
+            "start": self.start, "end": self.end, "time": self.time,
+            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
+            num_threads=self._num_flush_threads)
 
     def summary(self):
         return "AncestorData(num_ancestors={}, num_sites={})".format(
@@ -957,41 +1128,6 @@ class AncestorData(DataContainer):
     # Write mode
     ####################################
 
-    @classmethod
-    def initialise(cls, input_data, **kwargs):
-        """
-        Initialises a new SampleData object. Data can be added to
-        this object using the add_ancestor method.
-        """
-        self = cls()
-        super(cls, self)._initialise(**kwargs)
-        self.input_data = input_data
-        self.data.attrs["sample_data_uuid"] = input_data.uuid
-        self.data.attrs["num_sites"] = self.input_data.num_inference_sites
-
-        chunks = self._chunk_size
-        self.data.create_dataset(
-            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        self.data.create_dataset(
-            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
-        self.data.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint32)
-        self.data.create_dataset(
-            "focal_sites", shape=(0,), chunks=chunks,
-            dtype="array:i4", compressor=self._compressor)
-        self.data.create_dataset(
-            "ancestor", shape=(0,), chunks=chunks,
-            dtype="array:u1", compressor=self._compressor)
-
-        self.item_writer = BufferedItemWriter({
-            "start": self.start, "end": self.end, "time": self.time,
-            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
-            num_threads=self._num_flush_threads)
-        return self
-
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material
@@ -999,7 +1135,7 @@ class AncestorData(DataContainer):
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
-        num_sites = self.input_data.num_inference_sites
+        num_sites = self.sample_data.num_inference_sites
         haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
         focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
         if start < 0:
@@ -1036,3 +1172,39 @@ class AncestorData(DataContainer):
         """
         for a in chunk_iterator(self.ancestor):
             yield a
+
+
+def load(path):
+    """
+    Loads a tsinfer :class:`.SampleData` or :class:`.AncestorData` file from
+    the specified path. The correct class will be determined by the content
+    of the file. If the file is format not recognised a
+    :class:`.FileFormatError` will be thrown.
+
+    :param str path: The path of the file we wish to load.
+    :return: The corresponding :class:`.SampleData` or :class:`.AncestorData`
+        instance opened in read only mode.
+    :rtype: :class:`.AncestorData` or :class:`.SampleData`.
+    :raises: :class:`.FileFormatError` if the file cannot be read.
+    """
+    # TODO This is pretty inelegant, but it works. Really we should call the
+    # load on the superclass which can dispatch to the registered subclasses
+    # for a given format_name.
+    tsinfer_file = None
+    try:
+        logger.debug("Trying SampleData file")
+        tsinfer_file = SampleData.load(path)
+        logger.debug("Loaded SampleData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("SampleData load failed: {}".format(e))
+    try:
+        logger.debug("Trying AncestorData file")
+        tsinfer_file = AncestorData.load(path)
+        logger.debug("Loaded AncestorData file")
+    except exceptions.FileFormatError as e:
+        logger.debug("AncestorData load failed: {}".format(e))
+    if tsinfer_file is None:
+        raise exceptions.FileFormatError(
+            "Unrecognised file format. Try running with -vv and check the log "
+            "for more details on what went wrong")
+    return tsinfer_file

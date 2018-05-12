@@ -32,8 +32,6 @@ import humanize
 import time
 
 import tsinfer
-import tsinfer.formats as formats
-import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)
@@ -133,25 +131,8 @@ def setup_logging(args):
 
 def run_list(args):
     setup_logging(args)
-    tsinfer_file = None
-    try:
-        logger.debug("Trying SampleData file")
-        tsinfer_file = formats.SampleData.load(args.path)
-        logger.debug("Loaded SampleData file")
-    except exceptions.FileFormatError as e:
-        logger.debug("SampleData load failed: {}".format(e))
-    try:
-        logger.debug("Trying AncestorData file")
-        tsinfer_file = formats.AncestorData.load(args.path)
-        logger.debug("Loaded AncestorData file")
-    except exceptions.FileFormatError as e:
-        logger.debug("SampleData load failed: {}".format(e))
 
-    if tsinfer_file is None:
-        raise exceptions.FileFormatError(
-            "Unrecognised file format. Try running with -vv and check the log "
-            "for more details on what went wrong")
-
+    tsinfer_file = tsinfer.load(args.path)
     if args.storage:
         print(tsinfer_file.info)
     else:

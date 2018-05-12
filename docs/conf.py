@@ -192,4 +192,9 @@ texinfo_documents = [
 
 
 # Example configuration for intersphinx: refer to the Python standard library.
-intersphinx_mapping = {'https://docs.python.org/3/': None}
+intersphinx_mapping = {
+    'https://docs.python.org/3/': None,
+    'https://msprime.readthedocs.io/en/stable/': None,
+    'https://numcodecs.readthedocs.io/en/stable/': None,
+    'https://zarr.readthedocs.io/en/stable/': None,
+}
