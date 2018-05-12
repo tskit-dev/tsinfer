@@ -28,7 +28,7 @@ scope of this manual. Assuming that we know the ancestral state, we can then imp
 
     import tsinfer
 
-    with tsinfer.SampleData(num_samples=5) as sample_data:
+    with tsinfer.SampleData() as sample_data:
         sample_data.add_site(0, ["A", "T"], [0, 1, 0, 0, 0])
         sample_data.add_site(1, ["G", "C"], [0, 0, 0, 1, 1])
         sample_data.add_site(2, ["C", "A"], [0, 1, 1, 0, 0])
@@ -112,7 +112,7 @@ coalescent with recombination using `msprime
         sample_size=10000, Ne=10**4, recombination_rate=1e-8,
         mutation_rate=1e-8, length=10*10**6, random_seed=42)
     ts.dump("simulation-source.trees")
-    print("simulation done:", ts.num_sites, "sites")
+    print("simulation done:", ts.num_trees, "trees and", ts.num_sites,  "sites")
 
     progress = tqdm.tqdm(total=ts.num_sites)
     with tsinfer.SampleData(
@@ -126,7 +126,7 @@ coalescent with recombination using `msprime
 Running the code we get::
 
     $ python3 simulation-example.py
-    Simulation done: 36734 trees and 39001
+    Simulation done: 36734 trees and 39001 sites
     100%|████████████████████████████████| 39001/39001 [00:51<00:00, 762.26it/s]
 
 In this script we first run a simulation of a sample of 10 thousand 10 megabase chromosomes with
@@ -150,9 +150,8 @@ Examining the files, we then see the following::
     $ ls -lh simulation*
     -rw-r--r-- 1 jk jk  22M May 12 11:06 simulation.samples
     -rw-r--r-- 1 jk jk 4.8M May 12 11:06 simulation-source.trees
-    -rw-r--r-- 1 jk jk 4.4M May 12 11:27 simulation.trees
 
-The ``simulation.samples`` file is quite small, being only about five times the size of the
+The ``simulation.samples`` file is quite small, being only about four times the size of the
 original the ``msprime`` tree sequence file. The :ref:`tsinfer command line interface <sec_cli>`
 provides a useful way to examine files in more detail using the ``list`` (or ``ls``) command::
 
@@ -214,9 +213,11 @@ Looking at our output files, we see::
 
 Therefore our output tree sequence file that we have just inferred in less than five minutes is
 *even smaller* than the original ``msprime`` simulated tree sequence! Because the output file is
-also an ``msprime`` :class:`msprime.TreeSequence`, we can use the same API to work with both
+also an :class:`msprime.TreeSequence`, we can use the same API to work with both.
 
 .. code-block:: python
+
+    import msprime
 
     source = msprime.load("simulation-source.trees")
     inferred = msprime.load("simulation.trees")
@@ -237,8 +238,7 @@ Here we first load up our source and inferred tree sequences from their correspo
 ``.trees`` files. Each of the trees in these tree sequences has 10 thousand samples
 which is much too large to easily visualise. Therefore, to make things simple here
 we subset both tree sequences down to their minimal representations for six
-samples using `simplify
-<http://msprime.readthedocs.io/en/stable/api.html#msprime.TreeSequence.simplify>`_.
+samples using :meth:`msprime.TreeSequence.simplify`.
 (Using this tiny subset of the overall data allows us to get an informal
 feel for the trees that are inferred by ``tsinfer``, but this is certainly
 not a recommended approach for validating the inference!)
@@ -303,4 +303,10 @@ ancestor of nodes 2, 3, 4 and 5 before 1.
     1. Add documentation links for msprime above so we can explain tree
        sequences there.
 
+
+++++++++++++
+Data example
+++++++++++++
+
+.. todo:: Worked example where we process a VCF to get some data.
 

@@ -76,6 +76,22 @@ def _get_progress_monitor(progress_monitor):
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
         engine=C_ENGINE):
+    """
+    infer(sample_data, num_threads=0)
+
+    Runs the full :ref:`inference pipeline <sec_inference>` on the specified
+    :class:`SampleData` instance and returns the inferred
+    :class:`msprime.TreeSequence`.
+
+    :param SampleData sample_data: The input :class:`SampleData` instance
+        representing the observed data that we wish to make inferences from.
+    :param int num_threads: The number of worker threads to use in parallelised
+        sections of the algorithm. If <= 0, do not spawn any threads and
+        use simpler sequential algorithms (default).
+    :returns: The :class:`msprime.TreeSequence` object inferred from the
+        input sample data.
+    :rtype: msprime.TreeSequence
+    """
     ancestor_data = generate_ancestors(
         sample_data, engine=engine, progress_monitor=progress_monitor)
     ancestors_ts = match_ancestors(
@@ -88,7 +104,27 @@ def infer(
 
 
 def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kwargs):
+    """
+    generate_ancestors(sample_data, path=None, **kwargs)
 
+    Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
+    on the specified :class:`SampleData` instance and returns the resulting
+    :class:`AncestorData` instance. If you wish to store generated ancestors
+    persistently on file you must pass the ``path`` keyword argument to this
+    function. For example,
+
+    .. code-block:: python
+
+        ancestor_data = tsinfer.generate_ancestors(sample_data, path="mydata.ancestors")
+
+    All other keyword arguments are passed to the :class:`AncestorData` constructor,
+    which may be used to control the storage properties of the generated file.
+
+    :param SampleData sample_data: The :class:`SampleData` instance that we are
+        genering putative ancestors from.
+    :rtype: AncestorData
+    :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
+    """
     ancestor_data = formats.AncestorData(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
     num_sites = sample_data.num_inference_sites
@@ -162,8 +198,23 @@ def match_ancestors(
         sample_data, ancestor_data, progress_monitor=None, num_threads=0,
         path_compression=True, extended_checks=False, engine=C_ENGINE):
     """
-    Runs the copying process of the specified input and ancestors and returns
-    the resulting tree sequence.
+    match_ancestors(sample_data, path_compression, num_threads=0)
+
+    Runs the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
+    on the specified :class:`SampleData` and :class:`AncestorData` instances,
+    returning the resulting :class:`msprime.TreeSequence` representing the
+    complete ancestry of the putative ancestors.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        representing the input data.
+    :param AncestorData ancestor_data: The :class:`AncestorData` instance
+        representing the set of ancestral haplotypes that we are finding
+        a history for.
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
+    :return: The ancestors tree sequence representing the inferred history
+        of the set of ancestors.
+    :rtype: msprime.TreeSequence
     """
     matcher = AncestorMatcher(
         sample_data, ancestor_data, engine=engine,
@@ -176,6 +227,27 @@ def match_samples(
         sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
         path_compression=True, simplify=True, extended_checks=False,
         stabilise_node_ordering=False, engine=C_ENGINE):
+    """
+    match_samples(sample_data, ancestors_ts, num_threads=0, simplify=True)
+
+    Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
+    on the specified :class:`SampleData` instance and ancestors tree sequence,
+    returning the final :class:`msprime.TreeSequence` instance containing
+    the full inferred history for all samples and sites. If ``simplify`` is
+    True (the default) run :meth:`msprime.TreeSequence.simplify` on the
+    inferred tree sequence to ensure that it is in canonical form.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        representing the input data.
+    :param msprime.TreeSequence ancestors_ts: The
+        :class:`msprime.TreeSequence` instance representing the inferred
+        history among ancestral ancestral haplotypes.
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
+    :return: The tree sequence representing the inferred history
+        of the sample.
+    :rtype: msprime.TreeSequence
+    """
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
         engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,

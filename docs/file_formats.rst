@@ -18,7 +18,7 @@ Samples File
 ************
 
 The samples file is ``tsinfer's`` input format. Data must be converted into
-this format before it can be processes using the
+this format before it can be processed using the :class:`.SampleData` class.
 
 .. todo:: Document the structure of the samples file.
 
@@ -27,6 +27,9 @@ this format before it can be processes using the
 **************
 Ancestors File
 **************
+
+The ancestors file contains the ancestral haplotype data inferred from the
+sample data in the :ref:`sec_inference_generate_ancestors` step.
 
 .. todo:: Document the structure of the ancestors file.
 

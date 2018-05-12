@@ -590,6 +590,9 @@ class DataContainer(object):
 
 class SampleData(DataContainer):
     """
+    SampleData(sequence_length=0, path=None, num_flush_threads=0, \
+    compressor=None, chunk_size=1024)
+
     Class representing input sample data used for inference.
     See sample data file format :ref:`specifications <sec_file_formats_samples>`
     for details on the structure of this file.
@@ -616,10 +619,8 @@ class SampleData(DataContainer):
     .. code-block:: python
 
         with tsinfer.SampleData(path="mydata.samples") as sample_data:
-            sample_data.add_site(
-                position=1234, alleles=["G", "C"], genotypes=[0, 0, 1, 0])
-            sample_data.add_site(
-                position=5678, alleles=["A", "T"], genotypes=[1, 1, 1, 0])
+            sample_data.add_site(1234, ["G", "C"], [0, 0, 1, 0])
+            sample_data.add_site(5678, ["A", "T"], [1, 1, 1, 0])
 
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
@@ -627,21 +628,19 @@ class SampleData(DataContainer):
         site coordinates must be less than this value.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
-    :param Codec compressor: A `numcodecs <http://numcodecs.readthedocs.io/>`_
-        codec to use for compressing data. Any codec may be used, but
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
+        to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
-        By default, use the the
-        `zstd <http://numcodecs.readthedocs.io/en/stable/zstd.html>`_ codec
+        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
         when data is written to a file, and no compression when data is
         stored in memory.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
-    :param int num_flush_threads: The number of background threads to use
-        for compressing data and flushing to disc. If <= 0, do not spawn
-        any threads but use a synchronous algorithm instead. Default=0.
-
     """
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (0, 3)
@@ -1000,6 +999,9 @@ class SampleData(DataContainer):
 
 class AncestorData(DataContainer):
     """
+    AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
+    chunk_size=1024)
+
     Class representing the stored ancestor data produced by
     :func:`generate_ancestors`. See the samples file format
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
@@ -1009,20 +1011,19 @@ class AncestorData(DataContainer):
         that this ancestor data file was generated from.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
-    :param Codec compressor: A `numcodecs <http://numcodecs.readthedocs.io/>`_
-        codec to use for compressing data. Any codec may be used, but
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
+        to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
-        By default, use the the
-        `zstd <http://numcodecs.readthedocs.io/en/stable/zstd.html>`_ codec
+        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
         when data is written to a file, and no compression when data is
         stored in memory.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
-    :param int num_flush_threads: The number of background threads to use
-        for compressing data and flushing to disc. If <= 0, do not spawn
-        any threads but use a synchronous algorithm instead. Default=0.
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)

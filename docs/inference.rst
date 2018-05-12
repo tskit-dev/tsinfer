@@ -127,3 +127,5 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
 .. todo::
     1. Describe path compression here and above in the ancestors
        section
+    2. Describe the structure of the outpt tree sequences; how the
+       nodes are mapped, what the time values mean, etc.
