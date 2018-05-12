@@ -590,12 +590,64 @@ class DataContainer(object):
 
 class SampleData(DataContainer):
     """
-    Class representing the data stored about our input samples.
+    Class representing input sample data used for inference.
+    See sample data file format :ref:`specifications <sec_file_formats_samples>`
+    for details on the structure of this file.
+
+    The most common usage for this class will be to import data from some
+    external source and save it to file for later use. This will usually
+    follow a pattern like:
+
+    .. code-block:: python
+
+        sample_data = tsinfer.SampleData(path="mydata.samples")
+        sample_data.add_site(
+            position=1234, alleles=["G", "C"], genotypes=[0, 0, 1, 0])
+        sample_data.add_site(
+            position=5678, alleles=["A", "T"], genotypes=[1, 1, 1, 0])
+        sample_data.finalise()
+
+    This creates a sample data file for four samples and two sites, and
+    saves it in the file "mydata.samples". Note that the call to
+    :meth:`.finalise` is essential here to ensure that all data will be
+    correctly flushed to disk. For convenience, a context manager may
+    also be used to ensure this is done:
+
+    .. code-block:: python
+
+        with tsinfer.SampleData(path="mydata.samples") as sample_data:
+            sample_data.add_site(
+                position=1234, alleles=["G", "C"], genotypes=[0, 0, 1, 0])
+            sample_data.add_site(
+                position=5678, alleles=["A", "T"], genotypes=[1, 1, 1, 0])
+
+    :param float sequence_length: If specified, this is the sequence length
+        that will be associated with the tree sequence output by
+        :func:`tsinfer.infer` and :func:`tsinfer.match_samples`. If provided
+        site coordinates must be less than this value.
+    :param str path: The path of the file to store the sample data. If None,
+        the information is stored in memory and not persistent.
+    :param Codec compressor: A `numcodecs <http://numcodecs.readthedocs.io/>`_
+        codec to use for compressing data. Any codec may be used, but
+        problems may occur with very large datasets on certain codecs as
+        they cannot compress buffers >2GB. If None, do not use any compression.
+        By default, use the the
+        `zstd <http://numcodecs.readthedocs.io/en/stable/zstd.html>`_ codec
+        when data is written to a file, and no compression when data is
+        stored in memory.
+    :param int chunk_size: The chunk size used for
+        `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
+        compression level and algorithm performance. Default=1024.
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
+
     """
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (0, 3)
 
-    def __init__(self, sequence_length=0, num_samples=None, **kwargs):
+    def __init__(self, sequence_length=0, **kwargs):
+
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
         chunks = self._chunk_size,
@@ -640,10 +692,6 @@ class SampleData(DataContainer):
         # For now we just add one population. We can't round-trip the data
         # in tskit for now anyway, so there's no point in complicating things.
         self._add_population()
-        if num_samples is not None:
-            # Add in the default population and samples.
-            for _ in range(num_samples):
-                self.add_sample()
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
@@ -737,6 +785,15 @@ class SampleData(DataContainer):
         Returns True if all the data attributes of this input file and the
         specified input file are equal. This compares every attribute except
         the UUID and provenance.
+
+        To compare two :class:`SampleData`` instances for exact equality of
+        all data includeing UUIDs and provenance data, use ``s1 == s2``.
+
+        :param SampleData other: The other :class:`SampleData` instance to
+            compare with.
+        :return: ``True`` if the data held in this :class:`SampleData`
+            instance is identical to the date held in the other instacnce.
+        :rtype: bool
         """
         return (
             self.format_name == other.format_name and
@@ -765,10 +822,6 @@ class SampleData(DataContainer):
 
     @classmethod
     def from_tree_sequence(cls, ts, **kwargs):
-        """
-        Returns a sample data object corresponding to the specified tree
-        sequence.
-        """
         self = cls.__new__(cls)
         self.__init__(
             sequence_length=ts.sequence_length, num_samples=ts.num_samples, **kwargs)
@@ -809,14 +862,59 @@ class SampleData(DataContainer):
         self._samples_writer.add(
             population=population, metadata=self._check_metadata(metadata))
 
+    def _finalise_samples(self, num_samples):
+        if self.num_samples == 0:
+            # Add in the default samples for the genotypes.
+            for _ in range(num_samples):
+                self.add_sample()
+        self._samples_writer.flush()
+        self._samples_writer = None
+        self._alloc_site_writer()
+
     def add_site(self, position, alleles, genotypes, metadata=None, inference=None):
+        """
+        Adds a new site to this :class:`.SampleData`. At a minimum, the new site
+        must specify the ``position``, ``alleles`` an ``genotypes``. Sites
+        must be added in increasing order of position; duplicate positions are
+        **not** supported. For each site a list of ``alleles`` must be supplied.
+        This list defines the ancestral and derived states at the site. For
+        example, if we set ``alleles=["A", "T"]`` then the ancestral state is
+        "A" and the derived state is "T". The observed state for each sample
+        is then encoded using the ``genotypes`` parameter. If have a haploid
+        sample size of ``n``, then this must be a one dimensional array-like
+        object with length ``n``. For a given array ``g`` and sample index
+        ``j``, ``g[j]`` should contain ``0`` if sample ``j`` carries the
+        ancestral state at this site and ``1`` if it carries the derived state.
+        All sites must have genotypes for the same number of samples.
+
+        :param float position: The floating point position of this site. Must be
+            less than the ``sequence_length`` if provided to the :class:`.SampleData`
+            constructor. Must be greater than all previously added sites.
+        :param list(str) alleles: A list of strings defining the alleles at this
+            site. The zeroth element of this list is the **ancestral state**
+            and the oneth element is the **derived state**. Only biallelic
+            sites are currently supported.
+        :param arraylike genotypes: An array-like object defining the sample
+            genotypes at this site. The array of genotypes corresponds to the
+            observed alleles for each sample, represented by indexes into the
+            alleles array. This input is converted to a numpy array with
+            dtype ``np.uint8``; therefore, for maximum efficiency ensure
+            that the input array is also of this type.
+        :param dict metadata: A JSON encodable dict-like object containing
+            metadata that is to be associated with this site.
+        :param bool inference: If True, use this site during the inference
+            process. If False, do not use this sites for inference; in this
+            case, :func:`match_samples` will place mutations on the existing
+            tree in a way that encodes the supplied sample genotypes. If
+            ``inference=None`` (the default), use any site in which the
+            number of samples carrying the derived state is greater than
+            1 and less than the number of samples.
+        """
         self._check_build_mode()
-        if self._samples_writer is not None:
-            self._samples_writer.flush()
-            self._samples_writer = None
-            self._alloc_site_writer()
-            self._last_position = -1
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
+        if self._samples_writer is not None:
+            self._finalise_samples(genotypes.shape[0])
+            self._last_position = -1
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
         if len(set(alleles)) != len(alleles):
@@ -850,6 +948,8 @@ class SampleData(DataContainer):
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
+            if self._sites_writer is None:
+                self._finalise_samples()
             self._sites_writer.flush()
             self._sites_writer = None
         super(SampleData, self).finalise(**kwargs)
@@ -860,10 +960,14 @@ class SampleData(DataContainer):
 
     def genotypes(self, inference_sites=None):
         """
-        Returns an iterator over the sample (sites_id, genotypes) pairs.
-        If inference_sites is None, return all genotypes. If it is True,
-        return only genotypes at sites that have been marked for inference.
-        If False, return only genotypes at sites that are not marked for inference.
+        Returns an iterator over the (site_id, genotypes) pairs.
+        If ``inference_sites`` is ``None``, return genotypes for all sites.
+        If ``inference_sites`` is ``True``, return only genotypes at sites that have
+        been marked for inference; if ``False``, return only genotypes at sites
+        that are not marked for inference.
+
+        :param bool inference_sites: Control the sites that we return genotypes
+            for.
         """
         inference = self.sites_inference[:]
         for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
@@ -871,12 +975,13 @@ class SampleData(DataContainer):
                 yield j, a
 
     def haplotypes(self, inference_sites=None):
-        """
-        Returns an iterator over the sample haplotypes. If inference_sites is
-        None, return for all sites. If inference_sites is False, return for
-        sites that are not selected for inference. If True, return states
-        for sites that are selected for inference.
-        """
+        # Undocumenting for now.
+        # """
+        # Returns an iterator over the sample haplotypes. If inference_sites is
+        # None, return for all sites. If inference_sites is False, return for
+        # sites that are not selected for inference. If True, return states
+        # for sites that are selected for inference.
+        # """
         if inference_sites is not None:
             selection = self.sites_inference[:] == int(inference_sites)
         # We iterate over chunks vertically here, and it's not worth complicating
@@ -894,16 +999,38 @@ class SampleData(DataContainer):
 
 class AncestorData(DataContainer):
     """
-    Class representing the data stored about our input samples.
+    Class representing the stored ancestor data produced by
+    :func:`generate_ancestors`. See the samples file format
+    :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
+    of this file.
+
+    :param SampleData sample_data: The :class:`.SampleData` instance
+        that this ancestor data file was generated from.
+    :param str path: The path of the file to store the sample data. If None,
+        the information is stored in memory and not persistent.
+    :param Codec compressor: A `numcodecs <http://numcodecs.readthedocs.io/>`_
+        codec to use for compressing data. Any codec may be used, but
+        problems may occur with very large datasets on certain codecs as
+        they cannot compress buffers >2GB. If None, do not use any compression.
+        By default, use the the
+        `zstd <http://numcodecs.readthedocs.io/en/stable/zstd.html>`_ codec
+        when data is written to a file, and no compression when data is
+        stored in memory.
+    :param int chunk_size: The chunk size used for
+        `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
+        compression level and algorithm performance. Default=1024.
+    :param int num_flush_threads: The number of background threads to use
+        for compressing data and flushing to disc. If <= 0, do not spawn
+        any threads but use a synchronous algorithm instead. Default=0.
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (0, 2)
 
-    def __init__(self, input_data, **kwargs):
+    def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
-        self.input_data = input_data
-        self.data.attrs["sample_data_uuid"] = input_data.uuid
-        self.data.attrs["num_sites"] = self.input_data.num_inference_sites
+        self.sample_data = sample_data
+        self.data.attrs["sample_data_uuid"] = sample_data.uuid
+        self.data.attrs["num_sites"] = self.sample_data.num_inference_sites
 
         chunks = self._chunk_size
         self.data.create_dataset(
@@ -1006,7 +1133,7 @@ class AncestorData(DataContainer):
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
-        num_sites = self.input_data.num_inference_sites
+        num_sites = self.sample_data.num_inference_sites
         haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
         focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
         if start < 0:
@@ -1046,6 +1173,18 @@ class AncestorData(DataContainer):
 
 
 def load(path):
+    """
+    Loads a tsinfer :class:`.SampleData` or :class:`.AncestorData` file from
+    the specified path. The correct class will be determined by the content
+    of the file. If the file is format not recognised a
+    :class:`.FileFormatError` will be thrown.
+
+    :param str path: The path of the file we wish to load.
+    :return: The corresponding :class:`.SampleData` or :class:`.AncestorData`
+        instance opened in read only mode.
+    :rtype: :class:`.AncestorData` or :class:`.SampleData`.
+    :raises: :class:`.FileFormatError` if the file cannot be read.
+    """
     # TODO This is pretty inelegant, but it works. Really we should call the
     # load on the superclass which can dispatch to the registered subclasses
     # for a given format_name.
