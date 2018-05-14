@@ -1031,6 +1031,8 @@ class AncestorData(DataContainer):
     def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
         self.sample_data = sample_data
+        # Cache the num_sites value here as it's expensive to compute.
+        self._num_sites = self.sample_data.num_inference_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
         self.data.attrs["num_sites"] = self.sample_data.num_inference_sites
 
@@ -1135,16 +1137,15 @@ class AncestorData(DataContainer):
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
-        num_sites = self.sample_data.num_inference_sites
         haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
         focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
         if start < 0:
             raise ValueError("Start must be >= 0")
-        if end > num_sites:
+        if end > self._num_sites:
             raise ValueError("end must be <= num_variant_sites")
         if start >= end:
             raise ValueError("start must be < end")
-        if haplotype.shape != (num_sites,):
+        if haplotype.shape != (self._num_sites,):
             raise ValueError("haplotypes incorrect shape.")
         if time <= 0:
             raise ValueError("time must be > 0")
