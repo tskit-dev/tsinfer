@@ -10,6 +10,7 @@ import time
 import warnings
 import os.path
 import colorsys
+import json
 
 import numpy as np
 import pandas as pd
@@ -1113,29 +1114,34 @@ def run_ancestor_comparison(args):
     estimated_anc = tsinfer.generate_ancestors(sample_data)
     estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
 
-    print(estimated_anc)
-
     exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
     exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
 
-    print(exact_anc)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}.png".format(
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
         args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
         args.error_probability))
+    if args.store_data:
+        filename = name_format.format("length.json")
+        data = {
+            "exact_ancestors": exact_anc_length.tolist(),
+            "estimated_ancestors": estimated_anc_length.tolist()}
+        with open(filename, "w") as f:
+            json.dump(data, f)
+
     plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
     plt.legend()
-    plt.savefig(name_format.format("length-dist"))
+    plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
 
     frequency = estimated_anc.time[:][1:]
     print(estimated_anc_length[frequency==2])
     plt.hist(estimated_anc_length[frequency==2], bins=50)
     plt.xlabel("doubleton ancestor length")
-    plt.savefig(name_format.format("doubleton-length-dist"))
+    plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
 
     # Because we have different numbers of ancestors, we need to rescale time
@@ -1151,20 +1157,8 @@ def run_ancestor_comparison(args):
     plt.xlabel("Time (oldest to youngest)")
     plt.ylabel("Length")
     plt.legend()
-    plt.savefig(name_format.format("length-time"))
+    plt.savefig(name_format.format("length-time.png"))
     plt.clf()
-
-    # nbins = 100
-    # x = running_mean(exact_anc_num_focal, nbins)
-    # plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
-    # x = running_mean(estimated_anc_num_focal, nbins)
-    # plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
-    # plt.xlabel("Time (oldest to youngest)")
-    # plt.ylabel("Number of focal sites")
-    # plt.legend()
-    # plt.savefig(name_format.format("num_focal"))
-    # plt.clf()
-
 
 def get_node_degree_by_depth(ts):
     """
@@ -1467,6 +1461,9 @@ if __name__ == "__main__":
         help="Error probability")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--store-data", "-S", action="store_true",
+        help="Store the raw data.")
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
