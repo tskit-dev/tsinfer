@@ -15,6 +15,75 @@ import tsinfer
 import msprime
 
 
+class AncestorBuilderViz(object):
+    """
+    Visualisation for the process of building ancestors.
+    """
+
+    def __init__(self, sample_data, ancestor_data, width=800, height=400):
+        self.ancestor_data = ancestor_data
+        self.sample_data = sample_data
+        self.width = width
+        self.height = height
+        self.x_pad = 20
+        self.y_pad = 20
+        self.x_unit = (width - 2 * self.x_pad) / sample_data.num_sites
+        self.y_unit = (height - 2 * self.y_pad) / (sample_data.num_samples + 2)
+
+    def x_trans(self, v):
+        return self.x_pad + v * self.x_unit
+
+    def y_trans(self, v):
+        return self.height - (self.y_pad + v * self.y_unit)
+
+    def draw_matrix(self, dwg, focal_sites, ancestor, current_site=None):
+        A = self.sample_data.sites_genotypes[:].T
+        n, m = A.shape
+
+        for site in focal_sites:
+            dwg.add(dwg.rect(
+                (self.x_trans(site), self.y_trans(n)),
+                (self.x_unit, n * self.y_unit), fill="grey"))
+
+        labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
+        lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+        for x in range(m + 1):
+            a = self.x_trans(x), self.y_trans(0)
+            b = self.x_trans(x), self.y_trans(n)
+            lines.add(dwg.line(a, b))
+
+        for y in range(n + 1):
+            a = self.x_trans(0), self.y_trans(y)
+            b = self.x_trans(m), self.y_trans(y)
+            lines.add(dwg.line(a, b))
+
+        for x in range(m):
+            for y in range(n):
+                labels.add(dwg.text(
+                    str(A[y, x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))))
+        y = n + 1
+        for x in range(m):
+            labels.add(dwg.text(
+                str(ancestor[x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))))
+
+
+    def draw(self, ancestor_id, filename_pattern):
+        start = self.ancestor_data.start[ancestor_id]
+        end = self.ancestor_data.end[ancestor_id]
+        focal_sites = self.ancestor_data.focal_sites[ancestor_id]
+        a = np.zeros(self.sample_data.num_sites, dtype=int)
+        a[:] = -1
+        a[start: end] = self.ancestor_data.ancestor[ancestor_id]
+        print(start, end, focal_sites, a)
+
+
+        dwg = svgwrite.Drawing(size=(self.width, self.height), debug=True)
+        self.draw_matrix(dwg, focal_sites, a)
+        with open(filename_pattern.format(0), "w") as f:
+            f.write(dwg.tostring())
+
+
+
 def draw_edges(ts, width=800, height=600):
     """
     Returns an SVG depiction of the edges in the specified tree sequence.
@@ -393,15 +462,24 @@ def run_viz(
         path_compression=path_compression, time_chunking=time_chunking)
 
 
+def visualise_ancestors():
+    ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=3)
+    ts = tsinfer.strip_singletons(ts)
+    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    ancestor_data = tsinfer.generate_ancestors(sample_data)
+    viz = AncestorBuilderViz(sample_data, ancestor_data)
+
+    viz.draw(6, "ancestors_{}.svg")
+
+
 def main():
 
-    # np.set_printoptions(linewidth=20000)
-    # np.set_printoptions(threshold=20000000)
+    visualise_ancestors()
 
-    run_viz(
-        15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=True,
-        perfect_mutations=True, time_chunking=True, engine="C", path_compression=False,
-        error_rate=0.00)
+    # run_viz(
+    #     15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=True,
+    #     perfect_mutations=True, time_chunking=True, engine="C", path_compression=False,
+    #     error_rate=0.00)
 
     # run_viz(15, 1000, 0.002, 2, engine="C", perfect_ancestors=True)
 
