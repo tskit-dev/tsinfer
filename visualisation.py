@@ -112,6 +112,10 @@ def draw_ancestors(ts, width=800, height=600):
 class Visualiser(object):
 
     def __init__(self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8):
+        # Make sure the singletons have been removed.
+        for v in original_ts.variants():
+            if np.sum(v.genotypes) < 2:
+                raise ValueError("Only non singletons will be considered")
         self.box_size = box_size
         self.sample_data = sample_data
         self.original_ts = original_ts
@@ -126,13 +130,10 @@ class Visualiser(object):
             (self.num_ancestors, original_ts.num_sites), dtype=np.uint8)
         start = ancestor_data.start[:]
         end = ancestor_data.end[:]
-        variant_sites = np.hstack(
-            [sample_data.variant_site, [sample_data.num_sites]])
-        A = ancestor_data.genotypes[:]
-        for j in range(ancestor_data.num_ancestors):
-            self.ancestors[j, variant_sites[:-1]] = A[:, j]
-            self.ancestors[j, :variant_sites[start[j]]] = tsinfer.UNKNOWN_ALLELE
-            self.ancestors[j, variant_sites[end[j]]:] = tsinfer.UNKNOWN_ALLELE
+        for j, a in enumerate(ancestor_data.ancestors()):
+            self.ancestors[j, start[j]: end[j]] = a
+            self.ancestors[j, start[j]] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, end[j]:] = tsinfer.UNKNOWN_ALLELE
 
         # TODO This only partially works for extra ancestors created by path
         # compression. We'll get -1 lines for extra ancestors created from
@@ -325,29 +326,24 @@ class Visualiser(object):
 
 
 def visualise(
-        ts, recombination_rate, error_rate, method="C", box_size=8,
+        ts, recombination_rate, error_rate, engine="C", box_size=8,
         perfect_ancestors=False, path_compression=False, time_chunking=False):
 
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        compressor=None)
-    for v in ts.variants():
-        sample_data.add_variant(v.site.position, v.alleles, v.genotypes)
-    sample_data.finalise()
+    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
     if perfect_ancestors:
+        ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(
             sample_data, ancestor_data, ts, time_chunking=time_chunking)
+        ancestor_data.finalise()
     else:
-        tsinfer.build_ancestors(sample_data, ancestor_data, method=method)
-    ancestor_data.finalise()
+        ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
 
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, method=method, path_compression=path_compression,
+        sample_data, ancestor_data, engine=engine, path_compression=path_compression,
         extended_checks=True)
     inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, method=method, simplify=False,
+        sample_data, ancestors_ts, engine=engine, simplify=False,
         path_compression=path_compression, extended_checks=True)
 
     prefix = "tmp__NOBACKUP__/"
@@ -357,7 +353,7 @@ def visualise(
 
     # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, method=method, simplify=True,
+        sample_data, ancestors_ts, engine=engine, simplify=True,
         path_compression=False, stabilise_node_ordering=True)
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
@@ -373,7 +369,7 @@ def visualise(
 
 
 def run_viz(
-        n, L, rate, seed, mutation_rate=0, method="C",
+        n, L, rate, seed, mutation_rate=0, engine="C",
         perfect_ancestors=True, perfect_mutations=True, path_compression=False,
         time_chunking=True, error_rate=0):
     recomb_map = msprime.RecombinationMap.uniform_map(
@@ -393,7 +389,7 @@ def run_viz(
     with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
         f.write(draw_ancestors(ts))
     visualise(
-        ts, rate, 0, method=method, box_size=26, perfect_ancestors=perfect_ancestors,
+        ts, rate, 0, engine=engine, box_size=26, perfect_ancestors=perfect_ancestors,
         path_compression=path_compression, time_chunking=time_chunking)
 
 
@@ -402,17 +398,12 @@ def main():
     # np.set_printoptions(linewidth=20000)
     # np.set_printoptions(threshold=20000000)
 
-    # import daiquiri
-    # import sys
-    # daiquiri.setup(level="DEBUG", outputs=(daiquiri.output.Stream(sys.stdout),))
-
     run_viz(
-        15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=False,
-        perfect_mutations=False, time_chunking=True, method="C", path_compression=False,
+        15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=True,
+        perfect_mutations=True, time_chunking=True, engine="C", path_compression=False,
         error_rate=0.00)
 
-    # run_viz(15, 1000, 0.002, 2, method="C", perfect_ancestors=True)
-    # check_inference(500, 1000000, 0.00002, 1, 100000, method="C")
+    # run_viz(15, 1000, 0.002, 2, engine="C", perfect_ancestors=True)
 
 if __name__ == "__main__":
     main()
