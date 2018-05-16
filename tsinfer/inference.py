@@ -415,7 +415,8 @@ class Matcher(object):
         if num_samples == 0:
             return
 
-        count = np.zeros(tree.tree_sequence.num_nodes, dtype=int)
+        # count = np.zeros(tree.tree_sequence.num_nodes, dtype=int)
+        count = collections.Counter()
         for sample in samples:
             u = self.sample_ids[sample]
             while u != msprime.NULL_NODE:
