@@ -25,6 +25,7 @@ import colorutils
 
 
 import tsinfer
+from tsinfer.evaluation import build_simulated_ancestors
 import tsinfer.cli as cli
 import msprime
 
@@ -455,19 +456,18 @@ def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+    sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
         sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
     if exact_ancestors:
+        ancestor_data = tsinfer.AncestorData(sample_data, compressor=None)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        ancestor_data.finalise()
     else:
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-    ancestor_data.finalise()
+        ancestor_data = tsinfer.generate_ancestors(sample_data, compressor=None)
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
@@ -967,16 +967,13 @@ def ancestor_properties_worker(args):
     simulation_args, compute_exact = args
     ts = msprime.simulate(**simulation_args)
 
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+    sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length,
         compressor=None)
     for v in ts.variants():
         sample_data.add_site(v.site.position, v.alleles, v.genotypes)
     sample_data.finalise()
 
-    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc)
-    estimated_anc.finalise()
+    estimated_anc = tsinfer.generate_ancestors(sample_data, compressor=None)
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
     focal_sites = estimated_anc.focal_sites[:]
     focal_sites_offset = estimated_anc.focal_sites_offset[:]
@@ -995,8 +992,8 @@ def ancestor_properties_worker(args):
     }
 
     if compute_exact:
-        exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-        tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
+        exact_anc = tsinfer.AncestorData(sample_data, compressor=None)
+        build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
         exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
 
@@ -1123,24 +1120,21 @@ def run_ancestor_comparison(args):
     # ts  = tsinfer.insert_errors(ts, args.error_probability, seed=args.random_seed)
     V = generate_samples(ts, args.error_probability)
 
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
+    sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length,
         compressor=None)
     for j, v in enumerate(V):
         sample_data.add_site(j, ["0", "1"], v)
     sample_data.finalise()
 
-    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, method="P")
-    estimated_anc.finalise()
+    estimated_anc = tsinfer.generate_ancestors(sample_data, compressor=None)
     estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
     estimated_anc_num_focal = (
         estimated_anc.focal_sites_offset[1:] - estimated_anc.focal_sites_offset[:-1])
 
     print(estimated_anc)
 
-    exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
+    exact_anc = tsinfer.AncestorData(sample_data, compressor=None)
+    build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
     exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
     exact_anc_num_focal = (

@@ -920,7 +920,7 @@ class SampleData(DataContainer):
         if len(set(alleles)) != len(alleles):
             raise ValueError("Alleles must be distinct")
         if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
-            raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
+            raise ValueError("Genotype values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
             raise ValueError("Must have num_samples genotypes.")
         if position < 0:
