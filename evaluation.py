@@ -10,6 +10,7 @@ import time
 import warnings
 import os.path
 import colorsys
+import json
 
 import numpy as np
 import pandas as pd
@@ -66,7 +67,7 @@ def generate_samples(ts, error_p):
 
 
 def infer_from_simulation(
-        ts, recombination_rate=1, input_error=0, sample_error=0, method="C",
+        ts, recombination_rate=1, input_error=0, sample_error=0, engine="C",
         path_compression=True):
     if input_error == 0:
         genotypes = ts.genotype_matrix()
@@ -76,7 +77,7 @@ def infer_from_simulation(
     return tsinfer.infer(
         genotypes, positions=positions, sequence_length=ts.sequence_length,
         recombination_rate=recombination_rate, sample_error=sample_error,
-        method=method, path_compression=path_compression)
+        engine=engine, path_compression=path_compression)
 
 
 def get_mean_rf_distance(ts1, ts2):
@@ -354,8 +355,8 @@ def check_many_trees_one_mutation_per_branch():
         print(ts_source.genotype_matrix().T)
         ts_inferred = infer_from_simulation(ts_source,
                 path_compression=False,
-                # method="Py-matrix")
-                method="P")
+                # engine="Py-matrix")
+                engine="P")
         print("num_trees", ts_source.num_trees, ts_inferred.num_trees)
         print("num_edges", ts_source.num_edges, ts_inferred.num_edges)
         verify_trees_equal(ts_source, ts_inferred)
@@ -451,30 +452,26 @@ def check_single_tree_high_mutation_rate():
 ##############################
 
 
-def run_infer(ts, method="C", path_compression=True, exact_ancestors=False):
+def run_infer(ts, engine="C", path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        compressor=None)
-    for v in ts.variants():
-        sample_data.add_site(v.site.position, v.alleles, v.genotypes)
-    sample_data.finalise()
 
-    ancestor_data = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+
     if exact_ancestors:
+        ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        ancestor_data.finalise()
     else:
-        tsinfer.build_ancestors(sample_data, ancestor_data)
-    ancestor_data.finalise()
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
-        method=method)
+        engine=engine)
     inferred_ts = tsinfer.match_samples(
         sample_data, ancestors_ts, path_compression=path_compression,
-        method=method)
+        engine=engine)
     return inferred_ts
 
 def edges_performance_worker(args):
@@ -827,8 +824,7 @@ def run_hotspot_analysis(args):
     ts = msprime.simulate(**sim_args)
     print("simulated ", ts.num_trees, "trees and", ts.num_sites, "sites")
 
-    flat_ts = run_infer(ts)
-    map_ts = run_infer(ts, recombination_map=recomb_map)
+    inferred_ts = run_infer(ts)
 
     num_bins = 100
     hotspot_breakpoints = breakpoints
@@ -836,12 +832,9 @@ def run_hotspot_analysis(args):
     for density in [True, False]:
         for x in hotspot_breakpoints[1:-1]:
             plt.axvline(x=x, color="k", ls=":")
-        breakpoints = np.array(list(flat_ts.breakpoints()))
+        breakpoints = np.array(list(inferred_ts.breakpoints()))
         v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
-        plt.plot(bin_edges[:-1], v, label="flat rate")
-        breakpoints = np.array(list(map_ts.breakpoints()))
-        v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
-        plt.plot(bin_edges[:-1], v, "--", label="input map")
+        plt.plot(bin_edges[:-1], v, label="inferred")
         breakpoints = np.array(list(ts.breakpoints()))
         v, bin_edges = np.histogram(breakpoints, num_bins, density=density)
         plt.plot(bin_edges[:-1], v, label="source")
@@ -859,7 +852,7 @@ def run_hotspot_analysis(args):
     print("Generating edge plots")
     # TODO add option for colour mapping.
     edge_plot(ts, name_format.format("source_edges"))
-    edge_plot(flat_ts, name_format.format("dest_edges"))
+    edge_plot(inferred_ts, name_format.format("dest_edges"))
 
 
 def error_analysis_worker(args):
@@ -967,22 +960,13 @@ def ancestor_properties_worker(args):
     simulation_args, compute_exact = args
     ts = msprime.simulate(**simulation_args)
 
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        compressor=None)
-    for v in ts.variants():
-        sample_data.add_site(v.site.position, v.alleles, v.genotypes)
-    sample_data.finalise()
-
-    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc)
-    estimated_anc.finalise()
+    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    estimated_anc = tsinfer.generate_ancestors(sample_data)
     estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
     focal_sites = estimated_anc.focal_sites[:]
-    focal_sites_offset = estimated_anc.focal_sites_offset[:]
     estimated_anc_focal_distance = np.zeros(estimated_anc.num_ancestors)
     for j in range(estimated_anc.num_ancestors):
-        focal = focal_sites[focal_sites_offset[j]: focal_sites_offset[j + 1]]
+        focal = focal_sites[j]
         if len(focal) > 0:
             estimated_anc_focal_distance[j] = focal[-1] - focal[0]
 
@@ -995,16 +979,15 @@ def ancestor_properties_worker(args):
     }
 
     if compute_exact:
-        exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+        exact_anc = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
         exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
 
         focal_sites = exact_anc.focal_sites[:]
-        focal_sites_offset = exact_anc.focal_sites_offset[:]
         exact_anc_focal_distance = np.zeros(exact_anc.num_ancestors)
         for j in range(exact_anc.num_ancestors):
-            focal = focal_sites[focal_sites_offset[j]: focal_sites_offset[j + 1]]
+            focal = focal_sites[j]
             if len(focal) > 0:
                 exact_anc_focal_distance[j] = focal[-1] - focal[0]
         results.update({
@@ -1123,45 +1106,42 @@ def run_ancestor_comparison(args):
     # ts  = tsinfer.insert_errors(ts, args.error_probability, seed=args.random_seed)
     V = generate_samples(ts, args.error_probability)
 
-    sample_data = tsinfer.SampleData.initialise(
-        num_samples=ts.num_samples, sequence_length=ts.sequence_length,
-        compressor=None)
+    sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length)
     for j, v in enumerate(V):
         sample_data.add_site(j, ["0", "1"], v)
     sample_data.finalise()
 
-    estimated_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
-    tsinfer.build_ancestors(sample_data, estimated_anc, method="P")
-    estimated_anc.finalise()
+    estimated_anc = tsinfer.generate_ancestors(sample_data)
     estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
-    estimated_anc_num_focal = (
-        estimated_anc.focal_sites_offset[1:] - estimated_anc.focal_sites_offset[:-1])
 
-    print(estimated_anc)
-
-    exact_anc = tsinfer.AncestorData.initialise(sample_data, compressor=None)
+    exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
     exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
-    exact_anc_num_focal = (
-        exact_anc.focal_sites_offset[1:] - exact_anc.focal_sites_offset[:-1])
 
-    print(exact_anc)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}.png".format(
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
         args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
         args.error_probability))
+    if args.store_data:
+        filename = name_format.format("length.json")
+        data = {
+            "exact_ancestors": exact_anc_length.tolist(),
+            "estimated_ancestors": estimated_anc_length.tolist()}
+        with open(filename, "w") as f:
+            json.dump(data, f)
+
     plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
     plt.legend()
-    plt.savefig(name_format.format("length-dist"))
+    plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
 
     frequency = estimated_anc.time[:][1:]
     print(estimated_anc_length[frequency==2])
     plt.hist(estimated_anc_length[frequency==2], bins=50)
     plt.xlabel("doubleton ancestor length")
-    plt.savefig(name_format.format("doubleton-length-dist"))
+    plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
 
     # Because we have different numbers of ancestors, we need to rescale time
@@ -1177,20 +1157,8 @@ def run_ancestor_comparison(args):
     plt.xlabel("Time (oldest to youngest)")
     plt.ylabel("Length")
     plt.legend()
-    plt.savefig(name_format.format("length-time"))
+    plt.savefig(name_format.format("length-time.png"))
     plt.clf()
-
-    nbins = 100
-    x = running_mean(exact_anc_num_focal, nbins)
-    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
-    x = running_mean(estimated_anc_num_focal, nbins)
-    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
-    plt.xlabel("Time (oldest to youngest)")
-    plt.ylabel("Number of focal sites")
-    plt.legend()
-    plt.savefig(name_format.format("num_focal"))
-    plt.clf()
-
 
 def get_node_degree_by_depth(ts):
     """
@@ -1226,17 +1194,17 @@ def run_node_degree(args):
         "random_seed": rng.randint(1, 2**30)}
     smc_ts = msprime.simulate(**sim_args)
 
-    method= "C"
+    engine= "C"
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
-            smc_ts, method=method, exact_ancestors=False, path_compression=path_compression)
+            smc_ts, engine=engine, exact_ancestors=False, path_compression=path_compression)
         degree, depth = get_node_degree_by_depth(estimated_ancestors_ts)
         df = df.append(pd.DataFrame({
             "degree": degree, "depth": depth, "type":"estimated",
             "path_compression": path_compression}))
         exact_ancestors_ts = run_infer(
-            smc_ts, method=method, exact_ancestors=True, path_compression=path_compression)
+            smc_ts, engine=engine, exact_ancestors=True, path_compression=path_compression)
         degree, depth = get_node_degree_by_depth(exact_ancestors_ts)
         df = df.append(pd.DataFrame({
             "degree": degree, "depth": depth, "type":"exact",
@@ -1278,8 +1246,8 @@ def run_perfect_inference(args):
             print("Multiple recombinations; skipping")
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
-            base_ts, num_threads=args.num_threads, progress=args.progress,
-            method=args.method, extended_checks=args.extended_checks,
+            base_ts, num_threads=args.num_threads,
+            engine=args.engine, extended_checks=args.extended_checks,
             time_chunking=not args.no_time_chunking,
             path_compression=args.path_compression)
         print("n={} num_trees={} num_sites={}".format(
@@ -1291,7 +1259,7 @@ def run_perfect_inference(args):
             assert np.all(distances == 0)
         else:
             assert ts.tables.edges == inferred_ts.tables.edges
-            assert ts.tables.sites == inferred_ts.tables.sites
+            assert np.all(ts.tables.sites.position == inferred_ts.tables.sites.position)
             assert ts.tables.mutations == inferred_ts.tables.mutations
             assert np.array_equal(ts.tables.nodes.flags, inferred_ts.tables.nodes.flags)
             assert np.any(ts.tables.nodes.time != inferred_ts.tables.nodes.time)
@@ -1327,7 +1295,7 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
-    parser.add_argument("--method", default="C")
+    parser.add_argument("--engine", default="C")
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
@@ -1493,6 +1461,9 @@ if __name__ == "__main__":
         help="Error probability")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--store-data", "-S", action="store_true",
+        help="Store the raw data.")
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
