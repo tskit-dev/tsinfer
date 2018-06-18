@@ -119,15 +119,16 @@ def tsinfer_dev(
             sequence_length=ts.sequence_length,
             path="tmp.samples",
             chunk_size=10) as sample_data:
-        for j in range(ts.num_samples):
-            sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
+        for j in range(ts.num_samples // 2):
+            sample_data.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
         for site, genotypes in zip(ts.sites(), G):
             sample_data.add_site(
                 site.position, ["0", "1"], genotypes,
                 inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
 
-    # print("sample_data")
-    # print(sample_data)
+    print("sample_data")
+    print(sample_data)
+    # print(sample_data.samples_individual[:])
     # # sample_data.close()
 
 
@@ -229,7 +230,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(5, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
 
 
 #     for seed in range(1, 10000):

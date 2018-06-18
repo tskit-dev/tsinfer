@@ -230,9 +230,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, alleles in enumerate(sample_data.sites_alleles[:]):
             self.assertEqual(all_alleles[j], tuple(alleles))
 
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        output_ts = tsinfer.infer(sample_data)
         inferred_alleles = [variant.alleles for variant in output_ts.variants()]
         self.assertEqual(inferred_alleles, all_alleles)
 
@@ -254,14 +252,40 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, metadata in enumerate(sample_data.sites_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
 
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        output_ts = tsinfer.infer(sample_data)
         output_metadata = [
             json.loads(site.metadata.decode()) for site in output_ts.sites()]
         self.assertEqual(all_metadata, output_metadata)
 
-    def test_sample_metadata(self):
+    def test_population_metadata(self):
+        ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData(sequence_length=1)
+        rng = random.Random(32)
+        all_metadata = []
+        for j in range(ts.num_samples):
+            metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
+            sample_data.add_population(metadata=metadata)
+            all_metadata.append(metadata)
+        for j in range(ts.num_samples):
+            sample_data.add_individual(population=j)
+        for variant in ts.variants():
+            sample_data.add_site(
+                variant.site.position, variant.alleles, variant.genotypes)
+        sample_data.finalise()
+
+        for j, metadata in enumerate(sample_data.populations_metadata[:]):
+            self.assertEqual(all_metadata[j], metadata)
+        output_ts = tsinfer.infer(sample_data)
+        output_metadata = [
+            json.loads(population.metadata.decode())
+            for population in output_ts.populations()]
+        self.assertEqual(all_metadata, output_metadata)
+        for j, sample in enumerate(output_ts.samples()):
+            node = output_ts.node(sample)
+            self.assertEqual(node.population, j)
+
+    def test_individual_metadata(self):
         ts = msprime.simulate(11, mutation_rate=5, random_seed=16)
         self.assertGreater(ts.num_sites, 2)
         sample_data = tsinfer.SampleData(sequence_length=1)
@@ -269,23 +293,42 @@ class TestMetadataRoundTrip(unittest.TestCase):
         all_metadata = []
         for j in range(ts.num_samples):
             metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
-            sample_data.add_sample(metadata=metadata)
+            sample_data.add_individual(metadata=metadata)
             all_metadata.append(metadata)
         for variant in ts.variants():
             sample_data.add_site(
                 variant.site.position, variant.alleles, variant.genotypes)
         sample_data.finalise()
 
-        for j, metadata in enumerate(sample_data.samples_metadata[:]):
+        for j, metadata in enumerate(sample_data.individuals_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
-
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        output_ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        output_ts = tsinfer.infer(sample_data)
         output_metadata = [
-            json.loads(node.metadata.decode()) for node in output_ts.nodes()
-            if node.is_sample()]
+            json.loads(individual.metadata.decode())
+            for individual in output_ts.individuals()]
         self.assertEqual(all_metadata, output_metadata)
+
+    def test_individual_location(self):
+        ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData(sequence_length=1)
+        rng = random.Random(32)
+        all_locations = []
+        for j in range(ts.num_samples // 2):
+            location = np.array([rng.random() for _ in range(j)])
+            sample_data.add_individual(location=location, ploidy=2)
+            all_locations.append(location)
+        for variant in ts.variants():
+            sample_data.add_site(
+                variant.site.position, variant.alleles, variant.genotypes)
+        sample_data.finalise()
+
+        for j, location in enumerate(sample_data.individuals_location[:]):
+            self.assertTrue(np.array_equal(all_locations[j], location))
+        output_ts = tsinfer.infer(sample_data)
+        self.assertEqual(output_ts.num_individuals, len(all_locations))
+        for location, individual in zip(all_locations, output_ts.individuals()):
+            self.assertTrue(np.array_equal(location, individual.location))
 
 
 class TestThreads(TsinferTestCase):

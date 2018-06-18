@@ -35,6 +35,7 @@ import zarr
 import lmdb
 import humanize
 import numcodecs
+import msprime
 
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
@@ -217,6 +218,7 @@ class BufferedItemWriter(object):
             self.buffers[key][self.write_buffer][offset] = value
         self.num_buffered_items[self.write_buffer] += 1
         self.total_items += 1
+        return self.total_items - 1
 
     def flush(self):
         """
@@ -643,15 +645,18 @@ class SampleData(DataContainer):
         compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (0, 3)
+    FORMAT_VERSION = (1, 0)
+
+    # State machine for handling automatic addition of samples.
+    ADDING_POPULATIONS = 0
+    ADDING_SAMPLES = 1
+    ADDING_SITES = 2
 
     def __init__(self, sequence_length=0, **kwargs):
 
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
         chunks = self._chunk_size,
-        # We don't actually support population metadata yet, but keep the
-        # infrastucture around for when we do.
         populations_group = self.data.create_group("population")
         metadata = populations_group.create_dataset(
             "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
@@ -659,15 +664,29 @@ class SampleData(DataContainer):
         self._populations_writer = BufferedItemWriter(
             {"metadata": metadata}, num_threads=self._num_flush_threads)
 
+        individuals_group = self.data.create_group("individual")
+        metadata = individuals_group.create_dataset(
+            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=object, object_codec=self._metadata_codec)
+        location = individuals_group.create_dataset(
+            "location", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype="array:f8")
+        self._individuals_writer = BufferedItemWriter(
+            {"metadata": metadata, "location": location},
+            num_threads=self._num_flush_threads)
+
         samples_group = self.data.create_group("samples")
         population = samples_group.create_dataset(
             "population", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.int32)
+        individual = samples_group.create_dataset(
+            "individual", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         metadata = samples_group.create_dataset(
             "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=object, object_codec=self._metadata_codec)
         self._samples_writer = BufferedItemWriter(
-            {"population": population, "metadata": metadata},
+            {"individual": individual, "population": population, "metadata": metadata},
             num_threads=self._num_flush_threads)
 
         sites_group = self.data.create_group("sites")
@@ -688,10 +707,8 @@ class SampleData(DataContainer):
             dtype=object, object_codec=self._metadata_codec)
 
         self._sites_writer = None
-        # For now we just add one population. We can't round-trip the data
-        # in tskit for now anyway, so there's no point in complicating things.
-        self._add_population()
-        self._sample_added = False
+        # We are initially in the ADDING_POPULATIONS.
+        self._build_state = self.ADDING_POPULATIONS
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
@@ -720,6 +737,10 @@ class SampleData(DataContainer):
         return self.samples_metadata.shape[0]
 
     @property
+    def num_individuals(self):
+        return self.individuals_metadata.shape[0]
+
+    @property
     def num_sites(self):
         return self.sites_position.shape[0]
 
@@ -728,8 +749,20 @@ class SampleData(DataContainer):
         return self.data["population/metadata"]
 
     @property
+    def individuals_metadata(self):
+        return self.data["individual/metadata"]
+
+    @property
+    def individuals_location(self):
+        return self.data["individual/location"]
+
+    @property
     def samples_population(self):
         return self.data["samples/population"]
+
+    @property
+    def samples_individual(self):
+        return self.data["samples/individual"]
 
     @property
     def samples_metadata(self):
@@ -767,10 +800,14 @@ class SampleData(DataContainer):
         values = [
             ("sequence_length", self.sequence_length),
             ("num_populations", self.num_populations),
+            ("num_individuals", self.num_individuals),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
             ("num_inference_sites", self.num_inference_sites),
             ("populations/metadata", zarr_summary(self.populations_metadata)),
+            ("individuals/metadata", zarr_summary(self.individuals_metadata)),
+            ("individuals/location", zarr_summary(self.individuals_location)),
+            ("samples/individual", zarr_summary(self.samples_individual)),
             ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
             ("sites/position", zarr_summary(self.sites_position)),
@@ -799,9 +836,11 @@ class SampleData(DataContainer):
             self.format_name == other.format_name and
             self.format_version == other.format_version and
             self.num_populations == other.num_populations and
+            self.num_individuals == other.num_individuals and
             self.num_samples == other.num_samples and
             self.num_sites == other.num_sites and
             self.num_inference_sites == other.num_inference_sites and
+            np.all(self.samples_individual[:] == other.samples_individual[:]) and
             np.all(self.samples_population[:] == other.samples_population[:]) and
             np.all(self.sites_position[:] == other.sites_position[:]) and
             np.all(self.sites_inference[:] == other.sites_inference[:]) and
@@ -809,6 +848,10 @@ class SampleData(DataContainer):
             # Need to take a different approach with np object arrays.
             all(itertools.starmap(np.array_equal, zip(
                 self.populations_metadata[:], other.populations_metadata[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.individuals_metadata[:], other.individuals_metadata[:]))) and
+            all(itertools.starmap(np.array_equal, zip(
+                self.individuals_location[:], other.individuals_location[:]))) and
             all(itertools.starmap(np.array_equal, zip(
                 self.samples_metadata[:], other.samples_metadata[:]))) and
             all(itertools.starmap(np.array_equal, zip(
@@ -843,35 +886,37 @@ class SampleData(DataContainer):
         self._sites_writer = BufferedItemWriter(
                 arrays, num_threads=self._num_flush_threads)
 
-    def _add_population(self, metadata=None):
+    def add_population(self, metadata=None):
         self._check_build_mode()
+        if self._build_state != self.ADDING_POPULATIONS:
+            raise ValueError("Cannot add populations after adding samples or sites")
         self._populations_writer.add(metadata=self._check_metadata(metadata))
 
-    def add_sample(self, metadata=None):
+    def add_individual(self, ploidy=1, metadata=None, population=None, location=None):
         self._check_build_mode()
-        # Fixing this to 0 for now as we can't support population metadata in tskit
-        # yet. When the PopulationTable gets added, add a population argument to
-        # this method.
-        population = 0
-        if self._populations_writer is not None:
+        if self._build_state == self.ADDING_POPULATIONS:
             self._populations_writer.flush()
             self._populations_writer = None
+            self._build_state = self.ADDING_SAMPLES
+        if self._build_state != self.ADDING_SAMPLES:
+            raise ValueError("Cannot add individuals after adding sites")
+
+        if population is None:
+            population = msprime.NULL_POPULATION
         if population >= self.num_populations:
             raise ValueError("population ID out of bounds")
-        self._samples_writer.add(
-            population=population, metadata=self._check_metadata(metadata))
-        self._sample_added = True
+        if ploidy <= 0:
+            raise ValueError("Ploidy must be at least 1")
+        if location is None:
+            location = []
+        location = np.array(location, dtype=np.float64)
+        individual = self._individuals_writer.add(
+            metadata=self._check_metadata(metadata), location=location)
+        for _ in range(ploidy):
+            self._samples_writer.add(population=population, individual=individual)
 
-    def _finalise_samples(self, num_samples):
-        if not self._sample_added:
-            # Add in the default samples for the genotypes.
-            for _ in range(num_samples):
-                self.add_sample()
-        self._samples_writer.flush()
-        self._samples_writer = None
-        self._alloc_site_writer()
-
-    def add_site(self, position, alleles, genotypes, metadata=None, inference=None):
+    def add_site(
+            self, position, alleles=None, genotypes=None, metadata=None, inference=None):
         """
         Adds a new site to this :class:`.SampleData`. At a minimum, the new site
         must specify the ``position``, ``alleles`` an ``genotypes``. Sites
@@ -893,7 +938,8 @@ class SampleData(DataContainer):
         :param list(str) alleles: A list of strings defining the alleles at this
             site. The zeroth element of this list is the **ancestral state**
             and the oneth element is the **derived state**. Only biallelic
-            sites are currently supported.
+            sites are currently supported. If not specified or None, defaults
+            to ["0", "1"].
         :param arraylike genotypes: An array-like object defining the sample
             genotypes at this site. The array of genotypes corresponds to the
             observed alleles for each sample, represented by indexes into the
@@ -910,11 +956,30 @@ class SampleData(DataContainer):
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
         """
-        self._check_build_mode()
+        if genotypes is None:
+            raise ValueError("Genotypes must be specified")
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
-        if self._samples_writer is not None:
-            self._finalise_samples(genotypes.shape[0])
+        self._check_build_mode()
+        if self._build_state == self.ADDING_POPULATIONS:
+            if genotypes.shape[0] == 0:
+                # We could just raise an error here but we set the state
+                # here so that we can raise the same error as other
+                # similar conditions.
+                self._build_state = self.ADDING_SAMPLES
+            else:
+                # Add in the default haploid samples.
+                for _ in range(genotypes.shape[0]):
+                    self.add_individual()
+        if self._build_state == self.ADDING_SAMPLES:
+            self._individuals_writer.flush()
+            self._samples_writer.flush()
+            self._alloc_site_writer()
+            self._build_state = self.ADDING_SITES
             self._last_position = -1
+        assert self._build_state == self.ADDING_SITES
+
+        if alleles is None:
+            alleles = ["0", "1"]
         if len(alleles) > 2:
             raise ValueError("Only biallelic sites supported")
         if len(set(alleles)) != len(alleles):
@@ -948,10 +1013,14 @@ class SampleData(DataContainer):
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
-            if self._sites_writer is None:
-                self._finalise_samples()
-            self._sites_writer.flush()
-            self._sites_writer = None
+            if self._build_state == self.ADDING_POPULATIONS:
+                raise ValueError("Must add at least one sample individual")
+            elif self._build_state == self.ADDING_SAMPLES:
+                self._individuals_writer.flush()
+                self._samples_writer.flush()
+            elif self._build_state == self.ADDING_SITES:
+                self._sites_writer.flush()
+            self._build_state = -1
         super(SampleData, self).finalise(**kwargs)
 
     ####################################
