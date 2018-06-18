@@ -3,13 +3,10 @@ Example script for importing 1000 Genomes data.
 """
 import argparse
 import subprocess
-import multiprocessing
 import os
-import shutil
 import sys
 
 import numpy as np
-import msprime
 import tsinfer
 import attr
 import cyvcf2
@@ -22,6 +19,50 @@ class Site(object):
     alleles = attr.ib(None)
     genotypes = attr.ib(None)
     metadata = attr.ib({})
+
+
+def add_populations(sample_data):
+    """
+    Adds the 1000 genomes populations to the sample_data and return the mapping
+    of names (e.g. CHB) to IDs (e.g., 0).
+    """
+    # Based on
+    # http://www.internationalgenome.org/faq/which-populations-are-part-your-study/
+    populations = [
+        ["CHB", "Han Chinese in Beijing, China", "EAS"],
+        ["JPT", "Japanese in Tokyo, Japan", "EAS"],
+        ["CHS", "Southern Han Chinese", "EAS"],
+        ["CDX", "Chinese Dai in Xishuangbanna, China", "EAS"],
+        ["KHV", "Kinh in Ho Chi Minh City, Vietnam", "EAS"],
+        ["CEU", "Utah Residents (CEPH) with Northern and Western European Ancestry",
+            "EUR"],
+        ["TSI", "Toscani in Italia", "EUR"],
+        ["FIN", "Finnish in Finland", "EUR"],
+        ["GBR", "British in England and Scotland", "EUR"],
+        ["IBS", "Iberian Population in Spain", "EUR"],
+        ["YRI", "Yoruba in Ibadan, Nigeria", "AFR"],
+        ["LWK", "Luhya in Webuye, Kenya", "AFR"],
+        ["GWD", "Gambian in Western Divisions in the Gambia", "AFR"],
+        ["MSL", "Mende in Sierra Leone", "AFR"],
+        ["ESN", "Esan in Nigeria", "AFR"],
+        ["ASW", "Americans of African Ancestry in SW USA", "AFR"],
+        ["ACB", "African Caribbeans in Barbados", "AFR"],
+        ["MXL", "Mexican Ancestry from Los Angeles USA", "AMR"],
+        ["PUR", "Puerto Ricans from Puerto Rico", "AMR"],
+        ["CLM", "Colombians from Medellin, Colombia", "AMR"],
+        ["PEL", "Peruvians from Lima, Peru", "AMR"],
+        ["GIH", "Gujarati Indian from Houston, Texas", "SAS"],
+        ["PJL", "Punjabi from Lahore, Pakistan", "SAS"],
+        ["BEB", "Bengali from Bangladesh", "SAS"],
+        ["STU", "Sri Lankan Tamil from the UK", "SAS"],
+        ["ITU", "Indian Telugu from the UK", "SAS"],
+    ]
+    id_map = {}
+    for pop in populations:
+        pop_id = sample_data.add_population(
+            dict(zip(["name", "description", "super_population"], pop)))
+        id_map[pop[0]] = pop_id
+    return id_map
 
 
 def filter_duplicates(vcf):
@@ -43,6 +84,7 @@ def filter_duplicates(vcf):
         row = next_row
     if row is not None and bad_pos != -1:
         yield row
+
 
 def variants(vcf_path, show_progress=False):
 
@@ -88,73 +130,88 @@ def variants(vcf_path, show_progress=False):
 
     vcf.close()
 
-def convert(vcf_file, output_file, max_variants=None, show_progress=False):
+
+def add_samples(ped_file, population_id_map, individual_names, sample_data):
+    """
+    Reads the specified PED file to get information about the samples.
+    Assumes that the population IDs have already been allocated and
+    the individuals are to be added in the order in the specified list.
+
+    ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/working/20130606_sample_info/20130606_g1k.ped
+    """
+    columns = next(ped_file).split("\t")
+    sane_names = [col.replace(" ", "_").lower().strip() for col in columns]
+    rows = {}
+    for line in ped_file:
+        metadata = dict(zip(sane_names, line.strip().split("\t")))
+        metadata["population"] = population_id_map[metadata["population"]]
+        name = metadata["individual_id"]
+        # The value '0' seems to be used to encode missing, so insert None
+        # instead to be more useful.
+        nulled = {}
+        for key, value in metadata.items():
+            if value == "0":
+                value = None
+            nulled[key] = value
+        rows[name] = nulled
+
+    # Add in the metadata rows in the order of the VCF.
+    for name in individual_names:
+        metadata = rows[name]
+        sample_data.add_individual(metadata=metadata, ploidy=2)
+
+
+def convert(
+        vcf_file, pedigree_file, output_file, max_variants=None, show_progress=False):
 
     if max_variants is None:
         max_variants = 2**32  # Arbitrary, but > defined max for VCF
 
-    sample_data = tsinfer.SampleData.initialise(path=output_file, num_flush_threads=2)
+    sample_data = tsinfer.SampleData(path=output_file, num_flush_threads=2)
+    pop_id_map = add_populations(sample_data)
+
     vcf = cyvcf2.VCF(vcf_file)
-    for sample in vcf.samples:
-        metadata = {"name": sample}
-        sample_data.add_sample(metadata)
-        sample_data.add_sample(metadata)
+    individual_names = list(vcf.samples)
     vcf.close()
+
+    with open(pedigree_file, "r") as ped_file:
+        add_samples(ped_file, pop_id_map, individual_names, sample_data)
 
     for index, site in enumerate(variants(vcf_file, show_progress)):
         sample_data.add_site(site.position, site.alleles, site.genotypes, site.metadata)
         if index == max_variants:
             break
+
     sample_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
-
-
-def worker(t):
-    vcf, output, max_variants = t
-    print("Converting", vcf)
-    convert(vcf, output, max_variants)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Script to convert VCF files into tsinfer input.")
     parser.add_argument(
-        "vcf_pattern", help="The input VCF files file pattern.")
+        "vcf_file", help="The input VCF file pattern.")
     parser.add_argument(
-        "output_file_pattern", help="The tsinfer output file pattern to write to.")
+        "pedigree_file",
+        help="The pedigree file to get population and sample data from")
+    parser.add_argument(
+        "output_file", help="The tsinfer SampleData output file.")
     parser.add_argument(
         "-n", "--max-variants", default=None, type=int,
         help="Keep only the first n variants")
     parser.add_argument(
-        "--start", default=1, type=int, help="The first autosome")
-    parser.add_argument(
-        "--stop", default=22, type=int, help="The last autosome")
-    parser.add_argument(
-        "-P", "--processes", default=10, type=int, help="The number of worker processes")
-    parser.add_argument(
         "-p", "--progress", action="store_true")
 
     args = parser.parse_args()
-    # TODO Fix this up and make it an optional argument.
-    chromosomes = list(range(args.start, args.stop + 1))
 
-    # Build the file lists for the 22 autosomes.
-    vcf_files = [args.vcf_pattern.format(j) for j in chromosomes]
-    output_files = [args.output_file_pattern.format(j) for j in chromosomes]
-    max_variants = [args.max_variants for _ in chromosomes]
-
-    for vcf_file in vcf_files:
-        if not os.path.exists(vcf_file):
-            raise ValueError("{} does not exist".format(vcf_file))
-
-#     work = reversed(list(zip(
-#         vcf_files, genetic_map_files, output_files, max_variants)))
-#     with multiprocessing.Pool(args.processes) as pool:
-#         pool.map(worker, work)
-#     # for t in work:
-#     #     worker(t)
+    if not os.path.exists(args.vcf_file):
+        raise ValueError("{} does not exist".format(args.vcf_file))
 
     convert(
-        vcf_files[0], output_files[0], args.max_variants, show_progress=args.progress)
+        args.vcf_file,
+        args.pedigree_file,
+        args.output_file,
+        max_variants=args.max_variants,
+        show_progress=args.progress)
 
 
 if __name__ == "__main__":

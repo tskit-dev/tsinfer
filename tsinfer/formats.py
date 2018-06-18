@@ -890,7 +890,7 @@ class SampleData(DataContainer):
         self._check_build_mode()
         if self._build_state != self.ADDING_POPULATIONS:
             raise ValueError("Cannot add populations after adding samples or sites")
-        self._populations_writer.add(metadata=self._check_metadata(metadata))
+        return self._populations_writer.add(metadata=self._check_metadata(metadata))
 
     def add_individual(self, ploidy=1, metadata=None, population=None, location=None):
         self._check_build_mode()
@@ -914,6 +914,7 @@ class SampleData(DataContainer):
             metadata=self._check_metadata(metadata), location=location)
         for _ in range(ploidy):
             self._samples_writer.add(population=population, individual=individual)
+        return individual
 
     def add_site(
             self, position, alleles=None, genotypes=None, metadata=None, inference=None):
@@ -1005,11 +1006,12 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError(
                     "Cannot specify singletons or fixed sites for inference")
-        self._sites_writer.add(
+        site_id = self._sites_writer.add(
             position=position, genotypes=genotypes,
             metadata=self._check_metadata(metadata),
             inference=inference, alleles=alleles)
         self._last_position = position
+        return site_id
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
