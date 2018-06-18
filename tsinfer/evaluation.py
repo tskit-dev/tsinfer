@@ -38,14 +38,15 @@ def insert_errors(ts, probability, seed=None):
     a back/recurrent mutation as necessary. Errors resulting in
     fixation of either allele are rejected.
     """
+    tables = ts.dump_tables()
     rng = random.Random(seed)
-    mutations = msprime.MutationTable()
+    tables.mutations.clear()
     samples = ts.samples()
     for tree in ts.trees():
         for site in tree.sites():
             assert len(site.mutations) == 1
             mutation_node = site.mutations[0].node
-            mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
+            tables.mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
             for sample in samples:
                 # We disallow any fixations. There are two possibilities:
                 # (1) We have a singleton and the sample
@@ -66,14 +67,11 @@ def insert_errors(ts, probability, seed=None):
                     derived_state = str(int(u == msprime.NULL_NODE))
                     parent = msprime.NULL_MUTATION
                     if u == msprime.NULL_NODE:
-                        parent = len(mutations) - 1
-                    mutations.add_row(
+                        parent = len(tables.mutations) - 1
+                    tables.mutations.add_row(
                         site=site.id, node=sample, parent=parent,
                         derived_state=derived_state)
-
-    tables = ts.dump_tables()
-    tables.mutations = mutations
-    return msprime.load_tables(**tables.asdict())
+    return tables.tree_sequence()
 
 
 def kc_distance(tree1, tree2):
@@ -152,27 +150,29 @@ def strip_singletons(ts):
     """
     Returns a copy of the specified tree sequence with singletons removed.
     """
-    sites = msprime.SiteTable()
-    mutations = msprime.MutationTable()
+    tables = ts.dump_tables()
+    tables.sites.clear()
+    tables.mutations.clear()
     for variant in ts.variants():
         if np.sum(variant.genotypes) > 1:
-            site_id = sites.add_row(
+            site_id = tables.sites.add_row(
                 position=variant.site.position,
-                ancestral_state=variant.site.ancestral_state)
+                ancestral_state=variant.site.ancestral_state,
+                metadata=variant.site.metadata)
             assert len(variant.site.mutations) >= 1
             mutation = variant.site.mutations[0]
-            parent_id = mutations.add_row(
-                site=site_id, node=mutation.node, derived_state=mutation.derived_state)
+            parent_id = tables.mutations.add_row(
+                site=site_id, node=mutation.node,
+                derived_state=mutation.derived_state,
+                metadata=mutation.metadata)
             for error in variant.site.mutations[1:]:
                 parent = -1
                 if error.parent != -1:
                     parent = parent_id
-                mutations.add_row(
+                tables.mutations.add_row(
                     site=site_id, node=error.node, derived_state=error.derived_state,
-                    parent=parent)
-    tables = ts.dump_tables()
-    return msprime.load_tables(
-        nodes=tables.nodes, edges=tables.edges, sites=sites, mutations=mutations)
+                    parent=parent, metadata=error.metadata)
+    return tables.tree_sequence()
 
 
 def insert_perfect_mutations(ts, delta=None):
@@ -248,9 +248,8 @@ def insert_perfect_mutations(ts, delta=None):
                 site_id = tables.sites.add_row(position=x, ancestral_state="0")
                 tables.mutations.add_row(site=site_id, node=u, derived_state="1")
                 x += current_delta
-
-    msprime.sort_tables(**tables.asdict())
-    return msprime.load_tables(**tables.asdict())
+    tables.sort()
+    return tables.tree_sequence()
 
 
 def get_ancestral_haplotypes(ts):
@@ -258,15 +257,14 @@ def get_ancestral_haplotypes(ts):
     Returns a numpy array of the haplotypes of the ancestors in the
     specified tree sequence.
     """
-    nodes = ts.tables.nodes
+    tables = ts.dump_tables()
+    nodes = tables.nodes
     flags = nodes.flags[:]
     flags[:] = 1
     nodes.set_columns(time=nodes.time, flags=flags)
 
-    sites = [site.position for site in ts.sites()]
-    tsp = msprime.load_tables(
-        nodes=nodes, edges=ts.tables.edges, sites=ts.tables.sites,
-        mutations=ts.tables.mutations)
+    sites = tables.sites.position
+    tsp = tables.tree_sequence()
     B = tsp.genotype_matrix().T
 
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)

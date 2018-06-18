@@ -169,7 +169,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_multichar_alleles(self):
         ts = self.get_example_ts(5, 17)
-        t = ts.tables
+        t = ts.dump_tables()
         t.sites.clear()
         t.mutations.clear()
         for site in ts.sites():
@@ -177,7 +177,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             for mutation in site.mutations:
                 t.mutations.add_row(
                     site=site.id, node=mutation.node, derived_state="T" * site.id)
-        ts = msprime.load_tables(**t.asdict())
+        ts = t.tree_sequence()
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
 
@@ -388,8 +388,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 t.sites.add_row(position=pos, ancestral_state="0")
                 positions.add(pos)
         self.assertGreater(len(positions), ts.num_sites)
-        msprime.sort_tables(**t.asdict())
-        ts = msprime.load_tables(**t.asdict())
+        t.sort()
+        ts = t.tree_sequence()
 
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
@@ -406,8 +406,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 t.mutations.add_row(site=site_id, node=tree.root, derived_state="1")
                 positions.add(pos)
         self.assertGreater(len(positions), ts.num_sites)
-        msprime.sort_tables(**t.asdict())
-        ts = msprime.load_tables(**t.asdict())
+        t.sort()
+        ts = t.tree_sequence()
 
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
