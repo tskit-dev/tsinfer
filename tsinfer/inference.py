@@ -359,46 +359,40 @@ class Matcher(object):
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
+        sequence_length = max(1, tsb.num_sites)
+        tables = msprime.TableCollection(sequence_length=sequence_length)
         flags, time = tsb.dump_nodes()
         num_synthetic_nodes = np.sum(flags == 0)
-        nodes = msprime.NodeTable()
-        nodes.set_columns(flags=flags, time=time)
+        tables.nodes.set_columns(flags=flags, time=time)
         left, right, parent, child = tsb.dump_edges()
         position = np.arange(tsb.num_sites)
-        sequence_length = max(1, tsb.num_sites)
-        edges = msprime.EdgeTable()
-        edges.set_columns(left=left, right=right, parent=parent, child=child)
-        sites = msprime.SiteTable()
-        sites.set_columns(
+        tables.edges.set_columns(left=left, right=right, parent=parent, child=child)
+        tables.sites.set_columns(
             position=position,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
             ancestral_state_offset=np.arange(tsb.num_sites + 1, dtype=np.uint32))
-        mutations = msprime.MutationTable()
         site, node, derived_state, parent = tsb.dump_mutations()
         derived_state += ord('0')
-        mutations.set_columns(
+        tables.mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
-        provenances = msprime.ProvenanceTable()
         for timestamp, record in self.sample_data.provenances():
-            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         for timestamp, record in self.ancestor_data.provenances():
-            provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(
             command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
-        provenances.add_row(record=json.dumps(record))
+        tables.provenances.add_row(record=json.dumps(record))
         logger.debug("Sorting ancestors tree sequence")
-        msprime.sort_tables(nodes, edges, sites=sites, mutations=mutations)
+        tables.sort()
         logger.debug("Sorting ancestors tree sequence done")
         logger.info(
             "Built ancestors tree sequence: {} nodes ({} synthetic); {} edges; "
             "{} sites; {} mutations".format(
-                len(nodes), num_synthetic_nodes, len(edges),
-                len(mutations), len(sites)))
-        return msprime.load_tables(
-            nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            provenances=provenances, sequence_length=sequence_length)
+                len(tables.nodes), num_synthetic_nodes, len(tables.edges),
+                len(tables.mutations), len(tables.sites)))
+        return tables.tree_sequence()
 
     def encode_metadata(self, value):
         return json.dumps(value).encode()
@@ -447,12 +441,13 @@ class Matcher(object):
             mutations.add_row(
                 site=site, node=node, derived_state=alleles[1])
 
-    def insert_sites(self, ts, sites, mutations):
+    def insert_sites(self, tables):
         """
         Insert the sites in the sample data that were not marked for inference,
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
+        ts = tables.tree_sequence()
         num_sites = self.sample_data.num_sites
         alleles = self.sample_data.sites_alleles[:]
         inference = self.sample_data.sites_inference[:]
@@ -471,22 +466,22 @@ class Matcher(object):
             while tree.interval[1] <= x:
                 tree = next(trees)
             assert tree.interval[0] <= x < tree.interval[1]
-            sites.add_row(
+            tables.sites.add_row(
                 position=x,
                 ancestral_state=alleles[site_id][0],
                 metadata=self.encode_metadata(metadata[site_id]))
             if inference[site_id] == 1:
-                mutations.add_row(
+                tables.mutations.add_row(
                     site=site_id, node=node[inferred_site],
                     derived_state=alleles[site_id][derived_state[inferred_site]])
                 inferred_site += 1
             elif ts.num_edges > 0:
                 self.locate_mutations_on_tree(
-                    tree, site_id, genotypes, alleles[site_id], mutations)
+                    tree, site_id, genotypes, alleles[site_id], tables.mutations)
             else:
                 # If we have no tree topology this is all we can do.
                 self.locate_mutations_over_samples(
-                    site_id, genotypes, alleles[site_id], mutations)
+                    site_id, genotypes, alleles[site_id], tables.mutations)
             progress_monitor.update()
         progress_monitor.close()
 
@@ -496,68 +491,62 @@ class Matcher(object):
         ancestors will have the sample node flag set.
         """
         tsb = self.tree_sequence_builder
-        nodes = msprime.NodeTable()
-        flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = np.sum(flags == 0)
 
-        logger.debug("Adding tree sequence nodes")
-        # TODO add an option for encoding ancestor metadata in with the nodes here.
-        # Add in the nodes up to for the ancestors.
-        for u in range(self.sample_ids[0]):
-            nodes.add_row(flags=flags[u], time=time[u])
-        # Now add in the sample nodes with metadata, etc.
-        sample_metadata = self.sample_data.samples_metadata[:]
-        sample_population = self.sample_data.samples_population[:]
-        for sample_id, metadata, population in zip(
-                self.sample_ids, sample_metadata, sample_population):
-            nodes.add_row(
-                flags=flags[sample_id], time=time[sample_id],
-                population=population,
-                metadata=self.encode_metadata(metadata))
-        # Add in the remaining synthetic nodes.
-        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
-            nodes.add_row(flags=flags[u], time=time[u])
-
-        logger.debug("Adding tree sequence edges")
-        left, right, parent, child = tsb.dump_edges()
         inference_sites = self.sample_data.sites_inference[:]
         position = self.sample_data.sites_position[:]
         sequence_length = self.sample_data.sequence_length
         if sequence_length < position[-1]:
             sequence_length = position[-1] + 1
 
+        tables = msprime.TableCollection(sequence_length=sequence_length)
+
+        flags, time = tsb.dump_nodes()
+        num_synthetic_nodes = np.sum(flags == 0)
+        logger.debug("Adding tree sequence nodes")
+        # TODO add an option for encoding ancestor metadata in with the nodes here.
+        # Add in the nodes for the ancestors.
+        for u in range(self.sample_ids[0]):
+            tables.nodes.add_row(flags=flags[u], time=time[u])
+        # Now add in the sample nodes with metadata, etc.
+        sample_metadata = self.sample_data.samples_metadata[:]
+        sample_population = self.sample_data.samples_population[:]
+        for sample_id, metadata, population in zip(
+                self.sample_ids, sample_metadata, sample_population):
+            tables.nodes.add_row(
+                flags=flags[sample_id], time=time[sample_id],
+                # FIXME need to add population definitions for IDs.
+                population=-1,
+                metadata=self.encode_metadata(metadata))
+        # Add in the remaining synthetic nodes.
+        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
+            tables.nodes.add_row(flags=flags[u], time=time[u])
+
+        logger.debug("Adding tree sequence edges")
+        left, right, parent, child = tsb.dump_edges()
         # Subset down to the inference sites and map back to the site indexes.
         position = position[inference_sites == 1]
         pos_map = np.hstack([position, [sequence_length]])
         pos_map[0] = 0
-        edges = msprime.EdgeTable()
-        edges.set_columns(
+        tables.edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
         logger.debug("Sorting and building intermediate tree sequence.")
-        msprime.sort_tables(nodes, edges)
-        ts = msprime.load_tables(
-            nodes=nodes, edges=edges, sequence_length=sequence_length)
-        sites = msprime.SiteTable()
-        mutations = msprime.MutationTable()
-        self.insert_sites(ts, sites, mutations)
+        tables.sort()
+        self.insert_sites(tables)
 
-        provenances = msprime.ProvenanceTable()
         for prov in self.ancestors_ts.provenances():
-            provenances.add_row(timestamp=prov.timestamp, record=prov.record)
+            tables.provenances.add_row(timestamp=prov.timestamp, record=prov.record)
         # We don't have a source here because tree sequence files don't have a
         # UUID yet.
         record = provenance.get_provenance_dict(command="match-samples")
-        provenances.add_row(record=json.dumps(record))
+        tables.provenances.add_row(record=json.dumps(record))
 
         logger.info(
             "Built samples tree sequence: {} nodes ({} synthetic); {} edges; "
             "{} sites; {} mutations".format(
-                len(nodes), num_synthetic_nodes, len(edges),
-                len(mutations), len(sites)))
-        return msprime.load_tables(
-            nodes=nodes, edges=edges, sites=sites, mutations=mutations,
-            sequence_length=sequence_length, provenances=provenances)
+                len(tables.nodes), num_synthetic_nodes, len(tables.edges),
+                len(tables.mutations), len(tables.sites)))
+        return tables.tree_sequence()
 
 
 class AncestorMatcher(Matcher):
@@ -719,8 +708,8 @@ class AncestorMatcher(Matcher):
             ts = self.get_ancestors_tree_sequence()
         else:
             # Allocate an empty tree sequence.
-            ts = msprime.load_tables(
-                nodes=msprime.NodeTable(), edges=msprime.EdgeTable(), sequence_length=1)
+            tables = msprime.TableCollection(sequence_length=1)
+            ts = tables.tree_sequence()
         return ts
 
 
@@ -819,15 +808,15 @@ class SampleMatcher(Matcher):
                 # stable IDs after simplifying. This could possibly also be done
                 # by reversing the IDs within a time slice. This is used for comparing
                 # tree sequences produced by perfect inference.
-                tables = ts.tables
+                tables = ts.dump_tables()
                 time = tables.nodes.time
                 for t in range(1, int(time[0])):
                     index = np.where(time == t)[0]
                     k = index.shape[0]
                     time[index] += np.arange(k)[::-1] / k
                 tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
-                msprime.sort_tables(**tables.asdict())
-                ts = msprime.load_tables(**tables.asdict())
+                tables.sort()
+                ts = tables.tree_sequence()
             ts = ts.simplify(
                 samples=self.sample_ids, filter_zero_mutation_sites=False)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
