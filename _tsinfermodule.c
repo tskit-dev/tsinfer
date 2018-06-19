@@ -38,7 +38,11 @@ typedef struct {
 static void
 handle_library_error(int err)
 {
-    PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
+    if (err == TSI_ERR_NO_MEMORY) {
+        PyErr_NoMemory();
+    } else {
+        PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
+    }
 }
 
 
