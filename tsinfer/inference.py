@@ -497,8 +497,15 @@ class Matcher(object):
         sequence_length = self.sample_data.sequence_length
         if sequence_length < position[-1]:
             sequence_length = position[-1] + 1
-
         tables = msprime.TableCollection(sequence_length=sequence_length)
+
+        for metadata in self.sample_data.populations_metadata[:]:
+            tables.populations.add_row(self.encode_metadata(metadata))
+        for location, metadata in zip(
+                self.sample_data.individuals_location[:],
+                self.sample_data.individuals_metadata[:]):
+            tables.individuals.add_row(
+                location=location, metadata=self.encode_metadata(metadata))
 
         flags, time = tsb.dump_nodes()
         num_synthetic_nodes = np.sum(flags == 0)
@@ -508,14 +515,16 @@ class Matcher(object):
         for u in range(self.sample_ids[0]):
             tables.nodes.add_row(flags=flags[u], time=time[u])
         # Now add in the sample nodes with metadata, etc.
-        sample_metadata = self.sample_data.samples_metadata[:]
-        sample_population = self.sample_data.samples_population[:]
-        for sample_id, metadata, population in zip(
-                self.sample_ids, sample_metadata, sample_population):
+        for sample_id, metadata, population, individual in zip(
+                self.sample_ids,
+                self.sample_data.samples_metadata[:],
+                self.sample_data.samples_population[:],
+                self.sample_data.samples_individual[:]):
             tables.nodes.add_row(
-                flags=flags[sample_id], time=time[sample_id],
-                # FIXME need to add population definitions for IDs.
-                population=-1,
+                flags=flags[sample_id],
+                time=time[sample_id],
+                population=population,
+                individual=individual,
                 metadata=self.encode_metadata(metadata))
         # Add in the remaining synthetic nodes.
         for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
@@ -797,6 +806,39 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
+    def workaround_individuals_simplify(self, ts):
+        """
+        Temporary hack to work around the fact that simplify doesn't currently
+        support individuals. Remove once simplify supports individuals properly.
+        """
+        tables = ts.dump_tables()
+        individuals = tables.individuals.copy()
+        nodes = tables.nodes.copy()
+        tables.nodes.set_columns(
+            flags=nodes.flags, time=nodes.time, population=nodes.population,
+            metadata=nodes.metadata, metadata_offset=nodes.metadata_offset)
+        tables.individuals.clear()
+
+        node_id_map = tables.simplify(
+            samples=self.sample_ids, filter_zero_mutation_sites=False)
+        tables.individuals.set_columns(
+            flags=individuals.flags,
+            location=individuals.location,
+            location_offset=individuals.location_offset,
+            metadata=individuals.metadata,
+            metadata_offset=individuals.metadata_offset)
+        # Compute the new node.individuals column.
+        individual = tables.nodes.individual
+        individual[node_id_map[self.sample_ids]] = nodes.individual[self.sample_ids]
+        tables.nodes.set_columns(
+            flags=tables.nodes.flags,
+            time=tables.nodes.time,
+            individual=individual,
+            population=tables.nodes.population,
+            metadata=tables.nodes.metadata,
+            metadata_offset=tables.nodes.metadata_offset)
+        return tables.tree_sequence()
+
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
@@ -817,8 +859,9 @@ class SampleMatcher(Matcher):
                 tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
                 tables.sort()
                 ts = tables.tree_sequence()
-            ts = ts.simplify(
-                samples=self.sample_ids, filter_zero_mutation_sites=False)
+            ts = self.workaround_individuals_simplify(ts)
+            # ts = ts.simplify(
+            #     samples=self.sample_ids, filter_zero_mutation_sites=False)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
         return ts

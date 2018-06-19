@@ -305,6 +305,64 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(
             ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
             genotypes=[0])
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_individual(ploidy=3)
+        self.assertRaises(
+            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
+            genotypes=[0])
+
+    def test_add_population_errors(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        self.assertRaises(
+            TypeError, sample_data.add_population, metadata=234)
+
+    def test_add_state_machine(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_individual()
+        self.assertRaises(ValueError, sample_data.add_population)
+
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_site(0.1, genotypes=[0, 1])
+        self.assertRaises(ValueError, sample_data.add_population)
+        self.assertRaises(ValueError, sample_data.add_individual)
+
+    def test_population_metadata(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_population({"a": 1})
+        sample_data.add_population({"b": 2})
+        sample_data.add_individual(population=0)
+        sample_data.add_individual(population=1)
+        sample_data.add_site(position=0, genotypes=[0, 1])
+        sample_data.finalise()
+
+        self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
+        self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
+        self.assertEqual(sample_data.samples_population[0], 0)
+        self.assertEqual(sample_data.samples_population[1], 1)
+
+    def test_individual_metadata(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_population({"a": 1})
+        sample_data.add_population({"b": 2})
+        sample_data.add_individual(population=0)
+        sample_data.add_individual(population=1)
+        sample_data.finalise()
+        self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
+        self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
+
+    def test_add_individual_errors(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        self.assertRaises(TypeError, sample_data.add_individual, metadata=234)
+        self.assertRaises(ValueError, sample_data.add_individual, population=0)
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_population()
+        self.assertRaises(ValueError, sample_data.add_individual, population=1)
+        self.assertRaises(ValueError, sample_data.add_individual, location="x234")
+        self.assertRaises(ValueError, sample_data.add_individual, ploidy=0)
+
+    def test_no_data(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        self.assertRaises(ValueError, sample_data.finalise)
 
     def test_genotypes(self):
         ts = self.get_example_ts(13, 12)
