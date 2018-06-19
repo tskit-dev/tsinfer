@@ -612,7 +612,7 @@ class SampleData(DataContainer):
             position=5678, genotypes=[1, 1, 1, 0], alleles=["A", "T"])
         sample_data.finalise()
 
-    This creates a sample data file for four samples and two sites, and
+    This creates a sample data file for four haploid samples and two sites, and
     saves it in the file "mydata.samples". Note that the call to
     :meth:`.finalise` is essential here to ensure that all data will be
     correctly flushed to disk. For convenience, a context manager may
@@ -623,6 +623,41 @@ class SampleData(DataContainer):
         with tsinfer.SampleData(path="mydata.samples") as sample_data:
             sample_data.add_site(1234, [0, 0, 1, 0], ["G", "C"])
             sample_data.add_site(5678, [1, 1, 1, 0], ["A", "T"])
+
+    More complex :ref:`data models <sec_inference_data_model>` consisting
+    of populations and polyploid individuals can also be specified. For
+    example, we might have:
+
+    .. code-block:: python
+
+        with tsinfer.SampleData(path="mydata.samples") as sample_data:
+            # Define populations
+            sample_data.population(metadata={"name": "CEU"})
+            sample_data.population(metadata={"name": "YRI"})
+            # Define individuals
+            sample_data.add_individual(
+                ploidy=2, population=0, metadata={"name": "NA12878"})
+            sample_data.add_individual(
+                ploidy=2, population=0, metadata={"name": "NA12891"})
+            sample_data.add_individual(
+                ploidy=2, population=0, metadata={"name": "NA12892"})
+            sample_data.add_individual(
+                ploidy=2, population=1, metadata={"name": "NA18484"})
+            # Define sites and genotypes
+            sample_data.add_site(1234, [0, 1, 1, 1, 0, 0, 0, 0], ["G", "C"])
+            sample_data.add_site(5678, [0, 0, 0, 0, 0, 0, 1, 1], ["A", "T"])
+
+    In this example we defined two populations and four diploid individuals,
+    and so our genotypes arrays are of length eight. Thus, at first site the
+    first individual is heterozygous, the second is homozygous with the derived
+    allele and the other two individuals are homozygous with the ancestral
+    allele. To illustrate how we can use site and population metadata to link
+    up with external data sources we use the 1000 genomes identifiers (although
+    of course the genotype data is fake). Here we suppose that we have the
+    famous NA12878 trio from the CEU population, and one other individual from
+    the YRI population. This metadata is then embedded in the final tree
+    sequence that we infer, allowing us to use it conveniently in downstream
+    analyses.
 
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
@@ -887,12 +922,52 @@ class SampleData(DataContainer):
                 arrays, num_threads=self._num_flush_threads)
 
     def add_population(self, metadata=None):
+        """
+        Adds a new :ref:`sec_inference_data_model_population` to this
+        :class:`.SampleData` and returns its ID.
+
+        All calls to this method must be made **before** individuals or sites
+        are defined.
+
+        :param dict metadata: A JSON encodable dict-like object containing
+            metadata that is to be associated with this population.
+        :return: The ID of the newly added population.
+        :rtype: int
+        """
         self._check_build_mode()
         if self._build_state != self.ADDING_POPULATIONS:
             raise ValueError("Cannot add populations after adding samples or sites")
         return self._populations_writer.add(metadata=self._check_metadata(metadata))
 
     def add_individual(self, ploidy=1, metadata=None, population=None, location=None):
+        """
+        Adds a new :ref:`sec_inference_data_model_individual` to this
+        :class:`.SampleData` and returns its ID and those of the resulting additional
+        samples. Adding an individual with ploidy ``k`` results in ``k`` new samples
+        being added, and each of these samples will be associated with the
+        new individual. Each new sample will also be associated with the specified
+        population ID. It is an error to specify a population ID that does not
+        correspond to a population defined using :meth:`.add_population`.
+
+        All calls to this method must be made **after** populations are defined
+        using :meth:`.add_population` and **before** sites are defined using
+        :meth:`.add_site`.
+
+        :param int ploidy: The ploidy of this individual. This corresponds to the
+            number of samples added that refer to this individual. Defaults to 1
+            (haploid).
+        :param dict metadata: A JSON encodable dict-like object containing
+            metadata that is to be associated with this population.
+        :param int population: The ID of the population to assoicate with this
+            individual (or more precisely, with the samples for this individual).
+            If not specified or None, defaults to the null population (-1).
+        :param arraylike location: An array-like object defining n-dimensional
+            spatial location of this individual. If not specified or None, the
+            empty location is stored.
+        :return: The ID of the newly added individual and a list of the sample
+            IDs also added.
+        :rtype: tuple(int, list(int))
+        """
         self._check_build_mode()
         if self._build_state == self.ADDING_POPULATIONS:
             self._populations_writer.flush()
@@ -910,28 +985,39 @@ class SampleData(DataContainer):
         if location is None:
             location = []
         location = np.array(location, dtype=np.float64)
-        individual = self._individuals_writer.add(
+        individual_id = self._individuals_writer.add(
             metadata=self._check_metadata(metadata), location=location)
+        sample_ids = []
         for _ in range(ploidy):
-            self._samples_writer.add(population=population, individual=individual)
-        return individual
+            sid = self._samples_writer.add(
+                population=population, individual=individual_id)
+            sample_ids.append(sid)
+        return individual_id, sample_ids
 
     def add_site(
             self, position, genotypes, alleles=None, metadata=None, inference=None):
         """
-        Adds a new site to this :class:`.SampleData`. At a minimum, the new site
-        must specify the ``position``, ``alleles`` an ``genotypes``. Sites
-        must be added in increasing order of position; duplicate positions are
-        **not** supported. For each site a list of ``alleles`` must be supplied.
-        This list defines the ancestral and derived states at the site. For
-        example, if we set ``alleles=["A", "T"]`` then the ancestral state is
-        "A" and the derived state is "T". The observed state for each sample
-        is then encoded using the ``genotypes`` parameter. If have a haploid
-        sample size of ``n``, then this must be a one dimensional array-like
-        object with length ``n``. For a given array ``g`` and sample index
-        ``j``, ``g[j]`` should contain ``0`` if sample ``j`` carries the
-        ancestral state at this site and ``1`` if it carries the derived state.
-        All sites must have genotypes for the same number of samples.
+        Adds a new site to this :class:`.SampleData` and returns its ID.
+
+        At a minimum, the new site must specify the ``position`` and
+        ``genotypes``. Sites must be added in increasing order of position;
+        duplicate positions are **not** supported. For each site a list of
+        ``alleles`` may be supplied. This list defines the ancestral and
+        derived states at the site. For example, if we set ``alleles=["A",
+        "T"]`` then the ancestral state is "A" and the derived state is "T".
+        The observed state for each sample is then encoded using the
+        ``genotypes`` parameter. Thus if we have ``n`` samples then
+        this must be a one dimensional array-like object with length ``n``. For
+        a given array ``g`` and sample index ``j``, ``g[j]`` should contain
+        ``0`` if sample ``j`` carries the ancestral state at this site and
+        ``1`` if it carries the derived state. All sites must have genotypes
+        for the same number of samples.
+
+        All populations and individuals must be defined **before** this method
+        is called. If no individuals have been defined using
+        :meth:`.add_individual`, the first call to this method adds ``n``
+        haploid individuals, where ``n`` is the length of the ``genotypes``
+        array.
 
         :param float position: The floating point position of this site. Must be
             less than the ``sequence_length`` if provided to the :class:`.SampleData`
@@ -943,8 +1029,8 @@ class SampleData(DataContainer):
             dtype ``np.uint8``; therefore, for maximum efficiency ensure
             that the input array is also of this type.
         :param list(str) alleles: A list of strings defining the alleles at this
-            site. The zeroth element of this list is the **ancestral state**
-            and the oneth element is the **derived state**. Only biallelic
+            site. The zero'th element of this list is the **ancestral state**
+            and the one'th element is the **derived state**. Only biallelic
             sites are currently supported. If not specified or None, defaults
             to ["0", "1"].
         :param dict metadata: A JSON encodable dict-like object containing
@@ -956,6 +1042,8 @@ class SampleData(DataContainer):
             ``inference=None`` (the default), use any site in which the
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
+        :return: The ID of the newly added site.
+        :rtype: int
         """
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
         self._check_build_mode()

@@ -29,27 +29,30 @@ scope of this manual. Assuming that we know the ancestral state, we can then imp
     import tsinfer
 
     with tsinfer.SampleData() as sample_data:
-        sample_data.add_site(0, ["A", "T"], [0, 1, 0, 0, 0])
-        sample_data.add_site(1, ["G", "C"], [0, 0, 0, 1, 1])
-        sample_data.add_site(2, ["C", "A"], [0, 1, 1, 0, 0])
-        sample_data.add_site(3, ["G", "C"], [0, 1, 1, 0, 0])
-        sample_data.add_site(4, ["A", "C"], [0, 0, 0, 1, 1])
-        sample_data.add_site(5, ["T", "G"], [0, 1, 0, 0, 0])
+        sample_data.add_site(0, [0, 1, 0, 0, 0], ["A", "T"])
+        sample_data.add_site(1, [0, 0, 0, 1, 1], ["G", "C"])
+        sample_data.add_site(2, [0, 1, 1, 0, 0], ["C", "A"])
+        sample_data.add_site(3, [0, 1, 1, 0, 0], ["G", "C"])
+        sample_data.add_site(4, [0, 0, 0, 1, 1], ["A", "C"])
+        sample_data.add_site(5, [0, 1, 0, 0, 0], ["T", "G"])
 
-Here we create a new :class:`.SampleData` object for five samples. We then sequentially add the
-data for each site one-by-one using the
-:func:`add_site` method. The first argument for ``add_site`` is the
-position of the site in genome coordinates. This can be any positive value (even floating point),
-but site positions must be unique and sites must be added in increasing order of positions. For
-convenience we've given the sites position 0 to 5 here, but they could be any values.
+Here we create a new :class:`.SampleData` object for five samples. We then
+sequentially add the data for each site one-by-one using the
+:meth:`.Sample.add_site` method. The first argument for ``add_site`` is the
+position of the site in genome coordinates. This can be any positive value
+(even floating point), but site positions must be unique and sites must be
+added in increasing order of position. For convenience we've given the sites
+position 0 to 5 here, but they could be any values. The second argument for
+``add_site`` is a list of *genotypes* for the site. Each value in a genotypes
+array ``g`` is an integer: 0 represents the ancestral state for a site, and 1
+the derived state. The third argument to ``add_site`` is the list of *alleles*
+for the site. The first element of this list is the ancestral state and the
+second the derived state (currently only biallelic sites are supported). Thus,
+each call to ``add_site`` stores a single column of the original haplotype data
+above. For example, the ancestral and derived states for the site at position 0
+are "A"and "T" and the genotypes are 01000; together, these encode encode the
+first column, ATAAA.
 
-The second argument to ``add_site`` is the list of *alleles* for the site. The first element of
-this list must be the ancestral state and the second the derived state (currently only biallelic
-sites are supported). The third argument for ``add_site`` is a list of *genotypes* for the site.
-Each value in a genotypes array ``g`` is an index into the list of alleles. Thus, each call to
-``add_site`` stores a single column of the original haplotype data above. For example, the
-ancestral and derived states for the site at position 0 are "A"and "T" and the genotypes are
-01000; together, these encode encode the first column, ATAAA.
 
 Once we have stored our data in a :class:`.SampleData` object, we can easily infer a tree
 sequence using the Python API:
@@ -119,7 +122,7 @@ coalescent with recombination using `msprime
             path="simulation.samples", sequence_length=ts.sequence_length,
             num_flush_threads=2) as sample_data:
         for var in ts.variants():
-            sample_data.add_site(var.site.position, var.alleles, var.genotypes)
+            sample_data.add_site(var.site.position, var.genotypes, var.alleles)
             progress.update()
         progress.close()
 
@@ -131,7 +134,7 @@ Running the code we get::
 
 In this script we first run a simulation of a sample of 10 thousand 10 megabase chromosomes with
 human-like parameters, which results in about 37K distinct trees and 39K segregating sites. We
-then create a :class:`SampleData` instance to store the data we have simulated as before, but
+then create a :class:`.SampleData` instance to store the data we have simulated as before, but
 providing a few more parameters in this case. Firstly, we pass a ``path`` argument to provide a
 filename in which to permanently store the information. We also provide a ``sequence_length``
 argument (which defines the overall coordinate space for site positions) so that this value can
@@ -303,10 +306,12 @@ ancestor of nodes 2, 3, 4 and 5 before 1.
     1. Add documentation links for msprime above so we can explain tree
        sequences there.
 
-
 ++++++++++++
 Data example
 ++++++++++++
 
 .. todo:: Worked example where we process a VCF to get some data.
+
+.. todo:: Also add metadata and populations to this example, showing
+     how we retrieve the metadata from the tree sequence.
 

@@ -325,6 +325,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(ValueError, sample_data.add_population)
         self.assertRaises(ValueError, sample_data.add_individual)
 
+    def test_add_population_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        pid = sample_data.add_population({"a": 1})
+        self.assertEqual(pid, 0)
+        pid = sample_data.add_population()
+        self.assertEqual(pid, 1)
+        pid = sample_data.add_population()
+        self.assertEqual(pid, 2)
+
     def test_population_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.add_population({"a": 1})
@@ -349,6 +358,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
         self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
 
+    def test_add_individual_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        iid, sids = sample_data.add_individual()
+        self.assertEqual(iid, 0)
+        self.assertEqual(sids, [0])
+        iid, sids = sample_data.add_individual(ploidy=1)
+        self.assertEqual(iid, 1)
+        self.assertEqual(sids, [1])
+        iid, sids = sample_data.add_individual(ploidy=5)
+        self.assertEqual(iid, 2)
+        self.assertEqual(sids, [2, 3, 4, 5, 6])
+
     def test_add_individual_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(TypeError, sample_data.add_individual, metadata=234)
@@ -362,6 +383,13 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def test_no_data(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(ValueError, sample_data.finalise)
+
+    def test_add_site_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sid = sample_data.add_site(0, [0, 1])
+        self.assertEqual(sid, 0)
+        sid = sample_data.add_site(1, [0, 1])
+        self.assertEqual(sid, 1)
 
     def test_genotypes(self):
         ts = self.get_example_ts(13, 12)

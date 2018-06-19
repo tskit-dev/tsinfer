@@ -28,6 +28,84 @@ Input haplotype data for tskit must satisfy the following requirements:
   states must be computed using some other method.
 - Only biallelic sites are currently supported.
 
+
+.. _sec_inference_data_model:
+
+**********
+Data model
+**********
+
+The data model for ``tsinfer`` is tightly integrated with
+``msprime``'s `data model <https://msprime.readthedocs.io/en/stable/interchange.html>`_
+and uses the same concepts throughout. The intermediate file formats and APIs
+described here provide a bridge between this model and existing data sources. For
+convenience, we provide a brief description of concepts needed for importing
+data into ``tsinfer`` here. Please see the `msprime documentation
+<https://msprime.readthedocs.io/en/stable/index.html>`_ for more detailed
+information.
+
+.. _sec_inference_data_model_individual:
+
+++++++++++
+Individual
+++++++++++
+
+In ``tsinfer`` an individual defines one of the subjects for which we have
+genotype data. Individuals may have arbitrary ploidy levels (i.e., haploid,
+diploid, tetraploid, etc.). Different individuals within a dataset can have
+different ploidy levels. Individuals are added using the
+:meth:`.SampleData.add_individual` method.
+
+Arbitrary :ref:`sec_inference_data_model_metadata` can be associated with individuals.
+
+.. _sec_inference_data_model_sample:
+
+++++++
+Sample
+++++++
+
+Each individual is composed of one or more ``samples``, depending on their
+ploidy. If an individual is diploid they have two samples, one each for the
+maternal and paternal chromosomes copies. More generally, a ``node`` refers
+to a maternal or paternal chromosome that is either a sample or an
+ancestor of our samples.
+
+When we add an individual with ploidy ``k`` using
+:meth:`.SampleData.add_individual`, ``k`` new samples are also added
+which refer to this new individual. When adding genotype information using the
+:meth:`.SampleData.add_site` method, the user must ensure that the observed
+genotypes are in this same order.
+
+.. _sec_inference_data_model_population:
+
+++++++++++
+Population
+++++++++++
+
+A population is some grouping of individuals. Populations principally
+exist to allow us define metadata for groups of individuals (although
+technically, population IDs are associated with samples).
+Populations are added using the :meth:`.SampleData.add_population`
+method.
+
+.. _sec_inference_data_model_metadata:
+
+++++++++
+Metadata
+++++++++
+
+Metadata can be associated with populations and individuals in ``tsinfer``,
+which results in this information being available in the final tree
+sequence. Metadata allows us to incorporate extra information
+that is not part of the basic data model; for example, we can record
+the upstream ID of a given individual and their family relationships
+with other individuals.
+
+In ``tsinfer``, metadata can be stored by providing a JSON encodable
+mapping. This information is then stored as JSON, and embedded in the
+final tree sequence object and can be recovered using the ``msprime``
+APIs.
+
 .. _sec_inference_import_samples:
 
 *******************
@@ -129,3 +207,4 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
        section
     2. Describe the structure of the outpt tree sequences; how the
        nodes are mapped, what the time values mean, etc.
+
