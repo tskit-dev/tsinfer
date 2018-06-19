@@ -783,3 +783,31 @@ class TestBadEngine(unittest.TestCase):
             self.assertRaises(
                 ValueError, tsinfer.match_samples, sample_data, ancestors_ts,
                 engine=bad_engine)
+
+
+class TestWrongTreeSequence(unittest.TestCase):
+    """
+    Tests covering what happens when we provide an incorrect tree sequence
+    as the ancestrors_ts.
+    Initial issue: https://github.com/tskit-dev/tsinfer/issues/53
+    """
+    def test_wrong_ts_match_samples(self):
+        sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        inferred_ts = tsinfer.infer(sample_data)
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, inferred_ts)
+
+    def test_original_ts_match_samples(self):
+        sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, sim)
+
+    def test_different_ancestors_ts_match_samples(self):
+        sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+
+        sim = msprime.simulate(sample_size=6, random_seed=2, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, ancestors_ts)

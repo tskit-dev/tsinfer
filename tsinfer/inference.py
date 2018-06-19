@@ -324,16 +324,16 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
-        # before = time.perf_counter()
+        if ancestors_ts.num_sites != self.sample_data.num_inference_sites:
+            raise ValueError(
+                "Ancestors tree sequence not compatible with the the specified "
+                "sample data.")
         tables = ancestors_ts.dump_tables()
         nodes = tables.nodes
         self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
         # Need to sort by child ID here and left so that we can efficiently
         # insert the child paths.
-        # TODO remove this step when we use a native zarr file for storing the
-        # ancestor tree sequence. We output the edges in this order and we're
-        # just sorting/resorting the edges here.
         index = np.lexsort((edges.left, edges.child))
         self.tree_sequence_builder.restore_edges(
             edges.left.astype(np.int32)[index],
@@ -345,7 +345,6 @@ class Matcher(object):
             mutations.site, mutations.node, mutations.derived_state - ord('0'),
             mutations.parent)
         self.mutated_sites = mutations.site
-        # print("SITE  =", self.mutated_sites)
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
                 ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
