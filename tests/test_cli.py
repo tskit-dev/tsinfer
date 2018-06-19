@@ -107,6 +107,9 @@ class TestCli(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
         self.sample_file = str(pathlib.Path(self.tempdir.name, "input-data.samples"))
         self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
+        self.ancestor_trees = str(
+            pathlib.Path(self.tempdir.name, "input-data.ancestors.trees"))
+        self.output_trees = str(pathlib.Path(self.tempdir.name, "input-data.trees"))
         self.input_ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=10)
         sample_data = tsinfer.SampleData(
@@ -115,6 +118,11 @@ class TestCli(unittest.TestCase):
             sample_data.add_site(var.site.position, var.genotypes, var.alleles)
         sample_data.finalise()
         tsinfer.generate_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
+        ancestor_data = tsinfer.load(self.ancestor_file)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        ancestors_ts.dump(self.ancestor_trees)
+        ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        ts.dump(self.output_trees)
         sample_data.close()
 
 
@@ -190,10 +198,23 @@ class TestList(TestCli):
         output2 = self.run_command(["list", "--storage", self.ancestor_file])
         self.assertEqual(output1, output2)
 
+    def test_list_trees(self):
+        output1 = self.run_command(["list", self.output_trees])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["ls", self.output_trees])
+        self.assertEqual(output1, output2)
+
+    def test_list_ancestor_trees(self):
+        output1 = self.run_command(["list", self.ancestor_trees])
+        self.assertGreater(len(output1), 0)
+        output2 = self.run_command(["ls", self.ancestor_trees])
+        self.assertEqual(output1, output2)
+
     def test_list_unknown_files(self):
         zero_file = os.path.join(self.tempdir.name, "zeros")
         with open(zero_file, "wb") as f:
             f.write(bytearray(100))
-        for bad_file in ["/", zero_file]:
+        for bad_file in [zero_file]:
             self.assertRaises(
                 exceptions.FileFormatError, self.run_command, ["list", bad_file])
+        self.assertRaises(IsADirectoryError, self.run_command, ["list", "/"])

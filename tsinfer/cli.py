@@ -129,13 +129,32 @@ def setup_logging(args):
         logger.setLevel(log_level)
 
 
+def summarise_tree_sequence(path, ts):
+    print("path      =", path)
+    print("size      =", humanize.naturalsize(os.path.getsize(path), binary=True))
+    print("edges     =", ts.num_edges)
+    print("trees     =", ts.num_trees)
+    print("sites     =", ts.num_sites)
+    print("mutations =", ts.num_mutations)
+    # TODO Add optional tree statistics like mean degree, etc.
+
+
 def run_list(args):
     setup_logging(args)
-    tsinfer_file = tsinfer.load(args.path)
-    if args.storage:
-        print(tsinfer_file.info)
+    # First try to load with msprime.
+    ts = None
+    try:
+        ts = msprime.load(args.path)
+    except msprime.FileFormatError:
+        pass
+    if ts is None:
+        tsinfer_file = tsinfer.load(args.path)
+        if args.storage:
+            print(tsinfer_file.info)
+        else:
+            print(tsinfer_file)
     else:
-        print(tsinfer_file)
+        summarise_tree_sequence(args.path, ts)
 
 
 def run_infer(args):
