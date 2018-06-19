@@ -75,7 +75,7 @@ def _get_progress_monitor(progress_monitor):
 
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
-        engine=C_ENGINE):
+        simplify=True, engine=C_ENGINE):
     """
     infer(sample_data, num_threads=0)
 
@@ -99,7 +99,8 @@ def infer(
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
         sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
-        path_compression=path_compression, progress_monitor=progress_monitor)
+        path_compression=path_compression, simplify=simplify,
+        progress_monitor=progress_monitor)
     return inferred_ts
 
 
@@ -324,16 +325,16 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
-        # before = time.perf_counter()
+        if ancestors_ts.num_sites != self.sample_data.num_inference_sites:
+            raise ValueError(
+                "Ancestors tree sequence not compatible with the the specified "
+                "sample data.")
         tables = ancestors_ts.dump_tables()
         nodes = tables.nodes
         self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
         # Need to sort by child ID here and left so that we can efficiently
         # insert the child paths.
-        # TODO remove this step when we use a native zarr file for storing the
-        # ancestor tree sequence. We output the edges in this order and we're
-        # just sorting/resorting the edges here.
         index = np.lexsort((edges.left, edges.child))
         self.tree_sequence_builder.restore_edges(
             edges.left.astype(np.int32)[index],
@@ -345,7 +346,6 @@ class Matcher(object):
             mutations.site, mutations.node, mutations.derived_state - ord('0'),
             mutations.parent)
         self.mutated_sites = mutations.site
-        # print("SITE  =", self.mutated_sites)
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
                 ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
@@ -513,7 +513,8 @@ class Matcher(object):
         # TODO add an option for encoding ancestor metadata in with the nodes here.
         # Add in the nodes for the ancestors.
         for u in range(self.sample_ids[0]):
-            tables.nodes.add_row(flags=flags[u], time=time[u])
+            # TODO change this so that we turn off SAMPLE rather than just zeroing
+            tables.nodes.add_row(flags=0, time=time[u])
         # Now add in the sample nodes with metadata, etc.
         for sample_id, metadata, population, individual in zip(
                 self.sample_ids,

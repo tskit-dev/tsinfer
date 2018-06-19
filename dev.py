@@ -123,11 +123,15 @@ def tsinfer_dev(
             sample_data.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
         for site, genotypes in zip(ts.sites(), G):
             sample_data.add_site(
-                site.position, ["0", "1"], genotypes,
+                site.position, genotypes,
                 inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
 
-    print("sample_data")
-    print(sample_data)
+    ts = tsinfer.infer(sample_data, simplify=False)
+    for tree in ts.trees():
+        print(tree.draw(format="unicode"))
+
+    # print("sample_data")
+    # print(sample_data)
     # print(sample_data.samples_individual[:])
     # # sample_data.close()
 
