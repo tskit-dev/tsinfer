@@ -131,7 +131,6 @@ def setup_logging(args):
 
 def run_list(args):
     setup_logging(args)
-
     tsinfer_file = tsinfer.load(args.path)
     if args.storage:
         print(tsinfer_file.info)
