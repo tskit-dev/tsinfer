@@ -178,7 +178,9 @@ def convert(
         add_samples(ped_file, pop_id_map, individual_names, sample_data)
 
     for index, site in enumerate(variants(vcf_file, show_progress)):
-        sample_data.add_site(site.position, site.alleles, site.genotypes, site.metadata)
+        sample_data.add_site(
+            position=site.position, genotypes=site.genotypes,
+            alleles=site.alleles, metadata=site.metadata)
         if index == max_variants:
             break
 

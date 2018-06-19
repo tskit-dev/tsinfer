@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#include "err.h"
 #include "block_allocator.h"
 #include "object_heap.h"
 #include "avl.h"

@@ -65,7 +65,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
         self.assertEqual(input_file.format_version, formats.SampleData.FORMAT_VERSION)
         self.assertEqual(input_file.format_name, formats.SampleData.FORMAT_NAME)
@@ -240,20 +240,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         # Trying to add singletons or fixed sites as inference sites
         # raise and error
         input_file = formats.SampleData()
-        alleles = ["0", "1"]
         # Make sure this is OK
-        input_file.add_site(0, alleles, [0, 1, 1], inference=True)
+        input_file.add_site(0, [0, 1, 1], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[0, 0, 0], inference=True)
+            position=1, genotypes=[0, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[1, 0, 0], inference=True)
+            position=1, genotypes=[1, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[1, 1, 1], inference=True)
+            position=1, genotypes=[1, 1, 1], inference=True)
         input_file.add_site(
-            position=1, alleles=alleles, genotypes=[1, 0, 1], inference=True)
+            position=1, genotypes=[1, 0, 1], inference=True)
 
     def test_duplicate_sites(self):
         # Duplicate sites are not accepted.
@@ -326,6 +325,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(ValueError, sample_data.add_population)
         self.assertRaises(ValueError, sample_data.add_individual)
 
+    def test_add_population_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        pid = sample_data.add_population({"a": 1})
+        self.assertEqual(pid, 0)
+        pid = sample_data.add_population()
+        self.assertEqual(pid, 1)
+        pid = sample_data.add_population()
+        self.assertEqual(pid, 2)
+
     def test_population_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.add_population({"a": 1})
@@ -350,6 +358,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
         self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
 
+    def test_add_individual_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        iid, sids = sample_data.add_individual()
+        self.assertEqual(iid, 0)
+        self.assertEqual(sids, [0])
+        iid, sids = sample_data.add_individual(ploidy=1)
+        self.assertEqual(iid, 1)
+        self.assertEqual(sids, [1])
+        iid, sids = sample_data.add_individual(ploidy=5)
+        self.assertEqual(iid, 2)
+        self.assertEqual(sids, [2, 3, 4, 5, 6])
+
     def test_add_individual_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(TypeError, sample_data.add_individual, metadata=234)
@@ -364,12 +384,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(ValueError, sample_data.finalise)
 
+    def test_add_site_return(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sid = sample_data.add_site(0, [0, 1])
+        self.assertEqual(sid, 0)
+        sid = sample_data.add_site(1, [0, 1])
+        self.assertEqual(sid, 1)
+
     def test_genotypes(self):
         ts = self.get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
 
         self.assertLess(np.sum(input_file.sites_inference[:]), ts.num_sites)
@@ -399,7 +426,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertGreater(ts.num_sites, 1)
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
 
         G = ts.genotype_matrix()
@@ -430,7 +457,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             G = np.zeros((m, n), dtype=np.int8) + value
             input_file = formats.SampleData(sequence_length=m)
             for j in range(m):
-                input_file.add_site(j, ["0", "1"], G[j])
+                input_file.add_site(j, G[j])
             input_file.finalise()
             self.assertEqual(input_file.num_sites, m)
             self.assertTrue(
@@ -550,7 +577,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             length=sequence_length, random_seed=100)
         sample_data = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            sample_data.add_site(v.site.position, v.alleles, v.genotypes)
+            sample_data.add_site(v.site.position, v.genotypes, v.alleles)
         sample_data.finalise()
 
         num_sites = sample_data.num_inference_sites
