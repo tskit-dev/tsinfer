@@ -43,7 +43,7 @@ jobs:
               nosetests -v --with-coverage --cover-package tsinfer \
                   --cover-branches --cover-erase --cover-xml \
                   --cover-inclusive tests
-              # python3 -m codecov -F python
+              python3 -m codecov 
       - run:
           name: Build the distribution tarball.
           command: python setup.py sdist
