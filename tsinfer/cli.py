@@ -211,6 +211,7 @@ def run_match_samples(args):
     ts = tsinfer.match_samples(
         sample_data, ancestors_trees, num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
+        simplify=not args.no_simplify,
         progress_monitor=progress_monitor)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
@@ -275,6 +276,12 @@ def add_path_compression_argument(parser):
     parser.add_argument(
         "--no-path-compression", action="store_true",
         help="Disable path compression")
+
+
+def add_simplify_argument(parser):
+    parser.add_argument(
+        "--no-simplify", action="store_true",
+        help="Do not simplify the output tree sequence")
 
 
 def add_logging_arguments(parser):
@@ -344,6 +351,7 @@ def get_cli_parser():
     add_logging_arguments(parser)
     add_ancestors_trees_argument(parser)
     add_path_compression_argument(parser)
+    add_simplify_argument(parser)
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)

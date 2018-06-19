@@ -125,6 +125,15 @@ class TestCli(unittest.TestCase):
         ts.dump(self.output_trees)
         sample_data.close()
 
+    # Need to mock out setup_logging here or we spew logging to the console
+    # in later tests.
+    @mock.patch("tsinfer.cli.setup_logging")
+    def run_command(self, command, mock_setup_logging):
+        stdout, stderr = capture_output(cli.tsinfer_main, command)
+        self.assertEqual(stderr, "")
+        self.assertEqual(stdout, "")
+        self.assertTrue(mock_setup_logging.called)
+
 
 class TestCommandsDefaults(TestCli):
     """
@@ -139,15 +148,6 @@ class TestCommandsDefaults(TestCli):
         self.assertTrue(np.array_equal(
             output_trees.genotype_matrix(), self.input_ts.genotype_matrix()))
 
-    # Need to mock out setup_logging here or we spew logging to the console
-    # in later tests.
-    @mock.patch("tsinfer.cli.setup_logging")
-    def run_command(self, command, mock_setup_logging):
-        stdout, stderr = capture_output(cli.tsinfer_main, command)
-        self.assertEqual(stderr, "")
-        self.assertEqual(stdout, "")
-        self.assertTrue(mock_setup_logging.called)
-
     def test_infer(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
@@ -159,6 +159,25 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["match-samples", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)
+
+
+class TestMatchSamples(TestCli):
+    """
+    Tests for the match samples options.
+    """
+    def test_no_simplify(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        output_trees_no_simplify = os.path.join(
+            self.tempdir.name, "output-nosimplify.trees")
+        self.run_command(["generate-ancestors", self.sample_file])
+        self.run_command(["match-ancestors", self.sample_file])
+        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
+        self.run_command([
+            "match-samples", self.sample_file, "--no-simplify", "-O",
+            output_trees_no_simplify])
+        t1 = msprime.load(output_trees).tables
+        t2 = msprime.load(output_trees_no_simplify).tables
+        self.assertNotEqual(t1.nodes, t2.nodes)
 
 
 class TestList(TestCli):
