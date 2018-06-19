@@ -70,6 +70,22 @@ class TestRoundTrip(unittest.TestCase):
                 self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
             self.assertGreater(ts.num_provenances, 0)
 
+        for simplify in [True, False]:
+            ts = tsinfer.infer(sample_data, simplify=simplify)
+            self.assertEqual(ts.sequence_length, sequence_length)
+            self.assertEqual(ts.num_sites, len(positions))
+            for v in ts.variants():
+                self.assertEqual(v.position, positions[v.index])
+                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+
+        for path_compression in [True, False]:
+            ts = tsinfer.infer(sample_data, path_compression=path_compression)
+            self.assertEqual(ts.sequence_length, sequence_length)
+            self.assertEqual(ts.num_sites, len(positions))
+            for v in ts.variants():
+                self.assertEqual(v.position, positions[v.index])
+                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+
     def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
         self.verify_data_round_trip(ts.genotype_matrix(), positions, ts.sequence_length)
@@ -811,3 +827,34 @@ class TestWrongTreeSequence(unittest.TestCase):
         sim = msprime.simulate(sample_size=6, random_seed=2, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, ancestors_ts)
+
+
+class TestSimplify(unittest.TestCase):
+    """
+    Check that the simplify argument to infer is correctly invoked.
+    """
+    def verify(self, ts):
+        n = ts.num_samples
+        self.assertGreater(ts.num_sites, 2)
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        ts1 = tsinfer.infer(sd, simplify=True)
+        # When simplify is true the samples should be zero to n.
+        self.assertEqual(list(ts1.samples()), list(range(n)))
+        for tree in ts1.trees():
+            self.assertEqual(tree.num_samples(), len(list(tree.leaves())))
+
+        # When simplify is true the samples should be zero to N - n
+        # up to n
+        ts2 = tsinfer.infer(sd, simplify=False)
+        self.assertEqual(
+            list(ts2.samples()),
+            list(range(ts2.num_nodes - n, ts2.num_nodes)))
+
+    def test_single_tree(self):
+        ts = msprime.simulate(5, random_seed=1, mutation_rate=2)
+        self.verify(ts)
+
+    def test_many_trees(self):
+        ts = msprime.simulate(5, random_seed=1, recombination_rate=2, mutation_rate=2)
+        self.assertGreater(ts.num_trees, 2)
+        self.verify(ts)

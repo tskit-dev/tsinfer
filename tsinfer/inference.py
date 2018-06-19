@@ -75,7 +75,7 @@ def _get_progress_monitor(progress_monitor):
 
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
-        engine=C_ENGINE):
+        simplify=True, engine=C_ENGINE):
     """
     infer(sample_data, num_threads=0)
 
@@ -99,7 +99,8 @@ def infer(
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
         sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
-        path_compression=path_compression, progress_monitor=progress_monitor)
+        path_compression=path_compression, simplify=simplify,
+        progress_monitor=progress_monitor)
     return inferred_ts
 
 
@@ -512,7 +513,8 @@ class Matcher(object):
         # TODO add an option for encoding ancestor metadata in with the nodes here.
         # Add in the nodes for the ancestors.
         for u in range(self.sample_ids[0]):
-            tables.nodes.add_row(flags=flags[u], time=time[u])
+            # TODO change this so that we turn off SAMPLE rather than just zeroing
+            tables.nodes.add_row(flags=0, time=time[u])
         # Now add in the sample nodes with metadata, etc.
         for sample_id, metadata, population, individual in zip(
                 self.sample_ids,
