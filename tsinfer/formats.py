@@ -607,9 +607,9 @@ class SampleData(DataContainer):
 
         sample_data = tsinfer.SampleData(path="mydata.samples")
         sample_data.add_site(
-            position=1234, alleles=["G", "C"], genotypes=[0, 0, 1, 0])
+            position=1234, genotypes=[0, 0, 1, 0], alleles=["G", "C"])
         sample_data.add_site(
-            position=5678, alleles=["A", "T"], genotypes=[1, 1, 1, 0])
+            position=5678, genotypes=[1, 1, 1, 0], alleles=["A", "T"])
         sample_data.finalise()
 
     This creates a sample data file for four samples and two sites, and
@@ -621,8 +621,8 @@ class SampleData(DataContainer):
     .. code-block:: python
 
         with tsinfer.SampleData(path="mydata.samples") as sample_data:
-            sample_data.add_site(1234, ["G", "C"], [0, 0, 1, 0])
-            sample_data.add_site(5678, ["A", "T"], [1, 1, 1, 0])
+            sample_data.add_site(1234, [0, 0, 1, 0], ["G", "C"])
+            sample_data.add_site(5678, [1, 1, 1, 0], ["A", "T"])
 
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
@@ -868,7 +868,7 @@ class SampleData(DataContainer):
         self = cls.__new__(cls)
         self.__init__(sequence_length=ts.sequence_length, **kwargs)
         for v in ts.variants():
-            self.add_site(v.site.position, v.alleles, v.genotypes)
+            self.add_site(v.site.position, v.genotypes, v.alleles)
         self.finalise()
         return self
 
@@ -917,7 +917,7 @@ class SampleData(DataContainer):
         return individual
 
     def add_site(
-            self, position, alleles=None, genotypes=None, metadata=None, inference=None):
+            self, position, genotypes, alleles=None, metadata=None, inference=None):
         """
         Adds a new site to this :class:`.SampleData`. At a minimum, the new site
         must specify the ``position``, ``alleles`` an ``genotypes``. Sites
@@ -936,17 +936,17 @@ class SampleData(DataContainer):
         :param float position: The floating point position of this site. Must be
             less than the ``sequence_length`` if provided to the :class:`.SampleData`
             constructor. Must be greater than all previously added sites.
-        :param list(str) alleles: A list of strings defining the alleles at this
-            site. The zeroth element of this list is the **ancestral state**
-            and the oneth element is the **derived state**. Only biallelic
-            sites are currently supported. If not specified or None, defaults
-            to ["0", "1"].
         :param arraylike genotypes: An array-like object defining the sample
             genotypes at this site. The array of genotypes corresponds to the
             observed alleles for each sample, represented by indexes into the
             alleles array. This input is converted to a numpy array with
             dtype ``np.uint8``; therefore, for maximum efficiency ensure
             that the input array is also of this type.
+        :param list(str) alleles: A list of strings defining the alleles at this
+            site. The zeroth element of this list is the **ancestral state**
+            and the oneth element is the **derived state**. Only biallelic
+            sites are currently supported. If not specified or None, defaults
+            to ["0", "1"].
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this site.
         :param bool inference: If True, use this site during the inference
@@ -957,8 +957,6 @@ class SampleData(DataContainer):
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
         """
-        if genotypes is None:
-            raise ValueError("Genotypes must be specified")
         genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
         self._check_build_mode()
         if self._build_state == self.ADDING_POPULATIONS:

@@ -65,7 +65,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
         self.assertEqual(input_file.format_version, formats.SampleData.FORMAT_VERSION)
         self.assertEqual(input_file.format_name, formats.SampleData.FORMAT_NAME)
@@ -240,20 +240,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         # Trying to add singletons or fixed sites as inference sites
         # raise and error
         input_file = formats.SampleData()
-        alleles = ["0", "1"]
         # Make sure this is OK
-        input_file.add_site(0, alleles, [0, 1, 1], inference=True)
+        input_file.add_site(0, [0, 1, 1], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[0, 0, 0], inference=True)
+            position=1, genotypes=[0, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[1, 0, 0], inference=True)
+            position=1, genotypes=[1, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=[1, 1, 1], inference=True)
+            position=1, genotypes=[1, 1, 1], inference=True)
         input_file.add_site(
-            position=1, alleles=alleles, genotypes=[1, 0, 1], inference=True)
+            position=1, genotypes=[1, 0, 1], inference=True)
 
     def test_duplicate_sites(self):
         # Duplicate sites are not accepted.
@@ -369,7 +368,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertGreater(ts.num_sites, 1)
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
 
         self.assertLess(np.sum(input_file.sites_inference[:]), ts.num_sites)
@@ -399,7 +398,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertGreater(ts.num_sites, 1)
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            input_file.add_site(v.site.position, v.alleles, v.genotypes)
+            input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.finalise()
 
         G = ts.genotype_matrix()
@@ -430,7 +429,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             G = np.zeros((m, n), dtype=np.int8) + value
             input_file = formats.SampleData(sequence_length=m)
             for j in range(m):
-                input_file.add_site(j, ["0", "1"], G[j])
+                input_file.add_site(j, G[j])
             input_file.finalise()
             self.assertEqual(input_file.num_sites, m)
             self.assertTrue(
@@ -550,7 +549,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             length=sequence_length, random_seed=100)
         sample_data = formats.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
-            sample_data.add_site(v.site.position, v.alleles, v.genotypes)
+            sample_data.add_site(v.site.position, v.genotypes, v.alleles)
         sample_data.finalise()
 
         num_sites = sample_data.num_inference_sites

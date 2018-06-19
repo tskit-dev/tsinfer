@@ -112,7 +112,7 @@ class TestCli(unittest.TestCase):
         sample_data = tsinfer.SampleData(
             sequence_length=self.input_ts.sequence_length, path=self.sample_file)
         for var in self.input_ts.variants():
-            sample_data.add_site(var.site.position, var.alleles, var.genotypes)
+            sample_data.add_site(var.site.position, var.genotypes, var.alleles)
         sample_data.finalise()
         tsinfer.generate_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
         sample_data.close()

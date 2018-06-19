@@ -435,7 +435,7 @@ def run_perfect_inference(
     ts = insert_perfect_mutations(base_ts)
     with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
         for v in ts.variants():
-            sample_data.add_site(v.site.position, v.alleles, v.genotypes)
+            sample_data.add_site(v.site.position, v.genotypes, v.alleles)
 
     ancestor_data = formats.AncestorData(sample_data)
     build_simulated_ancestors(
