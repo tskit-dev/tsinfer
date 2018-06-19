@@ -210,6 +210,42 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         self.verify_round_trip(genotypes, inference)
 
 
+class TestZeroInferenceSites(unittest.TestCase):
+    """
+    Tests for the degenerate case in which we have no inference sites.
+    """
+    def verify(self, genotypes):
+        genotypes = np.array(genotypes, dtype=np.int8)
+        m = genotypes.shape[0]
+        with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
+            for j in range(m):
+                sample_data.add_site(j, genotypes[j], inference=False)
+        output_ts = tsinfer.infer(sample_data)
+        for tree in output_ts.trees():
+            self.assertEqual(tree.num_roots, 1)
+
+    def test_many_sites(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        self.assertGreater(ts.num_sites, 2)
+        self.verify(ts.genotype_matrix())
+
+    def test_one_site(self):
+        self.verify([[0, 0]])
+        self.verify([[0, 1]])
+        self.verify([[1, 0]])
+        self.verify([[1, 1]])
+
+    def test_two_sites(self):
+        self.verify([[0, 0], [0, 0]])
+        self.verify([[1, 1], [1, 1]])
+        self.verify([[0, 0, 0], [0, 0, 0]])
+        self.verify([[0, 1, 0], [1, 0, 0]])
+
+    def test_three_sites(self):
+        self.verify([[0, 0], [0, 0], [0, 0]])
+        self.verify([[1, 1], [1, 1], [1, 1]])
+
+
 def random_string(rng, max_len=10):
     """
     Uses the specified random generator to generate a random string.

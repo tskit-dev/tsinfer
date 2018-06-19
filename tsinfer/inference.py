@@ -533,12 +533,21 @@ class Matcher(object):
 
         logger.debug("Adding tree sequence edges")
         left, right, parent, child = tsb.dump_edges()
-        # Subset down to the inference sites and map back to the site indexes.
-        position = position[inference_sites == 1]
-        pos_map = np.hstack([position, [sequence_length]])
-        pos_map[0] = 0
-        tables.edges.set_columns(
-            left=pos_map[left], right=pos_map[right], parent=parent, child=child)
+        if np.all(inference_sites == 0):
+            # We have no inference sites, so no edges have been estimated. To ensure
+            # we have a rooted tree, we add in edges for each sample to an artificial
+            # root.
+            assert left.shape[0] == 0
+            root = tables.nodes.add_row(flags=0, time=tables.nodes.time.max() + 1)
+            for sample_id in self.sample_ids:
+                tables.edges.add_row(0, sequence_length, root, sample_id)
+        else:
+            # Subset down to the inference sites and map back to the site indexes.
+            position = position[inference_sites == 1]
+            pos_map = np.hstack([position, [sequence_length]])
+            pos_map[0] = 0
+            tables.edges.set_columns(
+                left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
         logger.debug("Sorting and building intermediate tree sequence.")
         tables.sort()
