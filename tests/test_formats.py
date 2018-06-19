@@ -41,10 +41,10 @@ class DataContainerMixin(object):
     Common tests for the the data container classes."
     """
     def test_load(self):
-        bad_files = ["/", "/file/does/not/exist"]
-        for bad_file in bad_files:
-            self.assertRaises(exceptions.FileError, self.tested_class.load, bad_file)
-        bad_format_files = ["LICENSE"]
+        self.assertRaises(IsADirectoryError, self.tested_class.load, "/")
+        self.assertRaises(
+            FileNotFoundError, self.tested_class.load, "/file/does/not/exist")
+        bad_format_files = ["LICENSE", "/dev/urandom"]
         for bad_format_file in bad_format_files:
             self.assertTrue(os.path.exists(bad_format_file))
             self.assertRaises(

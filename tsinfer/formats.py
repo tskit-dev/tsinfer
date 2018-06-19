@@ -345,6 +345,10 @@ class DataContainer(object):
 
     @classmethod
     def load(cls, path):
+        # Try to read the file. This should raise the correct error if we have a
+        # directory, missing file, permissions, etc.
+        with open(path, "r"):
+            pass
         self = cls.__new__(cls)
         self.mode = self.READ_MODE
         self.path = path
