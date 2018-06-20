@@ -89,6 +89,12 @@ FINALISED_KEY = "finalised"
 DEFAULT_COMPRESSOR = numcodecs.Zstd()
 
 
+def remove_lmdb_lockfile(lmdb_file):
+    lockfile = lmdb_file + "-lock"
+    if os.path.exists(lockfile):
+        os.unlink(lockfile)
+
+
 class BufferedItemWriter(object):
     """
     Class that writes items sequentially into a set of zarr arrays,
@@ -341,6 +347,8 @@ class DataContainer(object):
     def _new_lmdb_store(self):
         if os.path.exists(self.path):
             os.unlink(self.path)
+        # The existence of a lock-file can confuse things, so delete it.
+        remove_lmdb_lockfile(self.path)
         return zarr.LMDBStore(self.path, subdir=False)
 
     @classmethod
@@ -428,9 +436,7 @@ class DataContainer(object):
                 page_size = db.stat()["psize"]
                 db.set_mapsize(num_pages * page_size)
             # Remove the lock file as we don't need it after this point.
-            lockfile = self.path + "-lock"
-            if os.path.exists(lockfile):
-                os.unlink(lockfile)
+            remove_lmdb_lockfile(self.path)
         self._open_readonly()
 
     def _check_format(self):

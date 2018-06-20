@@ -49,8 +49,7 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        # TODO Change to 0.6.0 once it's released.
-        "msprime>=0.6.0b2",
+        "msprime>=0.6.0",
         "zarr>=2.2",
         "lmdb",
         "sortedcontainers"

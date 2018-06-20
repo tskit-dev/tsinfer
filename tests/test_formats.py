@@ -564,6 +564,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         data.finalise()
         self.assertRaises(ValueError, set_value, data, [])
 
+    def test_overwrite_partial(self):
+        # Check that we can correctly overwrite partially written and
+        # unfinalised files. See
+        # https://github.com/tskit-dev/tsinfer/issues/64
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            for _ in range(10):
+                data = formats.SampleData(path=filename)
+                for j in range(10):
+                    data.add_site(j, [0, 1])
+
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
