@@ -220,10 +220,33 @@ def copy_1kg():
     print("copy = ")
     print(copy)
 
+def tutorial_samples():
+    import tqdm
+    import msprime
+    import tsinfer
+
+    ts = msprime.simulate(
+                sample_size=10000, Ne=10**4, recombination_rate=1e-8,
+                    mutation_rate=1e-8, length=10*10**6, random_seed=42)
+    ts.dump("tmp__NOBACKUP__/simulation-source.trees")
+    print("simulation done:", ts.num_trees, "trees and", ts.num_sites,  "sites")
+
+    progress = tqdm.tqdm(total=ts.num_sites)
+    with tsinfer.SampleData(
+            path="tmp__NOBACKUP__/simulation.samples",
+            sequence_length=ts.sequence_length,
+            num_flush_threads=2) as sample_data:
+        for var in ts.variants():
+            sample_data.add_site(var.site.position, var.genotypes, var.alleles)
+            progress.update()
+    progress.close()
+
 if __name__ == "__main__":
 
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
+
+    tutorial_samples()
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
@@ -234,7 +257,8 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+    # tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+
 
 
 #     for seed in range(1, 10000):

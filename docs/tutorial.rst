@@ -160,20 +160,24 @@ provides a useful way to examine files in more detail using the ``list`` (or ``l
 
     $ tsinfer ls simulate.samples
     path                  = simulation.samples
-    file_size             = 21.7 MiB
+    file_size             = 21.8 MiB
     format_name           = tsinfer-sample-data
-    format_version        = (0, 3)
+    format_version        = (1, 0)
     finalised             = True
-    uuid                  = caed2618-5ee8-42ec-b447-e03d4a61ffc9
+    uuid                  = ab667d05-06bc-4a15-ab85-ab5a0ac39c36
     num_provenances       = 1
     provenances/timestamp = shape=(1,); dtype=object;
     provenances/record    = shape=(1,); dtype=object;
     sequence_length       = 10000000.0
-    num_populations       = 1
+    num_populations       = 0
+    num_individuals       = 10000
     num_samples           = 10000
     num_sites             = 39001
     num_inference_sites   = 35166
-    populations/metadata  = shape=(1,); dtype=object;
+    populations/metadata  = shape=(0,); dtype=object;
+    individuals/metadata  = shape=(10000,); dtype=object;
+    individuals/location  = shape=(10000,); dtype=object;
+    samples/individual    = shape=(10000,); dtype=int32;uncompressed size=40.0 kB
     samples/population    = shape=(10000,); dtype=int32;uncompressed size=40.0 kB
     samples/metadata      = shape=(10000,); dtype=object;
     sites/position        = shape=(39001,); dtype=float64;uncompressed size=312.0 kB
