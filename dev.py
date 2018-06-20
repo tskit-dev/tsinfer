@@ -226,8 +226,8 @@ def tutorial_samples():
     import tsinfer
 
     ts = msprime.simulate(
-                sample_size=10000, Ne=10**4, recombination_rate=1e-8,
-                    mutation_rate=1e-8, length=10*10**6, random_seed=42)
+        sample_size=10000, Ne=10**4, recombination_rate=1e-8,
+        mutation_rate=1e-8, length=10*10**6, random_seed=42)
     ts.dump("tmp__NOBACKUP__/simulation-source.trees")
     print("simulation done:", ts.num_trees, "trees and", ts.num_sites,  "sites")
 
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=20000)
     np.set_printoptions(threshold=20000000)
 
-    tutorial_samples()
+    # tutorial_samples()
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
