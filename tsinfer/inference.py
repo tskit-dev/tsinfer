@@ -187,7 +187,7 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
                     focal_sites.shape[0], e - s, duration))
             ancestor_data.add_ancestor(
                 start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
-                haplotype=a)
+                haplotype=a[s:e])
             progress.update()
         progress.close()
         logger.info("Finished building ancestors")
@@ -575,30 +575,25 @@ class AncestorMatcher(Matcher):
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.ancestors_time[:]
-        self.focal_sites = self.ancestor_data.ancestors_focal_sites[:]
-        self.start = self.ancestor_data.ancestors_start[:]
-        self.end = self.ancestor_data.ancestors_end[:]
 
-        # Create a list of all ID ranges in each epoch.
-        if self.start.shape[0] == 0:
-            self.num_epochs = 0
-        else:
-            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
-            start = np.hstack([[0], breaks + 1])
-            end = np.hstack([breaks + 1, [self.num_ancestors]])
-            self.epoch_slices = np.vstack([start, end]).T
-            self.num_epochs = self.epoch_slices.shape[0]
-        self.start_epoch = 1
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
         for ancestor_id in range(self.num_ancestors):
             self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
         self.ancestors = self.ancestor_data.ancestors()
-        if self.num_epochs > 0:
-            # Consume the first ancestor.
-            a = next(self.ancestors)
-            assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
+        # Consume the first ancestor.
+        a = next(self.ancestors, None)
+        self.num_epochs = 0
+        if a is not None:
+            assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.uint8))
+            # Create a list of all ID ranges in each epoch.
+            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
+            start = np.hstack([[0], breaks + 1])
+            end = np.hstack([breaks + 1, [self.num_ancestors]])
+            self.epoch_slices = np.vstack([start, end]).T
+            self.num_epochs = self.epoch_slices.shape[0]
+        self.start_epoch = 1
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -607,21 +602,21 @@ class AncestorMatcher(Matcher):
             ("nanc", str(end - start))
         ])
 
-    def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
+    def __ancestor_find_path(self, ancestor, thread_index=0):
         haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
-        focal_sites = self.focal_sites[ancestor_id]
-        start = self.start[ancestor_id]
-        end = self.end[ancestor_id]
-        self.results.set_mutations(ancestor_id, focal_sites)
-        assert ancestor.shape[0] == (end - start)
-        haplotype[start: end] = ancestor
+        focal_sites = ancestor.focal_sites
+        start = ancestor.start
+        end = ancestor.end
+        self.results.set_mutations(ancestor.id, focal_sites)
+        assert ancestor.haplotype.shape[0] == (end - start)
+        haplotype[start: end] = ancestor.haplotype
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
-                ancestor_id, start, end, focal_sites.shape[0]))
+                ancestor.id, start, end, focal_sites.shape[0]))
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
-                ancestor_id, haplotype, start, end, thread_index)
+                ancestor.id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
@@ -667,7 +662,8 @@ class AncestorMatcher(Matcher):
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
-                self.__ancestor_find_path(ancestor_id, a)
+                assert ancestor_id == a.id
+                self.__ancestor_find_path(a)
             self.__complete_epoch(j)
 
     def __match_ancestors_multi_threaded(self, start_epoch=1):
@@ -682,8 +678,7 @@ class AncestorMatcher(Matcher):
                 work = match_queue.get()
                 if work is None:
                     break
-                ancestor_id, a = work
-                self.__ancestor_find_path(ancestor_id, a, thread_index)
+                self.__ancestor_find_path(work, thread_index)
                 match_queue.task_done()
             match_queue.task_done()
 
@@ -699,7 +694,8 @@ class AncestorMatcher(Matcher):
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
-                match_queue.put((ancestor_id, a))
+                assert a.id == ancestor_id
+                match_queue.put(a)
             # Block until all matches have completed.
             match_queue.join()
             self.__complete_epoch(j)

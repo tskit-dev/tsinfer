@@ -36,6 +36,7 @@ import lmdb
 import humanize
 import numcodecs
 import msprime
+import attr
 
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
@@ -1167,6 +1168,20 @@ class SampleData(DataContainer):
                 yield a[selection]
 
 
+@attr.s
+class Ancestor(object):
+    """
+    An ancestor object.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    start = attr.ib()
+    end = attr.ib()
+    time = attr.ib()
+    focal_sites = attr.ib()
+    haplotype = attr.ib()
+
+
 class AncestorData(DataContainer):
     """
     AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
@@ -1337,11 +1352,11 @@ class AncestorData(DataContainer):
             raise ValueError("end must be <= num_variant_sites")
         if start >= end:
             raise ValueError("start must be < end")
-        if haplotype.shape != (self._num_sites,):
+        if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
         if time <= 0:
             raise ValueError("time must be > 0")
-        if not np.all(haplotype[focal_sites] == 1):
+        if not np.all(haplotype[focal_sites - start] == 1):
             raise ValueError("haplotype[j] must be = 1 for all focal sites")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
@@ -1349,7 +1364,7 @@ class AncestorData(DataContainer):
             raise ValueError("Biallelic sites only supported.")
         self.item_writer.add(
             start=start, end=end, time=time, focal_sites=focal_sites,
-            haplotype=haplotype[start:end])
+            haplotype=haplotype)
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
@@ -1362,9 +1377,15 @@ class AncestorData(DataContainer):
         """
         Returns an iterator over all the ancestors.
         """
-        # TODO this should return objects with the values decoded.
-        for a in chunk_iterator(self.ancestors_haplotype):
-            yield a
+        # TODO document properly.
+        start = self.ancestors_start[:]
+        end = self.ancestors_end[:]
+        time = self.ancestors_time[:]
+        focal_sites = self.ancestors_focal_sites[:]
+        for j, h in enumerate(chunk_iterator(self.ancestors_haplotype)):
+            yield Ancestor(
+                id=j, start=start[j], end=end[j], time=time[j],
+                focal_sites=focal_sites[j], haplotype=h)
 
 
 def load(path):

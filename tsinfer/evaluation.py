@@ -381,7 +381,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
             start=s, end=e, time=t, focal_sites=np.array(focal, dtype=np.int32),
-            haplotype=a)
+            haplotype=a[s:e])
 
 
 def print_tree_pairs(ts1, ts2, compute_distances=True):

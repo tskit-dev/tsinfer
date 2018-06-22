@@ -708,9 +708,11 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data.add_ancestor(  # ID 1
             start=0, end=6, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], time=3, haplotype=[0, 0, 1, -1, -1, -1])
+            start=0, end=3, focal_sites=[2], time=3,
+            haplotype=[0, 0, 1, -1, -1, -1][0: 3])
         ancestor_data.add_ancestor(  # ID 3
-            start=3, end=6, focal_sites=[4], time=2, haplotype=[-1, -1, -1, 0, 1, 0])
+            start=3, end=6, focal_sites=[4], time=2,
+            haplotype=[-1, -1, -1, 0, 1, 0][3: 6])
         ancestor_data.add_ancestor(  # ID 4
             start=0, end=6, focal_sites=[0, 1, 3, 5], time=1,
             haplotype=[1, 1, 1, 1, 1, 1])
@@ -737,10 +739,11 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data.add_ancestor(  # ID 1
             start=0, end=7, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], time=3, haplotype=[0, 0, 1, 0, 0, 0, 0])
+            start=0, end=3, focal_sites=[2], time=3,
+            haplotype=[0, 0, 1, 0, 0, 0, 0][0: 3])
         ancestor_data.add_ancestor(  # ID 3
             start=3, end=7, focal_sites=[4, 6], time=2,
-            haplotype=[-1, -1, -1, 0, 1, 0, 1])
+            haplotype=[-1, -1, -1, 0, 1, 0, 1][3: 7])
         ancestor_data.add_ancestor(  # ID 4
             start=0, end=7, focal_sites=[0, 1, 3, 5], time=1,
             haplotype=[1, 1, 1, 1, 1, 1, 1])
@@ -769,19 +772,19 @@ class TestPartialAncestorMatching(unittest.TestCase):
             haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
             start=0, end=4, focal_sites=[], time=6,
-            haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1])
+            haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
         ancestor_data.add_ancestor(  # ID 3
             start=4, end=12, focal_sites=[], time=5,
-            haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0])
+            haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0][4: 12])
         ancestor_data.add_ancestor(  # ID 4
             start=8, end=12, focal_sites=[9, 11], time=4,
-            haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1])
+            haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1][8: 12])
         ancestor_data.add_ancestor(  # ID 5
             start=4, end=8, focal_sites=[5, 7], time=3,
-            haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1])
+            haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1][4: 8])
         ancestor_data.add_ancestor(  # ID 6
             start=0, end=4, focal_sites=[1, 3], time=2,
-            haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1])
+            haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
         ancestor_data.add_ancestor(  # ID 7
             start=0, end=12, focal_sites=[0, 2, 4, 6, 8, 10], time=1,
             haplotype=[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0])

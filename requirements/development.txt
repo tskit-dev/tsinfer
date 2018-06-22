@@ -10,6 +10,7 @@ daiquiri
 msprime
 zarr
 lmdb
+attrs
 # Only needed for the Python implementation.
 sortedcontainers
 # Optional extras for debugging threads

@@ -138,9 +138,11 @@ def tsinfer_dev(
     # print(sample_data)
 
     ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
+    for anc in ancestor_data.ancestors():
+        print(anc)
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
 
-    print(ancestors_ts.tables)
+    # print(ancestors_ts.tables)
 
     # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
     # dump_provenance(output_ts)

@@ -622,7 +622,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for start, end, time, focal_sites, haplotype in ancestors:
-            ancestor_data.add_ancestor(start, end, time, focal_sites, haplotype)
+            ancestor_data.add_ancestor(
+                start, end, time, focal_sites, haplotype[start: end])
         ancestor_data.finalise()
 
         self.assertGreater(len(ancestor_data.uuid), 0)
@@ -638,7 +639,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertTrue(np.array_equal(
             inference_position, ancestor_data.sites_position[:]))
 
-        ancestors_list = list(ancestor_data.ancestors())
+        ancestors_list = [anc.haplotype for anc in ancestor_data.ancestors()]
         stored_start = ancestor_data.ancestors_start[:]
         stored_end = ancestor_data.ancestors_end[:]
         stored_time = ancestor_data.ancestors_time[:]
@@ -651,6 +652,12 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
+        for j, anc in enumerate(ancestor_data.ancestors()):
+            self.assertEqual(stored_start[j], anc.start)
+            self.assertEqual(stored_end[j], anc.end)
+            self.assertEqual(stored_time[j], anc.time)
+            self.assertTrue(np.array_equal(stored_focal_sites[j], anc.focal_sites))
+            self.assertTrue(np.array_equal(stored_ancestors[j], anc.haplotype))
 
     def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
