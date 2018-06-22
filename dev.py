@@ -126,27 +126,9 @@ def tsinfer_dev(
                 site.position, genotypes,
                 inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
 
-    ts = tsinfer.infer(sample_data, simplify=False)
-    for tree in ts.trees():
-        print(tree.draw(format="unicode"))
-
-    # print("sample_data")
-    # print(sample_data)
-    # print(sample_data.samples_individual[:])
-    # # sample_data.close()
-
-
-    # with sample_data.copy() as other_data:
-    #     print("other_data = ")
-    #     print(other_data)
-    #     print("mode = ", other_data._mode)
-
-
-    # print("after")
-    # print(other_data)
-    # print("mode = ", other_data._mode)
-
-    # # print(sample_data)
+    # ts = tsinfer.infer(sample_data, simplify=False)
+    # for tree in ts.trees():
+    #     print(tree.draw(format="unicode"))
 
     # # sample_data.finalise()
     # # print(sample_data)
@@ -156,9 +138,11 @@ def tsinfer_dev(
     # print(sample_data)
 
     ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
-
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+
+    print(ancestors_ts.tables)
+
+    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
     # dump_provenance(output_ts)
 
 
@@ -257,7 +241,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    # tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
 
 
 

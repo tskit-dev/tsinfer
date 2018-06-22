@@ -453,9 +453,9 @@ class TestGeneratedAncestors(unittest.TestCase):
 
         A = np.zeros(
             (ancestor_data.num_sites, ancestor_data.num_ancestors), dtype=np.uint8)
-        start = ancestor_data.start[:]
-        end = ancestor_data.end[:]
-        ancestors = ancestor_data.ancestor[:]
+        start = ancestor_data.ancestors_start[:]
+        end = ancestor_data.ancestors_end[:]
+        ancestors = ancestor_data.ancestors_haplotype[:]
         for j in range(ancestor_data.num_ancestors):
             A[start[j]: end[j], j] = ancestors[j]
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
@@ -504,13 +504,14 @@ class TestBuildAncestors(unittest.TestCase):
         return sample_data, ancestor_data
 
     def verify_ancestors(self, sample_data, ancestor_data):
-        ancestors = ancestor_data.ancestor[:]
+        ancestors = ancestor_data.ancestors_haplotype[:]
         inference_sites = sample_data.sites_inference[:]
+        position = sample_data.sites_position[:][inference_sites == 1]
         sample_genotypes = sample_data.sites_genotypes[:][inference_sites == 1, :]
-        start = ancestor_data.start[:]
-        end = ancestor_data.end[:]
-        time = ancestor_data.time[:]
-        focal_sites = ancestor_data.focal_sites[:]
+        start = ancestor_data.ancestors_start[:]
+        end = ancestor_data.ancestors_end[:]
+        time = ancestor_data.ancestors_time[:]
+        focal_sites = ancestor_data.ancestors_focal_sites[:]
 
         self.assertEqual(ancestor_data.num_ancestors, ancestors.shape[0])
         self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
@@ -518,6 +519,7 @@ class TestBuildAncestors(unittest.TestCase):
         self.assertEqual(ancestor_data.num_ancestors, start.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, end.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, focal_sites.shape[0])
+        self.assertTrue(np.array_equal(ancestor_data.sites_position[:], position))
         # The first ancestor must be all zeros.
         self.assertEqual(start[0], 0)
         self.assertEqual(end[0], ancestor_data.num_sites)
@@ -559,8 +561,8 @@ class TestBuildAncestors(unittest.TestCase):
         sample_data, ancestor_data = self.get_simulated_example(ts)
         self.verify_ancestors(sample_data, ancestor_data)
         # Make sure we have at least one partial ancestor.
-        start = ancestor_data.start[:]
-        end = ancestor_data.end[:]
+        start = ancestor_data.ancestors_start[:]
+        end = ancestor_data.ancestors_end[:]
         self.assertLess(np.min(end - start), ancestor_data.num_sites)
 
     def test_random_data(self):

@@ -574,10 +574,10 @@ class AncestorMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.time[:]
-        self.focal_sites = self.ancestor_data.focal_sites[:]
-        self.start = self.ancestor_data.start[:]
-        self.end = self.ancestor_data.end[:]
+        self.epoch = self.ancestor_data.ancestors_time[:]
+        self.focal_sites = self.ancestor_data.ancestors_focal_sites[:]
+        self.start = self.ancestor_data.ancestors_start[:]
+        self.end = self.ancestor_data.ancestors_end[:]
 
         # Create a list of all ID ranges in each epoch.
         if self.start.shape[0] == 0:
