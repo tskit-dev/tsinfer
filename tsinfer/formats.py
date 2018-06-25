@@ -1219,6 +1219,8 @@ class AncestorData(DataContainer):
         # Cache the num_sites value here as it's expensive to compute.
         self._num_sites = self.sample_data.num_inference_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
+        if self.sample_data.sequence_length == 0:
+            raise ValueError("Bad samples file: sequence_length cannot be zero")
         self.data.attrs["sequence_length"] = self.sample_data.sequence_length
 
         chunks = self._chunk_size

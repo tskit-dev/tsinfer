@@ -783,6 +783,22 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             start=0, end=num_sites, time=1, focal_sites=[0],
             haplotype=np.zeros(num_sites, dtype=np.uint8))
 
+    def test_zero_sequence_length(self):
+        # Mangle a sample data file to force a zero sequence length.
+        ts = msprime.simulate(10, mutation_rate=2, random_seed=5)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            with tsinfer.SampleData(path=filename) as sample_data:
+                for var in ts.variants():
+                    sample_data.add_site(var.site.position, var.genotypes)
+            store = zarr.LMDBStore(filename, subdir=False)
+            data = zarr.open(store=store, mode="w+")
+            data.attrs["sequence_length"] = 0
+            store.close()
+            sample_data = tsinfer.load(filename)
+            self.assertEqual(sample_data.sequence_length, 0)
+            self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
+
 
 class BufferedItemWriterMixin(object):
     """
