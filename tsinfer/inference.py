@@ -929,3 +929,39 @@ class ResultBuffer(object):
 
     def get_mutations(self, node_id):
         return self.mutations[node_id]
+
+
+# TODO This name is a bit too generic and the implementation should be in msprime.
+def minimise(ts):
+    """
+    Returns a tree sequence with the minimal information required to represent
+    the tree topologies at its sites.
+    """
+    tables = ts.dump_tables()
+    tables.edges.clear()
+    edge_buffer = []
+    first_site = True
+    for tree in ts.trees():
+        if tree.num_sites > 0:
+            sites = list(tree.sites())
+            if first_site:
+                x = 0
+                first_site = False
+            else:
+                x = sites[0].position
+            # Flush the edge buffer.
+            for left, parent, child in edge_buffer:
+                tables.edges.add_row(left, x, parent, child)
+            # Add edges for each node in the tree.
+            edge_buffer.clear()
+            for root in tree.roots:
+                for u in tree.nodes(root):
+                    if u != root:
+                        edge_buffer.append((x, tree.parent(u), u))
+    # Flush the final edges.
+    for left, parent, child in edge_buffer:
+        tables.edges.add_row(left, tables.sequence_length, parent, child)
+    tables.sort()
+    record = provenance.get_provenance_dict(command="minimise")
+    tables.provenances.add_row(record=json.dumps(record))
+    return tables.tree_sequence()
