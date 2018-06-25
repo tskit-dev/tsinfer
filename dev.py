@@ -229,13 +229,41 @@ def tutorial_samples():
             progress.update()
     progress.close()
 
+
+def subset_sites(ts, position):
+    """
+    Return a copy of the specified tree sequence with sites reduced to those
+    with positions in the specified list.
+    """
+    tables = ts.dump_tables()
+    lookup = frozenset(position)
+    tables.sites.clear()
+    tables.mutations.clear()
+    for site in ts.sites():
+        if site.position in lookup:
+            site_id = tables.sites.add_row(
+                site.position, ancestral_state=site.ancestral_state,
+                metadata=site.metadata)
+            for mutation in site.mutations:
+                tables.mutations.add_row(
+                    site_id, node=mutation.node, parent=mutation.parent,
+                    derived_state=mutation.derived_state,
+                    metadata=mutation.metadata)
+    return tables.tree_sequence()
+
 def minimise_dev():
-    ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
+    # ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
+    ts = msprime.load(sys.argv[1])
 
-    ts_new = tsinfer.minimise(ts)
+    position = ts.tables.sites.position[::2]
+    subset_ts = subset_sites(ts, position)
+    print("Got subset")
 
-    for tree in ts_new.trees():
-        print(tree.draw(format="unicode"))
+    ts_new = tsinfer.minimise(subset_ts)
+    print("done")
+
+    # for tree in ts_new.trees():
+    #     print(tree.draw(format="unicode"))
 
 
 if __name__ == "__main__":

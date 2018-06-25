@@ -962,10 +962,34 @@ class TestSimplify(unittest.TestCase):
         self.verify(ts)
 
 
+def squash_edges(ts):
+    """
+    Returns the edges in the tree sequence squashed.
+    """
+    t = ts.tables.nodes.time
+    edges = list(ts.edges())
+    edges.sort(key=lambda e: (t[e.parent], e.parent, e.child, e.left))
+
+    squashed = []
+    last_e = edges[0]
+    for e in edges[1:]:
+        condition = (
+            e.parent != last_e.parent or
+            e.child != last_e.child or
+            e.left != last_e.right)
+        if condition:
+            squashed.append(last_e)
+            last_e = e
+        last_e.right = e.right
+    squashed.append(last_e)
+    return squashed
+
+
 class TestMinimise(unittest.TestCase):
     """
     Tests for the minimise function.
     """
+
     def verify(self, ts):
         source_tables = ts.tables
         positions = set(source_tables.sites.position)
@@ -990,16 +1014,17 @@ class TestMinimise(unittest.TestCase):
                 self.assertEqual(tree.parent_dict, minimised_tree.parent_dict)
         self.assertTrue(np.array_equal(ts.genotype_matrix(), mts.genotype_matrix()))
 
-        # Check that the we have correctly squashed the edges, i.e. that we have
-        # no equal adjacent trees.
-        last_tree = None
-        for tree in mts.trees():
-            parent_dict = tree.parent_dict
-            self.assertNotEqual(last_tree, parent_dict)
-            last_tree = parent_dict
+        edges = list(mts.edges())
+        squashed = squash_edges(ts)
+        self.assertEqual(len(edges), len(squashed))
+        self.assertEqual(edges, squashed)
 
     def test_simple_recombination(self):
         ts = msprime.simulate(5, random_seed=1, recombination_rate=2, mutation_rate=2)
+        self.verify(ts)
+
+    def test_large_recombination(self):
+        ts = msprime.simulate(25, random_seed=12, recombination_rate=5, mutation_rate=15)
         self.verify(ts)
 
     def test_no_recombination(self):
@@ -1009,8 +1034,6 @@ class TestMinimise(unittest.TestCase):
     def test_no_mutation(self):
         ts = msprime.simulate(5, random_seed=1)
         self.verify(ts)
-
-    # TODO many more tests.
 
 
 class TestMatchSiteSubsets(unittest.TestCase):
