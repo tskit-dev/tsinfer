@@ -1011,3 +1011,73 @@ class TestMinimise(unittest.TestCase):
         self.verify(ts)
 
     # TODO many more tests.
+
+
+class TestMatchSiteSubsets(unittest.TestCase):
+    """
+    Tests that we can successfully run the algorithm on data in which we have
+    a subset of the original sites.
+    """
+    def subset_sites(self, ts, position):
+        """
+        Return a copy of the specified tree sequence with sites reduced to those
+        with positions in the specified list.
+        """
+        tables = ts.dump_tables()
+        lookup = set(position)
+        tables.sites.clear()
+        tables.mutations.clear()
+        for site in ts.sites():
+            if site.position in lookup:
+                site_id = tables.sites.add_row(
+                    site.position, ancestral_state=site.ancestral_state,
+                    metadata=site.metadata)
+                for mutation in site.mutations:
+                    tables.mutations.add_row(
+                        site_id, node=mutation.node, parent=mutation.parent,
+                        derived_state=mutation.derived_state,
+                        metadata=mutation.metadata)
+        self.assertTrue(np.array_equal(tables.sites.position, position))
+        return tables.tree_sequence()
+
+    def verify(self, sample_data, position_subset):
+        full_ts = tsinfer.infer(sample_data)
+        subset_ts = self.subset_sites(full_ts, position_subset)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        subset_ancestors_ts = tsinfer.minimise(
+            self.subset_sites(ancestors_ts, position_subset))
+        subset_ancestors_ts = subset_ancestors_ts.simplify()
+        subset_sample_data = tsinfer.SampleData.from_tree_sequence(subset_ts)
+        output_ts = tsinfer.match_samples(subset_sample_data, subset_ancestors_ts)
+        self.assertTrue(
+            np.array_equal(output_ts.genotype_matrix(), subset_ts.genotype_matrix()))
+
+    def test_simple_case(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=3)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        self.verify(sample_data, position[:][::2])
+
+    def test_one_sites(self):
+        ts = msprime.simulate(15, mutation_rate=2, recombination_rate=2, random_seed=3)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        self.verify(sample_data, position[:1])
+
+    def test_no_recombination(self):
+        ts = msprime.simulate(10, mutation_rate=2, random_seed=4)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        self.verify(sample_data, position[:][1::2])
+
+    def test_random_data(self):
+        n = 25
+        m = 50
+        G, positions = get_random_data_example(n, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        self.verify(sample_data, position[:][::2])
