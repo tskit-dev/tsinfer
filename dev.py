@@ -122,9 +122,15 @@ def tsinfer_dev(
         for j in range(ts.num_samples // 2):
             sample_data.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
         for site, genotypes in zip(ts.sites(), G):
-            sample_data.add_site(
-                site.position, genotypes,
-                inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
+            sample_data.add_site(site.position, genotypes)
+    with tsinfer.SampleData(sequence_length=ts.sequence_length) as subset_samples:
+        for j in range(ts.num_samples // 2):
+            subset_samples.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
+        for site, genotypes in zip(ts.sites(), G):
+            if site.id % 2 == 0:
+                subset_samples.add_site(site.position, genotypes)
+    print(sample_data)
+    print(subset_samples)
 
     # ts = tsinfer.infer(sample_data, simplify=False)
     # for tree in ts.trees():
@@ -138,13 +144,9 @@ def tsinfer_dev(
     # print(sample_data)
 
     ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
-    for anc in ancestor_data.ancestors():
-        print(anc)
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
-
-    # print(ancestors_ts.tables)
-
-    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+    # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
+    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
     # dump_provenance(output_ts)
 
 
@@ -227,10 +229,55 @@ def tutorial_samples():
             progress.update()
     progress.close()
 
+def minimise_dev():
+    ts = msprime.simulate(5, mutation_rate=0, recombination_rate=2, random_seed=3)
+
+    ts_new = tsinfer.minimise(ts)
+
+    for tree in ts_new.trees():
+        print(tree.draw(format="unicode"))
+
+
+# TODO This name is a bit too generic and the implementation should be in msprime.
+def minimise(ts):
+    """
+    Returns a tree sequence with the minimal information required to represent
+    the tree topologies at its sites.
+    """
+    tables = ts.dump_tables()
+    tables.edges.clear()
+    edge_buffer = []
+    first_site = True
+    for tree in ts.trees():
+        if tree.num_sites > 0:
+            sites = list(tree.sites())
+            if first_site:
+                x = 0
+                first_site = False
+            else:
+                x = sites[0].position
+            # Flush the edge buffer.
+            for left, parent, child in edge_buffer:
+                tables.edges.add_row(left, x, parent, child)
+            # Add edges for each node in the tree.
+            edge_buffer.clear()
+            for root in tree.roots:
+                for u in tree.nodes(root):
+                    if u != root:
+                        edge_buffer.append((x, tree.parent(u), u))
+    # Flush the final edges.
+    for left, parent, child in edge_buffer:
+        tables.edges.add_row(left, tables.sequence_length, parent, child)
+    tables.sort()
+    tables.simplify(ts.samples())
+    record = provenance.get_provenance_dict(command="minimise")
+    tables.provenances.add_row(record=json.dumps(record))
+    return tables.tree_sequence()
+
 if __name__ == "__main__":
 
-    np.set_printoptions(linewidth=20000)
-    np.set_printoptions(threshold=20000000)
+    # np.set_printoptions(linewidth=20000)
+    # np.set_printoptions(threshold=20000000)
 
     # tutorial_samples()
 
@@ -243,9 +290,9 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+    # tsinfer_dev(6, 0.3, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
-
+    minimise_dev()
 
 #     for seed in range(1, 10000):
 #         print(seed)

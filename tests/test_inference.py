@@ -577,6 +577,42 @@ class TestBuildAncestors(unittest.TestCase):
         self.verify_ancestors(sample_data, ancestor_data)
 
 
+class TestAncestorsTreeSequence(unittest.TestCase):
+    """
+    Tests for the output of the match_ancestors function.
+    """
+    def verify(self, sample_data):
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        tables = ancestors_ts.tables
+        self.assertTrue(np.array_equal(
+            tables.sites.position, ancestor_data.sites_position[:]))
+        self.assertEqual(ancestors_ts.num_samples, ancestor_data.num_ancestors)
+        H = ancestors_ts.genotype_matrix().T
+        for ancestor in ancestor_data.ancestors():
+            self.assertTrue(np.array_equal(
+                H[ancestor.id, ancestor.start: ancestor.end],
+                ancestor.haplotype))
+
+    def test_no_recombination(self):
+        ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_recombination(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data(self):
+        n = 25
+        m = 50
+        G, positions = get_random_data_example(n, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        self.verify(sample_data)
+
+
 class AlgorithmsExactlyEqualMixin(object):
     """
     For small example tree sequences, check that the Python and C implementations
@@ -857,6 +893,8 @@ class TestWrongTreeSequence(unittest.TestCase):
     def test_original_ts_match_samples(self):
         sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        # This raises an error because we have non-inference sites in the
+        # original ts.
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, sim)
 
     def test_different_ancestors_ts_match_samples(self):
@@ -868,6 +906,29 @@ class TestWrongTreeSequence(unittest.TestCase):
         sim = msprime.simulate(sample_size=6, random_seed=2, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, ancestors_ts)
+
+    def test_bad__edge_position(self):
+        sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+
+        tables = ancestors_ts.dump_tables()
+        # To make things easy, add a new node we can refer to without mucking
+        # up the existing topology
+        node = tables.nodes.add_row(flags=1)
+        tables.edges.add_row(0.5, 1.0, node - 1, node)
+        tables.sort()
+        bad_ts = tables.tree_sequence()
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, bad_ts)
+
+        # Same thing for the right coordinate.
+        tables = ancestors_ts.dump_tables()
+        node = tables.nodes.add_row(flags=1)
+        tables.edges.add_row(0, 0.5, node - 1, node)
+        tables.sort()
+        bad_ts = tables.tree_sequence()
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, bad_ts)
 
 
 class TestSimplify(unittest.TestCase):

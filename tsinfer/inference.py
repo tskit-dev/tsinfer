@@ -325,20 +325,36 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
-        if ancestors_ts.num_sites != self.sample_data.num_inference_sites:
+        tables = ancestors_ts.tables
+        # Make sure that the set of positions in the ancestors tree sequence is
+        # identical to the inference sites in the sample data file.
+        position = tables.sites.position
+        sample_data_position = self.sample_data.sites_position[:]
+        sample_data_position = sample_data_position[
+            self.sample_data.sites_inference[:] == 1]
+        if not np.array_equal(position, sample_data_position):
             raise ValueError(
                 "Ancestors tree sequence not compatible with the the specified "
                 "sample data.")
-        tables = ancestors_ts.dump_tables()
-        nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
+        # Get the indexes into the position array.
+        pos_map = np.hstack([position, [tables.sequence_length]])
+        pos_map[0] = 0
+        left = np.searchsorted(pos_map, edges.left)
+        if np.any(pos_map[left] != edges.left):
+            raise ValueError("Invalid left coordinates")
+        right = np.searchsorted(pos_map, edges.right)
+        if np.any(pos_map[right] != edges.right):
+            raise ValueError("Invalid right coordinates")
+
         # Need to sort by child ID here and left so that we can efficiently
         # insert the child paths.
-        index = np.lexsort((edges.left, edges.child))
+        index = np.lexsort((left, edges.child))
+        nodes = tables.nodes
+        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         self.tree_sequence_builder.restore_edges(
-            edges.left.astype(np.int32)[index],
-            edges.right.astype(np.int32)[index],
+            left[index].astype(np.int32),
+            right[index].astype(np.int32),
             edges.parent[index],
             edges.child[index])
         mutations = tables.mutations
@@ -359,14 +375,19 @@ class Matcher(object):
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
-        sequence_length = max(1, tsb.num_sites)
-        tables = msprime.TableCollection(sequence_length=sequence_length)
+        tables = msprime.TableCollection(
+            sequence_length=self.ancestor_data.sequence_length)
         flags, time = tsb.dump_nodes()
         num_synthetic_nodes = np.sum(flags == 0)
         tables.nodes.set_columns(flags=flags, time=time)
+
+        position = self.ancestor_data.sites_position
+        pos_map = np.hstack([position, [tables.sequence_length]])
+        pos_map[0] = 0
         left, right, parent, child = tsb.dump_edges()
-        position = np.arange(tsb.num_sites)
-        tables.edges.set_columns(left=left, right=right, parent=parent, child=child)
+        tables.edges.set_columns(
+            left=pos_map[left], right=pos_map[right], parent=parent, child=child)
+
         tables.sites.set_columns(
             position=position,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
