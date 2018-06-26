@@ -251,19 +251,83 @@ def subset_sites(ts, position):
                     metadata=mutation.metadata)
     return tables.tree_sequence()
 
+def minimise(ts):
+    tables = ts.dump_tables()
+
+    out_map = {}
+    in_map = {}
+    first_site = 0
+    for (_, edges_out, edges_in), tree in zip(ts.edge_diffs(), ts.trees()):
+        for edge in edges_out:
+            out_map[edge.child] = edge
+        for edge in edges_in:
+            in_map[edge.child] = edge
+        if tree.num_sites > 0:
+            sites = list(tree.sites())
+            if first_site:
+                x = 0
+                first_site = False
+            else:
+                x = sites[0].position
+            print("X = ", x)
+            for edge in out_map.values():
+                print("FLUSH", edge)
+            for edge in in_map.values():
+                print("INSER", edge)
+
+            # # Flush the edge buffer.
+            # for left, parent, child in edge_buffer:
+            #     tables.edges.add_row(left, x, parent, child)
+            # # Add edges for each node in the tree.
+            # edge_buffer.clear()
+            # for root in tree.roots:
+            #     for u in tree.nodes(root):
+            #         if u != root:
+            #             edge_buffer.append((x, tree.parent(u), u))
+
+    # position = np.hstack([[0], tables.sites.position, [ts.sequence_length]])
+    # position = tables.sites.position
+    # edges = []
+    # print(position)
+    # tables.edges.clear()
+    # for edge in ts.edges():
+    #     left = np.searchsorted(position, edge.left)
+    #     right = np.searchsorted(position, edge.right)
+
+    #     print(edge, left, right)
+    #     # if right - left > 1:
+    #         # print("KEEP:", edge, left, right)
+    #         # tables.edges.add_row(
+    #         #     position[left], position[right], edge.parent, edge.child)
+    #         # print("added", tables.edges[-1])
+    #     # else:
+    #         # print("SKIP:", edge, left, right)
+
+    # ts = tables.tree_sequence()
+    # for tree in ts.trees():
+    #     print("TREE:", tree.interval)
+    #     print(tree.draw(format="unicode"))
+
+
+
+
+
 def minimise_dev():
-    # ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
-    ts = msprime.load(sys.argv[1])
+    ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
+    # ts = msprime.load(sys.argv[1])
 
     position = ts.tables.sites.position[::2]
     subset_ts = subset_sites(ts, position)
     print("Got subset")
 
     ts_new = tsinfer.minimise(subset_ts)
+    for tree in ts_new.trees():
+        print("TREE:", tree.interval)
+        print(tree.draw(format="unicode"))
+    # print(ts_new.tables)
     print("done")
+    other = minimise(subset_ts)
 
-    # for tree in ts_new.trees():
-    #     print(tree.draw(format="unicode"))
 
 
 if __name__ == "__main__":

@@ -969,6 +969,8 @@ def squash_edges(ts):
     t = ts.tables.nodes.time
     edges = list(ts.edges())
     edges.sort(key=lambda e: (t[e.parent], e.parent, e.child, e.left))
+    if len(edges) == 0:
+        return []
 
     squashed = []
     last_e = edges[0]
@@ -1015,7 +1017,7 @@ class TestMinimise(unittest.TestCase):
         self.assertTrue(np.array_equal(ts.genotype_matrix(), mts.genotype_matrix()))
 
         edges = list(mts.edges())
-        squashed = squash_edges(ts)
+        squashed = squash_edges(mts)
         self.assertEqual(len(edges), len(squashed))
         self.assertEqual(edges, squashed)
 

@@ -938,7 +938,23 @@ def minimise(ts):
     the tree topologies at its sites.
     """
     tables = ts.dump_tables()
+    edge_map = {}
+
+    def add_edge(left, right, parent, child):
+        new_edge = msprime.Edge(left, right, parent, child)
+        if child not in edge_map:
+            edge_map[child] = new_edge
+        else:
+            edge = edge_map[child]
+            if edge.right == left and edge.parent == parent:
+                # Squash
+                edge.right = right
+            else:
+                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+                edge_map[child] = new_edge
+
     tables.edges.clear()
+
     edge_buffer = []
     first_site = True
     for tree in ts.trees():
@@ -951,16 +967,20 @@ def minimise(ts):
                 x = sites[0].position
             # Flush the edge buffer.
             for left, parent, child in edge_buffer:
-                tables.edges.add_row(left, x, parent, child)
+                add_edge(left, x, parent, child)
             # Add edges for each node in the tree.
             edge_buffer.clear()
             for root in tree.roots:
                 for u in tree.nodes(root):
                     if u != root:
                         edge_buffer.append((x, tree.parent(u), u))
-    # Flush the final edges.
+    # Add the final edges.
     for left, parent, child in edge_buffer:
-        tables.edges.add_row(left, tables.sequence_length, parent, child)
+        add_edge(left, tables.sequence_length, parent, child)
+    # Flush the remaining edges to the table
+    for edge in edge_map.values():
+        tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+
     tables.sort()
     record = provenance.get_provenance_dict(command="minimise")
     tables.provenances.add_row(record=json.dumps(record))
