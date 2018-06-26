@@ -187,7 +187,7 @@ def generate_ancestors(sample_data, progress_monitor=None, engine=C_ENGINE, **kw
                     focal_sites.shape[0], e - s, duration))
             ancestor_data.add_ancestor(
                 start=s, end=e, time=time_map[freq], focal_sites=focal_sites,
-                haplotype=a)
+                haplotype=a[s:e])
             progress.update()
         progress.close()
         logger.info("Finished building ancestors")
@@ -325,20 +325,36 @@ class Matcher(object):
         return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
-        if ancestors_ts.num_sites != self.sample_data.num_inference_sites:
+        tables = ancestors_ts.tables
+        # Make sure that the set of positions in the ancestors tree sequence is
+        # identical to the inference sites in the sample data file.
+        position = tables.sites.position
+        sample_data_position = self.sample_data.sites_position[:]
+        sample_data_position = sample_data_position[
+            self.sample_data.sites_inference[:] == 1]
+        if not np.array_equal(position, sample_data_position):
             raise ValueError(
                 "Ancestors tree sequence not compatible with the the specified "
                 "sample data.")
-        tables = ancestors_ts.dump_tables()
-        nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         edges = tables.edges
+        # Get the indexes into the position array.
+        pos_map = np.hstack([position, [tables.sequence_length]])
+        pos_map[0] = 0
+        left = np.searchsorted(pos_map, edges.left)
+        if np.any(pos_map[left] != edges.left):
+            raise ValueError("Invalid left coordinates")
+        right = np.searchsorted(pos_map, edges.right)
+        if np.any(pos_map[right] != edges.right):
+            raise ValueError("Invalid right coordinates")
+
         # Need to sort by child ID here and left so that we can efficiently
         # insert the child paths.
-        index = np.lexsort((edges.left, edges.child))
+        index = np.lexsort((left, edges.child))
+        nodes = tables.nodes
+        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
         self.tree_sequence_builder.restore_edges(
-            edges.left.astype(np.int32)[index],
-            edges.right.astype(np.int32)[index],
+            left[index].astype(np.int32),
+            right[index].astype(np.int32),
             edges.parent[index],
             edges.child[index])
         mutations = tables.mutations
@@ -359,14 +375,19 @@ class Matcher(object):
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
-        sequence_length = max(1, tsb.num_sites)
-        tables = msprime.TableCollection(sequence_length=sequence_length)
+        tables = msprime.TableCollection(
+            sequence_length=self.ancestor_data.sequence_length)
         flags, time = tsb.dump_nodes()
         num_synthetic_nodes = np.sum(flags == 0)
         tables.nodes.set_columns(flags=flags, time=time)
+
+        position = self.ancestor_data.sites_position
+        pos_map = np.hstack([position, [tables.sequence_length]])
+        pos_map[0] = 0
         left, right, parent, child = tsb.dump_edges()
-        position = np.arange(tsb.num_sites)
-        tables.edges.set_columns(left=left, right=right, parent=parent, child=child)
+        tables.edges.set_columns(
+            left=pos_map[left], right=pos_map[right], parent=parent, child=child)
+
         tables.sites.set_columns(
             position=position,
             ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
@@ -574,31 +595,26 @@ class AncestorMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.time[:]
-        self.focal_sites = self.ancestor_data.focal_sites[:]
-        self.start = self.ancestor_data.start[:]
-        self.end = self.ancestor_data.end[:]
+        self.epoch = self.ancestor_data.ancestors_time[:]
 
-        # Create a list of all ID ranges in each epoch.
-        if self.start.shape[0] == 0:
-            self.num_epochs = 0
-        else:
-            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
-            start = np.hstack([[0], breaks + 1])
-            end = np.hstack([breaks + 1, [self.num_ancestors]])
-            self.epoch_slices = np.vstack([start, end]).T
-            self.num_epochs = self.epoch_slices.shape[0]
-        self.start_epoch = 1
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
         for ancestor_id in range(self.num_ancestors):
             self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
 
         self.ancestors = self.ancestor_data.ancestors()
-        if self.num_epochs > 0:
-            # Consume the first ancestor.
-            a = next(self.ancestors)
-            assert np.array_equal(a, np.zeros(self.num_sites, dtype=np.uint8))
+        # Consume the first ancestor.
+        a = next(self.ancestors, None)
+        self.num_epochs = 0
+        if a is not None:
+            assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.uint8))
+            # Create a list of all ID ranges in each epoch.
+            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
+            start = np.hstack([[0], breaks + 1])
+            end = np.hstack([breaks + 1, [self.num_ancestors]])
+            self.epoch_slices = np.vstack([start, end]).T
+            self.num_epochs = self.epoch_slices.shape[0]
+        self.start_epoch = 1
 
     def __epoch_info_dict(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -607,21 +623,21 @@ class AncestorMatcher(Matcher):
             ("nanc", str(end - start))
         ])
 
-    def __ancestor_find_path(self, ancestor_id, ancestor, thread_index=0):
+    def __ancestor_find_path(self, ancestor, thread_index=0):
         haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
-        focal_sites = self.focal_sites[ancestor_id]
-        start = self.start[ancestor_id]
-        end = self.end[ancestor_id]
-        self.results.set_mutations(ancestor_id, focal_sites)
-        assert ancestor.shape[0] == (end - start)
-        haplotype[start: end] = ancestor
+        focal_sites = ancestor.focal_sites
+        start = ancestor.start
+        end = ancestor.end
+        self.results.set_mutations(ancestor.id, focal_sites)
+        assert ancestor.haplotype.shape[0] == (end - start)
+        haplotype[start: end] = ancestor.haplotype
         assert np.all(haplotype[focal_sites] == 1)
         logger.debug(
             "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
-                ancestor_id, start, end, focal_sites.shape[0]))
+                ancestor.id, start, end, focal_sites.shape[0]))
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
-                ancestor_id, haplotype, start, end, thread_index)
+                ancestor.id, haplotype, start, end, thread_index)
         assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
@@ -667,7 +683,8 @@ class AncestorMatcher(Matcher):
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
-                self.__ancestor_find_path(ancestor_id, a)
+                assert ancestor_id == a.id
+                self.__ancestor_find_path(a)
             self.__complete_epoch(j)
 
     def __match_ancestors_multi_threaded(self, start_epoch=1):
@@ -682,8 +699,7 @@ class AncestorMatcher(Matcher):
                 work = match_queue.get()
                 if work is None:
                     break
-                ancestor_id, a = work
-                self.__ancestor_find_path(ancestor_id, a, thread_index)
+                self.__ancestor_find_path(work, thread_index)
                 match_queue.task_done()
             match_queue.task_done()
 
@@ -699,7 +715,8 @@ class AncestorMatcher(Matcher):
             start, end = map(int, self.epoch_slices[j])
             for ancestor_id in range(start, end):
                 a = next(self.ancestors)
-                match_queue.put((ancestor_id, a))
+                assert a.id == ancestor_id
+                match_queue.put(a)
             # Block until all matches have completed.
             match_queue.join()
             self.__complete_epoch(j)
@@ -912,3 +929,59 @@ class ResultBuffer(object):
 
     def get_mutations(self, node_id):
         return self.mutations[node_id]
+
+
+# TODO This name is a bit too generic and the implementation should be in msprime.
+def minimise(ts):
+    """
+    Returns a tree sequence with the minimal information required to represent
+    the tree topologies at its sites.
+    """
+    tables = ts.dump_tables()
+    edge_map = {}
+
+    def add_edge(left, right, parent, child):
+        new_edge = msprime.Edge(left, right, parent, child)
+        if child not in edge_map:
+            edge_map[child] = new_edge
+        else:
+            edge = edge_map[child]
+            if edge.right == left and edge.parent == parent:
+                # Squash
+                edge.right = right
+            else:
+                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+                edge_map[child] = new_edge
+
+    tables.edges.clear()
+
+    edge_buffer = []
+    first_site = True
+    for tree in ts.trees():
+        if tree.num_sites > 0:
+            sites = list(tree.sites())
+            if first_site:
+                x = 0
+                first_site = False
+            else:
+                x = sites[0].position
+            # Flush the edge buffer.
+            for left, parent, child in edge_buffer:
+                add_edge(left, x, parent, child)
+            # Add edges for each node in the tree.
+            edge_buffer.clear()
+            for root in tree.roots:
+                for u in tree.nodes(root):
+                    if u != root:
+                        edge_buffer.append((x, tree.parent(u), u))
+    # Add the final edges.
+    for left, parent, child in edge_buffer:
+        add_edge(left, tables.sequence_length, parent, child)
+    # Flush the remaining edges to the table
+    for edge in edge_map.values():
+        tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+
+    tables.sort()
+    record = provenance.get_provenance_dict(command="minimise")
+    tables.provenances.add_row(record=json.dumps(record))
+    return tables.tree_sequence()

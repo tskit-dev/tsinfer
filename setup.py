@@ -52,7 +52,8 @@ setup(
         "msprime>=0.6.0",
         "zarr>=2.2",
         "lmdb",
-        "sortedcontainers"
+        "sortedcontainers",
+        "attrs",
     ],
     ext_modules=[_tsinfer_module],
     keywords=[],

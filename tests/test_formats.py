@@ -575,6 +575,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 for j in range(10):
                     data.add_site(j, [0, 1])
 
+    def test_sequence_length(self):
+        data = formats.SampleData(sequence_length=2)
+        data.add_site(position=0, genotypes=[0, 1, 1, 0])
+        data.finalise()
+        self.assertEqual(data.sequence_length, 2)
+        # The default sequence length should be the last site + 1.
+        data = formats.SampleData()
+        data.add_site(position=0, genotypes=[0, 1, 1, 0])
+        data.finalise()
+        self.assertEqual(data.sequence_length, 1)
+
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
@@ -611,23 +622,29 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for start, end, time, focal_sites, haplotype in ancestors:
-            ancestor_data.add_ancestor(start, end, time, focal_sites, haplotype)
+            ancestor_data.add_ancestor(
+                start, end, time, focal_sites, haplotype[start: end])
         ancestor_data.finalise()
 
         self.assertGreater(len(ancestor_data.uuid), 0)
         self.assertEqual(ancestor_data.sample_data_uuid, sample_data.uuid)
+        self.assertEqual(ancestor_data.sequence_length, sample_data.sequence_length)
         self.assertEqual(ancestor_data.format_name, formats.AncestorData.FORMAT_NAME)
         self.assertEqual(
             ancestor_data.format_version, formats.AncestorData.FORMAT_VERSION)
         self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
         self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
+        inference_position = sample_data.sites_position[:][
+            sample_data.sites_inference[:] == 1]
+        self.assertTrue(np.array_equal(
+            inference_position, ancestor_data.sites_position[:]))
 
-        ancestors_list = list(ancestor_data.ancestors())
-        stored_start = ancestor_data.start[:]
-        stored_end = ancestor_data.end[:]
-        stored_time = ancestor_data.time[:]
-        stored_ancestors = ancestor_data.ancestor[:]
-        stored_focal_sites = ancestor_data.focal_sites[:]
+        ancestors_list = [anc.haplotype for anc in ancestor_data.ancestors()]
+        stored_start = ancestor_data.ancestors_start[:]
+        stored_end = ancestor_data.ancestors_end[:]
+        stored_time = ancestor_data.ancestors_time[:]
+        stored_ancestors = ancestor_data.ancestors_haplotype[:]
+        stored_focal_sites = ancestor_data.ancestors_focal_sites[:]
         for j, (start, end, time, focal_sites, haplotype) in enumerate(ancestors):
             self.assertEqual(stored_start[j], start)
             self.assertEqual(stored_end[j], end)
@@ -635,6 +652,12 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
+        for j, anc in enumerate(ancestor_data.ancestors()):
+            self.assertEqual(stored_start[j], anc.start)
+            self.assertEqual(stored_end[j], anc.end)
+            self.assertEqual(stored_time[j], anc.time)
+            self.assertTrue(np.array_equal(stored_focal_sites[j], anc.focal_sites))
+            self.assertTrue(np.array_equal(stored_ancestors[j], anc.haplotype))
 
     def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
@@ -678,11 +701,11 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ancestor_data = tsinfer.AncestorData(
                 sample_data, chunk_size=chunk_size)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-            self.assertEqual(ancestor_data.ancestor.chunks, (chunk_size,))
-            self.assertEqual(ancestor_data.focal_sites.chunks, (chunk_size,))
-            self.assertEqual(ancestor_data.start.chunks, (chunk_size,))
-            self.assertEqual(ancestor_data.end.chunks, (chunk_size,))
-            self.assertEqual(ancestor_data.time.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_focal_sites.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_start.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_end.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_time.chunks, (chunk_size,))
 
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
@@ -708,7 +731,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
                 ancestor_data = tsinfer.AncestorData(
                     sample_data, path=filename, chunk_size=chunk_size)
                 self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-                self.assertEqual(ancestor_data.ancestor.chunks, (chunk_size,))
+                self.assertEqual(ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
             # Now reload the files and check they are equal
             file0 = formats.AncestorData.load(files[0])
             file1 = formats.AncestorData.load(files[1])
@@ -759,6 +782,22 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, time=1, focal_sites=[0],
             haplotype=np.zeros(num_sites, dtype=np.uint8))
+
+    def test_zero_sequence_length(self):
+        # Mangle a sample data file to force a zero sequence length.
+        ts = msprime.simulate(10, mutation_rate=2, random_seed=5)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            with tsinfer.SampleData(path=filename) as sample_data:
+                for var in ts.variants():
+                    sample_data.add_site(var.site.position, var.genotypes)
+            store = zarr.LMDBStore(filename, subdir=False)
+            data = zarr.open(store=store, mode="w+")
+            data.attrs["sequence_length"] = 0
+            store.close()
+            sample_data = tsinfer.load(filename)
+            self.assertEqual(sample_data.sequence_length, 0)
+            self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
 
 
 class BufferedItemWriterMixin(object):

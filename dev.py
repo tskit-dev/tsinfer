@@ -122,31 +122,19 @@ def tsinfer_dev(
         for j in range(ts.num_samples // 2):
             sample_data.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
         for site, genotypes in zip(ts.sites(), G):
-            sample_data.add_site(
-                site.position, genotypes,
-                inference=np.sum(genotypes) > 1 and site.id % 2 == 0)
+            sample_data.add_site(site.position, genotypes)
+    with tsinfer.SampleData(sequence_length=ts.sequence_length) as subset_samples:
+        for j in range(ts.num_samples // 2):
+            subset_samples.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
+        for site, genotypes in zip(ts.sites(), G):
+            if site.id % 2 == 0:
+                subset_samples.add_site(site.position, genotypes)
+    print(sample_data)
+    print(subset_samples)
 
-    ts = tsinfer.infer(sample_data, simplify=False)
-    for tree in ts.trees():
-        print(tree.draw(format="unicode"))
-
-    # print("sample_data")
-    # print(sample_data)
-    # print(sample_data.samples_individual[:])
-    # # sample_data.close()
-
-
-    # with sample_data.copy() as other_data:
-    #     print("other_data = ")
-    #     print(other_data)
-    #     print("mode = ", other_data._mode)
-
-
-    # print("after")
-    # print(other_data)
-    # print("mode = ", other_data._mode)
-
-    # # print(sample_data)
+    # ts = tsinfer.infer(sample_data, simplify=False)
+    # for tree in ts.trees():
+    #     print(tree.draw(format="unicode"))
 
     # # sample_data.finalise()
     # # print(sample_data)
@@ -156,8 +144,8 @@ def tsinfer_dev(
     # print(sample_data)
 
     ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
-
     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
+    # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
     # dump_provenance(output_ts)
 
@@ -241,10 +229,111 @@ def tutorial_samples():
             progress.update()
     progress.close()
 
+
+def subset_sites(ts, position):
+    """
+    Return a copy of the specified tree sequence with sites reduced to those
+    with positions in the specified list.
+    """
+    tables = ts.dump_tables()
+    lookup = frozenset(position)
+    tables.sites.clear()
+    tables.mutations.clear()
+    for site in ts.sites():
+        if site.position in lookup:
+            site_id = tables.sites.add_row(
+                site.position, ancestral_state=site.ancestral_state,
+                metadata=site.metadata)
+            for mutation in site.mutations:
+                tables.mutations.add_row(
+                    site_id, node=mutation.node, parent=mutation.parent,
+                    derived_state=mutation.derived_state,
+                    metadata=mutation.metadata)
+    return tables.tree_sequence()
+
+def minimise(ts):
+    tables = ts.dump_tables()
+
+    out_map = {}
+    in_map = {}
+    first_site = 0
+    for (_, edges_out, edges_in), tree in zip(ts.edge_diffs(), ts.trees()):
+        for edge in edges_out:
+            out_map[edge.child] = edge
+        for edge in edges_in:
+            in_map[edge.child] = edge
+        if tree.num_sites > 0:
+            sites = list(tree.sites())
+            if first_site:
+                x = 0
+                first_site = False
+            else:
+                x = sites[0].position
+            print("X = ", x)
+            for edge in out_map.values():
+                print("FLUSH", edge)
+            for edge in in_map.values():
+                print("INSER", edge)
+
+            # # Flush the edge buffer.
+            # for left, parent, child in edge_buffer:
+            #     tables.edges.add_row(left, x, parent, child)
+            # # Add edges for each node in the tree.
+            # edge_buffer.clear()
+            # for root in tree.roots:
+            #     for u in tree.nodes(root):
+            #         if u != root:
+            #             edge_buffer.append((x, tree.parent(u), u))
+
+    # position = np.hstack([[0], tables.sites.position, [ts.sequence_length]])
+    # position = tables.sites.position
+    # edges = []
+    # print(position)
+    # tables.edges.clear()
+    # for edge in ts.edges():
+    #     left = np.searchsorted(position, edge.left)
+    #     right = np.searchsorted(position, edge.right)
+
+    #     print(edge, left, right)
+    #     # if right - left > 1:
+    #         # print("KEEP:", edge, left, right)
+    #         # tables.edges.add_row(
+    #         #     position[left], position[right], edge.parent, edge.child)
+    #         # print("added", tables.edges[-1])
+    #     # else:
+    #         # print("SKIP:", edge, left, right)
+
+    # ts = tables.tree_sequence()
+    # for tree in ts.trees():
+    #     print("TREE:", tree.interval)
+    #     print(tree.draw(format="unicode"))
+
+
+
+
+
+def minimise_dev():
+    ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
+    # ts = msprime.load(sys.argv[1])
+
+    position = ts.tables.sites.position[::2]
+    subset_ts = subset_sites(ts, position)
+    print("Got subset")
+
+    ts_new = tsinfer.minimise(subset_ts)
+    for tree in ts_new.trees():
+        print("TREE:", tree.interval)
+        print(tree.draw(format="unicode"))
+    # print(ts_new.tables)
+    print("done")
+    other = minimise(subset_ts)
+
+
+
 if __name__ == "__main__":
 
-    np.set_printoptions(linewidth=20000)
-    np.set_printoptions(threshold=20000000)
+    # np.set_printoptions(linewidth=20000)
+    # np.set_printoptions(threshold=20000000)
 
     # tutorial_samples()
 
@@ -257,9 +346,9 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    # tsinfer_dev(6, 0.3, seed=1, num_threads=0, engine="C", recombination_rate=1e-8)
+    # tsinfer_dev(6, 0.3, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
-
+    minimise_dev()
 
 #     for seed in range(1, 10000):
 #         print(seed)

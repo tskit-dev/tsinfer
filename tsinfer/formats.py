@@ -36,6 +36,7 @@ import lmdb
 import humanize
 import numcodecs
 import msprime
+import attr
 
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
@@ -1119,6 +1120,9 @@ class SampleData(DataContainer):
             elif self._build_state == self.ADDING_SITES:
                 self._sites_writer.flush()
             self._build_state = -1
+            if self.sequence_length == 0:
+                self.data.attrs["sequence_length"] = self._last_position + 1
+
         super(SampleData, self).finalise(**kwargs)
 
     ####################################
@@ -1164,6 +1168,20 @@ class SampleData(DataContainer):
                 yield a[selection]
 
 
+@attr.s
+class Ancestor(object):
+    """
+    An ancestor object.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    start = attr.ib()
+    end = attr.ib()
+    time = attr.ib()
+    focal_sites = attr.ib()
+    haplotype = attr.ib()
+
+
 class AncestorData(DataContainer):
     """
     AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
@@ -1193,7 +1211,7 @@ class AncestorData(DataContainer):
         compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
-    FORMAT_VERSION = (0, 2)
+    FORMAT_VERSION = (1, 0)
 
     def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
@@ -1201,28 +1219,40 @@ class AncestorData(DataContainer):
         # Cache the num_sites value here as it's expensive to compute.
         self._num_sites = self.sample_data.num_inference_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
-        self.data.attrs["num_sites"] = self.sample_data.num_inference_sites
+        if self.sample_data.sequence_length == 0:
+            raise ValueError("Bad samples file: sequence_length cannot be zero")
+        self.data.attrs["sequence_length"] = self.sample_data.sequence_length
 
         chunks = self._chunk_size
+        # Add in the positions for the sites.
+        sites_inference = self.sample_data.sites_inference[:]
+        position = self.sample_data.sites_position[:][sites_inference == 1]
         self.data.create_dataset(
-            "start", shape=(0,), chunks=chunks, compressor=self._compressor,
+            "sites/position", data=position, chunks=chunks, compressor=self._compressor,
+            dtype=np.float64)
+
+        self.data.create_dataset(
+            "ancestors/start", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         self.data.create_dataset(
-            "end", shape=(0,), chunks=chunks, compressor=self._compressor,
+            "ancestors/end", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         self.data.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
+            "ancestors/time", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.uint32)
         self.data.create_dataset(
-            "focal_sites", shape=(0,), chunks=chunks,
+            "ancestors/focal_sites", shape=(0,), chunks=chunks,
             dtype="array:i4", compressor=self._compressor)
         self.data.create_dataset(
-            "ancestor", shape=(0,), chunks=chunks,
+            "ancestors/haplotype", shape=(0,), chunks=chunks,
             dtype="array:u1", compressor=self._compressor)
 
         self.item_writer = BufferedItemWriter({
-            "start": self.start, "end": self.end, "time": self.time,
-            "focal_sites": self.focal_sites, "ancestor": self.ancestor},
+            "start": self.ancestors_start,
+            "end": self.ancestors_end,
+            "time": self.ancestors_time,
+            "focal_sites": self.ancestors_focal_sites,
+            "haplotype": self.ancestors_haplotype},
             num_threads=self._num_flush_threads)
 
     def summary(self):
@@ -1231,14 +1261,16 @@ class AncestorData(DataContainer):
 
     def __str__(self):
         values = [
+            ("sequence_length", self.sequence_length),
             ("sample_data_uuid", self.sample_data_uuid),
             ("num_ancestors", self.num_ancestors),
             ("num_sites", self.num_sites),
-            ("start", zarr_summary(self.start)),
-            ("end", zarr_summary(self.end)),
-            ("time", zarr_summary(self.time)),
-            ("focal_sites", zarr_summary(self.focal_sites)),
-            ("ancestor", zarr_summary(self.ancestor))]
+            ("sites/position", zarr_summary(self.sites_position)),
+            ("ancestors/start", zarr_summary(self.ancestors_start)),
+            ("ancestors/end", zarr_summary(self.ancestors_end)),
+            ("ancestors/time", zarr_summary(self.ancestors_time)),
+            ("ancestors/focal_sites", zarr_summary(self.ancestors_focal_sites)),
+            ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype))]
         return super(AncestorData, self).__str__() + self._format_str(values)
 
     def data_equal(self, other):
@@ -1248,18 +1280,24 @@ class AncestorData(DataContainer):
         the UUID.
         """
         return (
+            self.sequence_length == other.sequence_length and
             self.sample_data_uuid == other.sample_data_uuid and
             self.format_name == other.format_name and
             self.format_version == other.format_version and
             self.num_ancestors == other.num_ancestors and
             self.num_sites == other.num_sites and
-            np.array_equal(self.start[:], other.start[:]) and
-            np.array_equal(self.end[:], other.end[:]) and
+            np.array_equal(self.sites_position[:], other.sites_position[:]) and
+            np.array_equal(self.ancestors_start[:], other.ancestors_start[:]) and
+            np.array_equal(self.ancestors_end[:], other.ancestors_end[:]) and
             # Need to take a different approach with np object arrays.
             all(itertools.starmap(np.array_equal, zip(
-                self.focal_sites[:], other.focal_sites[:]))) and
+                self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]))) and
             all(itertools.starmap(np.array_equal, zip(
-                self.ancestor[:], other.ancestor[:]))))
+                self.ancestors_haplotype[:], other.ancestors_haplotype[:]))))
+
+    @property
+    def sequence_length(self):
+        return self.data.attrs["sequence_length"]
 
     @property
     def sample_data_uuid(self):
@@ -1267,31 +1305,35 @@ class AncestorData(DataContainer):
 
     @property
     def num_ancestors(self):
-        return self.start.shape[0]
+        return self.ancestors_start.shape[0]
 
     @property
     def num_sites(self):
-        return self.data.attrs["num_sites"]
+        return self.sites_position.shape[0]
 
     @property
-    def start(self):
-        return self.data["start"]
+    def sites_position(self):
+        return self.data["sites/position"]
 
     @property
-    def end(self):
-        return self.data["end"]
+    def ancestors_start(self):
+        return self.data["ancestors/start"]
 
     @property
-    def time(self):
-        return self.data["time"]
+    def ancestors_end(self):
+        return self.data["ancestors/end"]
 
     @property
-    def focal_sites(self):
-        return self.data["focal_sites"]
+    def ancestors_time(self):
+        return self.data["ancestors/time"]
 
     @property
-    def ancestor(self):
-        return self.data["ancestor"]
+    def ancestors_focal_sites(self):
+        return self.data["ancestors/focal_sites"]
+
+    @property
+    def ancestors_haplotype(self):
+        return self.data["ancestors/haplotype"]
 
     ####################################
     # Write mode
@@ -1304,28 +1346,27 @@ class AncestorData(DataContainer):
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
-        haplotype = np.array(haplotype, dtype=np.uint8, copy=False)
-        focal_sites = np.array(focal_sites, dtype=np.int32, copy=False)
+        haplotype = np.array(haplotype, dtype=np.uint8)
+        focal_sites = np.array(focal_sites, dtype=np.int32)
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self._num_sites:
             raise ValueError("end must be <= num_variant_sites")
         if start >= end:
             raise ValueError("start must be < end")
-        if haplotype.shape != (self._num_sites,):
+        if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
         if time <= 0:
             raise ValueError("time must be > 0")
-        if not np.all(haplotype[focal_sites] == 1):
+        if not np.all(haplotype[focal_sites - start] == 1):
             raise ValueError("haplotype[j] must be = 1 for all focal sites")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
-        ancestor = haplotype[start:end].copy()
         self.item_writer.add(
             start=start, end=end, time=time, focal_sites=focal_sites,
-            ancestor=ancestor)
+            haplotype=haplotype)
 
     def finalise(self, **kwargs):
         if self._mode == self.BUILD_MODE:
@@ -1338,8 +1379,15 @@ class AncestorData(DataContainer):
         """
         Returns an iterator over all the ancestors.
         """
-        for a in chunk_iterator(self.ancestor):
-            yield a
+        # TODO document properly.
+        start = self.ancestors_start[:]
+        end = self.ancestors_end[:]
+        time = self.ancestors_time[:]
+        focal_sites = self.ancestors_focal_sites[:]
+        for j, h in enumerate(chunk_iterator(self.ancestors_haplotype)):
+            yield Ancestor(
+                id=j, start=start[j], end=end[j], time=time[j],
+                focal_sites=focal_sites[j], haplotype=h)
 
 
 def load(path):

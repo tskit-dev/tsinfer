@@ -7,3 +7,4 @@ msprime
 zarr
 lmdb
 sortedcontainers
+attrs

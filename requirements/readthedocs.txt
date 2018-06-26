@@ -1,3 +1,4 @@
+attrs
 six
 setuptools_scm 
 sphinx-argparse
