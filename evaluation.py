@@ -24,10 +24,11 @@ import tqdm
 import scipy.stats
 import colorutils
 
+import msprime
+
 
 import tsinfer
 import tsinfer.cli as cli
-import msprime
 
 def make_errors(v, p):
     """
@@ -962,7 +963,7 @@ def ancestor_properties_worker(args):
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    estimated_anc_length = estimated_anc.end[:] - estimated_anc.start[:]
+    estimated_anc_length = estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:]
     focal_sites = estimated_anc.focal_sites[:]
     estimated_anc_focal_distance = np.zeros(estimated_anc.num_ancestors)
     for j in range(estimated_anc.num_ancestors):
@@ -982,7 +983,7 @@ def ancestor_properties_worker(args):
         exact_anc = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
-        exact_anc_length = exact_anc.end[:] - exact_anc.start[:]
+        exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
         focal_sites = exact_anc.focal_sites[:]
         exact_anc_focal_distance = np.zeros(exact_anc.num_ancestors)
@@ -1108,16 +1109,16 @@ def run_ancestor_comparison(args):
 
     sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length)
     for j, v in enumerate(V):
-        sample_data.add_site(j, ["0", "1"], v)
+        sample_data.add_site(j, v,  ["0", "1"])
     sample_data.finalise()
 
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    estimated_anc_length = estimated_anc.end[1:] - estimated_anc.start[1:]
+    estimated_anc_length = estimated_anc.ancestors_end[1:] - estimated_anc.ancestors_start[1:]
 
     exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
-    exact_anc_length = exact_anc.end[1:] - exact_anc.start[1:]
+    exact_anc_length = exact_anc.ancestors_end[1:] - exact_anc.ancestors_start[1:]
 
 
     name_format = os.path.join(
@@ -1136,9 +1137,9 @@ def run_ancestor_comparison(args):
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
-
-    frequency = estimated_anc.time[:][1:]
-    print(estimated_anc_length[frequency==2])
+    
+    frequency = estimated_anc.ancestors_time[:][1:]
+    print("doubleton lengths", estimated_anc_length[frequency==2])
     plt.hist(estimated_anc_length[frequency==2], bins=50)
     plt.xlabel("doubleton ancestor length")
     plt.savefig(name_format.format("doubleton-length-dist.png"))
