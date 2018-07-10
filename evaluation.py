@@ -1218,7 +1218,10 @@ def run_ancestor_comparison(args):
         #plot with jitter
         plt.scatter(x_jittered, df_all.lengths_per_site.values, marker='.', s=72./fig.dpi, alpha=0.75, color="black")
         plt.ylim(1, max_y*1.02)
+        if args.log_yscale:
+            plt.yscale("log")
         ax = plt.gca()
+        ax.set_xlim(xmin=0)
         if ancestors_are_estimated:
             plt.title("Ancestor lengths as estimated by tsinfer")
             ax.step(exact_line_x[:-1], exact_mean_line_y, label="True mean", where='post', color="limegreen")
@@ -1555,6 +1558,8 @@ if __name__ == "__main__":
         help="Store the raw data.")
     parser.add_argument("--physical-length", "-pl", action='store_true',
         help='Should we plot the lengths in terms of physical lengths along the chromosome or just # sites')
+    parser.add_argument("--log-yscale", "-logy", action='store_true',
+        help='Should we log the y axis in length plots')
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
