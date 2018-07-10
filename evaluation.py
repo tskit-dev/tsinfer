@@ -1192,19 +1192,18 @@ def run_ancestor_comparison(args):
             linestyles = ["-",":"]
         else:
             #times are unique per ancestor, so we don't do well averaging - have to use a running mean
-            nbins=41
-            assert nbins % 2 == 1, "Must have odd number of bins"
+            assert args.running_average_span % 2 == 1, "Must have odd number of bins"
             lines_y = [
                 np.pad(
-                    running_mean(mean_by_anc_time.l.values, nbins), 
-                    (nbins-1)//2, mode='constant',constant_values=(np.nan,)),
+                    running_mean(mean_by_anc_time.l.values, args.running_average_span), 
+                    (args.running_average_span-1)//2, mode='constant',constant_values=(np.nan,)),
                 np.pad(
-                    running_median(median_by_anc_time.l.values, nbins), 
-                    (nbins-1)//2, mode='constant',constant_values=(np.nan,))
+                    running_median(median_by_anc_time.l.values, args.running_average_span), 
+                    (args.running_average_span-1)//2, mode='constant',constant_values=(np.nan,))
                 ]
             names = [
-                "Running mean over {} ancestors".format(nbins), 
-                "Running median over {} ancestors".format(nbins)]
+                "Running mean over {} ancestors".format(args.running_average_span), 
+                "Running median over {} ancestors".format(args.running_average_span)]
             linestyles = ["-",":"]
             #save some stuff for when we plot inferred lines
             exact_mean_line_y = lines_y[0]
@@ -1560,6 +1559,8 @@ if __name__ == "__main__":
         help='Should we plot the lengths in terms of physical lengths along the chromosome or just # sites')
     parser.add_argument("--log-yscale", "-logy", action='store_true',
         help='Should we log the y axis in length plots')
+    parser.add_argument("--running-average-span", "-av", type=int, default=51,
+        help='How many ancestors should we average over when calculating running means and medians (must be an odd number)')
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
