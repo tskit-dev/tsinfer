@@ -1116,15 +1116,15 @@ def run_ancestor_comparison(args):
 
     with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
         for s, v in zip(ts.sites(), V):
-            _ = sample_data.add_site(s.position, v,  ["0", "1"])
+            sample_data.add_site(s.position, v,  ["0", "1"])
 
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    estimated_anc_length = estimated_anc.ancestors_end[1:] - estimated_anc.ancestors_start[1:]
+    estimated_anc_length = estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:]
 
     exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
-    exact_anc_length = exact_anc.ancestors_end[1:] - exact_anc.ancestors_start[1:]
+    exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
 
     name_format = os.path.join(
@@ -1133,23 +1133,36 @@ def run_ancestor_comparison(args):
         args.error_probability))
     if args.store_data:
         filename = name_format.format("length.json")
-        data = {
-            "exact_ancestors": exact_anc_length.tolist(),
-            "estimated_ancestors": estimated_anc_length.tolist()}
+        data = { #don't store the longest (root) ancestor
+            "exact_ancestors": exact_anc_length[1:].tolist(),
+            "estimated_ancestors": estimated_anc_length[1:].tolist()}
         with open(filename, "w") as f:
             json.dump(data, f)
 
-    plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
+    plt.hist([exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
     
-    frequency = estimated_anc.ancestors_time[:][1:] + 1
-    print("doubleton lengths", estimated_anc_length[frequency==2])
+
+    
+    frequency = estimated_anc.ancestors_time[:] + 1
+    #check that frequencies from ancestors_time really do reflect the prevalance in the popn
+    n_ton_table = np.bincount([np.sum(v.genotypes) for v in ts.variants()])
+    for n, (expected, observed) in enumerate(zip(
+        n_ton_table, np.bincount(np.repeat(frequency, [len(x) for x in estimated_anc.ancestors_focal_sites[:]])))):
+        if n != 1: #singletons are omitted from the inferred ancestors_time
+            assert expected == observed
+    print("site frequencies:\n",
+        pd.DataFrame.from_dict({'count': n_ton_table}, orient='index', columns=list(range(len(n_ton_table)))))
+    print("estimated doubleton lengths:\n", estimated_anc_length[frequency==2])
     plt.hist(estimated_anc_length[frequency==2], bins=50)
     plt.xlabel("doubleton ancestor length")
     plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
+
+    #plot 
+
 
     #plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     #one point per variable site, so these should be directly comparable
@@ -1190,6 +1203,7 @@ def run_ancestor_comparison(args):
             lines_y = [mean_by_anc_time.l, median_by_anc_time.l]
             names = ["Mean", "Median"]
             linestyles = ["-",":"]
+            colours = ["orange", "darkorange"]
         else:
             #times are unique per ancestor, so we don't do well averaging - have to use a running mean
             assert args.running_average_span % 2 == 1, "Must have odd number of bins"
@@ -1205,6 +1219,7 @@ def run_ancestor_comparison(args):
                 "Running mean over {} ancestors".format(args.running_average_span), 
                 "Running median over {} ancestors".format(args.running_average_span)]
             linestyles = ["-",":"]
+            colours = ["limegreen", "forestgreen"]
             #save some stuff for when we plot inferred lines
             exact_mean_line_y = lines_y[0]
             exact_median_line_y = lines_y[1]
@@ -1224,14 +1239,14 @@ def run_ancestor_comparison(args):
         if ancestors_are_estimated:
             plt.title("Ancestor lengths as estimated by tsinfer")
             ax.step(exact_line_x[:-1], exact_mean_line_y, label="True mean", where='post', color="limegreen")
-            ax.step(exact_line_x[:-1], exact_median_line_y, label="True median", where='post', color="limegreen", linestyle=":")
+            ax.step(exact_line_x[:-1], exact_median_line_y, label="True median", where='post', color="forestgreen", linestyle=":")
             plt.xlabel("Ancestors_freq (youngest to oldest)")
             ax.set_xlim(xmin=0)
-            _ = ax.tick_params(axis='x', which="major", length=0)
-            _ = ax.set_xticklabels('', minor=True)
-            _ = ax.set_xticks(line_x[:-1], minor=True)
-            _ = ax.set_xticks(line_x[:-1]+np.diff(line_x)/2)
-            _ = ax.set_xticklabels(np.where(
+            ax.tick_params(axis='x', which="major", length=0)
+            ax.set_xticklabels('', minor=True)
+            ax.set_xticks(line_x[:-1], minor=True)
+            ax.set_xticks(line_x[:-1]+np.diff(line_x)/2)
+            ax.set_xticklabels(np.where(
                 np.isin(mean_by_anc_time.index, np.array([1,2,3,4,5,6,10,50,1000, 5000])), 
                 mean_by_anc_time.index,
                 ""))
@@ -1239,8 +1254,8 @@ def run_ancestor_comparison(args):
             plt.title("True ancestor lengths, ordered by known simulation time")
             plt.xlabel("Ancestors_time index (youngest to oldest)")
         
-        for y, label, linestyle in zip(lines_y, names, linestyles):
-            ax.step(line_x[:-1], y, label=label, where='post', color="orange", linestyle=linestyle)
+        for y, label, linestyle, colour in zip(lines_y, names, linestyles, colours):
+            ax.step(line_x[:-1], y, label=label, where='post', color=colour, linestyle=linestyle)
         plt.ylabel("Length" + ("(kb)" if args.physical_length else "(# sites)"))
         plt.legend(loc='upper center')
         figures.append(fig)
