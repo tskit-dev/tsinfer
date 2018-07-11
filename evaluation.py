@@ -1161,9 +1161,6 @@ def run_ancestor_comparison(args):
     plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
 
-    #plot 
-
-
     #plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     #one point per variable site, so these should be directly comparable
     #the exact ancestors have ancestors_time from 1..n_ancestors, ordered by real time
