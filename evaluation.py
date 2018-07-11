@@ -18,6 +18,7 @@ import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
 mp.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.backends.backend_pdf
 from matplotlib import collections as mc
 import seaborn as sns
 import tqdm
@@ -1091,6 +1092,12 @@ def running_mean(x, N):
     cumsum = np.cumsum(np.insert(x, 0, 0))
     return (cumsum[N:] - cumsum[:-N]) / float(N)
 
+def running_median(x, N):
+    idx = np.arange(N) + np.arange(len(x)-N+1)[:,None]
+    b = [row[row>0] for row in x[idx]]
+    return np.array(list(map(np.median,b)))
+
+
 def run_ancestor_comparison(args):
     MB = 10**6
     rng = random.Random(args.random_seed)
@@ -1107,18 +1114,17 @@ def run_ancestor_comparison(args):
     # ts  = tsinfer.insert_errors(ts, args.error_probability, seed=args.random_seed)
     V = generate_samples(ts, args.error_probability)
 
-    sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length)
-    for j, v in enumerate(V):
-        sample_data.add_site(j, v,  ["0", "1"])
-    sample_data.finalise()
+    with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
+        for s, v in zip(ts.sites(), V):
+            sample_data.add_site(s.position, v,  ["0", "1"])
 
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    estimated_anc_length = estimated_anc.ancestors_end[1:] - estimated_anc.ancestors_start[1:]
+    estimated_anc_length = estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:]
 
     exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
-    exact_anc_length = exact_anc.ancestors_end[1:] - exact_anc.ancestors_start[1:]
+    exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
 
     name_format = os.path.join(
@@ -1127,39 +1133,135 @@ def run_ancestor_comparison(args):
         args.error_probability))
     if args.store_data:
         filename = name_format.format("length.json")
-        data = {
-            "exact_ancestors": exact_anc_length.tolist(),
-            "estimated_ancestors": estimated_anc_length.tolist()}
+        data = { #don't store the longest (root) ancestor
+            "exact_ancestors": exact_anc_length[1:].tolist(),
+            "estimated_ancestors": estimated_anc_length[1:].tolist()}
         with open(filename, "w") as f:
             json.dump(data, f)
 
-    plt.hist([exact_anc_length, estimated_anc_length], label=["Exact", "Estimated"])
+    plt.hist([exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
     
-    frequency = estimated_anc.ancestors_time[:][1:]
-    print("doubleton lengths", estimated_anc_length[frequency==2])
+
+    
+    frequency = estimated_anc.ancestors_time[:] + 1
+    #check that frequencies from ancestors_time really do reflect the prevalance in the popn
+    n_ton_table = np.bincount([np.sum(v.genotypes) for v in ts.variants()])
+    for n, (expected, observed) in enumerate(zip(
+        n_ton_table, np.bincount(np.repeat(frequency, [len(x) for x in estimated_anc.ancestors_focal_sites[:]])))):
+        if n != 1: #singletons are omitted from the inferred ancestors_time
+            assert expected == observed
+    print("site frequencies:\n",
+        pd.DataFrame.from_dict({'count': n_ton_table}, orient='index', columns=list(range(len(n_ton_table)))))
+    print("estimated doubleton lengths:\n", estimated_anc_length[frequency==2])
     plt.hist(estimated_anc_length[frequency==2], bins=50)
     plt.xlabel("doubleton ancestor length")
     plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
 
-    # Because we have different numbers of ancestors, we need to rescale time
-    # somehow to display them on the same axis. We just map time linearly into
-    # 0,1. Possibly this is misleading.
-    nbins = 100
-    x = running_mean(exact_anc_length, nbins)
-    # x = exact_anc_length
-    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Exact")
-    x = running_mean(estimated_anc_length, nbins)
-    # x = estimated_anc_length
-    plt.plot(np.linspace(0, 1, x.shape[0]), x, label="Estimated")
-    plt.xlabel("Time (oldest to youngest)")
-    plt.ylabel("Length")
-    plt.legend()
-    plt.savefig(name_format.format("length-time.png"))
-    plt.clf()
+    #plot exact ancestors ordered by time, and estimated ancestors in frequency bands
+    #one point per variable site, so these should be directly comparable
+    #the exact ancestors have ancestors_time from 1..n_ancestors, ordered by real time
+    #in the simulation, so that each time is unique for a set of site on one ancestor
+    figures = []
+    for ancestors_are_estimated, anc in enumerate([exact_anc, estimated_anc]):
+        time = anc.ancestors_time[:] + (1 if ancestors_are_estimated else 0)
+        positions = np.append(anc.sites_position[:], anc.sequence_length)
+        lengths_by_sites = anc.ancestors_end[:]-anc.ancestors_start[:]
+        lengths_by_pos = (positions[anc.ancestors_end[:]]-positions[anc.ancestors_start[:]])/1000.0
+                
+        df = pd.DataFrame({
+            'start':anc.ancestors_start[:],
+            'end':anc.ancestors_end[:],
+            'l':lengths_by_pos if args.physical_length else lengths_by_sites,
+            'time':time, 
+            'nsites': [len(x) for x in anc.ancestors_focal_sites[:]]})
+        
+        df_all = pd.DataFrame({
+            'lengths_per_site': np.repeat(df.l.values, df.nsites.values),
+            'time': np.repeat(df.time.values, df.nsites.values),
+            'const':1
+            }).sort_values(by=['time'])
+        sum_per_timeslice = df_all.groupby('time').sum().const.values
+        df_all['x_pos'] = range(df_all.shape[0])
+        df_all['mean_x_pos'] = np.repeat(df_all.groupby('time').mean().x_pos.values, sum_per_timeslice)
+        df_all['width'] = np.repeat(sum_per_timeslice, sum_per_timeslice)
+        
+        mean_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby('time', sort=True).mean()
+        median_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby('time', sort=True).median()
+        sum_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby('time', sort=True).sum()
+        
+        line_x = np.insert(np.cumsum(sum_by_anc_time['nsites']).values, 0, 0)
+        
+        if ancestors_are_estimated:
+            #averaging over times is probably more-or-less OK
+            lines_y = [mean_by_anc_time.l, median_by_anc_time.l]
+            names = ["Mean", "Median"]
+            linestyles = ["-",":"]
+            colours = ["orange", "darkorange"]
+        else:
+            #times are unique per ancestor, so we don't do well averaging - have to use a running mean
+            assert args.running_average_span % 2 == 1, "Must have odd number of bins"
+            lines_y = [
+                np.pad(
+                    running_mean(mean_by_anc_time.l.values, args.running_average_span), 
+                    (args.running_average_span-1)//2, mode='constant',constant_values=(np.nan,)),
+                np.pad(
+                    running_median(median_by_anc_time.l.values, args.running_average_span), 
+                    (args.running_average_span-1)//2, mode='constant',constant_values=(np.nan,))
+                ]
+            names = [
+                "Running mean over {} ancestors".format(args.running_average_span), 
+                "Running median over {} ancestors".format(args.running_average_span)]
+            linestyles = ["-",":"]
+            colours = ["limegreen", "forestgreen"]
+            #save some stuff for when we plot inferred lines
+            exact_mean_line_y = lines_y[0]
+            exact_median_line_y = lines_y[1]
+            exact_line_x = line_x
+            max_y = np.max(df_all.lengths_per_site.values)
+        
+        fig = plt.figure(figsize=(10,10), dpi=100)
+        x_jittered = df_all.mean_x_pos.values + \
+            np.random.uniform(-df_all.width.values*9/20, df_all.width.values*9/20, len(df_all.mean_x_pos.values))
+        #plot with jitter
+        plt.scatter(x_jittered, df_all.lengths_per_site.values, marker='.', s=72./fig.dpi, alpha=0.75, color="black")
+        plt.ylim(1, max_y*1.02)
+        if args.log_yscale:
+            plt.yscale("log")
+        ax = plt.gca()
+        ax.set_xlim(xmin=0)
+        if ancestors_are_estimated:
+            plt.title("Ancestor lengths as estimated by tsinfer")
+            ax.step(exact_line_x[:-1], exact_mean_line_y, label="True mean", where='post', color="limegreen")
+            ax.step(exact_line_x[:-1], exact_median_line_y, label="True median", where='post', color="forestgreen", linestyle=":")
+            plt.xlabel("Ancestors_freq (youngest to oldest)")
+            ax.set_xlim(xmin=0)
+            ax.tick_params(axis='x', which="major", length=0)
+            ax.set_xticklabels('', minor=True)
+            ax.set_xticks(line_x[:-1], minor=True)
+            ax.set_xticks(line_x[:-1]+np.diff(line_x)/2)
+            ax.set_xticklabels(np.where(
+                np.isin(mean_by_anc_time.index, np.array([1,2,3,4,5,6,10,50,1000, 5000])), 
+                mean_by_anc_time.index,
+                ""))
+        else:
+            plt.title("True ancestor lengths, ordered by known simulation time")
+            plt.xlabel("Ancestors_time index (youngest to oldest)")
+        
+        for y, label, linestyle, colour in zip(lines_y, names, linestyles, colours):
+            ax.step(line_x[:-1], y, label=label, where='post', color=colour, linestyle=linestyle)
+        plt.ylabel("Length" + ("(kb)" if args.physical_length else "(# sites)"))
+        plt.legend(loc='upper center')
+        figures.append(fig)
+    
+    with matplotlib.backends.backend_pdf.PdfPages(
+        name_format.format(("kb" if args.physical_length else "n_sites") + "-time.pdf")) as pdf:
+        for fig in figures:
+            pdf.savefig(fig, dpi=100)
+
 
 def get_node_degree_by_depth(ts):
     """
@@ -1448,7 +1550,7 @@ if __name__ == "__main__":
         help="Runs plots comparing the real and simulated ancestors for a single instance.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_comparison)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument("--sample-size", "-n", type=int, default=60)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument(
@@ -1465,6 +1567,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--store-data", "-S", action="store_true",
         help="Store the raw data.")
+    parser.add_argument("--physical-length", "-pl", action='store_true',
+        help='Should we plot the lengths in terms of physical lengths along the chromosome or just # sites')
+    parser.add_argument("--log-yscale", "-logy", action='store_true',
+        help='Should we log the y axis in length plots')
+    parser.add_argument("--running-average-span", "-av", type=int, default=51,
+        help='How many ancestors should we average over when calculating running means and medians (must be an odd number)')
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
