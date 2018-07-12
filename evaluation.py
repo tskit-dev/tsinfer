@@ -1119,18 +1119,25 @@ def run_ancestor_comparison(args):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    estimated_anc_length = estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:]
-
     exact_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
-    exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
+    if args.physical_length:
+        length_units = "(kb)"
+        pos = np.append(estimated_anc.sites_position[:], estimated_anc.sequence_length)
+        estimated_anc_length = (pos[estimated_anc.ancestors_end[:]] - pos[estimated_anc.ancestors_start[:]])/1000
+        pos = np.append(exact_anc.sites_position[:], exact_anc.sequence_length)
+        exact_anc_length = (pos[exact_anc.ancestors_end[:]] - pos[exact_anc.ancestors_start[:]])/1000
+    else:
+        length_units = "(# inf sites)"
+        estimated_anc_length = estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:]
+        exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{}_{{}}".format(
         args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-        args.error_probability))
+        args.error_probability, ("kb" if args.physical_length else "sites")))
     if args.store_data:
         filename = name_format.format("length.json")
         data = { #don't store the longest (root) ancestor
@@ -1140,6 +1147,7 @@ def run_ancestor_comparison(args):
             json.dump(data, f)
 
     plt.hist([exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
+    plt.ylabel("Length" + length_units)
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
@@ -1160,6 +1168,41 @@ def run_ancestor_comparison(args):
     plt.xlabel("doubleton ancestor length")
     plt.savefig(name_format.format("doubleton-length-dist.png"))
     plt.clf()
+
+    #plot scatterplot of actual vs inferred ancestor lengths, per site
+    exact_lengths_by_inference_index = {exact_anc.sites_position[:][site_index]:[l, t] 
+        for l, sites, t in zip(exact_anc_length, exact_anc.ancestors_focal_sites[:], exact_anc.ancestors_time[:]) \
+            for site_index in sites}
+    estimated_lengths_by_inference_index = {estimated_anc.sites_position[:][site_index]:[l, t] 
+        for l, sites, t in zip(estimated_anc_length, estimated_anc.ancestors_focal_sites[:], estimated_anc.ancestors_time[:]+1) \
+            for site_index in sites}
+    #check that we have the same set of indexes used for inference
+    assert not (set(exact_lengths_by_inference_index.keys()) ^ set(estimated_lengths_by_inference_index.keys()))
+    shared_indices = set(exact_lengths_by_inference_index.keys()) & set(estimated_lengths_by_inference_index.keys())
+    
+    figures = []
+    for colorscale in ("Frequency", "True time order"):
+        fig = plt.figure(figsize=(10,10), dpi=100)
+        if args.length_scale == "log":
+            plt.yscale('log')
+            plt.xscale('log')
+        if colorscale=="Frequency":
+            cs = [estimated_lengths_by_inference_index[k][1] for k in shared_indices]            
+        else:
+            cs = [exact_lengths_by_inference_index[k][1] for k in shared_indices]
+        plt.scatter(
+            [exact_lengths_by_inference_index[k][0] for k in shared_indices],
+            [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
+            c = cs, cmap='cool', s=2)
+        cbar = plt.colorbar()
+        cbar.set_label(colorscale, rotation=270)
+        plt.xlabel("True ancestor length per variant " + length_units)
+        plt.ylabel("Inferred ancestor length per variant " + length_units)
+        figures.append(fig)
+    with matplotlib.backends.backend_pdf.PdfPages(name_format.format("length-scatter.pdf")) as pdf:
+        for fig in figures:
+            pdf.savefig(fig, dpi=100)
+    
 
     #plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     #one point per variable site, so these should be directly comparable
@@ -1228,11 +1271,13 @@ def run_ancestor_comparison(args):
             np.random.uniform(-df_all.width.values*9/20, df_all.width.values*9/20, len(df_all.mean_x_pos.values))
         #plot with jitter
         plt.scatter(x_jittered, df_all.lengths_per_site.values, marker='.', s=72./fig.dpi, alpha=0.75, color="black")
-        plt.ylim(1, max_y*1.02)
-        if args.log_yscale:
+        if args.length_scale == "log":
+            plt.ylim(1/(1000 if args.physical_length else 1), max_y*1.02)
             plt.yscale("log")
+        else:
+            plt.ylim(1/(1000 if args.physical_length else 1), max_y**1.02)
         ax = plt.gca()
-        ax.set_xlim(xmin=0)
+        ax.set_xlim(xmin=0, xmax=max(line_x))
         if ancestors_are_estimated:
             plt.title("Ancestor lengths as estimated by tsinfer")
             ax.step(exact_line_x[:-1], exact_mean_line_y, label="True mean", where='post', color="limegreen")
@@ -1253,12 +1298,12 @@ def run_ancestor_comparison(args):
         
         for y, label, linestyle, colour in zip(lines_y, names, linestyles, colours):
             ax.step(line_x[:-1], y, label=label, where='post', color=colour, linestyle=linestyle)
-        plt.ylabel("Length" + ("(kb)" if args.physical_length else "(# sites)"))
+        plt.ylabel("Length " + length_units)
         plt.legend(loc='upper center')
         figures.append(fig)
     
     with matplotlib.backends.backend_pdf.PdfPages(
-        name_format.format(("kb" if args.physical_length else "n_sites") + "-time.pdf")) as pdf:
+        name_format.format("time.pdf")) as pdf:
         for fig in figures:
             pdf.savefig(fig, dpi=100)
 
@@ -1569,8 +1614,8 @@ if __name__ == "__main__":
         help="Store the raw data.")
     parser.add_argument("--physical-length", "-pl", action='store_true',
         help='Should we plot the lengths in terms of physical lengths along the chromosome or just # sites')
-    parser.add_argument("--log-yscale", "-logy", action='store_true',
-        help='Should we log the y axis in length plots')
+    parser.add_argument("--length-scale", "-ls", choices=['linear', 'log'], default="linear",
+        help='Should we transform lengths when plotting')
     parser.add_argument("--running-average-span", "-av", type=int, default=51,
         help='How many ancestors should we average over when calculating running means and medians (must be an odd number)')
 
