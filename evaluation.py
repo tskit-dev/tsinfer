@@ -577,7 +577,7 @@ def run_ancestor_comparison(args):
     n_ton_table = np.bincount(
         [np.sum(g[1]) for g in sample_data.genotypes(inference_sites=True)])
     test_freqs = np.bincount(
-        np.repeat(frequency,[len(x) for x in estimated_anc.ancestors_focal_sites[:]]))
+        np.repeat(frequency, [len(x) for x in estimated_anc.ancestors_focal_sites[:]]))
     assert np.array_equal(n_ton_table, test_freqs)
 
     print(
@@ -607,16 +607,17 @@ def run_ancestor_comparison(args):
             estimated_anc.ancestors_time[:] + 1)
         for site_index in sites}
 
-    #if there is error, we may not have exactly the same inference sites in exact & estimated
+    # NB with error we may not have exactly the same inference sites in exact & estimated
     shared_indices = (
         set(exact_lengths_by_inference_index.keys()) &
         set(estimated_lengths_by_inference_index.keys()))
 
     figures = []
+
     class NormalizeBandWidths(mp.colors.Normalize):
         """
-        normalise a range into 0..1 where ranges of integers are banded 
-        into a single colour. The init parameter band_widths needs to be 
+        normalise a range into 0..1 where ranges of integers are banded
+        into a single colour. The init parameter band_widths needs to be
         a numpy vector of length the maximum integer encountered
         """
 
