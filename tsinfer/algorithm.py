@@ -153,7 +153,7 @@ class AncestorBuilder(object):
                 a[l] = 0
         return last_older_site
 
-    def make_ancestor(self, focal_sites, a):
+    def make_ancestor_old(self, focal_sites, a):
         # print("MAKE ANC", focal_sites)
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
@@ -172,6 +172,57 @@ class AncestorBuilder(object):
         end = known[-1] + 1
         # print("Made ancestor", start, end, a)
         assert np.all(a[start: end] != UNKNOWN_ALLELE)
+        return start, end
+
+    def __compute_state(self, site, samples):
+        s = np.sum(self.sites[site].genotypes[samples])
+        return int(round(s / samples.shape[0]))
+
+    def make_ancestor(self, focal_sites, a):
+        # print("make ancestor", focal_sites)
+
+        a[:] = UNKNOWN_ALLELE
+        samples = np.where(self.sites[focal_sites[0]].genotypes == 1)[0]
+        focal_frequency = self.sites[focal_sites[0]].frequency
+        n = samples.shape[0]
+        # print("focal_frequency = ", focal_frequency, "n = ", n)
+
+        # Fill in the states between the focal sites.
+        for j in range(focal_sites[0], focal_sites[-1] + 1):
+            a[j] = 0
+            if self.sites[j].frequency > focal_frequency:
+                a[j] = self.__compute_state(j, samples)
+        a[focal_sites] = 1
+
+        # Go rightwards to compute the end site.
+        end = focal_sites[-1] + 1
+        while end < self.num_sites:
+            s = 0
+            if self.sites[end].frequency > focal_frequency:
+                s = np.sum(self.sites[end].genotypes[samples])
+            if s != 0 and s != n:
+                break
+            end += 1
+        for j in range(focal_sites[-1] + 1, end):
+            a[j] = 0
+            if self.sites[j].frequency > focal_frequency:
+                a[j] = self.__compute_state(j, samples)
+
+        # Go leftwards to compute the start
+        start = focal_sites[0] - 1
+        while start >= 0:
+            s = 0
+            if self.sites[start].frequency > focal_frequency:
+                s = np.sum(self.sites[start].genotypes[samples])
+            if s != 0 and s != n:
+                break
+            start -= 1
+        start += 1
+
+        for j in range(start, focal_sites[0]):
+            a[j] = 0
+            if self.sites[j].frequency > focal_frequency:
+                a[j] = self.__compute_state(j, samples)
         return start, end
 
 
