@@ -37,6 +37,9 @@ def insert_errors(ts, probability, seed=None):
     are imposed by choosing a sample and inverting its state with
     a back/recurrent mutation as necessary. Errors resulting in
     fixation of either allele are rejected.
+
+    NOTE: this hasn't been verified and may not have the desired
+    statistical properties!
     """
     tables = ts.dump_tables()
     rng = random.Random(seed)

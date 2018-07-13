@@ -21,3 +21,7 @@ sphinx
 sphinx-argparse
 sphinx_rtd_theme
 setuptools_scm
+# Needed for evaluation script.
+pandas
+matplotlib
+seaborn

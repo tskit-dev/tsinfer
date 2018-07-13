@@ -36,7 +36,7 @@ jobs:
       - run:
           name: Lint Python
           command: |
-              flake8 --max-line-length 89 tsinfer setup.py tests
+              flake8 --max-line-length 89 tsinfer setup.py tests evaluation.py
       - run:
           name: Run Python tests 
           command: |
