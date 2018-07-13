@@ -618,6 +618,18 @@ def run_ancestor_comparison(args):
         set(estimated_lengths_by_inference_index.keys()))
 
     figures = []
+    class NormalizeWithBandWidths(mp.colors.Normalize):
+        """
+        normalise a range into 0..1 but where ranges of integers are bunged into a single colour
+        band_widths needs to be a numpy vector of length the maximum integer input
+        """
+        def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
+            self.bands = np.cumsum(band_widths) / np.sum(band_widths)
+            mp.colors.Normalize.__init__(self, vmin, vmax, clip)
+    
+        def __call__(self, value, clip=None):
+            return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
+    
     for colorscale in ("Frequency", "True time order"):
         fig = plt.figure(figsize=(10, 10), dpi=100)
         if args.length_scale == "log":
@@ -630,7 +642,7 @@ def run_ancestor_comparison(args):
         plt.scatter(
             [exact_lengths_by_inference_index[k][0] for k in shared_indices],
             [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
-            c=cs, cmap='cool', s=2)
+            c=cs, cmap='brg', s=2, norm=NormalizeWithBandWidths(band_widths=np.bincount(cs)))
         cbar = plt.colorbar()
         cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (KB)")
