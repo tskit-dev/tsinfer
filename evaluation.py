@@ -574,15 +574,12 @@ def run_ancestor_comparison(args):
     frequency = estimated_anc.ancestors_time[:] + 1
     # check that frequencies from ancestors_time really do reflect the
     # prevalance in the popn
-    n_ton_table = np.bincount([np.sum(v.genotypes) for v in ts.variants()])
-    for n, (expected, observed) in enumerate(zip(
-        n_ton_table,
-        np.bincount(
-            np.repeat(
-                frequency,
-                [len(x) for x in estimated_anc.ancestors_focal_sites[:]])))):
-        if n != 1:  # singletons are omitted from the inferred ancestors_time
-            assert expected == observed
+    n_ton_table = np.bincount(
+        [np.sum(g[1]) for g in sample_data.genotypes(inference_sites=True)])
+    test_freqs = np.bincount(
+        np.repeat(frequency,[len(x) for x in estimated_anc.ancestors_focal_sites[:]]))
+    assert np.array_equal(n_ton_table, test_freqs)
+
     print(
         "site frequencies:\n",
         pd.DataFrame.from_dict(
@@ -609,10 +606,8 @@ def run_ancestor_comparison(args):
             estimated_anc.ancestors_focal_sites[:],
             estimated_anc.ancestors_time[:] + 1)
         for site_index in sites}
-    # check that we have the same set of indexes used for inference
-    assert not (
-        set(exact_lengths_by_inference_index.keys()) ^
-        set(estimated_lengths_by_inference_index.keys()))
+
+    #if there is error, we may not have exactly the same inference sites in exact & estimated
     shared_indices = (
         set(exact_lengths_by_inference_index.keys()) &
         set(estimated_lengths_by_inference_index.keys()))
@@ -624,13 +619,14 @@ def run_ancestor_comparison(args):
         into a single colour. The init parameter band_widths needs to be 
         a numpy vector of length the maximum integer encountered
         """
+
         def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
             self.bands = np.cumsum(band_widths) / np.sum(band_widths)
             mp.colors.Normalize.__init__(self, vmin, vmax, clip)
-    
+
         def __call__(self, value, clip=None):
             return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
-    
+
     for colorscale in ("Frequency", "True time order"):
         fig = plt.figure(figsize=(10, 10), dpi=100)
         if args.length_scale == "log":
