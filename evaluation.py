@@ -387,11 +387,11 @@ def ancestor_properties_worker(args):
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
     estimated_anc = tsinfer.generate_ancestors(sample_data)
-    pos = estimated_anc.sites_position[:] / 1000  # Convert to KB
-    estimated_anc_length = (
-        pos[estimated_anc.ancestors_end[:]] - pos[estimated_anc.ancestors_start[:]])
+    # Show lengths as a fraction of the total.
+    estimated_anc_length = estimated_anc.ancestors_length / ts.sequence_length
     focal_sites = estimated_anc.ancestors_focal_sites[:]
     estimated_anc_focal_distance = np.zeros(estimated_anc.num_ancestors)
+    pos = np.hstack([estimated_anc.sites_position[:] / ts.sequence_length] + [1])
     for j in range(estimated_anc.num_ancestors):
         focal = focal_sites[j]
         if len(focal) > 0:
@@ -409,14 +409,16 @@ def ancestor_properties_worker(args):
         exact_anc = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
+        # Show lengths as a fraction of the total.
         exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
 
-        focal_sites = exact_anc.focal_sites[:]
+        focal_sites = exact_anc.ancestors_focal_sites[:]
+        pos = np.hstack([exact_anc.sites_position[:] / ts.sequence_length] + [1])
         exact_anc_focal_distance = np.zeros(exact_anc.num_ancestors)
         for j in range(exact_anc.num_ancestors):
             focal = focal_sites[j]
             if len(focal) > 0:
-                exact_anc_focal_distance[j] = focal[-1] - focal[0]
+                exact_anc_focal_distance[j] = pos[focal[-1]] - pos[focal[0]]
         results.update({
             "exact_anc_num": exact_anc.num_ancestors,
             "exact_anc_mean_len": np.mean(exact_anc_length),
@@ -461,7 +463,6 @@ def run_ancestor_properties(args):
     progress.close()
 
     df = pd.DataFrame(results)
-    df.length /= MB
     dfg = df.groupby(df.length).mean()
     print(dfg)
 

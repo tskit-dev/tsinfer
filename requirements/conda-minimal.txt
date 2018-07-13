@@ -8,3 +8,7 @@ zarr
 lmdb
 sortedcontainers
 attrs
+# Needed for evaluation script.
+pandas
+matplotlib
+seaborn

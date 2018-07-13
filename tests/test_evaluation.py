@@ -652,4 +652,9 @@ class TestCli(unittest.TestCase):
             "edges-performance", "-n", "5", "-l", "0.1", "-R", "2", "-s", "1"])
 
     def test_hotspot_analysis(self):
-        self.run_command(["hotspot-analysis", "-n", "5", "-R", "1", "-s", "5"])
+        self.run_command([
+            "hotspot-analysis", "-n", "5", "-l", "0.1", "-R", "1", "-s", "5"])
+
+    def test_ancestor_properties(self):
+        self.run_command([
+            "ancestor-properties", "-n", "5", "-l", "0.1", "-R", "1", "-s", "5"])
