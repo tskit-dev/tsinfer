@@ -547,28 +547,15 @@ def run_ancestor_comparison(args):
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
 
-    if args.physical_length:
-        length_units = "(kb)"
-        pos = np.append(estimated_anc.sites_position[:], estimated_anc.sequence_length)
-        pos /= 1000  # Convert to KB
-        estimated_anc_length = (
-            pos[estimated_anc.ancestors_end[:]] - pos[estimated_anc.ancestors_start[:]])
-        estimated_anc_length
-        pos = np.append(exact_anc.sites_position[:], exact_anc.sequence_length)
-        exact_anc_length = (
-            pos[exact_anc.ancestors_end[:]] - pos[exact_anc.ancestors_start[:]])
-
-    else:
-        length_units = "(# inf sites)"
-        estimated_anc_length = (
-            estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:])
-        exact_anc_length = exact_anc.ancestors_end[:] - exact_anc.ancestors_start[:]
-
+    # Convert lengths to KB.
+    estimated_anc_length = estimated_anc.ancestors_length / 1000
+    exact_anc_length = exact_anc.ancestors_length / 1000
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{}_{{}}".format(
+        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-            args.error_probability, ("kb" if args.physical_length else "sites")))
+            args.error_probability))
     if args.store_data:
+        # TODO Are we using this option for anything?
         filename = name_format.format("length.json")
         # Don't store the longest (root) ancestor
         data = {
@@ -579,7 +566,7 @@ def run_ancestor_comparison(args):
 
     plt.hist(
         [exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
-    plt.ylabel("Length" + length_units)
+    plt.ylabel("Length (KB)")
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
@@ -646,8 +633,8 @@ def run_ancestor_comparison(args):
             c=cs, cmap='cool', s=2)
         cbar = plt.colorbar()
         cbar.set_label(colorscale, rotation=270)
-        plt.xlabel("True ancestor length per variant " + length_units)
-        plt.ylabel("Inferred ancestor length per variant " + length_units)
+        plt.xlabel("True ancestor length per variant (KB)")
+        plt.ylabel("Inferred ancestor length per variant (KB)")
         figures.append(fig)
     with matplotlib.backends.backend_pdf.PdfPages(
             name_format.format("length-scatter.pdf")) as pdf:
@@ -660,15 +647,10 @@ def run_ancestor_comparison(args):
     figures = []
     for ancestors_are_estimated, anc in enumerate([exact_anc, estimated_anc]):
         time = anc.ancestors_time[:] + (1 if ancestors_are_estimated else 0)
-        positions = np.append(anc.sites_position[:], anc.sequence_length)
-        positions /= 1000  # Convert to KB
-        lengths_by_sites = anc.ancestors_end[:]-anc.ancestors_start[:]
-        lengths_by_pos = (
-            positions[anc.ancestors_end[:]] - positions[anc.ancestors_start[:]])
         df = pd.DataFrame({
             'start': anc.ancestors_start[:],
             'end': anc.ancestors_end[:],
-            'l': lengths_by_pos if args.physical_length else lengths_by_sites,
+            'l': anc.ancestors_length / 1000,
             'time': time,
             'nsites': [len(x) for x in anc.ancestors_focal_sites[:]]})
 
@@ -720,17 +702,16 @@ def run_ancestor_comparison(args):
             exact_mean_line_y = lines_y[0]
             exact_median_line_y = lines_y[1]
             exact_line_x = line_x
-            max_y = np.max(df_all.lengths_per_site.values)
+            # max_y = np.max(df_all.lengths_per_site.values)
 
         fig = plt.figure(figsize=(10, 10), dpi=100)
         w = df_all.width.values * 9 / 20
-        x_jittered = df_all.mean_x_pos.values + np.random.uniform(
-            -w, w, len(df_all.mean_x_pos.values))
-        # plot with jitter
+        jitter = np.random.uniform(-w, w, len(df_all.mean_x_pos.values))
+        x_jittered = df_all.mean_x_pos.values + jitter
         plt.scatter(
             x_jittered, df_all.lengths_per_site.values,
             marker='.', s=72./fig.dpi, alpha=0.75, color="black")
-        plt.ylim(1 / (1000 if args.physical_length else 1), max_y*1.02)
+        # plt.ylim(1 / (1000 if args.physical_length else 1), max_y*1.02)
         if args.length_scale == "log":
             plt.yscale("log")
         ax = plt.gca()
@@ -763,7 +744,7 @@ def run_ancestor_comparison(args):
             ax.step(
                 line_x[:-1], y, label=label, where='post', color=colour,
                 linestyle=linestyle)
-        plt.ylabel("Length " + length_units)
+        plt.ylabel("Length (KB)")
         plt.legend(loc='upper center')
         figures.append(fig)
 
@@ -1039,11 +1020,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--store-data", "-S", action="store_true",
         help="Store the raw data.")
-    parser.add_argument(
-        "--physical-length", "-P", action='store_true',
-        help=(
-            "Should we plot the lengths in terms of physical lengths "
-            "along the chromosome or just # sites"))
     parser.add_argument(
         "--length-scale", "-X", choices=['linear', 'log'], default="linear",
         help='Length scale for distances when plotting')

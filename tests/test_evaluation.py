@@ -658,3 +658,9 @@ class TestCli(unittest.TestCase):
     def test_ancestor_properties(self):
         self.run_command([
             "ancestor-properties", "-n", "5", "-l", "0.1", "-R", "1", "-s", "5"])
+
+    def test_ancestor_comparison(self):
+        self.run_command(["ancestor-properties", "-n", "5", "-l", "0.5"])
+
+    def test_node_degree(self):
+        self.run_command(["node-degree", "-n", "5", "-l", "0.1"])
