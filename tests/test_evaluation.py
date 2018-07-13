@@ -21,6 +21,9 @@ Test cases for the evaluation code.
 """
 import itertools
 import unittest
+import subprocess
+import sys
+import tempfile
 
 import msprime
 import numpy as np
@@ -626,3 +629,31 @@ class TestErrors(unittest.TestCase):
         # We should have some extra mutations
         self.assertGreater(tsp.num_mutations, ts.num_mutations)
         self.verify(ts, tsp)
+
+
+class TestCli(unittest.TestCase):
+    """
+    Simple tests for the evaluation CLI to make sure the various tests
+    at least run.
+    """
+    def run_command(self, command):
+        with tempfile.TemporaryDirectory(prefix="tsi_eval") as tmpdir:
+            subprocess.check_output(
+                [sys.executable, "evaluation.py"] + command + ["-d", tmpdir])
+
+    def test_help(self):
+        self.run_command(["--help"])
+
+    def test_perfect_inference(self):
+        self.run_command(["perfect-inference", "-n", "4", "-l", "0.1", "-s", "1"])
+
+    def test_edges_performance(self):
+        self.run_command([
+            "edges-performance", "-n", "5", "-l", "0.1", "-R", "2", "-s", "1"])
+
+    def test_effective_recombination(self):
+        self.run_command([
+            "effective-recombination", "-n", "4", "-l", "0.1", "-R", "2", "-s", "4"])
+
+    def test_hotspot_analysis(self):
+        self.run_command(["hotspot-analysis", "-n", "5", "-R", "1", "-s", "5"])

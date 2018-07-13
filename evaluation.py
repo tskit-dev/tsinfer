@@ -64,36 +64,6 @@ def generate_samples(ts, error_p):
     return G
 
 
-def infer_from_simulation(
-        ts, recombination_rate=1, input_error=0, sample_error=0, engine="C",
-        path_compression=True):
-    if input_error == 0:
-        genotypes = ts.genotype_matrix()
-    else:
-        genotypes = generate_samples(ts, input_error)
-    positions = [mut.position for mut in ts.mutations()]
-    return tsinfer.infer(
-        genotypes, positions=positions, sequence_length=ts.sequence_length,
-        recombination_rate=recombination_rate, sample_error=sample_error,
-        engine=engine, path_compression=path_compression)
-
-
-def verify_trees_equal(ts_source, ts_inferred):
-    """
-    Verifies that the inferred trees are topologically equal to the specified
-    inferred trees.
-    """
-    for t in ts_source.trees():
-        print(t.interval)
-        print(t.draw(format="unicode"))
-    print("++")
-    for t in ts_inferred.trees():
-        print(t.interval)
-        print(t.draw(format="unicode"))
-
-    print("==")
-
-
 def run_infer(ts, engine="C", path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
@@ -495,119 +465,21 @@ def run_hotspot_analysis(args):
     edge_plot(inferred_ts, name_format.format("dest_edges"))
 
 
-def error_analysis_worker(args):
-    simulation_args, input_error, inference_error = args
-    ts = msprime.simulate(**simulation_args)
-
-    # V = generate_samples(ts, input_error)
-    ts = tsinfer.insert_errors(ts, inference_error)
-    V = ts.genotype_matrix()
-    inferred_ts = tsinfer.infer(
-        V, [site.position for site in ts.sites()], sample_error=0,
-        sequence_length=ts.sequence_length,
-        recombination_rate=simulation_args["recombination_rate"])
-
-    results = {
-        "input_error": input_error,
-        "inference_error": inference_error,
-        "num_sites": ts.num_sites,
-        "source_num_trees": ts.num_trees,
-        "inferred_num_trees": inferred_ts.num_trees,
-        "source_edges": ts.num_edges,
-        "inferred_edges": inferred_ts.num_edges,
-    }
-    results.update(simulation_args)
-
-    breakpoints, kc_distance = tsinfer.compare(ts, inferred_ts)
-    d = breakpoints[1:] - breakpoints[:-1]
-    d /= breakpoints[-1]
-    kc_distance_weighted = np.sum(kc_distance * d)
-    kc_mean = np.mean(kc_distance)
-    results.update({
-        "kc_distance_weighted": kc_distance_weighted,
-        "kc_mean": kc_mean,
-    })
-    return results
-
-
-def run_error_analysis(args):
-    MB = 10**6
-    L = args.length * MB
-
-    work = []
-    rng = random.Random()
-    if args.random_seed is not None:
-        rng.seed(args.random_seed)
-    inference_errors = [
-        0, args.error_probability / 10, args.error_probability,
-        args.error_probability * 10]
-    for e in inference_errors:
-        for _ in range(args.num_replicates):
-            sim_args = {
-                "sample_size": args.sample_size,
-                "length": L,
-                "recombination_rate": args.recombination_rate,
-                "mutation_rate": args.mutation_rate,
-                "Ne": 10**4,
-                "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, args.error_probability, e))
-
-    random.shuffle(work)
-    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
-    results = []
-    try:
-        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
-            for result in executor.map(error_analysis_worker, work):
-                results.append(result)
-                progress.update()
-
-    except KeyboardInterrupt:
-        pass
-    progress.close()
-
-    df = pd.DataFrame(results)
-
-    name_format = os.path.join(
-        args.destination_dir,
-        "error_n={}_L={}_mu={}_rho={}_e={}_{{}}.png".format(
-            args.sample_size, args.length, args.mutation_rate,
-            args.recombination_rate, args.error_probability))
-
-    sns.boxplot(x="inference_error", y="kc_mean", data=df)
-    plt.ylabel("KC distance")
-    plt.xlabel("Error parameter")
-    plt.savefig(name_format.format("kc"))
-    plt.clf()
-
-    # plt.plot(dfg.inferred_edges / dfg.source_edges)
-    # plt.axvline(args.error_probability, ls="--")
-    # plt.ylabel("inferred # edges / source # edges")
-    # plt.xlabel("Error parameter")
-    # plt.savefig(name_format.format("edges"))
-    # plt.clf()
-
-    # plt.plot(dfg.kc_mean)
-    # plt.axvline(args.error_probability, ls="--")
-    # plt.ylabel("KC distance")
-    # plt.xlabel("Error parameter")
-    # plt.savefig(name_format.format("kc"))
-    # plt.clf()
-
-
 def ancestor_properties_worker(args):
     simulation_args, compute_exact = args
     ts = msprime.simulate(**simulation_args)
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
     estimated_anc = tsinfer.generate_ancestors(sample_data)
+    pos = estimated_anc.sites_position[:] / 1000  # Convert to KB
     estimated_anc_length = (
-        estimated_anc.ancestors_end[:] - estimated_anc.ancestors_start[:])
-    focal_sites = estimated_anc.focal_sites[:]
+        pos[estimated_anc.ancestors_end[:]] - pos[estimated_anc.ancestors_start[:]])
+    focal_sites = estimated_anc.ancestors_focal_sites[:]
     estimated_anc_focal_distance = np.zeros(estimated_anc.num_ancestors)
     for j in range(estimated_anc.num_ancestors):
         focal = focal_sites[j]
         if len(focal) > 0:
-            estimated_anc_focal_distance[j] = focal[-1] - focal[0]
+            estimated_anc_focal_distance[j] = pos[focal[-1]] - pos[focal[0]]
 
     results = {
         "num_sites": ts.num_sites,
@@ -1066,7 +938,8 @@ def run_perfect_inference(args):
     for seed in range(1, args.num_replicates + 1):
         base_ts = msprime.simulate(
             args.sample_size, Ne=10**4, length=args.length * 10**6,
-            recombination_rate=1e-8, random_seed=seed, model="smc_prime")
+            recombination_rate=1e-8, random_seed=args.random_seed + seed,
+            model="smc_prime")
         print("simulated ts with n={} and {} trees; seed={}".format(
             base_ts.num_samples, base_ts.num_trees, seed))
         if multiple_recombinations(base_ts):
@@ -1140,6 +1013,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--path-compression", "-c", action="store_true",
         help="Turn on path compression. Makes verification much slower.")
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    # Not actually used here, but useful to have it for testing.
+    parser.add_argument("--destination-dir", "-d", default="")
 
     parser = subparsers.add_parser(
         "edges-performance", aliases=["ep"],
@@ -1148,7 +1024,7 @@ if __name__ == "__main__":
     parser.set_defaults(runner=run_edges_performance)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=0.1, help="Sequence length in MB")
     parser.add_argument(
         "--recombination-rate", "-r", type=float, default=1e-8,
         help="Recombination rate")
@@ -1171,16 +1047,16 @@ if __name__ == "__main__":
         help="Shows the effective recombination rate against sample size.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_effective_recombination)
-    parser.add_argument("--sample-size", "-n", type=int, default=1000)
+    parser.add_argument("--sample-size", "-n", type=int, default=50)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=0.1, help="Sequence length in MB")
     parser.add_argument(
         "--recombination-rate", "-r", type=float, default=1e-8,
         help="Recombination rate")
     parser.add_argument(
         "--mutation-rate", "-u", type=float, default=1e-8,
         help="Mutation rate")
-    parser.add_argument("--num-replicates", "-R", type=int, default=10)
+    parser.add_argument("--num-replicates", "-R", type=int, default=1)
     parser.add_argument("--num-processes", "-P", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
@@ -1211,31 +1087,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hotspot-width", "-W", type=float, default=0.01,
         help="Width of hotspots as a fraction of total genome length.")
-    parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-P", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
-    parser.add_argument(
-        "--progress", "-p", action="store_true",
-        help="Show a progress monitor.")
-
-    parser = subparsers.add_parser(
-        "error-analysis", aliases=["ea"],
-        help="Runs plots analysing the effects of inserted errors.")
-    cli.add_logging_arguments(parser)
-    parser.set_defaults(runner=run_error_analysis)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
-    parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
-    parser.add_argument(
-        "--error-probability", "-e", type=float, default=0.01,
-        help="Probability of errors.")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-P", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
