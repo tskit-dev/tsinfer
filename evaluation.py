@@ -784,7 +784,7 @@ def run_ancestor_comparison(args):
 
 def binomial_confidence(x, n, z=1.96):
     """
-    Calculate the Wilson binomial interval, e.g. from 
+    Calculate the Wilson binomial interval, e.g. from
     https://stackoverflow.com/questions/10029588/python-implementation-of-the-wilson-score-interval
     """ # noqa
     phat = x / n

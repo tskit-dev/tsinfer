@@ -185,7 +185,6 @@ class AncestorBuilder(object):
         samples = np.where(self.sites[focal_sites[0]].genotypes == 1)[0]
         focal_frequency = self.sites[focal_sites[0]].frequency
         n = samples.shape[0]
-        # print("focal_frequency = ", focal_frequency, "n = ", n)
 
         # Fill in the states between the focal sites.
         for j in range(focal_sites[0], focal_sites[-1] + 1):
@@ -196,11 +195,17 @@ class AncestorBuilder(object):
 
         # Go rightwards to compute the end site.
         end = focal_sites[-1] + 1
+        # Arbitrarily set to 10 here -- obviously a parameter here if we want to
+        # keep this.
+        max_mismatches = 10
+        mismatches = 0
         while end < self.num_sites:
             s = 0
             if self.sites[end].frequency > focal_frequency:
                 s = np.sum(self.sites[end].genotypes[samples])
             if s != 0 and s != n:
+                mismatches += 1
+            if mismatches == max_mismatches:
                 break
             end += 1
         for j in range(focal_sites[-1] + 1, end):
@@ -210,11 +215,14 @@ class AncestorBuilder(object):
 
         # Go leftwards to compute the start
         start = focal_sites[0] - 1
+        mismatches = 0
         while start >= 0:
             s = 0
             if self.sites[start].frequency > focal_frequency:
                 s = np.sum(self.sites[start].genotypes[samples])
             if s != 0 and s != n:
+                mismatches += 1
+            if mismatches == max_mismatches:
                 break
             start -= 1
         start += 1

@@ -406,6 +406,38 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
         adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
+        # TODO clean this up when we're finished mucking around with the
+        # ancestor generator.
+        # print(adc.ancestors_start[:])
+        # print(adp.ancestors_start[:])
+        # assert np.array_equal(adc.ancestors_start[:], adp.ancestors_start[:])
+        # assert np.array_equal(adc.ancestors_end[:], adp.ancestors_end[:])
+
+        # print("end:")
+        # print(adc.ancestors_end[:])
+        # print(adp.ancestors_end[:])
+
+        # print("focal_sites:")
+        # print(adc.ancestors_focal_sites[:])
+        # print(adp.ancestors_focal_sites[:])
+
+        # print("haplotype:")
+        # print(adc.ancestors_haplotype[:])
+        # print()
+        # print(adp.ancestors_haplotype[:])
+
+        # j = 0
+        # for h1, h2 in zip(adc.ancestors_haplotype[:], adp.ancestors_haplotype[:]):
+        #     if not np.array_equal(h1, h2):
+        #         print(h1)
+        #         print(h2)
+        #         print(adp.ancestors_focal_sites[j])
+        #         print(adc.ancestors_focal_sites[j])
+        #         print(adc.ancestors_start[j])
+        #         print(adc.ancestors_end[j])
+        #     j += 1
+        # print(adc)
+        # print(adp)
         self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
