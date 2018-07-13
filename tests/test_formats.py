@@ -645,6 +645,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         stored_time = ancestor_data.ancestors_time[:]
         stored_ancestors = ancestor_data.ancestors_haplotype[:]
         stored_focal_sites = ancestor_data.ancestors_focal_sites[:]
+        stored_length = ancestor_data.ancestors_length[:]
         for j, (start, end, time, focal_sites, haplotype) in enumerate(ancestors):
             self.assertEqual(stored_start[j], start)
             self.assertEqual(stored_end[j], end)
@@ -652,12 +653,15 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
+        pos = list(ancestor_data.sites_position[:]) + [ancestor_data.sequence_length]
         for j, anc in enumerate(ancestor_data.ancestors()):
             self.assertEqual(stored_start[j], anc.start)
             self.assertEqual(stored_end[j], anc.end)
             self.assertEqual(stored_time[j], anc.time)
             self.assertTrue(np.array_equal(stored_focal_sites[j], anc.focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], anc.haplotype))
+            length = pos[anc.end] - pos[anc.start]
+            self.assertEqual(stored_length[j], length)
 
     def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)

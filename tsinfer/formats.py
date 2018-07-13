@@ -1335,6 +1335,18 @@ class AncestorData(DataContainer):
     def ancestors_haplotype(self):
         return self.data["ancestors/haplotype"]
 
+    @property
+    def ancestors_length(self):
+        """
+        Returns the length of ancestors in physical coordinates.
+        """
+        # Ancestor start and end are half-closed. The last site is assumed
+        # to cover the region up to sequence length.
+        pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+        start = self.ancestors_start[:]
+        end = self.ancestors_end[:]
+        return pos[end] - pos[start]
+
     ####################################
     # Write mode
     ####################################
