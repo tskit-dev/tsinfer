@@ -289,90 +289,6 @@ def run_edges_performance(args):
         plt.clf()
 
 
-def get_num_sample_edges(ts):
-    """
-    Returns the number of edges where the child is a sample.
-    """
-    count = 0
-    for e in ts.edges():
-        node = ts.node(e.child)
-        count += node.is_sample()
-    return count
-
-
-def effective_recombination_worker(args):
-    simulation_args = args
-    smc_ts = msprime.simulate(**simulation_args)
-    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
-    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
-    results = {
-        "num_sites": smc_ts.num_sites,
-        "source_num_trees": smc_ts.num_trees,
-        "source_sample_edges": get_num_sample_edges(smc_ts),
-        "estimated_anc_sample_edges": get_num_sample_edges(estimated_ancestors_ts),
-        "exact_anc_sample_edges": get_num_sample_edges(exact_ancestors_ts),
-    }
-    results.update(simulation_args)
-    return results
-
-
-def run_effective_recombination(args):
-    num_sample_sizes = 10
-    MB = 10**6
-
-    work = []
-    rng = random.Random()
-    if args.random_seed is not None:
-        rng.seed(args.random_seed)
-    for n in np.linspace(0, args.sample_size, num_sample_sizes + 1)[1:].astype(int):
-        for _ in range(args.num_replicates):
-            sim_args = {
-                "sample_size": n,
-                "length": args.length * MB,
-                "recombination_rate": args.recombination_rate,
-                "mutation_rate": args.mutation_rate,
-                "Ne": 10**4,
-                "model": "smc_prime",
-                "random_seed": rng.randint(1, 2**30)}
-            work.append(sim_args)
-
-    random.shuffle(work)
-    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
-    results = []
-    try:
-        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
-            for result in executor.map(effective_recombination_worker, work):
-                results.append(result)
-                progress.update()
-
-    except KeyboardInterrupt:
-        pass
-    progress.close()
-
-    df = pd.DataFrame(results)
-    df.length /= MB
-    df.source_sample_edges -= df.sample_size
-    df.estimated_anc_sample_edges -= df.sample_size
-    df.exact_anc_sample_edges -= df.sample_size
-
-    dfg = df.groupby(df.sample_size).mean()
-    print(dfg)
-
-    name_format = os.path.join(
-        args.destination_dir,
-        "effective_recombination_n={}_L={}_mu={}_rho={}_{{}}.png".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
-
-    plt.plot(dfg.source_sample_edges, label="source")
-    plt.plot(dfg.estimated_anc_sample_edges, label="estimated ancestors")
-    plt.plot(dfg.exact_anc_sample_edges, label="exact ancestors")
-    plt.ylabel("Number of sample edges - n")
-    plt.xlabel("Sample size")
-    plt.legend()
-    plt.savefig(name_format.format("sample_edges"))
-    plt.clf()
-
-
 def unrank(samples, n):
     """
     Unranks the specified set of samples from a possible n into its position
@@ -1038,28 +954,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--compute-tree-metrics", "-T", action="store_true",
         help="Compute tree metrics")
-    parser.add_argument(
-        "--progress", "-p", action="store_true",
-        help="Show a progress monitor.")
-
-    parser = subparsers.add_parser(
-        "effective-recombination", aliases=["er"],
-        help="Shows the effective recombination rate against sample size.")
-    cli.add_logging_arguments(parser)
-    parser.set_defaults(runner=run_effective_recombination)
-    parser.add_argument("--sample-size", "-n", type=int, default=50)
-    parser.add_argument(
-        "--length", "-l", type=float, default=0.1, help="Sequence length in MB")
-    parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
-    parser.add_argument("--num-replicates", "-R", type=int, default=1)
-    parser.add_argument("--num-processes", "-P", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--progress", "-p", action="store_true",
         help="Show a progress monitor.")

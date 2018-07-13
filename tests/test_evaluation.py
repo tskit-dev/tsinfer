@@ -651,9 +651,5 @@ class TestCli(unittest.TestCase):
         self.run_command([
             "edges-performance", "-n", "5", "-l", "0.1", "-R", "2", "-s", "1"])
 
-    def test_effective_recombination(self):
-        self.run_command([
-            "effective-recombination", "-n", "4", "-l", "0.1", "-R", "2", "-s", "4"])
-
     def test_hotspot_analysis(self):
         self.run_command(["hotspot-analysis", "-n", "5", "-R", "1", "-s", "5"])
