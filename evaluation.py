@@ -547,7 +547,7 @@ def run_ancestor_comparison(args):
     tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
     exact_anc.finalise()
 
-    # Convert lengths to KB.
+    # Convert lengths to kb.
     estimated_anc_length = estimated_anc.ancestors_length / 1000
     exact_anc_length = exact_anc.ancestors_length / 1000
     name_format = os.path.join(
@@ -566,7 +566,7 @@ def run_ancestor_comparison(args):
 
     plt.hist(
         [exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
-    plt.ylabel("Length (KB)")
+    plt.ylabel("Length (kb)")
     plt.legend()
     plt.savefig(name_format.format("length-dist.png"))
     plt.clf()
@@ -618,10 +618,11 @@ def run_ancestor_comparison(args):
         set(estimated_lengths_by_inference_index.keys()))
 
     figures = []
-    class NormalizeWithBandWidths(mp.colors.Normalize):
+    class NormalizeBandWidths(mp.colors.Normalize):
         """
-        normalise a range into 0..1 but where ranges of integers are bunged into a single colour
-        band_widths needs to be a numpy vector of length the maximum integer input
+        normalise a range into 0..1 where ranges of integers are banded 
+        into a single colour. The init parameter band_widths needs to be 
+        a numpy vector of length the maximum integer encountered
         """
         def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
             self.bands = np.cumsum(band_widths) / np.sum(band_widths)
@@ -642,11 +643,11 @@ def run_ancestor_comparison(args):
         plt.scatter(
             [exact_lengths_by_inference_index[k][0] for k in shared_indices],
             [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
-            c=cs, cmap='brg', s=2, norm=NormalizeWithBandWidths(band_widths=np.bincount(cs)))
+            c=cs, cmap='brg', s=2, norm=NormalizeBandWidths(band_widths=np.bincount(cs)))
         cbar = plt.colorbar()
         cbar.set_label(colorscale, rotation=270)
-        plt.xlabel("True ancestor length per variant (KB)")
-        plt.ylabel("Inferred ancestor length per variant (KB)")
+        plt.xlabel("True ancestor length per variant (kb)")
+        plt.ylabel("Inferred ancestor length per variant (kb)")
         figures.append(fig)
     with matplotlib.backends.backend_pdf.PdfPages(
             name_format.format("length-scatter.pdf")) as pdf:
@@ -756,7 +757,7 @@ def run_ancestor_comparison(args):
             ax.step(
                 line_x[:-1], y, label=label, where='post', color=colour,
                 linestyle=linestyle)
-        plt.ylabel("Length (KB)")
+        plt.ylabel("Length (kb)")
         plt.legend(loc='upper center')
         figures.append(fig)
 
