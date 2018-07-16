@@ -968,7 +968,7 @@ class SampleData(DataContainer):
             number of samples added that refer to this individual. Defaults to 1
             (haploid).
         :param dict metadata: A JSON encodable dict-like object containing
-            metadata that is to be associated with this population.
+            metadata that is to be associated with this individual.
         :param int population: The ID of the population to assoicate with this
             individual (or more precisely, with the samples for this individual).
             If not specified or None, defaults to the null population (-1).
