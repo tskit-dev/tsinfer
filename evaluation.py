@@ -550,6 +550,7 @@ def run_ancestor_comparison(args):
     # Convert lengths to kb.
     estimated_anc_length = estimated_anc.ancestors_length / 1000
     exact_anc_length = exact_anc.ancestors_length / 1000
+    max_length = ts.sequence_length / 1000
     name_format = os.path.join(
         args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
@@ -641,6 +642,9 @@ def run_ancestor_comparison(args):
             [exact_lengths_by_inference_index[k][0] for k in shared_indices],
             [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
             c=cs, cmap='brg', s=2, norm=NormalizeBandWidths(band_widths=np.bincount(cs)))
+        plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
+        plt.xlim(1, max_length)
+        plt.ylim(1, max_length)
         cbar = plt.colorbar()
         cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
