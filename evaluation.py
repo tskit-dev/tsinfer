@@ -642,9 +642,9 @@ def run_ancestor_comparison(args):
             [exact_lengths_by_inference_index[k][0] for k in shared_indices],
             [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
             c=cs, cmap='brg', s=2, norm=NormalizeBandWidths(band_widths=np.bincount(cs)))
-        plt.plot([1, max_length], [1, max_length], '-', color = 'grey', zorder=-1)
-        plt.xlim(1,max_length)
-        plt.ylim(1,max_length)
+        plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
+        plt.xlim(1, max_length)
+        plt.ylim(1, max_length)
         cbar = plt.colorbar()
         cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
