@@ -68,12 +68,12 @@ class AncestorBuilderViz(object):
 
 
     def draw(self, ancestor_id, filename_pattern):
-        start = self.ancestor_data.start[ancestor_id]
-        end = self.ancestor_data.end[ancestor_id]
-        focal_sites = self.ancestor_data.focal_sites[ancestor_id]
+        start = self.ancestor_data.ancestors_start[ancestor_id]
+        end = self.ancestor_data.ancestors_end[ancestor_id]
+        focal_sites = self.ancestor_data.ancestors_focal_sites[ancestor_id]
         a = np.zeros(self.sample_data.num_sites, dtype=int)
         a[:] = -1
-        a[start: end] = self.ancestor_data.ancestor[ancestor_id]
+        a[start: end] = self.ancestor_data.ancestors_haplotype[ancestor_id]
         print(start, end, focal_sites, a)
 
 
@@ -197,12 +197,10 @@ class Visualiser(object):
         self.num_ancestors = np.where(node_time > 0)[0].shape[0]
         self.ancestors = np.zeros(
             (self.num_ancestors, original_ts.num_sites), dtype=np.uint8)
-        start = ancestor_data.start[:]
-        end = ancestor_data.end[:]
         for j, a in enumerate(ancestor_data.ancestors()):
-            self.ancestors[j, start[j]: end[j]] = a
-            self.ancestors[j, start[j]] = tsinfer.UNKNOWN_ALLELE
-            self.ancestors[j, end[j]:] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, a.start: a.end] = a.haplotype
+            self.ancestors[j, :a.start] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, a.end:] = tsinfer.UNKNOWN_ALLELE
 
         # TODO This only partially works for extra ancestors created by path
         # compression. We'll get -1 lines for extra ancestors created from
@@ -474,14 +472,14 @@ def visualise_ancestors():
 
 def main():
 
-    visualise_ancestors()
+    # visualise_ancestors()
 
     # run_viz(
     #     15, 1000, 0.0020, 11, mutation_rate=0.02, perfect_ancestors=True,
     #     perfect_mutations=True, time_chunking=True, engine="C", path_compression=False,
     #     error_rate=0.00)
 
-    # run_viz(15, 1000, 0.002, 2, engine="C", perfect_ancestors=True)
+    run_viz(15, 1000, 0.002, 2, engine=tsinfer.PY_ENGINE, perfect_ancestors=False)
 
 if __name__ == "__main__":
     main()
