@@ -16,7 +16,6 @@ import matplotlib as mp
 # Force matplotlib to not use any Xwindows backend.
 mp.use('Agg')  # NOQA
 import matplotlib.pyplot as plt
-import matplotlib.backends.backend_pdf
 from matplotlib import collections as mc
 import seaborn as sns
 import tqdm
@@ -25,6 +24,16 @@ import daiquiri
 import msprime
 import tsinfer
 import tsinfer.cli as cli
+
+
+# Set by the CLI.
+global _output_format
+_output_format = None
+
+
+def save_figure(basename):
+    plt.savefig(basename + "." + _output_format)
+    plt.clf()
 
 
 def make_errors(v, p):
@@ -200,7 +209,7 @@ def run_edges_performance(args):
 
     name_format = os.path.join(
         args.destination_dir,
-        "ancestors_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        "ancestors_n={}_L={}_mu={}_rho={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
 
     plt.plot(
@@ -215,8 +224,7 @@ def run_edges_performance(args):
     plt.ylabel("inferred # edges / source # edges")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig(name_format.format("edges"))
-    plt.clf()
+    save_figure(name_format.format("edges"))
 
     plt.plot(
         dfg.num_sites, dfg.estimated_anc_mean_children,
@@ -239,7 +247,7 @@ def run_edges_performance(args):
     plt.ylabel("num_children")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig(name_format.format("num_children"))
+    save_figure(name_format.format("num_children"))
     plt.clf()
 
     if args.compute_tree_metrics:
@@ -255,7 +263,7 @@ def run_edges_performance(args):
         plt.ylabel("Distance weighted KC metric")
         plt.xlabel("Num sites")
         plt.legend()
-        plt.savefig(name_format.format("kc_distance_weighted"))
+        save_figure(name_format.format("kc_distance_weighted"))
         plt.clf()
 
         plt.plot(
@@ -270,7 +278,7 @@ def run_edges_performance(args):
         plt.ylabel("Mean KC metric")
         plt.xlabel("Num sites")
         plt.legend()
-        plt.savefig(name_format.format("kc_mean"))
+        save_figure(name_format.format("kc_mean"))
         plt.clf()
 
         plt.plot(
@@ -285,7 +293,7 @@ def run_edges_performance(args):
         plt.ylabel("Mean KC metric")
         plt.xlabel("Num sites")
         plt.legend()
-        plt.savefig(name_format.format("perfect_trees"))
+        save_figure(name_format.format("perfect_trees"))
         plt.clf()
 
 
@@ -318,8 +326,7 @@ def edge_plot(ts, filename):
     fig, ax = plt.subplots()
     ax.add_collection(lc)
     ax.autoscale()
-    plt.savefig(filename)
-    plt.clf()
+    save_figure(filename)
 
 
 def run_hotspot_analysis(args):
@@ -368,11 +375,11 @@ def run_hotspot_analysis(args):
 
         name_format = os.path.join(
             args.destination_dir,
-            "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}.png".format(
+            "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}".format(
                 args.sample_size, args.length, args.mutation_rate,
                 args.recombination_rate, args.num_hotspots, args.hotspot_intensity,
                 args.hotspot_width))
-        plt.savefig(name_format.format("breakpoints_density={}".format(density)))
+        save_figure(name_format.format("breakpoints_density={}".format(density)))
         plt.clf()
 
     print("Generating edge plots")
@@ -467,7 +474,7 @@ def run_ancestor_properties(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
 
     plt.plot(dfg.num_sites, dfg.estimated_anc_num, label="estimated ancestors")
@@ -479,7 +486,7 @@ def run_ancestor_properties(args):
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig(name_format.format("num"))
+    save_figure(name_format.format("num"))
     plt.clf()
 
     plt.plot(dfg.num_sites, dfg.estimated_anc_mean_len, label="estimated ancestors")
@@ -491,7 +498,7 @@ def run_ancestor_properties(args):
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig(name_format.format("mean_len"))
+    save_figure(name_format.format("mean_len"))
     plt.clf()
 
     plt.plot(
@@ -507,7 +514,7 @@ def run_ancestor_properties(args):
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
-    plt.savefig(name_format.format("mean_focal_distance"))
+    save_figure(name_format.format("mean_focal_distance"))
     plt.clf()
 
 
@@ -520,6 +527,21 @@ def running_median(x, N):
     idx = np.arange(N) + np.arange(len(x)-N+1)[:, None]
     b = [row[row > 0] for row in x[idx]]
     return np.array(list(map(np.median, b)))
+
+
+class NormalizeBandWidths(mp.colors.Normalize):
+    """
+    normalise a range into 0..1 where ranges of integers are banded
+    into a single colour. The init parameter band_widths needs to be
+    a numpy vector of length the maximum integer encountered
+    """
+
+    def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
+        self.bands = np.cumsum(band_widths) / np.sum(band_widths)
+        mp.colors.Normalize.__init__(self, vmin, vmax, clip)
+
+    def __call__(self, value, clip=None):
+        return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
 
 
 def run_ancestor_comparison(args):
@@ -569,7 +591,7 @@ def run_ancestor_comparison(args):
         [exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
     plt.ylabel("Length (kb)")
     plt.legend()
-    plt.savefig(name_format.format("length-dist.png"))
+    save_figure(name_format.format("length-dist"))
     plt.clf()
 
     frequency = estimated_anc.ancestors_time[:] + 1
@@ -590,7 +612,7 @@ def run_ancestor_comparison(args):
     print("estimated doubleton lengths:\n", estimated_anc_length[frequency == 2])
     plt.hist(estimated_anc_length[frequency == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
-    plt.savefig(name_format.format("doubleton-length-dist.png"))
+    save_figure(name_format.format("doubleton-length-dist"))
     plt.clf()
 
     # plot scatterplot of actual vs inferred ancestor lengths, per site
@@ -613,23 +635,7 @@ def run_ancestor_comparison(args):
         set(exact_lengths_by_inference_index.keys()) &
         set(estimated_lengths_by_inference_index.keys()))
 
-    figures = []
-
-    class NormalizeBandWidths(mp.colors.Normalize):
-        """
-        normalise a range into 0..1 where ranges of integers are banded
-        into a single colour. The init parameter band_widths needs to be
-        a numpy vector of length the maximum integer encountered
-        """
-
-        def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
-            self.bands = np.cumsum(band_widths) / np.sum(band_widths)
-            mp.colors.Normalize.__init__(self, vmin, vmax, clip)
-
-        def __call__(self, value, clip=None):
-            return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
-
-    for colorscale in ("Frequency", "True time order"):
+    for colorscale in ("Frequency", "True_time"):
         fig = plt.figure(figsize=(10, 10), dpi=100)
         if args.length_scale == "log":
             plt.yscale('log')
@@ -649,16 +655,12 @@ def run_ancestor_comparison(args):
         cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
         plt.ylabel("Inferred ancestor length per variant (kb)")
-        figures.append(fig)
-    with matplotlib.backends.backend_pdf.PdfPages(
-            name_format.format("length-scatter.pdf")) as pdf:
-        for fig in figures:
-            pdf.savefig(fig, dpi=100)
+        save_figure(name_format.format("length-scatter_{}".format(colorscale.lower())))
+
     # plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     # one point per variable site, so these should be directly comparable
     # the exact ancestors have ancestors_time from 1..n_ancestors, ordered by real time
     # in the simulation, so that each time is unique for a set of site on one ancestor
-    figures = []
     for ancestors_are_estimated, anc in enumerate([exact_anc, estimated_anc]):
         time = anc.ancestors_time[:] + (1 if ancestors_are_estimated else 0)
         df = pd.DataFrame({
@@ -760,12 +762,9 @@ def run_ancestor_comparison(args):
                 linestyle=linestyle)
         plt.ylabel("Length (kb)")
         plt.legend(loc='upper center')
-        figures.append(fig)
-
-    with matplotlib.backends.backend_pdf.PdfPages(
-            name_format.format("time.pdf")) as pdf:
-        for fig in figures:
-            pdf.savefig(fig, dpi=100)
+        save_figure(
+            name_format.format("time_{}".format(
+                "estimated" if ancestors_are_estimated else "true_ancestors")))
 
 
 def get_node_degree_by_depth(ts):
@@ -821,18 +820,18 @@ def run_node_degree(args):
             "path_compression": path_compression}))
 
     name_format = os.path.join(
-        args.destination_dir, "node-degree_n={}_L={}_mu={}_rho={}_{{}}.png".format(
+        args.destination_dir, "node-degree_n={}_L={}_mu={}_rho={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     print(df.describe())
 
     sns.factorplot(
         x="depth", y="degree", hue="path_compression", col="type",
         data=df, kind="bar")
-    plt.savefig(name_format.format("path-compression"))
+    save_figure(name_format.format("path-compression"))
     plt.clf()
 
     sns.barplot(x="depth", y="degree", hue="type", data=df[df.path_compression])
-    plt.savefig(name_format.format("length"))
+    save_figure(name_format.format("length"))
     plt.clf()
 
 
@@ -898,6 +897,9 @@ if __name__ == "__main__":
     top_parser.add_argument(
         "-V", "--version", action='version',
         version='%(prog)s {}'.format(tsinfer.__version__))
+    top_parser.add_argument(
+        "-o", "--output-format", default="png",
+        help="The output format for plots")
 
     subparsers = top_parser.add_subparsers(dest="subcommand")
     subparsers.required = True
@@ -1062,4 +1064,5 @@ if __name__ == "__main__":
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
+    _output_format = args.output_format
     args.runner(args)
