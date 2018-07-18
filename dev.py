@@ -134,7 +134,7 @@ def dump_provenance(ts):
 
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
-    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.hdf5".format(
+    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(
             n, num_megabases)
     if os.path.exists(input_file):
         ts = msprime.load(input_file)
@@ -149,20 +149,19 @@ def build_profile_inputs(n, num_megabases):
     if os.path.exists(filename):
         os.unlink(filename)
     # daiquiri.setup(level="DEBUG")
-    sample_data = tsinfer.SampleData.initialise(
-        sequence_length=ts.sequence_length, path=filename, num_flush_threads=4)
-    progress_monitor = tqdm.tqdm(total=ts.num_samples)
-    for j in range(ts.num_samples):
-        sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
-        progress_monitor.update()
-    progress_monitor.close()
-    progress_monitor = tqdm.tqdm(total=ts.num_sites)
-    for variant in ts.variants():
-        sample_data.add_site(
-            variant.site.position, variant.alleles, variant.genotypes)
-        progress_monitor.update()
-    sample_data.finalise()
-    progress_monitor.close()
+    with tsinfer.SampleData(
+            sequence_length=ts.sequence_length, path=filename,
+            num_flush_threads=4) as sample_data:
+        # progress_monitor = tqdm.tqdm(total=ts.num_samples)
+        # for j in range(ts.num_samples):
+        #     sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
+        #     progress_monitor.update()
+        # progress_monitor.close()
+        progress_monitor = tqdm.tqdm(total=ts.num_sites)
+        for variant in ts.variants():
+            sample_data.add_site(variant.site.position, variant.genotypes)
+            progress_monitor.update()
+        progress_monitor.close()
 
     print(sample_data)
 
@@ -313,14 +312,14 @@ if __name__ == "__main__":
 
     # build_profile_inputs(10, 1)
     # build_profile_inputs(100, 10)
-    # build_profile_inputs(1000, 100)
+    build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(6, 0.3, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    # tsinfer_dev(6, 0.3, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
 
     # minimise_dev()
 
