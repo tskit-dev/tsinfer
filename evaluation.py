@@ -538,10 +538,11 @@ class NormalizeBandWidths(mp.colors.Normalize):
 
     def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
         self.bands = np.cumsum(band_widths) / np.sum(band_widths)
+        self.x = np.arange(len(self.bands))
         mp.colors.Normalize.__init__(self, vmin, vmax, clip)
 
     def __call__(self, value, clip=None):
-        return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
+        return np.ma.masked_array(np.interp(value, self.x, self.bands))
 
 
 def run_ancestor_comparison(args):
