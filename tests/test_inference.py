@@ -408,14 +408,15 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
         # TODO clean this up when we're finished mucking around with the
         # ancestor generator.
+        # print()
         # print(adc.ancestors_start[:])
         # print(adp.ancestors_start[:])
         # assert np.array_equal(adc.ancestors_start[:], adp.ancestors_start[:])
-        # assert np.array_equal(adc.ancestors_end[:], adp.ancestors_end[:])
 
         # print("end:")
         # print(adc.ancestors_end[:])
         # print(adp.ancestors_end[:])
+        # assert np.array_equal(adc.ancestors_end[:], adp.ancestors_end[:])
 
         # print("focal_sites:")
         # print(adc.ancestors_focal_sites[:])

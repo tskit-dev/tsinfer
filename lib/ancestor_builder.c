@@ -107,29 +107,51 @@ ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t site
 static inline bool
 ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
         site_id_t site_id, node_id_t *restrict consistent_samples,
-        size_t num_consistent_samples, allele_t *ancestor)
+        size_t *num_consistent_samples, allele_t *ancestor)
 {
-    size_t j, ones;
+    size_t j, k, l, ones, zeros;
     const site_t focal_site = self->sites[focal_site_id];
     allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
-    bool ret = true;
+    allele_t consensus;
+    size_t current_num_samples = *num_consistent_samples;
 
     if (self->sites[site_id].frequency > focal_site.frequency) {
         ones = 0;
-        for (j = 0; j < num_consistent_samples; j++) {
+        for (j = 0; j < current_num_samples; j++) {
             ones += site_genotypes[consistent_samples[j]];
         }
-        if (ones == num_consistent_samples) {
-            ancestor[site_id] = 1;
-        } else if (ones == 0) {
-            ancestor[site_id] = 0;
+        zeros = current_num_samples - ones;
+        if (ones > zeros) {
+            consensus = 1;
+        } else if (ones < zeros) {
+            consensus = 0;
         } else {
-            ret = false;
+            /* Equal numbers so we don't know what to do */
+            return false;
         }
+
+        /* Go through the consistent samples and filter down to those
+         * that agree with the consensus */
+        k = 0;
+        for (j = 0; j < current_num_samples; j++) {
+            l = consistent_samples[j];
+            if (site_genotypes[l] == consensus) {
+                consistent_samples[k] = l;
+                k++;
+            }
+        }
+        if (k == 1) {
+            return false;
+        }
+        *num_consistent_samples = k;
+        ancestor[site_id] = consensus;
+        /* printf("%d\tconsensus=%d\tin_k=%d\tout_k=%d\n", */
+        /*         (int) site_id, consensus, (int) current_num_samples, */
+        /*         (int) k); */
     } else {
         ancestor[site_id] = 0;
     }
-    return ret;
+    return true;
 }
 
 /* Build the ancestors for sites in the specified focal sites */
@@ -178,16 +200,19 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     consistent = true;
     for (l = ((int64_t) focal_site) - 1; l >= 0 && consistent; l--) {
         consistent = ancestor_builder_make_site(self, focal_site, l,
-                consistent_samples, num_consistent_samples, ancestor);
+                consistent_samples, &num_consistent_samples, ancestor);
     }
     start = l + 1 + (int) !consistent;
 
+    ancestor_builder_get_consistent_samples(self, focal_sites[0], consistent_samples,
+            &num_consistent_samples);
+    assert(num_consistent_samples == self->sites[focal_sites[0]].frequency);
     /* Work rightwards from the last focal site */
     consistent = true;
     focal_site = focal_sites[num_focal_sites - 1];
     for (l = focal_site + 1; l < (int64_t) num_sites && consistent; l++) {
         consistent = ancestor_builder_make_site(self, focal_site, l,
-                consistent_samples, num_consistent_samples, ancestor);
+                consistent_samples, &num_consistent_samples, ancestor);
     }
     end = l - (int) !consistent;
 

@@ -225,7 +225,7 @@ class AncestorBuilder(object):
                 elif num_ones < num_zeros:
                     consensus = 0
                 else:
-                    # print("ARGH!! equal numbers, no idea what to do here")
+                    # print("Py ARGH!!", l)
                     break
                 samples = [
                     u for u in samples if self.sites[l].genotypes[u] == consensus]
