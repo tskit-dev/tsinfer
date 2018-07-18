@@ -131,7 +131,7 @@ class AncestorBuilder(object):
                 ret.append((frequency, focal_sites[start:]))
         return ret
 
-    def __build_ancestor_sites(self, focal_site, sites, a):
+    def __build_ancestor_sites_old(self, focal_site, sites, a):
         # print("__build_ancestor_sites", focal_site, sites)
         g = self.sites[focal_site].genotypes
         samples = np.where(g == 1)[0]
@@ -158,6 +158,107 @@ class AncestorBuilder(object):
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
+        self.__build_ancestor_sites_old(focal_site, sites, a)
+        focal_site = focal_sites[-1]
+        sites = range(focal_sites[0] - 1, -1, -1)
+        self.__build_ancestor_sites_old(focal_site, sites, a)
+        for j in range(focal_sites[0], focal_sites[-1] + 1):
+            if j in focal_sites:
+                a[j] = 1
+            else:
+                self.__build_ancestor_sites_old(focal_site, [j], a)
+        known = np.where(a != UNKNOWN_ALLELE)[0]
+        start = known[0]
+        end = known[-1] + 1
+        # print("Made ancestor", start, end, a)
+        assert np.all(a[start: end] != UNKNOWN_ALLELE)
+        return start, end
+
+    def __build_ancestor_sites_original(self, focal_site, sites, a):
+        samples = set()
+        g = self.sites[focal_site].genotypes
+        for j in range(self.num_samples):
+            if g[j] == 1:
+                samples.add(j)
+        for l in sites:
+            a[l] = 0
+            if self.sites[l].frequency > self.sites[focal_site].frequency:
+                # print("\texamining:", self.sites[l])
+                # print("\tsamples = ", samples)
+                num_ones = 0
+                num_zeros = 0
+                for j in samples:
+                    if self.sites[l].genotypes[j] == 1:
+                        num_ones += 1
+                    else:
+                        num_zeros += 1
+                # TODO choose a branch uniformly if we have equality.
+                if num_ones >= num_zeros:
+                    a[l] = 1
+                    samples = set(j for j in samples if self.sites[l].genotypes[j] == 1)
+                else:
+                    samples = set(j for j in samples if self.sites[l].genotypes[j] == 0)
+            if len(samples) == 1:
+                # print("BREAK")
+                break
+
+    def __build_ancestor_sites_experimental(self, focal_site, sites, a):
+        samples = set()
+        g = self.sites[focal_site].genotypes
+        for j in range(self.num_samples):
+            if g[j] == 1:
+                samples.add(j)
+        older_sites = []
+        for l in sites:
+            a[l] = 0
+            if self.sites[l].frequency > self.sites[focal_site].frequency:
+                older_sites.append(l)
+
+        # if len(older_sites) > 1:
+        #     print("Initial samples @", focal_site,"=", samples)
+        #     print("older_sites = ", older_sites)
+        for j, l in enumerate(older_sites):
+            # print("\texamining:", l)
+            # print("\tsamples = ", samples)
+            num_ones = 0
+            num_zeros = 0
+            for u in samples:
+                if self.sites[l].genotypes[u] == 1:
+                    num_ones += 1
+                else:
+                    num_zeros += 1
+            if num_ones > num_zeros:
+                consensus = 1
+            elif num_ones < num_zeros:
+                consensus = 0
+            else:
+                # print("ARGH!! equal numbers, no idea what to do here")
+                break
+            samples = [
+                u for u in samples if self.sites[l].genotypes[u] == consensus]
+            # disagreeing_samples = [
+            #     u for u in samples if self.sites[l].genotypes[u] != consensus]
+            # print("disagreeing_samples = ", disagreeing_samples)
+
+
+
+            # count = max(num_ones, num_zeros)
+            # print("\t", num_ones, num_zeros, count / len(samples))
+            # # if count / len(samples) < 2 / 3:
+            # #     print("BREAK")
+            # #     break
+            # if num_ones >= num_zeros:
+                # a[l] = 1
+            a[l] = consensus
+
+    def __build_ancestor_sites(self, focal_site, sites, a):
+        # self.__build_ancestor_sites_original(focal_site, sites, a)
+        self.__build_ancestor_sites_experimental(focal_site, sites, a)
+
+    def make_ancestor(self, focal_sites, a):
+        a[:] = UNKNOWN_ALLELE
+        focal_site = focal_sites[0]
+        sites = range(focal_sites[-1] + 1, self.num_sites)
         self.__build_ancestor_sites(focal_site, sites, a)
         focal_site = focal_sites[-1]
         sites = range(focal_sites[0] - 1, -1, -1)
@@ -170,17 +271,15 @@ class AncestorBuilder(object):
         known = np.where(a != UNKNOWN_ALLELE)[0]
         start = known[0]
         end = known[-1] + 1
-        # print("Made ancestor", start, end, a)
-        assert np.all(a[start: end] != UNKNOWN_ALLELE)
         return start, end
+
 
     def __compute_state(self, site, samples):
         s = np.sum(self.sites[site].genotypes[samples])
         return int(round(s / samples.shape[0]))
 
-    def make_ancestor(self, focal_sites, a):
+    def make_ancestor_experimental(self, focal_sites, a):
         # print("make ancestor", focal_sites)
-
         a[:] = UNKNOWN_ALLELE
         samples = np.where(self.sites[focal_sites[0]].genotypes == 1)[0]
         focal_frequency = self.sites[focal_sites[0]].frequency
@@ -197,7 +296,7 @@ class AncestorBuilder(object):
         end = focal_sites[-1] + 1
         # Arbitrarily set to 10 here -- obviously a parameter here if we want to
         # keep this.
-        max_mismatches = 10
+        max_mismatches = 1
         mismatches = 0
         while end < self.num_sites:
             s = 0

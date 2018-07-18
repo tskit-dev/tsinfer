@@ -32,7 +32,7 @@ _output_format = None
 
 
 def save_figure(basename):
-    plt.savefig(basename + "." + _output_format)
+    plt.savefig(basename + "." + _output_format, dpi=600)
     plt.clf()
 
 
@@ -666,8 +666,8 @@ def run_ancestor_comparison(args):
         plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
         plt.xlim(1, max_length)
         plt.ylim(1, max_length)
-        cbar = plt.colorbar()
-        cbar.set_label(colorscale, rotation=270)
+        # cbar = plt.colorbar()
+        # cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
         plt.ylabel("Inferred ancestor length per variant (kb)")
         save_figure(name_format.format("length-scatter_{}".format(colorscale.lower())))
