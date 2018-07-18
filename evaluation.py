@@ -594,23 +594,24 @@ def run_ancestor_comparison(args):
     save_figure(name_format.format("length-dist"))
     plt.clf()
 
-    frequency = estimated_anc.ancestors_time[:] + 1
-    # check that frequencies from ancestors_time really do reflect the
-    # prevalance in the popn
-    n_ton_table = np.bincount(
-        [np.sum(g[1]) for g in sample_data.genotypes(inference_sites=True)])
-    test_freqs = np.bincount(
-        np.repeat(frequency, [len(x) for x in estimated_anc.ancestors_focal_sites[:]]))
-    assert np.array_equal(n_ton_table, test_freqs)
+    # NB ancestors_time is not exactly the same as frequency, because frequency
+    # categories that are not represented in the data will be missed out. If we want a
+    # true frequency, we therefore need to get it directly from the samples
+    pos_to_ancestor = {}
+    estimated_anc.ancestors_focal_freq = np.zeros(estimated_anc.num_ancestors, np.int)
+    for a, focal_sites in enumerate(estimated_anc.ancestors_focal_sites[:]):
+        for focal_site in focal_sites:
+            pos_to_ancestor[estimated_anc.sites_position[:][focal_site]] = a
+    for i, g in sample_data.genotypes(inference_sites=True):
+        pos = sample_data.sites_position[:][i]
+        if estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]:
+            # check all focal sites in an ancestor have the same freq
+            assert np.sum(g) == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
+        estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
 
-    print(
-        "site frequencies:\n",
-        pd.DataFrame.from_dict(
-            {'count': n_ton_table},
-            orient='index',
-            columns=list(range(len(n_ton_table)))))
-    print("estimated doubleton lengths:\n", estimated_anc_length[frequency == 2])
-    plt.hist(estimated_anc_length[frequency == 2], bins=50)
+    print("estimated doubleton lengths")
+    print(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2])
+    plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
     save_figure(name_format.format("doubleton-length-dist"))
     plt.clf()
@@ -627,7 +628,7 @@ def run_ancestor_comparison(args):
         for l, sites, t in zip(
             estimated_anc_length,
             estimated_anc.ancestors_focal_sites[:],
-            estimated_anc.ancestors_time[:] + 1)
+            estimated_anc.ancestors_focal_freq)
         for site_index in sites}
 
     # NB with error we may not have exactly the same inference sites in exact & estimated
