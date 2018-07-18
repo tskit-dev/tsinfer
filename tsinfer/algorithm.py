@@ -208,48 +208,33 @@ class AncestorBuilder(object):
         for j in range(self.num_samples):
             if g[j] == 1:
                 samples.add(j)
-        older_sites = []
+        # if len(sites) > 1:
         for l in sites:
-            a[l] = 0
             if self.sites[l].frequency > self.sites[focal_site].frequency:
-                older_sites.append(l)
-
-        # if len(older_sites) > 1:
-        #     print("Initial samples @", focal_site,"=", samples)
-        #     print("older_sites = ", older_sites)
-        for j, l in enumerate(older_sites):
-            # print("\texamining:", l)
-            # print("\tsamples = ", samples)
-            num_ones = 0
-            num_zeros = 0
-            for u in samples:
-                if self.sites[l].genotypes[u] == 1:
-                    num_ones += 1
+                # print("examining:", l)
+                # print("\tsamples = ", samples)
+                num_ones = 0
+                num_zeros = 0
+                for u in samples:
+                    if self.sites[l].genotypes[u] == 1:
+                        num_ones += 1
+                    else:
+                        num_zeros += 1
+                if num_ones > num_zeros:
+                    consensus = 1
+                elif num_ones < num_zeros:
+                    consensus = 0
                 else:
-                    num_zeros += 1
-            if num_ones > num_zeros:
-                consensus = 1
-            elif num_ones < num_zeros:
-                consensus = 0
+                    # print("ARGH!! equal numbers, no idea what to do here")
+                    break
+                samples = [
+                    u for u in samples if self.sites[l].genotypes[u] == consensus]
+                if len(samples) == 1:
+                    # print("BREAKING")
+                    break
+                a[l] = consensus
             else:
-                # print("ARGH!! equal numbers, no idea what to do here")
-                break
-            samples = [
-                u for u in samples if self.sites[l].genotypes[u] == consensus]
-            # disagreeing_samples = [
-            #     u for u in samples if self.sites[l].genotypes[u] != consensus]
-            # print("disagreeing_samples = ", disagreeing_samples)
-
-
-
-            # count = max(num_ones, num_zeros)
-            # print("\t", num_ones, num_zeros, count / len(samples))
-            # # if count / len(samples) < 2 / 3:
-            # #     print("BREAK")
-            # #     break
-            # if num_ones >= num_zeros:
-                # a[l] = 1
-            a[l] = consensus
+                a[l] = 0
 
     def __build_ancestor_sites(self, focal_site, sites, a):
         # self.__build_ancestor_sites_original(focal_site, sites, a)
@@ -273,12 +258,11 @@ class AncestorBuilder(object):
         end = known[-1] + 1
         return start, end
 
-
     def __compute_state(self, site, samples):
         s = np.sum(self.sites[site].genotypes[samples])
         return int(round(s / samples.shape[0]))
 
-    def make_ancestor_experimental(self, focal_sites, a):
+    def make_ancestor_experimental_old(self, focal_sites, a):
         # print("make ancestor", focal_sites)
         a[:] = UNKNOWN_ALLELE
         samples = np.where(self.sites[focal_sites[0]].genotypes == 1)[0]

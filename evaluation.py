@@ -639,6 +639,7 @@ def run_ancestor_comparison(args):
             assert np.sum(g) == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
         estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
 
+    print("mean estimated ancestor length", np.mean(estimated_anc_length))
     print("estimated doubleton lengths")
     print(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2])
     plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
@@ -666,8 +667,8 @@ def run_ancestor_comparison(args):
         plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
         plt.xlim(1, max_length)
         plt.ylim(1, max_length)
-        # cbar = plt.colorbar()
-        # cbar.set_label(colorscale, rotation=270)
+        cbar = plt.colorbar()
+        cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
         plt.ylabel("Inferred ancestor length per variant (kb)")
         save_figure(name_format.format("length-scatter_{}".format(colorscale.lower())))
