@@ -73,7 +73,7 @@ def generate_samples(ts, error_p):
     return G
 
 
-def run_infer(ts, engine="C", path_compression=True, exact_ancestors=False):
+def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -538,10 +538,11 @@ class NormalizeBandWidths(mp.colors.Normalize):
 
     def __init__(self, vmin=None, vmax=None, band_widths=None, clip=False):
         self.bands = np.cumsum(band_widths) / np.sum(band_widths)
+        self.x = np.arange(len(self.bands))
         mp.colors.Normalize.__init__(self, vmin, vmax, clip)
 
     def __call__(self, value, clip=None):
-        return np.ma.masked_array(self.bands[np.rint(value).astype(np.int)])
+        return np.ma.masked_array(np.interp(value, self.x, self.bands))
 
 
 def run_ancestor_comparison(args):
@@ -594,23 +595,24 @@ def run_ancestor_comparison(args):
     save_figure(name_format.format("length-dist"))
     plt.clf()
 
-    frequency = estimated_anc.ancestors_time[:] + 1
-    # check that frequencies from ancestors_time really do reflect the
-    # prevalance in the popn
-    n_ton_table = np.bincount(
-        [np.sum(g[1]) for g in sample_data.genotypes(inference_sites=True)])
-    test_freqs = np.bincount(
-        np.repeat(frequency, [len(x) for x in estimated_anc.ancestors_focal_sites[:]]))
-    assert np.array_equal(n_ton_table, test_freqs)
+    # NB ancestors_time is not exactly the same as frequency, because frequency
+    # categories that are not represented in the data will be missed out. If we want a
+    # true frequency, we therefore need to get it directly from the samples
+    pos_to_ancestor = {}
+    estimated_anc.ancestors_focal_freq = np.zeros(estimated_anc.num_ancestors, np.int)
+    for a, focal_sites in enumerate(estimated_anc.ancestors_focal_sites[:]):
+        for focal_site in focal_sites:
+            pos_to_ancestor[estimated_anc.sites_position[:][focal_site]] = a
+    for i, g in sample_data.genotypes(inference_sites=True):
+        pos = sample_data.sites_position[:][i]
+        if estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]:
+            # check all focal sites in an ancestor have the same freq
+            assert np.sum(g) == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
+        estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
 
-    print(
-        "site frequencies:\n",
-        pd.DataFrame.from_dict(
-            {'count': n_ton_table},
-            orient='index',
-            columns=list(range(len(n_ton_table)))))
-    print("estimated doubleton lengths:\n", estimated_anc_length[frequency == 2])
-    plt.hist(estimated_anc_length[frequency == 2], bins=50)
+    print("estimated doubleton lengths")
+    print(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2])
+    plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
     save_figure(name_format.format("doubleton-length-dist"))
     plt.clf()
@@ -627,7 +629,7 @@ def run_ancestor_comparison(args):
         for l, sites, t in zip(
             estimated_anc_length,
             estimated_anc.ancestors_focal_sites[:],
-            estimated_anc.ancestors_time[:] + 1)
+            estimated_anc.ancestors_focal_freq)
         for site_index in sites}
 
     # NB with error we may not have exactly the same inference sites in exact & estimated
@@ -801,7 +803,7 @@ def run_node_degree(args):
         "random_seed": rng.randint(1, 2**30)}
     smc_ts = msprime.simulate(**sim_args)
 
-    engine = "C"
+    engine = tsinfer.C_ENGINE
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
@@ -909,7 +911,7 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
-    parser.add_argument("--engine", default="C")
+    parser.add_argument("--engine", default=tsinfer.C_ENGINE)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
