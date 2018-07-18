@@ -73,7 +73,7 @@ def generate_samples(ts, error_p):
     return G
 
 
-def run_infer(ts, engine="C", path_compression=True, exact_ancestors=False):
+def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -801,7 +801,7 @@ def run_node_degree(args):
         "random_seed": rng.randint(1, 2**30)}
     smc_ts = msprime.simulate(**sim_args)
 
-    engine = "C"
+    engine = tsinfer.C_ENGINE
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
@@ -909,7 +909,7 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
-    parser.add_argument("--engine", default="C")
+    parser.add_argument("--engine", default=tsinfer.C_ENGINE)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
