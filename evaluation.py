@@ -879,7 +879,7 @@ def run_ancestor_quality(args):
         true_length[p], olap_length[p], true_time[p]
         ] for p in anc_indices.keys()])
 
-    x_axis_length_metric = "absolute"  # or e.g. "fraction"
+    x_axis_length_metric = "fraction"  # or e.g. "fraction"
     y = data[:, 2] / data[:, 1]
     if x_axis_length_metric == "absolute":
         x = (data[:, 3] - data[:, 4])+1
@@ -892,21 +892,26 @@ def run_ancestor_quality(args):
     else:
         assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
 
-    plt.errorbar(
-        x, y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
-        fmt='none', ecolor='0.9', zorder=-1, s=1)
+    name = "quality-by-missingness"
     plt.scatter(
         x, y, c=data[:, 0], cmap='brg', s=2,
         norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
     plt.errorbar(
         x, y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
-        fmt='none', ecolor='0.9', zorder=-1, s=1)
+        fmt='none', ecolor='0.9', zorder=-2, s=1)
+    lengthsort = x.argsort()
+    pad_mean = np.pad(
+        running_mean(y[lengthsort], args.running_average_span),
+        (args.running_average_span - 1) // 2,
+        mode='constant', constant_values=(np.nan,))
+    plt.plot(x[lengthsort], pad_mean, 'k-', lw=1, zorder=-1)
     cbar = plt.colorbar()
     cbar.set_label("Frequency", rotation=270, labelpad=20)
     plt.ylabel("Sequence difference in overlapping region")
     plt.ylim(-0.01, 1)
-    save_figure(name_format.format("quality-by-missingness"))
+    save_figure(name_format.format(name))
 
+    name = "quality-by-freq"
     df = pd.DataFrame(data={'seq_diff': y, 'freq': data[:, 0].astype(np.int)})
     g = df.groupby('freq')
     plt.errorbar(
@@ -914,28 +919,29 @@ def run_ancestor_quality(args):
         marker="o", ls='none', ecolor='0.6')
     plt.ylabel("Sequence difference in overlapping region")
     plt.xlabel("Freq")
-    save_figure(name_format.format("quality-by-freq"))
+    save_figure(name_format.format(name))
 
+    name = "quality-by-time"
+    plt.scatter(
+        data[:, 5], y, c=data[:, 0], cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    plt.errorbar(
+        data[:, 5], y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
+        fmt='none', ecolor='0.9', zorder=-2, s=1)
     timesort = data[:, 5].argsort()
     pad_mean = np.pad(
         running_mean(y[timesort], args.running_average_span),
         (args.running_average_span - 1) // 2,
         mode='constant', constant_values=(np.nan,))
-    plt.errorbar(
-        data[timesort, 5], y[timesort],
-        yerr=np.abs(binomial_confidence(data[timesort, 2], data[timesort, 1]) - y),
-        fmt='none', ecolor='0.9', zorder=-2, s=1)
-    plt.scatter(
-        data[timesort, 5], y[timesort], c=data[timesort, 0], cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
     plt.plot(data[timesort, 5], pad_mean, 'k-', lw=1, zorder=-1)
     cbar = plt.colorbar()
     cbar.set_label("Frequency", rotation=270, labelpad=20)
     plt.ylabel("Sequence difference in overlapping region")
     plt.xlabel("True ancestor time index")
     plt.ylim(-0.01, 1)
-    save_figure(name_format.format("quality-by-time"))
+    save_figure(name_format.format(name))
 
+    name = "quality-by-length"
     plt.scatter(
         data[:, 3], y, c=data[:, 0], cmap='brg', s=2,
         norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
@@ -946,7 +952,7 @@ def run_ancestor_quality(args):
     plt.xscale('log')
     plt.ylim(-0.01, 1)
     plt.xlim(1)
-    save_figure(name_format.format("quality-by-length"))
+    save_figure(name_format.format(name))
 
 
 def get_node_degree_by_depth(ts):
