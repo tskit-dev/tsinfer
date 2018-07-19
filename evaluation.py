@@ -898,6 +898,9 @@ def run_ancestor_quality(args):
     plt.scatter(
         x, y, c=data[:, 0], cmap='brg', s=2,
         norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    plt.errorbar(
+        x, y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
+        fmt='none', ecolor='0.9', zorder=-1, s=1)
     cbar = plt.colorbar()
     cbar.set_label("Frequency", rotation=270, labelpad=20)
     plt.ylabel("Sequence difference in overlapping region")
@@ -913,9 +916,19 @@ def run_ancestor_quality(args):
     plt.xlabel("Freq")
     save_figure(name_format.format("quality-by-freq"))
 
+    timesort = data[:, 5].argsort()
+    pad_mean = np.pad(
+        running_mean(y[timesort], args.running_average_span),
+        (args.running_average_span - 1) // 2,
+        mode='constant', constant_values=(np.nan,))
+    plt.errorbar(
+        data[timesort, 5], y[timesort],
+        yerr=np.abs(binomial_confidence(data[timesort, 2], data[timesort, 1]) - y),
+        fmt='none', ecolor='0.9', zorder=-2, s=1)
     plt.scatter(
-        data[:, 4], y, c=data[:, 0], cmap='brg', s=2,
+        data[timesort, 5], y[timesort], c=data[timesort, 0], cmap='brg', s=2,
         norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    plt.plot(data[timesort, 5], pad_mean, 'k-', lw=1, zorder=-1)
     cbar = plt.colorbar()
     cbar.set_label("Frequency", rotation=270, labelpad=20)
     plt.ylabel("Sequence difference in overlapping region")
@@ -1238,6 +1251,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--length-scale", "-X", choices=['linear', 'log'], default="linear",
         help='Length scale for distances when plotting')
+    parser.add_argument(
+        "--running-average-span", "-A", type=int, default=51,
+        help=(
+            "How many ancestors should we average over when calculating "
+            "running means and medians (must be an odd number)"))
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],
