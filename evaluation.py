@@ -545,9 +545,14 @@ class NormalizeBandWidths(mp.colors.Normalize):
         return np.ma.masked_array(np.interp(value, self.x, self.bands))
 
 
-def run_ancestor_comparison(args):
+def sim_true_and_inferred_ancestors(args):
+    """
+    Run a simulation under args and return the samples, plus the true and the inferred
+    ancestors
+    """
     MB = 10**6
     rng = random.Random(args.random_seed)
+    np.random.seed(args.random_seed)
     sim_args = {
         "sample_size": args.sample_size,
         "length": args.length * MB,
@@ -565,15 +570,39 @@ def run_ancestor_comparison(args):
         for s, v in zip(ts.sites(), V):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
-    estimated_anc = tsinfer.generate_ancestors(sample_data)
-    exact_anc = tsinfer.AncestorData(sample_data)
-    tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
-    exact_anc.finalise()
+    inferred_anc = tsinfer.generate_ancestors(sample_data)
+    true_anc = tsinfer.AncestorData(sample_data)
+    tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
+    true_anc.finalise()
+    return sample_data, true_anc, inferred_anc
 
+
+def ancestor_data_by_pos(anc1, anc2):
+    """
+    Return indexes into ancestor data, keyed by focal site position, returning only
+    those indexes where positions are the same for both ancestors. This is useful
+    e.g. for plotting length v length scatterplots.
+    """
+    anc_by_focal_pos = []
+    for anc in (anc1, anc2):
+        position_to_index = {anc.sites_position[:][site_index]: i
+                             for i, sites in enumerate(anc.ancestors_focal_sites[:])
+                             for site_index in sites}
+        anc_by_focal_pos.append(position_to_index)
+
+    # NB with error we may not have exactly the same focal sites in exact & estimated
+    shared_indices = set.intersection(*[set(a.keys()) for a in anc_by_focal_pos])
+
+    return {pos: np.array([anc_by_focal_pos[0][pos], anc_by_focal_pos[1][pos]], np.int)
+            for pos in shared_indices}
+
+
+def run_ancestor_comparison(args):
+    sample_data, exact_anc, estimated_anc = sim_true_and_inferred_ancestors(args)
     # Convert lengths to kb.
     estimated_anc_length = estimated_anc.ancestors_length / 1000
     exact_anc_length = exact_anc.ancestors_length / 1000
-    max_length = ts.sequence_length / 1000
+    max_length = sample_data.sequence_length / 1000
     name_format = os.path.join(
         args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
@@ -617,38 +646,22 @@ def run_ancestor_comparison(args):
     save_figure(name_format.format("doubleton-length-dist"))
     plt.clf()
 
-    # plot scatterplot of actual vs inferred ancestor lengths, per site
-    exact_lengths_by_inference_index = {
-        exact_anc.sites_position[:][site_index]: [l, t]
-        for l, sites, t in zip(
-            exact_anc_length, exact_anc.ancestors_focal_sites[:],
-            exact_anc.ancestors_time[:])
-        for site_index in sites}
-    estimated_lengths_by_inference_index = {
-        estimated_anc.sites_position[:][site_index]: [l, t]
-        for l, sites, t in zip(
-            estimated_anc_length,
-            estimated_anc.ancestors_focal_sites[:],
-            estimated_anc.ancestors_focal_freq)
-        for site_index in sites}
-
-    # NB with error we may not have exactly the same inference sites in exact & estimated
-    shared_indices = (
-        set(exact_lengths_by_inference_index.keys()) &
-        set(estimated_lengths_by_inference_index.keys()))
+    anc_indexes = ancestor_data_by_pos(exact_anc, estimated_anc)
+    # convert to a 2d numpy array for convenience
+    exact_v_estimated_indexes = np.array([v for v in anc_indexes.values()])
 
     for colorscale in ("Frequency", "True_time"):
         fig = plt.figure(figsize=(10, 10), dpi=100)
         if args.length_scale == "log":
             plt.yscale('log')
             plt.xscale('log')
-        if colorscale == "Frequency":
-            cs = [estimated_lengths_by_inference_index[k][1] for k in shared_indices]
+        if colorscale != "Frequency":
+            cs = exact_anc.ancestors_time[:][exact_v_estimated_indexes[:, 0]]
         else:
-            cs = [exact_lengths_by_inference_index[k][1] for k in shared_indices]
+            cs = estimated_anc.ancestors_focal_freq[exact_v_estimated_indexes[:, 1]]
         plt.scatter(
-            [exact_lengths_by_inference_index[k][0] for k in shared_indices],
-            [estimated_lengths_by_inference_index[k][0] for k in shared_indices],
+            exact_anc_length[exact_v_estimated_indexes[:, 0]],
+            estimated_anc_length[exact_v_estimated_indexes[:, 1]],
             c=cs, cmap='brg', s=2, norm=NormalizeBandWidths(band_widths=np.bincount(cs)))
         plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
         plt.xlim(1, max_length)
@@ -767,6 +780,179 @@ def run_ancestor_comparison(args):
         save_figure(
             name_format.format("time_{}".format(
                 "estimated" if ancestors_are_estimated else "true_ancestors")))
+
+
+def binomial_confidence(x, n, z=1.96):
+    """
+    Calculate the Wilson binomial interval, e.g. from 
+    https://stackoverflow.com/questions/10029588/python-implementation-of-the-wilson-score-interval
+    """ # noqa
+    phat = x / n
+    d = z * np.sqrt((phat*(1-phat)+z*z/(4*n))/n)
+    return np.array([
+        (phat + z*z/(2*n) - d)/(1+z*z/n),
+        (phat + z*z/(2*n) + d)/(1+z*z/n)])
+
+
+def run_ancestor_quality(args):
+    """
+    Calculate quality measures per focal site, as these are comparable from estimated
+    to exact ancestors. This is a bit complicated because we don't always have the same
+    inference sites in estimated & exact ancestors, so we need to only check the sites
+    that are shared. We also need to limit the bounds over which we calculate quality
+    so that we only look at the regions of overlap between true and inferred ancestors
+    """
+    sample_data, exact_anc, estim_anc = sim_true_and_inferred_ancestors(args)
+
+    name_format = os.path.join(
+        args.destination_dir, "anc-qual_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+            args.error_probability))
+
+    anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
+    shared_positions = np.array(list(anc_indices.keys()))
+    # append sequencer_length to pos so that ancestors_end[:] indices are always valid
+    exact_positions = np.append(exact_anc.sites_position[:], sample_data.sequence_length)
+    estim_positions = np.append(estim_anc.sites_position[:], sample_data.sequence_length)
+    # only include sites which are focal in both exact and estim in the genome-wise masks
+    exact_sites_mask = np.isin(exact_anc.sites_position[:], shared_positions)
+    estim_sites_mask = np.isin(estim_anc.sites_position[:], shared_positions)
+    assert np.sum(exact_sites_mask) == np.sum(estim_sites_mask) == len(anc_indices)
+
+    # store the data to plot for each focal_site, keyed by position
+    freq = {sample_data.sites_position[:][i]: np.sum(g)
+            for i, g in sample_data.genotypes(inference_sites=None)}
+    olap_nsites = {}
+    olap_ndiff = {}
+    olap_length = {}
+    true_length = {}
+    true_time = {}
+    # find the left and right edges of the overlap
+    for focal_pos in sorted(anc_indices.keys()):
+        exact_index, estim_index = anc_indices[focal_pos]
+        # left (start) is biggest of exact and estim
+        if exact_positions[exact_anc.ancestors_start[:][exact_index]] > \
+                estim_positions[estim_anc.ancestors_start[:][estim_index]]:
+            olap_start_exact = exact_anc.ancestors_start[:][exact_index]
+            olap_start = exact_positions[olap_start_exact]
+            olap_start_estim = np.searchsorted(estim_anc.sites_position[:], olap_start)
+        else:
+            olap_start_estim = estim_anc.ancestors_start[:][estim_index]
+            olap_start = estim_positions[olap_start_estim]
+            olap_start_exact = np.searchsorted(exact_anc.sites_position[:], olap_start)
+
+        # right (end) is smallest of exact and estim
+        if exact_positions[exact_anc.ancestors_end[:][exact_index]] < \
+                estim_positions[estim_anc.ancestors_end[:][estim_index]]:
+            olap_end_exact = exact_anc.ancestors_end[:][exact_index]
+            olap_end = exact_positions[olap_end_exact]
+            olap_end_estim = np.searchsorted(estim_anc.sites_position[:], olap_end)
+        else:
+            olap_end_estim = estim_anc.ancestors_end[:][estim_index]
+            olap_end = estim_positions[olap_end_estim]
+            olap_end_exact = np.searchsorted(exact_anc.sites_position[:], olap_end)
+
+        # ancestors_haplotype[x] contains a vector of inferred sites only
+        # between ancestors_start[x] and ancestors_end[x]. To match it to the genome-wide
+        # mask we need to account for the offset before masking out non-shared sites
+        exact_full_hap = exact_anc.ancestors_haplotype[:][exact_index]
+        offset = exact_anc.ancestors_start[:][exact_index]
+        exact_olap = exact_full_hap[(olap_start_exact-offset):(olap_end_exact-offset)]
+        exact_comp = exact_olap[exact_sites_mask[olap_start_exact:olap_end_exact]]
+
+        estim_full_hap = estim_anc.ancestors_haplotype[estim_index]
+        offset = estim_anc.ancestors_start[:][estim_index]
+        estim_olap = estim_full_hap[(olap_start_estim-offset):(olap_end_estim-offset)]
+        estim_comp = estim_olap[estim_sites_mask[olap_start_estim:olap_end_estim]]
+
+        assert len(exact_comp) == len(estim_comp)
+
+        olap_nsites[focal_pos] = len(exact_comp)
+        olap_ndiff[focal_pos] = np.sum(exact_comp != estim_comp)
+        olap_length[focal_pos] = olap_end-olap_start
+        true_length[focal_pos] = exact_anc.ancestors_length[:][exact_index]
+        true_time[focal_pos] = exact_anc.ancestors_time[:][exact_index]
+        assert olap_length[focal_pos] <= true_length[focal_pos]
+
+    data = np.array([[
+        freq[p], olap_nsites[p], olap_ndiff[p],
+        true_length[p], olap_length[p], true_time[p]
+        ] for p in anc_indices.keys()])
+
+    x_axis_length_metric = "fraction"  # or e.g. "fraction"
+    y = data[:, 2] / data[:, 1]
+    if x_axis_length_metric == "absolute":
+        x = (data[:, 3] - data[:, 4])+1
+        plt.xlabel("Absolute length of missing ancestor + 1")
+        plt.xscale('log')
+        plt.xlim(0.8, np.max(x))
+    elif x_axis_length_metric == "fraction":
+        x = 1 - (data[:, 4] / data[:, 3])
+        plt.xlabel("Fraction of true ancestor missing from inferred")
+    else:
+        assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
+
+    name = "quality-by-missingness"
+    plt.scatter(
+        x, y, c=data[:, 0], cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    plt.errorbar(
+        x, y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
+        fmt='none', ecolor='0.9', zorder=-2, s=1)
+    lengthsort = x.argsort()
+    pad_mean = np.pad(
+        running_mean(y[lengthsort], args.running_average_span),
+        (args.running_average_span - 1) // 2,
+        mode='constant', constant_values=(np.nan,))
+    plt.plot(x[lengthsort], pad_mean, 'k-', lw=1, zorder=-1)
+    cbar = plt.colorbar()
+    cbar.set_label("Frequency", rotation=270, labelpad=20)
+    plt.ylabel("Sequence difference in overlapping region")
+    plt.ylim(-0.01, 1)
+    save_figure(name_format.format(name))
+
+    name = "quality-by-freq"
+    df = pd.DataFrame(data={'seq_diff': y, 'freq': data[:, 0].astype(np.int)})
+    g = df.groupby('freq')
+    plt.errorbar(
+        g.sem().index, g.mean().values, yerr=g.sem().values,
+        marker="o", ls='none', ecolor='0.6')
+    plt.ylabel("Sequence difference in overlapping region")
+    plt.xlabel("Freq")
+    save_figure(name_format.format(name))
+
+    name = "quality-by-time"
+    plt.scatter(
+        data[:, 5], y, c=data[:, 0], cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    plt.errorbar(
+        data[:, 5], y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
+        fmt='none', ecolor='0.9', zorder=-2, s=1)
+    timesort = data[:, 5].argsort()
+    pad_mean = np.pad(
+        running_mean(y[timesort], args.running_average_span),
+        (args.running_average_span - 1) // 2,
+        mode='constant', constant_values=(np.nan,))
+    plt.plot(data[timesort, 5], pad_mean, 'k-', lw=1, zorder=-1)
+    cbar = plt.colorbar()
+    cbar.set_label("Frequency", rotation=270, labelpad=20)
+    plt.ylabel("Sequence difference in overlapping region")
+    plt.xlabel("True ancestor time index")
+    plt.ylim(-0.01, 1)
+    save_figure(name_format.format(name))
+
+    name = "quality-by-length"
+    plt.scatter(
+        data[:, 3], y, c=data[:, 0], cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
+    cbar = plt.colorbar()
+    cbar.set_label("Frequency", rotation=270, labelpad=20)
+    plt.ylabel("Sequence difference in overlapping region")
+    plt.xlabel("Overlap length")
+    plt.xscale('log')
+    plt.ylim(-0.01, 1)
+    plt.xlim(1)
+    save_figure(name_format.format(name))
 
 
 def get_node_degree_by_depth(ts):
@@ -1038,6 +1224,36 @@ if __name__ == "__main__":
     parser.add_argument(
         "--store-data", "-S", action="store_true",
         help="Store the raw data.")
+    parser.add_argument(
+        "--length-scale", "-X", choices=['linear', 'log'], default="linear",
+        help='Length scale for distances when plotting')
+    parser.add_argument(
+        "--running-average-span", "-A", type=int, default=51,
+        help=(
+            "How many ancestors should we average over when calculating "
+            "running means and medians (must be an odd number)"))
+
+    parser = subparsers.add_parser(
+        "ancestor-quality", aliases=["aq"],
+        help=(
+            "Runs plots comparing the quality of simulated compared to real ancestors"
+            "for a single instance."))
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_ancestor_quality)
+    parser.add_argument("--sample-size", "-n", type=int, default=60)
+    parser.add_argument(
+        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+    parser.add_argument(
+        "--recombination-rate", "-r", type=float, default=1e-8,
+        help="Recombination rate")
+    parser.add_argument(
+        "--mutation-rate", "-u", type=float, default=1e-8,
+        help="Mutation rate")
+    parser.add_argument(
+        "--error-probability", "-e", type=float, default=0,
+        help="Error probability")
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--length-scale", "-X", choices=['linear', 'log'], default="linear",
         help='Length scale for distances when plotting')
