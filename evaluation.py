@@ -32,7 +32,7 @@ _output_format = None
 
 
 def save_figure(basename):
-    plt.savefig(basename + "." + _output_format, dpi=600)
+    plt.savefig(basename + "." + _output_format)
     plt.clf()
 
 
@@ -640,8 +640,14 @@ def run_ancestor_comparison(args):
         estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
 
     print("mean estimated ancestor length", np.mean(estimated_anc_length))
-    print("estimated doubleton lengths")
-    print(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2])
+    # Get the number of ancestors that have the maximum length
+    max_len = np.max(estimated_anc_length)
+    num_max_len = np.sum(estimated_anc_length == max_len)
+    print("max_len = ", max_len)
+    print(
+        "fraction of ancestors with max length = ",
+        num_max_len / estimated_anc.num_ancestors)
+
     plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
     save_figure(name_format.format("doubleton-length-dist"))

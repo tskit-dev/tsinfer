@@ -114,6 +114,7 @@ ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
     allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
     allele_t consensus;
     size_t current_num_samples = *num_consistent_samples;
+    size_t min_sample_set_size = focal_site.frequency / 2;
 
     if (self->sites[site_id].frequency > focal_site.frequency) {
         ones = 0;
@@ -140,7 +141,9 @@ ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
                 k++;
             }
         }
-        if (k == 1) {
+        /* if (k == 1) { */
+        if (k < min_sample_set_size) {
+            /* printf("Breaking k = %d, %d\n", k, (int) min_sample_set_size); */
             return false;
         }
         *num_consistent_samples = k;

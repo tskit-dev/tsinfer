@@ -203,15 +203,16 @@ class AncestorBuilder(object):
                 break
 
     def __build_ancestor_sites_experimental(self, focal_site, sites, a):
-        samples = set()
+        samples = []
+        min_sample_set_size = self.sites[focal_site].frequency // 2
+        # print("Build for", focal_site, "f=", self.sites[focal_site].frequency)
         g = self.sites[focal_site].genotypes
         for j in range(self.num_samples):
             if g[j] == 1:
-                samples.add(j)
-        # if len(sites) > 1:
+                samples.append(j)
         for l in sites:
             if self.sites[l].frequency > self.sites[focal_site].frequency:
-                # print("examining:", l)
+                # print("\texamining:", l, "frequency = ", self.sites[l].frequency)
                 # print("\tsamples = ", samples)
                 num_ones = 0
                 num_zeros = 0
@@ -220,17 +221,18 @@ class AncestorBuilder(object):
                         num_ones += 1
                     else:
                         num_zeros += 1
+                # print("\t", l, num_ones, num_zeros, sep="\t")
                 if num_ones > num_zeros:
                     consensus = 1
                 elif num_ones < num_zeros:
                     consensus = 0
                 else:
-                    # print("Py ARGH!!", l)
+                    # print("BREAK TIE", l)
                     break
                 samples = [
                     u for u in samples if self.sites[l].genotypes[u] == consensus]
-                if len(samples) == 1:
-                    # print("BREAKING")
+                if len(samples) < min_sample_set_size:
+                    # print("BREAKING", len(samples), min_sample_set_size)
                     break
                 a[l] = consensus
             else:
