@@ -326,9 +326,9 @@ class AncestorBuilder(object):
         focal_frequency = self.sites[focal_site].frequency
         min_sample_set_size = focal_frequency // 2
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
-        # print("initial S = ", S)
         last_site = focal_site
         remove_buffer = []
+        # print("Psite=", focal_site, "older_sites = ", len(older_sites))
         for l in older_sites:
             g_l = self.sites[l].genotypes
             ones = sum(g_l[u] for u in S)
@@ -337,14 +337,11 @@ class AncestorBuilder(object):
             consensus = 0
             if ones >= zeros:
                 consensus = 1
+            # print("\tP", l, "\t", len(S), S, ":ones=", ones, consensus)
             for u in remove_buffer:
                 if g_l[u] != consensus:
                     # print("\t\tremoving", u)
                     S.remove(u)
-            remove_buffer.clear()
-            for u in S:
-                if g_l[u] != consensus:
-                    remove_buffer.append(u)
             # print(g_l[S] == consensus)
             # S = S[g_l[S] == consensus]
             # print("\t", len(S), remove_buffer, consensus, sep="\t")
@@ -353,6 +350,10 @@ class AncestorBuilder(object):
             if len(S) <= min_sample_set_size:
                 # print("BREAKING", len(S), min_sample_set_size)
                 break
+            remove_buffer.clear()
+            for u in S:
+                if g_l[u] != consensus:
+                    remove_buffer.append(u)
             a[l] = consensus
             last_site = l
         return last_site

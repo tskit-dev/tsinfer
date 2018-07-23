@@ -407,8 +407,8 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
         adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
-        # TODO clean this up when we're finished mucking around with the
-        # ancestor generator.
+        # # TODO clean this up when we're finished mucking around with the
+        # # ancestor generator.
         # print()
         # print(adc.ancestors_start[:])
         # print(adp.ancestors_start[:])
@@ -979,9 +979,9 @@ class TestSimplify(unittest.TestCase):
         for tree in ts1.trees():
             self.assertEqual(tree.num_samples(), len(list(tree.leaves())))
 
-        # When simplify is true the samples should be zero to N - n
-        # up to n
-        ts2 = tsinfer.infer(sd, simplify=False)
+        # When simplify is true and there is no path compression,
+        # the samples should be zero to N - n up to n
+        ts2 = tsinfer.infer(sd, simplify=False, path_compression=False)
         self.assertEqual(
             list(ts2.samples()),
             list(range(ts2.num_nodes - n, ts2.num_nodes)))

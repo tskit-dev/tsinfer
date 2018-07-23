@@ -319,7 +319,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(36, 0.3, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(36, 0.3, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 

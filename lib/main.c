@@ -368,6 +368,9 @@ run_generate(const char *input_file, int verbose, int path_compression)
     if (ret != 0) {
         fatal_error("add_root_path");
     }
+    /* This doesn't work at all with the current code. If we do decide to make all ancestors
+     * have a single focal site, then this must be rewritten. */
+    assert(false);
 
     child = 2;
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
