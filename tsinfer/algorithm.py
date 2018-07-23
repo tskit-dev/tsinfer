@@ -98,13 +98,17 @@ class AncestorBuilder(object):
         Returns True if we should split the ancestor with focal sites at
         a and b into two separate ancestors.
         """
-        index = np.where(samples == 1)[0]
-        for j in range(a + 1, b):
-            if self.sites[j].frequency > self.sites[a].frequency:
-                gj = self.sites[j].genotypes[index]
-                if not (np.all(gj == 1) or np.all(gj == 0)):
-                    return True
-        return False
+        # FIXME experimental code assumes a single focal site. It may be
+        # that path compression makes this redundant in any case.
+        return True
+
+        # index = np.where(samples == 1)[0]
+        # for j in range(a + 1, b):
+        #     if self.sites[j].frequency > self.sites[a].frequency:
+        #         gj = self.sites[j].genotypes[index]
+        #         if not (np.all(gj == 1) or np.all(gj == 0)):
+        #             return True
+        # return False
 
     def ancestor_descriptors(self):
         """
@@ -242,7 +246,7 @@ class AncestorBuilder(object):
         # self.__build_ancestor_sites_original(focal_site, sites, a)
         self.__build_ancestor_sites_experimental(focal_site, sites, a)
 
-    def make_ancestor(self, focal_sites, a):
+    def make_ancestor_current(self, focal_sites, a):
         a[:] = UNKNOWN_ALLELE
         focal_site = focal_sites[0]
         sites = range(focal_sites[-1] + 1, self.num_sites)
@@ -316,6 +320,72 @@ class AncestorBuilder(object):
             a[j] = 0
             if self.sites[j].frequency > focal_frequency:
                 a[j] = self.__compute_state(j, samples)
+        return start, end
+
+    def compute_older_sites(self, focal_site, older_sites, a):
+        focal_frequency = self.sites[focal_site].frequency
+        min_sample_set_size = focal_frequency // 2
+        S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
+        # print("initial S = ", S)
+        last_site = focal_site
+        remove_buffer = []
+        for l in older_sites:
+            g_l = self.sites[l].genotypes
+            ones = sum(g_l[u] for u in S)
+            zeros = len(S) - ones
+            # print("\t", l, ones, zeros, sep="\t")
+            consensus = 0
+            if ones >= zeros:
+                consensus = 1
+            for u in remove_buffer:
+                if g_l[u] != consensus:
+                    # print("\t\tremoving", u)
+                    S.remove(u)
+            remove_buffer.clear()
+            for u in S:
+                if g_l[u] != consensus:
+                    remove_buffer.append(u)
+            # print(g_l[S] == consensus)
+            # S = S[g_l[S] == consensus]
+            # print("\t", len(S), remove_buffer, consensus, sep="\t")
+            # samples = [
+            #     u for u in samples if self.sites[l].genotypes[u] == consensus]
+            if len(S) <= min_sample_set_size:
+                # print("BREAKING", len(S), min_sample_set_size)
+                break
+            a[l] = consensus
+            last_site = l
+        return last_site
+
+    def make_ancestor(self, focal_sites, a):
+        assert len(focal_sites) == 1
+        focal_site = focal_sites[0]
+        focal_frequency = self.sites[focal_site].frequency
+        a[:] = UNKNOWN_ALLELE
+        a[focal_site] = 1
+
+        # Go rightwards from the focal site.
+        older_sites = [
+            l for l in range(focal_site + 1, self.num_sites)
+            if self.sites[l].frequency > focal_frequency]
+        last_site = self.compute_older_sites(focal_site, older_sites, a)
+        # Fill in the ancestral states at younger sites.
+        for l in range(focal_site + 1, last_site):
+            if self.sites[l].frequency <= focal_frequency:
+                a[l] = 0
+        end = last_site + 1
+
+        # Go leftwards from the focal site.
+        older_sites = [
+            l for l in range(focal_site - 1, -1, -1)
+            if self.sites[l].frequency > focal_frequency]
+        last_site = self.compute_older_sites(focal_site, older_sites, a)
+        # Fill in the ancestral states at younger sites.
+        for l in range(last_site + 1, focal_site):
+            if self.sites[l].frequency <= focal_frequency:
+                a[l] = 0
+        start = last_site
+
         return start, end
 
 

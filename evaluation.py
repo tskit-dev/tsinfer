@@ -570,7 +570,7 @@ def sim_true_and_inferred_ancestors(args):
         for s, v in zip(ts.sites(), V):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
-    inferred_anc = tsinfer.generate_ancestors(sample_data)
+    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
     true_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
