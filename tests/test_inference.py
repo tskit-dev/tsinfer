@@ -407,6 +407,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
         adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
+
         # # TODO clean this up when we're finished mucking around with the
         # # ancestor generator.
         # print()

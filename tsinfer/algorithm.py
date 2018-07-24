@@ -268,125 +268,54 @@ class AncestorBuilder(object):
         s = np.sum(self.sites[site].genotypes[samples])
         return int(round(s / samples.shape[0]))
 
-    def make_ancestor_experimental_old(self, focal_sites, a):
-        # print("make ancestor", focal_sites)
-        a[:] = UNKNOWN_ALLELE
-        samples = np.where(self.sites[focal_sites[0]].genotypes == 1)[0]
-        focal_frequency = self.sites[focal_sites[0]].frequency
-        n = samples.shape[0]
-
-        # Fill in the states between the focal sites.
-        for j in range(focal_sites[0], focal_sites[-1] + 1):
-            a[j] = 0
-            if self.sites[j].frequency > focal_frequency:
-                a[j] = self.__compute_state(j, samples)
-        a[focal_sites] = 1
-
-        # Go rightwards to compute the end site.
-        end = focal_sites[-1] + 1
-        # Arbitrarily set to 10 here -- obviously a parameter here if we want to
-        # keep this.
-        max_mismatches = 1
-        mismatches = 0
-        while end < self.num_sites:
-            s = 0
-            if self.sites[end].frequency > focal_frequency:
-                s = np.sum(self.sites[end].genotypes[samples])
-            if s != 0 and s != n:
-                mismatches += 1
-            if mismatches == max_mismatches:
-                break
-            end += 1
-        for j in range(focal_sites[-1] + 1, end):
-            a[j] = 0
-            if self.sites[j].frequency > focal_frequency:
-                a[j] = self.__compute_state(j, samples)
-
-        # Go leftwards to compute the start
-        start = focal_sites[0] - 1
-        mismatches = 0
-        while start >= 0:
-            s = 0
-            if self.sites[start].frequency > focal_frequency:
-                s = np.sum(self.sites[start].genotypes[samples])
-            if s != 0 and s != n:
-                mismatches += 1
-            if mismatches == max_mismatches:
-                break
-            start -= 1
-        start += 1
-
-        for j in range(start, focal_sites[0]):
-            a[j] = 0
-            if self.sites[j].frequency > focal_frequency:
-                a[j] = self.__compute_state(j, samples)
-        return start, end
-
-    def compute_older_sites(self, focal_site, older_sites, a):
+    def compute_ancestral_states(self, a, focal_site, sites):
         focal_frequency = self.sites[focal_site].frequency
         min_sample_set_size = focal_frequency // 2
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
-        last_site = focal_site
         remove_buffer = []
-        # print("Psite=", focal_site, "older_sites = ", len(older_sites))
-        for l in older_sites:
-            g_l = self.sites[l].genotypes
-            ones = sum(g_l[u] for u in S)
-            zeros = len(S) - ones
-            # print("\t", l, ones, zeros, sep="\t")
-            consensus = 0
-            if ones >= zeros:
-                consensus = 1
-            # print("\tP", l, "\t", len(S), S, ":ones=", ones, consensus)
-            for u in remove_buffer:
-                if g_l[u] != consensus:
-                    # print("\t\tremoving", u)
-                    S.remove(u)
-            # print(g_l[S] == consensus)
-            # S = S[g_l[S] == consensus]
-            # print("\t", len(S), remove_buffer, consensus, sep="\t")
-            # samples = [
-            #     u for u in samples if self.sites[l].genotypes[u] == consensus]
-            if len(S) <= min_sample_set_size:
-                # print("BREAKING", len(S), min_sample_set_size)
-                break
-            remove_buffer.clear()
-            for u in S:
-                if g_l[u] != consensus:
-                    remove_buffer.append(u)
-            a[l] = consensus
+        last_site = focal_site
+        # print("Computing for ", focal_site)
+        for l in sites:
+            a[l] = 0
             last_site = l
+            if self.sites[l].frequency > focal_frequency:
+                g_l = self.sites[l].genotypes
+                ones = sum(g_l[u] for u in S)
+                zeros = len(S) - ones
+                # print("\t", l, ones, zeros, sep="\t")
+                consensus = 0
+                if ones >= zeros:
+                    consensus = 1
+                # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
+                for u in remove_buffer:
+                    if g_l[u] != consensus:
+                        # print("\t\tremoving", u)
+                        S.remove(u)
+                # print("\t", len(S), remove_buffer, consensus, sep="\t")
+                if len(S) <= min_sample_set_size:
+                    # print("BREAKING", len(S), min_sample_set_size)
+                    break
+                remove_buffer.clear()
+                for u in S:
+                    if g_l[u] != consensus:
+                        remove_buffer.append(u)
+                a[l] = consensus
         return last_site
 
     def make_ancestor(self, focal_sites, a):
         assert len(focal_sites) == 1
         focal_site = focal_sites[0]
-        focal_frequency = self.sites[focal_site].frequency
         a[:] = UNKNOWN_ALLELE
         a[focal_site] = 1
 
-        # Go rightwards from the focal site.
-        older_sites = [
-            l for l in range(focal_site + 1, self.num_sites)
-            if self.sites[l].frequency > focal_frequency]
-        last_site = self.compute_older_sites(focal_site, older_sites, a)
-        # Fill in the ancestral states at younger sites.
-        for l in range(focal_site + 1, last_site):
-            if self.sites[l].frequency <= focal_frequency:
-                a[l] = 0
+        last_site = self.compute_ancestral_states(
+                a, focal_site, range(focal_site + 1, self.num_sites))
+        assert a[last_site] != UNKNOWN_ALLELE
         end = last_site + 1
-
-        # Go leftwards from the focal site.
-        older_sites = [
-            l for l in range(focal_site - 1, -1, -1)
-            if self.sites[l].frequency > focal_frequency]
-        last_site = self.compute_older_sites(focal_site, older_sites, a)
-        # Fill in the ancestral states at younger sites.
-        for l in range(last_site + 1, focal_site):
-            if self.sites[l].frequency <= focal_frequency:
-                a[l] = 0
+        last_site = self.compute_ancestral_states(
+                a, focal_site, range(focal_site - 1, -1, -1))
+        assert a[last_site] != UNKNOWN_ALLELE
         start = last_site
-
         return start, end
 
 
