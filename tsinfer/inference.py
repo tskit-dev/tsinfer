@@ -27,6 +27,7 @@ import time
 import logging
 import threading
 import json
+import heapq
 
 import numpy as np
 import humanize
@@ -93,7 +94,8 @@ def infer(
     :rtype: msprime.TreeSequence
     """
     ancestor_data = generate_ancestors(
-        sample_data, engine=engine, progress_monitor=progress_monitor)
+        sample_data, engine=engine, progress_monitor=progress_monitor,
+        num_threads=num_threads)
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
         path_compression=path_compression, progress_monitor=progress_monitor)
@@ -131,7 +133,9 @@ def generate_ancestors(
     """
     ancestor_data = formats.AncestorData(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
-    generator = AncestorGenerator(sample_data, ancestor_data, progress_monitor, engine)
+    generator = AncestorsGenerator(
+        sample_data, ancestor_data, progress_monitor, engine=engine,
+        num_threads=num_threads)
     generator.add_sites()
     generator.run()
     return ancestor_data
@@ -201,7 +205,7 @@ def match_samples(
     return ts
 
 
-class AncestorGenerator(object):
+class AncestorsGenerator(object):
     """
     Manages the process of building ancestors.
     """
@@ -249,6 +253,65 @@ class AncestorGenerator(object):
                 haplotype=a[s:e])
             progress.update()
 
+    def _run_threaded(self, progress):
+        # This works by pushing the ancestor descriptors onto the build_queue,
+        # which the worker threads pop off and process. We need to add ancestors
+        # in the the ancestor_data object in the correct order, so we maintain
+        # a priority queue (add_queue) which allows us to track the next smallest
+        # index of the generated ancestor. We add build ancestors to this queue
+        # as they are built, and drain it when we can.
+        queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
+        build_queue = queue.Queue(queue_depth)
+        add_lock = threading.Lock()
+        next_add_index = 0
+        add_queue = []
+
+        def drain_add_queue():
+            nonlocal next_add_index
+            num_drained = 0
+            while len(add_queue) > 0 and add_queue[0][0] == next_add_index:
+                _, time, focal_sites, start, end, haplotype = heapq.heappop(add_queue)
+                self.ancestor_data.add_ancestor(
+                    start=start, end=end, time=time, focal_sites=focal_sites,
+                    haplotype=haplotype)
+                progress.update()
+                next_add_index += 1
+                num_drained += 1
+            logger.debug("Drained {} ancestors from add queue".format(num_drained))
+
+        def build_worker(thread_index):
+            a = np.zeros(self.num_sites, dtype=np.uint8)
+            while True:
+                work = build_queue.get()
+                if work is None:
+                    break
+                index, time, focal_sites = work
+                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+                with add_lock:
+                    haplotype = a[start: end].copy()
+                    heapq.heappush(
+                        add_queue, (index, time, focal_sites, start, end, haplotype))
+                    drain_add_queue()
+                build_queue.task_done()
+            build_queue.task_done()
+
+        build_threads = [
+            threads.queue_consumer_thread(
+                build_worker, build_queue, name="build-worker-{}".format(j),
+                index=j)
+            for j in range(self.num_threads)]
+        logger.debug("Started {} build worker threads".format(self.num_threads))
+
+        for index, (freq, focal_sites) in enumerate(self.descriptors):
+            build_queue.put((index, self.time_map[freq], focal_sites))
+
+        # Stop the the worker threads.
+        for j in range(self.num_threads):
+            build_queue.put(None)
+        for j in range(self.num_threads):
+            build_threads[j].join()
+        drain_add_queue()
+
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
@@ -277,7 +340,7 @@ class AncestorGenerator(object):
             if self.num_threads <= 0:
                 self._run_synchronous(progress)
             else:
-                self._run_synchronous(progress)
+                self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
         self.ancestor_data.finalise()

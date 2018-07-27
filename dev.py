@@ -116,7 +116,8 @@ def tsinfer_dev(
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
+    ancestor_data = tsinfer.generate_ancestors(
+        sample_data, engine=engine, num_threads=1)
     print(ancestor_data)
 #     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
