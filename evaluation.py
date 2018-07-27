@@ -20,6 +20,7 @@ from matplotlib import collections as mc
 import seaborn as sns
 import tqdm
 import daiquiri
+import colorama
 
 import msprime
 import tsinfer
@@ -529,6 +530,18 @@ def running_median(x, N):
     return np.array(list(map(np.median, b)))
 
 
+class MidpointNormalize(mp.colors.Normalize):
+    def __init__(self, vmin=None, vmax=None, midpoint=None, clip=False):
+        self.midpoint = midpoint
+        mp.colors.Normalize.__init__(self, vmin, vmax, clip)
+
+    def __call__(self, value, clip=None):
+        # I'm ignoring masked values and all kinds of edge cases to make a
+        # simple example...
+        x, y = [self.vmin, self.midpoint, self.vmax], [0, 0.5, 1]
+        return np.ma.masked_array(np.interp(value, x, y))
+
+
 class NormalizeBandWidths(mp.colors.Normalize):
     """
     normalise a range into 0..1 where ranges of integers are banded
@@ -817,8 +830,8 @@ def run_ancestor_quality(args):
             args.error_probability))
 
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
-    shared_positions = np.array(list(anc_indices.keys()))
-    # append sequencer_length to pos so that ancestors_end[:] indices are always valid
+    shared_positions = np.array(list(sorted(anc_indices.keys())))
+    # append sequence_length to pos so that ancestors_end[:] indices are always valid
     exact_positions = np.append(exact_anc.sites_position[:], sample_data.sequence_length)
     estim_positions = np.append(estim_anc.sites_position[:], sample_data.sequence_length)
     # only include sites which are focal in both exact and estim in the genome-wise masks
@@ -829,17 +842,26 @@ def run_ancestor_quality(args):
     # store the data to plot for each focal_site, keyed by position
     freq = {sample_data.sites_position[:][i]: np.sum(g)
             for i, g in sample_data.genotypes(inference_sites=None)}
-    olap_nsites = {}
-    olap_ndiff = {}
-    olap_length = {}
+    estim_freq = np.array([freq[p] for p in estim_anc.sites_position[:]], dtype=np.int)
+    olap_n_sites = {}
+    olap_n_should_be_1_higher_freq = {}
+    olap_n_should_be_0_higher_freq = {}
+    olap_n_should_be_1_low_eq_freq = {}
+    olap_n_should_be_0_low_eq_freq = {}
+    olap_lft = {}
+    olap_rgt = {}
     true_length = {}
     true_time = {}
-    # find the left and right edges of the overlap
-    for focal_pos in sorted(anc_indices.keys()):
+    # find the left and right edges of the overlap - iterate by true time in reverse
+    for i, focal_pos in enumerate(
+        sorted(
+            shared_positions,
+            key=lambda pos: -exact_anc.ancestors_time[:][anc_indices[pos][0]])):
         exact_index, estim_index = anc_indices[focal_pos]
         # left (start) is biggest of exact and estim
-        if exact_positions[exact_anc.ancestors_start[:][exact_index]] > \
-                estim_positions[estim_anc.ancestors_start[:][estim_index]]:
+        exact_start = exact_positions[exact_anc.ancestors_start[:][exact_index]]
+        estim_start = estim_positions[estim_anc.ancestors_start[:][estim_index]]
+        if exact_start > estim_start:
             olap_start_exact = exact_anc.ancestors_start[:][exact_index]
             olap_start = exact_positions[olap_start_exact]
             olap_start_estim = np.searchsorted(estim_anc.sites_position[:], olap_start)
@@ -849,8 +871,9 @@ def run_ancestor_quality(args):
             olap_start_exact = np.searchsorted(exact_anc.sites_position[:], olap_start)
 
         # right (end) is smallest of exact and estim
-        if exact_positions[exact_anc.ancestors_end[:][exact_index]] < \
-                estim_positions[estim_anc.ancestors_end[:][estim_index]]:
+        exact_end = exact_positions[exact_anc.ancestors_end[:][exact_index]]
+        estim_end = estim_positions[estim_anc.ancestors_end[:][estim_index]]
+        if exact_end < estim_end:
             olap_end_exact = exact_anc.ancestors_end[:][exact_index]
             olap_end = exact_positions[olap_end_exact]
             olap_end_estim = np.searchsorted(estim_anc.sites_position[:], olap_end)
@@ -862,103 +885,262 @@ def run_ancestor_quality(args):
         # ancestors_haplotype[x] contains a vector of inferred sites only
         # between ancestors_start[x] and ancestors_end[x]. To match it to the genome-wide
         # mask we need to account for the offset before masking out non-shared sites
+        offset1 = exact_anc.ancestors_start[:][exact_index]
+        offset2 = estim_anc.ancestors_start[:][estim_index]
+
         exact_full_hap = exact_anc.ancestors_haplotype[:][exact_index]
-        offset = exact_anc.ancestors_start[:][exact_index]
-        exact_olap = exact_full_hap[(olap_start_exact-offset):(olap_end_exact-offset)]
+        # slice the full haplotype to include only the overlapping region
+        exact_olap = exact_full_hap[(olap_start_exact-offset1):(olap_end_exact-offset1)]
+        # make a 1/0 array with only the comparable sites
         exact_comp = exact_olap[exact_sites_mask[olap_start_exact:olap_end_exact]]
 
         estim_full_hap = estim_anc.ancestors_haplotype[estim_index]
-        offset = estim_anc.ancestors_start[:][estim_index]
-        estim_olap = estim_full_hap[(olap_start_estim-offset):(olap_end_estim-offset)]
-        estim_comp = estim_olap[estim_sites_mask[olap_start_estim:olap_end_estim]]
+        estim_olap = estim_full_hap[(olap_start_estim-offset2):(olap_end_estim-offset2)]
+        small_estim_mask = estim_sites_mask[olap_start_estim:olap_end_estim]
+        estim_comp = estim_olap[small_estim_mask]
 
         assert len(exact_comp) == len(estim_comp)
 
-        olap_nsites[focal_pos] = len(exact_comp)
-        olap_ndiff[focal_pos] = np.sum(exact_comp != estim_comp)
-        olap_length[focal_pos] = olap_end-olap_start
+        # save the statistics into variables indexed by position
+        bad_sites = exact_comp != estim_comp
+        should_be_1 = exact_comp & ~estim_comp
+        should_be_0 = estim_comp & ~exact_comp
+
+        assert np.sum(should_be_1 | should_be_0) == np.sum(bad_sites)
+
+        olap_n_sites[focal_pos] = len(exact_comp)
+        olap_lft[focal_pos] = olap_start
+        olap_rgt[focal_pos] = olap_end
         true_length[focal_pos] = exact_anc.ancestors_length[:][exact_index]
         true_time[focal_pos] = exact_anc.ancestors_time[:][exact_index]
-        assert olap_length[focal_pos] <= true_length[focal_pos]
+        sites_freq = estim_freq[olap_start_estim:olap_end_estim]
+        higher_freq = sites_freq[small_estim_mask] > freq[focal_pos]
+        olap_n_should_be_1_higher_freq[focal_pos] = np.sum(should_be_1 & higher_freq)
+        olap_n_should_be_0_higher_freq[focal_pos] = np.sum(should_be_0 & higher_freq)
+        olap_n_should_be_1_low_eq_freq[focal_pos] = np.sum(should_be_1 & ~higher_freq)
+        olap_n_should_be_0_low_eq_freq[focal_pos] = np.sum(should_be_0 & ~higher_freq)
+        assert olap_rgt[focal_pos]-olap_lft[focal_pos] <= true_length[focal_pos]
+        assert (olap_n_should_be_1_higher_freq[focal_pos] +
+                olap_n_should_be_0_higher_freq[focal_pos] +
+                olap_n_should_be_1_low_eq_freq[focal_pos] +
+                olap_n_should_be_0_low_eq_freq[focal_pos] ==
+                np.sum(bad_sites))
+        if args.print_bad_ancestors and np.any(bad_sites):
+            if i == 0:
+                print(
+                    "Freq & haplotype of bad ancestors, ordered by true age,"
+                    " oldest first (black = focal site, red or magenta = bad site "
+                    " with > or < freq than focal)")
+            if args.print_bad_ancestors == "all":
+                print(
+                    "TRUE ANCESTOR for focal site "
+                    "#{} (pos {}, time_index = {}/{})".format(
+                        i, focal_pos,
+                        exact_anc.ancestors_time[:][exact_index],
+                        max(exact_anc.ancestors_time[:])))
+                print("Haplotype (start @idx {}, pos {})".format(
+                    offset1, exact_positions[offset1]))
+                print(" "*(olap_start_estim-offset2), end="")
+                hap = "".join(exact_full_hap.astype(str))
+                focal_index = np.argmax(exact_positions[offset1:] == focal_pos)
+                print(hap[:focal_index], end="")
+                print(colorama.Fore.WHITE + colorama.Back.BLACK +
+                      hap[focal_index] + colorama.Style.RESET_ALL, end="")
+                print(hap[focal_index+1:])
+                print("Match with inferred ancestor starts @idx {}, pos {}".format(
+                    olap_start_exact, exact_positions[olap_start_exact]))
+                print(" "*(olap_start_estim-offset2), end="")
+                print(" "*(olap_start_exact-offset1))
+                print("".join([str(x) for x in np.where(
+                            exact_sites_mask[olap_start_exact:olap_end_exact],
+                            exact_olap,
+                            '*')]))
+                print(
+                    "INFERRED ANCESTOR for focal site #{} (pos {})".format(i, focal_pos))
+                print(
+                    "Haplotype (start @idx {}, pos {})".format(
+                        offset2, estim_positions[offset2]))
+                print(" "*(olap_start_exact-offset1), end="")
+                hap = "".join(estim_full_hap.astype(str))
+                focal_index = np.argmax(estim_positions[offset2:] == focal_pos)
+                print(hap[:focal_index], end="")
+                print(colorama.Fore.WHITE + colorama.Back.BLACK +
+                      hap[focal_index] + colorama.Style.RESET_ALL, end="")
+                print(hap[focal_index+1:])
+                # now indicate in the inferred ancestor which sites are bad, and if it is
+                # a case of a 1 being mistakenly reconstructed as a 0, whether this is
+                # because this is a less frequent site, or whether it is actually more
+                # frequent but we are calling a consensus
+                print("Match with inferred ancestor starts @idx {}, pos {}".format(
+                    olap_start_estim, estim_positions[olap_start_estim]))
+                print(" "*(olap_start_exact-offset1), end="")
+                print(" "*(olap_start_estim-offset2), end="")
+            elif args.print_bad_ancestors == "inferred":
+                print("{:<5}".format(int(freq[focal_pos])), end="")
+            k = 0
+            mask = estim_sites_mask[olap_start_estim:olap_end_estim]
+            for j, (bit, curr_pos) in enumerate(
+                    zip(estim_olap, estim_positions[olap_start_estim:])):
+                if mask[j]:
+                    if focal_pos == curr_pos:
+                        print(colorama.Fore.WHITE + colorama.Back.BLACK +
+                              str(bit) + colorama.Style.RESET_ALL, end="")
+                    elif exact_comp[k] == bit:
+                        print(str(bit), end="")
+                    elif freq[focal_pos] < freq[curr_pos]:
+                        print(colorama.Back.RED +
+                              str(bit) + colorama.Style.RESET_ALL, end="")
+                    elif freq[focal_pos] > freq[curr_pos]:
+                        print(colorama.Back.MAGENTA +
+                              str(bit) + colorama.Style.RESET_ALL, end="")
+                    else:
+                        print(colorama.Back.YELLOW +
+                              str(bit) + colorama.Style.RESET_ALL, end="")
+                    k += 1
+                else:
+                    print("*", end="")
+            print(colorama.Style.RESET_ALL)
 
-    data = np.array([[
-        freq[p], olap_nsites[p], olap_ndiff[p],
-        true_length[p], olap_length[p], true_time[p]
-        ] for p in anc_indices.keys()])
+    # create the data for use, ordered by real time (and make a new time index)
+    data = pd.DataFrame.from_records(
+        [(p, freq[p], olap_n_sites[p], true_length[p], olap_rgt[p]-olap_lft[p],
+          olap_n_should_be_1_higher_freq[p], olap_n_should_be_1_low_eq_freq[p],
+          olap_n_should_be_0_higher_freq[p], olap_n_should_be_0_low_eq_freq[p],
+          t, true_time[p])
+            for t, p in enumerate(sorted(shared_positions, key=lambda x: true_time[x]))],
+        columns=(
+            "position", "Frequency", "n_sites", "Real length", "Overlap length",
+            "err_hiF should be 1", "err_loF should be 1",
+            "err_hiF should be 0", "err_loF should be 0",
+            "Known time order", "orig_time"))
 
-    x_axis_length_metric = "fraction"  # or e.g. "fraction"
-    y = data[:, 2] / data[:, 1]
-    if x_axis_length_metric == "absolute":
-        x = (data[:, 3] - data[:, 4])+1
-        plt.xlabel("Absolute length of missing ancestor + 1")
-        plt.xscale('log')
-        plt.xlim(0.8, np.max(x))
-    elif x_axis_length_metric == "fraction":
-        x = 1 - (data[:, 4] / data[:, 3])
-        plt.xlabel("Fraction of true ancestor missing from inferred")
-    else:
-        assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
+    print(data[["err_hiF should be 1", "err_loF should be 1",
+                "err_hiF should be 0", "err_loF should be 0"]].sum())
+    data[["err_hiF should be 1", "err_loF should be 1",
+          "err_hiF should be 0", "err_loF should be 0", "n_sites"]].to_csv(
+        name_format.format("error_data.csv"))
+    # we want to know for each site whether it the frequency puts it within the same
+    # bounds as the known time order, and if not, whether we have inferred it as
+    # too old or too young. So we make an ordered list of "expected" freqs
+    freq_bins = np.bincount(data.Frequency)
+    freq_repeated = np.repeat(np.arange(len(freq_bins)), freq_bins)
+    # add another column on to the expected freq, as calculated from the actual time
+    data['expected_Frequency'] = freq_repeated[data["Known time order"].values]
+
+    data['n_mismatches'] = (data["err_hiF should be 1"] + data["err_loF should be 1"] +
+                            data["err_hiF should be 0"] + data["err_loF should be 0"])
+    data['Inaccuracy'] = data.n_mismatches / data.n_sites
+    data['Inferred age inaccuracy'] = data.expected_Frequency - data.Frequency
+    data['Inference error bias'] = \
+        (data["err_hiF should be 0"] + data["err_loF should be 0"]) / data.n_mismatches
+    Inaccuracy_label = "Sequence difference in overlapping region"
 
     name = "quality-by-missingness"
-    plt.scatter(
-        x, y, c=data[:, 0], cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
-    plt.errorbar(
-        x, y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
-        fmt='none', ecolor='0.9', zorder=-2, s=1)
-    lengthsort = x.argsort()
-    pad_mean = np.pad(
-        running_mean(y[lengthsort], args.running_average_span),
-        (args.running_average_span - 1) // 2,
-        mode='constant', constant_values=(np.nan,))
-    plt.plot(x[lengthsort], pad_mean, 'k-', lw=1, zorder=-1)
-    cbar = plt.colorbar()
-    cbar.set_label("Frequency", rotation=270, labelpad=20)
-    plt.ylabel("Sequence difference in overlapping region")
-    plt.ylim(-0.01, 1)
+    x_axis_length_metric = "fraction"  # or e.g. "fraction"
+    data['abs_missing_l'] = (data["Real length"] - data["Overlap length"])+1
+    data['rel_missing_l'] = 1 - (data["Overlap length"] / data["Real length"])
+    if x_axis_length_metric == "absolute":
+        x_col = 'abs_missing_l'
+        ax_params = {
+            "xlabel": "Absolute length of missing ancestor + 1",
+            "xscale": "log",
+            "xlim": (0.8, np.max(data[x_col]))}
+    elif x_axis_length_metric == "fraction":
+        x_col = 'rel_missing_l'
+        ax_params = {
+            "xlabel": "Fraction of true ancestor missing from inferred"}
+    else:
+        assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
+    ax = data.plot.scatter(
+        x=x_col, y="Inaccuracy", c="Frequency", cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins))
+    ax.errorbar(
+        x=data[x_col], y=data.Inaccuracy, fmt='none', zorder=-2, ecolor="0.9",
+        yerr=np.abs(
+            binomial_confidence(data.n_mismatches.values, data.n_sites.values) -
+            data.Inaccuracy.values))
+    data = data.sort_values(by=x_col)
+    rolling_mean = data.Inaccuracy.rolling(
+        center=True, window=args.running_average_span, min_periods=1).mean()
+    ax.plot(data[x_col], rolling_mean.values, 'k-', lw=1, zorder=-1)
+    ax.set(ylabel=Inaccuracy_label, ylim=(-0.01, 1), **ax_params)
     save_figure(name_format.format(name))
 
-    name = "quality-by-freq"
-    df = pd.DataFrame(data={'seq_diff': y, 'freq': data[:, 0].astype(np.int)})
-    g = df.groupby('freq')
-    plt.errorbar(
-        g.sem().index, g.mean().values, yerr=g.sem().values,
-        marker="o", ls='none', ecolor='0.6')
-    plt.ylabel("Sequence difference in overlapping region")
-    plt.xlabel("Freq")
+    name = "quality-by-freq-with-time"
+    ax = data.plot.scatter(
+        x='Frequency', y='Inaccuracy', c="Known time order", cmap='brg', s=2)
+    ax.set_ylabel(Inaccuracy_label)
+    save_figure(name_format.format(name))
+
+    ax_params = {
+        'xlim': (-1, np.max(data['Known time order'])*1.01),
+        'ylabel': "Sequence difference in overlapping region"}
+    legend_elements = [
+        mp.lines.Line2D(
+            [], [], linewidth=0, label="1", marker='o', color='k',
+            markeredgewidth=0.5, markerfacecolor='w', markersize=1**0.5),
+        mp.lines.Line2D(
+            [], [], linewidth=0, label="10", marker='o', color='k',
+            markeredgewidth=0.5, markerfacecolor='w', markersize=10**0.5),
+        mp.lines.Line2D(
+            [], [], linewidth=0, label="100", marker='o', color='k',
+            markeredgewidth=0.5, markerfacecolor='w', markersize=100**0.5)]
+    name = "quality-by-freq-with-bias"
+    ax = data.plot.scatter(
+        x='Known time order', y="Inaccuracy", c='Inference error bias', cmap='coolwarm',
+        s=data.n_mismatches.values+1)
+    """
+    labels = ["{:.1f}\n{:.0f}\n{:.0f}".format(
+        r['position'], r['orig_time'], r['n_mismatches']) for i, r in data.iterrows()]
+    for x,y,s in zip(data['Known time order'].values, data["Inaccuracy"].values, labels):
+        ax.text(x,y,s,fontsize=1, ha="center", va="center")
+    """
+    ax.set(**ax_params)
+    ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
+    save_figure(name_format.format(name))
+
+    name = "quality-by-freq-with-ordererr"
+    ax = data.plot.scatter(
+        x='Known time order', y="Inaccuracy", c='Inferred age inaccuracy', cmap='BrBG',
+        s=data.n_mismatches.values, norm=MidpointNormalize(midpoint=0))
+    ax.set(**ax_params)
+    ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
+    save_figure(name_format.format(name))
+
+    name = "quality-by-freq-mean-sem"
+    # the same as quality-by-freq but show a mean and sterr for quality
+    g = data.Inaccuracy.groupby(data.Frequency)
+    with warnings.catch_warnings():
+        # matplotlib warns for nans in error bars
+        warnings.simplefilter("ignore")
+        plt.errorbar(
+            g.sem().index, g.mean().values, yerr=g.sem().values,
+            marker="o", ls='none', ecolor='0.6')
+    plt.ylabel(Inaccuracy_label)
+    plt.xlabel("Frequency")
     save_figure(name_format.format(name))
 
     name = "quality-by-time"
-    plt.scatter(
-        data[:, 5], y, c=data[:, 0], cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
-    plt.errorbar(
-        data[:, 5], y, yerr=np.abs(binomial_confidence(data[:, 2], data[:, 1]) - y),
-        fmt='none', ecolor='0.9', zorder=-2, s=1)
-    timesort = data[:, 5].argsort()
-    pad_mean = np.pad(
-        running_mean(y[timesort], args.running_average_span),
-        (args.running_average_span - 1) // 2,
-        mode='constant', constant_values=(np.nan,))
-    plt.plot(data[timesort, 5], pad_mean, 'k-', lw=1, zorder=-1)
-    cbar = plt.colorbar()
-    cbar.set_label("Frequency", rotation=270, labelpad=20)
-    plt.ylabel("Sequence difference in overlapping region")
-    plt.xlabel("True ancestor time index")
-    plt.ylim(-0.01, 1)
+    ax = data.plot.scatter(
+        x='Known time order', y='Inaccuracy', c='Frequency', cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins))
+    data = data.sort_values(by="Known time order")
+    ax.errorbar(
+        data['Known time order'], data['Inaccuracy'],
+        yerr=np.abs(binomial_confidence(
+            data.n_mismatches.values, data.n_sites.values) - data.Inaccuracy.values),
+        fmt='none', ecolor='0.9', zorder=-2)
+    rolling_mean = data.Inaccuracy.rolling(
+        center=True, window=args.running_average_span, min_periods=1).mean()
+    ax.plot(data['Known time order'].values, rolling_mean.values, "k-")
+    ax.set(ylabel=Inaccuracy_label, ylim=(-0.01, 1))
     save_figure(name_format.format(name))
 
     name = "quality-by-length"
-    plt.scatter(
-        data[:, 3], y, c=data[:, 0], cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=np.bincount(data[:, 0].astype(np.int))))
-    cbar = plt.colorbar()
-    cbar.set_label("Frequency", rotation=270, labelpad=20)
-    plt.ylabel("Sequence difference in overlapping region")
-    plt.xlabel("Overlap length")
-    plt.xscale('log')
-    plt.ylim(-0.01, 1)
-    plt.xlim(1)
+    ax = data.plot.scatter(
+        x="Overlap length", y="Inaccuracy", c="Frequency", cmap='brg', s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins))
+    ax.set(ylabel=Inaccuracy_label, xscale='log', ylim=(-0.01, 1), xlim=(1))
     save_figure(name_format.format(name))
 
 
@@ -1111,7 +1293,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-replicates", "-R", type=int, default=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
     parser.add_argument(
-        "--progress", "-p", action="store_true",
+        "--progress", "-P", action="store_true",
         help="Show a progress monitor.")
     parser.add_argument(
         "--extended-checks", "-X", action="store_true",
@@ -1141,14 +1323,14 @@ if __name__ == "__main__":
         "--mutation-rate", "-u", type=float, default=1e-8,
         help="Mutation rate")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--compute-tree-metrics", "-T", action="store_true",
         help="Compute tree metrics")
     parser.add_argument(
-        "--progress", "-p", action="store_true",
+        "--progress", "-P", action="store_true",
         help="Show a progress monitor.")
 
     parser = subparsers.add_parser(
@@ -1175,11 +1357,11 @@ if __name__ == "__main__":
         "--hotspot-width", "-W", type=float, default=0.01,
         help="Width of hotspots as a fraction of total genome length.")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--progress", "-p", action="store_true",
+        "--progress", "-P", action="store_true",
         help="Show a progress monitor.")
 
     parser = subparsers.add_parser(
@@ -1197,11 +1379,11 @@ if __name__ == "__main__":
         "--mutation-rate", "-u", type=float, default=1e-8,
         help="Mutation rate")
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-P", type=int, default=None)
+    parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--progress", "-p", action="store_true",
+        "--progress", "-P", action="store_true",
         help="Show a progress monitor.")
     parser.add_argument(
         "--skip-exact", "-S", action="store_true",
@@ -1261,6 +1443,9 @@ if __name__ == "__main__":
         help="Error probability")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument(
+        "--print-bad-ancestors", "-b", nargs='?', const="inferred",
+        choices=['inferred', 'all'], help="Also print out all the bad ancestor matches")
     parser.add_argument(
         "--length-scale", "-X", choices=['linear', 'log'], default="linear",
         help='Length scale for distances when plotting')
