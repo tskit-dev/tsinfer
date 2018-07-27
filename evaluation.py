@@ -1109,18 +1109,23 @@ def run_ancestor_quality(args):
     ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
     save_figure(name_format.format(name))
 
-    name = "error-by-freq-mean-sem"
-    # show the (weighted) average
+    name = "error-type-by-freq-mean-sem"
+    # show the (weighted) average for different types of error
     g = data[['err_hiF', 'err_loF', 'n_sites']].groupby(data.Frequency)
-    with warnings.catch_warnings():
-        # matplotlib warns for nans in error bars
-        warnings.simplefilter("ignore")
-        plt.plot(
-            g.sum().index, g.sum().err_hiF.values/g.sum().n_sites.values,
-            marker="o", label="Errors at higher freq than focal")
-        plt.plot(
-            g.sum().index, g.sum().err_loF.values/g.sum().n_sites.values,
-            marker="o", label="Errors at lower freq than focal")
+    f_data = pd.DataFrame.from_dict(
+        {'Frequency': g.sum().index,
+         'hi': g.sum().err_hiF.values/g.sum().n_sites.values,
+         'lo': g.sum().err_loF.values/g.sum().n_sites.values})
+    f_data = f_data.sort_values(by='Frequency')
+    plt.plot(f_data.Frequency, f_data.hi, marker="o", linestyle='none', markersize=5,
+             c="darkgoldenrod", label="Errors at higher freq than focal")
+    plt.plot(f_data.Frequency, f_data.lo, marker="o", linestyle='none', markersize=5,
+             c="mediumseagreen", label="Errors at lower freq than focal")
+    rolling_mean = f_data.rolling(
+        center=True, window=args.running_average_span, min_periods=1).mean()
+    plt.plot(f_data.Frequency, rolling_mean.hi, "-", c="darkgoldenrod")
+    plt.plot(f_data.Frequency, rolling_mean.lo, "-", c="mediumseagreen")
+
     plt.legend()
     plt.ylabel(Inaccuracy_label)
     plt.xlabel("Frequency")
