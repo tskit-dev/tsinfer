@@ -31,7 +31,8 @@ import tsinfer
 import tsinfer.formats as formats
 
 
-def get_random_data_example(num_samples, num_sites):
+def get_random_data_example(num_samples, num_sites, seed=42):
+    np.random.seed(seed)
     G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
     return G, np.arange(num_sites)
 
@@ -406,6 +407,40 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
         adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
         adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
+
+        # # TODO clean this up when we're finished mucking around with the
+        # # ancestor generator.
+        # print()
+        # print(adc.ancestors_start[:])
+        # print(adp.ancestors_start[:])
+        # assert np.array_equal(adc.ancestors_start[:], adp.ancestors_start[:])
+
+        # print("end:")
+        # print(adc.ancestors_end[:])
+        # print(adp.ancestors_end[:])
+        # assert np.array_equal(adc.ancestors_end[:], adp.ancestors_end[:])
+
+        # print("focal_sites:")
+        # print(adc.ancestors_focal_sites[:])
+        # print(adp.ancestors_focal_sites[:])
+
+        # print("haplotype:")
+        # print(adc.ancestors_haplotype[:])
+        # print()
+        # print(adp.ancestors_haplotype[:])
+
+        # j = 0
+        # for h1, h2 in zip(adc.ancestors_haplotype[:], adp.ancestors_haplotype[:]):
+        #     if not np.array_equal(h1, h2):
+        #         print(h1)
+        #         print(h2)
+        #         print(adp.ancestors_focal_sites[j])
+        #         print(adc.ancestors_focal_sites[j])
+        #         print(adc.ancestors_start[j])
+        #         print(adc.ancestors_end[j])
+        #     j += 1
+        # print(adc)
+        # print(adp)
         self.assertTrue(adp.data_equal(adc))
 
     def test_no_recombination(self):
@@ -429,7 +464,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         self.verify_ancestor_generator(ts.genotype_matrix())
 
     def test_random_data(self):
-        G, _ = get_random_data_example(20, 50)
+        G, _ = get_random_data_example(20, 50, seed=1234)
         # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
 
@@ -945,9 +980,9 @@ class TestSimplify(unittest.TestCase):
         for tree in ts1.trees():
             self.assertEqual(tree.num_samples(), len(list(tree.leaves())))
 
-        # When simplify is true the samples should be zero to N - n
-        # up to n
-        ts2 = tsinfer.infer(sd, simplify=False)
+        # When simplify is true and there is no path compression,
+        # the samples should be zero to N - n up to n
+        ts2 = tsinfer.infer(sd, simplify=False, path_compression=False)
         self.assertEqual(
             list(ts2.samples()),
             list(range(ts2.num_nodes - n, ts2.num_nodes)))

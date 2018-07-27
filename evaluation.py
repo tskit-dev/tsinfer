@@ -570,7 +570,7 @@ def sim_true_and_inferred_ancestors(args):
         for s, v in zip(ts.sites(), V):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
-    inferred_anc = tsinfer.generate_ancestors(sample_data)
+    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
     true_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
@@ -639,8 +639,15 @@ def run_ancestor_comparison(args):
             assert np.sum(g) == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
         estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
 
-    print("estimated doubleton lengths")
-    print(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2])
+    print("mean estimated ancestor length", np.mean(estimated_anc_length))
+    # Get the number of ancestors that have the maximum length
+    max_len = np.max(estimated_anc_length)
+    num_max_len = np.sum(estimated_anc_length == max_len)
+    print("max_len = ", max_len)
+    print(
+        "fraction of ancestors with max length = ",
+        num_max_len / estimated_anc.num_ancestors)
+
     plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
     save_figure(name_format.format("doubleton-length-dist"))
@@ -784,7 +791,7 @@ def run_ancestor_comparison(args):
 
 def binomial_confidence(x, n, z=1.96):
     """
-    Calculate the Wilson binomial interval, e.g. from 
+    Calculate the Wilson binomial interval, e.g. from
     https://stackoverflow.com/questions/10029588/python-implementation-of-the-wilson-score-interval
     """ # noqa
     phat = x / n

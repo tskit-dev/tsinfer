@@ -114,40 +114,14 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    G = generate_samples(ts, error_rate)
-    with tsinfer.SampleData(
-            sequence_length=ts.sequence_length,
-            path="tmp.samples",
-            chunk_size=10) as sample_data:
-        for j in range(ts.num_samples // 2):
-            sample_data.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
-        for site, genotypes in zip(ts.sites(), G):
-            sample_data.add_site(site.position, genotypes)
-    with tsinfer.SampleData(sequence_length=ts.sequence_length) as subset_samples:
-        for j in range(ts.num_samples // 2):
-            subset_samples.add_individual(ploidy=2, metadata={"name": "ind_{}".format(j)})
-        for site, genotypes in zip(ts.sites(), G):
-            if site.id % 2 == 0:
-                subset_samples.add_site(site.position, genotypes)
-    print(sample_data)
-    print(subset_samples)
-
-    # ts = tsinfer.infer(sample_data, simplify=False)
-    # for tree in ts.trees():
-    #     print(tree.draw(format="unicode"))
-
-    # # sample_data.finalise()
-    # # print(sample_data)
-    # print("LOADED")
-    # with tsinfer.SampleData.load("tmp.samples") as sample_data:
-    #     print(sample_data)
-    # print(sample_data)
+    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
     ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
-    # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
-    # dump_provenance(output_ts)
+    print(ancestor_data)
+#     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
+#     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
+#     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+#     # dump_provenance(output_ts)
 
 
 def dump_provenance(ts):
@@ -160,7 +134,7 @@ def dump_provenance(ts):
 
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
-    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.hdf5".format(
+    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(
             n, num_megabases)
     if os.path.exists(input_file):
         ts = msprime.load(input_file)
@@ -175,20 +149,19 @@ def build_profile_inputs(n, num_megabases):
     if os.path.exists(filename):
         os.unlink(filename)
     # daiquiri.setup(level="DEBUG")
-    sample_data = tsinfer.SampleData.initialise(
-        sequence_length=ts.sequence_length, path=filename, num_flush_threads=4)
-    progress_monitor = tqdm.tqdm(total=ts.num_samples)
-    for j in range(ts.num_samples):
-        sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
-        progress_monitor.update()
-    progress_monitor.close()
-    progress_monitor = tqdm.tqdm(total=ts.num_sites)
-    for variant in ts.variants():
-        sample_data.add_site(
-            variant.site.position, variant.alleles, variant.genotypes)
-        progress_monitor.update()
-    sample_data.finalise()
-    progress_monitor.close()
+    with tsinfer.SampleData(
+            sequence_length=ts.sequence_length, path=filename,
+            num_flush_threads=4) as sample_data:
+        # progress_monitor = tqdm.tqdm(total=ts.num_samples)
+        # for j in range(ts.num_samples):
+        #     sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
+        #     progress_monitor.update()
+        # progress_monitor.close()
+        progress_monitor = tqdm.tqdm(total=ts.num_sites)
+        for variant in ts.variants():
+            sample_data.add_site(variant.site.position, variant.genotypes)
+            progress_monitor.update()
+        progress_monitor.close()
 
     print(sample_data)
 
@@ -346,9 +319,9 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    # tsinfer_dev(6, 0.3, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(36, 0.3, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
-    minimise_dev()
+    # minimise_dev()
 
 #     for seed in range(1, 10000):
 #         print(seed)

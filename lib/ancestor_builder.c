@@ -104,31 +104,84 @@ ancestor_builder_get_consistent_samples(ancestor_builder_t *self, site_id_t site
     *num_samples = (size_t) k;
 }
 
-static inline bool
-ancestor_builder_make_site(ancestor_builder_t *self, site_id_t focal_site_id,
-        site_id_t site_id, node_id_t *restrict consistent_samples,
-        size_t num_consistent_samples, allele_t *ancestor)
+static int
+ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
+        int direction, site_id_t focal_site, allele_t *ancestor,
+        node_id_t *restrict sample_set, bool *restrict disagree,
+        site_id_t *last_site_ret)
 {
-    size_t j, ones;
-    const site_t focal_site = self->sites[focal_site_id];
-    allele_t *restrict site_genotypes = self->sites[site_id].genotypes;
-    bool ret = true;
+    int ret = 0;
+    site_id_t last_site = focal_site;
+    int64_t l;
+    node_id_t u;
+    size_t j, ones, zeros, tmp_size, sample_set_size;
+    size_t focal_site_frequency = self->sites[focal_site].frequency;
+    size_t min_sample_set_size = focal_site_frequency / 2;
+    const site_t *restrict sites = self->sites;
+    const size_t num_sites = self->num_sites;
+    const allele_t *restrict genotypes;
+    allele_t consensus;
 
-    if (self->sites[site_id].frequency > focal_site.frequency) {
-        ones = 0;
-        for (j = 0; j < num_consistent_samples; j++) {
-            ones += site_genotypes[consistent_samples[j]];
+    ancestor_builder_get_consistent_samples(self, focal_site,
+            sample_set, &sample_set_size);
+    assert(sample_set_size == focal_site_frequency);
+    memset(disagree, 0, self->num_samples * sizeof(*disagree));
+
+    /* printf("site=%d, direction=%d\n", (int) focal_site, direction); */
+    for (l = focal_site + direction; l >= 0 && l < (int64_t) num_sites; l += direction) {
+        /* printf("\tl = %d\n", l); */
+        ancestor[l] = 0;
+        last_site = (site_id_t) l;
+        if (sites[l].frequency > focal_site_frequency) {
+
+            /* printf("\t%d\t%d:", l, (int) sample_set_size); */
+            /* for (j = 0; j < sample_set_size; j++) { */
+            /*     printf("%d, ", sample_set[j]); */
+            /* } */
+
+            genotypes = self->sites[l].genotypes;
+            ones = 0;
+            for (j = 0; j < sample_set_size; j++) {
+                ones += genotypes[sample_set[j]];
+            }
+            zeros = sample_set_size - ones;
+            consensus = 0;
+            if (ones >= zeros) {
+                consensus = 1;
+            }
+            /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
+            for (j = 0; j < sample_set_size; j++) {
+                u = sample_set[j];
+                if (disagree[u] && genotypes[u] != consensus) {
+                    /* This sample has disagreed with consensus twice in a row,
+                     * so remove it */
+                    /* printf("\t\tremoving %d\n", sample_set[j]); */
+                    sample_set[j] = -1;
+                }
+            }
+            /* Repack the sample set */
+            tmp_size = 0;
+            for (j = 0; j < sample_set_size; j++) {
+                if (sample_set[j] != -1) {
+                    sample_set[tmp_size] = sample_set[j];
+                    tmp_size++;
+                }
+            }
+            sample_set_size = tmp_size;
+            if (sample_set_size <= min_sample_set_size) {
+                /* printf("BREAK\n"); */
+                break;
+            }
+            ancestor[l] = consensus;
+            /* For the remaining sample set, set the disagree flags based
+             * on whether they agree with the consensus for this site. */
+            for (j = 0; j < sample_set_size; j++) {
+                u = sample_set[j];
+                disagree[u] = genotypes[u] != consensus;
+            }
         }
-        if (ones == num_consistent_samples) {
-            ancestor[site_id] = 1;
-        } else if (ones == 0) {
-            ancestor[site_id] = 0;
-        } else {
-            ret = false;
-        }
-    } else {
-        ancestor[site_id] = 0;
     }
+    *last_site_ret = last_site;
     return ret;
 }
 
@@ -139,64 +192,41 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
         allele_t *ancestor)
 {
     int ret = 0;
-    int64_t l;
-    site_id_t j, k, focal_site, start, end;
-    size_t num_consistent_samples = 0;
-    size_t num_sites = self->num_sites;
-    node_id_t *consistent_samples = malloc(self->num_samples * sizeof(node_id_t));
-    bool consistent;
+    site_id_t focal_site, last_site;
+    node_id_t *sample_set = malloc(self->num_samples * sizeof(node_id_t));
+    bool *restrict disagree = calloc(self->num_samples, sizeof(*disagree));
 
-    if (consistent_samples == NULL) {
+    if (sample_set == NULL || disagree == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    // TODO proper error checking.
-    assert(num_focal_sites > 0);
+    assert(num_focal_sites == 1);
 
-    ancestor_builder_get_consistent_samples(self, focal_sites[0], consistent_samples,
-            &num_consistent_samples);
-    assert(num_consistent_samples == self->sites[focal_sites[0]].frequency);
-
-    /* Set any unknown values to -1 */
-    memset(ancestor, 0xff, num_sites * sizeof(allele_t));
-
-    /* Fill in the sites within the bounds of the focal sites. We have previously
-     * checked that there is no disagreement among the consistent_samples, so we
-     * just take the value from one of the samples */
     focal_site = focal_sites[0];
+    memset(ancestor, 0xff, self->num_sites * sizeof(*ancestor));
     ancestor[focal_site] = 1;
-    for (j = 1; j < (site_id_t) num_focal_sites; j++) {
-        for (k = focal_sites[j - 1] + 1; k < focal_sites[j]; k++) {
-            ancestor[k] = 0;
-            if (self->sites[k].frequency > self->sites[focal_site].frequency) {
-                ancestor[k] = self->sites[k].genotypes[consistent_samples[0]];
-            }
-        }
-        ancestor[focal_sites[j]] = 1;
-    }
-    /* Work leftwards from the first focal site */
-    focal_site = focal_sites[0];
-    consistent = true;
-    for (l = ((int64_t) focal_site) - 1; l >= 0 && consistent; l--) {
-        consistent = ancestor_builder_make_site(self, focal_site, l,
-                consistent_samples, num_consistent_samples, ancestor);
-    }
-    start = l + 1 + (int) !consistent;
 
-    /* Work rightwards from the last focal site */
-    consistent = true;
-    focal_site = focal_sites[num_focal_sites - 1];
-    for (l = focal_site + 1; l < (int64_t) num_sites && consistent; l++) {
-        consistent = ancestor_builder_make_site(self, focal_site, l,
-                consistent_samples, num_consistent_samples, ancestor);
+    ret = ancestor_builder_compute_ancestral_states(self,
+            +1, focal_site, ancestor, sample_set, disagree, &last_site);
+    if (ret != 0) {
+        goto out;
     }
-    end = l - (int) !consistent;
+    assert(ancestor[last_site] != -1);
+    *ret_end = last_site + 1;
 
-    *ret_start = start;
-    *ret_end = end;
+    ret = ancestor_builder_compute_ancestral_states(self,
+            -1, focal_site, ancestor, sample_set, disagree, &last_site);
+    if (ret != 0) {
+        goto out;
+    }
+    assert(ancestor[last_site] != -1);
+    *ret_start = last_site;
 out:
-    tsi_safe_free(consistent_samples);
+    tsi_safe_free(sample_set);
+    tsi_safe_free(disagree);
     return ret;
 }
+
 
 int WARN_UNUSED
 ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequency,
@@ -333,6 +363,9 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     return 0;
 }
 
+#if 0
+FIXME - remove this if we go with one-focal-site-per-ancestor
+
 /* Returns true if we should break the an ancestor that spans from focal
  * site a to focal site b */
 static bool
@@ -356,6 +389,7 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
     }
     return ret;
 }
+#endif
 
 int
 ancestor_builder_finalise(ancestor_builder_t *self)
@@ -369,6 +403,9 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     site_id_t *focal_sites = NULL;
     site_id_t *p;
     site_id_t *consistent_samples = malloc(self->num_samples * sizeof(node_id_t));
+
+    /* FIXME TODO we're doing a lot of unnecessary work here joining up sites with identical
+     * patterns. Refactor this if we finalise on a single focal site per ancestor */
 
     if (consistent_samples == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -403,9 +440,10 @@ ancestor_builder_finalise(ancestor_builder_t *self)
                 assert(num_consistent_samples == descriptor->frequency);
             }
             for (k = 0; k < map_elem->num_sites - 1; k++) {
-                if (ancestor_builder_break_ancestor(
-                        self, focal_sites[k], focal_sites[k + 1],
-                        consistent_samples, num_consistent_samples)) {
+                /* if (ancestor_builder_break_ancestor( */
+                /*         self, focal_sites[k], focal_sites[k + 1], */
+                /*         consistent_samples, num_consistent_samples)) { */
+                if (true) {
                     p = focal_sites + k + 1;
                     descriptor->num_focal_sites = p - descriptor->focal_sites;
                     descriptor = self->descriptors + self->num_ancestors;
