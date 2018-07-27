@@ -1033,6 +1033,8 @@ def run_ancestor_quality(args):
     data['Inferred age inaccuracy'] = data.expected_Frequency - data.Frequency
     data['Inference error bias'] = \
         (data["err_hiF should be 1"] + data["err_loF should be 1"]) / data.n_mismatches
+    data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
+    data['err_loF'] = (data["err_loF should be 1"] + data["err_loF should be 0"])
     Inaccuracy_label = "Sequence difference in overlapping region"
 
     name = "quality-by-missingness"
@@ -1105,6 +1107,23 @@ def run_ancestor_quality(args):
         s=data.n_mismatches.values, norm=MidpointNormalize(midpoint=0))
     ax.set(**ax_params)
     ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
+    save_figure(name_format.format(name))
+
+    name = "error-by-freq-mean-sem"
+    # show the (weighted) average
+    g = data[['err_hiF', 'err_loF', 'n_sites']].groupby(data.Frequency)
+    with warnings.catch_warnings():
+        # matplotlib warns for nans in error bars
+        warnings.simplefilter("ignore")
+        plt.plot(
+            g.sum().index, g.sum().err_hiF.values/g.sum().n_sites.values,
+            marker="o", label="Errors at higher freq than focal")
+        plt.plot(
+            g.sum().index, g.sum().err_loF.values/g.sum().n_sites.values,
+            marker="o", label="Errors at lower freq than focal")
+    plt.legend()
+    plt.ylabel(Inaccuracy_label)
+    plt.xlabel("Frequency")
     save_figure(name_format.format(name))
 
     name = "quality-by-freq-mean-sem"
