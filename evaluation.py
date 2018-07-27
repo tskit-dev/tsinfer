@@ -1014,11 +1014,6 @@ def run_ancestor_quality(args):
             "err_hiF should be 0", "err_loF should be 0",
             "Known time order", "orig_time"))
 
-    print(data[["err_hiF should be 1", "err_loF should be 1",
-                "err_hiF should be 0", "err_loF should be 0"]].sum())
-    data[["err_hiF should be 1", "err_loF should be 1",
-          "err_hiF should be 0", "err_loF should be 0", "n_sites"]].to_csv(
-        name_format.format("error_data.csv"))
     # we want to know for each site whether it the frequency puts it within the same
     # bounds as the known time order, and if not, whether we have inferred it as
     # too old or too young. So we make an ordered list of "expected" freqs
@@ -1036,6 +1031,14 @@ def run_ancestor_quality(args):
     data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
     data['err_loF'] = (data["err_loF should be 1"] + data["err_loF should be 0"])
     Inaccuracy_label = "Sequence difference in overlapping region"
+
+    print("{} ancestors, {} with at least one error".format(
+        len(data), np.sum(data.n_mismatches != 0)))
+    print(data[["err_hiF should be 1", "err_loF should be 1",
+                "err_hiF should be 0", "err_loF should be 0"]].sum())
+    data[["err_hiF should be 1", "err_loF should be 1",
+          "err_hiF should be 0", "err_loF should be 0", "n_sites"]].to_csv(
+        name_format.format("error_data.csv"))
 
     name = "quality-by-missingness"
     x_axis_length_metric = "fraction"  # or e.g. "fraction"
