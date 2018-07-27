@@ -102,17 +102,14 @@ class AncestorBuilder(object):
         Returns True if we should split the ancestor with focal sites at
         a and b into two separate ancestors.
         """
-        # FIXME experimental code assumes a single focal site. It may be
-        # that path compression makes this redundant in any case.
-        return True
-
-        # index = np.where(samples == 1)[0]
-        # for j in range(a + 1, b):
-        #     if self.sites[j].frequency > self.sites[a].frequency:
-        #         gj = self.sites[j].genotypes[index]
-        #         if not (np.all(gj == 1) or np.all(gj == 0)):
-        #             return True
-        # return False
+        # return True
+        index = np.where(samples == 1)[0]
+        for j in range(a + 1, b):
+            if self.sites[j].frequency > self.sites[a].frequency:
+                gj = self.sites[j].genotypes[index]
+                if not (np.all(gj == 1) or np.all(gj == 0)):
+                    return True
+        return False
 
     def ancestor_descriptors(self):
         """
@@ -174,20 +171,48 @@ class AncestorBuilder(object):
         return last_site
 
     def make_ancestor(self, focal_sites, a):
-        assert len(focal_sites) == 1
-        focal_site = focal_sites[0]
         a[:] = UNKNOWN_ALLELE
-        a[focal_site] = 1
-
+        for focal_site in focal_sites:
+            a[focal_site] = 1
+        focal_frequency = self.sites[focal_sites[0]].frequency
+        S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
+        for j in range(len(focal_sites) - 1):
+            for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
+                a[l] = 0
+                if self.sites[l].frequency > focal_frequency:
+                    g_l = self.sites[l].genotypes
+                    ones = sum(g_l[u] for u in S)
+                    zeros = len(S) - ones
+                    # print("\t", l, ones, zeros, sep="\t")
+                    if ones >= zeros:
+                        a[l] = 1
+        focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
         assert a[last_site] != UNKNOWN_ALLELE
         end = last_site + 1
+        focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
         assert a[last_site] != UNKNOWN_ALLELE
         start = last_site
         return start, end
+
+        # Version with 1 focal site
+        # assert len(focal_sites) == 1
+        # focal_site = focal_sites[0]
+        # a[:] = UNKNOWN_ALLELE
+        # a[focal_site] = 1
+
+        # last_site = self.compute_ancestral_states(
+        #         a, focal_site, range(focal_site + 1, self.num_sites))
+        # assert a[last_site] != UNKNOWN_ALLELE
+        # end = last_site + 1
+        # last_site = self.compute_ancestral_states(
+        #         a, focal_site, range(focal_site - 1, -1, -1))
+        # assert a[last_site] != UNKNOWN_ALLELE
+        # start = last_site
+        # return start, end
 
 
 class TreeSequenceBuilder(object):
