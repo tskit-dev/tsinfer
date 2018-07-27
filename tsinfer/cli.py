@@ -178,7 +178,7 @@ def run_generate_ancestors(args):
     sample_data = tsinfer.SampleData.load(args.input)
     tsinfer.generate_ancestors(
         sample_data, progress_monitor=progress_monitor, path=ancestors_path,
-        num_flush_threads=args.num_threads)
+        num_flush_threads=args.num_flush_threads, num_threads=args.num_threads)
     summarise_usage()
 
 
@@ -302,6 +302,14 @@ def add_num_threads_argument(parser):
             "algorithm (default)."))
 
 
+def add_num_flush_threads_argument(parser):
+    parser.add_argument(
+        "--num-flush-threads", "-F", type=int, default=2,
+        help=(
+            "The number of data flush threads to use. If < 1, all data is flushed "
+            "synchronously in the main thread (default=2)"))
+
+
 def get_cli_parser():
     top_parser = argparse.ArgumentParser(
         description="Command line interface for tsinfer.")
@@ -321,6 +329,7 @@ def get_cli_parser():
     add_input_file_argument(parser)
     add_ancestors_file_argument(parser)
     add_num_threads_argument(parser)
+    add_num_flush_threads_argument(parser)
     add_progress_argument(parser)
     add_logging_arguments(parser)
     parser.set_defaults(runner=run_generate_ancestors)

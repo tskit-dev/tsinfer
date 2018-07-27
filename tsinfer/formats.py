@@ -28,7 +28,6 @@ import os.path
 import queue
 import threading
 import uuid
-import warnings
 
 import numpy as np
 import zarr
@@ -123,25 +122,17 @@ class BufferedItemWriter(object):
         self.current_size = 0
         self.total_items = 0
         for key, array in self.arrays.items():
-            # Make sure the destination array is zero sized at the start.
+            self.buffers[key] = [None for _ in range(self.num_buffers)]
+            np_array = array[:]
             shape = list(array.shape)
+            shape[0] = self.chunk_size
+            for j in range(self.num_buffers):
+                self.buffers[key][j] = np.empty_like(np_array)
+                self.buffers[key][j].resize(*shape)
+            # Make sure the destination array is zero sized at the start.
             shape[0] = 0
             array.resize(*shape)
-            self.buffers[key] = [None for _ in range(self.num_buffers)]
-            for j in range(self.num_buffers):
-                chunks = list(array.shape)
-                # For the buffer we must set the chunk size to 1, or we will
-                # reencode the buffer each time we update.
-                chunks[0] = 1
-                # 2018-04-18 Zarr current emits a warning when calling empty_like on
-                # object arrays. See https://github.com/zarr-developers/zarr/issues/257
-                # Remove this catch_warnings when the bug is fixed.
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    self.buffers[key][j] = zarr.empty_like(
-                        array, compressor=None, chunks=chunks)
-                chunks[0] = self.chunk_size
-                self.buffers[key][j].resize(*chunks)
+
         self.start_offset = [0 for _ in range(self.num_buffers)]
         self.num_buffered_items = [0 for _ in range(self.num_buffers)]
         self.write_buffer = 0
@@ -180,7 +171,8 @@ class BufferedItemWriter(object):
                     shape[0] = self.current_size
                     array.resize(*shape)
         for key, array in self.arrays.items():
-            array[start: end] = self.buffers[key][write_buffer][:n]
+            buffered = self.buffers[key][write_buffer][:n]
+            array[start: end] = buffered
         logger.debug("Buffer {} flush done".format(write_buffer))
 
     def _flush_worker(self, thread_index):

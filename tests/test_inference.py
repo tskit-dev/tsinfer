@@ -399,14 +399,16 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
     Tests for the ancestor generation process.
     """
 
-    def verify_ancestor_generator(self, genotypes):
+    def verify_ancestor_generator(self, genotypes, num_threads=0):
         m, n = genotypes.shape
         with tsinfer.SampleData() as sample_data:
             for j in range(m):
                 sample_data.add_site(j, genotypes[j])
 
-        adc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
-        adp = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
+        adc = tsinfer.generate_ancestors(
+            sample_data, engine=tsinfer.C_ENGINE, num_threads=num_threads)
+        adp = tsinfer.generate_ancestors(
+            sample_data, engine=tsinfer.PY_ENGINE, num_threads=num_threads)
 
         # # TODO clean this up when we're finished mucking around with the
         # # ancestor generator.
@@ -467,6 +469,18 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         G, _ = get_random_data_example(20, 50, seed=1234)
         # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
+
+    def test_random_data_threads(self):
+        G, _ = get_random_data_example(20, 50, seed=1234)
+        # G, _ = get_random_data_example(20, 10)
+        self.verify_ancestor_generator(G, num_threads=4)
+
+    def test_with_recombination_long_threads(self):
+        ts = msprime.simulate(
+            20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1)
+        assert ts.num_trees > 1
+        assert ts.num_sites > 100
+        self.verify_ancestor_generator(ts.genotype_matrix(), num_threads=3)
 
 
 class TestGeneratedAncestors(unittest.TestCase):

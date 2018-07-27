@@ -116,7 +116,8 @@ def tsinfer_dev(
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
+    ancestor_data = tsinfer.generate_ancestors(
+        sample_data, engine=engine, num_threads=1)
     print(ancestor_data)
 #     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
@@ -302,15 +303,23 @@ def minimise_dev():
     other = minimise(subset_ts)
 
 
+def run_build():
+
+    sample_data = tsinfer.load(sys.argv[1])
+    ad = tsinfer.generate_ancestors(sample_data)
+    print(ad)
+
 
 if __name__ == "__main__":
+
+    # run_build()
 
     # np.set_printoptions(linewidth=20000)
     # np.set_printoptions(threshold=20000000)
 
     # tutorial_samples()
 
-    # build_profile_inputs(10, 1)
+    # build_profile_inputs(10, 10)
     # build_profile_inputs(100, 10)
     # build_profile_inputs(1000, 100)
     # build_profile_inputs(10**4, 100)
