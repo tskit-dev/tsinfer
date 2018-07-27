@@ -1032,7 +1032,7 @@ def run_ancestor_quality(args):
     data['Inaccuracy'] = data.n_mismatches / data.n_sites
     data['Inferred age inaccuracy'] = data.expected_Frequency - data.Frequency
     data['Inference error bias'] = \
-        (data["err_hiF should be 0"] + data["err_loF should be 0"]) / data.n_mismatches
+        (data["err_hiF should be 1"] + data["err_loF should be 1"]) / data.n_mismatches
     Inaccuracy_label = "Sequence difference in overlapping region"
 
     name = "quality-by-missingness"
