@@ -24,7 +24,6 @@ import unittest
 import subprocess
 import sys
 import tempfile
-import os
 
 import msprime
 import numpy as np
@@ -641,9 +640,6 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="tsi_eval") as tmpdir:
             subprocess.check_output(
                 [sys.executable, "evaluation.py"] + command + ["-d", tmpdir])
-            # Any plots should be in png format by default
-            for path in os.listdir(tmpdir):
-                self.assertTrue(path.endswith(".png"))
 
     def test_help(self):
         self.run_command(["--help"])
@@ -668,3 +664,6 @@ class TestCli(unittest.TestCase):
 
     def test_node_degree(self):
         self.run_command(["node-degree", "-n", "5", "-l", "0.1"])
+
+    def test_ancestor_quality(self):
+        self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1"])

@@ -25,3 +25,4 @@ setuptools_scm
 pandas
 matplotlib
 seaborn
+colorama
