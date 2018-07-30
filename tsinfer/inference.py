@@ -228,13 +228,16 @@ class AncestorsGenerator(object):
         else:
             raise ValueError("Unknown engine:{}".format(engine))
 
-    def add_sites(self):
+    def add_sites(self, times=None):
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, (site_id, genotypes) in enumerate(
                 self.sample_data.genotypes(inference_sites=True)):
-            frequency = np.sum(genotypes)
-            self.ancestor_builder.add_site(j, int(frequency), genotypes)
+            if times is None:
+                t = int(np.sum(genotypes))
+            else:
+                t = times[j]
+            self.ancestor_builder.add_site(j, t, genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")

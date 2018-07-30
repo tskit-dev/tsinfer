@@ -9,6 +9,7 @@ import warnings
 import os.path
 import json
 import logging
+import collections
 
 import numpy as np
 import pandas as pd
@@ -583,7 +584,31 @@ def sim_true_and_inferred_ancestors(args):
         for s, v in zip(ts.sites(), V):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
-    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
+    if args.true_time:
+
+        time_map = collections.defaultdict(list)
+        j = 0
+        for tree in ts.trees():
+            for site in tree.sites():
+                assert len(site.mutations) == 1
+                node = site.mutations[0].node
+                if tree.num_samples(node) > 1:
+                    time_map[ts.node(node).time].append(j)
+                    j += 1
+        times = [None for _ in range(j)]
+        for j, t in enumerate(sorted(time_map.keys()), start=2):
+            # print(j, time, time_map[time])
+            for site in time_map[t]:
+                times[site] = j
+
+        inferred_anc = tsinfer.AncestorData(sample_data)
+        generator = tsinfer.AncestorsGenerator(
+            sample_data, inferred_anc, tsinfer.DummyProgressMonitor(),
+            engine=args.engine)
+        generator.add_sites(times)
+        generator.run()
+    else:
+        inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
     true_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
@@ -1445,13 +1470,16 @@ if __name__ == "__main__":
         "--store-data", "-S", action="store_true",
         help="Store the raw data.")
     parser.add_argument(
-        "--length-scale", "-X", choices=['linear', 'log'], default="linear",
+        "--length-scale", "-X", choices=['linear', 'log'], default="log",
         help='Length scale for distances when plotting')
     parser.add_argument(
         "--running-average-span", "-A", type=int, default=51,
         help=(
             "How many ancestors should we average over when calculating "
             "running means and medians (must be an odd number)"))
+    parser.add_argument(
+        "--true-time", action="store_true",
+        help="Generate ancestors using their true times.")
 
     parser = subparsers.add_parser(
         "ancestor-quality", aliases=["aq"],
@@ -1488,6 +1516,9 @@ if __name__ == "__main__":
         help=(
             "How many ancestors should we average over when calculating "
             "running means and medians (must be an odd number)"))
+    parser.add_argument(
+        "--true-time", action="store_true",
+        help="Generate ancestors using their true times.")
 
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"],

@@ -68,7 +68,7 @@ class AncestorBuilder(object):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
-        self.frequency_map = [{} for _ in range(self.num_samples + 1)]
+        self.frequency_map = collections.defaultdict(dict)
 
     def add_site(self, site_id, frequency, genotypes):
         """
@@ -118,7 +118,7 @@ class AncestorBuilder(object):
         """
         # self.print_state()
         ret = []
-        for frequency in reversed(range(self.num_samples + 1)):
+        for frequency in reversed(sorted(self.frequency_map.keys())):
             # Need to make the order in which these are returned deterministic,
             # or ancestor IDs are not replicable between runs. In the C implementation
             # We sort by the genotype patterns
@@ -127,7 +127,6 @@ class AncestorBuilder(object):
                 focal_sites = np.array(
                     self.frequency_map[frequency][key], dtype=np.int32)
                 samples = np.frombuffer(key, dtype=np.uint8)
-                # print("focal_sites = ", key, samples, focal_sites)
                 start = 0
                 for j in range(len(focal_sites) - 1):
                     if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samples):
@@ -138,8 +137,9 @@ class AncestorBuilder(object):
 
     def compute_ancestral_states(self, a, focal_site, sites):
         focal_frequency = self.sites[focal_site].frequency
-        min_sample_set_size = focal_frequency // 2
+        # print("Compute for ", focal_site, "@F = ", focal_frequency)
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
+        min_sample_set_size = len(S) // 2
         remove_buffer = []
         last_site = focal_site
         # print("Computing for ", focal_site)

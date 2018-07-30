@@ -114,15 +114,44 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
+    time_map = collections.defaultdict(list)
+    j = 0
+    for tree in ts.trees():
+        for site in tree.sites():
+            assert len(site.mutations) == 1
+            node = site.mutations[0].node
+            if tree.num_samples(node) > 1:
+                time_map[ts.node(node).time].append(j)
+                j += 1
+    times = [None for _ in range(j)]
+    for j, time in enumerate(sorted(time_map.keys()), start=2):
+        # print(j, time, time_map[time])
+        for site in time_map[time]:
+            times[site] = j
+
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = tsinfer.generate_ancestors(
-        sample_data, engine=engine, num_threads=num_threads)
+    # ancestor_data = tsinfer.generate_ancestors(
+    #     sample_data, engine=engine, num_threads=num_threads)
+
+    print(times)
+    ancestor_data = tsinfer.AncestorData(sample_data)
+    generator = tsinfer.AncestorsGenerator(
+        sample_data, ancestor_data, tsinfer.DummyProgressMonitor(),
+        engine=engine, num_threads=num_threads)
+    generator.add_sites(times)
+    generator.run()
+
     print(ancestor_data)
-#     ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
-#     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
-#     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
+    # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
+
+    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
 #     # dump_provenance(output_ts)
+    G1 = ts.genotype_matrix()
+    G2 = output_ts.genotype_matrix()
+    assert np.array_equal(G1, G2)
+
 
 
 def dump_provenance(ts):
