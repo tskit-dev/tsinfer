@@ -583,7 +583,7 @@ def sim_true_and_inferred_ancestors(args):
         for s, v in zip(ts.sites(), V):
             sample_data.add_site(s.position, v,  ["0", "1"])
 
-    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=tsinfer.C_ENGINE)
+    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
     true_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
@@ -1128,6 +1128,7 @@ def run_ancestor_quality(args):
         center=True, window=args.running_average_span, min_periods=1).mean()
     plt.plot(f_data.Frequency, rolling_mean.hi, "-", c="darkgoldenrod")
     plt.plot(f_data.Frequency, rolling_mean.lo, "-", c="mediumseagreen")
+    plt.ylim(None, args.diff_y_lim)
 
     plt.legend()
     plt.ylabel(Inaccuracy_label)
@@ -1145,6 +1146,7 @@ def run_ancestor_quality(args):
             marker="o", ls='none', ecolor='0.6')
     plt.ylabel(Inaccuracy_label)
     plt.xlabel("Frequency")
+    plt.ylim(None, args.diff_y_lim)
     save_figure(name_format.format(name))
 
     name = "quality-by-time"
@@ -1304,6 +1306,9 @@ if __name__ == "__main__":
     top_parser.add_argument(
         "-o", "--output-format", default="png",
         help="The output format for plots")
+    top_parser.add_argument(
+        "-e", "--engine", default=tsinfer.C_ENGINE,
+        help="The implementation to use.")
 
     subparsers = top_parser.add_subparsers(dest="subcommand")
     subparsers.required = True
@@ -1313,7 +1318,6 @@ if __name__ == "__main__":
         help="Runs the perfect inference process on simulated tree sequences.")
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
-    parser.add_argument("--engine", default=tsinfer.C_ENGINE)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
@@ -1476,6 +1480,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--length-scale", "-X", choices=['linear', 'log'], default="linear",
         help='Length scale for distances when plotting')
+    parser.add_argument(
+        "--diff-y-lim", help="The y-limit to use for sequence difference plots.",
+        default=None, type=float)
     parser.add_argument(
         "--running-average-span", "-A", type=int, default=51,
         help=(
