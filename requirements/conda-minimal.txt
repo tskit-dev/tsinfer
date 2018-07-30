@@ -12,3 +12,4 @@ attrs
 pandas
 matplotlib
 seaborn
+colorama
