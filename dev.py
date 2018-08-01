@@ -571,7 +571,7 @@ if __name__ == "__main__":
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
     tsinfer_dev(50, 2.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8,
-            error_rate=0.01)
+            error_rate=0.0)
 
     # minimise_dev()
 

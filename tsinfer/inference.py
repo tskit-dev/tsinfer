@@ -229,6 +229,7 @@ class AncestorsGenerator(object):
             raise ValueError("Unknown engine:{}".format(engine))
 
     def add_sites(self, times=None):
+        # TODO remove times if we don't use it.
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, (site_id, genotypes) in enumerate(
@@ -743,7 +744,9 @@ class AncestorMatcher(Matcher):
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
                 ancestor.id, haplotype, start, end, thread_index)
-        assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
+        # TODO This is no longer true after allowing ancestor building
+        # at the same frequency. Need an assert that makes sense here now.
+        # assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]

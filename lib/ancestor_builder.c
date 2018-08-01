@@ -132,7 +132,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
         /* printf("\tl = %d\n", l); */
         ancestor[l] = 0;
         last_site = (site_id_t) l;
-        if (sites[l].frequency > focal_site_frequency) {
+        if (sites[l].frequency >= focal_site_frequency) {
 
             /* printf("\t%d\t%d:", l, (int) sample_set_size); */
             /* for (j = 0; j < sample_set_size; j++) { */
@@ -415,22 +415,23 @@ static bool
 ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
         site_id_t b, node_id_t *restrict samples, size_t num_samples)
 {
-    bool ret = false;
-    site_id_t j, k;
-    size_t ones;
+    return true;
+    /* bool ret = false; */
+    /* site_id_t j, k; */
+    /* size_t ones; */
 
-    for (j = a + 1; j < b && !ret; j++) {
-        if (self->sites[j].frequency > self->sites[a].frequency) {
-            ones = 0;
-            for (k = 0; k < (site_id_t) num_samples; k++) {
-                ones += self->sites[j].genotypes[samples[k]];
-            }
-            if (ones != num_samples && ones != 0) {
-                ret = true;
-            }
-        }
-    }
-    return ret;
+    /* for (j = a + 1; j < b && !ret; j++) { */
+    /*     if (self->sites[j].frequency > self->sites[a].frequency) { */
+    /*         ones = 0; */
+    /*         for (k = 0; k < (site_id_t) num_samples; k++) { */
+    /*             ones += self->sites[j].genotypes[samples[k]]; */
+    /*         } */
+    /*         if (ones != num_samples && ones != 0) { */
+    /*             ret = true; */
+    /*         } */
+    /*     } */
+    /* } */
+    /* return ret; */
 }
 
 int
