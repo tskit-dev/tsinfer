@@ -109,49 +109,262 @@ def tsinfer_dev(
     ts = msprime.simulate(
             n, Ne=10**4, length=L_megabases,
             recombination_rate=recombination_rate, mutation_rate=1e-8,
-            random_seed=seed)
+            random_seed=seed,
+            model="smc_prime")
     if debug:
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    time_map = collections.defaultdict(list)
-    j = 0
-    for tree in ts.trees():
-        for site in tree.sites():
-            assert len(site.mutations) == 1
-            node = site.mutations[0].node
-            if tree.num_samples(node) > 1:
-                time_map[ts.node(node).time].append(j)
-                j += 1
-    times = [None for _ in range(j)]
-    for j, time in enumerate(sorted(time_map.keys()), start=2):
-        # print(j, time, time_map[time])
-        for site in time_map[time]:
-            times[site] = j
+    # sample_data = tsinfer.SampleData.from_tree_sequence(ts, compressor=None)
+    V = generate_samples(ts, error_rate)
+    with tsinfer.SampleData(compressor=None) as sample_data:
+        for site in ts.sites():
+            sample_data.add_site(site.position, V[site.id])
+    # print(sample_data)
 
-    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    time_type = "frequency"
+    ancestor_data = tsinfer.generate_ancestors(
+        sample_data, engine=engine, num_threads=num_threads)
 
-    # ancestor_data = tsinfer.generate_ancestors(
-    #     sample_data, engine=engine, num_threads=num_threads)
+#     # True time doesn't work with error at the moment
+#     time_type = "true"
+#     time_map = collections.defaultdict(list)
+#     j = 0
+#     for tree in ts.trees():
+#         for site in tree.sites():
+#             assert len(site.mutations) == 1
+#             node = site.mutations[0].node
+#             if tree.num_samples(node) > 1:
+#                 time_map[ts.node(node).time].append(j)
+#                 j += 1
+#     times = [None for _ in range(j)]
+#     for j, time in enumerate(sorted(time_map.keys()), start=2):
+#         # print(j, time, time_map[time])
+#         for site in time_map[time]:
+#             times[site] = j
+#     assert len(times) == sample_data.num_inference_sites
+#     # print(times)
+#     ancestor_data = tsinfer.AncestorData(sample_data)
+#     generator = tsinfer.AncestorsGenerator(
+#         sample_data, ancestor_data, tsinfer.DummyProgressMonitor(),
+#         engine=engine, num_threads=num_threads)
+#     generator.add_sites(times)
+#     generator.run()
 
-    print(times)
-    ancestor_data = tsinfer.AncestorData(sample_data)
-    generator = tsinfer.AncestorsGenerator(
-        sample_data, ancestor_data, tsinfer.DummyProgressMonitor(),
-        engine=engine, num_threads=num_threads)
-    generator.add_sites(times)
-    generator.run()
+    print(time_type, "time")
+    # Generate the true ancestors from the ts.
+    # ts = subset_sites(ts, ancestor_data.sites_position[:])
+    ts = tsinfer.minimise(ts)
+    tables = ts.dump_tables()
 
-    print(ancestor_data)
-    ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
+    site_map = {site.position: site.id for site in  ts.sites()}
+    site_map[0.0] = 0
+    site_map[ts.sequence_length] = len(site_map)
+    tables.nodes.set_columns(
+        flags=np.ones_like(tables.nodes.flags),
+        time=tables.nodes.time)
+    # print(tables)
+    ts = tables.tree_sequence()
+    H = ts.genotype_matrix().T.astype(int)
+    start = {u: ts.sequence_length for u in range(ts.num_nodes)}
+    end = {u: 0 for u in range(ts.num_nodes)}
+    for e in ts.edges():
+        start[e.parent] = min(start[e.parent], e.left)
+        end[e.parent] = max(end[e.parent], e.right)
+
+    for node in ts.nodes():
+        if end[node.id] != 0:
+            left = site_map[start[node.id]]
+            right = site_map[end[node.id]]
+            haplotype = H[node.id][:]
+            haplotype[:left] = -1
+            haplotype[right:] = -1
+            # h = "".join(map(str, haplotype[left: right]))
+            # print(node.id, left, right, h, sep="\t")
+            assert left < right
+            assert np.all(haplotype[left: right] >= 0)
+
+    # Make a mapping from focal sites to ancestors.
+    true_site_ancestor_map = {}
+    for site in ts.sites():
+        assert len(site.mutations) == 1
+        node = site.mutations[0].node
+        true_site_ancestor_map[site.id] = H[node][:]
+        # print("site = ", site.id, "node = ", node)
+        assert true_site_ancestor_map[site.id][site.id] == 1
+
+    # The equivalent map for generated ancestors.
+    inferred_site_ancestor_map = {}
+    inference_sites = np.where(sample_data.sites_inference[:])[0]
+    ancestor_site_position = ancestor_data.sites_position[:]
+    M = sample_data.num_sites
+    site_time = np.zeros(M, dtype=int)
+    num_ancestor_sites = ancestor_data.num_sites
+    # focal_site_time = np.zeros(ancestor_data.num_sites)
+    total_sites = 0
+    total_ones = 0
+    for ancestor in ancestor_data.ancestors():
+        # First map the ancestor haplotype into an array with the number of
+        # inference sites.
+        b = np.zeros(num_ancestor_sites, dtype=np.int8) - 1
+        b[ancestor.start: ancestor.end] = ancestor.haplotype
+        # Now map this into an array of the full size.
+        a = np.zeros(M, dtype=np.int8)
+        start = inference_sites[ancestor.start]
+        if ancestor.end == num_ancestor_sites:
+            end = M
+        else:
+            end = inference_sites[ancestor.end]
+        a[:start] = -1
+        a[end:] = -1
+        a[inference_sites] = b
+        total_sites += end - start
+        total_ones += np.sum(a[start: end] == 1)
+        for focal_site in ancestor.focal_sites:
+            mapped_site = inference_sites[focal_site]
+            assert start <= mapped_site < end
+            assert mapped_site not in inferred_site_ancestor_map
+            site_time[mapped_site] = ancestor.time
+            inferred_site_ancestor_map[mapped_site] = a
+
+    print("total_sites", total_sites)
+    print("total_ones", total_ones)
+    print("fraction", total_ones / total_sites)
+
+    # Analyse the data.
+
+    overlap_count = 0
+    mismatch_count = 0
+    # Arrays for the dataframe stratifying by time.
+    overlaps = []
+    mismatches = []
+    times = []
+    for site, inferred_ancestor in inferred_site_ancestor_map.items():
+        time = site_time[site]
+        true_ancestor = true_site_ancestor_map[site]
+        assert inferred_ancestor[site] == 1
+        assert true_ancestor[site] >= 0
+        true_length = np.sum(true_ancestor >= 0)
+        length = np.sum(inferred_ancestor >= 0)
+        # ancestor_comparisons += 1
+        # short_count += length < true_length
+        overlap = np.where(np.logical_and(inferred_ancestor >= 0, true_ancestor >= 0))[0]
+        assert len(overlap) > 0
+        start = overlap[0]
+        end = overlap[-1] + 1
+        assert np.array_equal(np.arange(start, end, dtype=int), overlap)
+        mismatch_index = inferred_ancestor[start: end] != true_ancestor[start: end]
+        mismatch = np.sum(mismatch_index)
+        overlap_count += end - start
+        mismatch_count += mismatch
+        times.append(time)
+        mismatches.append(mismatch)
+        overlaps.append(end - start)
+
+        # print(site, "@t =", time)
+        # print("\t", inferred_ancestor[start: end])
+        # print("\t", true_ancestor[start: end])
+        # print("\t", end - start, mismatch)
+
+
+    print("Total mismatch rate = ", mismatch_count / overlap_count)
+    data = pd.DataFrame({
+        "overlap": overlaps, "mismatches": mismatches, "time": times})
+
+    total = data.groupby(data.time).sum()
+    assert np.sum(data.overlap) == overlap_count
+    assert np.sum(data.mismatches) == mismatch_count
+
+    plt.plot(total.mismatches / total.overlap, ".")
+    plt.xlabel("Time")
+    plt.ylabel("Error")
+    plt.savefig("tmp__NOBACKUP__/error-{}.png".format(time_type))
+    plt.clf()
+
+    plt.plot(total.overlap, ".")
+    plt.xlabel("Time")
+    plt.ylabel("Base count")
+    plt.savefig("tmp__NOBACKUP__/count-{}.png".format(time_type))
+    plt.clf()
+
+    # print(site_ancestor_map)
+    # position = ancestor_data.sites_position[:]
+    # # inference_sites = sample_data.sites_inference[:]
+    # overlap_count = 0
+    # mismatch_count = 0
+    # short_count = 0
+    # ancestor_comparisons = 0
+    # older_site_count = 0
+    # equal_site_count = 0
+    # younger_site_count = 0
+    # # Arrays for the dataframe stratifying by time.
+    # overlaps = []
+    # mismatches = []
+    # times = []
+    # # The first index here is zero if the error site is older than the
+    # # focal site, 0 if it is equal, and 1 otherwise. The second index is the
+    # # value of mismatching base.
+    # mismatch_type_count = np.zeros((3, 2), dtype=int)
+    # for ancestor in ancestor_data.ancestors():
+    #     # print(ancestor)
+    #     a = np.zeros(ancestor_data.num_sites, dtype=np.int8)
+    #     a[ancestor.start: ancestor.end] = ancestor.haplotype
+    #     for site in ancestor.focal_sites:
+    #         # print("Site = ", position[site], ancestor.time)
+    #         true_ancestor = site_ancestor_map[position[site]]
+    #         true_length = np.sum(true_ancestor >= 0)
+    #         length = np.sum(a >= 0)
+    #         ancestor_comparisons += 1
+    #         short_count += length < true_length
+    #         overlap = np.logical_and(a >= 0, true_ancestor >= 0)
+    #         equal_site_count += np.sum(focal_site_time[overlap] == ancestor.time)
+    #         younger_site_count += np.sum(focal_site_time[overlap] < ancestor.time)
+    #         older_site_count += np.sum(focal_site_time[overlap] > ancestor.time)
+
+    #         mismatch = np.logical_and(overlap, a != true_ancestor)
+    #         overlap_count += np.sum(overlap)
+    #         mismatch_count += np.sum(mismatch)
+    #         overlaps.append(np.sum(overlap))
+    #         mismatches.append(np.sum(mismatch))
+    #         times.append(ancestor.time)
+    #         for mismatch_site in np.where(mismatch)[0]:
+    #             assert a[mismatch_site] != true_ancestor[mismatch_site]
+    #             mismatch_site_time = focal_site_time[mismatch_site]
+    #             index = 0
+    #             if mismatch_site_time == ancestor.time:
+    #                 index = 1
+    #             elif mismatch_site_time < ancestor.time:
+    #                 index = 2
+    #             # print("\t", mismatch_site, mismatch_site_time, index)
+    #             mismatch_type_count[index, a[mismatch_site]] += 1
+    #             # print("\tmismatch at ", mismatch_site, a[mismatch_site], true_ancestor[mismatch_site])
+    # print("Total mismatch rate = ", mismatch_count / overlap_count)
+    # print("Older  site comparisons =", older_site_count)
+    # print("Equal  site comparisons =", equal_site_count)
+    # print("Younger site comparison =", younger_site_count)
+    # print("Short ancestor fraction =", short_count / ancestor_comparisons)
+    # print("False 0 at older site   =", mismatch_type_count[0][0], "\t",
+    #         mismatch_type_count[0][0] / older_site_count)
+    # print("False 1 at older site   =", mismatch_type_count[0][1], "\t",
+    #         mismatch_type_count[0][1] / older_site_count)
+    # print("False 0 at equal site   =", mismatch_type_count[1][0], "\t",
+    #         mismatch_type_count[1][0] / equal_site_count)
+    # print("False 1 at equal site   =", mismatch_type_count[1][1], "\t",
+    #         mismatch_type_count[1][1] / equal_site_count)
+    # print("False 0 at younger site =", mismatch_type_count[2][0])
+    # print("False 1 at younger site =", mismatch_type_count[2][1])
+    # # print(mismatch_type_count)
+
+
+    # print(ancestor_data)
+    # ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
 
-    output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
-#     # dump_provenance(output_ts)
-    G1 = ts.genotype_matrix()
-    G2 = output_ts.genotype_matrix()
-    assert np.array_equal(G1, G2)
-
+    # output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+# #     # dump_provenance(output_ts)
+    # G1 = ts.genotype_matrix()
+    # G2 = output_ts.genotype_matrix()
+    # assert np.array_equal(G1, G2)
 
 
 def dump_provenance(ts):
@@ -343,8 +556,8 @@ if __name__ == "__main__":
 
     # run_build()
 
-    # np.set_printoptions(linewidth=20000)
-    # np.set_printoptions(threshold=20000000)
+    np.set_printoptions(linewidth=20000)
+    np.set_printoptions(threshold=20000000)
 
     # tutorial_samples()
 
@@ -357,7 +570,8 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(36, 0.3, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(50, 2.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8,
+            error_rate=0.01)
 
     # minimise_dev()
 
