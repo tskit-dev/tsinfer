@@ -28,6 +28,7 @@ import logging
 import threading
 import json
 import heapq
+import itertools
 
 import numpy as np
 import humanize
@@ -137,7 +138,8 @@ def generate_ancestors(
         sample_data, ancestor_data, progress_monitor, engine=engine,
         num_threads=num_threads)
     generator.add_sites()
-    generator.run()
+    generator.make_ancestors()
+    generator.flush()
     return ancestor_data
 
 
@@ -217,6 +219,9 @@ class AncestorsGenerator(object):
         self.num_sites = sample_data.num_inference_sites
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
+        # For each time, keep a map of haplotypes to the focal sites.
+        self.ancestor_map = collections.defaultdict(
+            lambda: collections.defaultdict(list))
         if engine == C_ENGINE:
             logger.debug("Using C AncestorBuilder implementation")
             self.ancestor_builder = _tsinfer.AncestorBuilder(
@@ -243,6 +248,11 @@ class AncestorsGenerator(object):
         progress.close()
         logger.info("Finished adding sites")
 
+    def _add_ancestor(self, start, end, time, focal_sites, haplotype):
+        # print("Adding", start, end, time, focal_sites, haplotype)
+        key = start, end, haplotype.tobytes()
+        self.ancestor_map[time][key].extend(focal_sites)
+
     def _run_synchronous(self, progress):
         a = np.zeros(self.num_sites, dtype=np.uint8)
         for freq, focal_sites in self.descriptors:
@@ -252,9 +262,7 @@ class AncestorsGenerator(object):
             logger.debug(
                 "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
                     focal_sites.shape[0], e - s, duration))
-            self.ancestor_data.add_ancestor(
-                start=s, end=e, time=self.time_map[freq], focal_sites=focal_sites,
-                haplotype=a[s:e])
+            self._add_ancestor(s, e, self.time_map[freq], focal_sites, a[s: e])
             progress.update()
 
     def _run_threaded(self, progress):
@@ -275,9 +283,7 @@ class AncestorsGenerator(object):
             num_drained = 0
             while len(add_queue) > 0 and add_queue[0][0] == next_add_index:
                 _, time, focal_sites, start, end, haplotype = heapq.heappop(add_queue)
-                self.ancestor_data.add_ancestor(
-                    start=start, end=end, time=time, focal_sites=focal_sites,
-                    haplotype=haplotype)
+                self._add_ancestor(start, end, time, focal_sites, haplotype)
                 progress.update()
                 next_add_index += 1
                 num_drained += 1
@@ -316,7 +322,7 @@ class AncestorsGenerator(object):
             build_threads[j].join()
         drain_add_queue()
 
-    def run(self):
+    def make_ancestors(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
         # Build the map from frequencies to time.
@@ -347,6 +353,45 @@ class AncestorsGenerator(object):
                 self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
+
+    def flush(self):
+        for time in sorted(self.ancestor_map.keys(), reverse=True):
+            all_focal = np.array(list(itertools.chain(
+                *self.ancestor_map[time].values())), dtype=int)
+            all_focal.sort()
+            # for focal in self.ancestor_map[time].values():
+            #     print(focal)
+            print("Time = ", time)
+            header = [" " for _ in range(self.num_sites)]
+            for x in all_focal:
+                header[x] = "x"
+            print("\t\t", "".join(header), sep="")
+            focal_count = np.zeros_like(all_focal)
+            num_focal_sites = []
+            for key, focal_sites in self.ancestor_map[time].items():
+                start, end, bytes_haplotype = key
+                haplotype = np.frombuffer(bytes_haplotype, dtype=np.uint8)
+                a = np.zeros(self.num_sites, dtype=np.uint8) - 1
+                a[start: end] = haplotype
+                focal_count += a[all_focal] == 1
+                h = "".join(map(str, haplotype))
+                h = "".join([str(x) if x != 255 else "*" for x in a])
+                print(start, end, h, "->", focal_sites, sep="\t")
+                self.ancestor_data.add_ancestor(
+                    start=start, end=end, time=time, focal_sites=focal_sites,
+                    haplotype=haplotype)
+                num_focal_sites.append(len(focal_sites))
+            print("\t", focal_count)
+            num_focal_sites = np.array(num_focal_sites)
+            # print(time)
+            # # print(all_focal)
+            # print(focal_count)
+            # print(num_focal_sites)
+            # print()
+            # print("{}\t({:.2f}, {:.2f}, {:.2f})\t({:.2f}, {:.2f}, {:.2f})".format(
+            #     time,
+            #     np.mean(num_focal_sites), np.min(num_focal_sites), np.max(num_focal_sites),
+            #     np.mean(focal_count), np.min(focal_count), np.max(focal_count)))
         self.ancestor_data.finalise()
 
 
@@ -743,10 +788,8 @@ class AncestorMatcher(Matcher):
                 ancestor.id, start, end, focal_sites.shape[0]))
         haplotype[focal_sites] = 0
         left, right, parent = self._find_path(
-                ancestor.id, haplotype, start, end, thread_index)
-        # TODO This is no longer true after allowing ancestor building
-        # at the same frequency. Need an assert that makes sense here now.
-        # assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
+            ancestor.id, haplotype, start, end, thread_index)
+        assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]

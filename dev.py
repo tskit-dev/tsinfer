@@ -94,8 +94,65 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S.T
 
-
 def tsinfer_dev(
+        n, L, seed, num_threads=1, recombination_rate=1e-8,
+        error_rate=0, engine="C", log_level="WARNING",
+        debug=True, progress=False, path_compression=True):
+
+    np.random.seed(seed)
+    random.seed(seed)
+    L_megabases = int(L * 10**6)
+
+    # daiquiri.setup(level=log_level)
+
+    ts = msprime.simulate(
+            n, Ne=10**4, length=L_megabases,
+            recombination_rate=recombination_rate, mutation_rate=1e-8,
+            random_seed=seed,
+            model="smc_prime")
+    if debug:
+        print("num_sites = ", ts.num_sites)
+    assert ts.num_sites > 0
+
+    V = generate_samples(ts, error_rate)
+    with tsinfer.SampleData(compressor=None) as sample_data:
+        for site in ts.sites():
+            sample_data.add_site(site.position, V[site.id])
+
+    # ancestor_data = tsinfer.generate_ancestors(
+    #     sample_data, engine=engine, num_threads=num_threads)
+
+    # True time doesn't work with error at the moment
+    time_type = "true"
+    time_map = collections.defaultdict(list)
+    j = 0
+    for tree in ts.trees():
+        for site in tree.sites():
+            assert len(site.mutations) == 1
+            node = site.mutations[0].node
+            if tree.num_samples(node) > 1:
+                time_map[ts.node(node).time].append(j)
+                j += 1
+    times = [None for _ in range(j)]
+    for j, time in enumerate(sorted(time_map.keys()), start=2):
+        # print(j, time, time_map[time])
+        for site in time_map[time]:
+            times[site] = j
+    assert len(times) == sample_data.num_inference_sites
+    # print(times)
+    ancestor_data = tsinfer.AncestorData(sample_data)
+    generator = tsinfer.AncestorsGenerator(
+        sample_data, ancestor_data, tsinfer.DummyProgressMonitor(),
+        engine=engine, num_threads=num_threads)
+    generator.add_sites(times)
+    generator.make_ancestors()
+    generator.flush()
+
+    # print(ancestor_data)
+    # ancestors_ts = tsinfer.match_ancestors(
+    #     sample_data, ancestor_data, engine=engine, num_threads=num_threads)
+
+def error_analysis(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, engine="C", log_level="WARNING",
         debug=True, progress=False, path_compression=True):
@@ -570,7 +627,9 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(50, 2.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8,
+    # tsinfer_dev(50, 2.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8,
+    #         error_rate=0.0)
+    tsinfer_dev(20, 1.0, seed=4, num_threads=0, engine="P", recombination_rate=1e-8,
             error_rate=0.0)
 
     # minimise_dev()

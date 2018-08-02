@@ -23,6 +23,7 @@ import unittest
 import random
 import string
 import json
+import collections
 
 import numpy as np
 import msprime
@@ -626,7 +627,6 @@ class TestBuildAncestors(unittest.TestCase):
         self.verify_ancestors(sample_data, ancestor_data)
 
 
-@unittest.skip("Ancestors TS currently not lossless")
 class TestAncestorsTreeSequence(unittest.TestCase):
     """
     Tests for the output of the match_ancestors function.
@@ -639,10 +639,26 @@ class TestAncestorsTreeSequence(unittest.TestCase):
             tables.sites.position, ancestor_data.sites_position[:]))
         self.assertEqual(ancestors_ts.num_samples, ancestor_data.num_ancestors)
         H = ancestors_ts.genotype_matrix().T
+        # print()
+        # M = collections.defaultdict(lambda: collections.defaultdict(list))
+        # for ancestor in ancestor_data.ancestors():
+        #     key = ancestor.haplotype.tobytes()
+        #     M[ancestor.time][key].extend(ancestor.focal_sites)
+
+        # for time in sorted(M.keys()):
+        #     print("time = ", time)
+        #     for pattern, focal_sites in M[time].items():
+        #         a = np.frombuffer(pattern, dtype=np.int8)
+        #         print("\t", a, "->", focal_sites)
+
+
         for ancestor in ancestor_data.ancestors():
-            self.assertTrue(np.array_equal(
-                H[ancestor.id, ancestor.start: ancestor.end],
-                ancestor.haplotype))
+            h = H[ancestor.id, ancestor.start: ancestor.end]
+            if not np.array_equal(h, ancestor.haplotype):
+                print(ancestor.time, ancestor.focal_sites)
+                print("\t", h)
+                print("\t", ancestor.haplotype)
+            self.assertTrue(np.array_equal(h, ancestor.haplotype))
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
