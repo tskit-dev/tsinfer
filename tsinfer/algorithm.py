@@ -349,6 +349,7 @@ class TreeSequenceBuilder(object):
             prev = edge
 
         if compress:
+            # print("Compressing path for ", child)
             head = self.compress_path(head)
 
         # Insert the chain into the global state.

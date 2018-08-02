@@ -23,6 +23,7 @@ import unittest
 import random
 import string
 import json
+import math
 
 import numpy as np
 import msprime
@@ -1155,3 +1156,56 @@ class TestMatchSiteSubsets(unittest.TestCase):
         sample_data.finalise()
         position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
         self.verify(sample_data, position[:][::2])
+
+
+class TestPathCompression(unittest.TestCase):
+    """
+    Tests for the results of path compression.
+    """
+    def verify(self, sample_data):
+        ts = tsinfer.infer(
+            sample_data, path_compression=True, engine=tsinfer.PY_ENGINE)
+        synthetic_nodes = [
+            node for node in ts.nodes() if math.floor(node.time) != node.time]
+        self.assertGreater(len(synthetic_nodes), 0)
+        for node in synthetic_nodes:
+            print(node.id, node.time)
+            parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
+            child_edges = [edge for edge in ts.edges() if edge.child == node.id]
+            self.assertGreater(len(parent_edges), 1)
+            self.assertGreater(len(child_edges), 1)
+            child_edges.sort(key=lambda e: e.left)
+            print("parent edges")
+            for edge in parent_edges:
+                print("\t", edge)
+
+            print("child edges")
+            # Child edges should always be contiguous
+            last_right = child_edges[0].left
+            for edge in child_edges:
+                print("\t", edge)
+                self.assertEqual(last_right, edge.left)
+                last_right = edge.right
+
+    def test_simple_case(self):
+        ts = msprime.simulate(15, mutation_rate=8, random_seed=4, recombination_rate=7)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_small_random_data(self):
+        n = 25
+        m = 20
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+    def test_large_random_data(self):
+        n = 100
+        m = 50
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
