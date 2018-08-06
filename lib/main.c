@@ -339,12 +339,12 @@ run_generate(const char *input_file, int verbose, int path_compression)
     }
 
     /* Add the ultimate ancestor */
-    ret = tree_sequence_builder_add_node(&ts_builder, num_samples + 1, true);
+    ret = tree_sequence_builder_add_node(&ts_builder, num_samples + 1, true, false);
     if (ret < 0) {
         fatal_error("add node");
     }
     /* Add the root ancestor */
-    ret = tree_sequence_builder_add_node(&ts_builder, num_samples, true);
+    ret = tree_sequence_builder_add_node(&ts_builder, num_samples, true, false);
     if (ret < 0) {
         fatal_error("add node");
     }
@@ -352,7 +352,7 @@ run_generate(const char *input_file, int verbose, int path_compression)
     for (frequency = num_samples - 1; frequency > 0; frequency--) {
         num_ancestors =  avl_count(&ancestor_builder.frequency_map[frequency]);
         for (j = 0; j < num_ancestors; j++) {
-            ret = tree_sequence_builder_add_node(&ts_builder, frequency, true);
+            ret = tree_sequence_builder_add_node(&ts_builder, frequency, true, false);
             if (ret < 0) {
                 fatal_error("add node");
             }
@@ -527,7 +527,7 @@ run_generate(const char *input_file, int verbose, int path_compression)
 
 
     for (j = 0; j < num_samples; j++) {
-        ret = tree_sequence_builder_add_node(&ts_builder, 0, true);
+        ret = tree_sequence_builder_add_node(&ts_builder, 0, true, false);
         if (ret < 0) {
             fatal_error("add node");
         }

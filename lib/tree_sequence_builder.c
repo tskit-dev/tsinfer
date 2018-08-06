@@ -124,10 +124,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             total_edges++;
             assert(e->edge.child == child);
             if (e->next != NULL) {
-                /* contiguity can be violated for synthetic nodes */
-                if (self->node_flags[e->edge.child] != 0) {
-                    assert(e->next->edge.left == e->edge.right);
-                }
+                assert(e->next->edge.left == e->edge.right);
             }
         }
     }
@@ -342,7 +339,8 @@ out:
 }
 
 node_id_t WARN_UNUSED
-tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool is_sample)
+tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
+        bool is_sample, bool is_synthetic)
 {
     int ret = 0;
     uint32_t flags = 0;
@@ -356,6 +354,10 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool 
     assert(self->num_nodes < self->max_nodes);
     if (is_sample) {
         flags = 1;
+    }
+    if (is_synthetic) {
+        assert(! is_sample);
+        flags = TSI_NODE_SYNTHETIC;
     }
     ret = self->num_nodes;
     self->time[ret] = time;
@@ -641,7 +643,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
                 min_parent_time, self->time[mapped[j].source->edge.parent]);
         }
     }
-    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.125, false);
+    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.5, false, true);
     if (ret < 0) {
         goto out;
     }
@@ -866,7 +868,9 @@ tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_no
     size_t j;
 
     for (j = 0; j < num_nodes; j++) {
-        ret = tree_sequence_builder_add_node(self, time[j], flags[j] == 1);
+        ret = tree_sequence_builder_add_node(self, time[j],
+                (flags[j] & 1) != 0,
+                (flags[j] & TSI_NODE_SYNTHETIC) != 0);
         if (ret < 0) {
             goto out;
         }

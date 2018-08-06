@@ -119,13 +119,15 @@ def tsinfer_dev(
     ancestor_data = tsinfer.generate_ancestors(
         sample_data, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, engine=engine, path_compression=True)
+        sample_data, ancestor_data, engine=engine, path_compression=True,
+        extended_checks=True)
 
     ts = tsinfer.match_samples(sample_data, ancestors_ts,
-            path_compression=False, simplify=False, engine=engine)
+            path_compression=True, simplify=False, engine=engine,
+            extended_checks=True)
 
     for node in ts.nodes():
-        if node.flags == 0:
+        if tsinfer.is_synthetic(node.flags):
             print("Synthetic node", node.id, node.time)
             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
@@ -345,7 +347,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(10, 0.025, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(20, 0.25, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 

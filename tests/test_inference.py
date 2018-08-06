@@ -29,6 +29,7 @@ import numpy as np
 import msprime
 
 import tsinfer
+import tsinfer.eval_util as eval_util
 
 
 def get_random_data_example(num_samples, num_sites, seed=42):
@@ -704,6 +705,7 @@ class AlgorithmsExactlyEqualMixin(object):
         # same tree sequences.
         tables_p = tsp.dump_tables()
         tables_c = tsc.dump_tables()
+        # if tables_p.nodes != tables_c.nodes:
         print("FIXME")
         print(tables_p.nodes)
         print(tables_c.nodes)
@@ -1199,7 +1201,13 @@ class PathCompressionMixin(object):
             self.assertGreater(len(original_matches), 1)
 
     def test_simple_case(self):
-        ts = msprime.simulate(55, mutation_rate=4, random_seed=4, recombination_rate=8)
+        ts = msprime.simulate(55, mutation_rate=5, random_seed=4, recombination_rate=8)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_simulation_with_error(self):
+        ts = msprime.simulate(50, mutation_rate=5, random_seed=4, recombination_rate=8)
+        ts = eval_util.insert_errors(ts, 0.1)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
@@ -1221,6 +1229,14 @@ class PathCompressionMixin(object):
                 sample_data.add_site(position, genotypes)
         self.verify(sample_data)
 
+    def test_c_engine_fail_example(self):
+        ts = msprime.simulate(
+            20, Ne=10**4, length=0.25 * 10**6,
+            recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=4)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
 
 class PathCompressionAncestorsMixin(PathCompressionMixin):
     """
@@ -1228,7 +1244,8 @@ class PathCompressionAncestorsMixin(PathCompressionMixin):
     """
     def verify(self, sample_data):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=self.engine)
+        ts = tsinfer.match_ancestors(
+            sample_data, ancestor_data, engine=self.engine, extended_checks=True)
         self.verify_tree_sequence(ts)
 
 
@@ -1253,7 +1270,8 @@ class PathCompressionSamplesMixin(PathCompressionMixin):
         ancestors_ts = tsinfer.match_ancestors(
             sample_data, ancestor_data, path_compression=False)
         ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, path_compression=True, engine=self.engine)
+            sample_data, ancestors_ts, path_compression=True, engine=self.engine,
+            extended_checks=True)
         self.verify_tree_sequence(ts)
 
 

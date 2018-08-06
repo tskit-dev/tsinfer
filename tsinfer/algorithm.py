@@ -379,7 +379,7 @@ class TreeSequenceBuilder(object):
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
         # print("min_parent_time = ", min_parent_time)
-        self.time[node_id] = min_parent_time - 0.1
+        self.time[node_id] = min_parent_time - 0.5
 
     def create_synthetic_node(self, matches):
         # If we have more than one edge matching to a given path, then we create
@@ -431,6 +431,8 @@ class TreeSequenceBuilder(object):
         # Find all edges in the index that have the same (left, right, parent)
         # values as edges in the edge path for this child.
         matches = []
+        contig_offsets = []
+        last_match = msprime.Edge(-1, -1, -1, -1)
         while edge is not None:
             # print("\tConsidering ", edge.left, edge.right, edge.parent)
             key = (edge.left, edge.right, edge.parent, -1)
@@ -440,12 +442,16 @@ class TreeSequenceBuilder(object):
                             edge.left, edge.right, edge.parent):
                 match = self.path_index.peekitem(index)[1]
                 matches.append((edge, match))
+                condition = (
+                    edge.left == last_match.right and
+                    match.child == last_match.child)
+                if not condition:
+                    contig_offsets.append(len(matches) - 1)
+                last_match = match
             edge = edge.next
+        contig_offsets.append(len(matches))
 
-        # Find the contiguous matches
-        # TODO This is inefficient. Should store a list of offsets instead
-        # Should also be done at the same time as generating the list above;
-        # no point in having a second list of lists.
+        # FIXME This is just to check the contig finding code above. Remove.
         contiguous_matches = [[(None, msprime.Edge(-1, -1, -1, -1))]]  # Sentinel
         for edge, match in matches:
             condition = (
@@ -455,8 +461,16 @@ class TreeSequenceBuilder(object):
                 contiguous_matches[-1].append((edge, match))
             else:
                 contiguous_matches.append([(edge, match)])
+        other_matches = [None]
+        for j in range(len(contig_offsets) - 1):
+            contigs = matches[contig_offsets[j]: contig_offsets[j + 1]]
+            other_matches.append(contigs)
+        assert len(other_matches) == len(contiguous_matches)
+        for c1, c2 in zip(contiguous_matches[1:], other_matches[1:]):
+            assert c1 == c2
 
-        for match_list in contiguous_matches[1:]:
+        for j in range(len(contig_offsets) - 1):
+            match_list = matches[contig_offsets[j]: contig_offsets[j + 1]]
             if len(match_list) > 1:
                 child_id = match_list[0][1].child
                 # print("MATCH:", child_id)
@@ -468,7 +482,6 @@ class TreeSequenceBuilder(object):
                 else:
                     # print("NEW SYNTHETIC")
                     self.create_synthetic_node(match_list)
-
         return self.squash_edges(head)
 
     def restore_mutations(self, site, node, derived_state, parent):
