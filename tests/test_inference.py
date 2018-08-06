@@ -1158,37 +1158,52 @@ class TestMatchSiteSubsets(unittest.TestCase):
         self.verify(sample_data, position[:][::2])
 
 
+
 class TestPathCompression(unittest.TestCase):
     """
-    Tests for the results of path compression.
+    Common utilities for testing a tree sequence with path compression.
     """
-    def verify(self, sample_data):
-        ts = tsinfer.infer(
-            sample_data, path_compression=True, engine=tsinfer.PY_ENGINE)
+    def verify_tree_sequence(self, ts):
         synthetic_nodes = [
             node for node in ts.nodes() if math.floor(node.time) != node.time]
         self.assertGreater(len(synthetic_nodes), 0)
         for node in synthetic_nodes:
-            print(node.id, node.time)
+            # print("Synthetic node", node)
             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
             self.assertGreater(len(parent_edges), 1)
             self.assertGreater(len(child_edges), 1)
             child_edges.sort(key=lambda e: e.left)
-            print("parent edges")
-            for edge in parent_edges:
-                print("\t", edge)
-
-            print("child edges")
+            # print("parent edges")
+            # for edge in parent_edges:
+            #     print("\t", edge)
+            # print("child edges")
             # Child edges should always be contiguous
             last_right = child_edges[0].left
             for edge in child_edges:
-                print("\t", edge)
+                # print("\t", edge)
                 self.assertEqual(last_right, edge.left)
                 last_right = edge.right
+            left = child_edges[0].left
+            right = child_edges[-1].right
+            original_matches = [
+                e for e in parent_edges if e.left == left and e.right == right]
+            # We must have at least two initial edges that exactly span the
+            # synthetic interva.
+            self.assertGreater(len(original_matches), 1)
+
+
+class TestPathCompressionAncestors(TestPathCompression):
+    """
+    Tests for the results of path compression on an ancestors tree sequence.
+    """
+    def verify(self, sample_data):
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
+        self.verify_tree_sequence(ts)
 
     def test_simple_case(self):
-        ts = msprime.simulate(15, mutation_rate=8, random_seed=4, recombination_rate=7)
+        ts = msprime.simulate(15, mutation_rate=8, random_seed=4, recombination_rate=8)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
@@ -1203,7 +1218,81 @@ class TestPathCompression(unittest.TestCase):
 
     def test_large_random_data(self):
         n = 100
-        m = 50
+        m = 30
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+
+class TestPathCompressionSamples(TestPathCompression):
+    """
+    Tests for the results of path compression just on samples.
+    """
+    def verify(self, sample_data):
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        # Turn off path compression in the ancestors to make this as difficult
+        # as possible.
+        ancestors_ts = tsinfer.match_ancestors(
+            sample_data, ancestor_data, path_compression=False)
+        ts = tsinfer.match_samples(
+            sample_data, ancestors_ts, path_compression=True, engine=tsinfer.PY_ENGINE)
+        self.verify_tree_sequence(ts)
+
+    def test_simple_case(self):
+        ts = msprime.simulate(55, mutation_rate=4, random_seed=4, recombination_rate=18)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_small_random_data(self):
+        n = 25
+        m = 20
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+    def test_large_random_data(self):
+        n = 100
+        m = 30
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+
+class TestPathCompressionFullStack(TestPathCompression):
+    """
+    Tests for the results of path compression just on samples.
+    """
+    def verify(self, sample_data):
+        # We have to turn off simplify because it'll sometimes remove chunks
+        # of synthetic ancestors, breaking out continguity requirements.
+        ts = tsinfer.infer(
+            sample_data, path_compression=True, engine=tsinfer.PY_ENGINE,
+            simplify=False)
+        self.verify_tree_sequence(ts)
+
+    def test_simple_case(self):
+        ts = msprime.simulate(15, mutation_rate=5, random_seed=9, recombination_rate=10)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_small_random_data(self):
+        n = 25
+        m = 20
+        G, positions = get_random_data_example(n, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+    def test_large_random_data(self):
+        n = 100
+        m = 30
         G, positions = get_random_data_example(n, m)
         with tsinfer.SampleData(sequence_length=m) as sample_data:
             for genotypes, position in zip(G, positions):

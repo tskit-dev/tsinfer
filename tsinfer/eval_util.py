@@ -29,6 +29,7 @@ import msprime
 
 import tsinfer.inference as inference
 import tsinfer.formats as formats
+import tsinfer.constants as constants
 
 
 def insert_errors(ts, probability, seed=None):
@@ -271,7 +272,7 @@ def get_ancestral_haplotypes(ts):
     B = tsp.genotype_matrix().T
 
     A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-    A[:] = inference.UNKNOWN_ALLELE
+    A[:] = constants.UNKNOWN_ALLELE
     for edge in ts.edges():
         start = bisect.bisect_left(sites, edge.left)
         end = bisect.bisect_right(sites, edge.right)
@@ -307,14 +308,14 @@ def get_ancestor_descriptors(A):
         masked = np.logical_and(a == 1, mask).astype(int)
         new_sites = np.where(masked)[0]
         mask[new_sites] = 0
-        segment = np.where(a != inference.UNKNOWN_ALLELE)[0]
+        segment = np.where(a != constants.UNKNOWN_ALLELE)[0]
         # Skip any ancestors that are entirely unknown
         if segment.shape[0] > 0:
             s = segment[0]
             e = segment[-1] + 1
-            assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
-            assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
-            assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+            assert np.all(a[s:e] != constants.UNKNOWN_ALLELE)
+            assert np.all(a[:s] == constants.UNKNOWN_ALLELE)
+            assert np.all(a[e:] == constants.UNKNOWN_ALLELE)
             ancestors.append(a)
             focal_sites.append(new_sites)
             start.append(s)
@@ -378,9 +379,9 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         time = np.arange(N)
     time = -1 * (time - time[-1]) + 1
     for a, s, e, focal, t in zip(ancestors, start, end, focal_sites, time):
-        assert np.all(a[:s] == inference.UNKNOWN_ALLELE)
-        assert np.all(a[s:e] != inference.UNKNOWN_ALLELE)
-        assert np.all(a[e:] == inference.UNKNOWN_ALLELE)
+        assert np.all(a[:s] == constants.UNKNOWN_ALLELE)
+        assert np.all(a[s:e] != constants.UNKNOWN_ALLELE)
+        assert np.all(a[e:] == constants.UNKNOWN_ALLELE)
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
             start=s, end=e, time=t, focal_sites=np.array(focal, dtype=np.int32),
@@ -431,7 +432,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
 def run_perfect_inference(
         base_ts, num_threads=1, path_compression=False,
         extended_checks=True, time_chunking=True, progress_monitor=None,
-        engine=inference.C_ENGINE):
+        engine=constants.C_ENGINE):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
