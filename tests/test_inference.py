@@ -693,22 +693,8 @@ class AlgorithmsExactlyEqualMixin(object):
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
-        # if self.path_compression_enabled:
-        #     # With path compression we have to check the tree metrics.
-        #     p_breakpoints, distance = tsinfer.compare(ts, tsp)
-        #     self.assertTrue(np.all(distance == 0))
-        #     c_breakpoints, distance = tsinfer.compare(ts, tsc)
-        #     self.assertTrue(np.all(distance == 0))
-        #     self.assertTrue(np.all(p_breakpoints == c_breakpoints))
-        # else:
-        # Without path compression we're guaranteed to return precisely the
-        # same tree sequences.
         tables_p = tsp.dump_tables()
         tables_c = tsc.dump_tables()
-        # if tables_p.nodes != tables_c.nodes:
-        print("FIXME")
-        print(tables_p.nodes)
-        print(tables_c.nodes)
         self.assertEqual(tables_p.nodes, tables_c.nodes)
         self.assertEqual(tables_p.edges, tables_c.edges)
         self.assertEqual(tables_p.sites, tables_c.sites)
@@ -1207,7 +1193,7 @@ class PathCompressionMixin(object):
 
     def test_simulation_with_error(self):
         ts = msprime.simulate(50, mutation_rate=5, random_seed=4, recombination_rate=8)
-        ts = eval_util.insert_errors(ts, 0.1)
+        ts = eval_util.insert_errors(ts, 0.1, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
@@ -1227,14 +1213,6 @@ class PathCompressionMixin(object):
         with tsinfer.SampleData(sequence_length=m) as sample_data:
             for genotypes, position in zip(G, positions):
                 sample_data.add_site(position, genotypes)
-        self.verify(sample_data)
-
-    def test_c_engine_fail_example(self):
-        ts = msprime.simulate(
-            20, Ne=10**4, length=0.25 * 10**6,
-            recombination_rate=1e-8, mutation_rate=1e-8,
-            random_seed=4)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
 
@@ -1257,6 +1235,15 @@ class TestPathCompressionAncestorsPyEngine(
 class TestPathCompressionAncestorsCEngine(
         PathCompressionAncestorsMixin, unittest.TestCase):
     engine = tsinfer.C_ENGINE
+
+    def test_c_engine_fail_example(self):
+        # Reproduce a failure that occured under the C engine.
+        ts = msprime.simulate(
+            20, Ne=10**4, length=0.25 * 10**6,
+            recombination_rate=1e-8, mutation_rate=1e-8,
+            random_seed=4)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
 
 
 class PathCompressionSamplesMixin(PathCompressionMixin):
