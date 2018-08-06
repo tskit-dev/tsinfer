@@ -124,10 +124,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             total_edges++;
             assert(e->edge.child == child);
             if (e->next != NULL) {
-                /* contiguity can be violated for synthetic nodes */
-                if (self->node_flags[e->edge.child] != 0) {
-                    assert(e->next->edge.left == e->edge.right);
-                }
+                assert(e->next->edge.left == e->edge.right);
             }
         }
     }
@@ -342,7 +339,8 @@ out:
 }
 
 node_id_t WARN_UNUSED
-tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool is_sample)
+tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
+        bool is_sample, bool is_synthetic)
 {
     int ret = 0;
     uint32_t flags = 0;
@@ -356,6 +354,10 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time, bool 
     assert(self->num_nodes < self->max_nodes);
     if (is_sample) {
         flags = 1;
+    }
+    if (is_synthetic) {
+        assert(! is_sample);
+        flags = TSI_NODE_SYNTHETIC;
     }
     ret = self->num_nodes;
     self->time[ret] = time;
@@ -522,28 +524,6 @@ typedef struct {
     indexed_edge_t *dest;
 } edge_map_t;
 
-typedef struct {
-    node_id_t node;
-    uint32_t count;
-} node_counter_t;
-
-
-/* Remap the edges in the set of matches to point to the already existing
- * synthethic node. */
-static int
-tree_sequence_builder_remap_synthetic(tree_sequence_builder_t *self,
-        node_id_t mapped_child, int num_mapped, edge_map_t *mapped)
-{
-    int ret = 0;
-    int j;
-
-    for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->edge.child == mapped_child) {
-            mapped[j].source->edge.parent = mapped_child;
-        }
-    }
-    return ret;
-}
 
 static void
 tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node)
@@ -624,7 +604,7 @@ out:
  * segments of existing ancestors. */
 static int
 tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
-        node_id_t mapped_child, int num_mapped, edge_map_t *mapped)
+        edge_map_t *mapped, size_t num_mapped)
 {
     int ret = 0;
     node_id_t synthetic_node;
@@ -632,49 +612,47 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
     indexed_edge_t *head = NULL;
     indexed_edge_t *prev = NULL;
     double min_parent_time;
-    int j;
+    node_id_t mapped_child = mapped[0].dest->edge.child;
+    size_t j;
 
     min_parent_time = self->time[0] + 1;
     for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->edge.child == mapped_child) {
-            min_parent_time = TSI_MIN(
-                min_parent_time, self->time[mapped[j].source->edge.parent]);
-        }
+        assert(mapped[j].dest->edge.child == mapped_child);
+        min_parent_time = TSI_MIN(
+            min_parent_time, self->time[mapped[j].source->edge.parent]);
     }
-    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.125, false);
+    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.5, false, true);
     if (ret < 0) {
         goto out;
     }
     synthetic_node = ret;
 
     for (j = 0; j < num_mapped; j++) {
-        if (mapped[j].dest->edge.child == mapped_child) {
-            edge = tree_sequence_builder_alloc_edge(self,
-                    mapped[j].source->edge.left,
-                    mapped[j].source->edge.right,
-                    mapped[j].source->edge.parent,
-                    synthetic_node, NULL);
-            if (edge == NULL) {
-                ret = TSI_ERR_NO_MEMORY;
-                goto out;
-            }
-            if (head == NULL) {
-                head = edge;
-            } else {
-                prev->next = edge;
-            }
-            prev = edge;
-            mapped[j].source->edge.parent = synthetic_node;
-            /* We are modifying the existing edge, so we must remove it
-             * from the indexes. Mark that it is unindexed by setting the
-             * child value to NULL_NODE. */
-            ret = tree_sequence_builder_unindex_edge(self, mapped[j].dest);
-            if (ret != 0) {
-                goto out;
-            }
-            mapped[j].dest->edge.parent = synthetic_node;
-            mapped[j].dest->edge.child = NULL_NODE;
+        edge = tree_sequence_builder_alloc_edge(self,
+                mapped[j].source->edge.left,
+                mapped[j].source->edge.right,
+                mapped[j].source->edge.parent,
+                synthetic_node, NULL);
+        if (edge == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
         }
+        if (head == NULL) {
+            head = edge;
+        } else {
+            prev->next = edge;
+        }
+        prev = edge;
+        mapped[j].source->edge.parent = synthetic_node;
+        /* We are modifying the existing edge, so we must remove it
+         * from the indexes. Mark that it is unindexed by setting the
+         * child value to NULL_NODE. */
+        ret = tree_sequence_builder_unindex_edge(self, mapped[j].dest);
+        if (ret != 0) {
+            goto out;
+        }
+        mapped[j].dest->edge.parent = synthetic_node;
+        mapped[j].dest->edge.child = NULL_NODE;
     }
     self->path[synthetic_node] = head;
     tree_sequence_builder_squash_edges(self, synthetic_node);
@@ -695,23 +673,26 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
 {
     int ret = 0;
     indexed_edge_t *c_edge, *match_edge;
+    edge_t last_match;
     edge_map_t *mapped = NULL;
-    node_counter_t *child_count = NULL;
+    size_t *contig_offsets = NULL;
     size_t path_length = 0;
-    int num_mapped = 0;
-    int num_mapped_children = 0;
-    int j, k;
+    size_t num_contigs = 0;
+    size_t num_mapped = 0;
+    size_t j, k, contig_size;
     node_id_t mapped_child;
 
     for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
         path_length++;
     }
     mapped = malloc(path_length * sizeof(*mapped));
-    child_count = calloc(path_length, sizeof(*child_count));
-    if (mapped == NULL || child_count == NULL) {
+    contig_offsets = malloc((path_length + 1)  * sizeof(*contig_offsets));
+    if (mapped == NULL || contig_offsets == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
+    last_match.right = -1;
+    last_match.child = NULL_NODE;
 
     for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
         /* Can we find a match for this edge? */
@@ -719,43 +700,40 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
         if (match_edge != NULL) {
             mapped[num_mapped].source = c_edge;
             mapped[num_mapped].dest = match_edge;
+            if (!(c_edge->edge.left == last_match.right &&
+                    match_edge->edge.child == last_match.child)) {
+                contig_offsets[num_contigs] = num_mapped;
+                num_contigs++;
+            }
+            last_match = match_edge->edge;
             num_mapped++;
         }
     }
-    for (j = 0; j < num_mapped; j++) {
-        mapped_child = mapped[j].dest->edge.child;
-        /* Increment the counter for this child. */
-        for (k = 0; k < num_mapped_children; k++) {
-            if (child_count[k].node == mapped_child) {
-                break;
-            }
-        }
-        if (k == num_mapped_children) {
-            num_mapped_children++;
-        }
-        child_count[k].node = mapped_child;
-        child_count[k].count++;
-    }
+    contig_offsets[num_contigs] = num_mapped;
 
-    for (k = 0; k < num_mapped_children; k++) {
-        if (child_count[k].count > 1) {
-            mapped_child = child_count[k].node;
-            if (self->node_flags[mapped_child] == 0) {
-                ret = tree_sequence_builder_remap_synthetic(self, mapped_child,
-                        num_mapped, mapped);
+    for (j = 0; j < num_contigs; j++) {
+        contig_size = contig_offsets[j + 1] - contig_offsets[j];
+        if (contig_size > 1) {
+            mapped_child = mapped[contig_offsets[j]].dest->edge.child;
+            if ((self->node_flags[mapped_child] & TSI_NODE_SYNTHETIC) != 0) {
+                /* Remap the edges in the set of matches to point to the already
+                 * existing synthethic node. */
+                for (k = contig_offsets[j]; k < contig_offsets[j + 1]; k++) {
+                    mapped[k].source->edge.parent = mapped_child;
+                }
             } else {
-                ret = tree_sequence_builder_make_synthetic_node(self, mapped_child,
-                        num_mapped, mapped);
-            }
-            if (ret != 0) {
-                goto out;
+                ret = tree_sequence_builder_make_synthetic_node(self,
+                        mapped + contig_offsets[j], contig_size);
+                if (ret != 0) {
+                    goto out;
+                }
             }
         }
     }
     tree_sequence_builder_squash_edges(self, child);
 out:
     tsi_safe_free(mapped);
-    tsi_safe_free(child_count);
+    tsi_safe_free(contig_offsets);
     return ret;
 }
 
@@ -866,7 +844,9 @@ tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_no
     size_t j;
 
     for (j = 0; j < num_nodes; j++) {
-        ret = tree_sequence_builder_add_node(self, time[j], flags[j] == 1);
+        ret = tree_sequence_builder_add_node(self, time[j],
+                (flags[j] & 1) != 0,
+                (flags[j] & TSI_NODE_SYNTHETIC) != 0);
         if (ret < 0) {
             goto out;
         }

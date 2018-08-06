@@ -17,26 +17,13 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Tree sequence inference.
-
-Python 3 only.
+Collection of constants used in tsinfer.
 """
 
-import sys
+UNKNOWN_ALLELE = 255
 
-if sys.version_info[0] < 3:
-    raise Exception("Python 3 only")
+C_ENGINE = "C"
+PY_ENGINE = "P"
 
-__version__ = "undefined"
-try:
-    from . import _version
-    __version__ = _version.version
-except ImportError:
-    pass
-
-from .inference import *  # NOQA
-from .formats import *  # NOQA
-from .eval_util import *  # NOQA
-from .exceptions import *  # NOQA
-from .constants import *  # NOQA
-from .cli import get_cli_parser  # NOQA
+# Bit 16 is set in node flags when they have been created by path compression.
+SYNTHETIC_NODE_BIT = 1 << 16

@@ -42,6 +42,8 @@
 #define TSI_COMPRESS_PATH   1
 #define TSI_EXTENDED_CHECKS 2
 
+#define TSI_NODE_SYNTHETIC ((uint32_t) (1u << 16))
+
 /* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;
 typedef int32_t node_id_t;
@@ -223,7 +225,7 @@ int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
-        double time, bool is_sample);
+        double time, bool is_sample, bool is_synthetic);
 int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
         node_id_t *parent, int flags);

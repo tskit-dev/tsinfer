@@ -38,12 +38,26 @@ import tsinfer.formats as formats
 import tsinfer.algorithm as algorithm
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
+import tsinfer.constants as constants
 
 logger = logging.getLogger(__name__)
 
-UNKNOWN_ALLELE = 255
-C_ENGINE = "C"
-PY_ENGINE = "P"
+
+def is_synthetic(flags):
+    """
+    Returns True if the synthetic flag is set on the specified flags
+    value.
+    """
+    return (flags & constants.SYNTHETIC_NODE_BIT) != 0
+
+
+def count_synthetic(flags):
+    """
+    Returns the number of values in the specified array which have the
+    SYNTHETIC_NODE_FLAG set.
+    """
+    flags = np.array(flags, dtype=np.uint32, copy=False)
+    return np.sum(np.bitwise_and(flags, constants.SYNTHETIC_NODE_BIT) != 0)
 
 
 class DummyProgress(object):
@@ -76,7 +90,7 @@ def _get_progress_monitor(progress_monitor):
 
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
-        simplify=True, engine=C_ENGINE):
+        simplify=True, engine=constants.C_ENGINE):
     """
     infer(sample_data, num_threads=0)
 
@@ -107,7 +121,8 @@ def infer(
 
 
 def generate_ancestors(
-        sample_data, num_threads=0, progress_monitor=None, engine=C_ENGINE, **kwargs):
+        sample_data, num_threads=0, progress_monitor=None, engine=constants.C_ENGINE,
+        **kwargs):
     """
     generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
 
@@ -143,7 +158,7 @@ def generate_ancestors(
 
 def match_ancestors(
         sample_data, ancestor_data, progress_monitor=None, num_threads=0,
-        path_compression=True, extended_checks=False, engine=C_ENGINE):
+        path_compression=True, extended_checks=False, engine=constants.C_ENGINE):
     """
     match_ancestors(sample_data, path_compression, num_threads=0)
 
@@ -173,7 +188,7 @@ def match_ancestors(
 def match_samples(
         sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
         path_compression=True, simplify=True, extended_checks=False,
-        stabilise_node_ordering=False, engine=C_ENGINE):
+        stabilise_node_ordering=False, engine=constants.C_ENGINE):
     """
     match_samples(sample_data, ancestors_ts, num_threads=0, simplify=True)
 
@@ -217,11 +232,11 @@ class AncestorsGenerator(object):
         self.num_sites = sample_data.num_inference_sites
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
-        if engine == C_ENGINE:
+        if engine == constants.C_ENGINE:
             logger.debug("Using C AncestorBuilder implementation")
             self.ancestor_builder = _tsinfer.AncestorBuilder(
                 self.num_samples, self.num_sites)
-        elif engine == PY_ENGINE:
+        elif engine == constants.PY_ENGINE:
             logger.debug("Using Python AncestorBuilder implementation")
             self.ancestor_builder = algorithm.AncestorBuilder(
                 self.num_samples, self.num_sites)
@@ -349,7 +364,7 @@ class AncestorsGenerator(object):
 class Matcher(object):
 
     def __init__(
-            self, sample_data, num_threads=1, engine=C_ENGINE,
+            self, sample_data, num_threads=1, engine=constants.C_ENGINE,
             path_compression=True, progress_monitor=None, extended_checks=False):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -360,11 +375,11 @@ class Matcher(object):
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
 
-        if engine == C_ENGINE:
+        if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
-        elif engine == PY_ENGINE:
+        elif engine == constants.PY_ENGINE:
             logger.debug("Using Python matcher implementation")
             self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
@@ -464,8 +479,9 @@ class Matcher(object):
         tsb = self.tree_sequence_builder
         tables = msprime.TableCollection(
             sequence_length=self.ancestor_data.sequence_length)
+
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = np.sum(flags == 0)
+        num_synthetic_nodes = count_synthetic(flags)
         tables.nodes.set_columns(flags=flags, time=time)
 
         position = self.ancestor_data.sites_position
@@ -631,13 +647,14 @@ class Matcher(object):
                 location=location, metadata=self.encode_metadata(metadata))
 
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = np.sum(flags == 0)
+        num_synthetic_nodes = count_synthetic(flags)
         logger.debug("Adding tree sequence nodes")
         # TODO add an option for encoding ancestor metadata in with the nodes here.
         # Add in the nodes for the ancestors.
         for u in range(self.sample_ids[0]):
-            # TODO change this so that we turn off SAMPLE rather than just zeroing
-            tables.nodes.add_row(flags=0, time=time[u])
+            # All true ancestors are samples in the ancestors tree sequence. We unset
+            # the SAMPLE flag but keep other flags intact.
+            tables.nodes.add_row(flags=flags[u] & ~1, time=time[u])
         # Now add in the sample nodes with metadata, etc.
         for sample_id, metadata, population, individual in zip(
                 self.sample_ids,
@@ -726,7 +743,7 @@ class AncestorMatcher(Matcher):
         ])
 
     def __ancestor_find_path(self, ancestor, thread_index=0):
-        haplotype = np.zeros(self.num_sites, dtype=np.uint8) + UNKNOWN_ALLELE
+        haplotype = np.zeros(self.num_sites, dtype=np.uint8) + constants.UNKNOWN_ALLELE
         focal_sites = ancestor.focal_sites
         start = ancestor.start
         end = ancestor.end
