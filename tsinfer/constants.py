@@ -25,6 +25,5 @@ UNKNOWN_ALLELE = 255
 C_ENGINE = "C"
 PY_ENGINE = "P"
 
-# This bit is set in the flags if the node is synthetic, i.e., has been
-# created by path compression.
-SYNTHETIC_NODE_FLAG = 16
+# Bit 16 is set in node flags when they have been created by path compression.
+SYNTHETIC_NODE_BIT = 1 << 16

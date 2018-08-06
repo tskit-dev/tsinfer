@@ -29,7 +29,6 @@ import numpy as np
 import msprime
 
 import tsinfer
-import tsinfer.formats as formats
 
 
 def get_random_data_example(num_samples, num_sites, seed=42):
@@ -59,7 +58,7 @@ class TestRoundTrip(unittest.TestCase):
     def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
-        sample_data = formats.SampleData(sequence_length=sequence_length)
+        sample_data = tsinfer.SampleData(sequence_length=sequence_length)
         for j in range(genotypes.shape[0]):
             sample_data.add_site(positions[j], genotypes[j])
         sample_data.finalise()
@@ -389,7 +388,7 @@ class TestThreads(TsinferTestCase):
     def test_equivalance(self):
         rho = 2
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
-        sample_data = formats.SampleData.from_tree_sequence(ts)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ts1 = tsinfer.infer(sample_data, num_threads=1)
         ts2 = tsinfer.infer(sample_data, num_threads=5)
         self.assertTreeSequencesEqual(ts1, ts2)
@@ -493,11 +492,11 @@ class TestGeneratedAncestors(unittest.TestCase):
         # Verifies that we can round-trip the specified tree sequence
         # using the generated ancestors. NOTE: this must be an SMC
         # consistent tree sequence!
-        with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
             for v in ts.variants():
                 sample_data.add_site(v.position, v.genotypes, v.alleles)
 
-        ancestor_data = formats.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
@@ -693,22 +692,25 @@ class AlgorithmsExactlyEqualMixin(object):
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
-        if self.path_compression_enabled:
-            # With path compression we have to check the tree metrics.
-            p_breakpoints, distance = tsinfer.compare(ts, tsp)
-            self.assertTrue(np.all(distance == 0))
-            c_breakpoints, distance = tsinfer.compare(ts, tsc)
-            self.assertTrue(np.all(distance == 0))
-            self.assertTrue(np.all(p_breakpoints == c_breakpoints))
-        else:
-            # Without path compression we're guaranteed to return precisely the
-            # same tree sequences.
-            tables_p = tsp.dump_tables()
-            tables_c = tsc.dump_tables()
-            self.assertEqual(tables_p.nodes, tables_c.nodes)
-            self.assertEqual(tables_p.edges, tables_c.edges)
-            self.assertEqual(tables_p.sites, tables_c.sites)
-            self.assertEqual(tables_p.mutations, tables_c.mutations)
+        # if self.path_compression_enabled:
+        #     # With path compression we have to check the tree metrics.
+        #     p_breakpoints, distance = tsinfer.compare(ts, tsp)
+        #     self.assertTrue(np.all(distance == 0))
+        #     c_breakpoints, distance = tsinfer.compare(ts, tsc)
+        #     self.assertTrue(np.all(distance == 0))
+        #     self.assertTrue(np.all(p_breakpoints == c_breakpoints))
+        # else:
+        # Without path compression we're guaranteed to return precisely the
+        # same tree sequences.
+        tables_p = tsp.dump_tables()
+        tables_c = tsc.dump_tables()
+        print("FIXME")
+        print(tables_p.nodes)
+        print(tables_c.nodes)
+        self.assertEqual(tables_p.nodes, tables_c.nodes)
+        self.assertEqual(tables_p.edges, tables_c.edges)
+        self.assertEqual(tables_p.sites, tables_c.sites)
+        self.assertEqual(tables_p.mutations, tables_c.mutations)
 
     def test_single_tree(self):
         for seed in range(10):
@@ -897,7 +899,7 @@ class TestBadEngine(unittest.TestCase):
 
     def get_example(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=3)
-        return formats.SampleData.from_tree_sequence(ts)
+        return tsinfer.SampleData.from_tree_sequence(ts)
 
     def test_infer(self):
         sample_data = self.get_example()
@@ -1158,15 +1160,19 @@ class TestMatchSiteSubsets(unittest.TestCase):
         self.verify(sample_data, position[:][::2])
 
 
-
-class TestPathCompression(unittest.TestCase):
+class PathCompressionMixin(object):
     """
     Common utilities for testing a tree sequence with path compression.
     """
     def verify_tree_sequence(self, ts):
+        num_fraction_times = sum(
+            math.floor(node.time) != node.time for node in ts.nodes())
         synthetic_nodes = [
-            node for node in ts.nodes() if math.floor(node.time) != node.time]
+            node for node in ts.nodes() if tsinfer.is_synthetic(node.flags)]
         self.assertGreater(len(synthetic_nodes), 0)
+        # Synthetic nodes will mostly have fractional times, so this number
+        # should at most the nuber of synthetic nodes.
+        self.assertGreaterEqual(len(synthetic_nodes), num_fraction_times)
         for node in synthetic_nodes:
             # print("Synthetic node", node)
             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
@@ -1189,21 +1195,11 @@ class TestPathCompression(unittest.TestCase):
             original_matches = [
                 e for e in parent_edges if e.left == left and e.right == right]
             # We must have at least two initial edges that exactly span the
-            # synthetic interva.
+            # synthetic interval.
             self.assertGreater(len(original_matches), 1)
 
-
-class TestPathCompressionAncestors(TestPathCompression):
-    """
-    Tests for the results of path compression on an ancestors tree sequence.
-    """
-    def verify(self, sample_data):
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
-        self.verify_tree_sequence(ts)
-
     def test_simple_case(self):
-        ts = msprime.simulate(15, mutation_rate=8, random_seed=4, recombination_rate=8)
+        ts = msprime.simulate(55, mutation_rate=4, random_seed=4, recombination_rate=8)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
@@ -1226,7 +1222,27 @@ class TestPathCompressionAncestors(TestPathCompression):
         self.verify(sample_data)
 
 
-class TestPathCompressionSamples(TestPathCompression):
+class PathCompressionAncestorsMixin(PathCompressionMixin):
+    """
+    Tests for the results of path compression on an ancestors tree sequence.
+    """
+    def verify(self, sample_data):
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=self.engine)
+        self.verify_tree_sequence(ts)
+
+
+class TestPathCompressionAncestorsPyEngine(
+        PathCompressionAncestorsMixin, unittest.TestCase):
+    engine = tsinfer.PY_ENGINE
+
+
+class TestPathCompressionAncestorsCEngine(
+        PathCompressionAncestorsMixin, unittest.TestCase):
+    engine = tsinfer.C_ENGINE
+
+
+class PathCompressionSamplesMixin(PathCompressionMixin):
     """
     Tests for the results of path compression just on samples.
     """
@@ -1237,34 +1253,21 @@ class TestPathCompressionSamples(TestPathCompression):
         ancestors_ts = tsinfer.match_ancestors(
             sample_data, ancestor_data, path_compression=False)
         ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, path_compression=True, engine=tsinfer.PY_ENGINE)
+            sample_data, ancestors_ts, path_compression=True, engine=self.engine)
         self.verify_tree_sequence(ts)
 
-    def test_simple_case(self):
-        ts = msprime.simulate(55, mutation_rate=4, random_seed=4, recombination_rate=18)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        self.verify(sample_data)
 
-    def test_small_random_data(self):
-        n = 25
-        m = 20
-        G, positions = get_random_data_example(n, m)
-        with tsinfer.SampleData(sequence_length=m) as sample_data:
-            for genotypes, position in zip(G, positions):
-                sample_data.add_site(position, genotypes)
-        self.verify(sample_data)
-
-    def test_large_random_data(self):
-        n = 100
-        m = 30
-        G, positions = get_random_data_example(n, m)
-        with tsinfer.SampleData(sequence_length=m) as sample_data:
-            for genotypes, position in zip(G, positions):
-                sample_data.add_site(position, genotypes)
-        self.verify(sample_data)
+class TestPathCompressionSamplesPyEngine(
+        PathCompressionSamplesMixin, unittest.TestCase):
+    engine = tsinfer.PY_ENGINE
 
 
-class TestPathCompressionFullStack(TestPathCompression):
+class TestPathCompressionSamplesCEngine(
+        PathCompressionSamplesMixin, unittest.TestCase):
+    engine = tsinfer.C_ENGINE
+
+
+class PathCompressionFullStackMixin(PathCompressionMixin):
     """
     Tests for the results of path compression just on samples.
     """
@@ -1272,29 +1275,60 @@ class TestPathCompressionFullStack(TestPathCompression):
         # We have to turn off simplify because it'll sometimes remove chunks
         # of synthetic ancestors, breaking out continguity requirements.
         ts = tsinfer.infer(
-            sample_data, path_compression=True, engine=tsinfer.PY_ENGINE,
+            sample_data, path_compression=True, engine=self.engine,
             simplify=False)
         self.verify_tree_sequence(ts)
 
-    def test_simple_case(self):
-        ts = msprime.simulate(15, mutation_rate=5, random_seed=9, recombination_rate=10)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        self.verify(sample_data)
 
-    def test_small_random_data(self):
-        n = 25
-        m = 20
-        G, positions = get_random_data_example(n, m)
-        with tsinfer.SampleData(sequence_length=m) as sample_data:
-            for genotypes, position in zip(G, positions):
-                sample_data.add_site(position, genotypes)
-        self.verify(sample_data)
+class TestPathCompressionFullStackPyEngine(
+        PathCompressionFullStackMixin, unittest.TestCase):
+    engine = tsinfer.PY_ENGINE
 
-    def test_large_random_data(self):
-        n = 100
-        m = 30
-        G, positions = get_random_data_example(n, m)
-        with tsinfer.SampleData(sequence_length=m) as sample_data:
-            for genotypes, position in zip(G, positions):
-                sample_data.add_site(position, genotypes)
-        self.verify(sample_data)
+
+class TestPathCompressionFullStackCEngine(
+        PathCompressionFullStackMixin, unittest.TestCase):
+    engine = tsinfer.C_ENGINE
+
+
+class TestSyntheticFlag(unittest.TestCase):
+    """
+    Tests if we can set and detect the synthetic node flag correctly.
+    """
+    BIT_POSITION = 16
+
+    def test_is_synthetic(self):
+        self.assertFalse(tsinfer.is_synthetic(0))
+        self.assertFalse(tsinfer.is_synthetic(1))
+        self.assertTrue(tsinfer.is_synthetic(tsinfer.SYNTHETIC_NODE_BIT))
+        for bit in range(32):
+            flags = 1 << bit
+            if bit == self.BIT_POSITION:
+                self.assertTrue(tsinfer.is_synthetic(flags))
+            else:
+                self.assertFalse(tsinfer.is_synthetic(flags))
+        flags = tsinfer.SYNTHETIC_NODE_BIT
+        for bit in range(32):
+            flags |= 1 << bit
+            self.assertTrue(tsinfer.is_synthetic(flags))
+        flags = 0
+        for bit in range(32):
+            if bit != self.BIT_POSITION:
+                flags |= 1 << bit
+            self.assertFalse(tsinfer.is_synthetic(flags))
+
+    def test_count_synthetic(self):
+        self.assertEqual(tsinfer.count_synthetic([0]), 0)
+        self.assertEqual(tsinfer.count_synthetic([tsinfer.SYNTHETIC_NODE_BIT]), 1)
+        self.assertEqual(tsinfer.count_synthetic([0, 0]), 0)
+        self.assertEqual(tsinfer.count_synthetic([0, tsinfer.SYNTHETIC_NODE_BIT]), 1)
+        self.assertEqual(tsinfer.count_synthetic(
+            [tsinfer.SYNTHETIC_NODE_BIT, tsinfer.SYNTHETIC_NODE_BIT]), 2)
+        self.assertEqual(tsinfer.count_synthetic([1, tsinfer.SYNTHETIC_NODE_BIT]), 1)
+        self.assertEqual(tsinfer.count_synthetic(
+            [1 | tsinfer.SYNTHETIC_NODE_BIT, 1 | tsinfer.SYNTHETIC_NODE_BIT]), 2)
+
+    def test_count_synthetic_random(self):
+        np.random.seed(42)
+        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
+        count = sum(map(tsinfer.is_synthetic, flags))
+        self.assertEqual(count, tsinfer.count_synthetic(flags))

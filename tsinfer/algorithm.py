@@ -31,7 +31,7 @@ import numpy as np
 import msprime
 import sortedcontainers
 
-UNKNOWN_ALLELE = 255
+import tsinfer.constants as constants
 
 
 class Edge(object):
@@ -171,7 +171,7 @@ class AncestorBuilder(object):
         return last_site
 
     def make_ancestor(self, focal_sites, a):
-        a[:] = UNKNOWN_ALLELE
+        a[:] = constants.UNKNOWN_ALLELE
         for focal_site in focal_sites:
             a[focal_site] = 1
         focal_frequency = self.sites[focal_sites[0]].frequency
@@ -189,12 +189,12 @@ class AncestorBuilder(object):
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
-        assert a[last_site] != UNKNOWN_ALLELE
+        assert a[last_site] != constants.UNKNOWN_ALLELE
         end = last_site + 1
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
-        assert a[last_site] != UNKNOWN_ALLELE
+        assert a[last_site] != constants.UNKNOWN_ALLELE
         start = last_site
         return start, end
 
@@ -235,7 +235,7 @@ class TreeSequenceBuilder(object):
 
     def restore_nodes(self, time, flags):
         for t, flag in zip(time, flags):
-            self.add_node(t, flag == 1)
+            self.add_node(t, flag & 1, is_synthetic=flag & constants.SYNTHETIC_NODE_BIT)
 
     def add_node(self, time, is_sample=True, is_synthetic=False):
         self.num_nodes += 1
@@ -244,8 +244,9 @@ class TreeSequenceBuilder(object):
         if is_sample:
             flags = 1
         if is_synthetic:
-            flags = 2 # TODO this should be another value
-        self.flags.append(int(is_sample))
+            assert not is_sample
+            flags = constants.SYNTHETIC_NODE_BIT
+        self.flags.append(flags)
         self.path.append(None)
         return self.num_nodes - 1
 
@@ -368,7 +369,7 @@ class TreeSequenceBuilder(object):
         Updates the node time for the specified synthetic node ID.
         """
         # print("Getting node time for ", node_id)
-        assert self.flags[node_id] == 0
+        assert self.flags[node_id] == constants.SYNTHETIC_NODE_BIT
         edge = self.path[node_id]
         assert edge is not None
         min_parent_time = self.time[0] + 1
@@ -380,15 +381,6 @@ class TreeSequenceBuilder(object):
         # print("min_parent_time = ", min_parent_time)
         self.time[node_id] = min_parent_time - 0.1
 
-    def remap_synthetic(self, child_id, matches):
-        """
-        Remap the edges in the set of matches to point to the already existing
-        synthethic node.
-        """
-        for new, old in matches:
-            if old.child == child_id:
-                new.parent = child_id
-
     def create_synthetic_node(self, matches):
         # If we have more than one edge matching to a given path, then we create
         # synthetic ancestor for this path.
@@ -397,11 +389,11 @@ class TreeSequenceBuilder(object):
         synthetic_head = None
         synthetic_prev = None
         child_id = matches[0][1].child
-        print("NEW SYNTHETIC FOR ", child_id, "=", synthetic_node)
-        print("BEFORE")
-        self.print_chain(self.path[child_id])
+        # print("NEW SYNTHETIC FOR ", child_id, "=", synthetic_node)
+        # print("BEFORE")
+        # self.print_chain(self.path[child_id])
         for new, old in matches:
-            print("\t", old)
+            # print("\t", old)
             # print("\t", new, "\t", old)
             assert new.left == old.left
             assert new.right == old.right
@@ -425,9 +417,9 @@ class TreeSequenceBuilder(object):
         self.path[child_id] = self.squash_edges_indexed(self.path[child_id], child_id)
         self.update_node_time(synthetic_node)
         self.index_edges(synthetic_node)
-        print("AFTER")
-        self.print_chain(synthetic_head)
-        self.print_chain(self.path[child_id])
+        # print("AFTER")
+        # self.print_chain(synthetic_head)
+        # self.print_chain(self.path[child_id])
 
     def compress_path(self, head):
         """
@@ -467,14 +459,14 @@ class TreeSequenceBuilder(object):
         for match_list in contiguous_matches[1:]:
             if len(match_list) > 1:
                 child_id = match_list[0][1].child
-                print("MATCH:", child_id)
-                if self.flags[child_id] == 0:
-                    print("EXISTING SYNTHETIC")
+                # print("MATCH:", child_id)
+                if self.flags[child_id] == constants.SYNTHETIC_NODE_BIT:
+                    # print("EXISTING SYNTHETIC")
                     for edge, match in match_list:
-                        print("\t", edge, match)
+                        # print("\t", edge, match)
                         edge.parent = child_id
                 else:
-                    print("NEW SYNTHETIC")
+                    # print("NEW SYNTHETIC")
                     self.create_synthetic_node(match_list)
 
         return self.squash_edges(head)
@@ -927,8 +919,8 @@ class AncestorMatcher(object):
         k = M - 1
         # Construct the matched haplotype
         match[:] = 0
-        match[:start] = UNKNOWN_ALLELE
-        match[end:] = UNKNOWN_ALLELE
+        match[:start] = constants.UNKNOWN_ALLELE
+        match[end:] = constants.UNKNOWN_ALLELE
         # Reset the tree.
         self.parent[:] = -1
         self.left_child[:] = -1

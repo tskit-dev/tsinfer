@@ -43,6 +43,23 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
+def is_synthetic(flags):
+    """
+    Returns True if the synthetic flag is set on the specified flags
+    value.
+    """
+    return (flags & constants.SYNTHETIC_NODE_BIT) != 0
+
+
+def count_synthetic(flags):
+    """
+    Returns the number of values in the specified array which have the
+    SYNTHETIC_NODE_FLAG set.
+    """
+    flags = np.array(flags, dtype=np.uint32, copy=False)
+    return np.sum(np.bitwise_and(flags, constants.SYNTHETIC_NODE_BIT) != 0)
+
+
 class DummyProgress(object):
     """
     Class that mimics the subset of the tqdm API that we use in this module.
@@ -464,7 +481,7 @@ class Matcher(object):
             sequence_length=self.ancestor_data.sequence_length)
 
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = np.sum(flags == 0)
+        num_synthetic_nodes = count_synthetic(flags)
         tables.nodes.set_columns(flags=flags, time=time)
 
         position = self.ancestor_data.sites_position
@@ -630,13 +647,14 @@ class Matcher(object):
                 location=location, metadata=self.encode_metadata(metadata))
 
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = np.sum(flags == 0)
+        num_synthetic_nodes = count_synthetic(flags)
         logger.debug("Adding tree sequence nodes")
         # TODO add an option for encoding ancestor metadata in with the nodes here.
         # Add in the nodes for the ancestors.
         for u in range(self.sample_ids[0]):
-            # TODO change this so that we turn off SAMPLE rather than just zeroing
-            tables.nodes.add_row(flags=0, time=time[u])
+            # All true ancestors are samples in the ancestors tree sequence. We unset
+            # the SAMPLE flag but keep other flags intact.
+            tables.nodes.add_row(flags=flags[u] & ~1, time=time[u])
         # Now add in the sample nodes with metadata, etc.
         for sample_id, metadata, population, individual in zip(
                 self.sample_ids,
