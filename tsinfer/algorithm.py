@@ -364,13 +364,12 @@ class TreeSequenceBuilder(object):
         if extended_checks:
             self.check_state()
 
-    def update_node_time(self, node_id):
+    def update_node_time(self, child_id, synthetic_parent_id):
         """
-        Updates the node time for the specified synthetic node ID.
+        Updates the node time for the specified synthetic parent node ID.
         """
-        # print("Getting node time for ", node_id)
-        assert self.flags[node_id] == constants.SYNTHETIC_NODE_BIT
-        edge = self.path[node_id]
+        assert self.flags[synthetic_parent_id] == constants.SYNTHETIC_NODE_BIT
+        edge = self.path[synthetic_parent_id]
         assert edge is not None
         min_parent_time = self.time[0] + 1
         while edge is not None:
@@ -378,8 +377,10 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # print("min_parent_time = ", min_parent_time)
-        self.time[node_id] = min_parent_time - 0.5
+        # For the asserttion to be violated we would need to have 10^8 synthetic
+        # ancestors sequentially copying from each other.
+        self.time[synthetic_parent_id] = min_parent_time - 1e-8
+        assert self.time[synthetic_parent_id] > self.time[child_id]
 
     def create_synthetic_node(self, matches):
         # If we have more than one edge matching to a given path, then we create
@@ -389,7 +390,7 @@ class TreeSequenceBuilder(object):
         synthetic_head = None
         synthetic_prev = None
         child_id = matches[0][1].child
-        # print("NEW SYNTHETIC FOR ", child_id, "=", synthetic_node)
+        # print("NEW SYNTHETIC", child_id, "@", self.time[child_id], "=", synthetic_node)
         # print("BEFORE")
         # self.print_chain(self.path[child_id])
         for new, old in matches:
@@ -415,7 +416,7 @@ class TreeSequenceBuilder(object):
 
         self.path[synthetic_node] = self.squash_edges(synthetic_head)
         self.path[child_id] = self.squash_edges_indexed(self.path[child_id], child_id)
-        self.update_node_time(synthetic_node)
+        self.update_node_time(child_id, synthetic_node)
         self.index_edges(synthetic_node)
         # print("AFTER")
         # self.print_chain(synthetic_head)

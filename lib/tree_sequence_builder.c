@@ -613,6 +613,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
     indexed_edge_t *prev = NULL;
     double min_parent_time;
     node_id_t mapped_child = mapped[0].dest->edge.child;
+    double mapped_child_time = self->time[mapped_child];
     size_t j;
 
     min_parent_time = self->time[0] + 1;
@@ -621,7 +622,13 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
         min_parent_time = TSI_MIN(
             min_parent_time, self->time[mapped[j].source->edge.parent]);
     }
-    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.5, false, true);
+    min_parent_time -= 1e-8;
+    if (min_parent_time <= mapped_child_time) {
+        ret = TSI_ERR_ASSERTION_FAILURE;
+        goto out;
+    }
+
+    ret = tree_sequence_builder_add_node(self, min_parent_time, false, true);
     if (ret < 0) {
         goto out;
     }
@@ -746,10 +753,26 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     indexed_edge_t *head = NULL;
     indexed_edge_t *prev = NULL;
     indexed_edge_t *e;
+    double child_time;
     int j;
+
+    if (child >= self->num_nodes) {
+        ret = TSI_ERR_GENERIC;
+        goto out;
+    }
+    child_time = self->time[child];
 
     /* Edges must be provided in reverese order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
+
+        if (parent[j] >= self->num_nodes) {
+            ret = TSI_ERR_GENERIC;
+            goto out;
+        }
+        if (self->time[parent[j]] <= child_time) {
+            ret = TSI_ERR_GENERIC;
+            goto out;
+        }
         e = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
                 child, NULL);
         if (e == NULL) {
