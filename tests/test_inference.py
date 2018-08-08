@@ -1337,3 +1337,17 @@ class TestSyntheticFlag(unittest.TestCase):
         flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
         count = sum(map(tsinfer.is_synthetic, flags))
         self.assertEqual(count, tsinfer.count_synthetic(flags))
+
+
+class TestBugExamples(unittest.TestCase):
+    """
+    Run tests on some examples that provoked bugs.
+    """
+    def test_path_compression_bad_times(self):
+        # This provoked a bug in which we created a synthetic ancestor
+        # with the same time as its child, creating an invalid topology.
+        sample_data = tsinfer.load(
+            "tests/data/bugs/invalid_synthetic_ancestor_time.samples")
+        ts = tsinfer.infer(sample_data)
+        for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
+            self.assertTrue(np.array_equal(var.genotypes, genotypes))
