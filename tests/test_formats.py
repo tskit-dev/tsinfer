@@ -66,6 +66,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertGreater(ts.num_sites, 1)
         for v in ts.variants():
             input_file.add_site(v.site.position, v.genotypes, v.alleles)
+        input_file.record_provenance("verify_data_round_trip")
         input_file.finalise()
         self.assertEqual(input_file.format_version, formats.SampleData.FORMAT_VERSION)
         self.assertEqual(input_file.format_name, formats.SampleData.FORMAT_NAME)
@@ -204,7 +205,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         iso = datetime.datetime.now().isoformat()
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
         record = input_file.provenances_record[0]
-        self.assertEqual(record["software"], "tsinfer")
+        self.assertEqual(record["software"]["name"], "tsinfer")
         a = list(input_file.provenances())
         self.assertEqual(len(a), 1)
         self.assertEqual(a[0][0], timestamp)
@@ -597,10 +598,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         ts = msprime.simulate(
             sample_size, recombination_rate=1, mutation_rate=10,
             length=sequence_length, random_seed=100)
-        sample_data = formats.SampleData(sequence_length=ts.sequence_length)
-        for v in ts.variants():
-            sample_data.add_site(v.site.position, v.genotypes, v.alleles)
-        sample_data.finalise()
+        sample_data = formats.SampleData.from_tree_sequence(ts)
 
         num_sites = sample_data.num_inference_sites
         ancestors = []
@@ -624,6 +622,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for start, end, time, focal_sites, haplotype in ancestors:
             ancestor_data.add_ancestor(
                 start, end, time, focal_sites, haplotype[start: end])
+        ancestor_data.record_provenance("verify_data_round_trip")
         ancestor_data.finalise()
 
         self.assertGreater(len(ancestor_data.uuid), 0)
@@ -686,16 +685,19 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         ancestor_data = tsinfer.AncestorData(sample_data)
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-        self.assertEqual(ancestor_data.num_provenances, 1)
-        timestamp = ancestor_data.provenances_timestamp[0]
+        self.assertEqual(ancestor_data.num_provenances, sample_data.num_provenances + 1)
+
+        timestamp = ancestor_data.provenances_timestamp[-1]
         iso = datetime.datetime.now().isoformat()
         self.assertEqual(timestamp.split("T")[0], iso.split("T")[0])
-        record = ancestor_data.provenances_record[0]
-        self.assertEqual(record["software"], "tsinfer")
+        record = ancestor_data.provenances_record[-1]
+        self.assertEqual(record["software"]["name"], "tsinfer")
         a = list(ancestor_data.provenances())
-        self.assertEqual(len(a), 1)
-        self.assertEqual(a[0][0], timestamp)
-        self.assertEqual(a[0][1], record)
+        self.assertEqual(a[-1][0], timestamp)
+        self.assertEqual(a[-1][1], record)
+        for j, (timestamp, record) in enumerate(sample_data.provenances()):
+            self.assertEqual(timestamp, a[j][0])
+            self.assertEqual(record, a[j][1])
 
     def test_chunk_size(self):
         N = 20

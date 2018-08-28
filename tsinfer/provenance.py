@@ -72,18 +72,24 @@ def get_environment():
     return env
 
 
-def get_provenance_dict(command, parameters=None, source=None):
+def get_provenance_dict(command=None, **kwargs):
     """
-    Returns a dictionary encoding an execution of tsinfer.
+    Returns a dictionary encoding an execution of tsinfer following the
+    tskit provenance schema.
 
-    Note: this format is incomplete and provisional.
+    https://msprime.readthedocs.io/en/stable/provenance.html
     """
+    if command is None:
+        raise ValueError("Command must be provided")
+    parameters = dict(kwargs)
+    parameters["command"] = command
     document = {
-        "software": "tsinfer",
-        "version": __version__,
-        "command": command,
+        "schema_version": "1.0.0",
+        "software": {
+            "name": "tsinfer",
+            "version": __version__,
+        },
         "parameters": parameters,
-        "source": source,
         "environment": get_environment()
     }
     return document

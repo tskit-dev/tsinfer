@@ -146,13 +146,14 @@ def generate_ancestors(
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
-    ancestor_data = formats.AncestorData(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
-    generator = AncestorsGenerator(
-        sample_data, ancestor_data, progress_monitor, engine=engine,
-        num_threads=num_threads)
-    generator.add_sites()
-    generator.run()
+    with formats.AncestorData(sample_data, **kwargs) as ancestor_data:
+        generator = AncestorsGenerator(
+            sample_data, ancestor_data, progress_monitor, engine=engine,
+            num_threads=num_threads)
+        generator.add_sites()
+        generator.run()
+        ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
 
 
@@ -358,7 +359,6 @@ class AncestorsGenerator(object):
                 self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
-        self.ancestor_data.finalise()
 
 
 class Matcher(object):
@@ -506,7 +506,8 @@ class Matcher(object):
         for timestamp, record in self.ancestor_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(
-            command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
+            command="match_ancestors",
+            source={"uuid": self.ancestor_data.uuid})
         tables.provenances.add_row(record=json.dumps(record))
         logger.debug("Sorting ancestors tree sequence")
         tables.sort()
@@ -952,39 +953,6 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def workaround_individuals_simplify(self, ts):
-        """
-        Temporary hack to work around the fact that simplify doesn't currently
-        support individuals. Remove once simplify supports individuals properly.
-        """
-        tables = ts.dump_tables()
-        individuals = tables.individuals.copy()
-        nodes = tables.nodes.copy()
-        tables.nodes.set_columns(
-            flags=nodes.flags, time=nodes.time, population=nodes.population,
-            metadata=nodes.metadata, metadata_offset=nodes.metadata_offset)
-        tables.individuals.clear()
-
-        node_id_map = tables.simplify(
-            samples=self.sample_ids, filter_zero_mutation_sites=False)
-        tables.individuals.set_columns(
-            flags=individuals.flags,
-            location=individuals.location,
-            location_offset=individuals.location_offset,
-            metadata=individuals.metadata,
-            metadata_offset=individuals.metadata_offset)
-        # Compute the new node.individuals column.
-        individual = tables.nodes.individual
-        individual[node_id_map[self.sample_ids]] = nodes.individual[self.sample_ids]
-        tables.nodes.set_columns(
-            flags=tables.nodes.flags,
-            time=tables.nodes.time,
-            individual=individual,
-            population=tables.nodes.population,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset)
-        return tables.tree_sequence()
-
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
@@ -1005,9 +973,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
                 tables.sort()
                 ts = tables.tree_sequence()
-            ts = self.workaround_individuals_simplify(ts)
-            # ts = ts.simplify(
-            #     samples=self.sample_ids, filter_zero_mutation_sites=False)
+            ts = ts.simplify(samples=self.sample_ids, filter_sites=False)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
         return ts
@@ -1050,57 +1016,13 @@ class ResultBuffer(object):
         return self.mutations[node_id]
 
 
-# TODO This name is a bit too generic and the implementation should be in msprime.
 def minimise(ts):
     """
     Returns a tree sequence with the minimal information required to represent
     the tree topologies at its sites.
+
+    This is a convenience function used when we wish to use a subset of the
+    sites in a tree sequence for ancestor matching. It is a thin-wrapper
+    over the simplify method.
     """
-    tables = ts.dump_tables()
-    edge_map = {}
-
-    def add_edge(left, right, parent, child):
-        new_edge = msprime.Edge(left, right, parent, child)
-        if child not in edge_map:
-            edge_map[child] = new_edge
-        else:
-            edge = edge_map[child]
-            if edge.right == left and edge.parent == parent:
-                # Squash
-                edge.right = right
-            else:
-                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
-                edge_map[child] = new_edge
-
-    tables.edges.clear()
-
-    edge_buffer = []
-    first_site = True
-    for tree in ts.trees():
-        if tree.num_sites > 0:
-            sites = list(tree.sites())
-            if first_site:
-                x = 0
-                first_site = False
-            else:
-                x = sites[0].position
-            # Flush the edge buffer.
-            for left, parent, child in edge_buffer:
-                add_edge(left, x, parent, child)
-            # Add edges for each node in the tree.
-            edge_buffer.clear()
-            for root in tree.roots:
-                for u in tree.nodes(root):
-                    if u != root:
-                        edge_buffer.append((x, tree.parent(u), u))
-    # Add the final edges.
-    for left, parent, child in edge_buffer:
-        add_edge(left, tables.sequence_length, parent, child)
-    # Flush the remaining edges to the table
-    for edge in edge_map.values():
-        tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
-
-    tables.sort()
-    record = provenance.get_provenance_dict(command="minimise")
-    tables.provenances.add_row(record=json.dumps(record))
-    return tables.tree_sequence()
+    return ts.simplify(reduce_to_site_topology=True, filter_sites=False)
