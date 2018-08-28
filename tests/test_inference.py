@@ -222,9 +222,12 @@ class TestZeroInferenceSites(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
             for j in range(m):
                 sample_data.add_site(j, genotypes[j], inference=False)
-        output_ts = tsinfer.infer(sample_data)
-        for tree in output_ts.trees():
-            self.assertEqual(tree.num_roots, 1)
+        self.assertEqual(sample_data.num_non_inference_sites, m)
+        self.assertEqual(sample_data.num_inference_sites, 0)
+        for path_compression in [False, True]:
+            output_ts = tsinfer.infer(sample_data, path_compression=path_compression)
+            for tree in output_ts.trees():
+                self.assertEqual(tree.num_roots, 1)
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -236,6 +239,7 @@ class TestZeroInferenceSites(unittest.TestCase):
         self.verify([[0, 1]])
         self.verify([[1, 0]])
         self.verify([[1, 1]])
+        self.verify([[1, 1, 1]])
 
     def test_two_sites(self):
         self.verify([[0, 0], [0, 0]])
@@ -304,6 +308,9 @@ class TestMetadataRoundTrip(unittest.TestCase):
 
         for j, metadata in enumerate(sample_data.sites_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
+
+        for variant in sample_data.variants():
+            self.assertEqual(all_metadata[variant.site.id], variant.site.metadata)
 
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [

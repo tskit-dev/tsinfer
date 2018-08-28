@@ -422,6 +422,40 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.assertTrue(np.array_equal(g, v.genotypes))
         self.assertIsNone(next(inference_genotypes, None), None)
 
+    def test_variants(self):
+        ts = self.get_example_ts(11, 15)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.from_tree_sequence(ts)
+
+        all_variants = input_file.variants()
+        for v1 in ts.variants():
+            v2 = next(all_variants)
+            self.assertEqual(v1.site.id, v2.site.id)
+            self.assertEqual(v1.site.position, v2.site.position)
+            self.assertEqual(v1.site.ancestral_state, v2.site.ancestral_state)
+            self.assertEqual(v1.alleles, v2.alleles)
+            self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
+        self.assertIsNone(next(all_variants, None), None)
+
+        inference_variants = input_file.variants(inference_sites=True)
+        non_inference_variants = input_file.variants(inference_sites=False)
+        for v1 in ts.variants():
+            freq = np.sum(v1.genotypes)
+            if 1 < freq < ts.num_samples:
+                v2 = next(inference_variants)
+                inference = 1
+            else:
+                v2 = next(non_inference_variants)
+                inference = 0
+            self.assertEqual(v1.site.id, v2.site.id)
+            self.assertEqual(v1.site.position, v2.site.position)
+            self.assertEqual(v1.site.ancestral_state, v2.site.ancestral_state)
+            self.assertEqual(inference, v2.site.inference)
+            self.assertEqual(v1.alleles, v2.alleles)
+            self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
+        self.assertIsNone(next(inference_variants, None), None)
+        self.assertIsNone(next(non_inference_variants, None), None)
+
     def test_haplotypes(self):
         ts = self.get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)
