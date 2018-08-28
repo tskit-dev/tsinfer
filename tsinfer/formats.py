@@ -28,6 +28,7 @@ import os.path
 import queue
 import threading
 import uuid
+import json
 
 import numpy as np
 import zarr
@@ -402,17 +403,13 @@ class DataContainer(object):
         other._mode = self.EDIT_MODE
         return other
 
-    def finalise(self, command=None, parameters=None, source=None):
+    def finalise(self):
         """
         Ensures that the state of the data is flushed and writes the
         provenance for the current operation. The specified 'command' is used
         to fill the corresponding entry in the provenance dictionary.
         """
         self._check_write_modes()
-        timestamp = datetime.datetime.now().isoformat()
-        record = provenance.get_provenance_dict(
-            command=command, parameters=parameters, source=source)
-        self.add_provenance(timestamp, record)
         self.data.attrs[FINALISED_KEY] = True
         if self.path is not None:
             store = self.data.store
@@ -497,6 +494,15 @@ class DataContainer(object):
         self.provenances_record.resize(n + 1)
         self.provenances_timestamp[n] = timestamp
         self.provenances_record[n] = record
+
+    def record_provenance(self, command=None, **kwargs):
+        """
+        Records the provenance information for this file using the
+        tskit provenances schema.
+        """
+        timestamp = datetime.datetime.now().isoformat()
+        record = provenance.get_provenance_dict(command=command, **kwargs)
+        self.add_provenance(timestamp, record)
 
     @property
     def format_name(self):
@@ -907,6 +913,10 @@ class SampleData(DataContainer):
         self.__init__(sequence_length=ts.sequence_length, **kwargs)
         for v in ts.variants():
             self.add_site(v.site.position, v.genotypes, v.alleles)
+        # Insert all the provenance from the original tree sequence.
+        for prov in ts.provenances():
+            self.add_provenance(prov.timestamp, json.loads(prov.record))
+        self.record_provenance(command="from-tree-sequence", **kwargs)
         self.finalise()
         return self
 
@@ -1102,7 +1112,7 @@ class SampleData(DataContainer):
         self._last_position = position
         return site_id
 
-    def finalise(self, **kwargs):
+    def finalise(self):
         if self._mode == self.BUILD_MODE:
             if self._build_state == self.ADDING_POPULATIONS:
                 raise ValueError("Must add at least one sample individual")
@@ -1115,7 +1125,7 @@ class SampleData(DataContainer):
             if self.sequence_length == 0:
                 self.data.attrs["sequence_length"] = self._last_position + 1
 
-        super(SampleData, self).finalise(**kwargs)
+        super(SampleData, self).finalise()
 
     ####################################
     # Read mode
@@ -1247,6 +1257,10 @@ class AncestorData(DataContainer):
             "haplotype": self.ancestors_haplotype},
             num_threads=self._num_flush_threads)
 
+        # Add in the provenance trail from the sample_data file.
+        for timestamp, record in sample_data.provenances():
+            self.add_provenance(timestamp, record)
+
     def summary(self):
         return "AncestorData(num_ancestors={}, num_sites={})".format(
             self.num_ancestors, self.num_sites)
@@ -1372,12 +1386,11 @@ class AncestorData(DataContainer):
             start=start, end=end, time=time, focal_sites=focal_sites,
             haplotype=haplotype)
 
-    def finalise(self, **kwargs):
+    def finalise(self):
         if self._mode == self.BUILD_MODE:
             self.item_writer.flush()
             self.item_writer = None
-        source = {"uuid": self.sample_data_uuid}
-        super(AncestorData, self).finalise(source=source, **kwargs)
+        super(AncestorData, self).finalise()
 
     def ancestors(self):
         """

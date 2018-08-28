@@ -146,13 +146,14 @@ def generate_ancestors(
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
-    ancestor_data = formats.AncestorData(sample_data, **kwargs)
     progress_monitor = _get_progress_monitor(progress_monitor)
-    generator = AncestorsGenerator(
-        sample_data, ancestor_data, progress_monitor, engine=engine,
-        num_threads=num_threads)
-    generator.add_sites()
-    generator.run()
+    with formats.AncestorData(sample_data, **kwargs) as ancestor_data:
+        generator = AncestorsGenerator(
+            sample_data, ancestor_data, progress_monitor, engine=engine,
+            num_threads=num_threads)
+        generator.add_sites()
+        generator.run()
+        ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
 
 
@@ -358,7 +359,6 @@ class AncestorsGenerator(object):
                 self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
-        self.ancestor_data.finalise()
 
 
 class Matcher(object):
@@ -506,7 +506,8 @@ class Matcher(object):
         for timestamp, record in self.ancestor_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(
-            command="match-ancestors", source={"uuid": self.ancestor_data.uuid})
+            command="match_ancestors",
+            source={"uuid": self.ancestor_data.uuid})
         tables.provenances.add_row(record=json.dumps(record))
         logger.debug("Sorting ancestors tree sequence")
         tables.sort()
