@@ -705,7 +705,7 @@ class Matcher(object):
             "Built samples tree sequence: {} nodes ({} synthetic); {} edges; "
             "{} sites; {} mutations".format(
                 len(tables.nodes), num_synthetic_nodes, len(tables.edges),
-                len(tables.mutations), len(tables.sites)))
+                len(tables.sites), len(tables.mutations)))
         return tables.tree_sequence()
 
 
