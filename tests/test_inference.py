@@ -305,6 +305,9 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for j, metadata in enumerate(sample_data.sites_metadata[:]):
             self.assertEqual(all_metadata[j], metadata)
 
+        for variant in sample_data.variants():
+            self.assertEqual(all_metadata[variant.site.id], variant.site.metadata)
+
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
             json.loads(site.metadata.decode()) for site in output_ts.sites()]

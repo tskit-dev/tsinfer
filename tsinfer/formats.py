@@ -599,6 +599,30 @@ class DataContainer(object):
             yield timestamp[j], record[j]
 
 
+@attr.s
+class Site(object):
+    """
+    A single site. Mirrors the definition in msprime.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    position = attr.ib()
+    ancestral_state = attr.ib()
+    inference = attr.ib()
+    metadata = attr.ib()
+
+
+@attr.s
+class Variant(object):
+    """
+    A single variant. Mirrors the definition in msprime but with some extra fields.
+    """
+    # TODO document properly.
+    site = attr.ib()
+    genotypes = attr.ib()
+    alleles = attr.ib()
+
+
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
@@ -771,6 +795,10 @@ class SampleData(DataContainer):
             return self.__num_inference_sites
         else:
             return int(np.sum(self.sites_inference[:]))
+
+    @property
+    def num_non_inference_sites(self):
+        return self.num_sites - self.num_inference_sites
 
     @property
     def num_populations(self):
@@ -1146,6 +1174,32 @@ class SampleData(DataContainer):
         for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
             if inference_sites is None or inference[j] == inference_sites:
                 yield j, a
+
+    def variants(self, inference_sites=None):
+        """
+        Returns an iterator over the Variant objects. This is equivalent to
+        the TreeSequence.variants iterator.
+
+        If ``inference_sites`` is ``None``, return variants for all sites.
+        If ``inference_sites`` is ``True``, return only variants at sites that have
+        been marked for inference; if ``False``, return only genotypes at sites
+        that are not marked for inference.
+
+        :param bool inference_sites: Control the sites that we return variants
+            for.
+        """
+        position = self.sites_position[:]
+        alleles = self.sites_alleles[:]
+        inference = self.sites_inference[:]
+        metadata = self.sites_metadata[:]
+        for j, genotypes in self.genotypes(inference_sites):
+            if inference_sites is None or inference[j] == inference_sites:
+                site = Site(
+                    id=j, position=position[j], ancestral_state=alleles[j][0],
+                    inference=inference[j], metadata=metadata[j])
+                variant = Variant(
+                    site=site, alleles=tuple(alleles[j]), genotypes=genotypes)
+                yield variant
 
     def haplotypes(self, inference_sites=None):
         # Undocumenting for now.

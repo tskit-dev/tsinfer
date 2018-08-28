@@ -522,12 +522,13 @@ class Matcher(object):
     def encode_metadata(self, value):
         return json.dumps(value).encode()
 
-    def locate_mutations_on_tree(self, tree, site, genotypes, alleles, mutations):
+    def locate_mutations_on_tree(self, tree, variant, mutations):
         """
         Find the most parsimonious way to place mutations to define the specified
         genotypes on the specified tree, and update the mutation table accordingly.
         """
-        samples = np.where(genotypes == 1)[0]
+        site = variant.site.id
+        samples = np.where(variant.genotypes == 1)[0]
         num_samples = len(samples)
         logger.debug("Locating mutations for site {}; n = {}".format(site, num_samples))
         # Nothing to do if this site is fixed for the ancestral state.
@@ -548,23 +549,23 @@ class Matcher(object):
         assert count[mutation_node] == num_samples
 
         parent_mutation = mutations.add_row(
-            site=site, node=mutation_node, derived_state=alleles[1])
+            site=site, node=mutation_node, derived_state=variant.alleles[1])
         # Traverse down the tree to find any leaves that do not have this
         # mutation and insert back mutations.
         for node in tree.nodes(mutation_node):
             if tree.is_leaf(node) and count[node] == 0:
                 mutations.add_row(
-                    site=site, node=node, derived_state=alleles[0],
+                    site=site, node=node, derived_state=variant.alleles[0],
                     parent=parent_mutation)
 
-    def locate_mutations_over_samples(self, site, genotypes, alleles, mutations):
+    def locate_mutations_over_samples(self, variant, mutations):
         """
         Place mutations directly over all the samples in the specified site.
         """
-        for sample in np.where(genotypes == 1)[0]:
+        for sample in np.where(variant.genotypes == 1)[0]:
             node = self.sample_ids[sample]
             mutations.add_row(
-                site=site, node=node, derived_state=alleles[1])
+                site=variant.site.id, node=node, derived_state=variant.alleles[1])
 
     def insert_sites(self, tables):
         """
@@ -572,56 +573,50 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
-        ts = tables.tree_sequence()
         num_sites = self.sample_data.num_sites
-        alleles = self.sample_data.sites_alleles[:]
-        inference = self.sample_data.sites_inference[:]
-        metadata = self.sample_data.sites_metadata[:]
-        position = self.sample_data.sites_position[:]
-        _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
-        num_non_inference_sites = np.sum(inference == 0)
+        num_non_inference_sites = self.sample_data.num_non_inference_sites
         logger.info(
             "Starting mutation positioning for {} non inference sites".format(
                 num_non_inference_sites))
-
         progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
+
+        _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        ts = tables.tree_sequence()
         if num_non_inference_sites > 0:
             inferred_site = 0
             trees = ts.trees()
             tree = next(trees)
-            for site_id, genotypes in self.sample_data.genotypes():
-                x = position[site_id]
-                while tree.interval[1] <= x:
+            for variant in self.sample_data.variants():
+                site = variant.site
+                while tree.interval[1] <= site.position:
                     tree = next(trees)
-                assert tree.interval[0] <= x < tree.interval[1]
+                assert tree.interval[0] <= site.position < tree.interval[1]
                 tables.sites.add_row(
-                    position=x,
-                    ancestral_state=alleles[site_id][0],
-                    metadata=self.encode_metadata(metadata[site_id]))
-                if inference[site_id] == 1:
+                    position=site.position,
+                    ancestral_state=site.ancestral_state,
+                    metadata=self.encode_metadata(site.metadata))
+                if site.inference == 1:
                     tables.mutations.add_row(
-                        site=site_id, node=node[inferred_site],
-                        derived_state=alleles[site_id][derived_state[inferred_site]])
+                        site=site.id, node=node[inferred_site],
+                        derived_state=variant.alleles[derived_state[inferred_site]])
                     inferred_site += 1
                 elif ts.num_edges > 0:
-                    self.locate_mutations_on_tree(
-                        tree, site_id, genotypes, alleles[site_id], tables.mutations)
+                    self.locate_mutations_on_tree(tree, variant, tables.mutations)
                 else:
                     # If we have no tree topology this is all we can do.
-                    self.locate_mutations_over_samples(
-                        site_id, genotypes, alleles[site_id], tables.mutations)
+                    self.locate_mutations_over_samples(variant, tables.mutations)
                 progress_monitor.update()
         else:
             # Simple case where all sites are inference sites.
-            for site_id in range(self.sample_data.num_sites):
-                x = position[site_id]
+            for variant in self.sample_data.variants():
+                site = variant.site
                 tables.sites.add_row(
-                    position=x,
-                    ancestral_state=alleles[site_id][0],
-                    metadata=self.encode_metadata(metadata[site_id]))
+                    position=site.position,
+                    ancestral_state=site.ancestral_state,
+                    metadata=self.encode_metadata(site.metadata))
                 tables.mutations.add_row(
-                    site=site_id, node=node[site_id],
-                    derived_state=alleles[site_id][derived_state[site_id]])
+                    site=site.id, node=node[site.id],
+                    derived_state=variant.alleles[derived_state[site.id]])
                 progress_monitor.update()
         progress_monitor.close()
 
