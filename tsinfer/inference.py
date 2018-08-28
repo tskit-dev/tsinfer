@@ -558,15 +558,6 @@ class Matcher(object):
                     site=site, node=node, derived_state=variant.alleles[0],
                     parent=parent_mutation)
 
-    def locate_mutations_over_samples(self, variant, mutations):
-        """
-        Place mutations directly over all the samples in the specified site.
-        """
-        for sample in np.where(variant.genotypes == 1)[0]:
-            node = self.sample_ids[sample]
-            mutations.add_row(
-                site=variant.site.id, node=node, derived_state=variant.alleles[1])
-
     def insert_sites(self, tables):
         """
         Insert the sites in the sample data that were not marked for inference,
@@ -600,11 +591,9 @@ class Matcher(object):
                         site=site.id, node=node[inferred_site],
                         derived_state=variant.alleles[derived_state[inferred_site]])
                     inferred_site += 1
-                elif ts.num_edges > 0:
-                    self.locate_mutations_on_tree(tree, variant, tables.mutations)
                 else:
-                    # If we have no tree topology this is all we can do.
-                    self.locate_mutations_over_samples(variant, tables.mutations)
+                    assert ts.num_edges > 0
+                    self.locate_mutations_on_tree(tree, variant, tables.mutations)
                 progress_monitor.update()
         else:
             # Simple case where all sites are inference sites.
