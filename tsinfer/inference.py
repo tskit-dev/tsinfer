@@ -953,39 +953,6 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def workaround_individuals_simplify(self, ts):
-        """
-        Temporary hack to work around the fact that simplify doesn't currently
-        support individuals. Remove once simplify supports individuals properly.
-        """
-        tables = ts.dump_tables()
-        individuals = tables.individuals.copy()
-        nodes = tables.nodes.copy()
-        tables.nodes.set_columns(
-            flags=nodes.flags, time=nodes.time, population=nodes.population,
-            metadata=nodes.metadata, metadata_offset=nodes.metadata_offset)
-        tables.individuals.clear()
-
-        node_id_map = tables.simplify(
-            samples=self.sample_ids, filter_zero_mutation_sites=False)
-        tables.individuals.set_columns(
-            flags=individuals.flags,
-            location=individuals.location,
-            location_offset=individuals.location_offset,
-            metadata=individuals.metadata,
-            metadata_offset=individuals.metadata_offset)
-        # Compute the new node.individuals column.
-        individual = tables.nodes.individual
-        individual[node_id_map[self.sample_ids]] = nodes.individual[self.sample_ids]
-        tables.nodes.set_columns(
-            flags=tables.nodes.flags,
-            time=tables.nodes.time,
-            individual=individual,
-            population=tables.nodes.population,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset)
-        return tables.tree_sequence()
-
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
@@ -1006,9 +973,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
                 tables.sort()
                 ts = tables.tree_sequence()
-            ts = self.workaround_individuals_simplify(ts)
-            # ts = ts.simplify(
-            #     samples=self.sample_ids, filter_zero_mutation_sites=False)
+            ts = ts.simplify(samples=self.sample_ids, filter_sites=False)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
         return ts
