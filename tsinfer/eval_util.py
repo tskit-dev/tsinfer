@@ -429,27 +429,110 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
     print("Total mismatches             = ", total_mismatches)
 
 
+def subset_sites(ts, position):
+    """
+    Return a copy of the specified tree sequence with sites reduced to those
+    with positions in the specified list.
+    """
+    tables = ts.dump_tables()
+    lookup = frozenset(position)
+    tables.sites.clear()
+    tables.mutations.clear()
+    for site in ts.sites():
+        if site.position in lookup:
+            site_id = tables.sites.add_row(
+                site.position, ancestral_state=site.ancestral_state,
+                metadata=site.metadata)
+            for mutation in site.mutations:
+                tables.mutations.add_row(
+                    site_id, node=mutation.node, parent=mutation.parent,
+                    derived_state=mutation.derived_state,
+                    metadata=mutation.metadata)
+    return tables.tree_sequence()
+
+
+def make_ancestors_ts(ts, sample_data, remove_leaves=False):
+    """
+    Return a tree sequence suitable for use as an ancestors tree sequence from the
+    specified source tree sequence using the samples in the specified sample
+    data. If remove_leaves is True, remove any nodes that are at time zero.
+
+    We generally assume that this is a standard tree sequence output by
+    msprime.simulate here.
+    """
+    position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+    reduced = subset_sites(ts, position)
+    minimised = inference.minimise(reduced)
+
+    tables = minimised.dump_tables()
+    # Rewrite the nodes so that 0 is one older than all the other nodes.
+    nodes = tables.nodes.copy()
+    tables.nodes.clear()
+    tables.nodes.add_row(flags=1, time=np.max(nodes.time) + 2)
+    tables.nodes.append_columns(
+        flags=np.ones_like(nodes.flags), # Everything is a sample
+        time=nodes.time + 1, # Make sure that all times are > 0
+        population=nodes.population,
+        individual=nodes.individual, metadata=nodes.metadata,
+        metadata_offset=nodes.metadata_offset)
+    # Add one to all node references to account for this.
+    tables.edges.set_columns(
+        left=tables.edges.left,
+        right=tables.edges.right,
+        parent=tables.edges.parent + 1,
+        child=tables.edges.child + 1)
+    tables.mutations.set_columns(
+        node=tables.mutations.node + 1,
+        site=tables.mutations.site,
+        parent=tables.mutations.parent,
+        derived_state=tables.mutations.derived_state,
+        derived_state_offset=tables.mutations.derived_state_offset,
+        metadata=tables.mutations.metadata,
+        metadata_offset=tables.mutations.metadata_offset)
+
+    trees = minimised.trees()
+    tree = next(trees)
+    left = 0
+    root = tree.root
+    for tree in trees:
+        if tree.root != root:
+            tables.edges.add_row(left, tree.interval[0], 0, root + 1)
+            root = tree.root
+            left = tree.interval[0]
+    tables.edges.add_row(left, ts.sequence_length, 0, root + 1)
+    tables.sort()
+    tables.simplify(samples=np.argsort(tables.nodes.time)[::-1].astype(np.int32))
+    if remove_leaves:
+        # Assume that all leaves are at time 1.
+        samples = np.where(tables.nodes.time != 1)[0].astype(np.int32)
+        tables.simplify(samples=samples)
+    new_ts = tables.tree_sequence()
+    return new_ts
+
+
 def run_perfect_inference(
         base_ts, num_threads=1, path_compression=False,
         extended_checks=True, time_chunking=True, progress_monitor=None,
-        engine=constants.C_ENGINE):
+        use_ts=False, engine=constants.C_ENGINE):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
     ts = insert_perfect_mutations(base_ts)
-    with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
-        for v in ts.variants():
-            sample_data.add_site(v.site.position, v.genotypes, v.alleles)
+    sample_data = formats.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = formats.AncestorData(sample_data)
-    build_simulated_ancestors(
-        sample_data, ancestor_data, ts, time_chunking=time_chunking)
-    ancestor_data.finalise()
+    if use_ts:
+        # Use the actual tree sequenc that was provided as the basis for copying.
+        ancestors_ts = make_ancestors_ts(ts, sample_data, remove_leaves=True)
+    else:
+        ancestor_data = formats.AncestorData(sample_data)
+        build_simulated_ancestors(
+            sample_data, ancestor_data, ts, time_chunking=time_chunking)
+        ancestor_data.finalise()
 
-    ancestors_ts = inference.match_ancestors(
-        sample_data, ancestor_data, engine=engine, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks,
-        progress_monitor=progress_monitor)
+        ancestors_ts = inference.match_ancestors(
+            sample_data, ancestor_data, engine=engine, path_compression=path_compression,
+            num_threads=num_threads, extended_checks=extended_checks,
+            progress_monitor=progress_monitor)
     # If time_chunking is turned on we need to stabilise the node ordering in the output
     # to ensure that the node IDs are comparable.
     inferred_ts = inference.match_samples(

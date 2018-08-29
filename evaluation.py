@@ -1252,20 +1252,24 @@ def multiple_recombinations(ts):
 
 
 def run_perfect_inference(args):
+    model = "smc_prime"
+    if args.use_ts:
+        model = "hudson"
     for seed in range(1, args.num_replicates + 1):
         base_ts = msprime.simulate(
             args.sample_size, Ne=10**4, length=args.length * 10**6,
             recombination_rate=1e-8, random_seed=args.random_seed + seed,
-            model="smc_prime")
+            model=model)
         print("simulated ts with n={} and {} trees; seed={}".format(
             base_ts.num_samples, base_ts.num_trees, seed))
-        if multiple_recombinations(base_ts):
+        if not args.use_ts and multiple_recombinations(base_ts):
             print("Multiple recombinations; skipping")
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
             base_ts, num_threads=args.num_threads,
             engine=args.engine, extended_checks=args.extended_checks,
             time_chunking=not args.no_time_chunking,
+            use_ts=args.use_ts,
             path_compression=args.path_compression)
         print("n={} num_trees={} num_sites={}".format(
             ts.num_samples, ts.num_trees, ts.num_sites))
@@ -1330,12 +1334,15 @@ if __name__ == "__main__":
         "--extended-checks", "-X", action="store_true",
         help="Enable extra consistency checking (slow)")
     parser.add_argument(
+        "--use-ts", action="store_true",
+        help="Use the original tree sequence as the ancestors tree sequence.")
+    parser.add_argument(
         "--no-time-chunking", action="store_true",
         help="Disable time-chunking to give each ancestor a distinct time.")
     parser.add_argument(
         "--path-compression", "-c", action="store_true",
         help="Turn on path compression. Makes verification much slower.")
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--random-seed", "-s", type=int, default=1)
     # Not actually used here, but useful to have it for testing.
     parser.add_argument("--destination-dir", "-d", default="")
 

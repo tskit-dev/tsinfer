@@ -43,6 +43,39 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
+def check_ancestors_ts(ts):
+    """
+    Checks if the specified tree sequence has the required properties for an
+    ancestors tree sequence.
+    """
+    if ts.num_nodes == 0:
+        return
+    tables = ts.tables
+    if np.any(tables.nodes.time <= 0):
+        raise ValueError("All nodes must have time > 0")
+    # This is a strong requirement, which is only partially true. It seems to be
+    # fine if we have synthetic nodes which are out-of-order. Why?
+    # # Nodes must be in nondecreasing order of time.
+    # time = tables.nodes.time
+    # if np.any(time[:-1] < time[1:]):
+    #     raise ValueError("Nodes must be allocated in non-decreasing time order.")
+
+    for tree in ts.trees(sample_counts=False):
+        # 0 must always be a root and have at least one child.
+        if tree.parent(0) != msprime.NULL_NODE:
+            raise ValueError("0 is not a root: non null parent")
+        if tree.left_child(0) == msprime.NULL_NODE:
+            raise ValueError("0 must have at least one child")
+        for root in tree.roots:
+            if root != 0:
+                if tree.left_child(root) != msprime.NULL_NODE:
+                    raise ValueError("All non empty subtrees must inherit from 0")
+        # Sites must have exactly one mutation
+        for site in tree.sites():
+            if len(site.mutations) != 1:
+                raise ValueError("Sites must have exactly one mutation")
+
+
 def is_synthetic(flags):
     """
     Returns True if the synthetic flag is set on the specified flags
@@ -86,6 +119,29 @@ def _get_progress_monitor(progress_monitor):
     if progress_monitor is None:
         progress_monitor = DummyProgressMonitor()
     return progress_monitor
+
+
+def verify(sample_data, tree_sequence):
+    """
+    Verifies that the specified sample data and tree sequence files encode the
+    same data.
+    """
+    if sample_data.num_sites != tree_sequence.num_sites:
+        raise ValueError("numbers of sites not equal")
+    if sample_data.num_samples != tree_sequence.num_samples:
+        raise ValueError("numbers of samples not equal")
+    for var1, var2 in zip(sample_data.variants(), tree_sequence.variants()):
+        if var1.site.id != var2.site.id:
+            raise ValueError("site IDs not equal: {} != {}".format(
+                var1.site.id, var2.site.id))
+        if var1.site.position != var2.site.position:
+            raise ValueError("site positions not equal: {} != {}".format(
+                var1.site.position, var2.site.position))
+        if var1.alleles != var2.alleles:
+            raise ValueError("alleles not equal: {} != {}".format(
+                var1.alleles, var2.alleles))
+        if not np.array_equal(var1.genotypes, var2.genotypes):
+            raise ValueError("Genotypes not equal at site {}".format(var1.site.id))
 
 
 def infer(
@@ -414,9 +470,7 @@ class Matcher(object):
         """
         matcher = self.matcher[thread_index]
         match = self.match[thread_index]
-        # print("Find path", child_id)
         left, right, parent = matcher.find_path(haplotype, start, end, match)
-        # print("Done")
         self.results.set_path(child_id, left, right, parent)
         self.match_progress.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
@@ -438,6 +492,8 @@ class Matcher(object):
             raise ValueError(
                 "Ancestors tree sequence not compatible with the the specified "
                 "sample data.")
+        if np.any(tables.nodes.time <= 0):
+            raise ValueError("All nodes must have time > 0")
         edges = tables.edges
         # Get the indexes into the position array.
         pos_map = np.hstack([position, [tables.sequence_length]])

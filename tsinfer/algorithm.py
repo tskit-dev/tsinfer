@@ -509,7 +509,7 @@ class TreeSequenceBuilder(object):
                 assert edge.child == child
                 if edge.next is not None:
                     if self.flags[child] != 0:
-                        assert edge.next.left == edge.right
+                        assert edge.next.left >= edge.right
                 assert self.left_index[(edge.left, self.time[child], child)] == edge
                 assert self.right_index[(edge.right, -self.time[child], child)] == edge
                 edge = edge.next

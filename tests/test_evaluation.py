@@ -542,12 +542,31 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, engine=engine)
             self.verify_perfect_inference(ts, inferred_ts)
 
+    def test_small_use_ts(self):
+        base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
+        self.assertGreater(base_ts.num_trees, 1)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                    base_ts, use_ts=True, engine=engine)
+            self.verify_perfect_inference(ts, inferred_ts)
+
     def test_small_smc_path_compression(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
         self.assertGreater(base_ts.num_trees, 1)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, path_compression=True)
+            # We can't just compare tables when doing path compression because
+            # we'll find different ways of expressing the same trees.
+            breakpoints, distances = tsinfer.compare(ts, inferred_ts)
+            self.assertTrue(np.all(distances == 0))
+
+    def test_small_use_ts_path_compression(self):
+        base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
+        self.assertGreater(base_ts.num_trees, 1)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                    base_ts, use_ts=True, path_compression=True, engine=engine)
             # We can't just compare tables when doing path compression because
             # we'll find different ways of expressing the same trees.
             breakpoints, distances = tsinfer.compare(ts, inferred_ts)
@@ -561,6 +580,13 @@ class TestPerfectInference(unittest.TestCase):
         # we'll find different ways of expressing the same trees.
         breakpoints, distances = tsinfer.compare(ts, inferred_ts)
         self.assertTrue(np.all(distances == 0))
+
+    def test_sample_20_use_ts(self):
+        base_ts = msprime.simulate(
+            20, length=5, recombination_rate=10, random_seed=111)
+        self.assertGreater(base_ts.num_trees, 5)
+        ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, use_ts=True)
+        self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc_threads(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
