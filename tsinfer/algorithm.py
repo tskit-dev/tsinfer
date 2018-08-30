@@ -594,8 +594,6 @@ def is_descendant(pi, u, v):
             w = pi[w]
         # print("DESC:",v, u, path)
         ret = w == v
-    if u < v:
-        assert not ret
     # print("IS_DESCENDENT(", u, v, ") = ", ret)
     return ret
 

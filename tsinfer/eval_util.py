@@ -460,9 +460,14 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     We generally assume that this is a standard tree sequence output by
     msprime.simulate here.
     """
+    for tree in ts.trees():
+        print(tree.draw(format="unicode"))
     position = samples.sites_position[:][samples.sites_inference[:] == 1]
     reduced = subset_sites(ts, position)
     minimised = inference.minimise(reduced)
+
+    for tree in minimised.trees():
+        print(tree.draw(format="unicode"))
 
     tables = minimised.dump_tables()
     # Rewrite the nodes so that 0 is one older than all the other nodes.
@@ -493,6 +498,9 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     trees = minimised.trees()
     tree = next(trees)
     left = 0
+    # To simplify things a bit we assume that there's one root. This can
+    # violated if we've got no sites at the end of the sequence and get
+    # n roots instead.
     root = tree.root
     for tree in trees:
         if tree.root != root:
@@ -501,7 +509,6 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
             left = tree.interval[0]
     tables.edges.add_row(left, ts.sequence_length, 0, root + 1)
     tables.sort()
-    tables.simplify(samples=np.argsort(tables.nodes.time)[::-1].astype(np.int32))
     if remove_leaves:
         # Assume that all leaves are at time 1.
         samples = np.where(tables.nodes.time != 1)[0].astype(np.int32)
@@ -521,12 +528,6 @@ def check_ancestors_ts(ts):
     tables = ts.tables
     if np.any(tables.nodes.time <= 0):
         raise ValueError("All nodes must have time > 0")
-    # This is a strong requirement, which is only partially true. It seems to be
-    # fine if we have synthetic nodes which are out-of-order. Why?
-    # # Nodes must be in nondecreasing order of time.
-    # time = tables.nodes.time
-    # if np.any(time[:-1] < time[1:]):
-    #     raise ValueError("Nodes must be allocated in non-decreasing time order.")
 
     for tree in ts.trees(sample_counts=False):
         # 0 must always be a root and have at least one child.

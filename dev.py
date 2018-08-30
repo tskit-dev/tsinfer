@@ -113,14 +113,9 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    ts = tsinfer.eval_util.insert_perfect_mutations(ts)
+    samples = tsinfer.SampleData.from_tree_sequence(ts)
 
-    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-
-    # Reduce and minimise the input ts so that we can use it as
-    # input.
-    position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
-    ancestors_ts = make_ancestors_ts(ts, position, remove_leaves=False)
+    ancestors_ts = tsinfer.make_ancestors_ts(samples, ts, remove_leaves=False)
 
 
 #     ancestor_data = tsinfer.generate_ancestors(
@@ -136,7 +131,7 @@ def tsinfer_dev(
 
 
 
-    ts = tsinfer.match_samples(sample_data, ancestors_ts,
+    ts = tsinfer.match_samples(samples, ancestors_ts,
             path_compression=False, simplify=False, engine=engine,
             extended_checks=True)
 
@@ -144,7 +139,7 @@ def tsinfer_dev(
     for tree in ts.trees():
         print(tree.draw(format="unicode"))
 
-    tsinfer.verify(sample_data, ts)
+    tsinfer.verify(samples, ts)
 
 
 #     for node in ts.nodes():
@@ -290,7 +285,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(3, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 
