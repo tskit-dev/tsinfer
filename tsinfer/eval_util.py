@@ -460,14 +460,9 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     We generally assume that this is a standard tree sequence output by
     msprime.simulate here.
     """
-    for tree in ts.trees():
-        print(tree.draw(format="unicode"))
     position = samples.sites_position[:][samples.sites_inference[:] == 1]
     reduced = subset_sites(ts, position)
     minimised = inference.minimise(reduced)
-
-    for tree in minimised.trees():
-        print(tree.draw(format="unicode"))
 
     tables = minimised.dump_tables()
     # Rewrite the nodes so that 0 is one older than all the other nodes.
