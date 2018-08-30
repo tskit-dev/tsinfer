@@ -1282,3 +1282,88 @@ class TestBugExamples(unittest.TestCase):
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             self.assertTrue(np.array_equal(var.genotypes, genotypes))
+
+
+class TestVerify(unittest.TestCase):
+    """
+    Checks that we correctly find problems with verify.
+    """
+
+    def test_nominal_case(self):
+        ts = msprime.simulate(10, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 0)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        inferred_ts = tsinfer.infer(samples)
+
+        tsinfer.verify(samples, inferred_ts)
+        tsinfer.verify(samples, ts)
+
+    def test_bad_num_sites(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData() as samples:
+            samples.add_site(0, genotypes=[0, 1])
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)
+
+    def test_bad_num_samples(self):
+        n = 5
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData() as samples:
+            for j in range(ts.num_sites):
+                samples.add_site(j, genotypes=[0, 1])
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)
+
+    def test_bad_sequence_length(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData(sequence_length=100) as samples:
+            for j in range(ts.num_sites):
+                samples.add_site(j, genotypes=[0, 1])
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)
+
+    def test_bad_site_position(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
+            for var in ts.variants():
+                samples.add_site(
+                    position=var.site.position + 1e-6, genotypes=var.genotypes)
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)
+
+    def test_bad_alleles(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
+            for var in ts.variants():
+                samples.add_site(
+                    position=var.site.position, alleles=["A", "T"],
+                    genotypes=var.genotypes)
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)
+
+    def test_bad_genotypes(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        self.assertGreater(ts.num_sites, 1)
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
+            for var in ts.variants():
+                samples.add_site(
+                    position=var.site.position, alleles=var.alleles,
+                    genotypes=[0, 0])
+
+        with self.assertRaises(ValueError):
+            tsinfer.verify(samples, ts)

@@ -470,8 +470,8 @@ def make_ancestors_ts(ts, sample_data, remove_leaves=False):
     tables.nodes.clear()
     tables.nodes.add_row(flags=1, time=np.max(nodes.time) + 2)
     tables.nodes.append_columns(
-        flags=np.ones_like(nodes.flags), # Everything is a sample
-        time=nodes.time + 1, # Make sure that all times are > 0
+        flags=np.ones_like(nodes.flags),  # Everything is a sample
+        time=nodes.time + 1,  # Make sure that all times are > 0
         population=nodes.population,
         individual=nodes.individual, metadata=nodes.metadata,
         metadata_offset=nodes.metadata_offset)
