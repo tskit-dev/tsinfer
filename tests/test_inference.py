@@ -518,6 +518,7 @@ class TestGeneratedAncestors(unittest.TestCase):
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data, ancestor_data, engine=engine)
+            tsinfer.check_ancestors_ts(ancestors_ts)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
             self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
@@ -640,16 +641,19 @@ class TestAncestorsTreeSequence(unittest.TestCase):
     """
     def verify(self, sample_data):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        tables = ancestors_ts.tables
-        self.assertTrue(np.array_equal(
-            tables.sites.position, ancestor_data.sites_position[:]))
-        self.assertEqual(ancestors_ts.num_samples, ancestor_data.num_ancestors)
-        H = ancestors_ts.genotype_matrix().T
-        for ancestor in ancestor_data.ancestors():
+        for path_compression in [True, False]:
+            ancestors_ts = tsinfer.match_ancestors(
+                sample_data, ancestor_data, path_compression=path_compression)
+            tsinfer.check_ancestors_ts(ancestors_ts)
+            tables = ancestors_ts.tables
             self.assertTrue(np.array_equal(
-                H[ancestor.id, ancestor.start: ancestor.end],
-                ancestor.haplotype))
+                tables.sites.position, ancestor_data.sites_position[:]))
+            self.assertEqual(ancestors_ts.num_samples, ancestor_data.num_ancestors)
+            H = ancestors_ts.genotype_matrix().T
+            for ancestor in ancestor_data.ancestors():
+                self.assertTrue(np.array_equal(
+                    H[ancestor.id, ancestor.start: ancestor.end],
+                    ancestor.haplotype))
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
@@ -925,7 +929,7 @@ class TestBadEngine(unittest.TestCase):
                 engine=bad_engine)
 
 
-class TestWrongTreeSequence(unittest.TestCase):
+class TestWrongAncestorsTreeSequence(unittest.TestCase):
     """
     Tests covering what happens when we provide an incorrect tree sequence
     as the ancestrors_ts.
@@ -944,6 +948,16 @@ class TestWrongTreeSequence(unittest.TestCase):
         # original ts.
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, sim)
 
+    def test_zero_node_times(self):
+        sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
+        sample_data = tsinfer.SampleData.from_tree_sequence(sim)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        tables = ancestors_ts.dump_tables()
+        tables.nodes.add_row(time=0, flags=0)
+        with self.assertRaises(ValueError):
+            tsinfer.match_samples(sample_data, tables.tree_sequence())
+
     def test_different_ancestors_ts_match_samples(self):
         sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
@@ -954,7 +968,7 @@ class TestWrongTreeSequence(unittest.TestCase):
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, ancestors_ts)
 
-    def test_bad__edge_position(self):
+    def test_bad_edge_position(self):
         sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
         ancestor_data = tsinfer.generate_ancestors(sample_data)

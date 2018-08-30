@@ -43,39 +43,6 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
-def check_ancestors_ts(ts):
-    """
-    Checks if the specified tree sequence has the required properties for an
-    ancestors tree sequence.
-    """
-    if ts.num_nodes == 0:
-        return
-    tables = ts.tables
-    if np.any(tables.nodes.time <= 0):
-        raise ValueError("All nodes must have time > 0")
-    # This is a strong requirement, which is only partially true. It seems to be
-    # fine if we have synthetic nodes which are out-of-order. Why?
-    # # Nodes must be in nondecreasing order of time.
-    # time = tables.nodes.time
-    # if np.any(time[:-1] < time[1:]):
-    #     raise ValueError("Nodes must be allocated in non-decreasing time order.")
-
-    for tree in ts.trees(sample_counts=False):
-        # 0 must always be a root and have at least one child.
-        if tree.parent(0) != msprime.NULL_NODE:
-            raise ValueError("0 is not a root: non null parent")
-        if tree.left_child(0) == msprime.NULL_NODE:
-            raise ValueError("0 must have at least one child")
-        for root in tree.roots:
-            if root != 0:
-                if tree.left_child(root) != msprime.NULL_NODE:
-                    raise ValueError("All non empty subtrees must inherit from 0")
-        # Sites must have exactly one mutation
-        for site in tree.sites():
-            if len(site.mutations) != 1:
-                raise ValueError("Sites must have exactly one mutation")
-
-
 def is_synthetic(flags):
     """
     Returns True if the synthetic flag is set on the specified flags

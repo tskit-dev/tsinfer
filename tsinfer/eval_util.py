@@ -451,7 +451,7 @@ def subset_sites(ts, position):
     return tables.tree_sequence()
 
 
-def make_ancestors_ts(ts, sample_data, remove_leaves=False):
+def make_ancestors_ts(samples, ts, remove_leaves=False):
     """
     Return a tree sequence suitable for use as an ancestors tree sequence from the
     specified source tree sequence using the samples in the specified sample
@@ -460,7 +460,7 @@ def make_ancestors_ts(ts, sample_data, remove_leaves=False):
     We generally assume that this is a standard tree sequence output by
     msprime.simulate here.
     """
-    position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+    position = samples.sites_position[:][samples.sites_inference[:] == 1]
     reduced = subset_sites(ts, position)
     minimised = inference.minimise(reduced)
 
@@ -510,6 +510,40 @@ def make_ancestors_ts(ts, sample_data, remove_leaves=False):
     return new_ts
 
 
+def check_ancestors_ts(ts):
+    """
+    Checks if the specified tree sequence has the required properties for an
+    ancestors tree sequence.
+    """
+    # An empty tree sequence is always fine.
+    if ts.num_nodes == 0:
+        return
+    tables = ts.tables
+    if np.any(tables.nodes.time <= 0):
+        raise ValueError("All nodes must have time > 0")
+    # This is a strong requirement, which is only partially true. It seems to be
+    # fine if we have synthetic nodes which are out-of-order. Why?
+    # # Nodes must be in nondecreasing order of time.
+    # time = tables.nodes.time
+    # if np.any(time[:-1] < time[1:]):
+    #     raise ValueError("Nodes must be allocated in non-decreasing time order.")
+
+    for tree in ts.trees(sample_counts=False):
+        # 0 must always be a root and have at least one child.
+        if tree.parent(0) != msprime.NULL_NODE:
+            raise ValueError("0 is not a root: non null parent")
+        if tree.left_child(0) == msprime.NULL_NODE:
+            raise ValueError("0 must have at least one child")
+        for root in tree.roots:
+            if root != 0:
+                if tree.left_child(root) != msprime.NULL_NODE:
+                    raise ValueError("All non empty subtrees must inherit from 0")
+        # Sites must have exactly one mutation
+        for site in tree.sites():
+            if len(site.mutations) != 1:
+                raise ValueError("Sites must have exactly one mutation")
+
+
 def run_perfect_inference(
         base_ts, num_threads=1, path_compression=False,
         extended_checks=True, time_chunking=True, progress_monitor=None,
@@ -522,7 +556,7 @@ def run_perfect_inference(
 
     if use_ts:
         # Use the actual tree sequenc that was provided as the basis for copying.
-        ancestors_ts = make_ancestors_ts(ts, sample_data, remove_leaves=True)
+        ancestors_ts = make_ancestors_ts(sample_data, ts, remove_leaves=True)
     else:
         ancestor_data = formats.AncestorData(sample_data)
         build_simulated_ancestors(
