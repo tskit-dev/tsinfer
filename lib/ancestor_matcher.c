@@ -242,14 +242,10 @@ is_descendant(const node_id_t u, const node_id_t v, const node_id_t *restrict pa
     node_id_t w = u;
 
     if (v != NULL_NODE) {
-        /* Because we allocate node IDs in nondecreasing order forwards in time,
-         * if the node ID is of u is less than v it cannot be a descendant of v */
-        if (u >= v) {
-            while (w != NULL_NODE && w != v) {
-                w = parent[w];
-            }
-            ret = w == v;
+        while (w != NULL_NODE && w != v) {
+            w = parent[w];
         }
+        ret = w == v;
     }
     return ret;
 }

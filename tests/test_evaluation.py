@@ -542,12 +542,31 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, engine=engine)
             self.verify_perfect_inference(ts, inferred_ts)
 
+    def test_small_use_ts(self):
+        base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
+        self.assertGreater(base_ts.num_trees, 1)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                    base_ts, use_ts=True, engine=engine)
+            self.verify_perfect_inference(ts, inferred_ts)
+
     def test_small_smc_path_compression(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
         self.assertGreater(base_ts.num_trees, 1)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, path_compression=True)
+            # We can't just compare tables when doing path compression because
+            # we'll find different ways of expressing the same trees.
+            breakpoints, distances = tsinfer.compare(ts, inferred_ts)
+            self.assertTrue(np.all(distances == 0))
+
+    def test_small_use_ts_path_compression(self):
+        base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
+        self.assertGreater(base_ts.num_trees, 1)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts, inferred_ts = tsinfer.run_perfect_inference(
+                    base_ts, use_ts=True, path_compression=True, engine=engine)
             # We can't just compare tables when doing path compression because
             # we'll find different ways of expressing the same trees.
             breakpoints, distances = tsinfer.compare(ts, inferred_ts)
@@ -561,6 +580,13 @@ class TestPerfectInference(unittest.TestCase):
         # we'll find different ways of expressing the same trees.
         breakpoints, distances = tsinfer.compare(ts, inferred_ts)
         self.assertTrue(np.all(distances == 0))
+
+    def test_sample_20_use_ts(self):
+        base_ts = msprime.simulate(
+            20, length=5, recombination_rate=10, random_seed=111)
+        self.assertGreater(base_ts.num_trees, 5)
+        ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, use_ts=True)
+        self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc_threads(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
@@ -577,6 +603,124 @@ class TestPerfectInference(unittest.TestCase):
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, time_chunking=False)
             self.verify_perfect_inference(ts, inferred_ts)
+
+
+class TestMakeAncestorsTs(unittest.TestCase):
+    """
+    Tests for the process of generating an ancestors tree sequence.
+    """
+    def verify_from_source(self, remove_leaves):
+        ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors_ts = tsinfer.make_ancestors_ts(
+            samples, ts, remove_leaves=remove_leaves)
+        tsinfer.check_ancestors_ts(ancestors_ts)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
+        tsinfer.verify(samples, final_ts)
+
+    def test_infer_from_source_no_leaves(self):
+        self.verify_from_source(True)
+
+    def test_infer_from_source(self):
+        self.verify_from_source(True)
+
+    def verify_from_inferred(self, remove_leaves):
+        ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        inferred = tsinfer.infer(samples)
+        ancestors_ts = tsinfer.make_ancestors_ts(
+            samples, inferred, remove_leaves=remove_leaves)
+        tsinfer.check_ancestors_ts(ancestors_ts)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
+        tsinfer.verify(samples, final_ts)
+
+    def test_infer_from_inferred_no_leaves(self):
+        self.verify_from_inferred(True)
+
+    def test_infer_from_inferred(self):
+        self.verify_from_inferred(False)
+
+
+class TestCheckAncestorsTs(unittest.TestCase):
+    """
+    Tests that we verify the right conditions from an ancestors TS.
+    """
+
+    def test_empty(self):
+        tables = msprime.TableCollection(1)
+        tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_zero_time(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=0, flags=0)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_zero_edges(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=1, flags=0)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_one_edge(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=2, flags=0)
+        tables.nodes.add_row(time=1, flags=0)
+        tables.edges.add_row(0, 1, 0, 1)
+        tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_zero_has_parent(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=1, flags=0)
+        tables.nodes.add_row(time=2, flags=0)
+        tables.edges.add_row(0, 1, 1, 0)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_zero_has_no_children(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=1, flags=0)
+        tables.nodes.add_row(time=2, flags=0)
+        tables.nodes.add_row(time=3, flags=0)
+        tables.edges.add_row(0, 1, 2, 1)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_disconnected_subtrees(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=4, flags=1)
+        tables.nodes.add_row(time=3, flags=1)
+        tables.nodes.add_row(time=2, flags=1)
+        tables.nodes.add_row(time=1, flags=1)
+        tables.edges.add_row(0, 1, 2, 3)
+        tables.edges.add_row(0, 1, 0, 1)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_many_mutations(self):
+        tables = msprime.TableCollection(1)
+        tables.nodes.add_row(time=2, flags=0)
+        tables.nodes.add_row(time=1, flags=0)
+        tables.edges.add_row(0, 1, 0, 1)
+        tables.sites.add_row(position=0.5, ancestral_state="0")
+        tables.mutations.add_row(site=0, node=0, derived_state="1")
+        tables.mutations.add_row(site=0, node=1, derived_state="0")
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(tables.tree_sequence())
+
+    def test_msprime_output(self):
+        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(ts)
+
+    def test_tsinfer_output(self):
+        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ts = tsinfer.infer(samples)
+        with self.assertRaises(ValueError):
+            tsinfer.check_ancestors_ts(ts)
 
 
 class TestErrors(unittest.TestCase):

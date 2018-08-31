@@ -88,6 +88,39 @@ def _get_progress_monitor(progress_monitor):
     return progress_monitor
 
 
+def verify(samples, tree_sequence, progress_monitor=None):
+    """
+    verify(samples, tree_sequence)
+
+    Verifies that the specified sample data and tree sequence files encode the
+    same data.
+
+    :param SampleData samples: The input :class:`SampleData` instance
+        representing the observed data that we wish to compare to.
+    :param TreeSequence tree_sequence: The input :class:`msprime.TreeSequence`
+        instance an encoding of the specified samples that we wish to verify.
+    """
+    progress_monitor = _get_progress_monitor(progress_monitor)
+    if samples.num_sites != tree_sequence.num_sites:
+        raise ValueError("numbers of sites not equal")
+    if samples.num_samples != tree_sequence.num_samples:
+        raise ValueError("numbers of samples not equal")
+    if samples.sequence_length != tree_sequence.sequence_length:
+        raise ValueError("Sequence lengths not equal")
+    progress = progress_monitor.get("verify", tree_sequence.num_sites)
+    for var1, var2 in zip(samples.variants(), tree_sequence.variants()):
+        if var1.site.position != var2.site.position:
+            raise ValueError("site positions not equal: {} != {}".format(
+                var1.site.position, var2.site.position))
+        if var1.alleles != var2.alleles:
+            raise ValueError("alleles not equal: {} != {}".format(
+                var1.alleles, var2.alleles))
+        if not np.array_equal(var1.genotypes, var2.genotypes):
+            raise ValueError("Genotypes not equal at site {}".format(var1.site.id))
+        progress.update()
+    progress.close()
+
+
 def infer(
         sample_data, progress_monitor=None, num_threads=0, path_compression=True,
         simplify=True, engine=constants.C_ENGINE):
@@ -414,9 +447,7 @@ class Matcher(object):
         """
         matcher = self.matcher[thread_index]
         match = self.match[thread_index]
-        # print("Find path", child_id)
         left, right, parent = matcher.find_path(haplotype, start, end, match)
-        # print("Done")
         self.results.set_path(child_id, left, right, parent)
         self.match_progress.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
@@ -438,6 +469,8 @@ class Matcher(object):
             raise ValueError(
                 "Ancestors tree sequence not compatible with the the specified "
                 "sample data.")
+        if np.any(tables.nodes.time <= 0):
+            raise ValueError("All nodes must have time > 0")
         edges = tables.edges
         # Get the indexes into the position array.
         pos_map = np.hstack([position, [tables.sequence_length]])

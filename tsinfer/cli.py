@@ -43,7 +43,7 @@ class ProgressMonitor(object):
     """
     def __init__(
             self, enabled=True, generate_ancestors=False, match_ancestors=False,
-            match_samples=False):
+            match_samples=False, verify=False):
         self.enabled = enabled
         self.num_bars = 0
         if generate_ancestors:
@@ -52,10 +52,14 @@ class ProgressMonitor(object):
             self.num_bars += 1
         if match_samples:
             self.num_bars += 3
+        if verify:
+            assert self.num_bars == 0
+            self.num_bars += 1
         self.current_count = 0
         self.current_instance = None
-        # Only show extra detail if we are runing match-ancestors by itself.
-        self.show_detail = self.num_bars == 1
+        if not verify:
+            # Only show extra detail if we are runing match-ancestors by itself.
+            self.show_detail = self.num_bars == 1
         self.descriptions = {
             "ga_add_sites": "ga-add",
             "ga_generate": "ga-gen",
@@ -63,6 +67,7 @@ class ProgressMonitor(object):
             "ms_match": "ms-match",
             "ms_paths": "ms-paths",
             "ms_sites": "ms-sites",
+            "verify": "verify",
         }
 
     def set_detail(self, info):
@@ -162,10 +167,10 @@ def run_infer(args):
     progress_monitor = ProgressMonitor(
         enabled=args.progress, generate_ancestors=True, match_ancestors=True,
         match_samples=True)
-    sample_data = tsinfer.SampleData.load(args.input)
+    sample_data = tsinfer.SampleData.load(args.samples)
     ts = tsinfer.infer(
         sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads)
-    output_trees = get_output_trees_path(args.output_trees, args.input)
+    output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
     summarise_usage()
@@ -173,9 +178,9 @@ def run_infer(args):
 
 def run_generate_ancestors(args):
     setup_logging(args)
-    ancestors_path = get_ancestors_path(args.ancestors, args.input)
+    ancestors_path = get_ancestors_path(args.ancestors, args.samples)
     progress_monitor = ProgressMonitor(enabled=args.progress, generate_ancestors=True)
-    sample_data = tsinfer.SampleData.load(args.input)
+    sample_data = tsinfer.SampleData.load(args.samples)
     tsinfer.generate_ancestors(
         sample_data, progress_monitor=progress_monitor, path=ancestors_path,
         num_flush_threads=args.num_flush_threads, num_threads=args.num_threads)
@@ -184,10 +189,10 @@ def run_generate_ancestors(args):
 
 def run_match_ancestors(args):
     setup_logging(args)
-    ancestors_path = get_ancestors_path(args.ancestors, args.input)
+    ancestors_path = get_ancestors_path(args.ancestors, args.samples)
     logger.info("Loading ancestral haplotypes from {}".format(ancestors_path))
-    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
-    sample_data = tsinfer.SampleData.load(args.input)
+    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
+    sample_data = tsinfer.SampleData.load(args.samples)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
     ts = tsinfer.match_ancestors(
@@ -202,9 +207,9 @@ def run_match_ancestors(args):
 def run_match_samples(args):
     setup_logging(args)
 
-    sample_data = tsinfer.SampleData.load(args.input)
-    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.input)
-    output_trees = get_output_trees_path(args.output_trees, args.input)
+    sample_data = tsinfer.SampleData.load(args.samples)
+    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
+    output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
     ancestors_trees = msprime.load(ancestors_trees)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
@@ -218,15 +223,18 @@ def run_match_samples(args):
     summarise_usage()
 
 
-# def run_verify(args):
-#     setup_logging(args)
-#     print("FIXME!!!")
-#     sys.exit(1)
+def run_verify(args):
+    setup_logging(args)
+    samples = tsinfer.SampleData.load(args.samples)
+    ts = msprime.load(args.tree_sequence)
+    progress_monitor = ProgressMonitor(enabled=args.progress, verify=True)
+    tsinfer.verify(samples, ts, progress_monitor=progress_monitor)
+    summarise_usage()
 
 
-def add_input_file_argument(parser):
+def add_samples_file_argument(parser):
     parser.add_argument(
-        "input",
+        "samples",
         help=(
             "The input sample data in tsinfer 'samples' format. Please see the "
             "documentation at http://tsinfer.readthedocs.io/ for information on "
@@ -326,7 +334,7 @@ def get_cli_parser():
         help=(
             "Generates a set of ancestors from the input sample data and stores "
             "the results in a tsinfer ancestors file."))
-    add_input_file_argument(parser)
+    add_samples_file_argument(parser)
     add_ancestors_file_argument(parser)
     add_num_threads_argument(parser)
     add_num_flush_threads_argument(parser)
@@ -341,7 +349,7 @@ def get_cli_parser():
             "Matches the ancestors built by the 'generate-ancestors' command against "
             "each other using the model information specified in the input file "
             "and writes the output to a tskit .trees file."))
-    add_input_file_argument(parser)
+    add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
     add_ancestors_trees_argument(parser)
@@ -356,7 +364,7 @@ def get_cli_parser():
         help=(
             "Matches the samples against the tree sequence structure built "
             "by the match-ancestors command"))
-    add_input_file_argument(parser)
+    add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_trees_argument(parser)
     add_path_compression_argument(parser)
@@ -372,7 +380,7 @@ def get_cli_parser():
             "Runs the generate-ancestors, match-ancestors and match-samples "
             "commands without writing the intermediate files to disk. Not "
             "recommended for large inferences."))
-    add_input_file_argument(parser)
+    add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
@@ -391,6 +399,18 @@ def get_cli_parser():
         "--storage", "-s", action="store_true",
         help="Show detailed information about data storage.")
     parser.set_defaults(runner=run_list)
+
+    parser = subparsers.add_parser(
+        "verify",
+        help=(
+            "Verify that the specified tree sequence and samples files represent "
+            "the same data"))
+    add_logging_arguments(parser)
+    add_samples_file_argument(parser)
+    parser.add_argument(
+        "tree_sequence", help="The tree sequence to compare with in .trees format.")
+    add_progress_argument(parser)
+    parser.set_defaults(runner=run_verify)
 
     return top_parser
 

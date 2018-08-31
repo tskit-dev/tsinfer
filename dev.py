@@ -94,7 +94,6 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S.T
 
-
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, engine="C", log_level="WARNING",
@@ -114,30 +113,47 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    samples = tsinfer.SampleData.from_tree_sequence(ts)
 
-    ancestor_data = tsinfer.generate_ancestors(
-        sample_data, engine=engine, num_threads=num_threads)
-    ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, engine=engine, path_compression=True,
-        extended_checks=True)
+    ancestors_ts = tsinfer.make_ancestors_ts(samples, ts, remove_leaves=False)
 
-    ts = tsinfer.match_samples(sample_data, ancestors_ts,
-            path_compression=True, simplify=False, engine=engine,
+
+#     ancestor_data = tsinfer.generate_ancestors(
+#         sample_data, engine=engine, num_threads=num_threads)
+#     ancestors_ts = tsinfer.match_ancestors(
+#         sample_data, ancestor_data, engine=engine, path_compression=True,
+#         extended_checks=True)
+
+    for tree in ancestors_ts.trees():
+        for site in tree.sites():
+            print("Mutation at ", site.mutations[0].node)
+        print(tree.draw(format="unicode"))
+
+
+
+    ts = tsinfer.match_samples(samples, ancestors_ts,
+            path_compression=False, simplify=False, engine=engine,
             extended_checks=True)
 
-    for node in ts.nodes():
-        if tsinfer.is_synthetic(node.flags):
-            print("Synthetic node", node.id, node.time)
-            parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
-            child_edges = [edge for edge in ts.edges() if edge.child == node.id]
-            child_edges.sort(key=lambda e: e.left)
-            print("parent edges")
-            for edge in parent_edges:
-                print("\t", edge)
-            print("child edges")
-            for edge in child_edges:
-                print("\t", edge)
+    # print(ts.tables.edges)
+    for tree in ts.trees():
+        print(tree.draw(format="unicode"))
+
+    tsinfer.verify(samples, ts)
+
+
+#     for node in ts.nodes():
+#         if tsinfer.is_synthetic(node.flags):
+#             print("Synthetic node", node.id, node.time)
+#             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
+#             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
+#             child_edges.sort(key=lambda e: e.left)
+#             print("parent edges")
+#             for edge in parent_edges:
+#                 print("\t", edge)
+#             print("child edges")
+#             for edge in child_edges:
+#                 print("\t", edge)
 
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
 #     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
@@ -244,84 +260,6 @@ def subset_sites(ts, position):
                     metadata=mutation.metadata)
     return tables.tree_sequence()
 
-def minimise(ts):
-    tables = ts.dump_tables()
-
-    out_map = {}
-    in_map = {}
-    first_site = 0
-    for (_, edges_out, edges_in), tree in zip(ts.edge_diffs(), ts.trees()):
-        for edge in edges_out:
-            out_map[edge.child] = edge
-        for edge in edges_in:
-            in_map[edge.child] = edge
-        if tree.num_sites > 0:
-            sites = list(tree.sites())
-            if first_site:
-                x = 0
-                first_site = False
-            else:
-                x = sites[0].position
-            print("X = ", x)
-            for edge in out_map.values():
-                print("FLUSH", edge)
-            for edge in in_map.values():
-                print("INSER", edge)
-
-            # # Flush the edge buffer.
-            # for left, parent, child in edge_buffer:
-            #     tables.edges.add_row(left, x, parent, child)
-            # # Add edges for each node in the tree.
-            # edge_buffer.clear()
-            # for root in tree.roots:
-            #     for u in tree.nodes(root):
-            #         if u != root:
-            #             edge_buffer.append((x, tree.parent(u), u))
-
-    # position = np.hstack([[0], tables.sites.position, [ts.sequence_length]])
-    # position = tables.sites.position
-    # edges = []
-    # print(position)
-    # tables.edges.clear()
-    # for edge in ts.edges():
-    #     left = np.searchsorted(position, edge.left)
-    #     right = np.searchsorted(position, edge.right)
-
-    #     print(edge, left, right)
-    #     # if right - left > 1:
-    #         # print("KEEP:", edge, left, right)
-    #         # tables.edges.add_row(
-    #         #     position[left], position[right], edge.parent, edge.child)
-    #         # print("added", tables.edges[-1])
-    #     # else:
-    #         # print("SKIP:", edge, left, right)
-
-    # ts = tables.tree_sequence()
-    # for tree in ts.trees():
-    #     print("TREE:", tree.interval)
-    #     print(tree.draw(format="unicode"))
-
-
-
-
-
-def minimise_dev():
-    ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
-    # ts = msprime.load(sys.argv[1])
-
-    position = ts.tables.sites.position[::2]
-    subset_ts = subset_sites(ts, position)
-    print("Got subset")
-
-    ts_new = tsinfer.minimise(subset_ts)
-    for tree in ts_new.trees():
-        print("TREE:", tree.interval)
-        print(tree.draw(format="unicode"))
-    # print(ts_new.tables)
-    print("done")
-    other = minimise(subset_ts)
-
-
 def run_build():
 
     sample_data = tsinfer.load(sys.argv[1])
@@ -347,7 +285,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(20, 0.25, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(3, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 

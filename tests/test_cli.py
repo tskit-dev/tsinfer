@@ -160,6 +160,40 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["match-samples", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)
 
+    def test_verify(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+        self.run_command(["verify", self.sample_file, output_trees])
+
+
+class TestProgress(TestCli):
+    """
+    Tests that we get some output when we use the progress bar.
+    """
+    # Need to mock out setup_logging here or we spew logging to the console
+    # in later tests.
+    @mock.patch("tsinfer.cli.setup_logging")
+    def run_command(self, command, mock_setup_logging):
+        stdout, stderr = capture_output(cli.tsinfer_main, command + ["--progress"])
+        self.assertGreater(len(stderr), 0)
+        self.assertEqual(stdout, "")
+        self.assertTrue(mock_setup_logging.called)
+
+    def test_infer(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+
+    def test_nominal_chain(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["generate-ancestors", self.sample_file])
+        self.run_command(["match-ancestors", self.sample_file])
+        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
+
+    def test_verify(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+        self.run_command(["verify", self.sample_file, output_trees])
+
 
 class TestMatchSamples(TestCli):
     """
