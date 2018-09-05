@@ -124,7 +124,9 @@ def variants(vcf_path, show_progress=False):
             if len(all_alleles) == 2:
                 all_alleles.remove(ancestral_state)
                 alleles = [ancestral_state, all_alleles.pop()]
-                metadata = {"ID": row.ID, "INFO": dict(row.INFO)}
+                # We could include the INFO dict here, but it's really big and not
+                # a lot of use.
+                metadata = {"rsid": row.ID}
                 yield Site(
                     position=row.POS, alleles=alleles, genotypes=a, metadata=metadata)
 
@@ -142,10 +144,12 @@ def add_samples(ped_file, population_id_map, individual_names, sample_data):
     columns = next(ped_file).split("\t")
     sane_names = [col.replace(" ", "_").lower().strip() for col in columns]
     rows = {}
+    populations = {}
     for line in ped_file:
         metadata = dict(zip(sane_names, line.strip().split("\t")))
-        metadata["population"] = population_id_map[metadata["population"]]
-        name = metadata["individual_id"]
+        name = metadata.pop("individual_id")
+        population_name = metadata.pop("population")
+        populations[name] = population_id_map[population_name]
         # The value '0' seems to be used to encode missing, so insert None
         # instead to be more useful.
         nulled = {}
@@ -158,7 +162,8 @@ def add_samples(ped_file, population_id_map, individual_names, sample_data):
     # Add in the metadata rows in the order of the VCF.
     for name in individual_names:
         metadata = rows[name]
-        sample_data.add_individual(metadata=metadata, ploidy=2)
+        sample_data.add_individual(
+            metadata=metadata, population=populations[name], ploidy=2)
 
 
 def convert(
@@ -167,24 +172,23 @@ def convert(
     if max_variants is None:
         max_variants = 2**32  # Arbitrary, but > defined max for VCF
 
-    sample_data = tsinfer.SampleData(path=output_file, num_flush_threads=2)
-    pop_id_map = add_populations(sample_data)
+    with tsinfer.SampleData(path=output_file, num_flush_threads=2) as sample_data:
+        pop_id_map = add_populations(sample_data)
 
-    vcf = cyvcf2.VCF(vcf_file)
-    individual_names = list(vcf.samples)
-    vcf.close()
+        vcf = cyvcf2.VCF(vcf_file)
+        individual_names = list(vcf.samples)
+        vcf.close()
 
-    with open(pedigree_file, "r") as ped_file:
-        add_samples(ped_file, pop_id_map, individual_names, sample_data)
+        with open(pedigree_file, "r") as ped_file:
+            add_samples(ped_file, pop_id_map, individual_names, sample_data)
 
-    for index, site in enumerate(variants(vcf_file, show_progress)):
-        sample_data.add_site(
-            position=site.position, genotypes=site.genotypes,
-            alleles=site.alleles, metadata=site.metadata)
-        if index == max_variants:
-            break
-
-    sample_data.finalise(command=sys.argv[0], parameters=sys.argv[1:])
+        for index, site in enumerate(variants(vcf_file, show_progress)):
+            sample_data.add_site(
+                position=site.position, genotypes=site.genotypes,
+                alleles=site.alleles, metadata=site.metadata)
+            if index == max_variants:
+                break
+        sample_data.record_provenance(command=sys.argv[0], args=sys.argv[1:])
 
 
 def main():
