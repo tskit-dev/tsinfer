@@ -1464,3 +1464,101 @@ class TestVerify(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             tsinfer.verify(samples, ts)
+
+
+class TestGetAncestors(unittest.TestCase):
+    """
+    Checks whether the get_ancestors function correctly returns an ancestors
+    tree sequence with the required properties.
+    """
+    def verify(self, ts):
+        pass
+        # ancestors_ts = tsinfer.get_ancestors(ts)
+
+    def test_stuff(self):
+        # Write some tests.
+        self.assertTrue(False)
+
+
+class TestInsertSrbAncestors(unittest.TestCase):
+    """
+    Tests that the insert_srb_ancestors function behaves as expected.
+    """
+
+    def insert_srb_ancestors(self, ts):
+        tables = ts.dump_tables()
+
+        srb_index = {}
+        edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
+        last_edge = edges[0]
+        for edge in edges[1:]:
+            condition = (
+                ts.node(edge.child).is_sample() and
+                edge.child == last_edge.child and
+                edge.left == last_edge.right)
+            if condition:
+                key = edge.left, last_edge.parent, edge.parent
+                if key in srb_index:
+                    count, left_bound, right_bound = srb_index[key]
+                    srb_index[key] = (
+                        count + 1,
+                        max(left_bound, last_edge.left),
+                        min(right_bound, edge.right))
+                else:
+                    srb_index[key] = 1, last_edge.left, edge.right
+            last_edge = edge
+
+        # The nodes that we want to keep are all those *except* what
+        # has been marked as samples.
+        samples = np.where(tables.nodes.flags != 1)[0].astype(np.int32)
+
+        # Mark all nodes as samples
+        tables.nodes.set_columns(
+            flags=np.bitwise_or(tables.nodes.flags, 1),
+            time=tables.nodes.time,
+            population=tables.nodes.population,
+            individual=tables.nodes.individual,
+            metadata=tables.nodes.metadata,
+            metadata_offset=tables.nodes.metadata_offset)
+        # Now simplify down the tables to get rid of all sample edges.
+        node_id_map = tables.simplify(samples)
+
+        # We cannot have flags that are both samples and synthetic.
+        flags = np.zeros_like(tables.nodes.flags)
+        flags[tables.nodes.flags == 1] = 1
+        index = np.bitwise_and(tables.nodes.flags, tsinfer.SYNTHETIC_NODE_BIT) != 0
+        flags[index] = tsinfer.SYNTHETIC_NODE_BIT
+        time = tables.nodes.time
+
+        tables.nodes.set_columns(
+            flags=flags,
+            time=time,
+            population=tables.nodes.population,
+            individual=tables.nodes.individual,
+            metadata=tables.nodes.metadata,
+            metadata_offset=tables.nodes.metadata_offset)
+
+        num_extra = 0
+        for k, v in srb_index.items():
+            if v[0] > 1:
+                left, right = v[1:]
+                x, pl, pr = k
+                pl = node_id_map[pl]
+                pr = node_id_map[pr]
+                t = min(time[pl], time[pr]) - 1e-4
+                node = tables.nodes.add_row(flags=1 << 17, time=t)
+                tables.edges.add_row(left, x, pl, node)
+                tables.edges.add_row(x, right, pr, node)
+                num_extra += 1
+
+                # print("New ancestor:", node, "t = ", t)
+                # print("\te1 = ", left, x, pl)
+                # print("\te2 = ", x, right, pr)
+        print("Generated", num_extra)
+        tables.sort()
+        # print(tables)
+        ancestors_ts = tables.tree_sequence()
+        # for tree in ancestors_ts.trees():
+        #     print(tree.interval)
+        #     print(tree.draw(format="unicode"))
+        return ancestors_ts

@@ -540,6 +540,48 @@ def check_ancestors_ts(ts):
                 raise ValueError("Sites must have exactly one mutation")
 
 
+def get_ancestors(ts):
+    """
+    Given the specified final, unsimplified, tree sequence output by tsinfer,
+    return the same tree sequence with the samples removed, which can then
+    be used as an ancestors tree sequence.
+    """
+    tables = ts.dump_tables()
+
+    # The nodes that we want to keep are all those *except* what
+    # has been marked as samples.
+    samples = np.where(tables.nodes.flags != msprime.NODE_IS_SAMPLE)[0].astype(np.int32)
+
+    # Mark all nodes as samples
+    tables.nodes.set_columns(
+        flags=np.bitwise_or(tables.nodes.flags, msprime.NODE_IS_SAMPLE),
+        time=tables.nodes.time,
+        population=tables.nodes.population,
+        individual=tables.nodes.individual,
+        metadata=tables.nodes.metadata,
+        metadata_offset=tables.nodes.metadata_offset)
+    # Now simplify down the tables to get rid of all sample edges.
+    tables.simplify(samples)
+
+    # We cannot have flags that are both samples and have other flags set,
+    # so we need to unset all the sample flags for these.
+    flags = np.zeros_like(tables.nodes.flags)
+    index = tables.nodes.flags == msprime.NODE_IS_SAMPLE
+    flags[index] = msprime.NODE_IS_SAMPLE
+    index = tables.nodes.flags != msprime.NODE_IS_SAMPLE
+    flags[index] = np.bitwise_and(tables.nodes.flags, ~msprime.NODE_IS_SAMPLE)
+
+    tables.nodes.set_columns(
+        flags=flags,
+        time=tables.nodes.time,
+        population=tables.nodes.population,
+        individual=tables.nodes.individual,
+        metadata=tables.nodes.metadata,
+        metadata_offset=tables.nodes.metadata_offset)
+    # TODO add provenance
+    return tables.tree_sequence()
+
+
 def run_perfect_inference(
         base_ts, num_threads=1, path_compression=False,
         extended_checks=True, time_chunking=True, progress_monitor=None,
