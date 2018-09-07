@@ -340,10 +340,9 @@ out:
 
 node_id_t WARN_UNUSED
 tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
-        bool is_sample, bool is_synthetic)
+        uint32_t flags)
 {
     int ret = 0;
-    uint32_t flags = 0;
 
     if (self->num_nodes == self->max_nodes) {
         ret = tree_sequence_builder_expand_nodes(self);
@@ -352,13 +351,6 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
         }
     }
     assert(self->num_nodes < self->max_nodes);
-    if (is_sample) {
-        flags = 1;
-    }
-    if (is_synthetic) {
-        assert(! is_sample);
-        flags = TSI_NODE_SYNTHETIC;
-    }
     ret = self->num_nodes;
     self->time[ret] = time;
     self->node_flags[ret] = flags;
@@ -628,7 +620,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
         goto out;
     }
 
-    ret = tree_sequence_builder_add_node(self, min_parent_time, false, true);
+    ret = tree_sequence_builder_add_node(self, min_parent_time, TSI_NODE_SYNTHETIC);
     if (ret < 0) {
         goto out;
     }
@@ -867,9 +859,7 @@ tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self, size_t num_no
     size_t j;
 
     for (j = 0; j < num_nodes; j++) {
-        ret = tree_sequence_builder_add_node(self, time[j],
-                (flags[j] & 1) != 0,
-                (flags[j] & TSI_NODE_SYNTHETIC) != 0);
+        ret = tree_sequence_builder_add_node(self, time[j], flags[j]);
         if (ret < 0) {
             goto out;
         }

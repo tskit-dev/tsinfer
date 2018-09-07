@@ -674,6 +674,49 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         self.verify(sample_data)
 
 
+class TestAncestorsTreeSequenceFlags(unittest.TestCase):
+    """
+    Checks that arbitrary flags can be set in the ancestors tree
+    sequence and recovered in the final ts.
+    """
+    def verify(self, sample_data, ancestors_ts):
+        source_flags = ancestors_ts.tables.nodes.flags
+        for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
+            for path_compression in [True, False]:
+                ts = tsinfer.match_samples(
+                    sample_data, ancestors_ts, path_compression=path_compression,
+                    simplify=False, engine=engine)
+                nodes = ts.tables.nodes
+                flags = nodes.flags[:source_flags.shape[0]]
+                # Anything that's marked as a sample in the ancestors should be a
+                # 0 in the final outout
+                samples = np.where(source_flags == 1)[0]
+                self.assertTrue(np.all(flags[samples] == 0))
+                # Anything that's not marked as a sample should be equal in both.
+                non_samples = np.where(source_flags != 1)[0]
+                self.assertTrue(np.all(flags[non_samples] == source_flags[non_samples]))
+
+    def test_no_flags_changes(self):
+
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        self.verify(samples, ancestors_ts)
+
+    def test_append_nodes(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        tables = ancestors_ts.dump_tables()
+        tables.nodes.add_row(flags=1 << 15, time=1.1)
+        tables.nodes.add_row(flags=1 << 16, time=1.1)
+        tables.nodes.add_row(flags=1 << 17, time=1.1)
+        tables.nodes.add_row(flags=1 << 18, time=1.0)
+        self.verify(samples, tables.tree_sequence())
+
+
 class AlgorithmsExactlyEqualMixin(object):
     """
     For small example tree sequences, check that the Python and C implementations

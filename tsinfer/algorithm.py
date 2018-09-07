@@ -235,17 +235,11 @@ class TreeSequenceBuilder(object):
 
     def restore_nodes(self, time, flags):
         for t, flag in zip(time, flags):
-            self.add_node(t, flag & 1, is_synthetic=flag & constants.SYNTHETIC_NODE_BIT)
+            self.add_node(t, flag)
 
-    def add_node(self, time, is_sample=True, is_synthetic=False):
+    def add_node(self, time, flags=1):
         self.num_nodes += 1
         self.time.append(time)
-        flags = 0
-        if is_sample:
-            flags = 1
-        if is_synthetic:
-            assert not is_sample
-            flags = constants.SYNTHETIC_NODE_BIT
         self.flags.append(flags)
         self.path.append(None)
         return self.num_nodes - 1
@@ -386,7 +380,7 @@ class TreeSequenceBuilder(object):
         # If we have more than one edge matching to a given path, then we create
         # synthetic ancestor for this path.
         # Create a new node for this synthetic ancestor.
-        synthetic_node = self.add_node(-1, is_sample=False, is_synthetic=True)
+        synthetic_node = self.add_node(-1, constants.SYNTHETIC_NODE_BIT)
         synthetic_head = None
         synthetic_prev = None
         child_id = matches[0][1].child
@@ -484,6 +478,55 @@ class TreeSequenceBuilder(object):
                     # print("NEW SYNTHETIC")
                     self.create_synthetic_node(match_list)
         return self.squash_edges(head)
+
+    def insert_srb_ancestors(self, nodes):
+        print("INSERT SRB ANCESTORS")
+
+        srb_index = {}
+        for child in nodes:
+            edge = self.path[child]
+            while edge.next is not None:
+                if edge.next.left == edge.right:
+                    key = edge.right, edge.parent, edge.next.parent
+                    if key in srb_index:
+                        count, left_bound, right_bound = srb_index[key]
+                        srb_index[key] = (
+                            count + 1,
+                            max(left_bound, edge.left),
+                            min(right_bound, edge.next.right))
+                    else:
+                        srb_index[key] = 1, edge.left, edge.next.right
+                edge = edge.next
+
+        for k, v in srb_index.items():
+            if v[0] > 1:
+                left, right = v[1:]
+                x, pl, pr = k
+                time = min(self.time[pl], self.time[pr]) - 1e-4
+                node = self.add_node(time, 1 << 17)
+                e2 = Edge(x, right, pr, node)
+                e1 = Edge(left, x, pl, node, e2)
+                self.path[node] = e1
+                self.index_edge(e1)
+                self.index_edge(e2)
+
+                # node = tables.nodes.add_row(flags=1 << 16, time=t)
+                # tables.edges.add_row(left, x, pl, node)
+                # tables.edges.add_row(x, right, pr, node)
+
+                print("New ancestor:", node, "time = ", time, "count=", v[0])
+                print("\te1 = ", left, x, pl)
+                print("\te2 = ", x, right, pr)
+
+                for child in nodes:
+                    edge = self.path[child]
+                    while edge is not None:
+                        if edge.right == x and edge.parent == pl:
+                            print("\te=", edge, edge.next)
+                        edge = edge.next
+
+                self.print_chain(e1)
+        # self.print_state()
 
     def restore_mutations(self, site, node, derived_state, parent):
         for s, u, d in zip(site, node, derived_state):

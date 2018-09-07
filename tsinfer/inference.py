@@ -801,6 +801,8 @@ class AncestorMatcher(Matcher):
             site, derived_state = self.results.get_mutations(child_id)
             self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
+        # self.tree_sequence_builder.insert_srb_ancestors(range(start, end))
+
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
