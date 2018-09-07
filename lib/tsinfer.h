@@ -42,7 +42,7 @@
 #define TSI_COMPRESS_PATH   1
 #define TSI_EXTENDED_CHECKS 2
 
-#define TSI_NODE_SYNTHETIC ((uint32_t) (1u << 16))
+#define TSI_NODE_IS_PC_ANCESTOR ((uint32_t) (1u << 16))
 
 /* TODO change all instances of this to node_id_t */
 typedef int32_t ancestor_id_t;

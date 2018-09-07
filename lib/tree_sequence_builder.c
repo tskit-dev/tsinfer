@@ -592,14 +592,14 @@ out:
     return ret;
 }
 
-/* Create a new synthetic ancestor which consists of the shared path
+/* Create a new pc ancestor which consists of the shared path
  * segments of existing ancestors. */
 static int
-tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
+tree_sequence_builder_make_pc_node(tree_sequence_builder_t *self,
         edge_map_t *mapped, size_t num_mapped)
 {
     int ret = 0;
-    node_id_t synthetic_node;
+    node_id_t pc_node;
     indexed_edge_t *edge;
     indexed_edge_t *head = NULL;
     indexed_edge_t *prev = NULL;
@@ -620,18 +620,18 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
         goto out;
     }
 
-    ret = tree_sequence_builder_add_node(self, min_parent_time, TSI_NODE_SYNTHETIC);
+    ret = tree_sequence_builder_add_node(self, min_parent_time, TSI_NODE_IS_PC_ANCESTOR);
     if (ret < 0) {
         goto out;
     }
-    synthetic_node = ret;
+    pc_node = ret;
 
     for (j = 0; j < num_mapped; j++) {
         edge = tree_sequence_builder_alloc_edge(self,
                 mapped[j].source->edge.left,
                 mapped[j].source->edge.right,
                 mapped[j].source->edge.parent,
-                synthetic_node, NULL);
+                pc_node, NULL);
         if (edge == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
@@ -642,7 +642,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
             prev->next = edge;
         }
         prev = edge;
-        mapped[j].source->edge.parent = synthetic_node;
+        mapped[j].source->edge.parent = pc_node;
         /* We are modifying the existing edge, so we must remove it
          * from the indexes. Mark that it is unindexed by setting the
          * child value to NULL_NODE. */
@@ -650,16 +650,16 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
         if (ret != 0) {
             goto out;
         }
-        mapped[j].dest->edge.parent = synthetic_node;
+        mapped[j].dest->edge.parent = pc_node;
         mapped[j].dest->edge.child = NULL_NODE;
     }
-    self->path[synthetic_node] = head;
-    tree_sequence_builder_squash_edges(self, synthetic_node);
+    self->path[pc_node] = head;
+    tree_sequence_builder_squash_edges(self, pc_node);
     ret = tree_sequence_builder_squash_indexed_edges(self, mapped_child);
     if (ret != 0) {
         goto out;
     }
-    ret = tree_sequence_builder_index_edges(self, synthetic_node);
+    ret = tree_sequence_builder_index_edges(self, pc_node);
     if (ret != 0) {
         goto out;
     }
@@ -714,14 +714,14 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
         contig_size = contig_offsets[j + 1] - contig_offsets[j];
         if (contig_size > 1) {
             mapped_child = mapped[contig_offsets[j]].dest->edge.child;
-            if ((self->node_flags[mapped_child] & TSI_NODE_SYNTHETIC) != 0) {
+            if ((self->node_flags[mapped_child] & TSI_NODE_IS_PC_ANCESTOR) != 0) {
                 /* Remap the edges in the set of matches to point to the already
                  * existing synthethic node. */
                 for (k = contig_offsets[j]; k < contig_offsets[j + 1]; k++) {
                     mapped[k].source->edge.parent = mapped_child;
                 }
             } else {
-                ret = tree_sequence_builder_make_synthetic_node(self,
+                ret = tree_sequence_builder_make_pc_node(self,
                         mapped + contig_offsets[j], contig_size);
                 if (ret != 0) {
                     goto out;

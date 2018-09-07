@@ -1143,13 +1143,13 @@ class PathCompressionMixin(object):
     def verify_tree_sequence(self, ts):
         num_fraction_times = sum(
             math.floor(node.time) != node.time for node in ts.nodes())
-        synthetic_nodes = [
-            node for node in ts.nodes() if tsinfer.is_synthetic(node.flags)]
-        self.assertGreater(len(synthetic_nodes), 0)
+        pc_nodes = [
+            node for node in ts.nodes() if tsinfer.is_pc_ancestor(node.flags)]
+        self.assertGreater(len(pc_nodes), 0)
         # Synthetic nodes will mostly have fractional times, so this number
-        # should at most the nuber of synthetic nodes.
-        self.assertGreaterEqual(len(synthetic_nodes), num_fraction_times)
-        for node in synthetic_nodes:
+        # should at most the number of pc nodes.
+        self.assertGreaterEqual(len(pc_nodes), num_fraction_times)
+        for node in pc_nodes:
             # print("Synthetic node", node)
             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
@@ -1171,7 +1171,7 @@ class PathCompressionMixin(object):
             original_matches = [
                 e for e in parent_edges if e.left == left and e.right == right]
             # We must have at least two initial edges that exactly span the
-            # synthetic interval.
+            # pc interval.
             self.assertGreater(len(original_matches), 1)
 
     def test_simple_case(self):
@@ -1266,7 +1266,7 @@ class PathCompressionFullStackMixin(PathCompressionMixin):
     """
     def verify(self, sample_data):
         # We have to turn off simplify because it'll sometimes remove chunks
-        # of synthetic ancestors, breaking out continguity requirements.
+        # of pc ancestors, breaking out continguity requirements.
         ts = tsinfer.infer(
             sample_data, path_compression=True, engine=self.engine,
             simplify=False)
@@ -1283,48 +1283,88 @@ class TestPathCompressionFullStackCEngine(
     engine = tsinfer.C_ENGINE
 
 
-class TestSyntheticFlag(unittest.TestCase):
+class TestFlags(unittest.TestCase):
     """
-    Tests if we can set and detect the synthetic node flag correctly.
+    Tests if we can set and detect the pc node flag correctly.
     """
-    BIT_POSITION = 16
+    PC_BIT_POSITION = 16
+    SRB_BIT_POSITION = 17
 
-    def test_is_synthetic(self):
-        self.assertFalse(tsinfer.is_synthetic(0))
-        self.assertFalse(tsinfer.is_synthetic(1))
-        self.assertTrue(tsinfer.is_synthetic(tsinfer.SYNTHETIC_NODE_BIT))
+    def test_is_pc_ancestor(self):
+        self.assertFalse(tsinfer.is_pc_ancestor(0))
+        self.assertFalse(tsinfer.is_pc_ancestor(1))
+        self.assertTrue(tsinfer.is_pc_ancestor(tsinfer.NODE_IS_PC_ANCESTOR))
         for bit in range(32):
             flags = 1 << bit
-            if bit == self.BIT_POSITION:
-                self.assertTrue(tsinfer.is_synthetic(flags))
+            if bit == self.PC_BIT_POSITION:
+                self.assertTrue(tsinfer.is_pc_ancestor(flags))
             else:
-                self.assertFalse(tsinfer.is_synthetic(flags))
-        flags = tsinfer.SYNTHETIC_NODE_BIT
+                self.assertFalse(tsinfer.is_pc_ancestor(flags))
+        flags = tsinfer.NODE_IS_PC_ANCESTOR
         for bit in range(32):
             flags |= 1 << bit
-            self.assertTrue(tsinfer.is_synthetic(flags))
+            self.assertTrue(tsinfer.is_pc_ancestor(flags))
         flags = 0
         for bit in range(32):
-            if bit != self.BIT_POSITION:
+            if bit != self.PC_BIT_POSITION:
                 flags |= 1 << bit
-            self.assertFalse(tsinfer.is_synthetic(flags))
+            self.assertFalse(tsinfer.is_pc_ancestor(flags))
 
-    def test_count_synthetic(self):
-        self.assertEqual(tsinfer.count_synthetic([0]), 0)
-        self.assertEqual(tsinfer.count_synthetic([tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic([0, 0]), 0)
-        self.assertEqual(tsinfer.count_synthetic([0, tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic(
-            [tsinfer.SYNTHETIC_NODE_BIT, tsinfer.SYNTHETIC_NODE_BIT]), 2)
-        self.assertEqual(tsinfer.count_synthetic([1, tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic(
-            [1 | tsinfer.SYNTHETIC_NODE_BIT, 1 | tsinfer.SYNTHETIC_NODE_BIT]), 2)
+    def test_count_pc_ancestors(self):
+        self.assertEqual(tsinfer.count_pc_ancestors([0]), 0)
+        self.assertEqual(tsinfer.count_pc_ancestors([tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors([0, 0]), 0)
+        self.assertEqual(tsinfer.count_pc_ancestors([0, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors(
+            [tsinfer.NODE_IS_PC_ANCESTOR, tsinfer.NODE_IS_PC_ANCESTOR]), 2)
+        self.assertEqual(tsinfer.count_pc_ancestors([1, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors(
+            [1 | tsinfer.NODE_IS_PC_ANCESTOR, 1 | tsinfer.NODE_IS_PC_ANCESTOR]), 2)
 
-    def test_count_synthetic_random(self):
+    def test_count_srb_ancestors_random(self):
         np.random.seed(42)
         flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
-        count = sum(map(tsinfer.is_synthetic, flags))
-        self.assertEqual(count, tsinfer.count_synthetic(flags))
+        count = sum(map(tsinfer.is_srb_ancestor, flags))
+        self.assertEqual(count, tsinfer.count_srb_ancestors(flags))
+
+    def test_is_srb_ancestor(self):
+        self.assertFalse(tsinfer.is_srb_ancestor(0))
+        self.assertFalse(tsinfer.is_srb_ancestor(1))
+        self.assertTrue(tsinfer.is_srb_ancestor(tsinfer.NODE_IS_SRB_ANCESTOR))
+        for bit in range(32):
+            flags = 1 << bit
+            if bit == self.SRB_BIT_POSITION:
+                self.assertTrue(tsinfer.is_srb_ancestor(flags))
+            else:
+                self.assertFalse(tsinfer.is_srb_ancestor(flags))
+        flags = tsinfer.NODE_IS_SRB_ANCESTOR
+        for bit in range(32):
+            flags |= 1 << bit
+            self.assertTrue(tsinfer.is_srb_ancestor(flags))
+        flags = 0
+        for bit in range(32):
+            if bit != self.SRB_BIT_POSITION:
+                flags |= 1 << bit
+            self.assertFalse(tsinfer.is_srb_ancestor(flags))
+
+    def test_count_srb_ancestors(self):
+        self.assertEqual(tsinfer.count_srb_ancestors([0]), 0)
+        self.assertEqual(tsinfer.count_srb_ancestors([tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors([0, 0]), 0)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [0, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [tsinfer.NODE_IS_SRB_ANCESTOR, tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [1, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [1 | tsinfer.NODE_IS_SRB_ANCESTOR, 1 | tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
+
+    def test_count_pc_ancestors_random(self):
+        np.random.seed(42)
+        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
+        count = sum(map(tsinfer.is_pc_ancestor, flags))
+        self.assertEqual(count, tsinfer.count_pc_ancestors(flags))
 
 
 class TestBugExamples(unittest.TestCase):
@@ -1332,10 +1372,10 @@ class TestBugExamples(unittest.TestCase):
     Run tests on some examples that provoked bugs.
     """
     def test_path_compression_bad_times(self):
-        # This provoked a bug in which we created a synthetic ancestor
+        # This provoked a bug in which we created a pc ancestor
         # with the same time as its child, creating an invalid topology.
         sample_data = tsinfer.load(
-            "tests/data/bugs/invalid_synthetic_ancestor_time.samples")
+            "tests/data/bugs/invalid_pc_ancestor_time.samples")
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             self.assertTrue(np.array_equal(var.genotypes, genotypes))

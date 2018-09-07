@@ -358,12 +358,12 @@ class TreeSequenceBuilder(object):
         if extended_checks:
             self.check_state()
 
-    def update_node_time(self, child_id, synthetic_parent_id):
+    def update_node_time(self, child_id, pc_parent_id):
         """
-        Updates the node time for the specified synthetic parent node ID.
+        Updates the node time for the specified pc parent node ID.
         """
-        assert self.flags[synthetic_parent_id] == constants.SYNTHETIC_NODE_BIT
-        edge = self.path[synthetic_parent_id]
+        assert self.flags[pc_parent_id] == constants.NODE_IS_PC_ANCESTOR
+        edge = self.path[pc_parent_id]
         assert edge is not None
         min_parent_time = self.time[0] + 1
         while edge is not None:
@@ -371,20 +371,20 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # For the asserttion to be violated we would need to have 10^8 synthetic
+        # For the asserttion to be violated we would need to have 10^8 pc
         # ancestors sequentially copying from each other.
-        self.time[synthetic_parent_id] = min_parent_time - 1e-8
-        assert self.time[synthetic_parent_id] > self.time[child_id]
+        self.time[pc_parent_id] = min_parent_time - 1e-8
+        assert self.time[pc_parent_id] > self.time[child_id]
 
-    def create_synthetic_node(self, matches):
+    def create_pc_node(self, matches):
         # If we have more than one edge matching to a given path, then we create
-        # synthetic ancestor for this path.
-        # Create a new node for this synthetic ancestor.
-        synthetic_node = self.add_node(-1, constants.SYNTHETIC_NODE_BIT)
-        synthetic_head = None
-        synthetic_prev = None
+        # a path-compression ancestor for this path.
+        # Create a new node for this pc ancestor.
+        pc_node = self.add_node(-1, constants.NODE_IS_PC_ANCESTOR)
+        pc_head = None
+        pc_prev = None
         child_id = matches[0][1].child
-        # print("NEW SYNTHETIC", child_id, "@", self.time[child_id], "=", synthetic_node)
+        # print("NEW SYNTHETIC", child_id, "@", self.time[child_id], "=", pc_node)
         # print("BEFORE")
         # self.print_chain(self.path[child_id])
         for new, old in matches:
@@ -393,27 +393,27 @@ class TreeSequenceBuilder(object):
             assert new.left == old.left
             assert new.right == old.right
             assert new.parent == old.parent
-            synthetic_edge = Edge(old.left, old.right, old.parent, synthetic_node)
-            if synthetic_prev is not None:
-                synthetic_prev.next = synthetic_edge
-            if synthetic_head is None:
-                synthetic_head = synthetic_edge
-            synthetic_prev = synthetic_edge
-            new.parent = synthetic_node
+            pc_edge = Edge(old.left, old.right, old.parent, pc_node)
+            if pc_prev is not None:
+                pc_prev.next = pc_edge
+            if pc_head is None:
+                pc_head = pc_edge
+            pc_prev = pc_edge
+            new.parent = pc_node
             # We are modifying this existing edge, so remove it from the
             # index. Also mark it as unindexed by setting the child_id to -1.
             # We check for this in squash_edges_indexed and make sure it
             # is indexed afterwards.
             self.unindex_edge(old)
-            old.parent = synthetic_node
+            old.parent = pc_node
             old.child = -1
 
-        self.path[synthetic_node] = self.squash_edges(synthetic_head)
+        self.path[pc_node] = self.squash_edges(pc_head)
         self.path[child_id] = self.squash_edges_indexed(self.path[child_id], child_id)
-        self.update_node_time(child_id, synthetic_node)
-        self.index_edges(synthetic_node)
+        self.update_node_time(child_id, pc_node)
+        self.index_edges(pc_node)
         # print("AFTER")
-        # self.print_chain(synthetic_head)
+        # self.print_chain(pc_head)
         # self.print_chain(self.path[child_id])
 
     def compress_path(self, head):
@@ -469,64 +469,15 @@ class TreeSequenceBuilder(object):
             if len(match_list) > 1:
                 child_id = match_list[0][1].child
                 # print("MATCH:", child_id)
-                if self.flags[child_id] == constants.SYNTHETIC_NODE_BIT:
+                if self.flags[child_id] == constants.NODE_IS_PC_ANCESTOR:
                     # print("EXISTING SYNTHETIC")
                     for edge, match in match_list:
                         # print("\t", edge, match)
                         edge.parent = child_id
                 else:
                     # print("NEW SYNTHETIC")
-                    self.create_synthetic_node(match_list)
+                    self.create_pc_node(match_list)
         return self.squash_edges(head)
-
-    def insert_srb_ancestors(self, nodes):
-        print("INSERT SRB ANCESTORS")
-
-        srb_index = {}
-        for child in nodes:
-            edge = self.path[child]
-            while edge.next is not None:
-                if edge.next.left == edge.right:
-                    key = edge.right, edge.parent, edge.next.parent
-                    if key in srb_index:
-                        count, left_bound, right_bound = srb_index[key]
-                        srb_index[key] = (
-                            count + 1,
-                            max(left_bound, edge.left),
-                            min(right_bound, edge.next.right))
-                    else:
-                        srb_index[key] = 1, edge.left, edge.next.right
-                edge = edge.next
-
-        for k, v in srb_index.items():
-            if v[0] > 1:
-                left, right = v[1:]
-                x, pl, pr = k
-                time = min(self.time[pl], self.time[pr]) - 1e-4
-                node = self.add_node(time, 1 << 17)
-                e2 = Edge(x, right, pr, node)
-                e1 = Edge(left, x, pl, node, e2)
-                self.path[node] = e1
-                self.index_edge(e1)
-                self.index_edge(e2)
-
-                # node = tables.nodes.add_row(flags=1 << 16, time=t)
-                # tables.edges.add_row(left, x, pl, node)
-                # tables.edges.add_row(x, right, pr, node)
-
-                print("New ancestor:", node, "time = ", time, "count=", v[0])
-                print("\te1 = ", left, x, pl)
-                print("\te2 = ", x, right, pr)
-
-                for child in nodes:
-                    edge = self.path[child]
-                    while edge is not None:
-                        if edge.right == x and edge.parent == pl:
-                            print("\te=", edge, edge.next)
-                        edge = edge.next
-
-                self.print_chain(e1)
-        # self.print_state()
 
     def restore_mutations(self, site, node, derived_state, parent):
         for s, u, d in zip(site, node, derived_state):

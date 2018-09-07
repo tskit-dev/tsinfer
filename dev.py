@@ -145,8 +145,7 @@ def insert_srb_ancestors(ts):
         metadata=tables.nodes.metadata,
         metadata_offset=tables.nodes.metadata_offset)
 
-
-    # print(tables.nodes)
+    num_extra = 0
     for k, v in srb_index.items():
         if v[0] > 1:
             left, right = v[1:]
@@ -157,10 +156,12 @@ def insert_srb_ancestors(ts):
             node = tables.nodes.add_row(flags=1 << 17, time=t)
             tables.edges.add_row(left, x, pl, node)
             tables.edges.add_row(x, right, pr, node)
+            num_extra += 1
 
-            print("New ancestor:", node, "t = ", t)
-            print("\te1 = ", left, x, pl)
-            print("\te2 = ", x, right, pr)
+            # print("New ancestor:", node, "t = ", t)
+            # print("\te1 = ", left, x, pl)
+            # print("\te2 = ", x, right, pr)
+    print("Generated", num_extra)
     tables.sort()
     # print(tables)
     ancestors_ts = tables.tree_sequence()
@@ -197,7 +198,7 @@ def tsinfer_dev(
         samples, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
         samples, ancestor_data, engine=engine, path_compression=False,
-        extended_checks=True)
+        extended_checks=False)
 
     ts = tsinfer.match_samples(samples, ancestors_ts,
             path_compression=False, engine=engine,
@@ -215,8 +216,13 @@ def tsinfer_dev(
             path_compression=False, engine=engine,
             simplify=True)
 
+    tables = ts.tables
+    flags = tables.nodes.flags
+    srb_parents = np.bitwise_and(flags[tables.edges.parent], 1 << 17) != 0
+
+    print("num srb parent edges = ", np.sum(srb_parents))
     print("edges after = ", ts.num_edges)
-    print(ts.tables.nodes)
+    # print(ts.tables.nodes)
 
 #     for tree in ts.trees():
 #         print(tree.interval)
@@ -372,7 +378,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(32, 1.15, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(320, 10.15, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 
