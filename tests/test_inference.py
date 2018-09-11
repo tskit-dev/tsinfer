@@ -1475,9 +1475,8 @@ class TestExtractAncestors(unittest.TestCase):
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
         ts = tsinfer.match_samples(samples, ancestors_ts_1, simplify=False)
-        ancestors_ts_2 = tsinfer.extract_ancestors(samples, ts)
         t1 = ancestors_ts_1.dump_tables()
-        t2 = ancestors_ts_2.dump_tables()
+        t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
         self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
         t1.provenances.clear()
         t2.provenances.clear()
@@ -1492,6 +1491,10 @@ class TestExtractAncestors(unittest.TestCase):
 
         self.assertEqual(t1, t2)
 
+        for node in ts.nodes():
+            if node_id_map[node.id] != -1:
+                self.assertEqual(node.time, t1.nodes.time[node_id_map[node.id]])
+
     def test_simple_simulation(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=5, random_seed=2)
         self.verify(tsinfer.SampleData.from_tree_sequence(ts))
@@ -1499,7 +1502,8 @@ class TestExtractAncestors(unittest.TestCase):
     def test_non_zero_one_mutations(self):
         ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
         ts = msprime.mutate(
-            ts, rate=5, model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
+            ts, rate=5, model=msprime.InfiniteSites(msprime.NUCLEOTIDES),
+            random_seed=15)
         self.assertGreater(ts.num_mutations, 0)
         self.verify(tsinfer.SampleData.from_tree_sequence(ts))
 
@@ -1519,8 +1523,7 @@ class TestInsertSrbAncestors(unittest.TestCase):
     Tests that the insert_srb_ancestors function behaves as expected.
     """
 
-    def insert_srb_ancestors(self, ts):
-        tables = ts.dump_tables()
+    def insert_srb_ancestors(self, samples, ts):
 
         srb_index = {}
         edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
@@ -1542,35 +1545,8 @@ class TestInsertSrbAncestors(unittest.TestCase):
                     srb_index[key] = 1, last_edge.left, edge.right
             last_edge = edge
 
-        # The nodes that we want to keep are all those *except* what
-        # has been marked as samples.
-        samples = np.where(tables.nodes.flags != 1)[0].astype(np.int32)
-
-        # Mark all nodes as samples
-        tables.nodes.set_columns(
-            flags=np.bitwise_or(tables.nodes.flags, 1),
-            time=tables.nodes.time,
-            population=tables.nodes.population,
-            individual=tables.nodes.individual,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset)
-        # Now simplify down the tables to get rid of all sample edges.
-        node_id_map = tables.simplify(samples)
-
-        # We cannot have flags that are both samples and synthetic.
-        flags = np.zeros_like(tables.nodes.flags)
-        flags[tables.nodes.flags == 1] = 1
-        index = np.bitwise_and(tables.nodes.flags, tsinfer.SYNTHETIC_NODE_BIT) != 0
-        flags[index] = tsinfer.SYNTHETIC_NODE_BIT
+        tables, node_id_map = tsinfer.extract_ancestors(samples, ts)
         time = tables.nodes.time
-
-        tables.nodes.set_columns(
-            flags=flags,
-            time=time,
-            population=tables.nodes.population,
-            individual=tables.nodes.individual,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset)
 
         num_extra = 0
         for k, v in srb_index.items():
@@ -1580,19 +1556,47 @@ class TestInsertSrbAncestors(unittest.TestCase):
                 pl = node_id_map[pl]
                 pr = node_id_map[pr]
                 t = min(time[pl], time[pr]) - 1e-4
-                node = tables.nodes.add_row(flags=1 << 17, time=t)
+                node = tables.nodes.add_row(flags=tsinfer.NODE_IS_SRB_ANCESTOR, time=t)
                 tables.edges.add_row(left, x, pl, node)
                 tables.edges.add_row(x, right, pr, node)
                 num_extra += 1
 
-                # print("New ancestor:", node, "t = ", t)
-                # print("\te1 = ", left, x, pl)
-                # print("\te2 = ", x, right, pr)
-        print("Generated", num_extra)
         tables.sort()
-        # print(tables)
         ancestors_ts = tables.tree_sequence()
-        # for tree in ancestors_ts.trees():
-        #     print(tree.interval)
-        #     print(tree.draw(format="unicode"))
         return ancestors_ts
+
+    def verify(self, samples):
+        ts = tsinfer.infer(samples, simplify=False)
+        ancestors_ts_1 = self.insert_srb_ancestors(samples, ts)
+        ancestors_ts_2 = tsinfer.insert_srb_ancestors(samples, ts)
+        t1 = ancestors_ts_1.dump_tables()
+        t2 = ancestors_ts_2.dump_tables()
+        t1.provenances.clear()
+        t2.provenances.clear()
+        self.assertEqual(t1, t2)
+
+        tsinfer.check_ancestors_ts(ancestors_ts_1)
+        ts2 = tsinfer.match_samples(samples, ancestors_ts_1)
+        tsinfer.verify(samples, ts2)
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=15, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
+
+    def test_random_data_large_example(self):
+        np.random.seed(5)
+        G, positions = get_random_data_example(15, 100)
+        with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+            for j in range(G.shape[0]):
+                samples.add_site(positions[j], G[j])
+        self.verify(samples)

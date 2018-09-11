@@ -24,14 +24,18 @@ import itertools
 import bisect
 import random
 import json
+import logging
 
 import numpy as np
 import msprime
+import tqdm
 
 import tsinfer.inference as inference
 import tsinfer.formats as formats
 import tsinfer.constants as constants
 import tsinfer.provenance as provenance
+
+logger = logging.getLogger(__name__)
 
 
 def insert_errors(ts, probability, seed=None):
@@ -565,7 +569,7 @@ def extract_ancestors(samples, ts):
         metadata=tables.nodes.metadata,
         metadata_offset=tables.nodes.metadata_offset)
     # Now simplify down the tables to get rid of all sample edges.
-    tables.simplify(
+    node_id_map = tables.simplify(
         samples, filter_sites=False, filter_individuals=True, filter_populations=False)
 
     # We cannot have flags that are both samples and have other flags set,
@@ -599,7 +603,76 @@ def extract_ancestors(samples, ts):
     record = provenance.get_provenance_dict(command="extract_ancestors")
     tables.provenances.add_row(record=json.dumps(record))
 
-    return tables.tree_sequence()
+    return tables, node_id_map
+
+
+def insert_srb_ancestors(samples, ts, show_progress=False):
+    """
+    Given the specified sample data file and final (unsimplified) tree sequence output
+    by tsinfer, return a tree sequence with an ancestor inserted for each shared
+    recombination breakpoint resulting from the sample edges. The returned tree
+    sequence can be used as an ancestors tree sequence.
+    """
+    logger.info("Starting srb ancestor insertion")
+    tables = ts.dump_tables()
+    edges = tables.edges
+    # In lexsort the primary sort key is *last*
+    index = np.lexsort((edges.left, edges.child))
+    logger.info("Sorted edges")
+    flags = tables.nodes.flags
+
+    # Definitely possible to do this more efficiently with numpy, but may not be
+    # worth it.
+    srb_index = {}
+    last_edge = edges[index[0]]
+    progress = tqdm.tqdm(
+        total=len(edges) - 1, desc="scan edges", disable=not show_progress)
+    for j in index[1:]:
+        progress.update()
+        edge = edges[j]
+        condition = (
+            flags[edge.child] == msprime.NODE_IS_SAMPLE and
+            edge.child == last_edge.child and
+            edge.left == last_edge.right)
+        if condition:
+            key = edge.left, last_edge.parent, edge.parent
+            if key in srb_index:
+                count, left_bound, right_bound = srb_index[key]
+                srb_index[key] = (
+                    count + 1,
+                    max(left_bound, last_edge.left),
+                    min(right_bound, edge.right))
+            else:
+                srb_index[key] = 1, last_edge.left, edge.right
+        last_edge = edge
+    progress.close()
+
+    logger.info("Built SRB map with {} items".format(len(srb_index)))
+    tables, node_id_map = extract_ancestors(samples, ts)
+    logger.info("Extracted ancestors ts")
+    time = tables.nodes.time
+
+    num_extra = 0
+    progress = tqdm.tqdm(
+        total=len(srb_index), desc="scan index", disable=not show_progress)
+    for k, v in srb_index.items():
+        progress.update()
+        if v[0] > 1:
+            left, right = v[1:]
+            x, pl, pr = k
+            pl = node_id_map[pl]
+            pr = node_id_map[pr]
+            t = min(time[pl], time[pr]) - 1e-4
+            node = tables.nodes.add_row(flags=constants.NODE_IS_SRB_ANCESTOR, time=t)
+            tables.edges.add_row(left, x, pl, node)
+            tables.edges.add_row(x, right, pr, node)
+            num_extra += 1
+    progress.close()
+
+    logger.info("Generated {} extra ancestors".format(num_extra))
+    tables.sort()
+    ancestors_ts = tables.tree_sequence()
+    return ancestors_ts
 
 
 def run_perfect_inference(
