@@ -1466,18 +1466,52 @@ class TestVerify(unittest.TestCase):
             tsinfer.verify(samples, ts)
 
 
-class TestGetAncestors(unittest.TestCase):
+class TestExtractAncestors(unittest.TestCase):
     """
-    Checks whether the get_ancestors function correctly returns an ancestors
+    Checks whether the extract_ancestors function correctly returns an ancestors
     tree sequence with the required properties.
     """
-    def verify(self, ts):
-        pass
-        # ancestors_ts = tsinfer.get_ancestors(ts)
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
+        ts = tsinfer.match_samples(samples, ancestors_ts_1, simplify=False)
+        ancestors_ts_2 = tsinfer.extract_ancestors(samples, ts)
+        t1 = ancestors_ts_1.dump_tables()
+        t2 = ancestors_ts_2.dump_tables()
+        self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
+        t1.provenances.clear()
+        t2.provenances.clear()
 
-    def test_stuff(self):
-        # Write some tests.
-        self.assertTrue(False)
+        self.assertEqual(t1.nodes, t2.nodes)
+        self.assertEqual(t1.edges, t2.edges)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.mutations, t2.mutations)
+        self.assertEqual(t1.populations, t2.populations)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.individuals, t2.individuals)
+
+        self.assertEqual(t1, t2)
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=5, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_non_zero_one_mutations(self):
+        ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
+        ts = msprime.mutate(
+            ts, rate=5, model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
+        self.assertGreater(ts.num_mutations, 0)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
 
 
 class TestInsertSrbAncestors(unittest.TestCase):

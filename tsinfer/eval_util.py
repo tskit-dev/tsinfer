@@ -23,6 +23,7 @@ import collections
 import itertools
 import bisect
 import random
+import json
 
 import numpy as np
 import msprime
@@ -30,6 +31,7 @@ import msprime
 import tsinfer.inference as inference
 import tsinfer.formats as formats
 import tsinfer.constants as constants
+import tsinfer.provenance as provenance
 
 
 def insert_errors(ts, probability, seed=None):
@@ -540,12 +542,14 @@ def check_ancestors_ts(ts):
                 raise ValueError("Sites must have exactly one mutation")
 
 
-def get_ancestors(ts):
+def extract_ancestors(samples, ts):
     """
-    Given the specified final, unsimplified, tree sequence output by tsinfer,
-    return the same tree sequence with the samples removed, which can then
+    Given the specified sample data file and final (unsimplified) tree sequence output
+    by tsinfer, return the same tree sequence with the samples removed, which can then
     be used as an ancestors tree sequence.
     """
+    position = samples.sites_position[:][samples.sites_inference[:] == 1]
+    ts = subset_sites(ts, position)
     tables = ts.dump_tables()
 
     # The nodes that we want to keep are all those *except* what
@@ -561,7 +565,8 @@ def get_ancestors(ts):
         metadata=tables.nodes.metadata,
         metadata_offset=tables.nodes.metadata_offset)
     # Now simplify down the tables to get rid of all sample edges.
-    tables.simplify(samples)
+    tables.simplify(
+        samples, filter_sites=False, filter_individuals=True, filter_populations=False)
 
     # We cannot have flags that are both samples and have other flags set,
     # so we need to unset all the sample flags for these.
@@ -569,7 +574,7 @@ def get_ancestors(ts):
     index = tables.nodes.flags == msprime.NODE_IS_SAMPLE
     flags[index] = msprime.NODE_IS_SAMPLE
     index = tables.nodes.flags != msprime.NODE_IS_SAMPLE
-    flags[index] = np.bitwise_and(tables.nodes.flags, ~msprime.NODE_IS_SAMPLE)
+    flags[index] = np.bitwise_and(tables.nodes.flags[index], ~msprime.NODE_IS_SAMPLE)
 
     tables.nodes.set_columns(
         flags=flags,
@@ -578,7 +583,22 @@ def get_ancestors(ts):
         individual=tables.nodes.individual,
         metadata=tables.nodes.metadata,
         metadata_offset=tables.nodes.metadata_offset)
-    # TODO add provenance
+    # Drop site metadata and set the ancestral_state to zeros
+    tables.sites.set_columns(
+        position=tables.sites.position,
+        ancestral_state=np.zeros(len(tables.sites), dtype=np.int8) + ord('0'),
+        ancestral_state_offset=np.arange(len(tables.sites) + 1, dtype=np.uint32))
+
+    # Drop mutation metadata and set the derived_state to ones
+    tables.mutations.set_columns(
+        site=tables.mutations.site,
+        node=tables.mutations.node,
+        derived_state=np.zeros(len(tables.mutations), dtype=np.int8) + ord('1'),
+        derived_state_offset=np.arange(len(tables.mutations) + 1, dtype=np.uint32))
+
+    record = provenance.get_provenance_dict(command="extract_ancestors")
+    tables.provenances.add_row(record=json.dumps(record))
+
     return tables.tree_sequence()
 
 
