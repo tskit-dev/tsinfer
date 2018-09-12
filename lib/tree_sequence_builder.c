@@ -27,6 +27,10 @@
 
 #include "avl.h"
 
+/* Time increment between path compression ancestors and their parents.
+ * Power-of-two value chosen here so that we can manipulate time values
+ * reasonably losslessly. */
+#define PC_ANCESTOR_INCREMENT (1.0 / 65536)
 
 static int
 cmp_edge_left_increasing_time(const void *a, const void *b) {
@@ -614,7 +618,7 @@ tree_sequence_builder_make_pc_node(tree_sequence_builder_t *self,
         min_parent_time = TSI_MIN(
             min_parent_time, self->time[mapped[j].source->edge.parent]);
     }
-    min_parent_time -= 1e-8;
+    min_parent_time -= PC_ANCESTOR_INCREMENT;
     if (min_parent_time <= mapped_child_time) {
         ret = TSI_ERR_ASSERTION_FAILURE;
         goto out;

@@ -158,6 +158,30 @@ class TestRoundTrip(unittest.TestCase):
             self.verify_data_round_trip(S, positions)
 
 
+class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
+    """
+    Tests that we correctly round drip data when we have augmented ancestors.
+    """
+    def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
+            for j in range(genotypes.shape[0]):
+                sample_data.add_site(positions[j], genotypes[j])
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ancestors_ts = tsinfer.augment_ancestors(
+                sample_data, ancestors_ts, np.arange(sample_data.num_samples),
+                engine=engine)
+            ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+            self.assertEqual(ts.sequence_length, sequence_length)
+            self.assertEqual(ts.num_sites, len(positions))
+            for v in ts.variants():
+                self.assertEqual(v.position, positions[v.index])
+                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+
+
 class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data when we have various combinations
@@ -1600,3 +1624,59 @@ class TestInsertSrbAncestors(unittest.TestCase):
             for j in range(G.shape[0]):
                 samples.add_site(positions[j], G[j])
         self.verify(samples)
+
+
+class TestAugmentedAncestors(unittest.TestCase):
+    """
+    Tests for augmenting an ancestors tree sequence with samples.
+    """
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        augmented_ancestors = tsinfer.augment_ancestors(samples, ancestors_ts, [0, 1])
+        t1 = ancestors_ts.dump_tables()
+        t2 = augmented_ancestors.dump_tables()
+
+        t2.nodes.truncate(len(t1.nodes))
+        t2.nodes.set_columns(
+            flags=t2.nodes.flags,
+            time=t2.nodes.time - 1)
+        self.assertEqual(t1.nodes, t2.nodes)
+
+        self.assertGreater(set(t2.edges), set(t1.edges))
+        self.assertEqual(t1.sites, t2.sites)
+        t2.mutations.truncate(len(t1.mutations))
+        self.assertEqual(t1.mutations, t2.mutations)
+        t2.provenances.truncate(len(t1.provenances))
+        self.assertEqual(t1.provenances, t2.provenances)
+        self.assertEqual(t1.individuals, t2.individuals)
+        self.assertEqual(t1.populations, t2.populations)
+
+    def test_simple_case(self):
+        ts = msprime.simulate(55, mutation_rate=5, random_seed=8, recombination_rate=8)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_simulation_with_error(self):
+        ts = msprime.simulate(50, mutation_rate=5, random_seed=5, recombination_rate=8)
+        ts = eval_util.insert_errors(ts, 0.1, seed=32)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_small_random_data(self):
+        n = 25
+        m = 20
+        G, positions = get_random_data_example(n, m, seed=1234)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+    def test_large_random_data(self):
+        n = 100
+        m = 30
+        G, positions = get_random_data_example(n, m, seed=1234)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
