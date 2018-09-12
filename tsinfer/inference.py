@@ -236,6 +236,41 @@ def match_ancestors(
     return matcher.match_ancestors()
 
 
+def augment_ancestors(
+        sample_data, ancestors_ts, indexes, progress_monitor=None, num_threads=0,
+        path_compression=True, extended_checks=False, engine=constants.C_ENGINE):
+    """
+    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0, simplify=True)
+
+    Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
+    on the specified :class:`SampleData` instance and ancestors tree sequence,
+    for the specified subset of sample indexes, returning the
+    :class:`msprime.TreeSequence` instance including these samples. This
+    tree sequence can then be used as an ancestors tree sequence for subsequent
+    matching against all samples.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        representing the input data.
+    :param msprime.TreeSequence ancestors_ts: The
+        :class:`msprime.TreeSequence` instance representing the inferred
+        history among ancestral ancestral haplotypes.
+    :param array indexes: The sample indexes to insert into the ancestors
+        tree sequence.
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
+    :return: The specified ancestors tree sequence augmented with copying
+        paths for the specified sample.
+    :rtype: msprime.TreeSequence
+    """
+    manager = SampleMatcher(
+        sample_data, ancestors_ts, path_compression=path_compression,
+        engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
+        extended_checks=extended_checks)
+    manager.match_samples(indexes)
+    ts = manager.get_augmented_ancestors_tree_sequence()
+    return ts
+
+
 def match_samples(
         sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
         path_compression=True, simplify=True, extended_checks=False,
@@ -551,6 +586,9 @@ class Matcher(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
+        # FIXME this is most likely doubling up the provenance as we're writing the
+        # provenance from both sample data and ancestor data. Ancestor data should
+        # already keep a copy of the sample data provenance.
         for timestamp, record in self.sample_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         for timestamp, record in self.ancestor_data.provenances():
@@ -658,6 +696,49 @@ class Matcher(object):
                     derived_state=variant.alleles[derived_state[site.id]])
                 progress_monitor.update()
         progress_monitor.close()
+
+    def get_augmented_ancestors_tree_sequence(self):
+        """
+        Return the ancestors tree sequence augmented with samples as extra ancestors.
+        """
+        logger.debug("Building augmented ancestors tree sequence")
+        tsb = self.tree_sequence_builder
+        tables = self.ancestors_ts.dump_tables()
+        num_pc_ancestors = count_pc_ancestors(tables.nodes.flags)
+
+        flags, time = tsb.dump_nodes()
+        # Anything at time 0 is one of our sample ancestors, so mark them.
+        flags[time == 0] = constants.NODE_IS_SAMPLE_ANCESTOR
+        # Increment the time for all nodes so the augmented samples are no longer
+        # at time 0.
+        time += 1
+        tables.nodes.set_columns(flags=flags, time=time)
+        num_pc_ancestors = count_pc_ancestors(tables.nodes.flags) - num_pc_ancestors
+
+        position = tables.sites.position
+        pos_map = np.hstack([position, [tables.sequence_length]])
+        pos_map[0] = 0
+        left, right, parent, child = tsb.dump_edges()
+        tables.edges.set_columns(
+            left=pos_map[left], right=pos_map[right], parent=parent, child=child)
+
+        site, node, derived_state, parent = tsb.dump_mutations()
+        derived_state += ord('0')
+        tables.mutations.set_columns(
+            site=site, node=node, derived_state=derived_state,
+            derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
+            parent=parent)
+        record = provenance.get_provenance_dict(command="augment_ancestors")
+        tables.provenances.add_row(record=json.dumps(record))
+        logger.debug("Sorting ancestors tree sequence")
+        tables.sort()
+        logger.debug("Sorting ancestors tree sequence done")
+        logger.info(
+            "Augmented ancestors tree sequence: {} nodes ({} extra pc ancestors); "
+            "{} edges; {} sites; {} mutations".format(
+                len(tables.nodes), num_pc_ancestors, len(tables.edges),
+                len(tables.mutations), len(tables.sites)))
+        return tables.tree_sequence()
 
     def get_samples_tree_sequence(self):
         """
@@ -910,10 +991,7 @@ class SampleMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
         self.ancestors_ts = ancestors_ts
-        self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
-        for j in range(self.num_samples):
-            self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -922,15 +1000,12 @@ class SampleMatcher(Matcher):
         derived_state = haplotype[diffs]
         self.results.set_mutations(sample_id, diffs.astype(np.int32), derived_state)
 
-    def __match_samples_single_threaded(self):
-        j = 0
-        for a in self.sample_haplotypes:
-            sample_id = self.sample_ids[j]
-            self.__process_sample(sample_id, a)
-            j += 1
-        assert j == self.num_samples
+    def __match_samples_single_threaded(self, indexes):
+        sample_haplotypes = self.sample_data.haplotypes(indexes, inference_sites=True)
+        for j, a in sample_haplotypes:
+            self.__process_sample(self.sample_ids[j], a)
 
-    def __match_samples_multi_threaded(self):
+    def __match_samples_multi_threaded(self, indexes):
         # Note that this function is not almost identical to the match_ancestors
         # multithreaded function above. All we need to do is provide a function
         # to do the matching and some producer for the actual items and we
@@ -951,13 +1026,13 @@ class SampleMatcher(Matcher):
 
         match_threads = [
             threads.queue_consumer_thread(
-                match_worker, match_queue, name="match-worker-{}".format(j),
-                index=j)
+                match_worker, match_queue, name="match-worker-{}".format(j), index=j)
             for j in range(self.num_threads)]
         logger.debug("Started {} match worker threads".format(self.num_threads))
 
-        for sample_id, a in zip(self.sample_ids, self.sample_haplotypes):
-            match_queue.put((sample_id, a))
+        sample_haplotypes = self.sample_data.haplotypes(indexes, inference_sites=True)
+        for j, a in sample_haplotypes:
+            match_queue.put((self.sample_ids[j], a))
 
         # Stop the the worker threads.
         for j in range(self.num_threads):
@@ -965,20 +1040,24 @@ class SampleMatcher(Matcher):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-    def match_samples(self):
-        logger.info("Started matching for {} samples".format(self.num_samples))
+    def match_samples(self, indexes=None):
+        if indexes is None:
+            indexes = np.arange(self.num_samples)
+        # Add in sample nodes.
+        for j in indexes:
+            self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
+        logger.info("Started matching for {} samples".format(len(indexes)))
         if self.sample_data.num_inference_sites > 0:
-            self.match_progress = self.progress_monitor.get(
-                    "ms_match", self.num_samples)
+            self.match_progress = self.progress_monitor.get("ms_match", len(indexes))
             if self.num_threads <= 0:
-                self.__match_samples_single_threaded()
+                self.__match_samples_single_threaded(indexes)
             else:
-                self.__match_samples_multi_threaded()
+                self.__match_samples_multi_threaded(indexes)
             self.match_progress.close()
             logger.info("Inserting sample paths: {} edges in total".format(
                 self.results.total_edges))
-            progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
-            for j in range(self.num_samples):
+            progress_monitor = self.progress_monitor.get("ms_paths", len(indexes))
+            for j in indexes:
                 sample_id = int(self.sample_ids[j])
                 left, right, parent = self.results.get_path(sample_id)
                 self.tree_sequence_builder.add_path(

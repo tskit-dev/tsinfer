@@ -94,83 +94,6 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S.T
 
-def insert_srb_ancestors(ts):
-    tables = ts.dump_tables()
-
-    srb_index = {}
-    edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
-    last_edge = edges[0]
-    for edge in edges[1:]:
-        if not ts.node(edge.child).is_sample():
-            continue
-        if edge.child == last_edge.child and edge.left == last_edge.right:
-            key = edge.left, last_edge.parent, edge.parent
-            if key in srb_index:
-                count, left_bound, right_bound = srb_index[key]
-                srb_index[key] = (
-                    count + 1,
-                    max(left_bound, last_edge.left),
-                    min(right_bound, edge.right))
-            else:
-                srb_index[key] = 1, last_edge.left, edge.right
-        last_edge = edge
-
-    # The nodes that we want to keep are all those *except* what
-    # has been marked as samples.
-    samples = np.where(tables.nodes.flags != 1)[0].astype(np.int32)
-
-    # Mark all nodes as samples
-    tables.nodes.set_columns(
-        flags=np.bitwise_or(tables.nodes.flags, 1),
-        time=tables.nodes.time,
-        population=tables.nodes.population,
-        individual=tables.nodes.individual,
-        metadata=tables.nodes.metadata,
-        metadata_offset=tables.nodes.metadata_offset)
-    # Now simplify down the tables to get rid of all sample edges.
-    node_id_map = tables.simplify(samples)
-
-    # We cannot have flags that are both samples and synthetic.
-    flags = np.zeros_like(tables.nodes.flags)
-    flags[tables.nodes.flags == 1] = 1
-    index = np.bitwise_and(tables.nodes.flags, tsinfer.SYNTHETIC_NODE_BIT) != 0
-    flags[index] = tsinfer.SYNTHETIC_NODE_BIT
-    time = tables.nodes.time
-
-    tables.nodes.set_columns(
-        flags=flags,
-        time=time,
-        population=tables.nodes.population,
-        individual=tables.nodes.individual,
-        metadata=tables.nodes.metadata,
-        metadata_offset=tables.nodes.metadata_offset)
-
-    num_extra = 0
-    for k, v in srb_index.items():
-        if v[0] > 1:
-            left, right = v[1:]
-            x, pl, pr = k
-            pl = node_id_map[pl]
-            pr = node_id_map[pr]
-            t = min(time[pl], time[pr]) - 1e-4
-            node = tables.nodes.add_row(flags=1 << 17, time=t)
-            tables.edges.add_row(left, x, pl, node)
-            tables.edges.add_row(x, right, pr, node)
-            num_extra += 1
-
-            # print("New ancestor:", node, "t = ", t)
-            # print("\te1 = ", left, x, pl)
-            # print("\te2 = ", x, right, pr)
-    print("Generated", num_extra)
-    tables.sort()
-    # print(tables)
-    ancestors_ts = tables.tree_sequence()
-    # for tree in ancestors_ts.trees():
-    #     print(tree.interval)
-    #     print(tree.draw(format="unicode"))
-    return ancestors_ts
-
-
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, engine="C", log_level="WARNING",
@@ -192,37 +115,31 @@ def tsinfer_dev(
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
 
-    # ancestors_ts = tsinfer.make_ancestors_ts(samples, ts, remove_leaves=False)
-
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
-        samples, ancestor_data, engine=engine, path_compression=False,
+        samples, ancestor_data, engine=engine, path_compression=True,
         extended_checks=False)
+
+    ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
+            [5, 6, 7], engine=engine)
 
     ts = tsinfer.match_samples(samples, ancestors_ts,
             path_compression=False, engine=engine,
-            simplify=False)
+            simplify=True)
 
-    # print(ts.tables.nodes)
+    print(ts.tables.nodes)
     # print(ts.tables.edges)
     # print(ts.dump_tables())
 
-    simplified = ts.simplify()
-    print("edges before = ", simplified.num_edges)
+    # simplified = ts.simplify()
+    # print("edges before = ", simplified.num_edges)
 
-    new_ancestors_ts = insert_srb_ancestors(ts)
-    ts = tsinfer.match_samples(samples, new_ancestors_ts,
-            path_compression=False, engine=engine,
-            simplify=True)
+    # new_ancestors_ts = insert_srb_ancestors(ts)
+    # ts = tsinfer.match_samples(samples, new_ancestors_ts,
+    #         path_compression=False, engine=engine,
+    #         simplify=True)
 
-    tables = ts.tables
-    flags = tables.nodes.flags
-    srb_parents = np.bitwise_and(flags[tables.edges.parent], 1 << 17) != 0
-
-    print("num srb parent edges = ", np.sum(srb_parents))
-    print("edges after = ", ts.num_edges)
-    # print(ts.tables.nodes)
 
 #     for tree in ts.trees():
 #         print(tree.interval)
@@ -332,27 +249,6 @@ def tutorial_samples():
     progress.close()
 
 
-def subset_sites(ts, position):
-    """
-    Return a copy of the specified tree sequence with sites reduced to those
-    with positions in the specified list.
-    """
-    tables = ts.dump_tables()
-    lookup = frozenset(position)
-    tables.sites.clear()
-    tables.mutations.clear()
-    for site in ts.sites():
-        if site.position in lookup:
-            site_id = tables.sites.add_row(
-                site.position, ancestral_state=site.ancestral_state,
-                metadata=site.metadata)
-            for mutation in site.mutations:
-                tables.mutations.add_row(
-                    site_id, node=mutation.node, parent=mutation.parent,
-                    derived_state=mutation.derived_state,
-                    metadata=mutation.metadata)
-    return tables.tree_sequence()
-
 def run_build():
 
     sample_data = tsinfer.load(sys.argv[1])
@@ -378,7 +274,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(320, 10.15, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(10, 1.15, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 

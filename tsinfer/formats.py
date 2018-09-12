@@ -1201,14 +1201,7 @@ class SampleData(DataContainer):
                     site=site, alleles=tuple(alleles[j]), genotypes=genotypes)
                 yield variant
 
-    def haplotypes(self, inference_sites=None):
-        # Undocumenting for now.
-        # """
-        # Returns an iterator over the sample haplotypes. If inference_sites is
-        # None, return for all sites. If inference_sites is False, return for
-        # sites that are not selected for inference. If True, return states
-        # for sites that are selected for inference.
-        # """
+    def __all_haplotypes(self, inference_sites=None):
         if inference_sites is not None:
             selection = self.sites_inference[:] == int(inference_sites)
         # We iterate over chunks vertically here, and it's not worth complicating
@@ -1219,9 +1212,26 @@ class SampleData(DataContainer):
                 chunk = self.sites_genotypes[:, j: j + chunk_size].T
             a = chunk[j % chunk_size]
             if inference_sites is None:
-                yield a
+                yield j, a
             else:
-                yield a[selection]
+                yield j, a[selection]
+
+    def haplotypes(self, samples=None, inference_sites=None):
+        if samples is None:
+            samples = np.arange(self.num_samples)
+        else:
+            samples = np.array(samples, copy=False)
+            if np.any(samples[:-1] >= samples[1:]):
+                raise ValueError("sample indexes must be in increasing order.")
+            if samples.shape[0] > 0 and samples[-1] >= self.num_samples:
+                raise ValueError("Sample index too large.")
+        j = 0
+        for index, a in self.__all_haplotypes(inference_sites):
+            if j == len(samples):
+                break
+            if index == samples[j]:
+                yield index, a
+                j += 1
 
 
 @attr.s

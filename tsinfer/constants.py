@@ -30,3 +30,6 @@ NODE_IS_PC_ANCESTOR = 1 << 16
 # Bit 17 is set in node flags when they have been created by shared recombination
 # breakpoint
 NODE_IS_SRB_ANCESTOR = 1 << 17
+# Bit 18 is set in node flags when they are samples inserted to augment existing
+# ancestors.
+NODE_IS_SAMPLE_ANCESTOR = 1 << 18
