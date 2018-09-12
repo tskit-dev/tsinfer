@@ -165,6 +165,18 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
+    def test_augment_ancestors(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        augmented_ancestors = os.path.join(
+            self.tempdir.name, "augmented_ancestors.trees")
+        self.run_command(["generate-ancestors", self.sample_file])
+        self.run_command(["match-ancestors", self.sample_file])
+        self.run_command(["augment-ancestors", self.sample_file, augmented_ancestors])
+        self.run_command([
+            "match-samples", self.sample_file, "-O", output_trees,
+            "-A", augmented_ancestors])
+        self.verify_output(output_trees)
+
 
 class TestProgress(TestCli):
     """

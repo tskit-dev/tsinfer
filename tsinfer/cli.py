@@ -24,12 +24,14 @@ import os
 import os.path
 import logging
 import resource
+import math
 
 import daiquiri
 import msprime
 import tqdm
 import humanize
 import time
+import numpy as np
 
 import tsinfer
 
@@ -43,7 +45,7 @@ class ProgressMonitor(object):
     """
     def __init__(
             self, enabled=True, generate_ancestors=False, match_ancestors=False,
-            match_samples=False, verify=False):
+            augment_ancestors=False, match_samples=False, verify=False):
         self.enabled = enabled
         self.num_bars = 0
         if generate_ancestors:
@@ -55,6 +57,9 @@ class ProgressMonitor(object):
         if verify:
             assert self.num_bars == 0
             self.num_bars += 1
+        if augment_ancestors:
+            assert self.num_bars == 0
+            self.num_bars += 2
         self.current_count = 0
         self.current_instance = None
         if not verify:
@@ -201,6 +206,31 @@ def run_match_ancestors(args):
         path_compression=not args.no_path_compression)
     logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
     ts.dump(ancestors_trees)
+    summarise_usage()
+
+
+def run_augment_ancestors(args):
+    setup_logging(args)
+
+    sample_data = tsinfer.SampleData.load(args.samples)
+    ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
+    output_path = args.augmented_ancestors
+    logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
+    ancestors_trees = msprime.load(ancestors_trees)
+    progress_monitor = ProgressMonitor(enabled=args.progress, augment_ancestors=True)
+    # TODO Need some error checking on these values
+    n = args.num_samples
+    N = sample_data.num_samples
+    if n is None:
+        n = int(math.ceil(10 * N / 100))
+
+    sample_indexes = np.linspace(0, N - 1, num=n).astype(int)
+    ts = tsinfer.augment_ancestors(
+        sample_data, ancestors_trees, sample_indexes, num_threads=args.num_threads,
+        path_compression=not args.no_path_compression,
+        progress_monitor=progress_monitor)
+    logger.info("Writing output tree sequence to {}".format(output_path))
+    ts.dump(output_path)
     summarise_usage()
 
 
@@ -357,6 +387,24 @@ def get_cli_parser():
     add_progress_argument(parser)
     add_path_compression_argument(parser)
     parser.set_defaults(runner=run_match_ancestors)
+
+    parser = subparsers.add_parser(
+        "augment-ancestors",
+        aliases=["aa"],
+        help="Augments the ancestors tree sequence by adding a subset of the samples")
+    add_samples_file_argument(parser)
+    parser.add_argument(
+        "augmented_ancestors",
+        help="The path to write the augmented ancestors tree sequence to")
+    parser.add_argument(
+        "-n", "--num-samples", type=int, default=None,
+        help="The number of samples to use. Defaults to 10%% of the total.")
+    add_ancestors_trees_argument(parser)
+    add_logging_arguments(parser)
+    add_path_compression_argument(parser)
+    add_num_threads_argument(parser)
+    add_progress_argument(parser)
+    parser.set_defaults(runner=run_augment_ancestors)
 
     parser = subparsers.add_parser(
         "match-samples",
