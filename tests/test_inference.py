@@ -1630,20 +1630,28 @@ class TestAugmentedAncestors(unittest.TestCase):
     """
     Tests for augmenting an ancestors tree sequence with samples.
     """
-    def verify(self, samples):
-        ancestors = tsinfer.generate_ancestors(samples)
-        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
-        augmented_ancestors = tsinfer.augment_ancestors(samples, ancestors_ts, [0, 1])
+    def verify_example(self, subset, samples, ancestors, path_compression):
+        ancestors_ts = tsinfer.match_ancestors(
+            samples, ancestors, path_compression=path_compression)
+        augmented_ancestors = tsinfer.augment_ancestors(
+            samples, ancestors_ts, subset, path_compression=path_compression)
         t1 = ancestors_ts.dump_tables()
         t2 = augmented_ancestors.dump_tables()
+        k = len(subset)
+        m = len(t1.nodes)
+        self.assertTrue(
+            np.all(t2.nodes.flags[m: m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR))
+        self.assertTrue(np.all(t2.nodes.time[m: m + k] == 1))
 
         t2.nodes.truncate(len(t1.nodes))
         t2.nodes.set_columns(
             flags=t2.nodes.flags,
             time=t2.nodes.time - 1)
         self.assertEqual(t1.nodes, t2.nodes)
-
-        self.assertGreater(set(t2.edges), set(t1.edges))
+        if not path_compression:
+            # If we have path compression it's possible that some older edges
+            # will be compressed out.
+            self.assertGreaterEqual(set(t2.edges), set(t1.edges))
         self.assertEqual(t1.sites, t2.sites)
         t2.mutations.truncate(len(t1.mutations))
         self.assertEqual(t1.mutations, t2.mutations)
@@ -1651,6 +1659,44 @@ class TestAugmentedAncestors(unittest.TestCase):
         self.assertEqual(t1.provenances, t2.provenances)
         self.assertEqual(t1.individuals, t2.individuals)
         self.assertEqual(t1.populations, t2.populations)
+
+        # Run the inference now
+        final_ts = tsinfer.match_samples(
+            samples, augmented_ancestors, simplify=False)
+        tables = final_ts.tables
+        for j, index in enumerate(subset):
+            sample_id = final_ts.samples()[index]
+            edges = [e for e in final_ts.edges() if e.child == sample_id]
+            self.assertEqual(len(edges), 1)
+            self.assertEqual(edges[0].left, 0)
+            self.assertEqual(edges[0].right, final_ts.sequence_length)
+            parent = edges[0].parent
+            original_node = len(t1.nodes) + j
+            self.assertEqual(
+                tables.nodes.flags[original_node], tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            # Most of the time the parent is the original node. However, in
+            # simple cases it can be somewhere up the tree above it.
+            if parent != original_node:
+                for tree in final_ts.trees():
+                    u = parent
+                    while u != msprime.NULL_NODE:
+                        siblings = tree.children(u)
+                        if original_node in siblings:
+                            break
+                        u = tree.parent(u)
+                    self.assertNotEqual(u, msprime.NULL_NODE)
+
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        n = samples.num_samples
+        subsets = [
+            [0, 1], [n - 2, n - 1],
+            [0, n // 2, n - 1],
+            range(n)
+        ]
+        for subset in subsets:
+            for path_compression in [True, False]:
+                self.verify_example(subset, samples, ancestors, path_compression)
 
     def test_simple_case(self):
         ts = msprime.simulate(55, mutation_rate=5, random_seed=8, recombination_rate=8)
