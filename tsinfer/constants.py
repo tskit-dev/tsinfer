@@ -26,4 +26,7 @@ C_ENGINE = "C"
 PY_ENGINE = "P"
 
 # Bit 16 is set in node flags when they have been created by path compression.
-SYNTHETIC_NODE_BIT = 1 << 16
+NODE_IS_PC_ANCESTOR = 1 << 16
+# Bit 17 is set in node flags when they have been created by shared recombination
+# breakpoint
+NODE_IS_SRB_ANCESTOR = 1 << 17

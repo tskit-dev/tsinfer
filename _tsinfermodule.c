@@ -449,21 +449,20 @@ TreeSequenceBuilder_add_node(TreeSequenceBuilder *self, PyObject *args, PyObject
     int err;
     PyObject *ret = NULL;
 
-    static char *kwlist[] = {"time", "is_sample", "is_synthetic", NULL};
+    static char *kwlist[] = {"time", "flags", NULL};
     double time;
-    int is_sample = true;
-    int is_synthetic = false;
+    int flags = 1;
 
     if (TreeSequenceBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "d|ii", kwlist, &time,
-                &is_sample, &is_synthetic)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "d|i", kwlist, &time,
+                &flags)) {
         goto out;
     }
 
     err = tree_sequence_builder_add_node(self->tree_sequence_builder,
-            time, is_sample, is_synthetic);
+            time, (uint32_t) flags);
     if (err < 0) {
         handle_library_error(err);
         goto out;

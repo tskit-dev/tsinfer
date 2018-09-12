@@ -43,21 +43,38 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
-def is_synthetic(flags):
+def is_pc_ancestor(flags):
     """
-    Returns True if the synthetic flag is set on the specified flags
-    value.
+    Returns True if the path compression ancestor flag is set on the specified
+    flags value.
     """
-    return (flags & constants.SYNTHETIC_NODE_BIT) != 0
+    return (flags & constants.NODE_IS_PC_ANCESTOR) != 0
 
 
-def count_synthetic(flags):
+def is_srb_ancestor(flags):
+    """
+    Returns True if the shared recombination breakpoint flag is set on the
+    specified flags value.
+    """
+    return (flags & constants.NODE_IS_SRB_ANCESTOR) != 0
+
+
+def count_pc_ancestors(flags):
     """
     Returns the number of values in the specified array which have the
-    SYNTHETIC_NODE_FLAG set.
+    NODE_IS_PC_ANCESTOR set.
     """
     flags = np.array(flags, dtype=np.uint32, copy=False)
-    return np.sum(np.bitwise_and(flags, constants.SYNTHETIC_NODE_BIT) != 0)
+    return np.sum(np.bitwise_and(flags, constants.NODE_IS_PC_ANCESTOR) != 0)
+
+
+def count_srb_ancestors(flags):
+    """
+    Returns the number of values in the specified array which have the
+    NODE_IS_SRB_ANCESTOR set.
+    """
+    flags = np.array(flags, dtype=np.uint32, copy=False)
+    return np.sum(np.bitwise_and(flags, constants.NODE_IS_SRB_ANCESTOR) != 0)
 
 
 class DummyProgress(object):
@@ -514,7 +531,7 @@ class Matcher(object):
             sequence_length=self.ancestor_data.sequence_length)
 
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = count_synthetic(flags)
+        num_pc_ancestors = count_pc_ancestors(flags)
         tables.nodes.set_columns(flags=flags, time=time)
 
         position = self.ancestor_data.sites_position
@@ -546,9 +563,9 @@ class Matcher(object):
         tables.sort()
         logger.debug("Sorting ancestors tree sequence done")
         logger.info(
-            "Built ancestors tree sequence: {} nodes ({} synthetic); {} edges; "
+            "Built ancestors tree sequence: {} nodes ({} pc ancestors); {} edges; "
             "{} sites; {} mutations".format(
-                len(tables.nodes), num_synthetic_nodes, len(tables.edges),
+                len(tables.nodes), num_pc_ancestors, len(tables.edges),
                 len(tables.mutations), len(tables.sites)))
         return tables.tree_sequence()
 
@@ -665,7 +682,8 @@ class Matcher(object):
                 location=location, metadata=self.encode_metadata(metadata))
 
         flags, time = tsb.dump_nodes()
-        num_synthetic_nodes = count_synthetic(flags)
+        num_pc_ancestors = count_pc_ancestors(flags)
+        num_srb_ancestors = count_srb_ancestors(flags)
         logger.debug("Adding tree sequence nodes")
         # TODO add an option for encoding ancestor metadata in with the nodes here.
         # Add in the nodes for the ancestors.
@@ -685,7 +703,7 @@ class Matcher(object):
                 population=population,
                 individual=individual,
                 metadata=self.encode_metadata(metadata))
-        # Add in the remaining synthetic nodes.
+        # Add in the remaining non-sample nodes.
         for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
             tables.nodes.add_row(flags=flags[u], time=time[u])
 
@@ -719,10 +737,10 @@ class Matcher(object):
         tables.provenances.add_row(record=json.dumps(record))
 
         logger.info(
-            "Built samples tree sequence: {} nodes ({} synthetic); {} edges; "
+            "Built samples tree sequence: {} nodes ({} pc, {} srb); {} edges; "
             "{} sites; {} mutations".format(
-                len(tables.nodes), num_synthetic_nodes, len(tables.edges),
-                len(tables.sites), len(tables.mutations)))
+                len(tables.nodes), num_pc_ancestors, num_srb_ancestors,
+                len(tables.edges), len(tables.sites), len(tables.mutations)))
         return tables.tree_sequence()
 
 

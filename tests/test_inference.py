@@ -674,6 +674,49 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         self.verify(sample_data)
 
 
+class TestAncestorsTreeSequenceFlags(unittest.TestCase):
+    """
+    Checks that arbitrary flags can be set in the ancestors tree
+    sequence and recovered in the final ts.
+    """
+    def verify(self, sample_data, ancestors_ts):
+        source_flags = ancestors_ts.tables.nodes.flags
+        for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
+            for path_compression in [True, False]:
+                ts = tsinfer.match_samples(
+                    sample_data, ancestors_ts, path_compression=path_compression,
+                    simplify=False, engine=engine)
+                nodes = ts.tables.nodes
+                flags = nodes.flags[:source_flags.shape[0]]
+                # Anything that's marked as a sample in the ancestors should be a
+                # 0 in the final outout
+                samples = np.where(source_flags == 1)[0]
+                self.assertTrue(np.all(flags[samples] == 0))
+                # Anything that's not marked as a sample should be equal in both.
+                non_samples = np.where(source_flags != 1)[0]
+                self.assertTrue(np.all(flags[non_samples] == source_flags[non_samples]))
+
+    def test_no_flags_changes(self):
+
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        self.verify(samples, ancestors_ts)
+
+    def test_append_nodes(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        tables = ancestors_ts.dump_tables()
+        tables.nodes.add_row(flags=1 << 15, time=1.1)
+        tables.nodes.add_row(flags=1 << 16, time=1.1)
+        tables.nodes.add_row(flags=1 << 17, time=1.1)
+        tables.nodes.add_row(flags=1 << 18, time=1.0)
+        self.verify(samples, tables.tree_sequence())
+
+
 class AlgorithmsExactlyEqualMixin(object):
     """
     For small example tree sequences, check that the Python and C implementations
@@ -1100,13 +1143,13 @@ class PathCompressionMixin(object):
     def verify_tree_sequence(self, ts):
         num_fraction_times = sum(
             math.floor(node.time) != node.time for node in ts.nodes())
-        synthetic_nodes = [
-            node for node in ts.nodes() if tsinfer.is_synthetic(node.flags)]
-        self.assertGreater(len(synthetic_nodes), 0)
+        pc_nodes = [
+            node for node in ts.nodes() if tsinfer.is_pc_ancestor(node.flags)]
+        self.assertGreater(len(pc_nodes), 0)
         # Synthetic nodes will mostly have fractional times, so this number
-        # should at most the nuber of synthetic nodes.
-        self.assertGreaterEqual(len(synthetic_nodes), num_fraction_times)
-        for node in synthetic_nodes:
+        # should at most the number of pc nodes.
+        self.assertGreaterEqual(len(pc_nodes), num_fraction_times)
+        for node in pc_nodes:
             # print("Synthetic node", node)
             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
@@ -1128,7 +1171,7 @@ class PathCompressionMixin(object):
             original_matches = [
                 e for e in parent_edges if e.left == left and e.right == right]
             # We must have at least two initial edges that exactly span the
-            # synthetic interval.
+            # pc interval.
             self.assertGreater(len(original_matches), 1)
 
     def test_simple_case(self):
@@ -1223,7 +1266,7 @@ class PathCompressionFullStackMixin(PathCompressionMixin):
     """
     def verify(self, sample_data):
         # We have to turn off simplify because it'll sometimes remove chunks
-        # of synthetic ancestors, breaking out continguity requirements.
+        # of pc ancestors, breaking out continguity requirements.
         ts = tsinfer.infer(
             sample_data, path_compression=True, engine=self.engine,
             simplify=False)
@@ -1240,48 +1283,88 @@ class TestPathCompressionFullStackCEngine(
     engine = tsinfer.C_ENGINE
 
 
-class TestSyntheticFlag(unittest.TestCase):
+class TestFlags(unittest.TestCase):
     """
-    Tests if we can set and detect the synthetic node flag correctly.
+    Tests if we can set and detect the pc node flag correctly.
     """
-    BIT_POSITION = 16
+    PC_BIT_POSITION = 16
+    SRB_BIT_POSITION = 17
 
-    def test_is_synthetic(self):
-        self.assertFalse(tsinfer.is_synthetic(0))
-        self.assertFalse(tsinfer.is_synthetic(1))
-        self.assertTrue(tsinfer.is_synthetic(tsinfer.SYNTHETIC_NODE_BIT))
+    def test_is_pc_ancestor(self):
+        self.assertFalse(tsinfer.is_pc_ancestor(0))
+        self.assertFalse(tsinfer.is_pc_ancestor(1))
+        self.assertTrue(tsinfer.is_pc_ancestor(tsinfer.NODE_IS_PC_ANCESTOR))
         for bit in range(32):
             flags = 1 << bit
-            if bit == self.BIT_POSITION:
-                self.assertTrue(tsinfer.is_synthetic(flags))
+            if bit == self.PC_BIT_POSITION:
+                self.assertTrue(tsinfer.is_pc_ancestor(flags))
             else:
-                self.assertFalse(tsinfer.is_synthetic(flags))
-        flags = tsinfer.SYNTHETIC_NODE_BIT
+                self.assertFalse(tsinfer.is_pc_ancestor(flags))
+        flags = tsinfer.NODE_IS_PC_ANCESTOR
         for bit in range(32):
             flags |= 1 << bit
-            self.assertTrue(tsinfer.is_synthetic(flags))
+            self.assertTrue(tsinfer.is_pc_ancestor(flags))
         flags = 0
         for bit in range(32):
-            if bit != self.BIT_POSITION:
+            if bit != self.PC_BIT_POSITION:
                 flags |= 1 << bit
-            self.assertFalse(tsinfer.is_synthetic(flags))
+            self.assertFalse(tsinfer.is_pc_ancestor(flags))
 
-    def test_count_synthetic(self):
-        self.assertEqual(tsinfer.count_synthetic([0]), 0)
-        self.assertEqual(tsinfer.count_synthetic([tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic([0, 0]), 0)
-        self.assertEqual(tsinfer.count_synthetic([0, tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic(
-            [tsinfer.SYNTHETIC_NODE_BIT, tsinfer.SYNTHETIC_NODE_BIT]), 2)
-        self.assertEqual(tsinfer.count_synthetic([1, tsinfer.SYNTHETIC_NODE_BIT]), 1)
-        self.assertEqual(tsinfer.count_synthetic(
-            [1 | tsinfer.SYNTHETIC_NODE_BIT, 1 | tsinfer.SYNTHETIC_NODE_BIT]), 2)
+    def test_count_pc_ancestors(self):
+        self.assertEqual(tsinfer.count_pc_ancestors([0]), 0)
+        self.assertEqual(tsinfer.count_pc_ancestors([tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors([0, 0]), 0)
+        self.assertEqual(tsinfer.count_pc_ancestors([0, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors(
+            [tsinfer.NODE_IS_PC_ANCESTOR, tsinfer.NODE_IS_PC_ANCESTOR]), 2)
+        self.assertEqual(tsinfer.count_pc_ancestors([1, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_pc_ancestors(
+            [1 | tsinfer.NODE_IS_PC_ANCESTOR, 1 | tsinfer.NODE_IS_PC_ANCESTOR]), 2)
 
-    def test_count_synthetic_random(self):
+    def test_count_srb_ancestors_random(self):
         np.random.seed(42)
         flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
-        count = sum(map(tsinfer.is_synthetic, flags))
-        self.assertEqual(count, tsinfer.count_synthetic(flags))
+        count = sum(map(tsinfer.is_srb_ancestor, flags))
+        self.assertEqual(count, tsinfer.count_srb_ancestors(flags))
+
+    def test_is_srb_ancestor(self):
+        self.assertFalse(tsinfer.is_srb_ancestor(0))
+        self.assertFalse(tsinfer.is_srb_ancestor(1))
+        self.assertTrue(tsinfer.is_srb_ancestor(tsinfer.NODE_IS_SRB_ANCESTOR))
+        for bit in range(32):
+            flags = 1 << bit
+            if bit == self.SRB_BIT_POSITION:
+                self.assertTrue(tsinfer.is_srb_ancestor(flags))
+            else:
+                self.assertFalse(tsinfer.is_srb_ancestor(flags))
+        flags = tsinfer.NODE_IS_SRB_ANCESTOR
+        for bit in range(32):
+            flags |= 1 << bit
+            self.assertTrue(tsinfer.is_srb_ancestor(flags))
+        flags = 0
+        for bit in range(32):
+            if bit != self.SRB_BIT_POSITION:
+                flags |= 1 << bit
+            self.assertFalse(tsinfer.is_srb_ancestor(flags))
+
+    def test_count_srb_ancestors(self):
+        self.assertEqual(tsinfer.count_srb_ancestors([0]), 0)
+        self.assertEqual(tsinfer.count_srb_ancestors([tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors([0, 0]), 0)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [0, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [tsinfer.NODE_IS_SRB_ANCESTOR, tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [1, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
+        self.assertEqual(tsinfer.count_srb_ancestors(
+            [1 | tsinfer.NODE_IS_SRB_ANCESTOR, 1 | tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
+
+    def test_count_pc_ancestors_random(self):
+        np.random.seed(42)
+        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
+        count = sum(map(tsinfer.is_pc_ancestor, flags))
+        self.assertEqual(count, tsinfer.count_pc_ancestors(flags))
 
 
 class TestBugExamples(unittest.TestCase):
@@ -1289,10 +1372,10 @@ class TestBugExamples(unittest.TestCase):
     Run tests on some examples that provoked bugs.
     """
     def test_path_compression_bad_times(self):
-        # This provoked a bug in which we created a synthetic ancestor
+        # This provoked a bug in which we created a pc ancestor
         # with the same time as its child, creating an invalid topology.
         sample_data = tsinfer.load(
-            "tests/data/bugs/invalid_synthetic_ancestor_time.samples")
+            "tests/data/bugs/invalid_pc_ancestor_time.samples")
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             self.assertTrue(np.array_equal(var.genotypes, genotypes))
@@ -1381,3 +1464,139 @@ class TestVerify(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             tsinfer.verify(samples, ts)
+
+
+class TestExtractAncestors(unittest.TestCase):
+    """
+    Checks whether the extract_ancestors function correctly returns an ancestors
+    tree sequence with the required properties.
+    """
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
+        ts = tsinfer.match_samples(samples, ancestors_ts_1, simplify=False)
+        t1 = ancestors_ts_1.dump_tables()
+        t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
+        self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
+        t1.provenances.clear()
+        t2.provenances.clear()
+
+        self.assertEqual(t1.nodes, t2.nodes)
+        self.assertEqual(t1.edges, t2.edges)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.mutations, t2.mutations)
+        self.assertEqual(t1.populations, t2.populations)
+        self.assertEqual(t1.sites, t2.sites)
+        self.assertEqual(t1.individuals, t2.individuals)
+
+        self.assertEqual(t1, t2)
+
+        for node in ts.nodes():
+            if node_id_map[node.id] != -1:
+                self.assertEqual(node.time, t1.nodes.time[node_id_map[node.id]])
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=5, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_non_zero_one_mutations(self):
+        ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
+        ts = msprime.mutate(
+            ts, rate=5, model=msprime.InfiniteSites(msprime.NUCLEOTIDES),
+            random_seed=15)
+        self.assertGreater(ts.num_mutations, 0)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
+
+
+class TestInsertSrbAncestors(unittest.TestCase):
+    """
+    Tests that the insert_srb_ancestors function behaves as expected.
+    """
+
+    def insert_srb_ancestors(self, samples, ts):
+
+        srb_index = {}
+        edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
+        last_edge = edges[0]
+        for edge in edges[1:]:
+            condition = (
+                ts.node(edge.child).is_sample() and
+                edge.child == last_edge.child and
+                edge.left == last_edge.right)
+            if condition:
+                key = edge.left, last_edge.parent, edge.parent
+                if key in srb_index:
+                    count, left_bound, right_bound = srb_index[key]
+                    srb_index[key] = (
+                        count + 1,
+                        max(left_bound, last_edge.left),
+                        min(right_bound, edge.right))
+                else:
+                    srb_index[key] = 1, last_edge.left, edge.right
+            last_edge = edge
+
+        tables, node_id_map = tsinfer.extract_ancestors(samples, ts)
+        time = tables.nodes.time
+
+        num_extra = 0
+        for k, v in srb_index.items():
+            if v[0] > 1:
+                left, right = v[1:]
+                x, pl, pr = k
+                pl = node_id_map[pl]
+                pr = node_id_map[pr]
+                t = min(time[pl], time[pr]) - 1e-4
+                node = tables.nodes.add_row(flags=tsinfer.NODE_IS_SRB_ANCESTOR, time=t)
+                tables.edges.add_row(left, x, pl, node)
+                tables.edges.add_row(x, right, pr, node)
+                num_extra += 1
+
+        tables.sort()
+        ancestors_ts = tables.tree_sequence()
+        return ancestors_ts
+
+    def verify(self, samples):
+        ts = tsinfer.infer(samples, simplify=False)
+        ancestors_ts_1 = self.insert_srb_ancestors(samples, ts)
+        ancestors_ts_2 = tsinfer.insert_srb_ancestors(samples, ts)
+        t1 = ancestors_ts_1.dump_tables()
+        t2 = ancestors_ts_2.dump_tables()
+        t1.provenances.clear()
+        t2.provenances.clear()
+        self.assertEqual(t1, t2)
+
+        tsinfer.check_ancestors_ts(ancestors_ts_1)
+        ts2 = tsinfer.match_samples(samples, ancestors_ts_1)
+        tsinfer.verify(samples, ts2)
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=15, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
+
+    def test_random_data_large_example(self):
+        np.random.seed(5)
+        G, positions = get_random_data_example(15, 100)
+        with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+            for j in range(G.shape[0]):
+                samples.add_site(positions[j], G[j])
+        self.verify(samples)
