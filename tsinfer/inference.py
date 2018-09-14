@@ -586,11 +586,6 @@ class Matcher(object):
             site=site, node=node, derived_state=derived_state,
             derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
             parent=parent)
-        # FIXME this is most likely doubling up the provenance as we're writing the
-        # provenance from both sample data and ancestor data. Ancestor data should
-        # already keep a copy of the sample data provenance.
-        for timestamp, record in self.sample_data.provenances():
-            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         for timestamp, record in self.ancestor_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(

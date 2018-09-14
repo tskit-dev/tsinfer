@@ -114,7 +114,6 @@ def tsinfer_dev(
     assert ts.num_sites > 0
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
-    print(samples.samples_metadata[:])
 
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
@@ -122,14 +121,15 @@ def tsinfer_dev(
         samples, ancestor_data, engine=engine, path_compression=True,
         extended_checks=False)
 
+
     ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
             [5, 6, 7], engine=engine)
+
 
     ts = tsinfer.match_samples(samples, ancestors_ts,
             path_compression=False, engine=engine,
             simplify=True)
 
-    print(ts.tables.nodes)
     # print(ts.tables.edges)
     # print(ts.dump_tables())
 

@@ -171,10 +171,10 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
-            ancestors_ts = tsinfer.augment_ancestors(
+            augmented_ts = tsinfer.augment_ancestors(
                 sample_data, ancestors_ts, np.arange(sample_data.num_samples),
                 engine=engine)
-            ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
+            ts = tsinfer.match_samples(sample_data, augmented_ts, engine=engine)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
@@ -578,10 +578,7 @@ class TestBuildAncestors(unittest.TestCase):
     Tests for the generate_ancestors function.
     """
     def get_simulated_example(self, ts):
-        with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
-            for variant in ts.variants():
-                sample_data.add_site(
-                    variant.site.position, variant.genotypes, variant.alleles)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         return sample_data, ancestor_data
 
@@ -629,6 +626,16 @@ class TestBuildAncestors(unittest.TestCase):
                     frequency_time_map[freq] = time[j]
                 self.assertEqual(frequency_time_map[freq], time[j])
         self.assertEqual(sorted(used_sites), list(range(ancestor_data.num_sites)))
+
+        # The provenance should be same as in the samples data file, plus an
+        # extra row.
+        self.assertEqual(ancestor_data.num_provenances, sample_data.num_provenances + 1)
+        for j in range(sample_data.num_provenances):
+            self.assertEqual(
+                ancestor_data.provenances_record[j], sample_data.provenances_record[j])
+            self.assertEqual(
+                ancestor_data.provenances_timestamp[j],
+                sample_data.provenances_timestamp[j])
 
     def test_simulated_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=10, random_seed=10)
@@ -678,6 +685,16 @@ class TestAncestorsTreeSequence(unittest.TestCase):
                 self.assertTrue(np.array_equal(
                     H[ancestor.id, ancestor.start: ancestor.end],
                     ancestor.haplotype))
+
+            # The provenance should be same as in the ancestors data file, plus an
+            # extra row.
+            self.assertEqual(
+                ancestor_data.num_provenances + 1, ancestors_ts.num_provenances)
+            for j in range(ancestor_data.num_provenances):
+                p = ancestors_ts.provenance(j)
+                self.assertEqual(
+                    ancestor_data.provenances_record[j], json.loads(p.record))
+                self.assertEqual(ancestor_data.provenances_timestamp[j], p.timestamp)
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
