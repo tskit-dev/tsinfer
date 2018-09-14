@@ -1630,11 +1630,9 @@ class TestAugmentedAncestors(unittest.TestCase):
     """
     Tests for augmenting an ancestors tree sequence with samples.
     """
-    def verify_example(self, subset, samples, ancestors, path_compression):
-        ancestors_ts = tsinfer.match_ancestors(
-            samples, ancestors, path_compression=path_compression)
-        augmented_ancestors = tsinfer.augment_ancestors(
-            samples, ancestors_ts, subset, path_compression=path_compression)
+    def verify_augmented_ancestors(
+            self, subset, ancestors_ts, augmented_ancestors, path_compression):
+
         t1 = ancestors_ts.dump_tables()
         t2 = augmented_ancestors.dump_tables()
         k = len(subset)
@@ -1642,11 +1640,19 @@ class TestAugmentedAncestors(unittest.TestCase):
         self.assertTrue(
             np.all(t2.nodes.flags[m: m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR))
         self.assertTrue(np.all(t2.nodes.time[m: m + k] == 1))
+        for j, node_id in enumerate(subset):
+            node = t2.nodes[m + j]
+            self.assertEqual(node.flags, tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            self.assertEqual(node.time, 1)
+            metadata = json.loads(node.metadata.decode())
+            self.assertEqual(node_id, metadata["sample"])
 
         t2.nodes.truncate(len(t1.nodes))
         t2.nodes.set_columns(
             flags=t2.nodes.flags,
-            time=t2.nodes.time - 1)
+            time=t2.nodes.time - 1,
+            metadata=t2.nodes.metadata,
+            metadata_offset=t2.nodes.metadata_offset)
         self.assertEqual(t1.nodes, t2.nodes)
         if not path_compression:
             # If we have path compression it's possible that some older edges
@@ -1660,9 +1666,19 @@ class TestAugmentedAncestors(unittest.TestCase):
         self.assertEqual(t1.individuals, t2.individuals)
         self.assertEqual(t1.populations, t2.populations)
 
+    def verify_example(self, subset, samples, ancestors, path_compression):
+        ancestors_ts = tsinfer.match_ancestors(
+            samples, ancestors, path_compression=path_compression)
+        augmented_ancestors = tsinfer.augment_ancestors(
+            samples, ancestors_ts, subset, path_compression=path_compression)
+
+        self.verify_augmented_ancestors(
+            subset, ancestors_ts, augmented_ancestors, path_compression)
+
         # Run the inference now
         final_ts = tsinfer.match_samples(
             samples, augmented_ancestors, simplify=False)
+        t1 = ancestors_ts.dump_tables()
         tables = final_ts.tables
         for j, index in enumerate(subset):
             sample_id = final_ts.samples()[index]
@@ -1692,7 +1708,8 @@ class TestAugmentedAncestors(unittest.TestCase):
         subsets = [
             [0, 1], [n - 2, n - 1],
             [0, n // 2, n - 1],
-            range(n)
+            range(5),
+            range(6),
         ]
         for subset in subsets:
             for path_compression in [True, False]:
@@ -1726,3 +1743,34 @@ class TestAugmentedAncestors(unittest.TestCase):
             for genotypes, position in zip(G, positions):
                 sample_data.add_site(position, genotypes)
         self.verify(sample_data)
+
+
+class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
+    """
+    Test that we can sequentially augment the ancestors.
+    """
+    def verify_example(self, full_subset, samples, ancestors, path_compression):
+        ancestors_ts = tsinfer.match_ancestors(
+            samples, ancestors, path_compression=path_compression)
+        expected_sample_ancestors = 0
+        for j in range(1, len(full_subset)):
+            subset = full_subset[:j]
+            expected_sample_ancestors += len(subset)
+            augmented_ancestors = tsinfer.augment_ancestors(
+                samples, ancestors_ts, subset, path_compression=path_compression)
+            self.verify_augmented_ancestors(
+                subset, ancestors_ts, augmented_ancestors, path_compression)
+            # Run the inference now
+            final_ts = tsinfer.match_samples(
+                samples, augmented_ancestors, simplify=False)
+
+            # Make sure metadata has been preserved in the final ts.
+            num_sample_ancestors = 0
+            for node in final_ts.nodes():
+                if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
+                    metadata = json.loads(node.metadata.decode())
+                    self.assertIn(metadata["sample"], subset)
+                    num_sample_ancestors += 1
+            self.assertEqual(expected_sample_ancestors, num_sample_ancestors)
+            tsinfer.verify(samples, final_ts.simplify())
+            ancestors_ts = augmented_ancestors
