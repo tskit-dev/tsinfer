@@ -158,6 +158,30 @@ class TestRoundTrip(unittest.TestCase):
             self.verify_data_round_trip(S, positions)
 
 
+class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
+    """
+    Tests that we correctly round drip data when we have augmented ancestors.
+    """
+    def verify_data_round_trip(self, genotypes, positions, sequence_length=None):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
+            for j in range(genotypes.shape[0]):
+                sample_data.add_site(positions[j], genotypes[j])
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            augmented_ts = tsinfer.augment_ancestors(
+                sample_data, ancestors_ts, np.arange(sample_data.num_samples),
+                engine=engine)
+            ts = tsinfer.match_samples(sample_data, augmented_ts, engine=engine)
+            self.assertEqual(ts.sequence_length, sequence_length)
+            self.assertEqual(ts.num_sites, len(positions))
+            for v in ts.variants():
+                self.assertEqual(v.position, positions[v.index])
+                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+
+
 class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data when we have various combinations
@@ -554,10 +578,7 @@ class TestBuildAncestors(unittest.TestCase):
     Tests for the generate_ancestors function.
     """
     def get_simulated_example(self, ts):
-        with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
-            for variant in ts.variants():
-                sample_data.add_site(
-                    variant.site.position, variant.genotypes, variant.alleles)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         return sample_data, ancestor_data
 
@@ -605,6 +626,16 @@ class TestBuildAncestors(unittest.TestCase):
                     frequency_time_map[freq] = time[j]
                 self.assertEqual(frequency_time_map[freq], time[j])
         self.assertEqual(sorted(used_sites), list(range(ancestor_data.num_sites)))
+
+        # The provenance should be same as in the samples data file, plus an
+        # extra row.
+        self.assertEqual(ancestor_data.num_provenances, sample_data.num_provenances + 1)
+        for j in range(sample_data.num_provenances):
+            self.assertEqual(
+                ancestor_data.provenances_record[j], sample_data.provenances_record[j])
+            self.assertEqual(
+                ancestor_data.provenances_timestamp[j],
+                sample_data.provenances_timestamp[j])
 
     def test_simulated_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=10, random_seed=10)
@@ -654,6 +685,16 @@ class TestAncestorsTreeSequence(unittest.TestCase):
                 self.assertTrue(np.array_equal(
                     H[ancestor.id, ancestor.start: ancestor.end],
                     ancestor.haplotype))
+
+            # The provenance should be same as in the ancestors data file, plus an
+            # extra row.
+            self.assertEqual(
+                ancestor_data.num_provenances + 1, ancestors_ts.num_provenances)
+            for j in range(ancestor_data.num_provenances):
+                p = ancestors_ts.provenance(j)
+                self.assertEqual(
+                    ancestor_data.provenances_record[j], json.loads(p.record))
+                self.assertEqual(ancestor_data.provenances_timestamp[j], p.timestamp)
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
@@ -1600,3 +1641,153 @@ class TestInsertSrbAncestors(unittest.TestCase):
             for j in range(G.shape[0]):
                 samples.add_site(positions[j], G[j])
         self.verify(samples)
+
+
+class TestAugmentedAncestors(unittest.TestCase):
+    """
+    Tests for augmenting an ancestors tree sequence with samples.
+    """
+    def verify_augmented_ancestors(
+            self, subset, ancestors_ts, augmented_ancestors, path_compression):
+
+        t1 = ancestors_ts.dump_tables()
+        t2 = augmented_ancestors.dump_tables()
+        k = len(subset)
+        m = len(t1.nodes)
+        self.assertTrue(
+            np.all(t2.nodes.flags[m: m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR))
+        self.assertTrue(np.all(t2.nodes.time[m: m + k] == 1))
+        for j, node_id in enumerate(subset):
+            node = t2.nodes[m + j]
+            self.assertEqual(node.flags, tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            self.assertEqual(node.time, 1)
+            metadata = json.loads(node.metadata.decode())
+            self.assertEqual(node_id, metadata["sample"])
+
+        t2.nodes.truncate(len(t1.nodes))
+        t2.nodes.set_columns(
+            flags=t2.nodes.flags,
+            time=t2.nodes.time - 1,
+            metadata=t2.nodes.metadata,
+            metadata_offset=t2.nodes.metadata_offset)
+        self.assertEqual(t1.nodes, t2.nodes)
+        if not path_compression:
+            # If we have path compression it's possible that some older edges
+            # will be compressed out.
+            self.assertGreaterEqual(set(t2.edges), set(t1.edges))
+        self.assertEqual(t1.sites, t2.sites)
+        t2.mutations.truncate(len(t1.mutations))
+        self.assertEqual(t1.mutations, t2.mutations)
+        t2.provenances.truncate(len(t1.provenances))
+        self.assertEqual(t1.provenances, t2.provenances)
+        self.assertEqual(t1.individuals, t2.individuals)
+        self.assertEqual(t1.populations, t2.populations)
+
+    def verify_example(self, subset, samples, ancestors, path_compression):
+        ancestors_ts = tsinfer.match_ancestors(
+            samples, ancestors, path_compression=path_compression)
+        augmented_ancestors = tsinfer.augment_ancestors(
+            samples, ancestors_ts, subset, path_compression=path_compression)
+
+        self.verify_augmented_ancestors(
+            subset, ancestors_ts, augmented_ancestors, path_compression)
+
+        # Run the inference now
+        final_ts = tsinfer.match_samples(
+            samples, augmented_ancestors, simplify=False)
+        t1 = ancestors_ts.dump_tables()
+        tables = final_ts.tables
+        for j, index in enumerate(subset):
+            sample_id = final_ts.samples()[index]
+            edges = [e for e in final_ts.edges() if e.child == sample_id]
+            self.assertEqual(len(edges), 1)
+            self.assertEqual(edges[0].left, 0)
+            self.assertEqual(edges[0].right, final_ts.sequence_length)
+            parent = edges[0].parent
+            original_node = len(t1.nodes) + j
+            self.assertEqual(
+                tables.nodes.flags[original_node], tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            # Most of the time the parent is the original node. However, in
+            # simple cases it can be somewhere up the tree above it.
+            if parent != original_node:
+                for tree in final_ts.trees():
+                    u = parent
+                    while u != msprime.NULL_NODE:
+                        siblings = tree.children(u)
+                        if original_node in siblings:
+                            break
+                        u = tree.parent(u)
+                    self.assertNotEqual(u, msprime.NULL_NODE)
+
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        n = samples.num_samples
+        subsets = [
+            [0, 1], [n - 2, n - 1],
+            [0, n // 2, n - 1],
+            range(5),
+            range(6),
+        ]
+        for subset in subsets:
+            for path_compression in [True, False]:
+                self.verify_example(subset, samples, ancestors, path_compression)
+
+    def test_simple_case(self):
+        ts = msprime.simulate(55, mutation_rate=5, random_seed=8, recombination_rate=8)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_simulation_with_error(self):
+        ts = msprime.simulate(50, mutation_rate=5, random_seed=5, recombination_rate=8)
+        ts = eval_util.insert_errors(ts, 0.1, seed=32)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        self.verify(sample_data)
+
+    def test_small_random_data(self):
+        n = 25
+        m = 20
+        G, positions = get_random_data_example(n, m, seed=1234)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+    def test_large_random_data(self):
+        n = 100
+        m = 30
+        G, positions = get_random_data_example(n, m, seed=1234)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        self.verify(sample_data)
+
+
+class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
+    """
+    Test that we can sequentially augment the ancestors.
+    """
+    def verify_example(self, full_subset, samples, ancestors, path_compression):
+        ancestors_ts = tsinfer.match_ancestors(
+            samples, ancestors, path_compression=path_compression)
+        expected_sample_ancestors = 0
+        for j in range(1, len(full_subset)):
+            subset = full_subset[:j]
+            expected_sample_ancestors += len(subset)
+            augmented_ancestors = tsinfer.augment_ancestors(
+                samples, ancestors_ts, subset, path_compression=path_compression)
+            self.verify_augmented_ancestors(
+                subset, ancestors_ts, augmented_ancestors, path_compression)
+            # Run the inference now
+            final_ts = tsinfer.match_samples(
+                samples, augmented_ancestors, simplify=False)
+
+            # Make sure metadata has been preserved in the final ts.
+            num_sample_ancestors = 0
+            for node in final_ts.nodes():
+                if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
+                    metadata = json.loads(node.metadata.decode())
+                    self.assertIn(metadata["sample"], subset)
+                    num_sample_ancestors += 1
+            self.assertEqual(expected_sample_ancestors, num_sample_ancestors)
+            tsinfer.verify(samples, final_ts.simplify())
+            ancestors_ts = augmented_ancestors

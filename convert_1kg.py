@@ -147,7 +147,7 @@ def add_samples(ped_file, population_id_map, individual_names, sample_data):
     populations = {}
     for line in ped_file:
         metadata = dict(zip(sane_names, line.strip().split("\t")))
-        name = metadata.pop("individual_id")
+        name = metadata["individual_id"]
         population_name = metadata.pop("population")
         populations[name] = population_id_map[population_name]
         # The value '0' seems to be used to encode missing, so insert None

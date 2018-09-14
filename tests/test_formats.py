@@ -371,6 +371,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(iid, 2)
         self.assertEqual(sids, [2, 3, 4, 5, 6])
 
+    def test_samples_metadata(self):
+        with formats.SampleData(sequence_length=10) as sample_data:
+            sample_data.add_individual(ploidy=2)
+        individuals_metadata = sample_data.individuals_metadata[:]
+        self.assertEqual(len(individuals_metadata), 1)
+        self.assertEqual(individuals_metadata[0], {})
+
+        samples_metadata = sample_data.samples_metadata[:]
+        self.assertEqual(len(samples_metadata), 2)
+        self.assertEqual(samples_metadata[0], {})
+        self.assertEqual(samples_metadata[1], {})
+
     def test_add_individual_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(TypeError, sample_data.add_individual, metadata=234)
@@ -456,34 +468,77 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertIsNone(next(inference_variants, None), None)
         self.assertIsNone(next(non_inference_variants, None), None)
 
-    def test_haplotypes(self):
+    def test_all_haplotypes(self):
         ts = self.get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
-        for v in ts.variants():
-            input_file.add_site(v.site.position, v.genotypes, v.alleles)
-        input_file.finalise()
+        input_file = formats.SampleData.from_tree_sequence(ts)
 
         G = ts.genotype_matrix()
         j = 0
-        for h in input_file.haplotypes():
+        for index, h in input_file.haplotypes():
             self.assertTrue(np.array_equal(h, G[:, j]))
+            self.assertEqual(index, j)
+            j += 1
+        self.assertEqual(j, ts.num_samples)
+
+        j = 0
+        for index, h in input_file.haplotypes(np.arange(ts.num_samples)):
+            self.assertTrue(np.array_equal(h, G[:, j]))
+            self.assertEqual(index, j)
             j += 1
         self.assertEqual(j, ts.num_samples)
 
         selection = input_file.sites_inference[:] == 1
         j = 0
-        for h in input_file.haplotypes(inference_sites=True):
+        for index, h in input_file.haplotypes(inference_sites=True):
             self.assertTrue(np.array_equal(h, G[selection, j]))
+            self.assertEqual(index, j)
             j += 1
         self.assertEqual(j, ts.num_samples)
 
         selection = input_file.sites_inference[:] == 0
         j = 0
-        for h in input_file.haplotypes(inference_sites=False):
+        for index, h in input_file.haplotypes(inference_sites=False):
             self.assertTrue(np.array_equal(h, G[selection, j]))
+            self.assertEqual(index, j)
             j += 1
         self.assertEqual(j, ts.num_samples)
+
+    def test_haplotypes_index_errors(self):
+        ts = self.get_example_ts(13, 12)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.from_tree_sequence(ts)
+        self.assertRaises(ValueError, list, input_file.haplotypes([1, 0]))
+        self.assertRaises(ValueError, list, input_file.haplotypes([0, 1, 2, -1]))
+        self.assertRaises(ValueError, list, input_file.haplotypes([0, 1, 2, 2]))
+        self.assertRaises(ValueError, list, input_file.haplotypes(np.arange(10)[::-1]))
+
+        # Out of bounds sample index.
+        self.assertRaises(ValueError, list, input_file.haplotypes([13]))
+        self.assertRaises(ValueError, list, input_file.haplotypes([3, 14]))
+
+    def test_haplotypes_subsets(self):
+        ts = self.get_example_ts(25, 12)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.from_tree_sequence(ts)
+
+        subsets = [
+            [],
+            [0], [1], [21], [22],
+            [0, 1], [1, 2], [4, 5], [10, 11], [23, 24],
+            [0, 1, 2], [1, 2, 3], [4, 5, 6], [1, 10, 20],
+            [0, 1, 2, 3], [0, 10, 11, 20], [10, 15, 20, 21],
+            np.arange(24), 1 + np.arange(24),
+            np.arange(25),
+        ]
+        G = ts.genotype_matrix()
+        for subset in subsets:
+            j = 0
+            for index, h in input_file.haplotypes(subset):
+                self.assertTrue(np.array_equal(h, G[:, subset[j]]))
+                self.assertEqual(index, subset[j])
+                j += 1
+            self.assertEqual(j, len(subset))
 
     def test_invariant_sites(self):
         n = 10
