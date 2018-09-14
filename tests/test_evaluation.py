@@ -811,3 +811,33 @@ class TestCli(unittest.TestCase):
 
     def test_ancestor_quality(self):
         self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1"])
+
+
+class TestCountSampleChildEdges(unittest.TestCase):
+    """
+    Tests the count_sample_child_edges function.
+    """
+    def verify(self, ts):
+        sample_edges = tsinfer.count_sample_child_edges(ts)
+        x = np.zeros(ts.num_samples, dtype=np.int)
+        for j, node in enumerate(ts.samples()):
+            for edge in ts.edges():
+                if edge.child == node:
+                    x[j] += 1
+        self.assertTrue(np.array_equal(x, sample_edges))
+
+    def test_simulated(self):
+        ts = msprime.simulate(20, recombination_rate=2, random_seed=2)
+        self.verify(ts)
+
+    def test_inferred_no_simplify(self):
+        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=2)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ts = tsinfer.infer(samples, simplify=False)
+        self.verify(ts)
+
+    def test_inferred_simplify(self):
+        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ts = tsinfer.infer(samples)
+        self.verify(ts)

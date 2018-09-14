@@ -706,3 +706,13 @@ def run_perfect_inference(
         progress_monitor=progress_monitor,
         stabilise_node_ordering=time_chunking and not path_compression)
     return ts, inferred_ts
+
+
+def count_sample_child_edges(ts):
+    """
+    Returns an array counting the number of edges where each sample is a child.
+    The returned array is of length num_samples, i.e., is indexed by the
+    sample index not by its ID.
+    """
+    child_counts = np.bincount(ts.tables.edges.child)
+    return child_counts[ts.samples()]
