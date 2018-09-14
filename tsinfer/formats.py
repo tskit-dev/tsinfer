@@ -1030,8 +1030,9 @@ class SampleData(DataContainer):
             metadata=self._check_metadata(metadata), location=location)
         sample_ids = []
         for _ in range(ploidy):
+            # For now default the metadata to the empty dict.
             sid = self._samples_writer.add(
-                population=population, individual=individual_id)
+                population=population, individual=individual_id, metadata={})
             sample_ids.append(sid)
         return individual_id, sample_ids
 

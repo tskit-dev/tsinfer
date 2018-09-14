@@ -371,6 +371,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(iid, 2)
         self.assertEqual(sids, [2, 3, 4, 5, 6])
 
+    def test_samples_metadata(self):
+        with formats.SampleData(sequence_length=10) as sample_data:
+            sample_data.add_individual(ploidy=2)
+        individuals_metadata = sample_data.individuals_metadata[:]
+        self.assertEqual(len(individuals_metadata), 1)
+        self.assertEqual(individuals_metadata[0], {})
+
+        samples_metadata = sample_data.samples_metadata[:]
+        self.assertEqual(len(samples_metadata), 2)
+        self.assertEqual(samples_metadata[0], {})
+        self.assertEqual(samples_metadata[1], {})
+
     def test_add_individual_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(TypeError, sample_data.add_individual, metadata=234)

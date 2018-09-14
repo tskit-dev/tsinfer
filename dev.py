@@ -114,6 +114,7 @@ def tsinfer_dev(
     assert ts.num_sites > 0
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
+    print(samples.samples_metadata[:])
 
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
