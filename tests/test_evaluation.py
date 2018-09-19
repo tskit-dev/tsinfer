@@ -841,3 +841,40 @@ class TestCountSampleChildEdges(unittest.TestCase):
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ts = tsinfer.infer(samples)
         self.verify(ts)
+
+
+class TestMeanSampleAncestry(unittest.TestCase):
+    """
+    Tests the mean_sample_ancestry function.
+    """
+    # Commenting out for now.
+    # def verify(self, ts):
+    #     A = np.zeros((ts.num_populations, ts.num_nodes))
+    #     for pop in range(ts.num_populations):
+    #         A_pop = np.zeros((ts.num_nodes, ts.num_trees))
+    #         L = np.zeros(ts.num_nodes)
+    #         samples = ts.samples(population=pop)
+    #         for tree in ts.trees(tracked_samples=samples):
+    #             left, right = tree.interval
+    #             for node in tree.nodes():
+    #                 f = tree.num_tracked_samples(node) / tree.num_samples(node)
+    #                 A_pop[node][tree.index] =  f
+    #                 L[node] = right - left
+    #         print(A_pop)
+    #         print(L)
+    #         print(np.mean(A_pop, axis=1))
+
+    #     for tree in ts.trees():
+    #         print(tree.interval)
+    #         print(tree.draw(format="unicode"))
+
+    def test_two_populations_high_migration(self):
+        ts = msprime.simulate(
+            population_configurations=[
+                msprime.PopulationConfiguration(3),
+                msprime.PopulationConfiguration(3)],
+            migration_matrix=[[0, 1], [1, 0]],
+            recombination_rate=1,
+            random_seed=5)
+        self.assertGreater(ts.num_trees, 1)
+        # self.verify(ts)

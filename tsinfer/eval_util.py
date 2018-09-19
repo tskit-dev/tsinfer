@@ -716,3 +716,10 @@ def count_sample_child_edges(ts):
     """
     child_counts = np.bincount(ts.tables.edges.child)
     return child_counts[ts.samples()]
+# def mean_sample_ancestry(ts):
+#     """
+#     Computes the mean sample ancestry for each node in the tree sequence. This is
+#     defined as the fraction of samples below a given node from each population,
+#     averaged along the length of sequence that the node is ancestral to at
+#     least one sample.
+#     """
