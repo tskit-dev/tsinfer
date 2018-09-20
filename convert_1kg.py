@@ -126,7 +126,7 @@ def variants(vcf_path, show_progress=False):
                 alleles = [ancestral_state, all_alleles.pop()]
                 # We could include the INFO dict here, but it's really big and not
                 # a lot of use.
-                metadata = {"rsid": row.ID}
+                metadata = {"rsid": row.ID, "ref": row.REF}
                 yield Site(
                     position=row.POS, alleles=alleles, genotypes=a, metadata=metadata)
 
