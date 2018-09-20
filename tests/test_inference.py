@@ -192,8 +192,18 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         with tsinfer.SampleData() as sample_data:
             for j in range(genotypes.shape[0]):
                 sample_data.add_site(j, genotypes[j], inference=inference[j])
-        output_ts = tsinfer.infer(sample_data)
-        self.assertTrue(np.array_equal(genotypes, output_ts.genotype_matrix()))
+        for simplify in [False, True]:
+            output_ts = tsinfer.infer(sample_data, simplify=simplify)
+            for tree in output_ts.trees():
+                for site in tree.sites():
+                    f = np.sum(genotypes[site.id])
+                    if f == 0:
+                        self.assertEqual(len(site.mutations), 0)
+                    elif f == output_ts.num_samples:
+                        self.assertEqual(len(site.mutations), 1)
+                        self.assertEqual(site.mutations[0].node, tree.root)
+                    self.assertLess(len(site.mutations), output_ts.num_samples)
+            self.assertTrue(np.array_equal(genotypes, output_ts.genotype_matrix()))
 
     def test_simple_single_tree(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=10)
@@ -233,6 +243,12 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
         inference[:] = False
+        self.verify_round_trip(genotypes, inference)
+
+    def test_random_data(self):
+        genotypes, _ = get_random_data_example(20, 50, seed=12345)
+        inference = np.sum(genotypes, axis=1) > 1
+        inference[::2] = False
         self.verify_round_trip(genotypes, inference)
 
 

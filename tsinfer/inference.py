@@ -626,20 +626,32 @@ class Matcher(object):
                 count[u] += 1
                 u = tree.parent(u)
         # Go up the tree until we find the first node ancestral to all samples.
-        mutation_node = self.sample_ids[samples[0]]
-        while count[mutation_node] < num_samples:
-            mutation_node = tree.parent(mutation_node)
-        assert count[mutation_node] == num_samples
-
-        parent_mutation = mutations.add_row(
-            site=site, node=mutation_node, derived_state=variant.alleles[1])
-        # Traverse down the tree to find any leaves that do not have this
-        # mutation and insert back mutations.
-        for node in tree.nodes(mutation_node):
-            if tree.is_leaf(node) and count[node] == 0:
-                mutations.add_row(
-                    site=site, node=node, derived_state=variant.alleles[0],
-                    parent=parent_mutation)
+        node = self.sample_ids[samples[0]]
+        while count[node] < num_samples:
+            node = tree.parent(node)
+        assert count[node] == num_samples
+        # Look at the children of this node and put down mutations appropriately.
+        split_children = False
+        for child in tree.children(node):
+            if count[child] == 0:
+                split_children = True
+                break
+        mutation_nodes = [node]
+        if split_children:
+            mutation_nodes = []
+            for child in tree.children(node):
+                if count[child] > 0:
+                    mutation_nodes.append(child)
+        for mutation_node in mutation_nodes:
+            parent_mutation = mutations.add_row(
+                site=site, node=mutation_node, derived_state=variant.alleles[1])
+            # Traverse down the tree to find any leaves that do not have this
+            # mutation and insert back mutations.
+            for node in tree.nodes(mutation_node):
+                if tree.is_sample(node) and count[node] == 0:
+                    mutations.add_row(
+                        site=site, node=node, derived_state=variant.alleles[0],
+                        parent=parent_mutation)
 
     def insert_sites(self, tables):
         """
