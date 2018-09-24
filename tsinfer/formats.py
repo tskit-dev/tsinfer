@@ -774,6 +774,7 @@ class SampleData(DataContainer):
             "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=object, object_codec=self._metadata_codec)
 
+        self._last_position = 0
         self._sites_writer = None
         # We are initially in the ADDING_POPULATIONS.
         self._build_state = self.ADDING_POPULATIONS
@@ -1153,6 +1154,8 @@ class SampleData(DataContainer):
             self._build_state = -1
             if self.sequence_length == 0:
                 self.data.attrs["sequence_length"] = self._last_position + 1
+            if self.num_sites == 0:
+                raise ValueError("Must add at least one site")
 
         super(SampleData, self).finalise()
 
