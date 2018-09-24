@@ -372,6 +372,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(iid, 2)
         self.assertEqual(sids, [2, 3, 4, 5, 6])
 
+    def test_numpy_position(self):
+        pos = np.array([5.1, 100], dtype=np.float64)
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(pos[0], [0, 0])
+        self.assertEqual(sample_data.sequence_length, 6.1)
+        with formats.SampleData(sequence_length=pos[1]) as sample_data:
+            sample_data.add_site(pos[0], [0, 0])
+        self.assertEqual(sample_data.sequence_length, 100)
+
     def test_samples_metadata(self):
         with formats.SampleData(sequence_length=10) as sample_data:
             sample_data.add_individual(ploidy=2)
