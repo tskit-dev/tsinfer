@@ -252,6 +252,50 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         self.verify_round_trip(genotypes, inference)
 
 
+class TestZeroNonInferenceSites(unittest.TestCase):
+    """
+    Test the case where we have no non-inference sites.
+    """
+    def verify(self, sample_data):
+        with self.assertLogs("tsinfer.inference", level="INFO") as logs:
+            ts = tsinfer.infer(sample_data)
+        messages = [record.msg for record in logs.records]
+        self.assertIn("Inserting detailed site information", messages)
+        tsinfer.verify(sample_data, ts)
+
+    def test_many_sites(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        non_singletons = np.sum(genotypes, axis=1) > 1
+        genotypes = genotypes[non_singletons]
+        m = genotypes.shape[1]
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for g, position in zip(genotypes, np.arange(m)):
+                sample_data.add_site(position, g)
+        self.verify(sample_data)
+
+    def test_many_sites_letter_alleles(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        self.assertGreater(ts.num_sites, 2)
+        genotypes = ts.genotype_matrix()
+        non_singletons = np.sum(genotypes, axis=1) > 1
+        genotypes = genotypes[non_singletons]
+        m = genotypes.shape[1]
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for g, position in zip(genotypes, np.arange(m)):
+                sample_data.add_site(position, g, alleles=["A", "G"])
+        self.verify(sample_data)
+
+    def test_one_site(self):
+        genotypes = np.array([[1, 1, 0]])
+        m = genotypes.shape[1]
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for g, position in zip(genotypes, np.arange(m)):
+                sample_data.add_site(position, g)
+        self.verify(sample_data)
+
+
 class TestZeroInferenceSites(unittest.TestCase):
     """
     Tests for the degenerate case in which we have no inference sites.
