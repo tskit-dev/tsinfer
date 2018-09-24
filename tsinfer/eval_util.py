@@ -706,3 +706,20 @@ def run_perfect_inference(
         progress_monitor=progress_monitor,
         stabilise_node_ordering=time_chunking and not path_compression)
     return ts, inferred_ts
+
+
+def count_sample_child_edges(ts):
+    """
+    Returns an array counting the number of edges where each sample is a child.
+    The returned array is of length num_samples, i.e., is indexed by the
+    sample index not by its ID.
+    """
+    child_counts = np.bincount(ts.tables.edges.child)
+    return child_counts[ts.samples()]
+# def mean_sample_ancestry(ts):
+#     """
+#     Computes the mean sample ancestry for each node in the tree sequence. This is
+#     defined as the fraction of samples below a given node from each population,
+#     averaged along the length of sequence that the node is ancestral to at
+#     least one sample.
+#     """

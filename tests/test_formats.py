@@ -355,6 +355,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sample_data.add_population({"b": 2})
         sample_data.add_individual(population=0)
         sample_data.add_individual(population=1)
+        sample_data.add_site(0, [0, 0])
         sample_data.finalise()
         self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
         self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
@@ -371,9 +372,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(iid, 2)
         self.assertEqual(sids, [2, 3, 4, 5, 6])
 
+    def test_numpy_position(self):
+        pos = np.array([5.1, 100], dtype=np.float64)
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(pos[0], [0, 0])
+        self.assertEqual(sample_data.sequence_length, 6.1)
+        with formats.SampleData(sequence_length=pos[1]) as sample_data:
+            sample_data.add_site(pos[0], [0, 0])
+        self.assertEqual(sample_data.sequence_length, 100)
+
     def test_samples_metadata(self):
         with formats.SampleData(sequence_length=10) as sample_data:
             sample_data.add_individual(ploidy=2)
+            sample_data.add_site(0, [0, 0])
         individuals_metadata = sample_data.individuals_metadata[:]
         self.assertEqual(len(individuals_metadata), 1)
         self.assertEqual(individuals_metadata[0], {})
@@ -395,6 +406,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_no_data(self):
         sample_data = formats.SampleData(sequence_length=10)
+        self.assertRaises(ValueError, sample_data.finalise)
+
+    def test_no_sites(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_individual()
         self.assertRaises(ValueError, sample_data.finalise)
 
     def test_add_site_return(self):

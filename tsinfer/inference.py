@@ -661,14 +661,14 @@ class Matcher(object):
         """
         num_sites = self.sample_data.num_sites
         num_non_inference_sites = self.sample_data.num_non_inference_sites
-        logger.info(
-            "Starting mutation positioning for {} non inference sites".format(
-                num_non_inference_sites))
         progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
 
         _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
         if num_non_inference_sites > 0:
+            logger.info(
+                "Starting mutation positioning for {} non inference sites".format(
+                    num_non_inference_sites))
             inferred_site = 0
             trees = ts.trees()
             tree = next(trees)
@@ -691,16 +691,19 @@ class Matcher(object):
                     self.locate_mutations_on_tree(tree, variant, tables.mutations)
                 progress_monitor.update()
         else:
-            # Simple case where all sites are inference sites.
-            for variant in self.sample_data.variants():
-                site = variant.site
+            # Simple case where all sites are inference sites. We save a lot of time here
+            # by not decoding the genotypes.
+            logger.info("Inserting detailed site information")
+            position = self.sample_data.sites_position[:]
+            alleles = self.sample_data.sites_alleles[:]
+            metadata = self.sample_data.sites_metadata[:]
+            for j in range(self.num_sites):
                 tables.sites.add_row(
-                    position=site.position,
-                    ancestral_state=site.ancestral_state,
-                    metadata=self.encode_metadata(site.metadata))
+                    position=position[j],
+                    ancestral_state=alleles[j][0],
+                    metadata=self.encode_metadata(metadata[j]))
                 tables.mutations.add_row(
-                    site=site.id, node=node[site.id],
-                    derived_state=variant.alleles[derived_state[site.id]])
+                    site=j, node=node[j], derived_state=alleles[j][derived_state[j]])
                 progress_monitor.update()
         progress_monitor.close()
 
