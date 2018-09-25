@@ -716,10 +716,138 @@ def count_sample_child_edges(ts):
     """
     child_counts = np.bincount(ts.tables.edges.child)
     return child_counts[ts.samples()]
-# def mean_sample_ancestry(ts):
-#     """
-#     Computes the mean sample ancestry for each node in the tree sequence. This is
-#     defined as the fraction of samples below a given node from each population,
-#     averaged along the length of sequence that the node is ancestral to at
-#     least one sample.
-#     """
+
+
+def node_span(ts):
+    """
+    Returns the "span" of all nodes in the tree sequence. This is defined as the
+    total length of all trees that the node participates in. A node "participates in"
+    a tree if it is reachable from a root. The span of all samples is therefore equal
+    to the sequence length.
+    """
+    S = np.zeros(ts.num_nodes)
+    start = np.zeros(ts.num_nodes) - 1
+    iterator = zip(ts.edge_diffs(), ts.trees(sample_counts=False))
+    for ((left, _), edges_out, edges_in), tree in iterator:
+        for edge in edges_out:
+            u = edge.parent
+            # This is complicated a bit by having to support trees in which we
+            # can have branches leading from a root which have zero samples.
+            for u in [edge.parent, edge.child]:
+                condition = (
+                        tree.parent(u) == msprime.NULL_NODE and
+                        tree.left_child(u) == msprime.NULL_NODE and
+                        not ts.node(u).is_sample() and
+                        start[u] != -1)
+                if condition:
+                    S[u] += left - start[u]
+                    start[u] = -1
+        for edge in edges_in:
+            for u in [edge.parent, edge.child]:
+                if start[u] == -1:
+                    start[u] = left
+    for u in tree.nodes():
+        S[u] += ts.sequence_length - start[u]
+    return S
+
+
+def mean_sample_ancestry(ts, sample_sets):
+    """
+    Computes the mean sample ancestry for each node in the tree sequence. This is
+    defined as the fraction of samples below a given node from each population,
+    averaged along the length of sequence that the node is ancestral to at
+    least one sample.
+    """
+    num_sample_sets = len(sample_sets)
+    S = np.zeros(ts.num_nodes)
+    A = np.zeros((num_sample_sets, ts.num_nodes))
+    span_start = np.zeros(ts.num_nodes) - 1
+    last_update = np.zeros(ts.num_nodes) - 1
+    tree_iters = zip(*[ts.trees(tracked_samples=samples) for samples in sample_sets])
+    trees = None
+
+    for diffs, tree in zip(ts.edge_diffs(), ts.trees()):
+        (left, right), edges_out, edges_in = diffs
+        assert tree.interval == (left, right)
+
+        # In edges out, we need to (a) store all nodes that are affected and
+        # (b) deal with any nodes that leave the tree, making sure we mark
+        # them as inactive.
+        nodes_out = set()
+        for edge in edges_out:
+            u = edge.parent
+            for u in [edge.parent, edge.child]:
+                nodes_out.add(u)
+                condition = (
+                        tree.parent(u) == msprime.NULL_NODE and
+                        tree.left_child(u) == msprime.NULL_NODE and
+                        not ts.node(u).is_sample() and
+                        span_start[u] != -1)
+                if condition:
+                    S[u] += left - span_start[u]
+                    span_start[u] = -1
+                    w = left - last_update[u]
+                    num_samples = trees[0].num_samples(u)
+                    if num_samples > 0:
+                        for set_index, t in enumerate(trees):
+                            A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
+                    # print("Kicking out ", u)
+                    last_update[u] = -1
+
+        # In nodes_in we compute the span, and also keep track of the set of nodes that
+        # are affected.
+        nodes_in = set()
+        for edge in edges_in:
+            for u in [edge.parent, edge.child]:
+                if span_start[u] == -1:
+                    span_start[u] = left
+                nodes_in.add(u)
+
+        if tree.index > 0:
+            # Before we advance the counters for all the sample_sets we must check if
+            # any nodes have changed since we last updated A. If they have, we must
+            # compute the total contribution *before* we examine the current tree.
+            visited = set()
+            for u in nodes_in | nodes_out:
+                while u != -1 and u not in visited:
+                    num_samples = trees[0].num_samples(u)
+                    # print("Last tree update", u, last_update[u], "w = ", w)
+                    if last_update[u] != -1 and num_samples > 0:
+                        w = (left - last_update[u])
+                        for set_index, t in enumerate(trees):
+                            A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
+                    visited.add(u)
+                    last_update[u] = left
+                    u = tree.parent(u)
+
+        trees = next(tree_iters)
+        assert trees[0].interval == (left, right)
+        # print("--", left, right)
+        # print(trees[0].draw(format="unicode"))
+
+        # In the current tree we need to look at the nodes that have been inserted,
+        # adding the contribution for the current tree to the total.
+        visited = set()
+        for u in nodes_in:
+            while u != -1 and u not in visited:
+                w = right - left
+                num_samples = trees[0].num_samples(u)
+                if num_samples > 0:
+                    for set_index, t in enumerate(trees):
+                        A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
+                visited.add(u)
+                last_update[u] = right
+                u = tree.parent(u)
+
+    # Finally add in the contribution for the last tree.
+    for u in trees[0].nodes():
+        S[u] += ts.sequence_length - span_start[u]
+        assert last_update[u] != -1
+        w = ts.sequence_length - last_update[u]
+        num_samples = trees[0].num_samples(u)
+        if num_samples > 0:
+            for set_index, t in enumerate(trees):
+                A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
+    assert np.array_equal(S, node_span(ts))
+    A /= S
+    return A
