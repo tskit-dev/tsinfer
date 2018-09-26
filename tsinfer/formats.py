@@ -940,6 +940,12 @@ class SampleData(DataContainer):
     def from_tree_sequence(cls, ts, **kwargs):
         self = cls.__new__(cls)
         self.__init__(sequence_length=ts.sequence_length, **kwargs)
+        # Assume this is a haploid tree sequence.
+        for population in ts.populations():
+            self.add_population()
+        for u in ts.samples():
+            node = ts.node(u)
+            self.add_individual(population=node.population, ploidy=1)
         for v in ts.variants():
             self.add_site(v.site.position, v.genotypes, v.alleles)
         # Insert all the provenance from the original tree sequence.

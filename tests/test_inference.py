@@ -1582,13 +1582,17 @@ class TestExtractAncestors(unittest.TestCase):
         t1.provenances.clear()
         t2.provenances.clear()
 
+        # Population data isn't carried through in ancestors tree sequences
+        # for now.
+        t2.populations.clear()
+
         self.assertEqual(t1.nodes, t2.nodes)
         self.assertEqual(t1.edges, t2.edges)
         self.assertEqual(t1.sites, t2.sites)
         self.assertEqual(t1.mutations, t2.mutations)
         self.assertEqual(t1.populations, t2.populations)
-        self.assertEqual(t1.sites, t2.sites)
         self.assertEqual(t1.individuals, t2.individuals)
+        self.assertEqual(t1.sites, t2.sites)
 
         self.assertEqual(t1, t2)
 

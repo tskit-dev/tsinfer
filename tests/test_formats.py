@@ -64,6 +64,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
+        for pop in ts.populations():
+            input_file.add_population()
+        for sample in ts.samples():
+            node = ts.node(sample)
+            input_file.add_individual(ploidy=1, population=node.population)
         for v in ts.variants():
             input_file.add_site(v.site.position, v.genotypes, v.alleles)
         input_file.record_provenance("verify_data_round_trip")
