@@ -721,9 +721,9 @@ def count_sample_child_edges(ts):
 def node_span(ts):
     """
     Returns the "span" of all nodes in the tree sequence. This is defined as the
-    total length of all trees that the node participates in. A node "participates in"
-    a tree if it is reachable from a root. The span of all samples is therefore equal
-    to the sequence length.
+    total distance along the sequence of all trees that the node participates in.
+    A node "participates in" a tree if it is reachable from a root. The span of all
+    samples is therefore equal to the sequence length.
     """
     S = np.zeros(ts.num_nodes)
     start = np.zeros(ts.num_nodes) - 1
@@ -751,12 +751,15 @@ def node_span(ts):
     return S
 
 
-def mean_sample_ancestry(ts, sample_sets):
+def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     """
-    Computes the mean sample ancestry for each node in the tree sequence. This is
-    defined as the fraction of samples below a given node from each population,
-    averaged along the length of sequence that the node is ancestral to at
-    least one sample.
+    Computes the mean sample ancestry for each node in the tree sequence with
+    respect to the specified list of sets of samples, returning a 2D array with
+    dimensions (len(sample_sets), ts.num_nodes). For a given element of this
+    array, A[k, u] is the average fraction of samples that descend from u
+    that are from samples_sets[k]. The average for each node is computed
+    by weighting the contribution along the span of u by the distance it
+    persists unchanged.
     """
     num_sample_sets = len(sample_sets)
     S = np.zeros(ts.num_nodes)
@@ -765,8 +768,11 @@ def mean_sample_ancestry(ts, sample_sets):
     last_update = np.zeros(ts.num_nodes) - 1
     tree_iters = zip(*[ts.trees(tracked_samples=samples) for samples in sample_sets])
     trees = None
+    progress_iter = tqdm.tqdm(
+        zip(ts.edge_diffs(), ts.trees()),
+        total=ts.num_trees, disable=not show_progress)
 
-    for diffs, tree in zip(ts.edge_diffs(), ts.trees()):
+    for diffs, tree in progress_iter:
         (left, right), edges_out, edges_in = diffs
         assert tree.interval == (left, right)
 
@@ -848,6 +854,6 @@ def mean_sample_ancestry(ts, sample_sets):
         if num_samples > 0:
             for set_index, t in enumerate(trees):
                 A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
-    assert np.array_equal(S, node_span(ts))
+    # assert np.array_equal(S, node_span(ts))
     A /= S
     return A
