@@ -924,24 +924,31 @@ class TestMeanSampleAncestry(unittest.TestCase):
         """
         S = tsinfer.node_span(ts)
         A = np.zeros((len(sample_sets), ts.num_nodes))
+        all_samples = []
+        for sample_set in sample_sets:
+            all_samples.extend(sample_set)
         for set_index in range(len(sample_sets)):
             # Set everything to -1 to detect the trees in which the node is not
             # present. We use a numpy mask to exclude these below.
             A_pop = np.zeros((ts.num_nodes, ts.num_trees)) - 1
-            for tree in ts.trees(tracked_samples=sample_sets[set_index]):
-                left, right = tree.interval
-                for node in tree.nodes():
-                    num_samples = tree.num_samples(node)
+            tree_iters = [
+                ts.trees(tracked_samples=sample_sets[set_index]),
+                ts.trees(tracked_samples=all_samples)]
+            for tree_sub, tree_all in zip(*tree_iters):
+                left, right = tree_sub.interval
+                for node in tree_sub.nodes():
+                    num_samples = tree_all.num_tracked_samples(node)
                     if num_samples > 0:
-                        f = tree.num_tracked_samples(node) / num_samples
+                        f = tree_sub.num_tracked_samples(node) / num_samples
                         # Each fraction is weighted by the distance along this tree.
                         w = (right - left)
-                        A_pop[node][tree.index] = f * w
+                        A_pop[node][tree_sub.index] = f * w
             x = ma.array(A_pop, mask=A_pop < 0)
             # The final value for each node is the mean ancestry fraction for this
             # population over the trees that it was defined in, divided by the span
             # of that node.
             A[set_index] = np.sum(x, axis=1) / S
+
         return A
 
     def verify(self, ts, sample_sets):
@@ -991,13 +998,19 @@ class TestMeanSampleAncestry(unittest.TestCase):
         total = np.sum(A, axis=0)
         self.assertTrue(np.allclose(total[total != 0], 1))
 
-    @unittest.skip("TODO: we should probably be taking the fraction *within*")
     def test_two_populations_incomplete_samples(self):
         ts = self.two_populations_high_migration_example()
         samples = ts.samples()
-        A = self.verify(ts, [samples[:2], samples[:-2]])
+        A = self.verify(ts, [samples[:2], samples[-2:]])
         total = np.sum(A, axis=0)
         self.assertTrue(np.allclose(total[total != 0], 1))
+
+    def test_two_populations_overlapping_samples(self):
+        ts = self.two_populations_high_migration_example()
+        with self.assertRaises(ValueError):
+            tsinfer.mean_sample_ancestry(ts, [[1], [1]])
+        with self.assertRaises(ValueError):
+            tsinfer.mean_sample_ancestry(ts, [[1, 1], [2]])
 
     def test_two_populations_high_migration_inferred(self):
         ts = self.two_populations_high_migration_example()

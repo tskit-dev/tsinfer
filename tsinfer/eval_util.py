@@ -761,6 +761,14 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     by weighting the contribution along the span of u by the distance it
     persists unchanged.
     """
+    all_samples = set()
+    for sample_set in sample_sets:
+        U = set(sample_set)
+        if len(U) != len(sample_set):
+            raise ValueError("Cannot have duplicate values within set")
+        if len(all_samples & U) != 0:
+            raise ValueError("Sample sets must be disjoint")
+        all_samples |= U
     num_sample_sets = len(sample_sets)
     S = np.zeros(ts.num_nodes)
     A = np.zeros((num_sample_sets, ts.num_nodes))
@@ -793,7 +801,7 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
                     S[u] += left - span_start[u]
                     span_start[u] = -1
                     w = left - last_update[u]
-                    num_samples = trees[0].num_samples(u)
+                    num_samples = sum(t.num_tracked_samples(u) for t in trees)
                     if num_samples > 0:
                         for set_index, t in enumerate(trees):
                             A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
@@ -816,7 +824,7 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
             visited = set()
             for u in nodes_in | nodes_out:
                 while u != -1 and u not in visited:
-                    num_samples = trees[0].num_samples(u)
+                    num_samples = sum(t.num_tracked_samples(u) for t in trees)
                     # print("Last tree update", u, last_update[u], "w = ", w)
                     if last_update[u] != -1 and num_samples > 0:
                         w = (left - last_update[u])
@@ -837,7 +845,7 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
         for u in nodes_in:
             while u != -1 and u not in visited:
                 w = right - left
-                num_samples = trees[0].num_samples(u)
+                num_samples = sum(t.num_tracked_samples(u) for t in trees)
                 if num_samples > 0:
                     for set_index, t in enumerate(trees):
                         A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
@@ -850,7 +858,7 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
         S[u] += ts.sequence_length - span_start[u]
         assert last_update[u] != -1
         w = ts.sequence_length - last_update[u]
-        num_samples = trees[0].num_samples(u)
+        num_samples = sum(t.num_tracked_samples(u) for t in trees)
         if num_samples > 0:
             for set_index, t in enumerate(trees):
                 A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
