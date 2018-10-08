@@ -958,14 +958,14 @@ class TestMeanSampleAncestry(unittest.TestCase):
         self.assertTrue(np.allclose(A1, A2))
         return A1
 
-    def two_populations_high_migration_example(self):
+    def two_populations_high_migration_example(self, mutation_rate=10):
         ts = msprime.simulate(
             population_configurations=[
                 msprime.PopulationConfiguration(3),
                 msprime.PopulationConfiguration(3)],
             migration_matrix=[[0, 1], [1, 0]],
             recombination_rate=1,
-            mutation_rate=10,
+            mutation_rate=mutation_rate,
             random_seed=5)
         self.assertGreater(ts.num_trees, 1)
         return ts
@@ -980,6 +980,13 @@ class TestMeanSampleAncestry(unittest.TestCase):
 
     def test_two_populations_high_migration(self):
         ts = self.two_populations_high_migration_example()
+        A = self.verify(ts, [ts.samples(0), ts.samples(1)])
+        total = np.sum(A, axis=0)
+        self.assertTrue(np.allclose(total[total != 0], 1))
+
+    def test_two_populations_high_migration_no_centromere(self):
+        ts = self.two_populations_high_migration_example(mutation_rate=0)
+        ts = tsinfer.snip_centromere(ts, 0.4, 0.6)
         A = self.verify(ts, [ts.samples(0), ts.samples(1)])
         total = np.sum(A, axis=0)
         self.assertTrue(np.allclose(total[total != 0], 1))
@@ -1029,3 +1036,108 @@ class TestMeanSampleAncestry(unittest.TestCase):
                 for j in range(ts.num_samples // group_size)]
             self.verify(ts, sample_sets)
             group_size *= 2
+
+
+class TestSnipCentromere(unittest.TestCase):
+    """
+    Tests that we remove the centromere successfully from tree sequences.
+    """
+    def snip_centromere(self, ts, left, right):
+        """
+        Simple implementation of snipping out centromere.
+        """
+        assert 0 < left < right < ts.sequence_length
+        tables = ts.dump_tables()
+        tables.edges.clear()
+        for edge in ts.edges():
+            if right <= edge.left or left >= edge.right:
+                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+            else:
+                if edge.left < left:
+                    tables.edges.add_row(edge.left, left, edge.parent, edge.child)
+                if right < edge.right:
+                    tables.edges.add_row(right, edge.right, edge.parent, edge.child)
+        tables.sort()
+        return tables.tree_sequence()
+
+    def verify(self, ts, left, right):
+        ts1 = self.snip_centromere(ts, left, right)
+        ts2 = tsinfer.snip_centromere(ts, left, right)
+        t1 = ts1.dump_tables()
+        t2 = ts2.dump_tables()
+        t1.provenances.clear()
+        t2.provenances.clear()
+        self.assertEqual(t1, t2)
+        tree_found = False
+        for tree in ts1.trees():
+            if tree.interval == (left, right):
+                tree_found = True
+                for node in ts1.nodes():
+                    self.assertEqual(tree.parent(node.id), msprime.NULL_NODE)
+                break
+        self.assertTrue(tree_found)
+        return ts1
+
+    def test_single_tree(self):
+        ts1 = msprime.simulate(10, random_seed=1)
+        ts2 = self.verify(ts1, 0.5, 0.6)
+        self.assertEqual(ts2.num_trees, 3)
+
+    def test_many_trees(self):
+        ts1 = msprime.simulate(10, length=10, recombination_rate=1, random_seed=1)
+        self.assertGreater(ts1.num_trees, 2)
+        self.verify(ts1, 5, 6)
+
+    def get_random_data_example(self, position, num_samples, seed=100):
+        np.random.seed(seed)
+        G = np.random.randint(2, size=(position.shape[0], num_samples)).astype(np.uint8)
+        with tsinfer.SampleData() as sample_data:
+            for j, x in enumerate(position):
+                sample_data.add_site(x, G[j])
+        return sample_data
+
+    def test_random_data_inferred_no_simplify(self):
+        samples = self.get_random_data_example(
+            10 * np.arange(10), num_samples=10, seed=2)
+        inferred_ts = tsinfer.infer(samples, simplify=False)
+        ts = self.verify(inferred_ts, 55, 57)
+        self.assertTrue(np.array_equal(
+            ts.genotype_matrix(), inferred_ts.genotype_matrix()))
+
+    def test_random_data_inferred_simplify(self):
+        samples = self.get_random_data_example(5 * np.arange(10), num_samples=10, seed=2)
+        inferred_ts = tsinfer.infer(samples, simplify=True)
+        ts = self.verify(inferred_ts, 12, 15)
+        self.assertTrue(np.array_equal(
+            ts.genotype_matrix(), inferred_ts.genotype_matrix()))
+
+    def test_coordinate_errors(self):
+        ts = msprime.simulate(2, length=10, recombination_rate=1, random_seed=1)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, -1, 5)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 0, 5)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 1, 10)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 1, 11)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 6, 5)
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 5, 5)
+
+    def test_position_errors(self):
+        ts = msprime.simulate(
+            2, length=10, recombination_rate=1, random_seed=1, mutation_rate=2)
+        X = ts.tables.sites.position
+        self.assertGreater(X.shape[0], 3)
+        # Left cannot be on a site position.
+        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, X[0], X[0] + 0.001)
+        # Cannot go either side of a position
+        self.assertRaises(
+            ValueError, tsinfer.snip_centromere, ts, X[0] - 0.001, X[0] + 0.001)
+        # Cannot cover multiple positions
+        self.assertRaises(
+            ValueError, tsinfer.snip_centromere, ts, X[0] - 0.001, X[2] + 0.001)
+
+    def test_right_on_position(self):
+        ts1 = msprime.simulate(
+            2, length=10, recombination_rate=1, random_seed=1, mutation_rate=2)
+        X = ts1.tables.sites.position
+        self.assertGreater(X.shape[0], 1)
+        ts2 = self.verify(ts1, X[0] - 0.001, X[0])
+        self.assertTrue(np.array_equal(ts1.genotype_matrix(), ts2.genotype_matrix()))

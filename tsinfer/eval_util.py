@@ -857,3 +857,58 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     # assert np.array_equal(S, node_span(ts))
     A /= S
     return A
+
+
+def snip_centromere(ts, left, right):
+    """
+    Cuts tree topology information out of the specifified tree sequence in the specified
+    region. The tree sequence will effectively be in two halves. There cannot be
+    any sites within the removed region.
+    """
+    if not (0 < left < right < ts.sequence_length):
+        raise ValueError("Invalid centromere coordinates")
+    tables = ts.dump_tables()
+    if len(tables.sites) > 0:
+        position = tables.sites.position
+        left_index = np.searchsorted(position, left)
+        right_index = np.searchsorted(position, right)
+        if right_index != left_index:
+            raise ValueError("Cannot have sites defined within the centromere")
+
+    edges = tables.edges.copy()
+    # Get all edges that do not intersect and add them in directly.
+    index = np.logical_or(right <= edges.left, left >= edges.right)
+    tables.edges.set_columns(
+        left=edges.left[index],
+        right=edges.right[index],
+        parent=edges.parent[index],
+        child=edges.child[index])
+    # Get all edges that intersect and add two edges for each.
+    index = np.logical_not(index)
+    i_parent = edges.parent[index]
+    i_child = edges.child[index]
+    i_left = edges.left[index]
+    i_right = edges.right[index]
+
+    # Only insert valid edges (remove any entirely lost topology)
+    index = i_left < left
+    num_intersecting = np.sum(index)
+    tables.edges.append_columns(
+        left=i_left[index],
+        right=np.full(num_intersecting, left, dtype=np.float64),
+        parent=i_parent[index],
+        child=i_child[index])
+
+    # Only insert valid edges (remove any entirely lost topology)
+    index = right < i_right
+    num_intersecting = np.sum(index)
+    tables.edges.append_columns(
+        left=np.full(num_intersecting, right, dtype=np.float64),
+        right=i_right[index],
+        parent=i_parent[index],
+        child=i_child[index])
+    tables.sort()
+    record = provenance.get_provenance_dict(
+        command="snip_centromere", left=left, right=right)
+    tables.provenances.add_row(record=json.dumps(record))
+    return tables.tree_sequence()
