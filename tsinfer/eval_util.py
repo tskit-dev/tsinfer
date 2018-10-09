@@ -1,4 +1,4 @@
-#
+
 # Copyright (C) 2018 University of Oxford
 #
 # This file is part of tsinfer.
@@ -721,33 +721,26 @@ def count_sample_child_edges(ts):
 def node_span(ts):
     """
     Returns the "span" of all nodes in the tree sequence. This is defined as the
-    total distance along the sequence of all trees that the node participates in.
-    A node "participates in" a tree if it is reachable from a root. The span of all
-    samples is therefore equal to the sequence length.
+    total distance along the sequence of all trees that the node is the ancestor
+    of a sample. The span of all samples is therefore equal to the sequence length.
     """
     S = np.zeros(ts.num_nodes)
     start = np.zeros(ts.num_nodes) - 1
-    iterator = zip(ts.edge_diffs(), ts.trees(sample_counts=False))
+    iterator = zip(ts.edge_diffs(), ts.trees(sample_counts=True))
     for ((left, _), edges_out, edges_in), tree in iterator:
         for edge in edges_out:
             u = edge.parent
-            # This is complicated a bit by having to support trees in which we
-            # can have branches leading from a root which have zero samples.
             for u in [edge.parent, edge.child]:
-                condition = (
-                        tree.parent(u) == msprime.NULL_NODE and
-                        tree.left_child(u) == msprime.NULL_NODE and
-                        not ts.node(u).is_sample() and
-                        start[u] != -1)
-                if condition:
+                if tree.num_samples(u) == 0 and start[u] != -1:
                     S[u] += left - start[u]
                     start[u] = -1
         for edge in edges_in:
             for u in [edge.parent, edge.child]:
-                if start[u] == -1:
+                if start[u] == -1 and tree.num_samples(u) > 0:
                     start[u] = left
     for u in tree.nodes():
-        S[u] += ts.sequence_length - start[u]
+        if tree.num_samples(u) > 0:
+            S[u] += ts.sequence_length - start[u]
     return S
 
 
@@ -756,104 +749,126 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     Computes the mean sample ancestry for each node in the tree sequence with
     respect to the specified list of sets of samples, returning a 2D array with
     dimensions (len(sample_sets), ts.num_nodes). For a given element of this
-    array, A[k, u] is the average fraction of samples that descend from u
-    that are from samples_sets[k]. The average for each node is computed
-    by weighting the contribution along the span of u by the distance it
-    persists unchanged.
+    array, A[k, u] is the average fraction of samples (within the entire set of
+    samples specified) descending from u that are from samples_sets[k]. The average
+    for each node is computed by weighting the contribution along the span of
+    u by the distance it persists unchanged.
     """
-    num_sample_sets = len(sample_sets)
-    S = np.zeros(ts.num_nodes)
-    A = np.zeros((num_sample_sets, ts.num_nodes))
-    span_start = np.zeros(ts.num_nodes) - 1
-    last_update = np.zeros(ts.num_nodes) - 1
-    tree_iters = zip(*[ts.trees(tracked_samples=samples) for samples in sample_sets])
-    trees = None
+    # Check the inputs (could be done more efficiently here)
+    all_samples = set()
+    for sample_set in sample_sets:
+        U = set(sample_set)
+        if len(U) != len(sample_set):
+            raise ValueError("Cannot have duplicate values within set")
+        if len(all_samples & U) != 0:
+            raise ValueError("Sample sets must be disjoint")
+        all_samples |= U
+
+    K = len(sample_sets)
+    A = np.zeros((K, ts.num_nodes))
+    parent = np.zeros(ts.num_nodes, dtype=int) - 1
+    sample_count = np.zeros((K, ts.num_nodes), dtype=int)
+    last_update = np.zeros(ts.num_nodes)
+    total_length = np.zeros(ts.num_nodes)
+
+    def update_counts(edge, sign):
+        # Update the counts and statistics for a given node. Before we change the
+        # node counts in the given direction, check to see if we need to update
+        # statistics for that node. When a node count changes, we add the
+        # accumulated statistic value for the span since that node was last updated.
+        v = edge.parent
+        while v != -1:
+            if last_update[v] != left:
+                total = np.sum(sample_count[:, v])
+                if total != 0:
+                    length = left - last_update[v]
+                    for j in range(K):
+                        A[j, v] += length * sample_count[j, v] / total
+                    total_length[v] += length
+                last_update[v] = left
+            for j in range(K):
+                sample_count[j, v] += sign * sample_count[j, edge.child]
+            v = parent[v]
+
+    # Set the intitial conditions.
+    for j in range(K):
+        for u in sample_sets[j]:
+            sample_count[j][u] = 1
+
     progress_iter = tqdm.tqdm(
-        zip(ts.edge_diffs(), ts.trees()),
-        total=ts.num_trees, disable=not show_progress)
-
-    for diffs, tree in progress_iter:
-        (left, right), edges_out, edges_in = diffs
-        assert tree.interval == (left, right)
-
-        # In edges out, we need to (a) store all nodes that are affected and
-        # (b) deal with any nodes that leave the tree, making sure we mark
-        # them as inactive.
-        nodes_out = set()
+        ts.edge_diffs(), total=ts.num_trees, disable=not show_progress)
+    for (left, right), edges_out, edges_in in progress_iter:
         for edge in edges_out:
-            u = edge.parent
-            for u in [edge.parent, edge.child]:
-                nodes_out.add(u)
-                condition = (
-                        tree.parent(u) == msprime.NULL_NODE and
-                        tree.left_child(u) == msprime.NULL_NODE and
-                        not ts.node(u).is_sample() and
-                        span_start[u] != -1)
-                if condition:
-                    S[u] += left - span_start[u]
-                    span_start[u] = -1
-                    w = left - last_update[u]
-                    num_samples = trees[0].num_samples(u)
-                    if num_samples > 0:
-                        for set_index, t in enumerate(trees):
-                            A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
-                    # print("Kicking out ", u)
-                    last_update[u] = -1
-
-        # In nodes_in we compute the span, and also keep track of the set of nodes that
-        # are affected.
-        nodes_in = set()
+            parent[edge.child] = -1
+            update_counts(edge, -1)
         for edge in edges_in:
-            for u in [edge.parent, edge.child]:
-                if span_start[u] == -1:
-                    span_start[u] = left
-                nodes_in.add(u)
+            parent[edge.child] = edge.parent
+            update_counts(edge, +1)
 
-        if tree.index > 0:
-            # Before we advance the counters for all the sample_sets we must check if
-            # any nodes have changed since we last updated A. If they have, we must
-            # compute the total contribution *before* we examine the current tree.
-            visited = set()
-            for u in nodes_in | nodes_out:
-                while u != -1 and u not in visited:
-                    num_samples = trees[0].num_samples(u)
-                    # print("Last tree update", u, last_update[u], "w = ", w)
-                    if last_update[u] != -1 and num_samples > 0:
-                        w = (left - last_update[u])
-                        for set_index, t in enumerate(trees):
-                            A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
-                    visited.add(u)
-                    last_update[u] = left
-                    u = tree.parent(u)
-
-        trees = next(tree_iters)
-        assert trees[0].interval == (left, right)
-        # print("--", left, right)
-        # print(trees[0].draw(format="unicode"))
-
-        # In the current tree we need to look at the nodes that have been inserted,
-        # adding the contribution for the current tree to the total.
-        visited = set()
-        for u in nodes_in:
-            while u != -1 and u not in visited:
-                w = right - left
-                num_samples = trees[0].num_samples(u)
-                if num_samples > 0:
-                    for set_index, t in enumerate(trees):
-                        A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
-                visited.add(u)
-                last_update[u] = right
-                u = tree.parent(u)
-
-    # Finally add in the contribution for the last tree.
-    for u in trees[0].nodes():
-        S[u] += ts.sequence_length - span_start[u]
-        assert last_update[u] != -1
-        w = ts.sequence_length - last_update[u]
-        num_samples = trees[0].num_samples(u)
-        if num_samples > 0:
-            for set_index, t in enumerate(trees):
-                A[set_index][u] += w * t.num_tracked_samples(u) / num_samples
-    # assert np.array_equal(S, node_span(ts))
-    A /= S
+    # Finally, add the stats for the last tree and normalise by the total
+    # length that each node was an ancestor to > 0 samples.
+    for v in range(ts.num_nodes):
+        total = np.sum(sample_count[:, v])
+        if total != 0:
+            length = ts.sequence_length - last_update[v]
+            total_length[v] += length
+            for j in range(K):
+                A[j, v] += length * sample_count[j, v] / total
+        if total_length[v] != 0:
+            A[:, v] /= total_length[v]
     return A
+
+
+def snip_centromere(ts, left, right):
+    """
+    Cuts tree topology information out of the specifified tree sequence in the specified
+    region. The tree sequence will effectively be in two halves. There cannot be
+    any sites within the removed region.
+    """
+    if not (0 < left < right < ts.sequence_length):
+        raise ValueError("Invalid centromere coordinates")
+    tables = ts.dump_tables()
+    if len(tables.sites) > 0:
+        position = tables.sites.position
+        left_index = np.searchsorted(position, left)
+        right_index = np.searchsorted(position, right)
+        if right_index != left_index:
+            raise ValueError("Cannot have sites defined within the centromere")
+
+    edges = tables.edges.copy()
+    # Get all edges that do not intersect and add them in directly.
+    index = np.logical_or(right <= edges.left, left >= edges.right)
+    tables.edges.set_columns(
+        left=edges.left[index],
+        right=edges.right[index],
+        parent=edges.parent[index],
+        child=edges.child[index])
+    # Get all edges that intersect and add two edges for each.
+    index = np.logical_not(index)
+    i_parent = edges.parent[index]
+    i_child = edges.child[index]
+    i_left = edges.left[index]
+    i_right = edges.right[index]
+
+    # Only insert valid edges (remove any entirely lost topology)
+    index = i_left < left
+    num_intersecting = np.sum(index)
+    tables.edges.append_columns(
+        left=i_left[index],
+        right=np.full(num_intersecting, left, dtype=np.float64),
+        parent=i_parent[index],
+        child=i_child[index])
+
+    # Only insert valid edges (remove any entirely lost topology)
+    index = right < i_right
+    num_intersecting = np.sum(index)
+    tables.edges.append_columns(
+        left=np.full(num_intersecting, right, dtype=np.float64),
+        right=i_right[index],
+        parent=i_parent[index],
+        child=i_child[index])
+    tables.sort()
+    record = provenance.get_provenance_dict(
+        command="snip_centromere", left=left, right=right)
+    tables.provenances.add_row(record=json.dumps(record))
+    return tables.tree_sequence()
