@@ -56,43 +56,43 @@ def make_errors(v, p):
         w[samples] = errors
     return w
 
+
 def make_errors_genotype_model(g, error_probs):
     """
     Given an empirically estimated error probability matrix, resample for a particular
     variant. Determine variant frequency and true genotype (g0, g1, or g2),
     then return observed genotype based on row in error_probs with nearest
-    frequency. Treat each pair of alleles as a diploid individual. 
+    frequency. Treat each pair of alleles as a diploid individual.
     """
     w = np.copy(g)
-    
-    #Make diploid (iterate each pair of alleles)
-    genos=[(w[i],w[i+1]) for i in range(0,w.shape[0],2)]
-    
-    #Record the true genotypes
-    g0 = [i for i, x in enumerate(genos) if x == (0,0)]
-    g1a = [i for i, x in enumerate(genos) if x == (1,0)]
-    g1b = [i for i, x in enumerate(genos) if x == (0,1)]
-    g2 = [i for i, x in enumerate(genos) if x == (1,1)]
-    
+
+    # Make diploid (iterate each pair of alleles)
+    genos=[(w[i], w[i+1]) for i in range(0, w.shape[0], 2)]
+
+    # Record the true genotypes
+    g0 = [i for i, x in enumerate(genos) if x == (0, 0)]
+    g1a = [i for i, x in enumerate(genos) if x == (1, 0)]
+    g1b = [i for i, x in enumerate(genos) if x == (0, 1)]
+    g2 = [i for i, x in enumerate(genos) if x == (1, 1)]
 
     for idx in g0:
         result=[(0,0),(1,0),(1,1)][np.random.choice(3,
             p=error_probs[['p00','p01','p02']].values[0])]
         if result == (1,0):
-            genos[idx]=[(0,1),(1,0)][np.random.choice(2)]
+            genos[idx] = [(0,1),(1,0)][np.random.choice(2)]
         else:
             genos[idx] = result
     for idx in g1a:
-        genos[idx]=[(0,0),(1,0),(1,1)][np.random.choice(3,
-            p=error_probs[['p10','p11','p12']].values[0])]
+        genos[idx] = [(0, 0), (1, 0),(1, 1)][
+            np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
     for idx in g1b:
-        genos[idx]=[(0,0),(0,1),(1,1)][np.random.choice(3,
-            p=error_probs[['p10','p11','p12']].values[0])]
+        genos[idx] = [(0, 0), (0, 1), (1, 1)][
+            np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
     for idx in g2:
-        result=[(0,0),(1,0),(1,1)][np.random.choice(3,
-            p=error_probs[['p20','p21','p22']].values[0])]
-        if result == (1,0):
-            genos[idx]=[(0,1),(1,0)][np.random.choice(2)]
+        result = [(0, 0), (1, 0), (1, 1)][np.random.choice(3,
+            p=error_probs[['p20', 'p21', 'p22']].values[0])]
+        if result == (1 ,0):
+            genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
             genos[idx] = result
             
@@ -118,13 +118,14 @@ def generate_samples(ts, error_param=0):
         for v in ts.variants():
             m = v.genotypes.shape[0]
             frequency = np.sum(v.genotypes) / m
-            #Find closest row in error matrix file
+            # Find closest row in error matrix file
             closest_row = (error_matrix['freq']-frequency).abs().argsort()[:1]
             closest_freq = error_matrix.iloc[closest_row]
             g = make_errors_genotype_model(v.genotypes, closest_freq)
             sd.add_site(position=v.site.position, alleles=v.alleles, genotypes=g)
     sd.finalise()
     return sd
+
 
 def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
     """
@@ -666,7 +667,7 @@ def run_ancestor_comparison(args):
     try:
         err = float(args.error)
     except ValueError:
-        err = args.error.replace("/","_")
+        err = args.error.replace("/", "_")
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
@@ -879,7 +880,7 @@ def run_ancestor_quality(args):
     try:
         err = float(args.error)
     except ValueError:
-        err = args.error.replace("/","_")
+        err = args.error.replace("/", "_")
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
@@ -1091,7 +1092,6 @@ def run_ancestor_quality(args):
     data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
     data['err_loF'] = (data["err_loF should be 1"] + data["err_loF should be 0"])
     Inaccuracy_label = "Sequence difference in overlapping region"
-
 
     print("{} ancestors, {} with at least one error".format(
         len(data), np.sum(data.n_mismatches != 0)))
