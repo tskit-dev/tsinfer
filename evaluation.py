@@ -1083,7 +1083,6 @@ def run_ancestor_quality(args):
     freq_repeated = np.repeat(np.arange(len(freq_bins)), freq_bins)
     # add another column on to the expected freq, as calculated from the actual time
     data['expected_Frequency'] = freq_repeated[data["Known time order"].values]
-
     data['n_mismatches'] = (data["err_hiF should be 1"] + data["err_loF should be 1"] +
                             data["err_hiF should be 0"] + data["err_loF should be 0"])
     data['Inaccuracy'] = data.n_mismatches / data.n_sites
@@ -1092,18 +1091,23 @@ def run_ancestor_quality(args):
         (data["err_hiF should be 1"] + data["err_loF should be 1"]) / data.n_mismatches
     data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
     data['err_loF'] = (data["err_loF should be 1"] + data["err_loF should be 0"])
-    Inaccuracy_label = "Sequence difference in overlapping region"
 
     print("{} ancestors, {} with at least one error".format(
         len(data), np.sum(data.n_mismatches != 0)))
     print(data[["err_hiF should be 1", "err_loF should be 1",
                 "err_hiF should be 0", "err_loF should be 0"]].sum())
     if args.csv_only:
-        data.to_csv(
-            name_format.format("error_data.csv"))
+        # Add some standard params to the CSV to make it easy to paste CSVs together
+        data["sample_size"] = args.sample_size
+        data["seq_length"] = args.length
+        data["mu"] = args.mutation_rate
+        data["rho"] = args.recombination_rate
+        data["seq_error"] = args.error
+        data.to_csv(name_format.format("error_data.csv"))
         return
 
     # Now do the plots
+    Inaccuracy_label = "Sequence difference in overlapping region"
     name = "quality-by-missingness"
     x_axis_length_metric = "fraction"  # or e.g. "fraction"
     data['abs_missing_l'] = (data["Real length"] - data["Overlap"])+1
