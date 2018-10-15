@@ -76,7 +76,7 @@ def make_errors_genotype_model(g, error_probs):
     g2 = [i for i, x in enumerate(genos) if x == (1, 1)]
 
     for idx in g0:
-        result=[(0, 0), (1, 0), (1, 1)][
+        result = [(0, 0), (1, 0), (1, 1)][
             np.random.choice(3, p=error_probs[['p00', 'p01', 'p02']].values[0])]
         if result == (1, 0):
             genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
@@ -89,8 +89,8 @@ def make_errors_genotype_model(g, error_probs):
         genos[idx] = [(0, 0), (0, 1), (1, 1)][
             np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
     for idx in g2:
-        result = [(0, 0), (1, 0), (1, 1)][np.random.choice(3,
-            p=error_probs[['p20', 'p21', 'p22']].values[0])]
+        result = [(0, 0), (1, 0), (1, 1)][
+            np.random.choice(3, p=error_probs[['p20', 'p21', 'p22']].values[0])]
         if result == (1, 0):
             genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
