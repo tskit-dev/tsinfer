@@ -67,7 +67,7 @@ def make_errors_genotype_model(g, error_probs):
     w = np.copy(g)
 
     # Make diploid (iterate each pair of alleles)
-    genos=[(w[i], w[i+1]) for i in range(0, w.shape[0], 2)]
+    genos = [(w[i], w[i+1]) for i in range(0, w.shape[0], 2)]
 
     # Record the true genotypes
     g0 = [i for i, x in enumerate(genos) if x == (0, 0)]
@@ -76,14 +76,14 @@ def make_errors_genotype_model(g, error_probs):
     g2 = [i for i, x in enumerate(genos) if x == (1, 1)]
 
     for idx in g0:
-        result=[(0,0),(1,0),(1,1)][np.random.choice(3,
-            p=error_probs[['p00','p01','p02']].values[0])]
-        if result == (1,0):
-            genos[idx] = [(0,1),(1,0)][np.random.choice(2)]
+        result=[(0, 0), (1, 0), (1, 1)][
+            np.random.choice(3, p=error_probs[['p00', 'p01', 'p02']].values[0])]
+        if result == (1, 0):
+            genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
             genos[idx] = result
     for idx in g1a:
-        genos[idx] = [(0, 0), (1, 0),(1, 1)][
+        genos[idx] = [(0, 0), (1, 0), (1, 1)][
             np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
     for idx in g1b:
         genos[idx] = [(0, 0), (0, 1), (1, 1)][
@@ -91,18 +91,19 @@ def make_errors_genotype_model(g, error_probs):
     for idx in g2:
         result = [(0, 0), (1, 0), (1, 1)][np.random.choice(3,
             p=error_probs[['p20', 'p21', 'p22']].values[0])]
-        if result == (1 ,0):
+        if result == (1, 0):
             genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
             genos[idx] = result
-            
+
     return(np.array(sum(genos, ())))
+
 
 def generate_samples(ts, error_param=0):
     """
-    Generate a samples file from a simulated ts based on the empirically estimated 
+    Generate a samples file from a simulated ts based on the empirically estimated
     error matrix saved in self.error_matrix.
-    Reject any variants that result in a fixed column. 
+    Reject any variants that result in a fixed column.
     """
     assert ts.num_sites != 0
     sd = tsinfer.SampleData(sequence_length=ts.sequence_length)
