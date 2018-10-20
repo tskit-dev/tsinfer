@@ -777,16 +777,15 @@ class Matcher(object):
         inference_sites = self.sample_data.sites_inference[:]
         position = self.sample_data.sites_position[:]
         tables = self.ancestors_ts.dump_tables()
+        num_ancestral_individuals = len(tables.individuals)
 
         # Currently there's no information about populations etc stored in the
         # ancestors ts.
         for metadata in self.sample_data.populations_metadata[:]:
             tables.populations.add_row(self.encode_metadata(metadata))
-        for location, metadata in zip(
-                self.sample_data.individuals_location[:],
-                self.sample_data.individuals_metadata[:]):
+        for ind in self.sample_data.individuals():
             tables.individuals.add_row(
-                location=location, metadata=self.encode_metadata(metadata))
+                location=ind.location, metadata=self.encode_metadata(ind.metadata))
 
         logger.debug("Adding tree sequence nodes")
         flags, time = tsb.dump_nodes()
@@ -813,7 +812,7 @@ class Matcher(object):
                 flags=flags[sample_id],
                 time=time[sample_id],
                 population=population,
-                individual=individual,
+                individual=num_ancestral_individuals + individual,
                 metadata=self.encode_metadata(metadata))
         # Add in the remaining non-sample nodes.
         for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):

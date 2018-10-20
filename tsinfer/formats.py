@@ -623,6 +623,17 @@ class Variant(object):
     alleles = attr.ib()
 
 
+@attr.s
+class Individual(object):
+    """
+    An Individual object.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    location = attr.ib()
+    metadata = attr.ib()
+
+
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
@@ -1243,6 +1254,12 @@ class SampleData(DataContainer):
             if index == samples[j]:
                 yield index, a
                 j += 1
+
+    def individuals(self):
+        # TODO document
+        iterator = zip(self.individuals_location[:], self.individuals_metadata[:])
+        for j, (location, metadata) in enumerate(iterator):
+            yield Individual(j, location=location, metadata=metadata)
 
 
 @attr.s
