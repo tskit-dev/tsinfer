@@ -798,7 +798,6 @@ class TestAncestorsTreeSequenceFlags(unittest.TestCase):
                 self.assertTrue(np.all(flags[non_samples] == source_flags[non_samples]))
 
     def test_no_flags_changes(self):
-
         ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
@@ -816,6 +815,65 @@ class TestAncestorsTreeSequenceFlags(unittest.TestCase):
         tables.nodes.add_row(flags=1 << 17, time=1.1)
         tables.nodes.add_row(flags=1 << 18, time=1.0)
         self.verify(samples, tables.tree_sequence())
+
+
+class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
+    """
+    Checks that we can have individuals in the ancestors tree sequence and
+    that they are correctly preserved in the final TS.
+    """
+    def verify(self, sample_data, ancestors_ts):
+        ts = tsinfer.match_samples(sample_data, ancestors_ts, simplify=False)
+        self.assertEqual(
+            ancestors_ts.num_individuals + sample_data.num_individuals,
+            ts.num_individuals)
+        # The ancestors individiduals should come first.
+        final_individuals = ts.individuals()
+        for ind in ancestors_ts.individuals():
+            final_ind = next(final_individuals)
+            self.assertEqual(final_ind, ind)
+            # The nodes for this individual should *not* be samples.
+            for u in final_ind.nodes:
+                node = ts.node(u)
+                self.assertFalse(node.is_sample())
+
+        for ind1, ind2 in zip(final_individuals, sample_data.individuals()):
+            self.assertTrue(np.array_equal(ind1.location, ind2.location))
+            self.assertEqual(json.loads(ind1.metadata.decode()), ind2.metadata)
+            # The nodes for this individual should *not* be samples.
+            for u in ind1.nodes:
+                node = ts.node(u)
+                self.assertTrue(node.is_sample())
+
+    def test_zero_individuals(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestors = tsinfer.generate_ancestors(samples)
+        ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
+        self.verify(samples, ancestors_ts)
+
+    def test_diploid_individuals(self):
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        tables = ts.dump_tables()
+        for j in range(ts.num_samples // 2):
+            tables.individuals.add_row(flags=j, location=[j, j], metadata=b"X" * j)
+        # Add these individuals to the first n nodes.
+        individual = np.zeros(ts.num_nodes, dtype=np.int32) - 1
+        x = np.arange(ts.num_samples // 2)
+        individual[2 * x] = x
+        individual[2 * x + 1] = x
+        tables.nodes.set_columns(
+            flags=tables.nodes.flags,
+            time=tables.nodes.time,
+            individual=individual)
+        ts = tables.tree_sequence()
+        with tsinfer.SampleData() as samples:
+            for j in range(ts.num_samples // 2):
+                samples.add_individual(ploidy=2, location=[100 * j], metadata={"X": j})
+            for var in ts.variants():
+                samples.add_site(var.site.position, var.genotypes)
+        ancestors_ts = eval_util.make_ancestors_ts(samples, ts)
+        self.verify(samples, ancestors_ts)
 
 
 class AlgorithmsExactlyEqualMixin(object):

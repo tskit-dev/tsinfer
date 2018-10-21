@@ -888,7 +888,6 @@ def run_ancestor_quality(args):
         args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
             args.sample_size, args.Ne, args.length, args.mutation_rate,
             args.recombination_rate, err))
-
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
     shared_positions = np.array(list(sorted(anc_indices.keys())))
     # append sequence_length to pos so that ancestors_end[:] indices are always valid
