@@ -625,7 +625,7 @@ def sim_true_and_inferred_ancestors(args):
         "length": args.length * MB,
         "recombination_rate": args.recombination_rate,
         "mutation_rate": args.mutation_rate,
-        "Ne": 10**4,
+        "Ne": args.Ne,
         "model": "smc_prime",
         "random_seed": rng.randint(1, 2**30)}
     ts = msprime.simulate(**sim_args)
@@ -672,9 +672,9 @@ def run_ancestor_comparison(args):
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-comp_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-            err))
+        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+            args.sample_size, args.Ne, args.length, args.mutation_rate, 
+            args.recombination_rate, err))
     if args.store_data:
         # TODO Are we using this option for anything?
         filename = name_format.format("length.json")
@@ -885,9 +885,9 @@ def run_ancestor_quality(args):
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-qual_n={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
-            err))
+        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+            args.sample_size, args.Ne, args.length, args.mutation_rate,
+            args.recombination_rate, err))
 
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
     shared_positions = np.array(list(sorted(anc_indices.keys())))
@@ -1326,7 +1326,7 @@ def run_perfect_inference(args):
         model = "hudson"
     for seed in range(1, args.num_replicates + 1):
         base_ts = msprime.simulate(
-            args.sample_size, Ne=10**4, length=args.length * 10**6,
+            args.sample_size, Ne=args.Ne, length=args.length * 10**6,
             recombination_rate=1e-8, random_seed=args.random_seed + seed,
             model=model)
         print("simulated ts with n={} and {} trees; seed={}".format(
@@ -1392,6 +1392,7 @@ if __name__ == "__main__":
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument("--Ne", "-N", type=int, default=10**4)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument("--num-replicates", "-R", type=int, default=1)
@@ -1477,6 +1478,7 @@ if __name__ == "__main__":
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_properties)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
+    parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument(
@@ -1504,6 +1506,7 @@ if __name__ == "__main__":
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_comparison)
     parser.add_argument("--sample-size", "-n", type=int, default=100)
+    parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument(
@@ -1537,6 +1540,7 @@ if __name__ == "__main__":
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_quality)
     parser.add_argument("--sample-size", "-n", type=int, default=100)
+    parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
         "--length", "-l", type=float, default=1, help="Sequence length in MB")
     parser.add_argument(
