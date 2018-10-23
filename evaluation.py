@@ -673,7 +673,7 @@ def run_ancestor_comparison(args):
             err = err[:-len(".csv")]
     name_format = os.path.join(
         args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate, 
+            args.sample_size, args.Ne, args.length, args.mutation_rate,
             args.recombination_rate, err))
     if args.store_data:
         # TODO Are we using this option for anything?
