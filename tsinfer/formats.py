@@ -676,8 +676,8 @@ class SampleData(DataContainer):
 
         with tsinfer.SampleData(path="mydata.samples") as sample_data:
             # Define populations
-            sample_data.population(metadata={"name": "CEU"})
-            sample_data.population(metadata={"name": "YRI"})
+            sample_data.add_population(metadata={"name": "CEU"})
+            sample_data.add_population(metadata={"name": "YRI"})
             # Define individuals
             sample_data.add_individual(
                 ploidy=2, population=0, metadata={"name": "NA12878"})

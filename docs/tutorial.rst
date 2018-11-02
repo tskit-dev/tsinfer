@@ -28,7 +28,7 @@ scope of this manual. Assuming that we know the ancestral state, we can then imp
 
     import tsinfer
 
-    with tsinfer.SampleData() as sample_data:
+    with tsinfer.SampleData(sequence_length=6) as sample_data:
         sample_data.add_site(0, [0, 1, 0, 0, 0], ["A", "T"])
         sample_data.add_site(1, [0, 0, 0, 1, 1], ["G", "C"])
         sample_data.add_site(2, [0, 1, 1, 0, 0], ["C", "A"])
