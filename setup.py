@@ -50,6 +50,7 @@ setup(
         "humanize",
         "daiquiri",
         "msprime>=0.6.1",
+        "numcodecs>=0.6",
         "zarr>=2.2",
         "lmdb",
         "sortedcontainers",
