@@ -28,6 +28,7 @@ import warnings
 
 import numpy as np
 import msprime
+import numcodecs
 import numcodecs.blosc as blosc
 import zarr
 
@@ -1051,13 +1052,13 @@ class BufferedItemWriterMixin(object):
         for chunks in [1, 2, 5, 10, 100]:
             n = 10
             z = zarr.empty(
-                n, dtype=object, object_codec=formats.TempJSON(), chunks=(chunks,))
+                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,))
             for j in range(n):
                 z[j] = {str(k): k for k in range(j)}
             self.filter_warnings_verify_round_trip({"z": z})
 
     def test_empty_string_list(self):
-        z = zarr.empty(1, dtype=object, object_codec=formats.TempJSON(), chunks=(2,))
+        z = zarr.empty(1, dtype=object, object_codec=numcodecs.JSON(), chunks=(2,))
         z[0] = ["", ""]
         self.filter_warnings_verify_round_trip({"z": z})
 

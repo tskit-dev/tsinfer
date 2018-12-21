@@ -43,38 +43,6 @@ import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
 
 
-####################
-
-# Temporary implemention of the fixed JSON codec implemented here:
-# https://github.com/zarr-developers/numcodecs/pull/77
-# Remove once this has been released.
-class TempJSON(numcodecs.JSON):
-
-    codec_id = "json2"
-
-    def encode(self, buf):
-        buf = np.asanyarray(buf)
-        items = buf.tolist()
-        items.append(buf.dtype.str)
-        items.append(buf.shape)
-        return self._encoder.encode(items).encode(self._text_encoding)
-
-    def decode(self, buf, out=None):
-        buf = numcodecs.compat.buffer_tobytes(buf)
-        items = self._decoder.decode(buf.decode(self._text_encoding))
-        dec = np.empty(items[-1], dtype=items[-2])
-        dec[:] = items[:-2]
-        if out is not None:
-            np.copyto(out, dec)
-            return out
-        else:
-            return dec
-
-
-numcodecs.register_codec(TempJSON)
-
-####################
-
 # FIXME need some global place to keep these constants
 UNKNOWN_ALLELE = 255
 
@@ -280,7 +248,7 @@ class DataContainer(object):
             compressor = DEFAULT_COMPRESSOR
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = TempJSON()
+        self._metadata_codec = numcodecs.JSON()
         self._compressor = compressor
         self.data = zarr.group()
         self.path = path
@@ -676,8 +644,8 @@ class SampleData(DataContainer):
 
         with tsinfer.SampleData(path="mydata.samples") as sample_data:
             # Define populations
-            sample_data.population(metadata={"name": "CEU"})
-            sample_data.population(metadata={"name": "YRI"})
+            sample_data.add_population(metadata={"name": "CEU"})
+            sample_data.add_population(metadata={"name": "YRI"})
             # Define individuals
             sample_data.add_individual(
                 ploidy=2, population=0, metadata={"name": "NA12878"})

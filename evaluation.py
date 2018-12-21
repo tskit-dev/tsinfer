@@ -673,7 +673,7 @@ def run_ancestor_comparison(args):
             err = err[:-len(".csv")]
     name_format = os.path.join(
         args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate, 
+            args.sample_size, args.Ne, args.length, args.mutation_rate,
             args.recombination_rate, err))
     if args.store_data:
         # TODO Are we using this option for anything?
@@ -1325,7 +1325,7 @@ def run_perfect_inference(args):
         model = "hudson"
     for seed in range(1, args.num_replicates + 1):
         base_ts = msprime.simulate(
-            args.sample_size, args.Ne, length=args.length * 10**6,
+            args.sample_size, Ne=args.Ne, length=args.length * 10**6,
             recombination_rate=1e-8, random_seed=args.random_seed + seed,
             model=model)
         print("simulated ts with n={} and {} trees; seed={}".format(
