@@ -126,12 +126,12 @@ file format, we provide a simple :ref:`Python API <sec_api_file_formats>`
 to allow the user to efficiently construct it from their own data.
 An example of how to use this API is given in the :ref:`sec_tutorial`.
 
-We do not provide an automatic means of important data from a VCF
-intentionally, as we believe that this would be extremely difficult to do.
+We do not provide an automatic means of importing data from VCF (or any
+other format) intentionally, as we believe that this would be extremely difficult to do.
 As there is no universally accepted way of encoding ancestral state
 information in VCF, in practise the user would most often have to write
-a new VCF file with ancestral state and metadata information in the form
-that we require. Thus, it is more efficient to skip this intermediate
+a new VCF file with ancestral state and metadata information in a specific
+form that we would require. Thus, it is more efficient to skip this intermediate
 step and to directly produce a :ref:`format <sec_file_formats_samples>`
 that is both compact and very efficient to process.
 

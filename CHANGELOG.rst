@@ -1,4 +1,18 @@
 ********************
+[0.1.4] - 2018-12-12
+********************
+
+Bugfix release.
+
+- Fix issue caused by upstream changes in numcodecs (#136).
+
+********************
+[0.1.3] - 2018-11-02
+********************
+
+Release corresponding to code used in the preprint.
+
+********************
 [0.1.2] - 2018-06-18
 ********************
 
