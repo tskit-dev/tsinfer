@@ -346,15 +346,13 @@ class AncestorsGenerator(object):
                 self.sample_data.genotypes(inference_sites=True)):
             frequency = int(np.sum(genotypes))
             if variant_ages is None:
-                #assume age == frequency, use 
-                self.ancestor_builder.add_site(j, frequency, genotypes, 
-                    ancestor_uid=genotypes.tobytes(), age=frequency)
+                #assume age == frequency, the default
+                self.ancestor_builder.add_site(j, frequency, genotypes)
             else:
                 over_node, age = variant_ages[j]
                 assert len(variant_ages) == self.num_sites
-                self.ancestor_builder.add_site(
-                    j, int(frequency), genotypes, 
-                    ancestor_uid=over_node, age=age)
+                self.ancestor_builder.add_site(j, int(frequency), genotypes, age=age,
+                    ancestor_uid=over_node)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")

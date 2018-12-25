@@ -80,29 +80,39 @@ class AncestorBuilder(object):
         # consisting of a dictionary of uid=>[array_of_site_ids]
         self.age_map = collections.defaultdict(dict)
         
-    def add_site(self, site_id, frequency, genotypes, ancestor_uid, age=None):
+    def add_site(self, site_id, frequency, genotypes, age=None, ancestor_uid=None):
         """
         Adds a new site at the specified ID and allele pattern to the builder.
         Normally we build ancestors by taking frequency order as a proxy for age order,
         but for testing purposes, we can also pass in specific age that this variant was
         generated, and the order of these ages will be used in the matching algorithm. 
-        If frequency is used as a proxy for age, the ancestor_uid is expected to be
-        a genotypes.tobytes() object indicating which samples have the variant. If an
-        actual age is used, the ancestor_uid could simply be the node over which this
-        variant was generated.
+        The parameter ancestor_uid specifies whether this site should be put onto the
+        same ancestor as another site at the same age. If it is "None", we place all
+        sites with the same variant distribution onto the same ancestor. If it is False,
+        we create a new ancestor for every site.
         """
         assert frequency > 1
         if age is None:
             # treat frequency as age
             self.sites[site_id] = Site(site_id, frequency, genotypes)
             pattern_map = self.age_map[frequency]
-            # we expect the uid to be from genotypes.tobytes()
-            assert isinstance(ancestor_uid, bytes)
         else:
             self.sites[site_id] = Site(site_id, frequency, genotypes, age)
             pattern_map = self.age_map[age]
-        
-        # Each unique pattern gets added to the list
+
+        if ancestor_uid is None:
+            # This is the norm. Sites with an identical variant distribution (i.e.
+            # with the same genotypes.tobytes() value) are put into the same ancestor
+            ancestor_uid = genotypes.tobytes()
+        elif ancestor_uid == False:
+            # each site creates a new ancestor
+            ancestor_uid = -site_id # use the negative site_id, which should never clash
+            assert ancestor_uid not in pattern_map
+        else:
+            # don't allow bytes objects as uids, as we use these internally
+            assert not isinstance(ancestor_uid, bytes)
+
+        # Add each site to the list for this ancestor_uid
         if ancestor_uid not in pattern_map:
             pattern_map[ancestor_uid] = []
         pattern_map[ancestor_uid].append(site_id)
