@@ -101,9 +101,11 @@ def make_errors_genotype_model(g, error_probs):
 
 def generate_samples(ts, error_param=0):
     """
-    Generate a samples file from a simulated ts based on the empirically estimated
+    Generate a samples file and a map of genome pos => (nodeid, age) for each
+    site from a simulated ts based on the empirically estimated
     error matrix saved in self.error_matrix.
-    Reject any variants that result in a fixed column.
+    With error, some variants may result in a fixed column, but this should be dealt with
+    OK by tsinfer.
     """
     assert ts.num_sites != 0
     sd = tsinfer.SampleData(sequence_length=ts.sequence_length)
@@ -127,6 +129,19 @@ def generate_samples(ts, error_param=0):
     sd.finalise()
     return sd
 
+def variant_ages(ts):
+    """
+    Return the ages for each derived variant, matching the order of sites returned by 
+    generate_samples().
+
+    """
+    ages = {}
+    for v in ts.variants():
+        mutations = v.site.mutations
+        assert len(mutations) == 1 # check only one mutation per variant => i.s.
+        assert v.position not in ages
+        ages[v.position] = (mutations[0].node, ts.node(mutations[0].node).time)
+    return ages
 
 def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
     """
