@@ -350,7 +350,7 @@ class AncestorsGenerator(object):
                 self.ancestor_builder.add_site(
                     j, int(frequency), genotypes, over_node, age=age)
             else:
-                #assume
+                #assume age == frequency
                 self.ancestor_builder.add_site(
                     j, int(frequency), genotypes, genotypes.tobytes())
             progress.update()
@@ -361,11 +361,11 @@ class AncestorsGenerator(object):
         a = np.zeros(self.num_sites, dtype=np.uint8)
         for age, focal_sites in self.descriptors:
             before = time.perf_counter()
-            a, returned_age, s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
+            s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor at age {} ({}) with {} focal sites and length={} in {:.2f}s.".format(
-                    age, returned_age, focal_sites.shape[0], e - s, duration))
+                "Made ancestor at age {} with {} focal sites and length={} in {:.2f}s.".format(
+                    age, focal_sites.shape[0], e - s, duration))
             self.ancestor_data.add_ancestor(
                 start=s, end=e, time=self.time_map[age], focal_sites=focal_sites,
                 haplotype=a[s:e])
@@ -404,7 +404,7 @@ class AncestorsGenerator(object):
                 if work is None:
                     break
                 index, time, focal_sites = work
-                a, age, start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
+                start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
                 with add_lock:
                     haplotype = a[start: end].copy()
                     heapq.heappush(

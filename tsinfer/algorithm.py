@@ -241,7 +241,7 @@ class AncestorBuilder(object):
                 a, focal_site, range(focal_site - 1, -1, -1))
         assert a[last_site] != constants.UNKNOWN_ALLELE
         start = last_site
-        return a, focal_age, start, end
+        return start, end
 
         # Version with 1 focal site
         # assert len(focal_sites) == 1
