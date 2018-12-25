@@ -171,8 +171,9 @@ def infer(
 
 
 def generate_ancestors(
-        sample_data, num_threads=0, progress_monitor=None, engine=constants.C_ENGINE, 
-        nodes_ages=None, **kwargs):
+        sample_data, num_threads=0, progress_monitor=None, 
+        engine=constants.C_ENGINE, variant_age_by_position=None, # params for debugging
+        **kwargs):
     """
     generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
 
@@ -198,16 +199,16 @@ def generate_ancestors(
     """
     progress_monitor = _get_progress_monitor(progress_monitor)
     with formats.AncestorData(sample_data, **kwargs) as ancestor_data:
-        if nodes_ages is not None:
-            #make an array of (node num,pos) entries corresponding to the variant numbers
-            sites_nodes_ages = [nodes_ages[v.site.position]
-                for v in sample_data.variants(inference_sites=True)]
-        else:
-            sites_nodes_ages = None
         generator = AncestorsGenerator(
             sample_data, ancestor_data, progress_monitor, engine=engine,
             num_threads=num_threads)
-        generator.add_sites(sites_nodes_ages)
+        if variant_age_by_position is not None:
+            #make an array of (node num,pos) entries corresponding to the variant numbers
+            variant_ages = [variant_age_by_position[v.site.position]
+                for v in sample_data.variants(inference_sites=True)]
+            generator.add_sites(variant_ages)
+        else:
+            generator.add_sites()
         generator.run()
         ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
@@ -335,7 +336,7 @@ class AncestorsGenerator(object):
         else:
             raise ValueError("Unknown engine:{}".format(engine))
 
-    def add_sites(self, sites_nodes_ages=None):
+    def add_sites(self, variant_ages=None):
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         # There may be multiple samples at the same age/freq, we store 
@@ -343,16 +344,17 @@ class AncestorsGenerator(object):
         # distributions
         for j, (site_id, genotypes) in enumerate(
                 self.sample_data.genotypes(inference_sites=True)):
-            frequency = np.sum(genotypes)
-            if sites_nodes_ages:
-                over_node, age = sites_nodes_ages[j]
-                assert len(sites_nodes_ages) == self.num_sites
-                self.ancestor_builder.add_site(
-                    j, int(frequency), genotypes, over_node, age=age)
+            frequency = int(np.sum(genotypes))
+            if variant_ages is None:
+                #assume age == frequency, use 
+                self.ancestor_builder.add_site(j, frequency, genotypes, 
+                    ancestor_uid=genotypes.tobytes(), age=frequency)
             else:
-                #assume age == frequency
+                over_node, age = variant_ages[j]
+                assert len(variant_ages) == self.num_sites
                 self.ancestor_builder.add_site(
-                    j, int(frequency), genotypes, genotypes.tobytes())
+                    j, int(frequency), genotypes, 
+                    ancestor_uid=over_node, age=age)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
