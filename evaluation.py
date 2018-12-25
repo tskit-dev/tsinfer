@@ -101,11 +101,9 @@ def make_errors_genotype_model(g, error_probs):
 
 def generate_samples(ts, error_param=0):
     """
-    Generate a samples file and a map of genome pos => (nodeid, age) for each
-    site from a simulated ts based on the empirically estimated
+    Generate a samples file from a simulated ts based on the empirically estimated
     error matrix saved in self.error_matrix.
-    With error, some variants may result in a fixed column, but this should be dealt with
-    OK by tsinfer.
+    Reject any variants that result in a fixed column.
     """
     assert ts.num_sites != 0
     sd = tsinfer.SampleData(sequence_length=ts.sequence_length)
@@ -129,7 +127,8 @@ def generate_samples(ts, error_param=0):
     sd.finalise()
     return sd
 
-def variant_ages(ts):
+
+def variant_age_at_position(ts):
     """
     Return the ages for each derived variant, matching the order of sites returned by 
     generate_samples().
@@ -143,19 +142,28 @@ def variant_ages(ts):
         ages[v.position] = (mutations[0].node, ts.node(mutations[0].node).time)
     return ages
 
-def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
+
+def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="infer"):
     """
     Runs the perfect inference process on the specified tree sequence.
+    :param string ancestors: A string, either "infer", "exact", or "ideal_age"
     """
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
-    if exact_ancestors:
+    if ancestors == "infer":
+        ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
+    elif ancestors == "exact":
         ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
+    elif ancestors == "ideal_age":
+        assert engine == tsinfer.PY_ENGINE #until we imlement a C version
+        ages_by_position = variant_age_at_position(ts)
+        ancestor_data = tsinfer.generate_ancestors(
+            sample_data, engine=engine, variant_age_by_position=ages_by_position)
     else:
-        ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
-
+        raise ValueError("Parameter 'ancestors' must be 'infer', 'exact' or 'ideal_age'")
+        
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
         engine=engine)
@@ -176,65 +184,33 @@ def edges_performance_worker(args):
         warnings.warn("Dropping simulation with no variants")
         return {}
 
-    before = time.perf_counter()
-    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False, engine=engine)
-    estimated_ancestors_time = time.perf_counter() - before
-    num_children = []
-    for edgeset in estimated_ancestors_ts.edgesets():
-        num_children.append(len(edgeset.children))
-    estimated_ancestors_num_children = np.array(num_children)
+    ts={}
+    results = {'source_n_trees':smc_ts.num_trees, 'source_n_edges': smc_ts.num_edges,
+        'num_sites': smc_ts.num_sites, 'sim_time': sim_time}
+    for anc in ('infer', 'exact', 'ideal_age'):
+        before = time.perf_counter()
+        ts[anc] = run_infer(smc_ts, ancestors=anc, engine=engine)
+        results[anc+"_anc_time"] = time.perf_counter() - before
+        n_children = []
+        for edgeset in ts[anc].edgesets():
+            n_children.append(len(edgeset.children))
+        num_children = np.array(n_children)
+        results[anc+"_anc_mean_children"] = np.mean(num_children)
+        results[anc+"_anc_max_children"] = np.max(num_children)
+        results[anc+"_anc_n_trees"] = ts[anc].num_trees
+        results[anc+"_anc_n_edges"] = ts[anc].num_edges
 
-    before = time.perf_counter()
-    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True, engine=engine)
-    exact_ancestors_time = time.perf_counter() - before
-    num_children = []
-    for edgeset in exact_ancestors_ts.edgesets():
-        num_children.append(len(edgeset.children))
-    exact_ancestors_num_children = np.array(num_children)
-
-    results = {
-        "sim_time": sim_time,
-        "estimated_anc_time": estimated_ancestors_time,
-        "exact_anc_time": exact_ancestors_time,
-        "num_sites": smc_ts.num_sites,
-        "source_num_trees": smc_ts.num_trees,
-        "estimated_anc_trees": estimated_ancestors_ts.num_trees,
-        "exact_anc_trees": exact_ancestors_ts.num_trees,
-        "source_edges": smc_ts.num_edges,
-        "estimated_anc_edges": estimated_ancestors_ts.num_edges,
-        "exact_anc_edges": exact_ancestors_ts.num_edges,
-        "estimated_anc_max_children": np.max(estimated_ancestors_num_children),
-        "estimated_anc_mean_children":
-            np.mean(estimated_ancestors_num_children),
-        "exact_anc_max_children": np.max(exact_ancestors_num_children),
-        "exact_anc_mean_children":
-            np.mean(exact_ancestors_num_children),
-    }
     results.update(simulation_args)
     if tree_metrics:
-        before = time.perf_counter()
-        breakpoints, kc_distance = tsinfer.compare(smc_ts, exact_ancestors_ts)
-        d = breakpoints[1:] - breakpoints[:-1]
-        d /= breakpoints[-1]
-        exact_anc_kc_distance_weighted = np.sum(kc_distance * d)
-        exact_anc_perfect_trees = np.sum((kc_distance == 0) * d)
-        exact_anc_kc_mean = np.mean(kc_distance)
-        breakpoints, kc_distance = tsinfer.compare(smc_ts, estimated_ancestors_ts)
-        d = breakpoints[1:] - breakpoints[:-1]
-        d /= breakpoints[-1]
-        estimated_anc_kc_distance_weighted = np.sum(kc_distance * d)
-        estimated_anc_perfect_trees = np.sum((kc_distance == 0) * d)
-        estimated_anc_kc_mean = np.mean(kc_distance)
-        tree_metrics_time = time.perf_counter() - before
-        results.update({
-            "tree_metrics_time": tree_metrics_time,
-            "exact_anc_kc_distance_weighted": exact_anc_kc_distance_weighted,
-            "exact_anc_perfect_trees": exact_anc_perfect_trees,
-            "exact_anc_kc_mean": exact_anc_kc_mean,
-            "estimated_anc_kc_distance_weighted": estimated_anc_kc_distance_weighted,
-            "estimated_anc_perfect_trees": estimated_anc_perfect_trees,
-            "estimated_anc_kc_mean": estimated_anc_kc_mean,
-        })
+        for anc in ('infer', 'exact', 'ideal_age'):
+            before = time.perf_counter()
+            breakpoints, kc_distance = tsinfer.compare(smc_ts, ts[anc])
+            d = breakpoints[1:] - breakpoints[:-1]
+            d /= breakpoints[-1]
+            results.update({anc+'_tree_metrics_time': time.perf_counter() - before,
+                anc+"_anc_kc_distance_weighted": np.sum(kc_distance * d),
+                anc+"_anc_perfect_trees": np.sum((kc_distance == 0) * d),
+                anc+"_anc_kc_mean": np.mean(kc_distance)})
     return results
 
 
@@ -283,11 +259,14 @@ def run_edges_performance(args):
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
 
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_edges / dfg.source_edges,
-        label="estimated ancestors")
+        dfg.num_sites, dfg.infer_anc_n_edges / dfg.source_n_edges,
+        label="inferred ancestors")
     plt.plot(
-        dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges,
+        dfg.num_sites, dfg.exact_anc_n_edges / dfg.source_n_edges,
         label="exact ancestors")
+    plt.plot(
+        dfg.num_sites, dfg.ideal_age_anc_n_edges / dfg.source_n_edges,
+        label="inferred ancestors with exact age")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
@@ -297,11 +276,11 @@ def run_edges_performance(args):
     save_figure(name_format.format("edges"))
 
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_mean_children,
-        label="estimated ancestors mean", color="blue")
+        dfg.num_sites, dfg.infer_anc_mean_children,
+        label="inferred ancestors mean", color="blue")
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_max_children,
-        label="estimated ancestors max", color="blue", linestyle=":")
+        dfg.num_sites, dfg.infer_anc_max_children,
+        label="inferred ancestors max", color="blue", linestyle=":")
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
@@ -314,6 +293,12 @@ def run_edges_performance(args):
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
+    plt.plot(
+        dfg.num_sites, dfg.ideal_age_anc_mean_children,
+        label="inferred ancestors with exact age mean", color="green")
+    plt.plot(
+        dfg.num_sites, dfg.ideal_age_anc_max_children,
+        label="inferred ancestors with exact age max", color="green", linestyle=":")
     plt.ylabel("num_children")
     plt.xlabel("Num sites")
     plt.legend()
@@ -321,12 +306,12 @@ def run_edges_performance(args):
     plt.clf()
 
     if args.compute_tree_metrics:
-        plt.plot(
-            dfg.num_sites, dfg.estimated_anc_kc_distance_weighted,
-            label="estimated ancestors")
-        plt.plot(
-            dfg.num_sites, dfg.exact_anc_kc_distance_weighted,
-            label="exact ancestors")
+        ydata_titles = [
+            ('infer', 'inferred ancestors'),
+            ('exact', 'exact ancestors'),
+            ('ideal_age', 'inferred ancestors with exact age')]
+        for y, l in ydata_titles:
+            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_kc_distance_weighted'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
@@ -336,12 +321,8 @@ def run_edges_performance(args):
         save_figure(name_format.format("kc_distance_weighted"))
         plt.clf()
 
-        plt.plot(
-            dfg.num_sites, dfg.estimated_anc_kc_mean,
-            label="estimated ancestors")
-        plt.plot(
-            dfg.num_sites, dfg.exact_anc_kc_mean,
-            label="exact ancestors")
+        for y, l in ydata_titles:
+            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_kc_mean'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
@@ -351,12 +332,8 @@ def run_edges_performance(args):
         save_figure(name_format.format("kc_mean"))
         plt.clf()
 
-        plt.plot(
-            dfg.num_sites, dfg.estimated_anc_perfect_trees,
-            label="estimated ancestors")
-        plt.plot(
-            dfg.num_sites, dfg.exact_anc_perfect_trees,
-            label="exact ancestors")
+        for y, l in ydata_titles:
+            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_perfect_trees'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
@@ -903,6 +880,7 @@ def run_ancestor_quality(args):
         args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
             args.sample_size, args.Ne, args.length, args.mutation_rate,
             args.recombination_rate, err))
+
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
     shared_positions = np.array(list(sorted(anc_indices.keys())))
     # append sequence_length to pos so that ancestors_end[:] indices are always valid
@@ -1294,14 +1272,14 @@ def run_node_degree(args):
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
-            smc_ts, engine=engine, exact_ancestors=False,
+            smc_ts, engine=engine, ancestors='infer',
             path_compression=path_compression)
         degree, depth = get_node_degree_by_depth(estimated_ancestors_ts)
         df = df.append(pd.DataFrame({
             "degree": degree, "depth": depth, "type": "estimated",
             "path_compression": path_compression}))
         exact_ancestors_ts = run_infer(
-            smc_ts, engine=engine, exact_ancestors=True,
+            smc_ts, engine=engine, ancestors='exact',
             path_compression=path_compression)
         degree, depth = get_node_degree_by_depth(exact_ancestors_ts)
         df = df.append(pd.DataFrame({
