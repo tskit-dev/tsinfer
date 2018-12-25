@@ -154,7 +154,7 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestor
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
     else:
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
 
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
@@ -166,7 +166,7 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestor
 
 
 def edges_performance_worker(args):
-    simulation_args, tree_metrics = args
+    simulation_args, tree_metrics, engine = args
     before = time.perf_counter()
     smc_ts = msprime.simulate(**simulation_args)
     sim_time = time.perf_counter() - before
@@ -177,7 +177,7 @@ def edges_performance_worker(args):
         return {}
 
     before = time.perf_counter()
-    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False)
+    estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False, engine=engine)
     estimated_ancestors_time = time.perf_counter() - before
     num_children = []
     for edgeset in estimated_ancestors_ts.edgesets():
@@ -185,7 +185,7 @@ def edges_performance_worker(args):
     estimated_ancestors_num_children = np.array(num_children)
 
     before = time.perf_counter()
-    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True)
+    exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True, engine=engine)
     exact_ancestors_time = time.perf_counter() - before
     num_children = []
     for edgeset in exact_ancestors_ts.edgesets():
@@ -256,7 +256,7 @@ def run_edges_performance(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, args.compute_tree_metrics))
+            work.append((sim_args, args.compute_tree_metrics, args.engine))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -1290,7 +1290,7 @@ def run_node_degree(args):
         "random_seed": rng.randint(1, 2**30)}
     smc_ts = msprime.simulate(**sim_args)
 
-    engine = tsinfer.C_ENGINE
+    engine = args.engine
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
