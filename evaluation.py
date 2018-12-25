@@ -157,7 +157,7 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="inf
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
     elif ancestors == "ideal_age":
-        assert engine == tsinfer.PY_ENGINE #until we imlement a C version
+        assert engine == tsinfer.PY_ENGINE #until we implement a C version
         ages_by_position = variant_age_at_position(ts)
         ancestor_data = tsinfer.generate_ancestors(
             sample_data, engine=engine, variant_age_by_position=ages_by_position)
