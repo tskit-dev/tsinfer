@@ -364,8 +364,10 @@ class AncestorsGenerator(object):
             s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor at age {} with {} focal sites and length={} in {:.2f}s.".format(
-                    age, focal_sites.shape[0], e - s, duration))
+                "Made ancestor in {:.2f}s at nominal age {} (timestep {}) "
+                "from {} to {} (l={}) with {} focal sites ({})".format(
+                    duration, age, self.time_map[age], e, s, e-s, 
+                    focal_sites.shape[0], focal_sites))
             self.ancestor_data.add_ancestor(
                 start=s, end=e, time=self.time_map[age], focal_sites=focal_sites,
                 haplotype=a[s:e])
