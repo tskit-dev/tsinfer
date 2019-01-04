@@ -26,6 +26,7 @@ import msprime
 import tsinfer
 import tsinfer.cli as cli
 
+logger = logging.getLogger(__name__)
 
 # Set by the CLI.
 global _output_format
@@ -151,19 +152,23 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="inf
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
     if ancestors == "infer":
+        logger.info("Generating ancestors normally")
         ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
     elif ancestors == "exact":
+        logger.info("Generating exact ancestors from original tree sequence")
         ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
     elif ancestors == "ideal_age":
-        assert engine == tsinfer.PY_ENGINE #until we implement a C version
+        logger.info("Generating ancestors with times taken from original tree sequence")
+        engine = tsinfer.PY_ENGINE #until we implement a C version
         ages_by_position = variant_age_at_position(ts)
         ancestor_data = tsinfer.generate_ancestors(
             sample_data, engine=engine, variant_age_by_position=ages_by_position)
     else:
         raise ValueError("Parameter 'ancestors' must be 'infer', 'exact' or 'ideal_age'")
         
+    logger.info("Running matching process")
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
         engine=engine)
@@ -1371,6 +1376,9 @@ if __name__ == "__main__":
     top_parser.add_argument(
         "-o", "--output-format", default="png",
         help="The output format for plots")
+    top_parser.add_argument(
+        "-v", "--verbosity", action="count", default=0,
+        help="Verbosity level")
     top_parser.add_argument(
         "-e", "--engine", default=tsinfer.C_ENGINE,
         help="The implementation to use.")
