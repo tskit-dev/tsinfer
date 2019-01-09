@@ -175,6 +175,7 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="inf
         raise ValueError("Parameter 'ancestors' must be 'infer', 'exact' or 'ideal_age'")
         
     logger.info("Running matching process")
+
     ancestors_ts = tsinfer.match_ancestors(
         sample_data, ancestor_data, path_compression=path_compression,
         engine=engine)
