@@ -347,18 +347,19 @@ class AncestorsGenerator(object):
         """
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
-        # There may be multiple samples at the same age/freq, we store 
+        # There may be multiple samples at the same age/freq, we store
         # the site_id in a dict for each age, keyed by pattern of site
         # distributions
         for j, (site_id, genotypes) in enumerate(
                 self.sample_data.genotypes(inference_sites=True)):
             frequency = int(np.sum(genotypes))
             if variant_ages is None:
-                #assume age == frequency, the default
+                # assume age == frequency, the default
                 self.ancestor_builder.add_site(j, frequency, genotypes)
             else:
                 assert len(variant_ages) == self.num_sites
-                self.ancestor_builder.add_site(j, frequency, genotypes, age=variant_ages[j])
+                self.ancestor_builder.add_site(
+                    j, frequency, genotypes, age=variant_ages[j])
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
@@ -372,7 +373,7 @@ class AncestorsGenerator(object):
             logger.debug(
                 "Made ancestor in {:.2f}s at nominal age {} (timestep {}) "
                 "from {} to {} (l={}) with {} focal sites ({})".format(
-                    duration, age, self.time_map[age], e, s, e-s, 
+                    duration, age, self.time_map[age], e, s, e-s,
                     focal_sites.shape[0], focal_sites))
             self.ancestor_data.add_ancestor(
                 start=s, end=e, time=self.time_map[age], focal_sites=focal_sites,

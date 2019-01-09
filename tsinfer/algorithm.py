@@ -83,7 +83,7 @@ class AncestorBuilder(object):
         Adds a new site at the specified ID to the builder.
         Normally we build ancestors by taking frequency order as a proxy for age order,
         but for testing purposes, we can also pass in specific age that this variant was
-        generated, and the order of these ages will be used in the matching algorithm. 
+        generated, and the order of these ages will be used in the matching algorithm.
         """
         assert frequency > 1
         if age is None:
@@ -94,7 +94,7 @@ class AncestorBuilder(object):
             self.sites[site_id] = Site(site_id, frequency, genotypes, age)
             pattern_map = self.age_map[age]
 
-        # Sites with an identical variant distribution (i.e. with the same 
+        # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) are put into the same ancestor.
         # This is a bit of a hack, and we may want to change it
         ancestor_uid = genotypes.tobytes()
