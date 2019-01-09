@@ -131,16 +131,16 @@ def generate_samples(ts, error_param=0):
 
 def variant_age_at_position(ts, return_tuple_with_node_id=False):
     """
-    Return an age for each derived variant, matching the order of sites 
-    returned by generate_samples(). 
-    We might also want the node id as it indicates whether two sites are on the same 
+    Return an age for each derived variant, matching the order of sites returned by
+    generate_samples().
+    We might also want the node id as it indicates whether two sites are on the same
     coalescent ancestor - if return_tuple_with_node_id=True, instead of returning a
     simple age for each position, we return a tuple of (age, node_id).
     """
     ages = {}
     for v in ts.variants():
         mutations = v.site.mutations
-        assert len(mutations) == 1 # check only one mutation per variant => i.s.
+        assert len(mutations) == 1  # Check only one mutation per variant => i.s.
         assert v.position not in ages
         node_id = mutations[0].node
         if return_tuple_with_node_id:
@@ -167,13 +167,13 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="inf
         ancestor_data.finalise()
     elif ancestors == "ideal_age":
         logger.info("Generating ancestors with times taken from original tree sequence")
-        engine = tsinfer.PY_ENGINE #until we implement a C version
+        engine = tsinfer.PY_ENGINE  # Until we implement a C version
         ages_by_position = variant_age_at_position(ts)
         ancestor_data = tsinfer.generate_ancestors(
             sample_data, engine=engine, variant_age_by_position=ages_by_position)
     else:
         raise ValueError("Parameter 'ancestors' must be 'infer', 'exact' or 'ideal_age'")
-        
+
     logger.info("Running matching process")
 
     ancestors_ts = tsinfer.match_ancestors(
@@ -196,8 +196,9 @@ def edges_performance_worker(args):
         warnings.warn("Dropping simulation with no variants")
         return {}
 
-    ts={}
-    results = {'source_n_trees':smc_ts.num_trees, 'source_n_edges': smc_ts.num_edges,
+    ts = {}
+    results = {
+        'source_n_trees': smc_ts.num_trees, 'source_n_edges': smc_ts.num_edges,
         'num_sites': smc_ts.num_sites, 'sim_time': sim_time}
     for anc in ('infer', 'exact', 'ideal_age'):
         before = time.perf_counter()
@@ -219,7 +220,8 @@ def edges_performance_worker(args):
             breakpoints, kc_distance = tsinfer.compare(smc_ts, ts[anc])
             d = breakpoints[1:] - breakpoints[:-1]
             d /= breakpoints[-1]
-            results.update({anc+'_tree_metrics_time': time.perf_counter() - before,
+            results.update({
+                anc+'_tree_metrics_time': time.perf_counter() - before,
                 anc+"_anc_kc_distance_weighted": np.sum(kc_distance * d),
                 anc+"_anc_perfect_trees": np.sum((kc_distance == 0) * d),
                 anc+"_anc_kc_mean": np.mean(kc_distance)})
@@ -323,7 +325,7 @@ def run_edges_performance(args):
             ('exact', 'exact ancestors'),
             ('ideal_age', 'inferred ancestors with exact age')]
         for y, l in ydata_titles:
-            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_kc_distance_weighted'], label=l)
+            plt.plot(dfg.num_sites, dfg.loc[:, y + '_anc_kc_distance_weighted'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
@@ -334,7 +336,7 @@ def run_edges_performance(args):
         plt.clf()
 
         for y, l in ydata_titles:
-            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_kc_mean'], label=l)
+            plt.plot(dfg.num_sites, dfg.loc[:, y + '_anc_kc_mean'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
@@ -345,7 +347,7 @@ def run_edges_performance(args):
         plt.clf()
 
         for y, l in ydata_titles:
-            plt.plot(dfg.num_sites, dfg.loc[:,y + '_anc_perfect_trees'], label=l)
+            plt.plot(dfg.num_sites, dfg.loc[:, y + '_anc_perfect_trees'], label=l)
         plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
             args.sample_size, args.mutation_rate, args.recombination_rate,
             args.num_replicates))
