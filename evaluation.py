@@ -455,8 +455,9 @@ def ancestor_properties_worker(args):
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
     if true_times:
-        estimated_anc = tsinfer.generate_ancestors(sample_data,
-            engine=engine, variant_age_by_position=variant_age_at_position(ts))
+        estimated_anc = tsinfer.generate_ancestors(
+            sample_data, engine=engine,
+            variant_age_by_position=variant_age_at_position(ts))
     else:
         estimated_anc = tsinfer.generate_ancestors(sample_data, engine=engine)
     # Show lengths as a fraction of the total.
