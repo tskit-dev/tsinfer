@@ -171,7 +171,7 @@ def infer(
 
 
 def generate_ancestors(
-        sample_data, num_threads=0, progress_monitor=None, 
+        sample_data, num_threads=0, progress_monitor=None,
         engine=constants.C_ENGINE, variant_age_by_position=None,
         **kwargs):
     """
@@ -194,8 +194,8 @@ def generate_ancestors(
         genering putative ancestors from.
     :param int num_threads: The number of worker threads to use. If < 1, use a
         simpler synchronous algorithm.
-    :param int variant_age_by_position: Rather than use frequency as a proxy for age 
-        (the default) we can pass in a dictionary of known ages for each variant, 
+    :param dict variant_age_by_position: Rather than use frequency as a proxy for age
+        (the default) we can pass in a dictionary of known ages for each variant,
         keyed by position.
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
@@ -206,9 +206,9 @@ def generate_ancestors(
             sample_data, ancestor_data, progress_monitor, engine=engine,
             num_threads=num_threads)
         if variant_age_by_position is not None:
-            #make an array of ages corresponding to the inference sites
+            # Make an array of ages corresponding to the inference sites
             variant_ages = [variant_age_by_position[v.site.position]
-                for v in sample_data.variants(inference_sites=True)]
+                    for v in sample_data.variants(inference_sites=True)]
             generator.add_sites(variant_ages)
         else:
             generator.add_sites()
@@ -342,8 +342,8 @@ class AncestorsGenerator(object):
     def add_sites(self, variant_ages=None):
         """
         Add all sites from the sample_data object into the ancestor_builder.
-        If we have prior knowledge of the age of the variant at each site, we
-        can pass it in as list of  
+        If we have prior knowledge of the age of the variant at each site, we can
+        pass it in as an array of ages of length equal to the number of inference sites.
         """
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
@@ -441,8 +441,7 @@ class AncestorsGenerator(object):
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
-        
-        
+
         # If sites don't have a time, build a map from frequencies to time.
         # Time is simply measured in integer units
         self.time_map = {}

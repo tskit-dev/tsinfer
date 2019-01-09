@@ -53,8 +53,8 @@ class Site(object):
     def __init__(self, id, frequency, genotypes, age=None):
         self.id = id
         if age:
-           self.age = age
-           self.frequency = frequency
+            self.age = age
+            self.frequency = frequency
         else:
             self.age = self.frequency = frequency
         self.genotypes = genotypes
@@ -77,7 +77,7 @@ class AncestorBuilder(object):
         # same ancestor_uid: the age_map contains values keyed by age, with values
         # consisting of a dictionary of uid=>[array_of_site_ids]
         self.age_map = collections.defaultdict(dict)
-        
+
     def add_site(self, site_id, frequency, genotypes, age=None):
         """
         Adds a new site at the specified ID to the builder.
@@ -139,7 +139,7 @@ class AncestorBuilder(object):
         """
         # self.print_state()
         ret = []
-        
+
         for age in sorted(self.age_map.keys(), reverse=True):
             # Find all the ancestors at the same age
             # We need to make the order in which these are returned deterministic,
@@ -152,11 +152,11 @@ class AncestorBuilder(object):
                 # Where we have tried to place sites with the same distribution of
                 # variants in the same ancestor, we might want to split them up.
                 if isinstance(key, bytes):
-                    samples = np.frombuffer(key, dtype=np.uint8)
-                    # print("focal_sites = ", key, samples, focal_sites)
+                    samp = np.frombuffer(key, dtype=np.uint8)
+                    # print("focal_sites = ", key, samp, focal_sites)
                     start = 0
                     for j in range(len(focal_sites) - 1):
-                        if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samples):
+                        if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
                             ret.append((age, focal_sites[start: j + 1]))
                             start = j + 1
                     ret.append((age, focal_sites[start:]))
@@ -212,7 +212,7 @@ class AncestorBuilder(object):
         # check all focal sites in this ancestor are at the same age
         for fs in focal_sites[1:]:
             assert self.sites[fs].age == focal_age
-        
+
         a[:] = constants.UNKNOWN_ALLELE
         for focal_site in focal_sites:
             a[focal_site] = 1
