@@ -455,8 +455,8 @@ def ancestor_properties_worker(args):
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
     if true_times:
-        estimated_anc = tsinfer.generate_ancestors(sample_data, 
-            engine=engine, variant_age_by_position = variant_age_at_position(ts))
+        estimated_anc = tsinfer.generate_ancestors(sample_data,
+            engine=engine, variant_age_by_position=variant_age_at_position(ts))
     else:
         estimated_anc = tsinfer.generate_ancestors(sample_data, engine=engine)
     # Show lengths as a fraction of the total.
@@ -645,7 +645,8 @@ def sim_true_and_inferred_ancestors(args):
     sample_data = generate_samples(ts, args.error)
 
     if args.use_true_times:
-        inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine,
+        inferred_anc = tsinfer.generate_ancestors(
+            sample_data, engine=args.engine,
             variant_age_by_position=variant_age_at_position(ts))
     else:
         inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
@@ -1513,7 +1514,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--use-true-times", "-t", action="store_true",
+    parser.add_argument(
+        "--use-true-times", "-t", action="store_true",
         help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
@@ -1544,7 +1546,8 @@ if __name__ == "__main__":
         "--error", "-e", default="0",
         help="Error: either a probability or a csv filename to use for empirical error")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--use-true-times", "-t", action="store_true",
+    parser.add_argument(
+        "--use-true-times", "-t", action="store_true",
         help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
@@ -1580,7 +1583,8 @@ if __name__ == "__main__":
         "--error", "-e", default="0",
         help="Error: either a probability or a csv filename to use for empirical error")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--use-true-times", "-t", action="store_true",
+    parser.add_argument(
+        "--use-true-times", "-t", action="store_true",
         help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(

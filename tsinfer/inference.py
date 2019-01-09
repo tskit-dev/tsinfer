@@ -207,7 +207,8 @@ def generate_ancestors(
             num_threads=num_threads)
         if variant_age_by_position is not None:
             # Make an array of ages corresponding to the inference sites
-            variant_ages = [variant_age_by_position[v.site.position]
+            variant_ages = [
+                variant_age_by_position[v.site.position]
                     for v in sample_data.variants(inference_sites=True)]
             generator.add_sites(variant_ages)
         else:
