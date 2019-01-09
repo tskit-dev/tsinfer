@@ -221,9 +221,8 @@ class AncestorBuilder(object):
         Fills out the array a with the haplotype
         return the start and end of an ancestor
         """
-        #check all focal sites in this ancestor are at the same age
         focal_age = self.sites[focal_sites[0]].age
-        #check the others
+        # check all focal sites in this ancestor are at the same age
         for fs in focal_sites[1:]:
             assert self.sites[fs].age == focal_age
         

@@ -131,9 +131,9 @@ def generate_samples(ts, error_param=0):
 
 def variant_age_at_position(ts):
     """
-    Return the ages for each derived variant, matching the order of sites returned by 
-    generate_samples().
-
+    Return a (node, age) tuple for each derived variant, matching the order of sites 
+    returned by generate_samples(). We need the node id to know if two sites are on the
+    same coalescent ancestor.
     """
     ages = {}
     for v in ts.variants():
