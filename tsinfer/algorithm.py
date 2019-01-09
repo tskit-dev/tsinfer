@@ -69,8 +69,6 @@ class AncestorBuilder(object):
     # focal site. Once this is finalise should refactor to remove the complexity
     # needed for matching up ancestors with identical focal sites.
     def __init__(self, num_samples, num_sites):
-        """
-        """
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
