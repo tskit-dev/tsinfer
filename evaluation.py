@@ -129,11 +129,13 @@ def generate_samples(ts, error_param=0):
     return sd
 
 
-def variant_age_node_at_position(ts):
+def variant_age_at_position(ts, return_tuple_with_node_id=False):
     """
-    Return a (age, node_id) tuple for each derived variant, matching the order of sites 
-    returned by generate_samples(). We might want the node id as it indicates whether
-    two sites are on the same coalescent ancestor.
+    Return an age for each derived variant, matching the order of sites 
+    returned by generate_samples(). 
+    We might also want the node id as it indicates whether two sites are on the same 
+    coalescent ancestor - if return_tuple_with_node_id=True, instead of returning a
+    simple age for each position, we return a tuple of (age, node_id).
     """
     ages = {}
     for v in ts.variants():
@@ -141,7 +143,10 @@ def variant_age_node_at_position(ts):
         assert len(mutations) == 1 # check only one mutation per variant => i.s.
         assert v.position not in ages
         node_id = mutations[0].node
-        ages[v.position] = (ts.node(node_id).time, node_id)
+        if return_tuple_with_node_id:
+            ages[v.position] = (ts.node(node_id).time, node_id)
+        else:
+            ages[v.position] = ts.node(node_id).time
     return ages
 
 
@@ -163,7 +168,7 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, ancestors="inf
     elif ancestors == "ideal_age":
         logger.info("Generating ancestors with times taken from original tree sequence")
         engine = tsinfer.PY_ENGINE #until we implement a C version
-        ages_by_position = [v[0] for v in variant_age_node_at_position(ts)]
+        ages_by_position = variant_age_at_position(ts)
         ancestor_data = tsinfer.generate_ancestors(
             sample_data, engine=engine, variant_age_by_position=ages_by_position)
     else:
