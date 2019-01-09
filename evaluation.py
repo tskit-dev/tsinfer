@@ -450,11 +450,15 @@ def run_hotspot_analysis(args):
 
 
 def ancestor_properties_worker(args):
-    simulation_args, compute_exact = args
+    simulation_args, engine, compute_exact, true_times = args
     ts = msprime.simulate(**simulation_args)
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-    estimated_anc = tsinfer.generate_ancestors(sample_data)
+    if true_times:
+        estimated_anc = tsinfer.generate_ancestors(sample_data, 
+            engine=engine, variant_age_by_position = variant_age_at_position(ts))
+    else:
+        estimated_anc = tsinfer.generate_ancestors(sample_data, engine=engine)
     # Show lengths as a fraction of the total.
     estimated_anc_length = estimated_anc.ancestors_length / ts.sequence_length
     focal_sites = estimated_anc.ancestors_focal_sites[:]
@@ -515,7 +519,8 @@ def run_ancestor_properties(args):
                 "Ne": 10**4,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2**30)}
-            work.append((sim_args, not args.skip_exact))
+            work.append((
+                sim_args, args.engine, not args.skip_exact, args.use_true_times))
 
     random.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
@@ -535,8 +540,9 @@ def run_ancestor_properties(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}{}".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate,
+            "_truetime" if args.use_true_times else ""))
 
     plt.plot(dfg.num_sites, dfg.estimated_anc_num, label="estimated ancestors")
     if not args.skip_exact:
@@ -556,7 +562,7 @@ def run_ancestor_properties(args):
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
-    # plt.ylabel("inferred # ancestors / exact # ancestors")
+    plt.ylabel("Mean length of ancestor")
     plt.xlabel("Num sites")
     plt.legend()
     save_figure(name_format.format("mean_len"))
@@ -572,7 +578,7 @@ def run_ancestor_properties(args):
     plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
         args.sample_size, args.mutation_rate, args.recombination_rate,
         args.num_replicates))
-    # plt.ylabel("inferred # ancestors / exact # ancestors")
+    plt.ylabel("Fraction of seq length between leftmost & rightmost focal site per anc")
     plt.xlabel("Num sites")
     plt.legend()
     save_figure(name_format.format("mean_focal_distance"))
@@ -638,7 +644,11 @@ def sim_true_and_inferred_ancestors(args):
 
     sample_data = generate_samples(ts, args.error)
 
-    inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
+    if args.use_true_times:
+        inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine,
+            variant_age_by_position=variant_age_at_position(ts))
+    else:
+        inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
     true_anc = tsinfer.AncestorData(sample_data)
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
@@ -678,9 +688,11 @@ def run_ancestor_comparison(args):
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate,
-            args.recombination_rate, err))
+        args.destination_dir, "anc-comp_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}{}"
+            .format(
+                args.sample_size, args.Ne, args.length, args.mutation_rate,
+                args.recombination_rate, err,
+                "_truetime" if args.use_true_times else ""))
     if args.store_data:
         # TODO Are we using this option for anything?
         filename = name_format.format("length.json")
@@ -827,7 +839,7 @@ def run_ancestor_comparison(args):
         if args.length_scale == "log":
             plt.yscale("log")
         ax = plt.gca()
-        ax.set_xlim(xmin=0, xmax=max(line_x))
+        ax.set_xlim(0, max(line_x))
         if ancestors_are_estimated:
             plt.title("Ancestor lengths as estimated by tsinfer")
             ax.step(
@@ -837,7 +849,7 @@ def run_ancestor_comparison(args):
                 exact_line_x[:-1], exact_median_line_y, label="True median",
                 where='post', color="forestgreen", linestyle=":")
             plt.xlabel("Ancestors_freq (youngest to oldest)")
-            ax.set_xlim(xmin=0)
+            ax.set_xlim(0)
             ax.tick_params(axis='x', which="major", length=0)
             ax.set_xticklabels('', minor=True)
             ax.set_xticks(line_x[:-1], minor=True)
@@ -891,9 +903,11 @@ def run_ancestor_quality(args):
         if err.endswith(".csv"):
             err = err[:-len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate,
-            args.recombination_rate, err))
+        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}{}"
+            .format(
+                args.sample_size, args.Ne, args.length, args.mutation_rate,
+                args.recombination_rate, err,
+                "_truetime" if args.use_true_times else ""))
 
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
     shared_positions = np.array(list(sorted(anc_indices.keys())))
@@ -1499,6 +1513,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--use-true-times", "-t", action="store_true",
+        help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--progress", "-P", action="store_true",
@@ -1528,6 +1544,8 @@ if __name__ == "__main__":
         "--error", "-e", default="0",
         help="Error: either a probability or a csv filename to use for empirical error")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--use-true-times", "-t", action="store_true",
+        help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--store-data", "-S", action="store_true",
@@ -1562,6 +1580,8 @@ if __name__ == "__main__":
         "--error", "-e", default="0",
         help="Error: either a probability or a csv filename to use for empirical error")
     parser.add_argument("--random-seed", "-s", type=int, default=None)
+    parser.add_argument("--use-true-times", "-t", action="store_true",
+        help="Inject the real times into the ancestor inference")
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--print-bad-ancestors", "-b", nargs='?', const="inferred",
