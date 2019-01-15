@@ -27,7 +27,7 @@ import json
 import logging
 
 import numpy as np
-import msprime
+import tskit
 import tqdm
 
 import tsinfer.inference as inference
@@ -72,11 +72,11 @@ def insert_errors(ts, probability, seed=None):
                     # If sample is a descendent of the mutation node we
                     # change the state to 0, otherwise change state to 1.
                     u = sample
-                    while u != mutation_node and u != msprime.NULL_NODE:
+                    while u != mutation_node and u != tskit.NULL:
                         u = tree.parent(u)
-                    derived_state = str(int(u == msprime.NULL_NODE))
-                    parent = msprime.NULL_MUTATION
-                    if u == msprime.NULL_NODE:
+                    derived_state = str(int(u == tskit.NULL))
+                    parent = tskit.NULL
+                    if u == tskit.NULL:
                         parent = len(tables.mutations) - 1
                     tables.mutations.add_row(
                         site=site.id, node=sample, parent=parent,
@@ -464,7 +464,7 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     data. If remove_leaves is True, remove any nodes that are at time zero.
 
     We generally assume that this is a standard tree sequence output by
-    msprime.simulate here.
+    tskit.simulate here.
     """
     position = samples.sites_position[:][samples.sites_inference[:] == 1]
     reduced = subset_sites(ts, position)
@@ -532,13 +532,13 @@ def check_ancestors_ts(ts):
 
     for tree in ts.trees(sample_counts=False):
         # 0 must always be a root and have at least one child.
-        if tree.parent(0) != msprime.NULL_NODE:
+        if tree.parent(0) != tskit.NULL:
             raise ValueError("0 is not a root: non null parent")
-        if tree.left_child(0) == msprime.NULL_NODE:
+        if tree.left_child(0) == tskit.NULL:
             raise ValueError("0 must have at least one child")
         for root in tree.roots:
             if root != 0:
-                if tree.left_child(root) != msprime.NULL_NODE:
+                if tree.left_child(root) != tskit.NULL:
                     raise ValueError("All non empty subtrees must inherit from 0")
         # Sites must have exactly one mutation
         for site in tree.sites():
@@ -558,11 +558,11 @@ def extract_ancestors(samples, ts):
 
     # The nodes that we want to keep are all those *except* what
     # has been marked as samples.
-    samples = np.where(tables.nodes.flags != msprime.NODE_IS_SAMPLE)[0].astype(np.int32)
+    samples = np.where(tables.nodes.flags != tskit.NODE_IS_SAMPLE)[0].astype(np.int32)
 
     # Mark all nodes as samples
     tables.nodes.set_columns(
-        flags=np.bitwise_or(tables.nodes.flags, msprime.NODE_IS_SAMPLE),
+        flags=np.bitwise_or(tables.nodes.flags, tskit.NODE_IS_SAMPLE),
         time=tables.nodes.time,
         population=tables.nodes.population,
         individual=tables.nodes.individual,
@@ -575,10 +575,10 @@ def extract_ancestors(samples, ts):
     # We cannot have flags that are both samples and have other flags set,
     # so we need to unset all the sample flags for these.
     flags = np.zeros_like(tables.nodes.flags)
-    index = tables.nodes.flags == msprime.NODE_IS_SAMPLE
-    flags[index] = msprime.NODE_IS_SAMPLE
-    index = tables.nodes.flags != msprime.NODE_IS_SAMPLE
-    flags[index] = np.bitwise_and(tables.nodes.flags[index], ~msprime.NODE_IS_SAMPLE)
+    index = tables.nodes.flags == tskit.NODE_IS_SAMPLE
+    flags[index] = tskit.NODE_IS_SAMPLE
+    index = tables.nodes.flags != tskit.NODE_IS_SAMPLE
+    flags[index] = np.bitwise_and(tables.nodes.flags[index], ~tskit.NODE_IS_SAMPLE)
 
     tables.nodes.set_columns(
         flags=flags,
@@ -631,7 +631,7 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
         progress.update()
         edge = edges[j]
         condition = (
-            flags[edge.child] == msprime.NODE_IS_SAMPLE and
+            flags[edge.child] == tskit.NODE_IS_SAMPLE and
             edge.child == last_edge.child and
             edge.left == last_edge.right)
         if condition:

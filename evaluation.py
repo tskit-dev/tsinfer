@@ -1299,13 +1299,19 @@ def run_node_degree(args):
             args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
     print(df.describe())
 
-    sns.factorplot(
-        x="depth", y="degree", hue="path_compression", col="type",
-        data=df, kind="bar")
+    with warnings.catch_warnings():
+        # Seaborn is throwing some warnings here. Presumably will be fixed at some point.
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        sns.catplot(
+            x="depth", y="degree", hue="path_compression", col="type",
+            data=df, kind="bar")
     save_figure(name_format.format("path-compression"))
     plt.clf()
 
-    sns.barplot(x="depth", y="degree", hue="type", data=df[df.path_compression])
+    with warnings.catch_warnings():
+        # Seaborn is throwing some warnings here. Presumably will be fixed at some point.
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        sns.barplot(x="depth", y="degree", hue="type", data=df[df.path_compression])
     save_figure(name_format.format("length"))
     plt.clf()
 

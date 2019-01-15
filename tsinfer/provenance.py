@@ -26,7 +26,7 @@ import platform
 import zarr
 import numcodecs
 import lmdb
-import msprime
+import tskit
 
 
 __version__ = "undefined"
@@ -53,8 +53,8 @@ def get_environment():
             "lmdb": {
                 "version": lmdb.__version__
             },
-            "msprime": {
-                "version": msprime.__version__
+            "tskit": {
+                "version": tskit.__version__
             },
         },
         "os": {
@@ -77,7 +77,7 @@ def get_provenance_dict(command=None, **kwargs):
     Returns a dictionary encoding an execution of tsinfer following the
     tskit provenance schema.
 
-    https://msprime.readthedocs.io/en/stable/provenance.html
+    https://tskit.readthedocs.io/en/stable/provenance.html
     """
     if command is None:
         raise ValueError("Command must be provided")

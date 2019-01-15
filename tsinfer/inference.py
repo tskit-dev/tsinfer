@@ -31,7 +31,7 @@ import heapq
 
 import numpy as np
 import humanize
-import msprime
+import tskit
 
 import _tsinfer
 import tsinfer.formats as formats
@@ -114,7 +114,7 @@ def verify(samples, tree_sequence, progress_monitor=None):
 
     :param SampleData samples: The input :class:`SampleData` instance
         representing the observed data that we wish to compare to.
-    :param TreeSequence tree_sequence: The input :class:`msprime.TreeSequence`
+    :param TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
         instance an encoding of the specified samples that we wish to verify.
     """
     progress_monitor = _get_progress_monitor(progress_monitor)
@@ -146,16 +146,16 @@ def infer(
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
-    :class:`msprime.TreeSequence`.
+    :class:`tskit.TreeSequence`.
 
     :param SampleData sample_data: The input :class:`SampleData` instance
         representing the observed data that we wish to make inferences from.
     :param int num_threads: The number of worker threads to use in parallelised
         sections of the algorithm. If <= 0, do not spawn any threads and
         use simpler sequential algorithms (default).
-    :returns: The :class:`msprime.TreeSequence` object inferred from the
+    :returns: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
-    :rtype: msprime.TreeSequence
+    :rtype: tskit.TreeSequence
     """
     ancestor_data = generate_ancestors(
         sample_data, engine=engine, progress_monitor=progress_monitor,
@@ -215,7 +215,7 @@ def match_ancestors(
 
     Runs the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
     on the specified :class:`SampleData` and :class:`AncestorData` instances,
-    returning the resulting :class:`msprime.TreeSequence` representing the
+    returning the resulting :class:`tskit.TreeSequence` representing the
     complete ancestry of the putative ancestors.
 
     :param SampleData sample_data: The :class:`SampleData` instance
@@ -227,7 +227,7 @@ def match_ancestors(
         this is <= 0 then a simpler sequential algorithm is used (default).
     :return: The ancestors tree sequence representing the inferred history
         of the set of ancestors.
-    :rtype: msprime.TreeSequence
+    :rtype: tskit.TreeSequence
     """
     matcher = AncestorMatcher(
         sample_data, ancestor_data, engine=engine,
@@ -245,14 +245,14 @@ def augment_ancestors(
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
     for the specified subset of sample indexes, returning the
-    :class:`msprime.TreeSequence` instance including these samples. This
+    :class:`tskit.TreeSequence` instance including these samples. This
     tree sequence can then be used as an ancestors tree sequence for subsequent
     matching against all samples.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
-    :param msprime.TreeSequence ancestors_ts: The
-        :class:`msprime.TreeSequence` instance representing the inferred
+    :param tskit.TreeSequence ancestors_ts: The
+        :class:`tskit.TreeSequence` instance representing the inferred
         history among ancestral ancestral haplotypes.
     :param array indexes: The sample indexes to insert into the ancestors
         tree sequence.
@@ -260,7 +260,7 @@ def augment_ancestors(
         this is <= 0 then a simpler sequential algorithm is used (default).
     :return: The specified ancestors tree sequence augmented with copying
         paths for the specified sample.
-    :rtype: msprime.TreeSequence
+    :rtype: tskit.TreeSequence
     """
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
@@ -280,21 +280,21 @@ def match_samples(
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
-    returning the final :class:`msprime.TreeSequence` instance containing
+    returning the final :class:`tskit.TreeSequence` instance containing
     the full inferred history for all samples and sites. If ``simplify`` is
-    True (the default) run :meth:`msprime.TreeSequence.simplify` on the
+    True (the default) run :meth:`tskit.TreeSequence.simplify` on the
     inferred tree sequence to ensure that it is in canonical form.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
-    :param msprime.TreeSequence ancestors_ts: The
-        :class:`msprime.TreeSequence` instance representing the inferred
+    :param tskit.TreeSequence ancestors_ts: The
+        :class:`tskit.TreeSequence` instance representing the inferred
         history among ancestral ancestral haplotypes.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
     :return: The tree sequence representing the inferred history
         of the sample.
-    :rtype: msprime.TreeSequence
+    :rtype: tskit.TreeSequence
     """
     manager = SampleMatcher(
         sample_data, ancestors_ts, path_compression=path_compression,
@@ -562,7 +562,7 @@ class Matcher(object):
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
-        tables = msprime.TableCollection(
+        tables = tskit.TableCollection(
             sequence_length=self.ancestor_data.sequence_length)
 
         flags, time = tsb.dump_nodes()
@@ -622,7 +622,7 @@ class Matcher(object):
         count = collections.Counter()
         for sample in samples:
             u = self.sample_ids[sample]
-            while u != msprime.NULL_NODE:
+            while u != tskit.NULL:
                 count[u] += 1
                 u = tree.parent(u)
         # Go up the tree until we find the first node ancestral to all samples.
@@ -793,7 +793,7 @@ class Matcher(object):
 
         # All true ancestors are samples in the ancestors tree sequence. We unset
         # the SAMPLE flag but keep other flags intact.
-        new_flags = np.bitwise_and(tables.nodes.flags, ~msprime.NODE_IS_SAMPLE)
+        new_flags = np.bitwise_and(tables.nodes.flags, ~tskit.NODE_IS_SAMPLE)
         tables.nodes.set_columns(
             flags=new_flags.astype(np.uint32),
             time=tables.nodes.time,
@@ -1011,7 +1011,7 @@ class AncestorMatcher(Matcher):
             ts = self.get_ancestors_tree_sequence()
         else:
             # Allocate an empty tree sequence.
-            tables = msprime.TableCollection(
+            tables = tskit.TableCollection(
                 sequence_length=self.ancestor_data.sequence_length)
             ts = tables.tree_sequence()
         return ts

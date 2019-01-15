@@ -23,7 +23,7 @@ class Mock(MagicMock):
         return MagicMock()
 
 MOCK_MODULES = [
-    'numpy', 'msprime', '_tsinfer', 'zarr', 'numcodecs', 'lmdb',
+    'numpy', 'tskit', '_tsinfer', 'zarr', 'numcodecs', 'lmdb',
     'sortedcontainers', 'humanize', 'daiquiri', 'tqdm'
 ]
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
@@ -194,7 +194,7 @@ texinfo_documents = [
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     'https://docs.python.org/3/': None,
-    'https://msprime.readthedocs.io/en/stable/': None,
+    'https://tskit.readthedocs.io/en/stable/': None,
     'https://numcodecs.readthedocs.io/en/stable/': None,
     'https://zarr.readthedocs.io/en/stable/': None,
 }

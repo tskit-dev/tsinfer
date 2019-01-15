@@ -28,7 +28,7 @@ first.
 import collections
 
 import numpy as np
-import msprime
+import tskit
 import sortedcontainers
 
 import tsinfer.constants as constants
@@ -427,7 +427,7 @@ class TreeSequenceBuilder(object):
         # values as edges in the edge path for this child.
         matches = []
         contig_offsets = []
-        last_match = msprime.Edge(-1, -1, -1, -1)
+        last_match = tskit.Edge(-1, -1, -1, -1)
         while edge is not None:
             # print("\tConsidering ", edge.left, edge.right, edge.parent)
             key = (edge.left, edge.right, edge.parent, -1)
@@ -447,7 +447,7 @@ class TreeSequenceBuilder(object):
         contig_offsets.append(len(matches))
 
         # FIXME This is just to check the contig finding code above. Remove.
-        contiguous_matches = [[(None, msprime.Edge(-1, -1, -1, -1))]]  # Sentinel
+        contiguous_matches = [[(None, tskit.Edge(-1, -1, -1, -1))]]  # Sentinel
         for edge, match in matches:
             condition = (
                 edge.left == contiguous_matches[-1][-1][1].right and
@@ -522,7 +522,7 @@ class TreeSequenceBuilder(object):
     def print_state(self):
         print("TreeSequenceBuilder state")
         print("num_nodes = ", self.num_nodes)
-        nodes = msprime.NodeTable()
+        nodes = tskit.NodeTable()
         flags, time = self.dump_nodes()
         nodes.set_columns(flags=flags, time=time)
         print("nodes = ")
@@ -583,7 +583,7 @@ def is_descendant(pi, u, v):
     if v != -1:
         w = u
         path = []
-        while w != v and w != msprime.NULL_NODE:
+        while w != v and w != tskit.NULL:
             path.append(w)
             w = pi[w]
         # print("DESC:",v, u, path)
@@ -641,7 +641,7 @@ class AncestorMatcher(object):
     def update_site(self, site, state):
         n = self.tree_sequence_builder.num_nodes
 
-        mutation_node = msprime.NULL_NODE
+        mutation_node = tskit.NULL
         if site in self.tree_sequence_builder.mutations:
             mutation_node = self.tree_sequence_builder.mutations[site][0][0]
             # Insert an new L-value for the mutation node if needed.
@@ -745,31 +745,31 @@ class AncestorMatcher(object):
         c = edge.child
         lsib = self.left_sib[c]
         rsib = self.right_sib[c]
-        if lsib == msprime.NULL_NODE:
+        if lsib == tskit.NULL:
             self.left_child[p] = rsib
         else:
             self.right_sib[lsib] = rsib
-        if rsib == msprime.NULL_NODE:
+        if rsib == tskit.NULL:
             self.right_child[p] = lsib
         else:
             self.left_sib[rsib] = lsib
-        self.parent[c] = msprime.NULL_NODE
-        self.left_sib[c] = msprime.NULL_NODE
-        self.right_sib[c] = msprime.NULL_NODE
+        self.parent[c] = tskit.NULL
+        self.left_sib[c] = tskit.NULL
+        self.right_sib[c] = tskit.NULL
 
     def insert_edge(self, edge):
         p = edge.parent
         c = edge.child
         self.parent[c] = p
         u = self.right_child[p]
-        if u == msprime.NULL_NODE:
+        if u == tskit.NULL:
             self.left_child[p] = c
-            self.left_sib[c] = msprime.NULL_NODE
-            self.right_sib[c] = msprime.NULL_NODE
+            self.left_sib[c] = tskit.NULL
+            self.right_sib[c] = tskit.NULL
         else:
             self.right_sib[u] = c
             self.left_sib[c] = u
-            self.right_sib[c] = msprime.NULL_NODE
+            self.right_sib[c] = tskit.NULL
         self.right_child[p] = c
 
     def is_nonzero_root(self, u):
