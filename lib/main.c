@@ -35,6 +35,7 @@
 
 #include "tsinfer.h"
 
+#if 0
 static void
 fatal_error(const char *msg, ...)
 {
@@ -231,10 +232,15 @@ output_ts(tree_sequence_builder_t *ts_builder)
     free(derived_state);
     free(mutation_parent);
 }
+#endif
 
 static void
 run_generate(const char *input_file, int verbose, int path_compression)
 {
+    /* This is all basically broken now and doesn't compile any more. Will
+     * need to rewrite when we move to using the tskit C API.
+     */
+#if 0
     size_t num_samples, num_sites, j, k, num_ancestors;
     allele_t *haplotypes = NULL;
     allele_t *genotypes = NULL;
@@ -574,6 +580,7 @@ run_generate(const char *input_file, int verbose, int path_compression)
     tsi_safe_free(node_buffer);
     tsi_safe_free(site_buffer);
     tsi_safe_free(derived_state_buffer);
+#endif
 }
 
 

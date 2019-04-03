@@ -570,7 +570,7 @@ class DataContainer(object):
 @attr.s
 class Site(object):
     """
-    A single site. Mirrors the definition in tskit.
+    A single site. Mirrors the definition in tskit with some additional fields.
     """
     # TODO document properly.
     id = attr.ib()
@@ -578,6 +578,7 @@ class Site(object):
     ancestral_state = attr.ib()
     inference = attr.ib()
     metadata = attr.ib()
+    age = attr.ib()
 
 
 @attr.s
@@ -925,7 +926,7 @@ class SampleData(DataContainer):
     ####################################
 
     @classmethod
-    def from_tree_sequence(cls, ts, **kwargs):
+    def from_tree_sequence(cls, ts, use_times=True, **kwargs):
         self = cls.__new__(cls)
         self.__init__(sequence_length=ts.sequence_length, **kwargs)
         # Assume this is a haploid tree sequence.
@@ -936,7 +937,7 @@ class SampleData(DataContainer):
             self.add_individual(population=node.population, ploidy=1)
         for v in ts.variants():
             age = None
-            if len(v.site.mutations) == 1:
+            if len(v.site.mutations) == 1 and use_times:
                 age = ts.node(v.site.mutations[0].node).time
             self.add_site(v.site.position, v.genotypes, v.alleles, age=age)
         # Insert all the provenance from the original tree sequence.
@@ -1202,11 +1203,12 @@ class SampleData(DataContainer):
         alleles = self.sites_alleles[:]
         inference = self.sites_inference[:]
         metadata = self.sites_metadata[:]
+        age = self.sites_age[:]
         for j, genotypes in self.genotypes(inference_sites):
             if inference_sites is None or inference[j] == inference_sites:
                 site = Site(
                     id=j, position=position[j], ancestral_state=alleles[j][0],
-                    inference=inference[j], metadata=metadata[j])
+                    inference=inference[j], metadata=metadata[j], age=age[j])
                 variant = Variant(
                     site=site, alleles=tuple(alleles[j]), genotypes=genotypes)
                 yield variant
@@ -1321,7 +1323,7 @@ class AncestorData(DataContainer):
             dtype=np.int32)
         self.data.create_dataset(
             "ancestors/age", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint32)
+            dtype=np.float64)
         self.data.create_dataset(
             "ancestors/focal_sites", shape=(0,), chunks=chunks,
             dtype="array:i4", compressor=self._compressor)

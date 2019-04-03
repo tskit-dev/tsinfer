@@ -108,9 +108,10 @@ static PyObject *
 AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"site_id", "frequency", "genotypes", NULL};
+    static char *kwlist[] = {"site_id", "age", "genotypes", NULL};
+    PyObject *ret = NULL;
     int site_id;
-    unsigned long frequency;
+    double age;
     PyObject *genotypes = NULL;
     PyArrayObject *genotypes_array = NULL;
     npy_intp *shape;
@@ -118,8 +119,8 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ikO!", kwlist,
-            &site_id, &frequency, &PyArray_Type, &genotypes)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "idO!", kwlist,
+            &site_id, &age, &PyArray_Type, &genotypes)) {
         goto out;
     }
     genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_UINT8,
@@ -137,16 +138,17 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id,
-        (size_t) frequency, (allele_t *) PyArray_DATA(genotypes_array));
+    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id, age,
+            (allele_t *) PyArray_DATA(genotypes_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
+    ret = Py_BuildValue("");
 out:
     Py_XDECREF(genotypes_array);
-    return Py_BuildValue("");
+    return ret;
 }
 
 static PyObject *
@@ -233,12 +235,12 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
-
     err = ancestor_builder_finalise(self->builder);
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
+    /* ancestor_builder_print_state(self->builder, stdout); */
     descriptors = PyTuple_New(self->builder->num_ancestors);
     if (descriptors == NULL) {
         goto out;
@@ -253,8 +255,7 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
         }
         memcpy(PyArray_DATA(site_array), descriptor->focal_sites,
                 descriptor->num_focal_sites * sizeof(site_id_t));
-        py_descriptor = Py_BuildValue("kO",
-                (unsigned long) descriptor->frequency, site_array);
+        py_descriptor = Py_BuildValue("dO", descriptor->age, site_array);
         if (py_descriptor == NULL) {
             Py_DECREF(site_array);
             goto out;

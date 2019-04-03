@@ -891,7 +891,7 @@ class TestNodeSpan(unittest.TestCase):
 
     def test_inferred_no_simplify(self):
         ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         ts = tsinfer.infer(samples, simplify=False)
         self.verify(ts)
 

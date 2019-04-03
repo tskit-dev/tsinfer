@@ -895,12 +895,11 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, age=1, focal_sites=[],
             haplotype=np.zeros(num_sites, dtype=np.uint8) + 2)
-
         # focal sites must be within start:end
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=1, end=num_sites, age=1, focal_sites=[0],
-            haplotype=np.ones(num_sites, dtype=np.uint8))
+            haplotype=np.ones(num_sites - 1, dtype=np.uint8))
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites - 2, age=1, focal_sites=[num_sites - 1],

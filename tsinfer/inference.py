@@ -172,7 +172,7 @@ def infer(
 
 def generate_ancestors(
         sample_data, num_threads=0, progress_monitor=None, engine=constants.C_ENGINE,
-        variant_age_by_position=None, **kwargs):
+        **kwargs):
     """
     generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
 
@@ -193,9 +193,6 @@ def generate_ancestors(
         genering putative ancestors from.
     :param int num_threads: The number of worker threads to use. If < 1, use a
         simpler synchronous algorithm.
-    :param dict variant_age_by_position: Rather than use frequency as a proxy for age
-        (the default) we can pass in a dictionary of known ages for each variant,
-        keyed by position.
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
@@ -204,13 +201,7 @@ def generate_ancestors(
         generator = AncestorsGenerator(
             sample_data, ancestor_data, progress_monitor, engine=engine,
             num_threads=num_threads)
-        if variant_age_by_position is not None:
-            # Make an array of ages corresponding to the inference sites
-            variant_ages = [variant_age_by_position[v.site.position]
-                            for v in sample_data.variants(inference_sites=True)]
-            generator.add_sites(variant_ages)
-        else:
-            generator.add_sites()
+        generator.add_sites()
         generator.run()
         ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
@@ -338,27 +329,14 @@ class AncestorsGenerator(object):
         else:
             raise ValueError("Unknown engine:{}".format(engine))
 
-    def add_sites(self, variant_ages=None):
+    def add_sites(self):
         """
-        Add all sites from the sample_data object into the ancestor_builder.
-        If we have prior knowledge of the age of the variant at each site, we can
-        pass it in as an array of ages of length equal to the number of inference sites.
+        Add all sites from the sample_data object into the ancestor builder.
         """
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
-        # There may be multiple samples at the same age/freq, we store
-        # the site_id in a dict for each age, keyed by pattern of site
-        # distributions
-        for j, (site_id, genotypes) in enumerate(
-                self.sample_data.genotypes(inference_sites=True)):
-            frequency = int(np.sum(genotypes))
-            if variant_ages is None:
-                # assume age == frequency, the default
-                self.ancestor_builder.add_site(j, frequency, genotypes)
-            else:
-                assert len(variant_ages) == self.num_sites
-                self.ancestor_builder.add_site(
-                    j, frequency, genotypes, age=variant_ages[j])
+        for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
+            self.ancestor_builder.add_site(j, variant.site.age, variant.genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
@@ -370,13 +348,12 @@ class AncestorsGenerator(object):
             s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor in {:.2f}s at nominal age {} (timestep {}) "
-                "from {} to {} (l={}) with {} focal sites ({})".format(
-                    duration, age, self.time_map[age], e, s, e-s,
+                "Made ancestor in {:.2f}s with age {} (epoch {}) "
+                "from {} to {} (len={}) with {} focal sites ({})".format(
+                    duration, age, self.age_to_epoch[age], s, e, e - s,
                     focal_sites.shape[0], focal_sites))
             self.ancestor_data.add_ancestor(
-                start=s, end=e, time=self.time_map[age], focal_sites=focal_sites,
-                haplotype=a[s:e])
+                start=s, end=e, age=age, focal_sites=focal_sites, haplotype=a[s:e])
             progress.update()
 
     def _run_threaded(self, progress):
@@ -396,9 +373,9 @@ class AncestorsGenerator(object):
             nonlocal next_add_index
             num_drained = 0
             while len(add_queue) > 0 and add_queue[0][0] == next_add_index:
-                _, time, focal_sites, start, end, haplotype = heapq.heappop(add_queue)
+                _, age, focal_sites, start, end, haplotype = heapq.heappop(add_queue)
                 self.ancestor_data.add_ancestor(
-                    start=start, end=end, time=time, focal_sites=focal_sites,
+                    start=start, end=end, age=age, focal_sites=focal_sites,
                     haplotype=haplotype)
                 progress.update()
                 next_add_index += 1
@@ -411,12 +388,12 @@ class AncestorsGenerator(object):
                 work = build_queue.get()
                 if work is None:
                     break
-                index, time, focal_sites = work
+                index, age, focal_sites = work
                 start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
                 with add_lock:
                     haplotype = a[start: end].copy()
                     heapq.heappush(
-                        add_queue, (index, time, focal_sites, start, end, haplotype))
+                        add_queue, (index, age, focal_sites, start, end, haplotype))
                     drain_add_queue()
                 build_queue.task_done()
             build_queue.task_done()
@@ -429,7 +406,7 @@ class AncestorsGenerator(object):
         logger.debug("Started {} build worker threads".format(self.num_threads))
 
         for index, (age, focal_sites) in enumerate(self.descriptors):
-            build_queue.put((index, self.time_map[age], focal_sites))
+            build_queue.put((index, age, focal_sites))
 
         # Stop the the worker threads.
         for j in range(self.num_threads):
@@ -441,28 +418,27 @@ class AncestorsGenerator(object):
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
-        # If sites don't have a time, build a map from frequencies to time.
-        # Time is simply measured in integer units
-        self.time_map = {}
+        # Maps epoch numbers to their corresponding ancestor ages.
+        self.age_to_epoch = {}
         for age, _ in reversed(self.descriptors):
-            if age not in self.time_map:
-                self.time_map[age] = len(self.time_map) + 1
+            if age not in self.age_to_epoch:
+                self.age_to_epoch[age] = len(self.age_to_epoch) + 1
         if self.num_ancestors > 0:
             logger.info("Starting build for {} ancestors".format(self.num_ancestors))
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
             a = np.zeros(self.num_sites, dtype=np.uint8)
-            root_time = len(self.time_map) + 1
-            ultimate_ancestor_time = root_time + 1
+            root_age = max(self.age_to_epoch.keys()) + 1
+            ultimate_ancestor_age = root_age + 1
             # Add the ultimate ancestor. This is an awkward hack really; we don't
             # ever insert this ancestor. The only reason to add it here is that
             # it makes sure that the ancestor IDs we have in the ancestor file are
             # the same as in the ancestor tree sequence. This seems worthwhile.
             self.ancestor_data.add_ancestor(
-                start=0, end=self.num_sites, time=ultimate_ancestor_time,
+                start=0, end=self.num_sites, age=ultimate_ancestor_age,
                 focal_sites=[], haplotype=a)
             # Hack to ensure we always have a root with zeros at every position.
             self.ancestor_data.add_ancestor(
-                start=0, end=self.num_sites, time=root_time,
+                start=0, end=self.num_sites, age=root_age,
                 focal_sites=np.array([], dtype=np.int32), haplotype=a)
             if self.num_threads <= 0:
                 self._run_synchronous(progress)
@@ -888,13 +864,12 @@ class AncestorMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.ancestors_time[:]
+        self.epoch = self.ancestor_data.ancestors_age[:]
 
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
         for ancestor_id in range(self.num_ancestors):
             self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
-
         self.ancestors = self.ancestor_data.ancestors()
         # Consume the first ancestor.
         a = next(self.ancestors, None)

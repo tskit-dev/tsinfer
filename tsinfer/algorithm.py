@@ -36,8 +36,7 @@ import tsinfer.constants as constants
 
 class Edge(object):
 
-    def __init__(
-            self, left=None, right=None, parent=None, child=None, next=None):
+    def __init__(self, left=None, right=None, parent=None, child=None, next=None):
         self.left = left
         self.right = right
         self.parent = parent
@@ -50,14 +49,10 @@ class Edge(object):
 
 
 class Site(object):
-    def __init__(self, id, frequency, genotypes, age=None):
+    def __init__(self, id, age, genotypes):
         self.id = id
+        self.age = age
         self.genotypes = genotypes
-        if age:
-            self.age = age
-            self.frequency = frequency
-        else:
-            self.age = self.frequency = frequency
 
 
 class AncestorBuilder(object):
@@ -80,32 +75,16 @@ class AncestorBuilder(object):
         # defaultdict of defaultdicts
         self.age_map = collections.defaultdict(lambda: collections.defaultdict(list))
 
-    def add_site(self, site_id, frequency, genotypes, age=None):
+    def add_site(self, site_id, age, genotypes):
         """
         Adds a new site at the specified ID to the builder.
-        Normally we build ancestors by taking frequency order as a proxy for age order,
-        but if we have better information on the age of we can also pass in specific age
-        that this variant was generated, and the order of these ages will be used in the
-        matching algorithm.
         """
-        assert frequency > 1
-        # create the dict which will be used to store site_ids
-        if age is None:
-            # treat frequency as age
-            self.sites[site_id] = Site(site_id, frequency, genotypes)
-            sites_at_fixed_age = self.age_map[frequency]
-        else:
-            self.sites[site_id] = Site(site_id, frequency, genotypes, age)
-            sites_at_fixed_age = self.age_map[age]
-
+        self.sites[site_id] = Site(site_id, age, genotypes)
+        sites_at_fixed_age = self.age_map[age]
         # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) and at the same age, are put into the same ancestor,
         # to which we allocate a unique ID (just use the genotypes.tobytes() value)
-        # This is a bit of a hack, and we may want to change it. We might also have
-        # information about which variants are present in which actual ancestors, in
-        # which case we should pass e.g. an integer as the UID (not implemented)
         ancestor_uid = genotypes.tobytes()
-
         # Add each site to the list for this ancestor_uid at this age
         sites_at_fixed_age[ancestor_uid].append(site_id)
 
@@ -114,7 +93,7 @@ class AncestorBuilder(object):
         print("Sites = ")
         for j in range(self.num_sites):
             site = self.sites[j]
-            print(j, site.frequency, site.genotypes, site.age, sep="\t")
+            print(j, site.genotypes, site.age, sep="\t")
         print("Age map")
         for age in sorted(self.age_map.keys()):
             sites_at_fixed_age = self.age_map[age]
@@ -131,7 +110,7 @@ class AncestorBuilder(object):
         # return True
         index = np.where(samples == 1)[0]
         for j in range(a + 1, b):
-            if self.sites[j].frequency > self.sites[a].frequency:
+            if self.sites[j].age > self.sites[a].age:
                 gj = self.sites[j].genotypes[index]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
@@ -151,23 +130,15 @@ class AncestorBuilder(object):
             # We sort by the genotype patterns
             keys = sorted(self.age_map[age].keys())
             for key in keys:
-                focal_sites = np.array(
-                    self.age_map[age][key], dtype=np.int32)
-                # Where we have tried to place sites with the same distribution of
-                # variants in the same ancestor, we might want to split them up.
-                if isinstance(key, bytes):
-                    samp = np.frombuffer(key, dtype=np.uint8)
-                    # print("focal_sites = ", key, samp, focal_sites)
-                    start = 0
-                    for j in range(len(focal_sites) - 1):
-                        if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
-                            ret.append((age, focal_sites[start: j + 1]))
-                            start = j + 1
-                    ret.append((age, focal_sites[start:]))
-                else:
-                    # Could get here if we have reasons other than variant distribution
-                    # pattern to place variants in the same ancestor
-                    ret.append((age, focal_sites))
+                focal_sites = np.array(self.age_map[age][key], dtype=np.int32)
+                samp = np.frombuffer(key, dtype=np.uint8)
+                # print("focal_sites = ", key, samp, focal_sites)
+                start = 0
+                for j in range(len(focal_sites) - 1):
+                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
+                        ret.append((age, focal_sites[start: j + 1]))
+                        start = j + 1
+                ret.append((age, focal_sites[start:]))
         return ret
 
     def compute_ancestral_states(self, a, focal_site, sites):
@@ -176,12 +147,11 @@ class AncestorBuilder(object):
         of the preprint, with the buffer.
         """
         focal_age = self.sites[focal_site].age
-        # Break when half are in focal set
-        min_sample_set_size = self.sites[focal_site].frequency // 2
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
+        # Break when we've lost half of S
+        min_sample_set_size = len(S) // 2
         remove_buffer = []
         last_site = focal_site
-        # print("Computing for ", focal_site)
         for l in sites:
             a[l] = 0
             last_site = l
@@ -189,7 +159,7 @@ class AncestorBuilder(object):
                 g_l = self.sites[l].genotypes
                 ones = sum(g_l[u] for u in S)
                 zeros = len(S) - ones
-                # print("\t", l, ones, zeros, sep="\t")
+                # print("\tsite", l, ones, zeros, sep="\t")
                 consensus = 0
                 if ones >= zeros:
                     consensus = 1
