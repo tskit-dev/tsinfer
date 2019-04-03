@@ -26,6 +26,7 @@ import sys
 import tempfile
 
 import msprime
+import tskit
 import numpy as np
 
 import tsinfer
@@ -57,7 +58,7 @@ def kc_distance(tree1, tree2):
             u = tree.mrca(a, b)
             path_len = 0
             v = u
-            while tree.parent(v) != msprime.NULL_NODE:
+            while tree.parent(v) != tskit.NULL:
                 path_len += 1
                 v = tree.parent(v)
             M[tree_index][j] = path_len
@@ -649,30 +650,30 @@ class TestCheckAncestorsTs(unittest.TestCase):
     """
 
     def test_empty(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_time(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=0, flags=0)
         with self.assertRaises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_edges(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         with self.assertRaises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_one_edge(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=1, flags=0)
         tables.edges.add_row(0, 1, 0, 1)
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_has_parent(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         tables.nodes.add_row(time=2, flags=0)
         tables.edges.add_row(0, 1, 1, 0)
@@ -680,7 +681,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_has_no_children(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=3, flags=0)
@@ -689,7 +690,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_disconnected_subtrees(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=4, flags=1)
         tables.nodes.add_row(time=3, flags=1)
         tables.nodes.add_row(time=2, flags=1)
@@ -700,7 +701,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_many_mutations(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=1, flags=0)
         tables.edges.add_row(0, 1, 0, 1)
@@ -1107,7 +1108,7 @@ class TestSnipCentromere(unittest.TestCase):
             if tree.interval == (left, right):
                 tree_found = True
                 for node in ts1.nodes():
-                    self.assertEqual(tree.parent(node.id), msprime.NULL_NODE)
+                    self.assertEqual(tree.parent(node.id), tskit.NULL)
                 break
         self.assertTrue(tree_found)
         return ts1

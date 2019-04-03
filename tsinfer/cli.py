@@ -27,7 +27,7 @@ import resource
 import math
 
 import daiquiri
-import msprime
+import tskit
 import tqdm
 import humanize
 import time
@@ -151,11 +151,11 @@ def summarise_tree_sequence(path, ts):
 
 def run_list(args):
     setup_logging(args)
-    # First try to load with msprime.
+    # First try to load with tskit.
     ts = None
     try:
-        ts = msprime.load(args.path)
-    except msprime.FileFormatError:
+        ts = tskit.load(args.path)
+    except tskit.FileFormatError:
         pass
     if ts is None:
         tsinfer_file = tsinfer.load(args.path)
@@ -216,7 +216,7 @@ def run_augment_ancestors(args):
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     output_path = args.augmented_ancestors
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
-    ancestors_trees = msprime.load(ancestors_trees)
+    ancestors_trees = tskit.load(ancestors_trees)
     progress_monitor = ProgressMonitor(enabled=args.progress, augment_ancestors=True)
     # TODO Need some error checking on these values
     n = args.num_samples
@@ -241,7 +241,7 @@ def run_match_samples(args):
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
-    ancestors_trees = msprime.load(ancestors_trees)
+    ancestors_trees = tskit.load(ancestors_trees)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
     ts = tsinfer.match_samples(
         sample_data, ancestors_trees, num_threads=args.num_threads,
@@ -256,7 +256,7 @@ def run_match_samples(args):
 def run_verify(args):
     setup_logging(args)
     samples = tsinfer.SampleData.load(args.samples)
-    ts = msprime.load(args.tree_sequence)
+    ts = tskit.load(args.tree_sequence)
     progress_monitor = ProgressMonitor(enabled=args.progress, verify=True)
     tsinfer.verify(samples, ts, progress_monitor=progress_monitor)
     summarise_usage()

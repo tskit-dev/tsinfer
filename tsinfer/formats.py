@@ -35,7 +35,7 @@ import zarr
 import lmdb
 import humanize
 import numcodecs
-import msprime
+import tskit
 import attr
 
 import tsinfer.threads as threads
@@ -570,7 +570,7 @@ class DataContainer(object):
 @attr.s
 class Site(object):
     """
-    A single site. Mirrors the definition in msprime.
+    A single site. Mirrors the definition in tskit.
     """
     # TODO document properly.
     id = attr.ib()
@@ -583,7 +583,7 @@ class Site(object):
 @attr.s
 class Variant(object):
     """
-    A single variant. Mirrors the definition in msprime but with some extra fields.
+    A single variant. Mirrors the definition in tskit but with some extra fields.
     """
     # TODO document properly.
     site = attr.ib()
@@ -1004,7 +1004,7 @@ class SampleData(DataContainer):
             raise ValueError("Cannot add individuals after adding sites")
 
         if population is None:
-            population = msprime.NULL_POPULATION
+            population = tskit.NULL
         if population >= self.num_populations:
             raise ValueError("population ID out of bounds")
         if ploidy <= 0:

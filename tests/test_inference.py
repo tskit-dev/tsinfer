@@ -27,6 +27,7 @@ import math
 
 import numpy as np
 import msprime
+import tskit
 
 import tsinfer
 import tsinfer.eval_util as eval_util
@@ -1008,11 +1009,11 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data.finalise()
 
         expected_edges = [
-            msprime.Edge(0, 6, 0, 1),
-            msprime.Edge(0, 3, 2, 4),
-            msprime.Edge(3, 6, 3, 4),
-            msprime.Edge(3, 6, 1, 3),
-            msprime.Edge(0, 3, 1, 2)]
+            tskit.Edge(0, 6, 0, 1),
+            tskit.Edge(0, 3, 2, 4),
+            tskit.Edge(3, 6, 3, 4),
+            tskit.Edge(3, 6, 1, 3),
+            tskit.Edge(0, 3, 1, 2)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
     def test_partial_overlap(self):
@@ -1039,11 +1040,11 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data.finalise()
 
         expected_edges = [
-            msprime.Edge(0, 7, 0, 1),
-            msprime.Edge(0, 3, 2, 4),
-            msprime.Edge(3, 7, 3, 4),
-            msprime.Edge(3, 7, 1, 3),
-            msprime.Edge(0, 3, 1, 2)]
+            tskit.Edge(0, 7, 0, 1),
+            tskit.Edge(0, 3, 2, 4),
+            tskit.Edge(3, 7, 3, 4),
+            tskit.Edge(3, 7, 1, 3),
+            tskit.Edge(0, 3, 1, 2)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
     def test_edge_overlap_bug(self):
@@ -1080,15 +1081,15 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data.finalise()
 
         expected_edges = [
-            msprime.Edge(0, 12, 0, 1),
-            msprime.Edge(0, 4, 1, 2),
-            msprime.Edge(4, 12, 1, 3),
-            msprime.Edge(8, 12, 1, 4),
-            msprime.Edge(4, 8, 1, 5),
-            msprime.Edge(0, 4, 1, 6),
-            msprime.Edge(0, 4, 1, 7),
-            msprime.Edge(4, 8, 5, 7),
-            msprime.Edge(8, 12, 1, 7)]
+            tskit.Edge(0, 12, 0, 1),
+            tskit.Edge(0, 4, 1, 2),
+            tskit.Edge(4, 12, 1, 3),
+            tskit.Edge(8, 12, 1, 4),
+            tskit.Edge(4, 8, 1, 5),
+            tskit.Edge(0, 4, 1, 6),
+            tskit.Edge(0, 4, 1, 7),
+            tskit.Edge(4, 8, 5, 7),
+            tskit.Edge(8, 12, 1, 7)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
 
@@ -1834,12 +1835,12 @@ class TestAugmentedAncestors(unittest.TestCase):
             if parent != original_node:
                 for tree in final_ts.trees():
                     u = parent
-                    while u != msprime.NULL_NODE:
+                    while u != tskit.NULL:
                         siblings = tree.children(u)
                         if original_node in siblings:
                             break
                         u = tree.parent(u)
-                    self.assertNotEqual(u, msprime.NULL_NODE)
+                    self.assertNotEqual(u, tskit.NULL)
 
     def verify(self, samples):
         ancestors = tsinfer.generate_ancestors(samples)

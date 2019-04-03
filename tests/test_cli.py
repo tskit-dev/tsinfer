@@ -29,6 +29,7 @@ import unittest
 import unittest.mock as mock
 
 import numpy as np
+import tskit
 import msprime
 
 import tsinfer
@@ -140,7 +141,7 @@ class TestCommandsDefaults(TestCli):
     Tests that the basic commands work if we provide the default arguments.
     """
     def verify_output(self, output_path):
-        output_trees = msprime.load(output_path)
+        output_trees = tskit.load(output_path)
         self.assertEqual(output_trees.num_samples, self.input_ts.num_samples)
         self.assertEqual(output_trees.sequence_length, self.input_ts.sequence_length)
         self.assertEqual(output_trees.num_sites, self.input_ts.num_sites)
@@ -221,8 +222,8 @@ class TestMatchSamples(TestCli):
         self.run_command([
             "match-samples", self.sample_file, "--no-simplify", "-O",
             output_trees_no_simplify])
-        t1 = msprime.load(output_trees).tables
-        t2 = msprime.load(output_trees_no_simplify).tables
+        t1 = tskit.load(output_trees).tables
+        t2 = tskit.load(output_trees_no_simplify).tables
         self.assertNotEqual(t1.nodes, t2.nodes)
 
 
