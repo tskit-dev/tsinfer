@@ -172,7 +172,7 @@ def infer(
 
 def generate_ancestors(
         sample_data, num_threads=0, progress_monitor=None, engine=constants.C_ENGINE,
-        **kwargs):
+        variant_age_by_position=None, **kwargs):
     """
     generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
 
@@ -193,6 +193,9 @@ def generate_ancestors(
         genering putative ancestors from.
     :param int num_threads: The number of worker threads to use. If < 1, use a
         simpler synchronous algorithm.
+    :param dict variant_age_by_position: Rather than use frequency as a proxy for age
+        (the default) we can pass in a dictionary of known ages for each variant,
+        keyed by position.
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
@@ -201,7 +204,13 @@ def generate_ancestors(
         generator = AncestorsGenerator(
             sample_data, ancestor_data, progress_monitor, engine=engine,
             num_threads=num_threads)
-        generator.add_sites()
+        if variant_age_by_position is not None:
+            # Make an array of ages corresponding to the inference sites
+            variant_ages = [variant_age_by_position[v.site.position]
+                            for v in sample_data.variants(inference_sites=True)]
+            generator.add_sites(variant_ages)
+        else:
+            generator.add_sites()
         generator.run()
         ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
@@ -329,28 +338,44 @@ class AncestorsGenerator(object):
         else:
             raise ValueError("Unknown engine:{}".format(engine))
 
-    def add_sites(self):
+    def add_sites(self, variant_ages=None):
+        """
+        Add all sites from the sample_data object into the ancestor_builder.
+        If we have prior knowledge of the age of the variant at each site, we can
+        pass it in as an array of ages of length equal to the number of inference sites.
+        """
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
+        # There may be multiple samples at the same age/freq, we store
+        # the site_id in a dict for each age, keyed by pattern of site
+        # distributions
         for j, (site_id, genotypes) in enumerate(
                 self.sample_data.genotypes(inference_sites=True)):
-            frequency = np.sum(genotypes)
-            self.ancestor_builder.add_site(j, int(frequency), genotypes)
+            frequency = int(np.sum(genotypes))
+            if variant_ages is None:
+                # assume age == frequency, the default
+                self.ancestor_builder.add_site(j, frequency, genotypes)
+            else:
+                assert len(variant_ages) == self.num_sites
+                self.ancestor_builder.add_site(
+                    j, frequency, genotypes, age=variant_ages[j])
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
         a = np.zeros(self.num_sites, dtype=np.uint8)
-        for freq, focal_sites in self.descriptors:
+        for age, focal_sites in self.descriptors:
             before = time.perf_counter()
             s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor with {} focal sites and length={} in {:.2f}s.".format(
-                    focal_sites.shape[0], e - s, duration))
+                "Made ancestor in {:.2f}s at nominal age {} (timestep {}) "
+                "from {} to {} (l={}) with {} focal sites ({})".format(
+                    duration, age, self.time_map[age], e, s, e-s,
+                    focal_sites.shape[0], focal_sites))
             self.ancestor_data.add_ancestor(
-                start=s, end=e, time=self.time_map[freq], focal_sites=focal_sites,
+                start=s, end=e, time=self.time_map[age], focal_sites=focal_sites,
                 haplotype=a[s:e])
             progress.update()
 
@@ -403,8 +428,8 @@ class AncestorsGenerator(object):
             for j in range(self.num_threads)]
         logger.debug("Started {} build worker threads".format(self.num_threads))
 
-        for index, (freq, focal_sites) in enumerate(self.descriptors):
-            build_queue.put((index, self.time_map[freq], focal_sites))
+        for index, (age, focal_sites) in enumerate(self.descriptors):
+            build_queue.put((index, self.time_map[age], focal_sites))
 
         # Stop the the worker threads.
         for j in range(self.num_threads):
@@ -416,11 +441,12 @@ class AncestorsGenerator(object):
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
-        # Build the map from frequencies to time.
+        # If sites don't have a time, build a map from frequencies to time.
+        # Time is simply measured in integer units
         self.time_map = {}
-        for freq, _ in reversed(self.descriptors):
-            if freq not in self.time_map:
-                self.time_map[freq] = len(self.time_map) + 1
+        for age, _ in reversed(self.descriptors):
+            if age not in self.time_map:
+                self.time_map[age] = len(self.time_map) + 1
         if self.num_ancestors > 0:
             logger.info("Starting build for {} ancestors".format(self.num_ancestors))
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)

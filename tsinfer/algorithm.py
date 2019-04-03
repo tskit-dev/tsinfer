@@ -50,10 +50,14 @@ class Edge(object):
 
 
 class Site(object):
-    def __init__(self, id, frequency, genotypes):
+    def __init__(self, id, frequency, genotypes, age=None):
         self.id = id
-        self.frequency = frequency
         self.genotypes = genotypes
+        if age:
+            self.age = age
+            self.frequency = frequency
+        else:
+            self.age = self.frequency = frequency
 
 
 class AncestorBuilder(object):
@@ -68,34 +72,56 @@ class AncestorBuilder(object):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
-        self.frequency_map = [{} for _ in range(self.num_samples + 1)]
+        # Create a mapping from age to sites. Different sites can exist at the same age,
+        # if we expect them to be part of the same ancestor node we can give them the
+        # same ancestor_uid: the age_map contains values keyed by age, with values
+        # consisting of a dictionary, d, of uid=>[array_of_site_ids]
+        # It is handy to be able to add to d without checking, so we make this a
+        # defaultdict of defaultdicts
+        self.age_map = collections.defaultdict(lambda: collections.defaultdict(list))
 
-    def add_site(self, site_id, frequency, genotypes):
+    def add_site(self, site_id, frequency, genotypes, age=None):
         """
-        Adds a new site at the specified ID and allele pattern to the builder.
+        Adds a new site at the specified ID to the builder.
+        Normally we build ancestors by taking frequency order as a proxy for age order,
+        but if we have better information on the age of we can also pass in specific age
+        that this variant was generated, and the order of these ages will be used in the
+        matching algorithm.
         """
         assert frequency > 1
-        self.sites[site_id] = Site(site_id, frequency, genotypes)
-        pattern_map = self.frequency_map[frequency]
-        # Each unique pattern gets added to the list
-        key = genotypes.tobytes()
-        if key not in pattern_map:
-            pattern_map[key] = []
-        pattern_map[key].append(site_id)
+        # create the dict which will be used to store site_ids
+        if age is None:
+            # treat frequency as age
+            self.sites[site_id] = Site(site_id, frequency, genotypes)
+            sites_at_fixed_age = self.age_map[frequency]
+        else:
+            self.sites[site_id] = Site(site_id, frequency, genotypes, age)
+            sites_at_fixed_age = self.age_map[age]
+
+        # Sites with an identical variant distribution (i.e. with the same
+        # genotypes.tobytes() value) and at the same age, are put into the same ancestor,
+        # to which we allocate a unique ID (just use the genotypes.tobytes() value)
+        # This is a bit of a hack, and we may want to change it. We might also have
+        # information about which variants are present in which actual ancestors, in
+        # which case we should pass e.g. an integer as the UID (not implemented)
+        ancestor_uid = genotypes.tobytes()
+
+        # Add each site to the list for this ancestor_uid at this age
+        sites_at_fixed_age[ancestor_uid].append(site_id)
 
     def print_state(self):
         print("Ancestor builder")
         print("Sites = ")
         for j in range(self.num_sites):
             site = self.sites[j]
-            print(j, site.frequency, site.genotypes, sep="\t")
-        print("Frequency map")
-        for f in range(self.num_samples):
-            pattern_map = self.frequency_map[f]
-            if len(pattern_map) > 0:
-                print("f = ", f, "with ", len(pattern_map), "patterns")
-                for pattern, sites in pattern_map.items():
-                    print("\t", pattern, ":", sites)
+            print(j, site.frequency, site.genotypes, site.age, sep="\t")
+        print("Age map")
+        for age in sorted(self.age_map.keys()):
+            sites_at_fixed_age = self.age_map[age]
+            if len(sites_at_fixed_age) > 0:
+                print("age = ", age, "with ", len(sites_at_fixed_age), "ancestors")
+                for ancestor, sites in sites_at_fixed_age.items():
+                    print("\t", ancestor, ":", sites)
 
     def break_ancestor(self, a, b, samples):
         """
@@ -113,32 +139,45 @@ class AncestorBuilder(object):
 
     def ancestor_descriptors(self):
         """
-        Returns a list of (frequency, focal_sites) tuples describing the
-        ancestors in reverse order of frequency.
+        Returns a list of (age, focal_sites) tuples describing the ancestors in age order
+        (oldest first)
         """
         # self.print_state()
         ret = []
-        for frequency in reversed(range(self.num_samples + 1)):
-            # Need to make the order in which these are returned deterministic,
+        for age in sorted(self.age_map.keys(), reverse=True):
+            # Find all the ancestors at the same age
+            # We need to make the order in which these are returned deterministic,
             # or ancestor IDs are not replicable between runs. In the C implementation
             # We sort by the genotype patterns
-            keys = sorted(self.frequency_map[frequency].keys())
+            keys = sorted(self.age_map[age].keys())
             for key in keys:
                 focal_sites = np.array(
-                    self.frequency_map[frequency][key], dtype=np.int32)
-                samples = np.frombuffer(key, dtype=np.uint8)
-                # print("focal_sites = ", key, samples, focal_sites)
-                start = 0
-                for j in range(len(focal_sites) - 1):
-                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samples):
-                        ret.append((frequency, focal_sites[start: j + 1]))
-                        start = j + 1
-                ret.append((frequency, focal_sites[start:]))
+                    self.age_map[age][key], dtype=np.int32)
+                # Where we have tried to place sites with the same distribution of
+                # variants in the same ancestor, we might want to split them up.
+                if isinstance(key, bytes):
+                    samp = np.frombuffer(key, dtype=np.uint8)
+                    # print("focal_sites = ", key, samp, focal_sites)
+                    start = 0
+                    for j in range(len(focal_sites) - 1):
+                        if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
+                            ret.append((age, focal_sites[start: j + 1]))
+                            start = j + 1
+                    ret.append((age, focal_sites[start:]))
+                else:
+                    # Could get here if we have reasons other than variant distribution
+                    # pattern to place variants in the same ancestor
+                    ret.append((age, focal_sites))
         return ret
 
     def compute_ancestral_states(self, a, focal_site, sites):
-        focal_frequency = self.sites[focal_site].frequency
-        min_sample_set_size = focal_frequency // 2
+        """
+        Together with make_ancestor, this is the main algorithm as implemented in Fig S2
+        of the preprint, with the buffer.
+        """
+        focal_age = self.sites[focal_site].age
+        # Break when half are in focal set
+        min_sample_set_size = self.sites[focal_site].frequency // 2
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
         remove_buffer = []
         last_site = focal_site
@@ -146,7 +185,7 @@ class AncestorBuilder(object):
         for l in sites:
             a[l] = 0
             last_site = l
-            if self.sites[l].frequency > focal_frequency:
+            if self.sites[l].age > focal_age:
                 g_l = self.sites[l].genotypes
                 ones = sum(g_l[u] for u in S)
                 zeros = len(S) - ones
@@ -171,26 +210,35 @@ class AncestorBuilder(object):
         return last_site
 
     def make_ancestor(self, focal_sites, a):
+        """
+        Fills out the array a with the haplotype
+        return the start and end of an ancestor
+        """
+        focal_age = self.sites[focal_sites[0]].age
+        # check all focal sites in this ancestor are at the same age
+        assert all([self.sites[fs].age == focal_age for fs in focal_sites])
+
         a[:] = constants.UNKNOWN_ALLELE
         for focal_site in focal_sites:
             a[focal_site] = 1
-        focal_frequency = self.sites[focal_sites[0]].frequency
         S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
         for j in range(len(focal_sites) - 1):
             for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
                 a[l] = 0
-                if self.sites[l].frequency > focal_frequency:
+                if self.sites[l].age > focal_age:
                     g_l = self.sites[l].genotypes
                     ones = sum(g_l[u] for u in S)
                     zeros = len(S) - ones
                     # print("\t", l, ones, zeros, sep="\t")
                     if ones >= zeros:
                         a[l] = 1
+        # Go rightwards
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
         assert a[last_site] != constants.UNKNOWN_ALLELE
         end = last_site + 1
+        # Go leftwards
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
