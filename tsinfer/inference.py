@@ -211,7 +211,7 @@ def match_ancestors(
         sample_data, ancestor_data, progress_monitor=None, num_threads=0,
         path_compression=True, extended_checks=False, engine=constants.C_ENGINE):
     """
-    match_ancestors(sample_data, path_compression, num_threads=0)
+    match_ancestors(sample_data, ancestor_data, num_threads=0, path_compression=True)
 
     Runs the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
     on the specified :class:`SampleData` and :class:`AncestorData` instances,
@@ -225,6 +225,8 @@ def match_ancestors(
         a history for.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
+    :param bool path_compression: Should we try to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints)
     :return: The ancestors tree sequence representing the inferred history
         of the set of ancestors.
     :rtype: tskit.TreeSequence
