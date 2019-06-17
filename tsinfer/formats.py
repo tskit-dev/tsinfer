@@ -885,12 +885,12 @@ class SampleData(DataContainer):
         the UUID and provenance.
 
         To compare two :class:`SampleData`` instances for exact equality of
-        all data includeing UUIDs and provenance data, use ``s1 == s2``.
+        all data including UUIDs and provenance data, use ``s1 == s2``.
 
         :param SampleData other: The other :class:`SampleData` instance to
             compare with.
         :return: ``True`` if the data held in this :class:`SampleData`
-            instance is identical to the date held in the other instacnce.
+            instance is identical to the date held in the other instance.
         :rtype: bool
         """
         return (
