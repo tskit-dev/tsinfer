@@ -30,6 +30,7 @@ import tskit
 import numpy as np
 
 import tsinfer
+import tsinfer.constants as constants
 
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
@@ -300,7 +301,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         Simple implementation using tree traversals.
         """
         A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-        A[:] = tsinfer.UNKNOWN_ALLELE
+        A[:] = constants.UNKNOWN_ALLELE
         for t in ts.trees():
             for site in t.sites():
                 for u in t.nodes():
@@ -337,7 +338,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
                 self.assertTrue(np.all(A[above, site.id] == 0))
                 outside = np.array(list(
                     set(range(ts.num_nodes)) - set(tree.nodes())), dtype=int)
-                self.assertTrue(np.all(A[outside, site.id] == tsinfer.UNKNOWN_ALLELE))
+                self.assertTrue(np.all(A[outside, site.id] == constants.UNKNOWN_ALLELE))
 
     def test_single_tree(self):
         ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
@@ -422,9 +423,9 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         self.assertTrue(np.all(ancestors[0, :] == 0))
         for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
             self.assertTrue(0 <= s < e <= m)
-            self.assertTrue(np.all(a[:s] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[e:] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[s:e] != tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[:s] == constants.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[e:] == constants.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[s:e] != constants.UNKNOWN_ALLELE))
             for site in focal:
                 self.assertEqual(a[site], 1)
 

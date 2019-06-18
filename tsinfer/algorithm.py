@@ -219,16 +219,16 @@ class AncestorBuilder(object):
         # Version with 1 focal site
         # assert len(focal_sites) == 1
         # focal_site = focal_sites[0]
-        # a[:] = UNKNOWN_ALLELE
+        # a[:] = constants.UNKNOWN_ALLELE
         # a[focal_site] = 1
 
         # last_site = self.compute_ancestral_states(
         #         a, focal_site, range(focal_site + 1, self.num_sites))
-        # assert a[last_site] != UNKNOWN_ALLELE
+        # assert a[last_site] != constants.UNKNOWN_ALLELE
         # end = last_site + 1
         # last_site = self.compute_ancestral_states(
         #         a, focal_site, range(focal_site - 1, -1, -1))
-        # assert a[last_site] != UNKNOWN_ALLELE
+        # assert a[last_site] != constants.UNKNOWN_ALLELE
         # start = last_site
         # return start, end
 
