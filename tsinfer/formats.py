@@ -43,9 +43,6 @@ import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
 
 
-# FIXME need some global place to keep these constants
-UNKNOWN_ALLELE = 255
-
 logger = logging.getLogger(__name__)
 
 
