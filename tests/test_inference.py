@@ -967,7 +967,7 @@ class AlgorithmsExactlyEqualMixin(object):
     def test_twenty_samples(self):
         for seed in range(5):
             ts = msprime.simulate(
-                10, recombination_rate=0.1, random_seed=seed + 500, length=10,
+                20, recombination_rate=0.1, random_seed=seed + 500, length=10,
                 model="smc_prime")
             ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
             self.verify(ts)
