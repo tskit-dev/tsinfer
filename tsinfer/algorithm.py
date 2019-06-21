@@ -58,11 +58,8 @@ class Site(object):
 class AncestorBuilder(object):
     """
     Builds inferred ancestors.
+    This implementation partially allows for multiple focal sites per ancestor
     """
-    # TODO this implementation currently partially allows for multiple focal
-    # sites per ancestor, but the final generation algorithm assumes a single
-    # focal site. Once this is finalised we should refactor to remove the complexity
-    # needed for matching up ancestors with identical focal sites.
     def __init__(self, num_samples, num_sites):
         self.num_samples = num_samples
         self.num_sites = num_sites
