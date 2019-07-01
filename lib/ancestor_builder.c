@@ -27,12 +27,12 @@
 
 #include "avl.h"
 
-typedef struct {
-    allele_t *state;
-    site_id_t id;
-    size_t num_samples;
-} site_equality_t;
-
+static int
+cmp_age_map(const void *a, const void *b) {
+    const age_map_t *ia = (age_map_t const *) a;
+    const age_map_t *ib = (age_map_t const *) b;
+    return (ia->age > ib->age) - (ia->age < ib->age);
+}
 
 static int
 cmp_pattern_map(const void *a, const void *b) {
@@ -42,14 +42,88 @@ cmp_pattern_map(const void *a, const void *b) {
     return ret;
 }
 
+static void
+ancestor_builder_check_state(ancestor_builder_t *self)
+{
+    size_t count;
+    avl_node_t *a, *b;
+    pattern_map_t *pattern_map;
+    age_map_t *age_map;
+    site_list_t *s;
+
+    for (a = self->age_map.head; a != NULL; a = a->next) {
+        age_map = (age_map_t *) a->item;
+        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+            pattern_map = (pattern_map_t *) b->item;
+            count = 0;
+            for (s = pattern_map->sites; s != NULL; s = s->next) {
+                assert(self->sites[s->site].age == age_map->age);
+                assert(self->sites[s->site].genotypes == pattern_map->genotypes);
+                count++;
+            }
+            assert(pattern_map->num_sites == count);
+        }
+    }
+}
+
+int
+ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
+{
+    size_t j, k;
+    avl_node_t *a, *b;
+    pattern_map_t *pattern_map;
+    age_map_t *age_map;
+    site_list_t *s;
+
+    fprintf(out, "Ancestor builder\n");
+    fprintf(out, "num_samples = %d\n", (int) self->num_samples);
+    fprintf(out, "num_sites = %d\n", (int) self->num_sites);
+    fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
+
+    fprintf(out, "Sites:\n");
+    for (j = 0; j < self->num_sites; j++) {
+        fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].age,
+                self->sites[j].genotypes);
+    }
+    fprintf(out, "Age map:\n");
+
+    for (a = self->age_map.head; a != NULL; a = a->next) {
+        age_map = (age_map_t *) a->item;
+        printf("Epoch: age = %f: %d ancestors\n",
+                age_map->age, avl_count(&age_map->pattern_map));
+        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+            pattern_map = (pattern_map_t *) b->item;
+            printf("\t");
+            for (k = 0; k < self->num_samples; k++) {
+                printf("%d", pattern_map->genotypes[k]);
+            }
+            printf("\t");
+            for (s = pattern_map->sites; s != NULL; s = s->next) {
+                printf("%d ", s->site);
+            }
+            printf("\n");
+        }
+    }
+    fprintf(out, "Descriptors:\n");
+    for (j = 0; j < self->num_ancestors; j++) {
+        fprintf(out, "%f\t%d: ",  self->descriptors[j].age,
+                (int) self->descriptors[j].num_focal_sites);
+        for (k = 0; k < self->descriptors[j].num_focal_sites; k++) {
+            fprintf(out, "%d, ", self->descriptors[j].focal_sites[k]);
+        }
+        fprintf(out, "\n");
+    }
+    block_allocator_print_state(&self->allocator, out);
+    ancestor_builder_check_state(self);
+    return 0;
+}
+
 int
 ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_sites,
         int flags)
 {
     int ret = 0;
-    size_t j;
     // TODO error checking
-    //
     assert(num_samples > 1);
     /* TODO need to be able to handle zero sites */
     /* assert(num_sites > 0); */
@@ -59,10 +133,8 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     self->num_sites = num_sites;
     self->flags = flags;
     self->sites = calloc(num_sites, sizeof(site_t));
-    self->frequency_map = calloc(num_samples + 1, sizeof(avl_tree_t));
     self->descriptors = calloc(num_sites, sizeof(ancestor_descriptor_t));
-    if (self->sites == NULL || self->frequency_map == NULL
-            || self->descriptors == NULL) {
+    if (self->sites == NULL || self->descriptors == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -70,9 +142,7 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     if (ret != 0) {
         goto out;
     }
-    for (j = 0; j < num_samples + 1; j++) {
-        avl_init_tree(&self->frequency_map[j], cmp_pattern_map, NULL);
-    }
+    avl_init_tree(&self->age_map, cmp_age_map, NULL);
 out:
     return ret;
 }
@@ -81,10 +151,37 @@ int
 ancestor_builder_free(ancestor_builder_t *self)
 {
     tsi_safe_free(self->sites);
-    tsi_safe_free(self->frequency_map);
     tsi_safe_free(self->descriptors);
     block_allocator_free(&self->allocator);
     return 0;
+}
+
+static age_map_t *
+ancestor_builder_get_age_map(ancestor_builder_t *self, double age)
+{
+    age_map_t *ret = NULL;
+    age_map_t search, *age_map;
+    avl_node_t *avl_node;
+
+    search.age = age;
+    avl_node = avl_search(&self->age_map, &search);
+    if (avl_node == NULL) {
+        avl_node = block_allocator_get(&self->allocator, sizeof(*avl_node));
+        age_map = block_allocator_get(&self->allocator, sizeof(*age_map));
+        if (avl_node == NULL || age_map == NULL) {
+            goto out;
+        }
+        age_map->age = age;
+        avl_init_tree(&age_map->pattern_map, cmp_pattern_map, NULL);
+        avl_init_node(avl_node, age_map);
+        avl_node = avl_insert_node(&self->age_map, avl_node);
+        assert(avl_node != NULL);
+        ret = age_map;
+    } else {
+        ret = (age_map_t *) avl_node->item;
+    }
+out:
+    return ret;
 }
 
 static inline void
@@ -114,9 +211,8 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
     site_id_t last_site = focal_site;
     int64_t l;
     node_id_t u;
-    size_t j, ones, zeros, tmp_size, sample_set_size;
-    size_t focal_site_frequency = self->sites[focal_site].frequency;
-    size_t min_sample_set_size = focal_site_frequency / 2;
+    size_t j, ones, zeros, tmp_size, sample_set_size, min_sample_set_size;
+    double focal_site_age = self->sites[focal_site].age;
     const site_t *restrict sites = self->sites;
     const size_t num_sites = self->num_sites;
     const allele_t *restrict genotypes;
@@ -124,20 +220,21 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
 
     ancestor_builder_get_consistent_samples(self, focal_site,
             sample_set, &sample_set_size);
-    assert(sample_set_size == focal_site_frequency);
     memset(disagree, 0, self->num_samples * sizeof(*disagree));
+    min_sample_set_size = sample_set_size / 2;
 
-    /* printf("site=%d, direction=%d\n", (int) focal_site, direction); */
+    /* printf("site=%d, direction=%d min_sample_size=%d\n", (int) focal_site, direction, */
+    /*         (int) min_sample_set_size); */
     for (l = focal_site + direction; l >= 0 && l < (int64_t) num_sites; l += direction) {
-        /* printf("\tl = %d\n", l); */
+        /* printf("\tl = %d\n", (int) l); */
         ancestor[l] = 0;
         last_site = (site_id_t) l;
-        if (sites[l].frequency > focal_site_frequency) {
+        if (sites[l].age > focal_site_age) {
 
-            /* printf("\t%d\t%d:", l, (int) sample_set_size); */
-            /* for (j = 0; j < sample_set_size; j++) { */
-            /*     printf("%d, ", sample_set[j]); */
-            /* } */
+            /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
+            /* /1* for (j = 0; j < sample_set_size; j++) { *1/ */
+            /* /1*     printf("%d, ", sample_set[j]); *1/ */
+            /* /1* } *1/ */
 
             genotypes = self->sites[l].genotypes;
             ones = 0;
@@ -150,6 +247,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
                 consensus = 1;
             }
             /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
+            /* fflush(stdout); */
             for (j = 0; j < sample_set_size; j++) {
                 u = sample_set[j];
                 if (disagree[u] && genotypes[u] != consensus) {
@@ -192,22 +290,22 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
 {
     int ret = 0;
     site_id_t l;
-    size_t j, k, ones, zeros, sample_set_size, focal_site_frequency;
+    size_t j, k, ones, zeros, sample_set_size;
+    double focal_site_age;
     const site_t *restrict sites = self->sites;
     const allele_t *restrict genotypes;
 
     assert(num_focal_sites > 0);
     ancestor_builder_get_consistent_samples(self, focal_sites[0],
             sample_set, &sample_set_size);
-    focal_site_frequency = self->sites[focal_sites[0]].frequency;
-    assert(sample_set_size == focal_site_frequency);
+    focal_site_age = self->sites[focal_sites[0]].age;
 
     ancestor[focal_sites[0]] = 1;
     for (j = 1; j < num_focal_sites; j++) {
         ancestor[focal_sites[j]] = 1;
         for (l = focal_sites[j - 1] + 1; l < focal_sites[j]; l++) {
             ancestor[l] = 0;
-            if (sites[l].frequency > focal_site_frequency) {
+            if (sites[l].age > focal_site_age) {
                 /* printf("\t%d\t%d:", l, (int) sample_set_size); */
                 /* for (k = 0; k < sample_set_size; k++) { */
                 /*     printf("%d, ", sample_set[k]); */
@@ -275,7 +373,7 @@ out:
 
 
 int WARN_UNUSED
-ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequency,
+ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, double age,
         allele_t *genotypes)
 {
     int ret = 0;
@@ -283,131 +381,61 @@ ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, size_t frequenc
     avl_node_t *avl_node;
     site_list_t *list_node;
     pattern_map_t search, *map_elem;
-    avl_tree_t *pattern_map = &self->frequency_map[frequency];
+    avl_tree_t *pattern_map;
+    age_map_t *age_map = ancestor_builder_get_age_map(self, age);
 
-    assert(frequency <= self->num_samples);
+    if (age_map == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    pattern_map = &age_map->pattern_map;
+
     assert(l < (site_id_t) self->num_sites);
     site = &self->sites[l];
-    site->frequency = frequency;
-    if (frequency > 1) {
-        search.genotypes = genotypes;
-        search.num_samples = self->num_samples;
-        avl_node = avl_search(pattern_map, &search);
-        if (avl_node == NULL) {
-            avl_node = block_allocator_get(&self->allocator, sizeof(avl_node_t));
-            map_elem = block_allocator_get(&self->allocator, sizeof(pattern_map_t));
-            site->genotypes = block_allocator_get(&self->allocator,
-                    self->num_samples * sizeof(allele_t));
-            if (avl_node == NULL || map_elem == NULL || site->genotypes == NULL) {
-                ret = TSI_ERR_NO_MEMORY;
-                goto out;
-            }
-            memcpy(site->genotypes, genotypes, self->num_samples * sizeof(allele_t));
-            avl_init_node(avl_node, map_elem);
-            map_elem->genotypes = site->genotypes;
-            map_elem->num_samples = self->num_samples;
-            map_elem->sites = NULL;
-            map_elem->num_sites = 0;
-            avl_node = avl_insert_node(pattern_map, avl_node);
-            assert(avl_node != NULL);
-            if (site->genotypes == NULL) {
-                ret = TSI_ERR_NO_MEMORY;
-                goto out;
-            }
-        } else {
-            map_elem = (pattern_map_t *) avl_node->item;
-            site->genotypes = map_elem->genotypes;
-        }
-        map_elem->num_sites++;
+    site->age = age;
 
-        list_node = block_allocator_get(&self->allocator, sizeof(site_list_t));
-        if (list_node == NULL) {
+    search.genotypes = genotypes;
+    search.num_samples = self->num_samples;
+    avl_node = avl_search(pattern_map, &search);
+    if (avl_node == NULL) {
+        avl_node = block_allocator_get(&self->allocator, sizeof(avl_node_t));
+        map_elem = block_allocator_get(&self->allocator, sizeof(pattern_map_t));
+        site->genotypes = block_allocator_get(&self->allocator,
+                self->num_samples * sizeof(allele_t));
+        if (avl_node == NULL || map_elem == NULL || site->genotypes == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
         }
-        list_node->site = l;
-        list_node->next = map_elem->sites;
-        map_elem->sites = list_node;
+        memcpy(site->genotypes, genotypes, self->num_samples * sizeof(allele_t));
+        avl_init_node(avl_node, map_elem);
+        map_elem->genotypes = site->genotypes;
+        map_elem->num_samples = self->num_samples;
+        map_elem->sites = NULL;
+        map_elem->num_sites = 0;
+        avl_node = avl_insert_node(pattern_map, avl_node);
+        assert(avl_node != NULL);
+        if (site->genotypes == NULL) {
+            ret = TSI_ERR_NO_MEMORY;
+            goto out;
+        }
+    } else {
+        map_elem = (pattern_map_t *) avl_node->item;
+        site->genotypes = map_elem->genotypes;
     }
+    map_elem->num_sites++;
+
+    list_node = block_allocator_get(&self->allocator, sizeof(site_list_t));
+    if (list_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    list_node->site = l;
+    list_node->next = map_elem->sites;
+    map_elem->sites = list_node;
 out:
     return ret;
 }
 
-static void
-ancestor_builder_check_state(ancestor_builder_t *self)
-{
-    size_t f, k, count;
-    avl_node_t *a;
-    pattern_map_t *map_elem;
-    site_list_t *s;
-
-    for (f = 0; f < self->num_samples + 1; f++) {
-        for (a = self->frequency_map[f].head; a != NULL; a = a->next) {
-            map_elem = (pattern_map_t *) a->item;
-            count = 0;
-            for (k = 0; k < self->num_samples; k++) {
-                count += map_elem->genotypes[k] == 1;
-            }
-            assert(count == f);
-            count = 0;
-            for (s = map_elem->sites; s != NULL; s = s->next) {
-                assert(self->sites[s->site].frequency == f);
-                assert(self->sites[s->site].genotypes == map_elem->genotypes);
-                count++;
-            }
-            assert(map_elem->num_sites == count);
-        }
-    }
-}
-
-int
-ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
-{
-    size_t j, k;
-    avl_node_t *a;
-    pattern_map_t *map_elem;
-    site_list_t *s;
-
-    fprintf(out, "Ancestor builder\n");
-    fprintf(out, "num_samples = %d\n", (int) self->num_samples);
-    fprintf(out, "num_sites = %d\n", (int) self->num_sites);
-    fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
-
-    fprintf(out, "Sites:\n");
-    for (j = 0; j < self->num_sites; j++) {
-        fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].frequency,
-                self->sites[j].genotypes);
-    }
-    fprintf(out, "Frequency map:\n");
-    for (j = 0; j < self->num_samples + 1; j++) {
-        printf("Frequency = %d: %d ancestors\n", (int) j,
-                avl_count(&self->frequency_map[j]));
-        for (a = self->frequency_map[j].head; a != NULL; a = a->next) {
-            map_elem = (pattern_map_t *) a->item;
-            printf("\t");
-            for (k = 0; k < self->num_samples; k++) {
-                printf("%d", map_elem->genotypes[k]);
-            }
-            printf("\t");
-            for (s = map_elem->sites; s != NULL; s = s->next) {
-                printf("%d ", s->site);
-            }
-            printf("\n");
-        }
-    }
-    fprintf(out, "Descriptors:\n");
-    for (j = 0; j < self->num_ancestors; j++) {
-        fprintf(out, "%d\t%d: ",  (int) self->descriptors[j].frequency,
-                (int) self->descriptors[j].num_focal_sites);
-        for (k = 0; k < self->descriptors[j].num_focal_sites; k++) {
-            fprintf(out, "%d, ", self->descriptors[j].focal_sites[k]);
-        }
-        fprintf(out, "\n");
-    }
-    block_allocator_print_state(&self->allocator, out);
-    ancestor_builder_check_state(self);
-    return 0;
-}
 
 /* Returns true if we should break the an ancestor that spans from focal
  * site a to focal site b */
@@ -420,7 +448,7 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
     size_t ones;
 
     for (j = a + 1; j < b && !ret; j++) {
-        if (self->sites[j].frequency > self->sites[a].frequency) {
+        if (self->sites[j].age > self->sites[a].age) {
             ones = 0;
             for (k = 0; k < (site_id_t) num_samples; k++) {
                 ones += self->sites[j].genotypes[samples[k]];
@@ -437,9 +465,10 @@ int
 ancestor_builder_finalise(ancestor_builder_t *self)
 {
     int ret = 0;
-    size_t j, k, num_consistent_samples;
-    avl_node_t *a;
-    pattern_map_t *map_elem;
+    size_t j, num_consistent_samples;
+    avl_node_t *a, *b;
+    pattern_map_t *pattern_map;
+    age_map_t *age_map;
     site_list_t *s;
     ancestor_descriptor_t *descriptor;
     site_id_t *focal_sites = NULL;
@@ -452,42 +481,44 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     }
     num_consistent_samples = 0;  /* Keep the compiler happy */
     self->num_ancestors = 0;
-    for (j = self->num_samples; j > 1; j--) {
-        for (a = self->frequency_map[j].head; a != NULL; a = a->next) {
+
+    /* Return the descriptors in *reverse* order */
+    for (a = self->age_map.tail; a != NULL; a = a->prev) {
+        age_map = (age_map_t *) a->item;
+        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+            pattern_map = (pattern_map_t *) b->item;
             descriptor = self->descriptors + self->num_ancestors;
             self->num_ancestors++;
-            descriptor->frequency = j;
-            map_elem = (pattern_map_t *) a->item;
+            descriptor->age = age_map->age;
             focal_sites = block_allocator_get(&self->allocator,
-                    map_elem->num_sites * sizeof(site_id_t));
+                    pattern_map->num_sites * sizeof(site_id_t));
             if (focal_sites == NULL) {
                 ret = TSI_ERR_NO_MEMORY;
                 goto out;
             }
             descriptor->focal_sites = focal_sites;
-            descriptor->num_focal_sites = map_elem->num_sites;
-            k = map_elem->num_sites - 1;
-            for (s = map_elem->sites; s != NULL; s = s->next) {
-                focal_sites[k] = s->site;
-                k--;
+            descriptor->num_focal_sites = pattern_map->num_sites;
+            j = pattern_map->num_sites - 1;
+            for (s = pattern_map->sites; s != NULL; s = s->next) {
+                focal_sites[j] = s->site;
+                j--;
             }
             /* Now check to see if we need to split this ancestor up
              * further */
-            if (map_elem->num_sites > 1) {
+            if (pattern_map->num_sites > 1) {
                 ancestor_builder_get_consistent_samples(self, focal_sites[0],
                         consistent_samples, &num_consistent_samples);
-                assert(num_consistent_samples == descriptor->frequency);
             }
-            for (k = 0; k < map_elem->num_sites - 1; k++) {
+            for (j = 0; j < pattern_map->num_sites - 1; j++) {
                 if (ancestor_builder_break_ancestor(
-                        self, focal_sites[k], focal_sites[k + 1],
+                        self, focal_sites[j], focal_sites[j + 1],
                         consistent_samples, num_consistent_samples)) {
-                    p = focal_sites + k + 1;
+                    p = focal_sites + j + 1;
                     descriptor->num_focal_sites = p - descriptor->focal_sites;
                     descriptor = self->descriptors + self->num_ancestors;
                     self->num_ancestors++;
-                    descriptor->frequency = j;
-                    descriptor->num_focal_sites = map_elem->num_sites - k - 1;
+                    descriptor->age = age_map->age;
+                    descriptor->num_focal_sites = pattern_map->num_sites - j - 1;
                     descriptor->focal_sites = p;
                 }
             }

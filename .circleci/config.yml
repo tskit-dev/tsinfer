@@ -16,9 +16,6 @@ jobs:
       - run:
           name: Install package and test basic usage.
           command: |
-              # Need to install numpy first or msprime doesn't build correctly.
-              # Remove this when msprime fully depends on numpy.
-              pip install numpy --user
               pip install . --user 
               tsinfer --help
               pip uninstall tsinfer --yes
@@ -29,10 +26,10 @@ jobs:
       - run:
           name: Install development dependencies
           command: |
-              # FIXME installing msprime from betas here to workaround the missing 
-              # package for 0.6.0. Remove as soon as 0.6.0 is released.
-              pip install msprime --user --pre
               pip install -r requirements/development.txt --user
+              # On circle using numa results in lots of 'set_mempolicy: Operation not permitted'
+              # messages because of conflicts with Docker. So we just remove it.
+              pip uninstall numa -y
       - run:
           name: Lint Python
           command: |

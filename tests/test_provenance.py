@@ -23,6 +23,7 @@ import unittest
 import json
 
 import msprime
+import tskit
 
 import tsinfer
 import tsinfer.provenance as provenance
@@ -36,11 +37,11 @@ class TestProvenanceValid(unittest.TestCase):
     def validate_ts(self, ts):
         for prov in ts.provenances():
             p_doc = json.loads(prov.record)
-            msprime.validate_provenance(p_doc)
+            tskit.validate_provenance(p_doc)
 
     def validate_file(self, data):
         for timestamp, record in data.provenances():
-            msprime.validate_provenance(record)
+            tskit.validate_provenance(record)
 
     def test_infer(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)

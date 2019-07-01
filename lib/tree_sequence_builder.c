@@ -752,7 +752,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     double child_time;
     int j;
 
-    if (child >= self->num_nodes) {
+    if (child >= (node_id_t) self->num_nodes) {
         ret = TSI_ERR_GENERIC;
         goto out;
     }
@@ -761,7 +761,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     /* Edges must be provided in reverese order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
 
-        if (parent[j] >= self->num_nodes) {
+        if (parent[j] >= (node_id_t) self->num_nodes) {
             ret = TSI_ERR_GENERIC;
             goto out;
         }

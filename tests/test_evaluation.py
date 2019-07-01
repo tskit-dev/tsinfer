@@ -26,9 +26,11 @@ import sys
 import tempfile
 
 import msprime
+import tskit
 import numpy as np
 
 import tsinfer
+import tsinfer.constants as constants
 
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
@@ -57,7 +59,7 @@ def kc_distance(tree1, tree2):
             u = tree.mrca(a, b)
             path_len = 0
             v = u
-            while tree.parent(v) != msprime.NULL_NODE:
+            while tree.parent(v) != tskit.NULL:
                 path_len += 1
                 v = tree.parent(v)
             M[tree_index][j] = path_len
@@ -299,7 +301,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         Simple implementation using tree traversals.
         """
         A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-        A[:] = tsinfer.UNKNOWN_ALLELE
+        A[:] = constants.UNKNOWN_ALLELE
         for t in ts.trees():
             for site in t.sites():
                 for u in t.nodes():
@@ -336,7 +338,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
                 self.assertTrue(np.all(A[above, site.id] == 0))
                 outside = np.array(list(
                     set(range(ts.num_nodes)) - set(tree.nodes())), dtype=int)
-                self.assertTrue(np.all(A[outside, site.id] == tsinfer.UNKNOWN_ALLELE))
+                self.assertTrue(np.all(A[outside, site.id] == constants.UNKNOWN_ALLELE))
 
     def test_single_tree(self):
         ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
@@ -421,9 +423,9 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         self.assertTrue(np.all(ancestors[0, :] == 0))
         for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
             self.assertTrue(0 <= s < e <= m)
-            self.assertTrue(np.all(a[:s] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[e:] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[s:e] != tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[:s] == constants.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[e:] == constants.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[s:e] != constants.UNKNOWN_ALLELE))
             for site in focal:
                 self.assertEqual(a[site], 1)
 
@@ -649,30 +651,30 @@ class TestCheckAncestorsTs(unittest.TestCase):
     """
 
     def test_empty(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_time(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=0, flags=0)
         with self.assertRaises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_edges(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         with self.assertRaises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_one_edge(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=1, flags=0)
         tables.edges.add_row(0, 1, 0, 1)
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_has_parent(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         tables.nodes.add_row(time=2, flags=0)
         tables.edges.add_row(0, 1, 1, 0)
@@ -680,7 +682,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_has_no_children(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=3, flags=0)
@@ -689,7 +691,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_disconnected_subtrees(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=4, flags=1)
         tables.nodes.add_row(time=3, flags=1)
         tables.nodes.add_row(time=2, flags=1)
@@ -700,7 +702,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_many_mutations(self):
-        tables = msprime.TableCollection(1)
+        tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=1, flags=0)
         tables.edges.add_row(0, 1, 0, 1)
@@ -890,7 +892,7 @@ class TestNodeSpan(unittest.TestCase):
 
     def test_inferred_no_simplify(self):
         ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
+        samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         ts = tsinfer.infer(samples, simplify=False)
         self.verify(ts)
 
@@ -1107,7 +1109,7 @@ class TestSnipCentromere(unittest.TestCase):
             if tree.interval == (left, right):
                 tree_found = True
                 for node in ts1.nodes():
-                    self.assertEqual(tree.parent(node.id), msprime.NULL_NODE)
+                    self.assertEqual(tree.parent(node.id), tskit.NULL)
                 break
         self.assertTrue(tree_found)
         return ts1
