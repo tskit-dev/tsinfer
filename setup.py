@@ -53,6 +53,7 @@ setup(
         "numcodecs>=0.6",
         "zarr>=2.2",
         "lmdb",
+        "python-lmdb",
         "sortedcontainers",
         "attrs",
     ],
