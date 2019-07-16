@@ -106,7 +106,7 @@ def summarise_usage():
     try:
         max_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         if sys.platform != 'darwin':
-            max_mem *= 1024  #  Linux and other OSs (e.g. freeBSD) report maxrss in kb
+            max_mem *= 1024  # Linux and other OSs (e.g. freeBSD) report maxrss in kb
     except NameError:
         process = psutil.Process(os.getpid())
         max_mem = process.get_ext_memory_info().peak_wset
