@@ -154,6 +154,8 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["generate-ancestors", self.sample_file])
@@ -166,6 +168,8 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file access permissions issue")
     def test_augment_ancestors(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         augmented_ancestors = os.path.join(
@@ -196,6 +200,8 @@ class TestProgress(TestCli):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["generate-ancestors", self.sample_file])
@@ -212,6 +218,8 @@ class TestMatchSamples(TestCli):
     """
     Tests for the match samples options.
     """
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_no_simplify(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         output_trees_no_simplify = os.path.join(
@@ -283,4 +291,8 @@ class TestList(TestCli):
         for bad_file in [zero_file]:
             self.assertRaises(
                 exceptions.FileFormatError, self.run_command, ["list", bad_file])
-        self.assertRaises(IsADirectoryError, self.run_command, ["list", "/"])
+        if sys.platform == "win32":
+            # Windows raises a PermissionError not IsADirectoryError when opening a dir
+            self.assertRaises(PermissionError, self.run_command, ["list", "/"])
+        else:
+            self.assertRaises(IsADirectoryError, self.run_command, ["list", "/"])

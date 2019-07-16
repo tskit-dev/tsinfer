@@ -20,6 +20,7 @@
 Tests for the data files.
 """
 
+import sys
 import unittest
 import tempfile
 import os.path
@@ -42,10 +43,16 @@ class DataContainerMixin(object):
     Common tests for the the data container classes."
     """
     def test_load(self):
-        self.assertRaises(IsADirectoryError, self.tested_class.load, "/")
         self.assertRaises(
             FileNotFoundError, self.tested_class.load, "/file/does/not/exist")
-        bad_format_files = ["LICENSE", "/dev/urandom"]
+        if sys.platform != "win32":
+            self.assertRaises(IsADirectoryError, self.tested_class.load, "/")
+            bad_format_files = ["LICENSE", "/dev/urandom"]
+        else:
+            # Windows raises a PermissionError not IsADirectoryError when opening a dir
+            self.assertRaises(PermissionError, self.tested_class.load, "/")
+            # No /dev/urandom on Windows
+            bad_format_files = ["LICENSE"]
         for bad_format_file in bad_format_files:
             self.assertTrue(os.path.exists(bad_format_file))
             self.assertRaises(
@@ -98,6 +105,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 the_age = ts.node(variant.site.mutations[0].node).time
             self.assertEqual(the_age, age[j])
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_defaults_with_path(self):
         ts = self.get_example_ts(10, 10)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -137,6 +146,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 if name.endswith("genotypes"):
                     self.assertEqual(array.chunks[1], chunk_size)
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_filename(self):
         ts = self.get_example_ts(14, 15)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -150,6 +161,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertIsNot(other_input_file, input_file)
             self.assertEqual(other_input_file, input_file)
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_chunk_size_file_equal(self):
         ts = self.get_example_ts(13, 15)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -640,6 +653,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertNotEqual(copy.uuid, data.uuid)
         self.assertTrue(copy.data_equal(data))
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_copy_update_inference_sites(self):
         with formats.SampleData() as data:
             for j in range(4):
@@ -687,6 +702,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         data.finalise()
         self.assertRaises(ValueError, set_value, data, [])
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_overwrite_partial(self):
         # Check that we can correctly overwrite partially written and
         # unfinalised files. See
@@ -791,6 +808,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for _, array in ancestor_data.arrays():
             self.assertEqual(array.compressor, None)
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_defaults_with_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -835,6 +854,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(ancestor_data.ancestors_end.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.ancestors_age.chunks, (chunk_size,))
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -848,6 +869,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertIsNot(other_ancestor_data, ancestor_data)
             self.assertEqual(other_ancestor_data, ancestor_data)
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_chunk_size_file_equal(self):
         N = 60
         sample_data, ancestors = self.get_example_data(22, 16, N)
@@ -910,6 +933,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             start=0, end=num_sites, age=1, focal_sites=[0],
             haplotype=np.zeros(num_sites, dtype=np.uint8))
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
     def test_zero_sequence_length(self):
         # Mangle a sample data file to force a zero sequence length.
         ts = msprime.simulate(10, mutation_rate=2, random_seed=5)
