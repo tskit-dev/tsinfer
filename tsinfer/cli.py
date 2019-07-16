@@ -23,8 +23,11 @@ import argparse
 import os
 import os.path
 import logging
-import resource
 import math
+try:
+    import resource  # Unix way of getting max memory size
+except ImportError:
+    import psutil  # Provides a way of getting max memory size on windows
 
 import daiquiri
 import tskit
@@ -98,10 +101,16 @@ __before = time.time()
 
 def summarise_usage():
     wall_time = humanize.naturaldelta(time.time() - __before)
-    rusage = resource.getrusage(resource.RUSAGE_SELF)
-    user_time = humanize.naturaldelta(rusage.ru_utime)
-    sys_time = rusage.ru_stime
-    max_rss = humanize.naturalsize(rusage.ru_maxrss * 1024, binary=True)
+    user_time = humanize.naturaldelta(os.times().user)
+    sys_time = os.times().system
+    try:
+        max_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform != 'darwin':
+            max_mem *= 1024  #  Linux and other OSs (e.g. freeBSD) report maxrss in kb
+    except NameError:
+        process = psutil.Process(os.getpid())
+        max_mem = process.get_ext_memory_info().peak_wset
+    max_rss = humanize.naturalsize(max_mem, binary=True)
     logger.info("wall time = {}".format(wall_time))
     logger.info("rusage: user={}; sys={:.2f}s; max_rss={}".format(
         user_time, sys_time, max_rss))
