@@ -1,0 +1,27 @@
+environment:
+  matrix:
+    # Disabling Py37 x64. Some weird problem with h5py. See github.com/tskit-dev/msprime/issues/678
+    # - PYTHON: "C:\\Miniconda37-x64"
+    - PYTHON: "C:\\Miniconda36-x64"
+
+init:
+  - cmd: ECHO Using %PYTHON%
+
+install:
+  - cmd: SET PATH=%PYTHON%;%PYTHON%\Scripts;%PATH%
+  - cmd: git submodule update --init --recursive
+  # We have symlinks in the repo, which need to be treated specially on Windows.
+  - cmd: git config core.symlinks true
+  - cmd: git reset --hard
+  - cmd: conda config --add channels conda-forge
+  - cmd: conda install --yes --file=requirements\conda-minimal.txt
+  - cmd: conda info -a
+
+build_script:
+  - cmd: python setup.py build_ext --inplace
+  - cmd: pip install daiquiri # daiquiri isn't available on conda-forge
+  # Cannot run tests for now because LMDB isn't found.
+  # - cmd: nosetests -vs
+
+after_test:
+  - cmd: python setup.py bdist_wheel

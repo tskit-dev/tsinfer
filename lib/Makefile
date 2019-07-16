@@ -1,5 +1,5 @@
 
-CC=h5cc
+CC=gcc
 CFLAGS=-std=c99 -g -pedantic -Werror -Wall -W \
   -Wno-unused-parameter\
   -Wmissing-prototypes -Wstrict-prototypes \
@@ -19,7 +19,7 @@ all: main
 
 
 argtable3.o: argtable3.c
-	${CC} -Wall -g -O2 -c argtable3.c
+	${CC} -g -O2 -c argtable3.c
 
 
 # We need a seperate rule for avl.c as it won't pass the strict checks.
