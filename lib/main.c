@@ -31,8 +31,6 @@
 #include <regex.h>
 #include "argtable3.h"
 
-#include <hdf5.h>
-
 #include "tsinfer.h"
 
 #if 0
