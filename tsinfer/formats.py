@@ -17,7 +17,7 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Manage tsinfer's various HDF5 file formats.
+Manage tsinfer's various file formats.
 """
 import collections.abc as abc
 import datetime
@@ -757,7 +757,7 @@ class SampleData(DataContainer):
             dtype=np.float64)
         sites_group.create_dataset(
             "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
-            compressor=self._compressor, dtype=np.uint8)
+            compressor=self._compressor, dtype=np.int8)
         sites_group.create_dataset(
             "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.uint8)
@@ -1093,7 +1093,7 @@ class SampleData(DataContainer):
             genotypes at this site. The array of genotypes corresponds to the
             observed alleles for each sample, represented by indexes into the
             alleles array. This input is converted to a numpy array with
-            dtype ``np.uint8``; therefore, for maximum efficiency ensure
+            dtype ``np.int8``; therefore, for maximum efficiency ensure
             that the input array is also of this type.
         :param list(str) alleles: A list of strings defining the alleles at this
             site. The zero'th element of this list is the **ancestral state**
@@ -1116,7 +1116,7 @@ class SampleData(DataContainer):
         :return: The ID of the newly added site.
         :rtype: int
         """
-        genotypes = np.array(genotypes, dtype=np.uint8, copy=False)
+        genotypes = tskit.util.safe_np_int_cast(genotypes, dtype=np.int8)
         self._check_build_mode()
         if self._build_state == self.ADDING_POPULATIONS:
             if genotypes.shape[0] == 0:
@@ -1265,7 +1265,7 @@ class SampleData(DataContainer):
         if samples is None:
             samples = np.arange(self.num_samples)
         else:
-            samples = np.array(samples, copy=False)
+            samples = tskit.util.safe_np_int_cast(samples, dtype=np.int32)
             if np.any(samples[:-1] >= samples[1:]):
                 raise ValueError("sample indexes must be in increasing order.")
             if samples.shape[0] > 0 and samples[-1] >= self.num_samples:
@@ -1364,7 +1364,7 @@ class AncestorData(DataContainer):
             dtype="array:i4", compressor=self._compressor)
         self.data.create_dataset(
             "ancestors/haplotype", shape=(0,), chunks=chunks,
-            dtype="array:u1", compressor=self._compressor)
+            dtype="array:i1", compressor=self._compressor)
 
         self.item_writer = BufferedItemWriter({
             "start": self.ancestors_start,
@@ -1477,12 +1477,12 @@ class AncestorData(DataContainer):
     def add_ancestor(self, start, end, age, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material
-        over the interval [start:end], that is associated with the specfied age
+        over the interval [start:end], that is associated with the specified age
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
-        haplotype = np.array(haplotype, dtype=np.uint8)
-        focal_sites = np.array(focal_sites, dtype=np.int32)
+        haplotype = tskit.util.safe_np_int_cast(haplotype, dtype=np.int8, copy=True)
+        focal_sites = tskit.util.safe_np_int_cast(focal_sites, dtype=np.int32, copy=True)
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self._num_sites:

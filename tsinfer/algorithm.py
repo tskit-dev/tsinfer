@@ -28,8 +28,8 @@ first.
 import collections
 
 import numpy as np
-import tskit
 import sortedcontainers
+import tskit
 
 import tsinfer.constants as constants
 
@@ -185,7 +185,7 @@ class AncestorBuilder(object):
         # check all focal sites in this ancestor are at the same age
         assert all([self.sites[fs].age == focal_age for fs in focal_sites])
 
-        a[:] = constants.UNKNOWN_ALLELE
+        a[:] = tskit.MISSING_DATA
         for focal_site in focal_sites:
             a[focal_site] = 1
         S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
@@ -203,29 +203,29 @@ class AncestorBuilder(object):
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
-        assert a[last_site] != constants.UNKNOWN_ALLELE
+        assert a[last_site] != tskit.MISSING_DATA
         end = last_site + 1
         # Go leftwards
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
-        assert a[last_site] != constants.UNKNOWN_ALLELE
+        assert a[last_site] != tskit.MISSING_DATA
         start = last_site
         return start, end
 
         # Version with 1 focal site
         # assert len(focal_sites) == 1
         # focal_site = focal_sites[0]
-        # a[:] = constants.UNKNOWN_ALLELE
+        # a[:] = tskit.MISSING_DATA
         # a[focal_site] = 1
 
         # last_site = self.compute_ancestral_states(
         #         a, focal_site, range(focal_site + 1, self.num_sites))
-        # assert a[last_site] != constants.UNKNOWN_ALLELE
+        # assert a[last_site] != tskit.MISSING_DATA
         # end = last_site + 1
         # last_site = self.compute_ancestral_states(
         #         a, focal_site, range(focal_site - 1, -1, -1))
-        # assert a[last_site] != constants.UNKNOWN_ALLELE
+        # assert a[last_site] != tskit.MISSING_DATA
         # start = last_site
         # return start, end
 
@@ -582,7 +582,7 @@ class TreeSequenceBuilder(object):
                 site[j] = l
                 node[j] = u
                 derived_state[j] = d
-                parent[j] = -1
+                parent[j] = tskit.NULL
                 if d == 0:
                     parent[j] = p
                 j += 1
@@ -595,7 +595,7 @@ def is_descendant(pi, u, v):
     v is on the path to root from u.
     """
     ret = False
-    if v != -1:
+    if v != tskit.NULL:
         w = u
         path = []
         while w != v and w != tskit.NULL:
@@ -639,6 +639,9 @@ class AncestorMatcher(object):
         for l in range(self.num_sites):
             print(l, self.max_likelihood_node[l], self.traceback[l], sep="\t")
 
+    def is_root(self, u):
+        return self.parent[u] == tskit.NULL
+
     def check_likelihoods(self):
         assert len(set(self.likelihood_nodes)) == len(self.likelihood_nodes)
         # Every value in L_nodes must be positive.
@@ -649,7 +652,7 @@ class AncestorMatcher(object):
             if v >= 0:
                 assert u in self.likelihood_nodes
             # Roots other than 0 should have v == -2
-            if u != 0 and self.parent[u] == -1 and self.left_child[u] == -1:
+            if u != 0 and self.is_root(u) and self.left_child[u] == -1:
                 # print("root: u = ", u, self.parent[u], self.left_child[u])
                 assert v == -2
 
@@ -727,8 +730,8 @@ class AncestorMatcher(object):
         for u in old_likelihood_nodes:
             # We need to find the likelihood of the parent of u. If this is
             # the same as u, we can delete it.
-            p = self.parent[u]
-            if p != -1:
+            if not self.is_root(u):
+                p = self.parent[u]
                 cached_paths.append(p)
                 v = p
                 while self.likelihood[v] == -1 and L_cache[v] == -1:
@@ -788,7 +791,7 @@ class AncestorMatcher(object):
         self.right_child[p] = c
 
     def is_nonzero_root(self, u):
-        return u != 0 and self.parent[u] == -1 and self.left_child[u] == -1
+        return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
     def find_path(self, h, start, end, match):
         Il = self.tree_sequence_builder.left_index
@@ -833,7 +836,7 @@ class AncestorMatcher(object):
         assert left < right
 
         for u in range(n):
-            if self.parent[u] != -1:
+            if not self.is_root(u):
                 self.likelihood[u] = -1
 
         last_root = 0
@@ -940,8 +943,8 @@ class AncestorMatcher(object):
         k = M - 1
         # Construct the matched haplotype
         match[:] = 0
-        match[:start] = constants.UNKNOWN_ALLELE
-        match[end:] = constants.UNKNOWN_ALLELE
+        match[:start] = tskit.MISSING_DATA
+        match[end:] = tskit.MISSING_DATA
         # Reset the tree.
         self.parent[:] = -1
         self.left_child[:] = -1
