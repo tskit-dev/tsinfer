@@ -23,6 +23,7 @@ import collections.abc as abc
 import datetime
 import itertools
 import logging
+import sys
 import os
 import os.path
 import queue
@@ -308,7 +309,16 @@ class DataContainer(object):
             os.unlink(self.path)
         # The existence of a lock-file can confuse things, so delete it.
         remove_lmdb_lockfile(self.path)
-        return zarr.LMDBStore(self.path, subdir=False)
+        if sys.platform == "win32":
+            # Currently lmdb windows allocates the entire file size rather than growing
+            # dynamically(see see https://github.com/mozilla/lmdb-rs/issues/40).
+            # On windows, we therefore hard code a smaller map_size to avoid filling up
+            # disk space. This is clearly a hack just to get tsinfer working on win32.
+            # Arbitrarily, we allocate 1GiB (2**30 bytes). Windows users who want to run
+            # large inferences may need to increase the hardcoded map_size below.
+            return zarr.LMDBStore(self.path, map_size=2**30, subdir=False)
+        else:
+            return zarr.LMDBStore(self.path, subdir=False)
 
     @classmethod
     def load(cls, path):

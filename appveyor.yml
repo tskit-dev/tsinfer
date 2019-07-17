@@ -20,8 +20,7 @@ install:
 build_script:
   - cmd: python setup.py build_ext --inplace
   - cmd: pip install daiquiri # daiquiri isn't available on conda-forge
-  # Cannot run tests for now because LMDB isn't found.
-  # - cmd: nosetests -vs
+  - cmd: nosetests -vs
 
 after_test:
   - cmd: python setup.py bdist_wheel

@@ -19,12 +19,16 @@
 """
 Command line interfaces to tsinfer.
 """
+import sys
 import argparse
 import os
 import os.path
 import logging
-import resource
 import math
+try:
+    import resource
+except ImportError:
+    resource = None  # resource.getrusage absent on windows, so skip outputting max mem
 
 import daiquiri
 import tskit
@@ -98,13 +102,19 @@ __before = time.time()
 
 def summarise_usage():
     wall_time = humanize.naturaldelta(time.time() - __before)
-    rusage = resource.getrusage(resource.RUSAGE_SELF)
-    user_time = humanize.naturaldelta(rusage.ru_utime)
-    sys_time = rusage.ru_stime
-    max_rss = humanize.naturalsize(rusage.ru_maxrss * 1024, binary=True)
+    user_time = humanize.naturaldelta(os.times().user)
+    sys_time = os.times().system
+    if resource is None:
+        # Don't report max memory on Windows. We could do this using the psutil lib, via
+        # psutil.Process(os.getpid()).get_ext_memory_info().peak_wset if demand exists
+        maxmem_str = ""
+    else:
+        max_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform != 'darwin':
+            max_mem *= 1024  # Linux and other OSs (e.g. freeBSD) report maxrss in kb
+        maxmem_str = "; max memory={}".format(humanize.naturalsize(max_mem, binary=True))
     logger.info("wall time = {}".format(wall_time))
-    logger.info("rusage: user={}; sys={:.2f}s; max_rss={}".format(
-        user_time, sys_time, max_rss))
+    logger.info("rusage: user={}; sys={:.2f}s".format(user_time, sys_time) + maxmem_str)
 
 
 def get_default_path(path, input_path, extension):
