@@ -49,7 +49,7 @@ class DataContainerMixin(object):
         for bad_format_file in bad_format_files:
             self.assertTrue(os.path.exists(bad_format_file))
             self.assertRaises(
-                exceptions.FileFormatError, formats.SampleData.load, bad_format_file)
+                exceptions.FileFormatError, self.tested_class.load, bad_format_file)
 
 
 class TestSampleData(unittest.TestCase, DataContainerMixin):
