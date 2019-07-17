@@ -277,8 +277,7 @@ def get_ancestral_haplotypes(ts):
     tsp = tables.tree_sequence()
     B = tsp.genotype_matrix().T
 
-    A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-    A[:] = constants.UNKNOWN_ALLELE
+    A = np.full((ts.num_nodes, ts.num_sites), tskit.MISSING_DATA, dtype=np.int8)
     for edge in ts.edges():
         start = bisect.bisect_left(sites, edge.left)
         end = bisect.bisect_right(sites, edge.right)
@@ -301,7 +300,7 @@ def get_ancestor_descriptors(A):
     results on ancestors that contain trapped genetic material.
     """
     L = A.shape[1]
-    ancestors = [np.zeros(L, dtype=np.uint8)]
+    ancestors = [np.zeros(L, dtype=np.int8)]
     focal_sites = [[]]
     start = [0]
     end = [L]
@@ -314,19 +313,19 @@ def get_ancestor_descriptors(A):
         masked = np.logical_and(a == 1, mask).astype(int)
         new_sites = np.where(masked)[0]
         mask[new_sites] = 0
-        segment = np.where(a != constants.UNKNOWN_ALLELE)[0]
+        segment = np.where(a != tskit.MISSING_DATA)[0]
         # Skip any ancestors that are entirely unknown
         if segment.shape[0] > 0:
             s = segment[0]
             e = segment[-1] + 1
-            assert np.all(a[s:e] != constants.UNKNOWN_ALLELE)
-            assert np.all(a[:s] == constants.UNKNOWN_ALLELE)
-            assert np.all(a[e:] == constants.UNKNOWN_ALLELE)
+            assert np.all(a[s:e] != tskit.MISSING_DATA)
+            assert np.all(a[:s] == tskit.MISSING_DATA)
+            assert np.all(a[e:] == tskit.MISSING_DATA)
             ancestors.append(a)
             focal_sites.append(new_sites)
             start.append(s)
             end.append(e)
-    return np.array(ancestors, dtype=np.uint8), start, end, focal_sites
+    return np.array(ancestors, dtype=np.int8), start, end, focal_sites
 
 
 def assert_smc(ts):
@@ -385,9 +384,9 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         time = np.arange(N)
     time = -1 * (time - time[-1]) + 1
     for a, s, e, focal, t in zip(ancestors, start, end, focal_sites, time):
-        assert np.all(a[:s] == constants.UNKNOWN_ALLELE)
-        assert np.all(a[s:e] != constants.UNKNOWN_ALLELE)
-        assert np.all(a[e:] == constants.UNKNOWN_ALLELE)
+        assert np.all(a[:s] == tskit.MISSING_DATA)
+        assert np.all(a[s:e] != tskit.MISSING_DATA)
+        assert np.all(a[e:] == tskit.MISSING_DATA)
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
             start=s, end=e, age=t, focal_sites=np.array(focal, dtype=np.int32),

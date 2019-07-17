@@ -30,7 +30,6 @@ import tskit
 import numpy as np
 
 import tsinfer
-import tsinfer.constants as constants
 
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
@@ -300,8 +299,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         """
         Simple implementation using tree traversals.
         """
-        A = np.zeros((ts.num_nodes, ts.num_sites), dtype=np.uint8)
-        A[:] = constants.UNKNOWN_ALLELE
+        A = np.full((ts.num_nodes, ts.num_sites), tskit.MISSING_DATA, dtype=np.int8)
         for t in ts.trees():
             for site in t.sites():
                 for u in t.nodes():
@@ -338,7 +336,7 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
                 self.assertTrue(np.all(A[above, site.id] == 0))
                 outside = np.array(list(
                     set(range(ts.num_nodes)) - set(tree.nodes())), dtype=int)
-                self.assertTrue(np.all(A[outside, site.id] == constants.UNKNOWN_ALLELE))
+                self.assertTrue(np.all(A[outside, site.id] == tskit.MISSING_DATA))
 
     def test_single_tree(self):
         ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
@@ -423,9 +421,9 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         self.assertTrue(np.all(ancestors[0, :] == 0))
         for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
             self.assertTrue(0 <= s < e <= m)
-            self.assertTrue(np.all(a[:s] == constants.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[e:] == constants.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(a[s:e] != constants.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(a[:s] == tskit.MISSING_DATA))
+            self.assertTrue(np.all(a[e:] == tskit.MISSING_DATA))
+            self.assertTrue(np.all(a[s:e] != tskit.MISSING_DATA))
             for site in focal:
                 self.assertEqual(a[site], 1)
 
@@ -906,7 +904,7 @@ class TestNodeSpan(unittest.TestCase):
         np.random.seed(10)
         num_sites = 40
         num_samples = 8
-        G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
+        G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.int8)
         with tsinfer.SampleData() as sample_data:
             for j in range(num_sites):
                 sample_data.add_site(j, G[j])
@@ -978,7 +976,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
 
     def get_random_data_example(self, num_sites, num_samples, seed=100):
         np.random.seed(seed)
-        G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
+        G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.int8)
         with tsinfer.SampleData() as sample_data:
             for j in range(num_sites):
                 sample_data.add_site(j, G[j])
@@ -1126,7 +1124,7 @@ class TestSnipCentromere(unittest.TestCase):
 
     def get_random_data_example(self, position, num_samples, seed=100):
         np.random.seed(seed)
-        G = np.random.randint(2, size=(position.shape[0], num_samples)).astype(np.uint8)
+        G = np.random.randint(2, size=(position.shape[0], num_samples)).astype(np.int8)
         with tsinfer.SampleData() as sample_data:
             for j, x in enumerate(position):
                 sample_data.add_site(x, G[j])

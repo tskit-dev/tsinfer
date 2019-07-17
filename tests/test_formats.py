@@ -32,6 +32,7 @@ import msprime
 import numcodecs
 import numcodecs.blosc as blosc
 import zarr
+import tskit
 
 import tsinfer
 import tsinfer.formats as formats
@@ -89,7 +90,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(input_file.num_samples, ts.num_samples)
         self.assertEqual(input_file.sequence_length, ts.sequence_length)
         self.assertEqual(input_file.num_sites, ts.num_sites)
-        self.assertEqual(input_file.sites_genotypes.dtype, np.uint8)
+        self.assertEqual(input_file.sites_genotypes.dtype, np.int8)
         self.assertEqual(input_file.sites_position.dtype, np.float64)
         # Take copies to avoid decompressing the data repeatedly.
         genotypes = input_file.sites_genotypes[:]
@@ -240,14 +241,14 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_variant_errors(self):
         input_file = formats.SampleData(sequence_length=10)
-        genotypes = np.zeros(2, np.uint8)
+        genotypes = np.zeros(2, np.int8)
         input_file.add_site(0, alleles=["0", "1"], genotypes=genotypes)
         for bad_position in [-1, 10, 100]:
             self.assertRaises(
                 ValueError, input_file.add_site, position=bad_position,
                 alleles=["0", "1"], genotypes=genotypes)
         for bad_genotypes in [[0, 2], [-1, 0], [], [0], [0, 0, 0]]:
-            genotypes = np.array(bad_genotypes, dtype=np.uint8)
+            genotypes = np.array(bad_genotypes, dtype=np.int8)
             self.assertRaises(
                 ValueError, input_file.add_site, position=1,
                 alleles=["0", "1"], genotypes=genotypes)
@@ -742,15 +743,15 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = sample_data.num_inference_sites
         ancestors = []
         for j in range(num_ancestors):
-            haplotype = np.zeros(num_sites, dtype=np.uint8) + tsinfer.UNKNOWN_ALLELE
+            haplotype = np.full(num_sites, tskit.MISSING_DATA, dtype=np.int8)
             start = j
             end = max(num_sites - j, start + 1)
             self.assertLess(start, end)
             haplotype[start: end] = 0
             if start + j < end:
                 haplotype[start + j: end] = 1
-            self.assertTrue(np.all(haplotype[:start] == tsinfer.UNKNOWN_ALLELE))
-            self.assertTrue(np.all(haplotype[end:] == tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(haplotype[:start] == tskit.MISSING_DATA))
+            self.assertTrue(np.all(haplotype[end:] == tskit.MISSING_DATA))
             focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
             focal_sites = focal_sites[focal_sites < end]
             haplotype[focal_sites] = 1
@@ -912,26 +913,26 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, age=1, focal_sites=[],
-            haplotype=np.zeros(num_sites + 1, dtype=np.uint8))
+            haplotype=np.zeros(num_sites + 1, dtype=np.int8))
         # Haplotypes must be < 2
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, age=1, focal_sites=[],
-            haplotype=np.zeros(num_sites, dtype=np.uint8) + 2)
+            haplotype=np.full(num_sites, 2, dtype=np.int8))
         # focal sites must be within start:end
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=1, end=num_sites, age=1, focal_sites=[0],
-            haplotype=np.ones(num_sites - 1, dtype=np.uint8))
+            haplotype=np.ones(num_sites - 1, dtype=np.int8))
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites - 2, age=1, focal_sites=[num_sites - 1],
-            haplotype=np.ones(num_sites, dtype=np.uint8))
+            haplotype=np.ones(num_sites, dtype=np.int8))
         # focal sites must be set to 1
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, age=1, focal_sites=[0],
-            haplotype=np.zeros(num_sites, dtype=np.uint8))
+            haplotype=np.zeros(num_sites, dtype=np.int8))
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")

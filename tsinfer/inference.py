@@ -344,7 +344,7 @@ class AncestorsGenerator(object):
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
-        a = np.zeros(self.num_sites, dtype=np.uint8)
+        a = np.zeros(self.num_sites, dtype=np.int8)
         for age, focal_sites in self.descriptors:
             before = time.perf_counter()
             s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
@@ -385,7 +385,7 @@ class AncestorsGenerator(object):
             logger.debug("Drained {} ancestors from add queue".format(num_drained))
 
         def build_worker(thread_index):
-            a = np.zeros(self.num_sites, dtype=np.uint8)
+            a = np.zeros(self.num_sites, dtype=np.int8)
             while True:
                 work = build_queue.get()
                 if work is None:
@@ -428,7 +428,7 @@ class AncestorsGenerator(object):
         if self.num_ancestors > 0:
             logger.info("Starting build for {} ancestors".format(self.num_ancestors))
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
-            a = np.zeros(self.num_sites, dtype=np.uint8)
+            a = np.zeros(self.num_sites, dtype=np.int8)
             root_age = max(self.age_to_epoch.keys()) + 1
             ultimate_ancestor_age = root_age + 1
             # Add the ultimate ancestor. This is an awkward hack really; we don't
@@ -487,7 +487,7 @@ class Matcher(object):
 
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
-        self.match = [np.zeros(self.num_sites, np.uint8) for _ in range(num_threads)]
+        self.match = [np.zeros(self.num_sites, np.int8) for _ in range(num_threads)]
         self.results = ResultBuffer()
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
@@ -877,7 +877,7 @@ class AncestorMatcher(Matcher):
         a = next(self.ancestors, None)
         self.num_epochs = 0
         if a is not None:
-            assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.uint8))
+            assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
             # Create a list of all ID ranges in each epoch.
             breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
             start = np.hstack([[0], breaks + 1])
@@ -894,7 +894,7 @@ class AncestorMatcher(Matcher):
         ])
 
     def __ancestor_find_path(self, ancestor, thread_index=0):
-        haplotype = np.zeros(self.num_sites, dtype=np.uint8) + constants.UNKNOWN_ALLELE
+        haplotype = np.full(self.num_sites, tskit.MISSING_DATA, dtype=np.int8)
         focal_sites = ancestor.focal_sites
         start = ancestor.start
         end = ancestor.end
@@ -1154,7 +1154,7 @@ class ResultBuffer(object):
 
     def set_mutations(self, node_id, site, derived_state=None):
         if derived_state is None:
-            derived_state = np.ones(site.shape[0], dtype=np.uint8)
+            derived_state = np.ones(site.shape[0], dtype=np.int8)
         with self.lock:
             self.mutations[node_id] = site, derived_state
 
