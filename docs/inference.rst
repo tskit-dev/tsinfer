@@ -204,14 +204,29 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    way as for ancestors, and the path compression algorithm can be equally
    applied here.
 
-
 2. As we only use a subset of the available sites for inference
    (excluding by default any sites that are fixed or singletons)
    we then place mutations on the inferred trees in order to
    represent the information at these sites. This is done using the tskit
-   `map_mutations <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.Tree.map_mutations>`_.
-   method.
-   
+   `map_mutations <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.Tree.map_mutations>`_
+   method. Edges in the inferred tree sequence usually extend from one inference site up
+   to (but not including) another, covering the non-inference sites
+   between them. There are two exceptions to this, which allow us to
+   encompass any extra non-inference sites that might lie to the left
+   or right of the set of edges above a particular node:
+
+   a. For the set of edges connecting an *ancestor* to its parent ("internal edges") the
+      leftmost edge is extended leftwards. It is extended to include the site immediately
+      to the right of the previous inference site, or position 0 if there is no previous
+      inference site. The rightmost edge in the set is extended rightwards up to the next
+      inference site (or to the end of the sequence).
+   b. For the set of edges connecting a *sample* to its parent ("sample edges") the
+      leftmost edge is extended leftwards to encompass the leftmost non-missing site for
+      this sample, or genomic position 0 if it is the first site. Similarly, the
+      rightmost edge is extended so that it terminates either one site to the right of
+      the rightmost non-missing site, or to the end of the sequence if the rightmost
+      non-missing site is the last in the tree sequence.
+
 
 3. Remove ancestral paths that do not lead to any of the samples by
    `simplifying

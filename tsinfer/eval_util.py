@@ -512,6 +512,9 @@ def extract_ancestors(samples, ts):
     Given the specified sample data file and final (unsimplified) tree sequence output
     by tsinfer, return the same tree sequence with the samples removed, which can then
     be used as an ancestors tree sequence.
+
+    To make this identical to an ancestors TS, we need to change the coordinates slightly
+    so the leftmost coord for an ancestor maps to the inference site one to the right
     """
     position = samples.sites_position[:][samples.sites_inference[:]]
     ts = subset_sites(ts, position)
@@ -532,6 +535,18 @@ def extract_ancestors(samples, ts):
     # Now simplify down the tables to get rid of all sample edges.
     node_id_map = tables.simplify(
         samples, filter_sites=False, filter_individuals=True, filter_populations=False)
+
+    # Any edge whose left-hand edge does not map to an inference site is one that has
+    # been extended leftwards to cover potentially missing sites. To turn it back into
+    # an ancestors TS, for these sites we go rightwards until the next inference site
+    pos = position.copy()
+    pos[0] = 0.0
+    edges = tables.edges
+    tables.edges.set_columns(
+        left=pos[np.searchsorted(position, edges.left)],
+        right=edges.right,
+        parent=edges.parent,
+        child=edges.child)
 
     # We cannot have flags that are both samples and have other flags set,
     # so we need to unset all the sample flags for these.
@@ -635,7 +650,7 @@ def run_perfect_inference(
     sample_data = formats.SampleData.from_tree_sequence(ts)
 
     if use_ts:
-        # Use the actual tree sequenc that was provided as the basis for copying.
+        # Use the actual tree sequence that was provided as the basis for copying.
         ancestors_ts = make_ancestors_ts(sample_data, ts, remove_leaves=True)
     else:
         ancestor_data = formats.AncestorData(sample_data)

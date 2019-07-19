@@ -143,8 +143,14 @@ class AncestorBuilder(object):
 
     def compute_ancestral_states(self, a, focal_site, sites):
         """
-        Together with make_ancestor, this is the main algorithm as implemented in Fig S2
-        of the preprint, with the buffer.
+        For a given focal site, and set of sites to fill in (usually all the ones
+        leftwards or rightwards), augment the haplotype array a with the inferred sites
+        Together with `make_ancestor`, which calls this function, these describe the main
+        algorithm as implemented in Fig S2 of the preprint, with the buffer.
+
+        TODO - account for tskit.MISSING_DATA in samples (e.g. when encountered in
+        the remove_buffer we should keep the sample in the buffer until we know that
+        there is a conflict, rather than clear the remove buffer on every iteration)
         """
         focal_time = self.sites[focal_site].time
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
@@ -157,8 +163,8 @@ class AncestorBuilder(object):
             last_site = l
             if self.sites[l].time > focal_time:
                 g_l = self.sites[l].genotypes
-                ones = sum(g_l[u] for u in S)
-                zeros = len(S) - ones
+                ones = sum(g_l[u] == 1 for u in S)
+                zeros = sum(g_l[u] == 0 for u in S)
                 # print("\tsite", l, ones, zeros, sep="\t")
                 consensus = 0
                 if ones >= zeros:
@@ -177,6 +183,7 @@ class AncestorBuilder(object):
                     if g_l[u] != consensus:
                         remove_buffer.append(u)
                 a[l] = consensus
+        assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
     def make_ancestor(self, focal_sites, a):
@@ -192,27 +199,34 @@ class AncestorBuilder(object):
         for focal_site in focal_sites:
             a[focal_site] = 1
         S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
+        # Interpolate ancestral haplotype within focal region (i.e. region
+        #  spanning from leftmost to rightmost focal site)
         for j in range(len(focal_sites) - 1):
+            # Interpolate region between focal site j and focal site j+1
             for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
                 a[l] = 0
                 if self.sites[l].time > focal_time:
                     g_l = self.sites[l].genotypes
-                    ones = sum(g_l[u] for u in S)
-                    zeros = len(S) - ones
+                    ones = sum(g_l[u] == 1 for u in S)
+                    zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", l, ones, zeros, sep="\t")
-                    if ones >= zeros:
+                    if ones >= zeros:  # Should probably be "ones > zeros" (see below)
+                        # Since this site should be older, this is a conflict
+                        # We just take the majority rule. If equal, we assume that
+                        # the derived variant is more likely (this is probably wrong)
+                        # (we could possibly do something more sophisticated for ancient
+                        #  samples by taking into account the sample age)
                         a[l] = 1
-        # Go rightwards
+        # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
         assert a[last_site] != tskit.MISSING_DATA
         end = last_site + 1
-        # Go leftwards
+        # Extend ancestral haplotype leftwards from leftmost focal site
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
-        assert a[last_site] != tskit.MISSING_DATA
         start = last_site
         return start, end
 
@@ -374,7 +388,7 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # For the asserttion to be violated we would need to have 64K pc
+        # For the assertion to be violated we would need to have 64K pc
         # ancestors sequentially copying from each other.
         self.time[pc_parent_id] = min_parent_time - (1 / 2**16)
         assert self.time[pc_parent_id] > self.time[child_id]
@@ -546,6 +560,10 @@ class TreeSequenceBuilder(object):
         return flags, time
 
     def dump_edges(self):
+        """
+        Return all the edges, in path order (such that all edges for a child are gathered
+        together, and the edges for this child are always listed from left to right)
+        """
         left = np.zeros(self.num_edges, dtype=np.int32)
         right = np.zeros(self.num_edges, dtype=np.int32)
         parent = np.zeros(self.num_edges, dtype=np.int32)
