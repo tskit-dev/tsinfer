@@ -23,6 +23,36 @@ Python 3 only.
 """
 
 import sys
+# Start temporary monkey patch to allow use of functions / constants in tskit v2.0.
+# The following lines can be deleted once the master tskit version has been updated
+import numpy as np
+import tskit
+tskit.MISSING_DATA = -1
+
+
+class util():
+    @staticmethod
+    def safe_np_int_cast(int_array, dtype, copy=False):  # Copied from v2.0 tskit/util.py
+        if not isinstance(int_array, np.ndarray):
+            int_array = np.array(int_array)
+            copy = False
+        if int_array.size == 0:
+            return int_array.astype(dtype, copy=copy)
+        try:
+            return int_array.astype(dtype, casting='safe', copy=copy)
+        except TypeError:
+            bounds = np.iinfo(dtype)
+            if np.any(int_array < bounds.min) or np.any(int_array > bounds.max):
+                raise OverflowError("Cannot convert safely to {} type".format(dtype))
+            if int_array.dtype.kind == 'i' and np.dtype(dtype).kind == 'u':
+                casting = 'unsafe'
+            else:
+                casting = 'same_kind'
+            return int_array.astype(dtype, casting=casting, copy=copy)
+
+
+tskit.util = util
+# End temporary monkey patch
 
 if sys.version_info[0] < 3:
     raise Exception("Python 3 only")
