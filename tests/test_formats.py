@@ -644,6 +644,49 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             copy = data.copy()
         self.assertRaises(ValueError, copy.copy)
 
+    def test_error_not_build_mode(self):
+        # Cannot build after finalising.
+        with formats.SampleData() as input_file:
+            alleles = ["0", "1"]
+            genotypes = [0, 1, 1]
+            input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(
+            ValueError, input_file.add_provenance,
+            datetime.datetime.now().isoformat(), {})
+        self.assertRaises(ValueError, input_file._check_build_mode)
+
+    def test_error_not_write_mode(self):
+        # Cannot finalise twice.
+        with formats.SampleData() as input_file:
+            alleles = ["0", "1"]
+            genotypes = [0, 1, 1]
+            input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
+        self.assertRaises(ValueError, input_file.finalise)
+        self.assertRaises(ValueError, input_file._check_write_modes)
+
+    def test_error_not_edit_mode(self):
+        # Can edit after copy but not after finalising.
+        with formats.SampleData() as input_file:
+            alleles = ["0", "1"]
+            genotypes = [0, 1, 1]
+            input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
+        editable_sample_data = input_file.copy()
+        # Try editing: use setter in the normal way
+        editable_sample_data.sites_inference = np.array([0])
+        # Try editing: use setter via setattr
+        setattr(editable_sample_data, 'sites_inference', np.array([1]))
+        editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
+
+        editable_sample_data.finalise()
+        self.assertRaises(
+            ValueError, setattr, editable_sample_data, 'sites_inference', np.array([1]))
+        self.assertRaises(
+            ValueError, editable_sample_data.add_provenance,
+            datetime.datetime.now().isoformat(), {})
+
     def test_copy_new_uuid(self):
         data = formats.SampleData()
         data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1])

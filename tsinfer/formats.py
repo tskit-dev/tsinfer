@@ -425,15 +425,15 @@ class DataContainer(object):
 
     def _check_build_mode(self):
         if self._mode != self.BUILD_MODE:
-            raise ValueError("Invalid opertion: must be in build mode")
+            raise ValueError("Invalid operation: must be in build mode")
 
     def _check_edit_mode(self):
         if self._mode != self.EDIT_MODE:
-            raise ValueError("Invalid opertion: must be in edit mode")
+            raise ValueError("Invalid operation: must be in edit mode")
 
     def _check_write_modes(self):
         if self._mode not in (self.EDIT_MODE, self.BUILD_MODE):
-            raise ValueError("Invalid opertion: must be in edit or build mode")
+            raise ValueError("Invalid operation: must be in edit or build mode")
 
     @property
     def file_size(self):
