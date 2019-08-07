@@ -75,7 +75,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     /* Check the properties of the likelihood map */
     for (j = 0; j < self->num_likelihood_nodes; j++) {
         u = self->likelihood_nodes[j];
-        printf("%d -> %d\n", u, self->likelihood[u]);
+        fprintf(out, "%d -> %d\n", u, self->likelihood[u]);
     }
     fprintf(out, "traceback\n");
     for (j = 0; j < (int) self->num_sites; j++) {
