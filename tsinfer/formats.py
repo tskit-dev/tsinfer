@@ -1180,13 +1180,11 @@ class SampleData(DataContainer):
     def genotypes(self, inference_sites=None):
         """
         Returns an iterator over the (site_id, genotypes) pairs.
-        If ``inference_sites`` is ``None``, return genotypes for all sites.
-        If ``inference_sites`` is ``True``, return only genotypes at sites that have
-        been marked for inference; if ``False``, return only genotypes at sites
-        that are not marked for inference.
 
-        :param bool inference_sites: Control the sites that we return genotypes
-            for.
+        :param bool inference_sites: Control the sites for which genotypes are returned.
+            If ``None``, return genotypes for all sites; if ``True``, return only
+            genotypes at sites that have been marked for inference; if ``False``, return
+            only genotypes at sites that are not marked for inference.
         """
         inference = self.sites_inference[:]
         for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
@@ -1198,13 +1196,10 @@ class SampleData(DataContainer):
         Returns an iterator over the Variant objects. This is equivalent to
         the TreeSequence.variants iterator.
 
-        If ``inference_sites`` is ``None``, return variants for all sites.
-        If ``inference_sites`` is ``True``, return only variants at sites that have
-        been marked for inference; if ``False``, return only genotypes at sites
-        that are not marked for inference.
-
-        :param bool inference_sites: Control the sites that we return variants
-            for.
+        :param bool inference_sites: Control the sites for which variants are returned.
+            If ``None``, return genotypes for all sites; if ``True``, return only
+            genotypes at sites that have been marked for inference; if ``False``, return
+            only genotypes at sites that are not marked for inference.
         """
         position = self.sites_position[:]
         alleles = self.sites_alleles[:]
@@ -1236,6 +1231,20 @@ class SampleData(DataContainer):
                 yield j, a[selection]
 
     def haplotypes(self, samples=None, inference_sites=None):
+        """
+        Returns an iterator over the (sample_id, haplotype) pairs.
+
+        :param list samples: The sample IDs for which haplotypes are returned. If
+            ``None``, return haplotypes for all sample nodes, otherwise this may be a
+            numpy array (or array-like) object (converted to dtype=np.int32).
+        :param bool inference_sites: Control the sites included in each haplotype. If
+            ``inference_sites`` is ``None``, each returned haplotype includes all sampled
+            sites and is thus of length ``num_sites``. Otherwise, if ``inference_sites``
+            is ``True`` each haplotype includes only sites that have been marked for
+            inference, if ``False``, only sites that are not marked for inference: in
+            both cases the haplotype arrays may thus be less than ``num_sites`` long.
+
+        """
         if samples is None:
             samples = np.arange(self.num_samples)
         else:
