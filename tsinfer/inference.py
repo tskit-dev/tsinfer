@@ -609,54 +609,6 @@ class Matcher(object):
     def encode_metadata(self, value):
         return json.dumps(value).encode()
 
-    def locate_mutations_on_tree(self, tree, variant, mutations):
-        """
-        Find the most parsimonious way to place mutations to define the specified
-        genotypes on the specified tree, and update the mutation table accordingly.
-        """
-        site = variant.site.id
-        samples = np.where(variant.genotypes == 1)[0]
-        num_samples = len(samples)
-        logger.debug("Locating mutations for site {}; n = {}".format(site, num_samples))
-        # Nothing to do if this site is fixed for the ancestral state.
-        if num_samples == 0:
-            return
-
-        # count = np.zeros(tree.tree_sequence.num_nodes, dtype=int)
-        count = collections.Counter()
-        for sample in samples:
-            u = self.sample_ids[sample]
-            while u != tskit.NULL:
-                count[u] += 1
-                u = tree.parent(u)
-        # Go up the tree until we find the first node ancestral to all samples.
-        node = self.sample_ids[samples[0]]
-        while count[node] < num_samples:
-            node = tree.parent(node)
-        assert count[node] == num_samples
-        # Look at the children of this node and put down mutations appropriately.
-        split_children = False
-        for child in tree.children(node):
-            if count[child] == 0:
-                split_children = True
-                break
-        mutation_nodes = [node]
-        if split_children:
-            mutation_nodes = []
-            for child in tree.children(node):
-                if count[child] > 0:
-                    mutation_nodes.append(child)
-        for mutation_node in mutation_nodes:
-            parent_mutation = mutations.add_row(
-                site=site, node=mutation_node, derived_state=variant.alleles[1])
-            # Traverse down the tree to find any leaves that do not have this
-            # mutation and insert back mutations.
-            for node in tree.nodes(mutation_node):
-                if tree.is_sample(node) and count[node] == 0:
-                    mutations.add_row(
-                        site=site, node=node, derived_state=variant.alleles[0],
-                        parent=parent_mutation)
-
     def insert_sites(self, tables):
         """
         Insert the sites in the sample data that were not marked for inference,
@@ -670,6 +622,7 @@ class Matcher(object):
         _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
         if num_non_inference_sites > 0:
+            assert ts.num_edges > 0
             logger.info(
                 "Starting mutation positioning for {} non inference sites".format(
                     num_non_inference_sites))
@@ -678,12 +631,13 @@ class Matcher(object):
             tree = next(trees)
             for variant in self.sample_data.variants():
                 site = variant.site
+                predefined_anc_state = site.ancestral_state
                 while tree.interval[1] <= site.position:
                     tree = next(trees)
                 assert tree.interval[0] <= site.position < tree.interval[1]
                 tables.sites.add_row(
                     position=site.position,
-                    ancestral_state=site.ancestral_state,
+                    ancestral_state=predefined_anc_state,
                     metadata=self.encode_metadata(site.metadata))
                 if site.inference == 1:
                     tables.mutations.add_row(
@@ -691,8 +645,32 @@ class Matcher(object):
                         derived_state=variant.alleles[derived_state[inferred_site]])
                     inferred_site += 1
                 else:
-                    assert ts.num_edges > 0
-                    self.locate_mutations_on_tree(tree, variant, tables.mutations)
+                    if np.all(variant.genotypes == tskit.MISSING_DATA):
+                        # Map_mutations has to have at least 1 non-missing value to work
+                        inferred_anc_state = tskit.MISSING_DATA
+                        mapped_mutations = []
+                    else:
+                        inferred_anc_state, mapped_mutations = tree.map_mutations(
+                            variant.genotypes, variant.alleles + (tskit.MISSING_DATA, ))
+                    if (predefined_anc_state != tskit.MISSING_DATA and
+                            inferred_anc_state != predefined_anc_state):
+                        # Non-inference sites whose ancestral state was defined as
+                        # missing have their ancestral state inferred. Otherwise we need
+                        # to set the ancestral state to that defined in the original file
+                        sample_missing = set(
+                            ts.samples()[variant.genotypes == tskit.MISSING_DATA])
+                        for root_node in tree.roots:
+                            # Add a transition at each root to the mapped value
+                            if tree.is_leaf(root_node) and root_node in sample_missing:
+                                # Except isolated tips (automatically flagged as missing)
+                                continue
+                            tables.mutations.add_row(
+                                site=site.id, node=root_node,
+                                derived_state=inferred_anc_state)
+                    for mutation in mapped_mutations:
+                        tables.mutations.add_row(
+                            site=site.id, node=mutation.node,
+                            derived_state=mutation.derived_state)
                 progress_monitor.update()
         else:
             # Simple case where all sites are inference sites. We save a lot of time here

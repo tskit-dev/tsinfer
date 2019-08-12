@@ -188,15 +188,10 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
 2. As we only use a subset of the available sites for inference
    (excluding by default any sites that are fixed or singletons)
    we then place mutations on the inferred trees in order to
-   represent the information at these sites. We currently use a
-   form of Dollo parsimony to do this. For a given site with
-   a set of samples with the derived state, first find the MRCA
-   of these samples, and place a mutation at this node. Then,
-   for all samples in this subtree that carry the ancestral
-   state, place a back mutation to the ancestral state directly over
-   this sample. **Note this approach is suboptimal because there
-   may be clades of ancestral state samples which would allow us
-   to encode the data with fewer back mutations.**
+   represent the information at these sites. This is done using the tskit
+   `map_mutations <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.Tree.map_mutations>`_.
+   method.
+   
 
 3. Reduce the resulting tree sequence to a canonical form by
    `simplifying it
