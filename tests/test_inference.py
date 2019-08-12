@@ -1642,7 +1642,8 @@ class TestExtractAncestors(unittest.TestCase):
     def verify(self, samples):
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
-        ts = tsinfer.match_samples(samples, ancestors_ts_1, simplify=False)
+        ts = tsinfer.match_samples(
+            samples, ancestors_ts_1, path_compression=False, simplify=False)
         t1 = ancestors_ts_1.dump_tables()
         t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
         self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
