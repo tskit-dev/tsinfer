@@ -139,10 +139,10 @@ def verify(samples, tree_sequence, progress_monitor=None):
 
 
 def infer(
-        sample_data, progress_monitor=None, num_threads=0, path_compression=True,
-        simplify=True, engine=constants.C_ENGINE):
+        sample_data, num_threads=0, path_compression=True, simplify=True,
+        engine=constants.C_ENGINE, progress_monitor=None):
     """
-    infer(sample_data, num_threads=0)
+    infer(sample_data, num_threads=0, path_compression=True, simplify=True)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
@@ -153,13 +153,19 @@ def infer(
     :param int num_threads: The number of worker threads to use in parallelised
         sections of the algorithm. If <= 0, do not spawn any threads and
         use simpler sequential algorithms (default).
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
+    :param bool simplify: Whether to remove extra tree nodes and edges that are not
+        on a path between the root and any of the samples. To do so, the final tree
+        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
+        with ``keep_unary`` set to True (default = ``True``).
     :returns: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
     :rtype: tskit.TreeSequence
     """
     ancestor_data = generate_ancestors(
-        sample_data, engine=engine, progress_monitor=progress_monitor,
-        num_threads=num_threads)
+        sample_data, num_threads=num_threads,
+        engine=engine, progress_monitor=progress_monitor,)
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
         path_compression=path_compression, progress_monitor=progress_monitor)
@@ -171,8 +177,8 @@ def infer(
 
 
 def generate_ancestors(
-        sample_data, num_threads=0, progress_monitor=None, engine=constants.C_ENGINE,
-        **kwargs):
+        sample_data, num_threads=0, path=None,
+        engine=constants.C_ENGINE, progress_monitor=None, **kwargs):
     """
     generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
 
@@ -186,21 +192,23 @@ def generate_ancestors(
 
         ancestor_data = tsinfer.generate_ancestors(sample_data, path="mydata.ancestors")
 
-    All other keyword arguments are passed to the :class:`AncestorData` constructor,
+    Other keyword arguments are passed to the :class:`AncestorData` constructor,
     which may be used to control the storage properties of the generated file.
 
     :param SampleData sample_data: The :class:`SampleData` instance that we are
         genering putative ancestors from.
     :param int num_threads: The number of worker threads to use. If < 1, use a
         simpler synchronous algorithm.
+    :param str path: The path of the file to store the sample data. If None,
+        the information is stored in memory and not persistent.
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
     progress_monitor = _get_progress_monitor(progress_monitor)
-    with formats.AncestorData(sample_data, **kwargs) as ancestor_data:
+    with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
         generator = AncestorsGenerator(
-            sample_data, ancestor_data, progress_monitor, engine=engine,
-            num_threads=num_threads)
+            sample_data, ancestor_data, num_threads=num_threads,
+            engine=engine, progress_monitor=progress_monitor)
         generator.add_sites()
         generator.run()
         ancestor_data.record_provenance("generate-ancestors")
@@ -208,8 +216,8 @@ def generate_ancestors(
 
 
 def match_ancestors(
-        sample_data, ancestor_data, progress_monitor=None, num_threads=0,
-        path_compression=True, extended_checks=False, engine=constants.C_ENGINE):
+        sample_data, ancestor_data, num_threads=0, path_compression=True,
+        extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
     match_ancestors(sample_data, ancestor_data, num_threads=0, path_compression=True)
 
@@ -225,24 +233,25 @@ def match_ancestors(
         a history for.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
-    :param bool path_compression: Should we try to merge edges that share identical
-        paths (essentially taking advantage of shared recombination breakpoints)
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
     :return: The ancestors tree sequence representing the inferred history
         of the set of ancestors.
     :rtype: tskit.TreeSequence
     """
     matcher = AncestorMatcher(
-        sample_data, ancestor_data, engine=engine,
-        progress_monitor=progress_monitor, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks)
+        sample_data, ancestor_data, num_threads=num_threads,
+        path_compression=path_compression, extended_checks=extended_checks,
+        engine=engine, progress_monitor=progress_monitor)
     return matcher.match_ancestors()
 
 
 def augment_ancestors(
-        sample_data, ancestors_ts, indexes, progress_monitor=None, num_threads=0,
-        path_compression=True, extended_checks=False, engine=constants.C_ENGINE):
+        sample_data, ancestors_ts, indexes, num_threads=0, path_compression=True,
+        extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
-    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0, simplify=True)
+    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,
+    path_compression=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
@@ -260,32 +269,34 @@ def augment_ancestors(
         tree sequence.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
     :return: The specified ancestors tree sequence augmented with copying
         paths for the specified sample.
     :rtype: tskit.TreeSequence
     """
     manager = SampleMatcher(
-        sample_data, ancestors_ts, path_compression=path_compression,
-        engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
-        extended_checks=extended_checks)
+        sample_data, ancestors_ts, num_threads=num_threads,
+        path_compression=path_compression, extended_checks=extended_checks,
+        engine=engine, progress_monitor=progress_monitor
+        )
     manager.match_samples(indexes)
     ts = manager.get_augmented_ancestors_tree_sequence(indexes)
     return ts
 
 
 def match_samples(
-        sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
-        path_compression=True, simplify=True, extended_checks=False,
-        stabilise_node_ordering=False, engine=constants.C_ENGINE):
+        sample_data, ancestors_ts, num_threads=0, path_compression=True, simplify=True,
+        extended_checks=False, stabilise_node_ordering=False, engine=constants.C_ENGINE,
+        progress_monitor=None):
     """
-    match_samples(sample_data, ancestors_ts, num_threads=0, simplify=True)
+    match_samples(sample_data, ancestors_ts, num_threads=0, path_compression=True,
+        simplify=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
     returning the final :class:`tskit.TreeSequence` instance containing
-    the full inferred history for all samples and sites. If ``simplify`` is
-    True (the default) run :meth:`tskit.TreeSequence.simplify` on the
-    inferred tree sequence to ensure that it is in canonical form.
+    the full inferred history for all samples and sites.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
@@ -294,14 +305,20 @@ def match_samples(
         history among ancestral ancestral haplotypes.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
+    :param bool simplify: Whether to remove extra tree nodes and edges that are not
+        on a path between the root and any of the samples. To do so, the final tree
+        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
+        with ``keep_unary`` set to True (default = ``True``).
     :return: The tree sequence representing the inferred history
         of the sample.
     :rtype: tskit.TreeSequence
     """
     manager = SampleMatcher(
-        sample_data, ancestors_ts, path_compression=path_compression,
-        engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
-        extended_checks=extended_checks)
+        sample_data, ancestors_ts, num_threads=num_threads,
+        path_compression=path_compression, extended_checks=extended_checks,
+        engine=engine, progress_monitor=progress_monitor)
     manager.match_samples()
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering)
@@ -313,7 +330,8 @@ class AncestorsGenerator(object):
     Manages the process of building ancestors.
     """
     def __init__(
-            self, sample_data, ancestor_data, progress_monitor, engine, num_threads=0):
+            self, sample_data, ancestor_data, num_threads=0,
+            engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
         self.ancestor_data = ancestor_data
         self.progress_monitor = progress_monitor
@@ -453,8 +471,8 @@ class AncestorsGenerator(object):
 class Matcher(object):
 
     def __init__(
-            self, sample_data, num_threads=1, engine=constants.C_ENGINE,
-            path_compression=True, progress_monitor=None, extended_checks=False):
+            self, sample_data, num_threads=1, path_compression=True,
+            extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
         self.num_threads = num_threads
         self.path_compression = path_compression
@@ -1106,8 +1124,9 @@ class SampleMatcher(Matcher):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
         if simplify:
-            logger.info("Running simplify on {} nodes and {} edges".format(
-                ts.num_nodes, ts.num_edges))
+            logger.info(
+                "Running simplify(keep_unary=True) on {} nodes and {} edges".format(
+                    ts.num_nodes, ts.num_edges))
             if stabilise_node_ordering:
                 # Ensure all the node times are distinct so that they will have
                 # stable IDs after simplifying. This could possibly also be done
@@ -1122,7 +1141,8 @@ class SampleMatcher(Matcher):
                 tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
                 tables.sort()
                 ts = tables.tree_sequence()
-            ts = ts.simplify(samples=self.sample_ids, filter_sites=False)
+            ts = ts.simplify(
+                samples=self.sample_ids, filter_sites=False, keep_unary=True)
             logger.info("Finished simplify; now have {} nodes and {} edges".format(
                 ts.num_nodes, ts.num_edges))
         return ts
