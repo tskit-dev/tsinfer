@@ -226,6 +226,18 @@ def chunk_iterator(array):
         yield chunk[j % chunk_size]
 
 
+def rev_chunk_iterator(array):
+    """
+    Utility to iterate in reverse over the rows in the specified array efficiently
+    by accessing one chunk at a time.
+    """
+    chunk_size = array.chunks[0]
+    for j in range(array.shape[0]):
+        if j % chunk_size == 0:
+            chunk = array[-(j + chunk_size): (None if j == 0 else -j)][:]
+        yield chunk[-(j % chunk_size) - 1]
+
+
 class DataContainer(object):
     """
     Superclass of objects used to represent a collection of related
@@ -707,6 +719,26 @@ class SampleData(DataContainer):
     ADDING_SAMPLES = 1
     ADDING_SITES = 2
 
+    class _GenotypesIterator(object):
+        """
+        Allow iteration and reverse iteration over SampleData genotypes
+        """
+        def __init__(self, sample_data, inference_sites):
+            self.sample_data = sample_data
+            self.inference_sites = inference_sites
+
+        def __iter__(self):
+            inference = self.sample_data.sites_inference[:]
+            for j, a in enumerate(chunk_iterator(self.sample_data.sites_genotypes)):
+                if self.inference_sites is None or inference[j] == self.inference_sites:
+                    yield j, a
+
+        def __reversed__(self):
+            inference = self.sample_data.sites_inference[:]
+            for j, a in enumerate(rev_chunk_iterator(self.sample_data.sites_genotypes)):
+                if self.inference_sites is None or inference[j] == self.inference_sites:
+                    yield self.sample_data.num_sites - j - 1, a
+
     def __init__(self, sequence_length=0, **kwargs):
 
         super().__init__(**kwargs)
@@ -1186,10 +1218,7 @@ class SampleData(DataContainer):
             genotypes at sites that have been marked for inference; if ``False``, return
             only genotypes at sites that are not marked for inference.
         """
-        inference = self.sites_inference[:]
-        for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
-            if inference_sites is None or inference[j] == inference_sites:
-                yield j, a
+        return self._GenotypesIterator(self, inference_sites)
 
     def variants(self, inference_sites=None):
         """
