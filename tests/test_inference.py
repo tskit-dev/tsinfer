@@ -311,7 +311,7 @@ class TestZeroInferenceSites(unittest.TestCase):
     Tests for the degenerate case in which we have no inference sites.
     """
     def verify(self, genotypes):
-        genotypes = np.array(genotypes, dtype=np.int8)
+        genotypes = np.array(genotypes, dtype=np.uint8)
         m = genotypes.shape[0]
         with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
             for j in range(m):
@@ -610,13 +610,13 @@ class TestGeneratedAncestors(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
             for v in ts.variants():
                 sample_data.add_site(v.position, v.genotypes, v.alleles)
-
         ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
-        A = np.zeros(
-            (ancestor_data.num_sites, ancestor_data.num_ancestors), dtype=np.uint8)
+        A = np.full(
+            (ancestor_data.num_sites, ancestor_data.num_ancestors),
+            tskit.MISSING_DATA, dtype=np.int8)
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         ancestors = ancestor_data.ancestors_haplotype[:]
