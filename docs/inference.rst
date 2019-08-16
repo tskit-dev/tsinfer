@@ -36,13 +36,12 @@ Data model
 **********
 
 The data model for ``tsinfer`` is tightly integrated with
-``msprime``'s `data model <https://msprime.readthedocs.io/en/stable/interchange.html>`_
+``tskit``'s `data model <https://tskit.readthedocs.io/en/latest/data-model.html>`_
 and uses the same concepts throughout. The intermediate file formats and APIs
 described here provide a bridge between this model and existing data sources. For
 convenience, we provide a brief description of concepts needed for importing
-data into ``tsinfer`` here. Please see the `msprime documentation
-<https://msprime.readthedocs.io/en/stable/index.html>`_ for more detailed
-information.
+data into ``tsinfer`` here. Please see the `tskit documentation
+<https://tskit.readthedocs.io/>`_ for more detailed information.
 
 .. _sec_inference_data_model_individual:
 
@@ -167,8 +166,9 @@ number of recombination events.
 The copying path for each ancestor then describes its ancestry at every
 point in the sequence: from a genealogical perspective, we know its
 parent node. This information is encoded precisely as an `edge
-<http://msprime.readthedocs.io/en/stable/interchange.html#edge-table>`_ in a
-`tree sequence <http://msprime.readthedocs.io/en/stable/interchange.html#data-model>`_.
+<https://tskit.readthedocs.io/en/latest/data-model.html#edge-table>`_ in a
+`tree sequence
+<https://tskit.readthedocs.io/en/latest/python-api.html#trees-and-tree-sequences>`_.
 Thus, we refer to the output of this step as the "ancestors tree sequence",
 which is conventionally stored in a file ending with ``.ancestors.trees``.
 
@@ -200,7 +200,7 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
 
 3. Reduce the resulting tree sequence to a canonical form by
    `simplifying it
-   <http://msprime.readthedocs.io/en/stable/api.html#msprime.TreeSequence.simplify>`_.
+   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_.
 
 .. todo::
     1. Describe path compression here and above in the ancestors

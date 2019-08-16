@@ -17,6 +17,6 @@ make two very important gains:
    storing and processing the data that we have.
 
 The output of ``tsinfer`` is an :class:`msprime.TreeSequence` and so the
-full `msprime API <https://msprime.readthedocs.io/>`_ can be used to
-analyse real data, in precisely the same way that it is currently used
-to analyse simulation data.
+full `tskit API <https://tskit.readthedocs.io>`_ can be used to
+analyse real data, in precisely the same way that it is commonly used
+to analyse simulation data, for example, from `msprime <https://msprime.readthedocs.io/>`_.
