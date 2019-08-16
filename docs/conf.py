@@ -15,6 +15,8 @@
 
 import os
 import sys
+
+import pkg_resources
 from unittest.mock import MagicMock
 
 class Mock(MagicMock):
