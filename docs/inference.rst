@@ -198,13 +198,18 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    may be clades of ancestral state samples which would allow us
    to encode the data with fewer back mutations.**
 
-3. Reduce the resulting tree sequence to a canonical form by
-   `simplifying it
-   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_.
+3. Remove ancestral paths that do not lead to any of the samples by 
+   `simplifying
+   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_
+   the final tree sequence. When simplifying, we keep non-branching ("unary")
+   nodes, as they indicate ancestors which we have actively inferred, and
+   for technical reasons keeping unary ancestors can also lead to better
+   compression. Note that this means that not every internal node in the
+   inferred tree sequence will correspond to a coalescent event.
 
 .. todo::
     1. Describe path compression here and above in the ancestors
        section
-    2. Describe the structure of the outpt tree sequences; how the
+    2. Describe the structure of the output tree sequences; how the
        nodes are mapped, what the time values mean, etc.
 
