@@ -42,8 +42,7 @@ Running inference
 
 .. autofunction:: tsinfer.match_samples
 
-.. todo::
-    1. Add documentation for path compression here.
+.. autofunction:: tsinfer.augment_ancestors
 
 ++++++++++
 Exceptions

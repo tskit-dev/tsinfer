@@ -161,6 +161,19 @@ given time, and an ancestor can copy from any older ancestor. For each
 ancestor, we find a path through older ancestors that minimises the
 number of recombination events.
 
+As well as minimising recombination events by finding the best path, we can also
+minimise events by looking for *shared recombination breakpoints*. A shared
+breakpoint exists if a set of children share a breakpoint in the same position,
+and they also have identical parents to the left of the breakpoint and identical
+parents to the right of the breakpoint. Rather than supposing that these
+children experienced multiple identical recombination events in parallel, we can
+reduce the number of ancestral recombination events by postulating a "synthetic
+ancestor" with this breakpoint, existing at a slightly older point
+in time, from whom all the children are descended at this genomic position. We
+call the algorithm used to implement this addition to the ancestral copying
+paths, "path compression".
+
+
 .. todo:: Schematic of the ancestors copying process.
 
 The copying path for each ancestor then describes its ancestry at every
@@ -183,7 +196,9 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
 1. The first (and usually most time-consuming) is to find copying paths
    for our sample haplotypes through the ancestors. Each copying path
    corresponds to a set of tree sequence edges in precisely the same
-   way as for ancestors.
+   way as for ancestors, and the path compression algorithm can be equally
+   applied here.
+
 
 2. As we only use a subset of the available sites for inference
    (excluding by default any sites that are fixed or singletons)
@@ -198,13 +213,18 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    may be clades of ancestral state samples which would allow us
    to encode the data with fewer back mutations.**
 
-3. Reduce the resulting tree sequence to a canonical form by
-   `simplifying it
-   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_.
+3. Remove ancestral paths that do not lead to any of the samples by
+   `simplifying
+   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_
+   the final tree sequence. When simplifying, we keep non-branching ("unary")
+   nodes, as they indicate ancestors which we have actively inferred, and
+   for technical reasons keeping unary ancestors can also lead to better
+   compression. Note that this means that not every internal node in the
+   inferred tree sequence will correspond to a coalescent event.
 
 .. todo::
     1. Describe path compression here and above in the ancestors
        section
-    2. Describe the structure of the outpt tree sequences; how the
+    2. Describe the structure of the output tree sequences; how the
        nodes are mapped, what the time values mean, etc.
 

@@ -705,6 +705,8 @@ def run_perfect_inference(
         num_threads=num_threads, extended_checks=extended_checks,
         progress_monitor=progress_monitor,
         stabilise_node_ordering=time_chunking and not path_compression)
+    # to compare against the original, we need to remove unary nodes from the inferred TS
+    inferred_ts = inferred_ts.simplify(keep_unary=False, filter_sites=False)
     return ts, inferred_ts
 
 

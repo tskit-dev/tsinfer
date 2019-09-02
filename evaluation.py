@@ -373,9 +373,13 @@ def edge_plot(ts, filename):
     for tree in ts.trees():
         left, right = tree.interval
         for u in tree.nodes():
-            for c in tree.children(u):
-                lines.append([(left, c), (right, c)])
-                colours.append(pallete[unrank(tree.samples(c), n)])
+            children = tree.children(u)
+            # Don't bother plotting unary nodes, which will all have the same
+            # samples under them as their next non-unary descendant
+            if len(children) > 1:
+                for c in children:
+                    lines.append([(left, c), (right, c)])
+                    colours.append(pallete[unrank(tree.samples(c), n)])
 
     lc = mc.LineCollection(lines, linewidths=2, colors=colours)
     fig, ax = plt.subplots()

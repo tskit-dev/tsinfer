@@ -610,13 +610,13 @@ class TestGeneratedAncestors(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
             for v in ts.variants():
                 sample_data.add_site(v.position, v.genotypes, v.alleles)
-
         ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
-        A = np.zeros(
-            (ancestor_data.num_sites, ancestor_data.num_ancestors), dtype=np.uint8)
+        A = np.full(
+            (ancestor_data.num_sites, ancestor_data.num_ancestors),
+            tskit.MISSING_DATA, dtype=np.int8)
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         ancestors = ancestor_data.ancestors_haplotype[:]
@@ -628,8 +628,7 @@ class TestGeneratedAncestors(unittest.TestCase):
             tsinfer.check_ancestors_ts(ancestors_ts)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
-            self.assertTrue(np.array_equal(
-                ancestors_ts.genotype_matrix(impute_missing_data=True), A))
+            self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
                 sample_data, ancestors_ts, engine=engine)
             self.assertTrue(np.array_equal(
@@ -1229,6 +1228,14 @@ class TestSimplify(unittest.TestCase):
         self.assertEqual(
             list(ts2.samples()),
             list(range(ts2.num_nodes - n, ts2.num_nodes)))
+
+        # Check that we're calling simplify with the correct arguments.
+        ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
+        t1 = ts1.dump_tables()
+        t2 = ts2.dump_tables()
+        t1.provenances.clear()
+        t2.provenances.clear()
+        self.assertEqual(t1, t2)
 
     def test_single_tree(self):
         ts = msprime.simulate(5, random_seed=1, mutation_rate=2)

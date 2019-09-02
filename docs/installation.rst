@@ -4,8 +4,8 @@
 Installation
 ############
 
-Python 3.3 or newer is required for ``tsinfer``. Any Unix-like platform should work
-(``tsinfer`` is tested on Linux and OSX).
+Python 3.5 or newer is required for ``tsinfer``. Any Unix-like platform should
+work (``tsinfer`` is tested on Linux, OS X, and Windows).
 
 Please use ``pip`` to install,
 e.g.::
@@ -32,8 +32,6 @@ first using `venv <https://docs.python.org/3/library/venv.html>`_::
     $ source tsinfer-venv/bin/activate
     (tsinfer-venv) $ pip install tsinfer
     (tsinfer-venv) $ tsinfer --help
-
-.. _sec_installation_installation_problems:
 
 ****************
 Potential issues
