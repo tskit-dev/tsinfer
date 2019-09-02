@@ -628,7 +628,8 @@ class TestGeneratedAncestors(unittest.TestCase):
             tsinfer.check_ancestors_ts(ancestors_ts)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
-            self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
+            self.assertTrue(np.array_equal(
+                ancestors_ts.genotype_matrix(impute_missing_data=True), A))
             inferred_ts = tsinfer.match_samples(
                 sample_data, ancestors_ts, engine=engine)
             self.assertTrue(np.array_equal(
