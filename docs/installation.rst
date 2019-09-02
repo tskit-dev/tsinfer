@@ -35,22 +35,16 @@ first using `venv <https://docs.python.org/3/library/venv.html>`_::
 
 .. _sec_installation_installation_problems:
 
-+++++++++++++++++++++
-Installation problems
-+++++++++++++++++++++
+****************
+Potential issues
+****************
 
-
-There are situations (usually where the GSL libraries are not in the
-default locations) where ``tskit`` installation can fail. The same issue can 
-occur when installing ``msprime``, so you can consult the 
-`msprime installation documentation <https://msprime.readthedocs.io/en/stable/installation.html>`_
-for details on the various ways to address this problem.
-
-Note that one of the dependencies of ``tsinfer``, ``numcodecs``, can be compiled to
-use AVX2 instructions if those are available on your hardware. This has led to
-issues when installing on hardware with AVX2, then trying to use ``tsinfer``
-from a cluster compute node without AVX2. To resolve this, ``numcodecs`` has a
+One of the dependencies of ``tsinfer``,
+`numcodecs <https://numcodecs.readthedocs.io/>`_, is compiled to
+use AVX2 instructions (where available) when installed using pip. This can lead to
+issues when ``numcodecs`` is compiled on a machine that supports AVX2
+and subsequently run on older machines that do not. To resolve this, ``numcodecs`` has a
 ``DISABLE_NUMCODECS_AVX2`` variable which can be turned on before calling
-``pip install``, see 
+``pip install``, see
 `these instructions <https://numcodecs.readthedocs.io/en/stable/#installation>`_
 for details.

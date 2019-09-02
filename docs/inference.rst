@@ -168,7 +168,7 @@ point in the sequence: from a genealogical perspective, we know its
 parent node. This information is encoded precisely as an `edge
 <https://tskit.readthedocs.io/en/latest/data-model.html#edge-table>`_ in a
 `tree sequence
-<https://tskit.readthedocs.io/en/latest/python-api.html#trees-and-tree-sequences>`_.
+<https://tskit.readthedocs.io/en/latest/data-model.html>`_.
 Thus, we refer to the output of this step as the "ancestors tree sequence",
 which is conventionally stored in a file ending with ``.ancestors.trees``.
 
