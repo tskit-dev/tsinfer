@@ -311,7 +311,7 @@ class TestZeroInferenceSites(unittest.TestCase):
     Tests for the degenerate case in which we have no inference sites.
     """
     def verify(self, genotypes):
-        genotypes = np.array(genotypes, dtype=np.uint8)
+        genotypes = np.array(genotypes, dtype=np.int8)
         m = genotypes.shape[0]
         with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
             for j in range(m):
@@ -628,8 +628,7 @@ class TestGeneratedAncestors(unittest.TestCase):
             tsinfer.check_ancestors_ts(ancestors_ts)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
-            self.assertTrue(np.array_equal(
-                ancestors_ts.genotype_matrix(impute_missing_data=True), A))
+            self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
                 sample_data, ancestors_ts, engine=engine)
             self.assertTrue(np.array_equal(
@@ -1229,6 +1228,14 @@ class TestSimplify(unittest.TestCase):
         self.assertEqual(
             list(ts2.samples()),
             list(range(ts2.num_nodes - n, ts2.num_nodes)))
+
+        # Check that we're calling simplify with the correct arguments.
+        ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
+        t1 = ts1.dump_tables()
+        t2 = ts2.dump_tables()
+        t1.provenances.clear()
+        t2.provenances.clear()
+        self.assertEqual(t1, t2)
 
     def test_single_tree(self):
         ts = msprime.simulate(5, random_seed=1, mutation_rate=2)

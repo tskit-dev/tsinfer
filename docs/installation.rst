@@ -4,7 +4,7 @@
 Installation
 ############
 
-Python 3.3 or newer is required for ``tsinfer``. Any Unix-like platform should
+Python 3.5 or newer is required for ``tsinfer``. Any Unix-like platform should
 work (``tsinfer`` is tested on Linux, OS X, and Windows).
 
 Please use ``pip`` to install,

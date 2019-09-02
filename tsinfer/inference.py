@@ -250,8 +250,8 @@ def augment_ancestors(
         sample_data, ancestors_ts, indexes, num_threads=0, path_compression=True,
         extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
-    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,
-    path_compression=True)
+    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,\
+        path_compression=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
@@ -290,7 +290,7 @@ def match_samples(
         extended_checks=False, stabilise_node_ordering=False, engine=constants.C_ENGINE,
         progress_monitor=None):
     """
-    match_samples(sample_data, ancestors_ts, num_threads=0, path_compression=True,
+    match_samples(sample_data, ancestors_ts, num_threads=0, path_compression=True,\
         simplify=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`

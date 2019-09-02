@@ -197,7 +197,7 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    for our sample haplotypes through the ancestors. Each copying path
    corresponds to a set of tree sequence edges in precisely the same
    way as for ancestors, and the path compression algorithm can be equally
-   applied here. 
+   applied here.
 
 
 2. As we only use a subset of the available sites for inference
@@ -213,7 +213,7 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    may be clades of ancestral state samples which would allow us
    to encode the data with fewer back mutations.**
 
-3. Remove ancestral paths that do not lead to any of the samples by 
+3. Remove ancestral paths that do not lead to any of the samples by
    `simplifying
    <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_
    the final tree sequence. When simplifying, we keep non-branching ("unary")
