@@ -108,10 +108,10 @@ static PyObject *
 AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"site_id", "age", "genotypes", NULL};
+    static char *kwlist[] = {"site_id", "time", "genotypes", NULL};
     PyObject *ret = NULL;
     int site_id;
-    double age;
+    double time;
     PyObject *genotypes = NULL;
     PyArrayObject *genotypes_array = NULL;
     npy_intp *shape;
@@ -120,7 +120,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "idO!", kwlist,
-            &site_id, &age, &PyArray_Type, &genotypes)) {
+            &site_id, &time, &PyArray_Type, &genotypes)) {
         goto out;
     }
     genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
@@ -138,7 +138,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id, age,
+    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id, time,
             (allele_t *) PyArray_DATA(genotypes_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
@@ -255,7 +255,7 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
         }
         memcpy(PyArray_DATA(site_array), descriptor->focal_sites,
                 descriptor->num_focal_sites * sizeof(site_id_t));
-        py_descriptor = Py_BuildValue("dO", descriptor->age, site_array);
+        py_descriptor = Py_BuildValue("dO", descriptor->time, site_array);
         if (py_descriptor == NULL) {
             Py_DECREF(site_array);
             goto out;

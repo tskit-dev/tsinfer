@@ -28,10 +28,10 @@
 #include "avl.h"
 
 static int
-cmp_age_map(const void *a, const void *b) {
-    const age_map_t *ia = (age_map_t const *) a;
-    const age_map_t *ib = (age_map_t const *) b;
-    return (ia->age > ib->age) - (ia->age < ib->age);
+cmp_time_map(const void *a, const void *b) {
+    const time_map_t *ia = (time_map_t const *) a;
+    const time_map_t *ib = (time_map_t const *) b;
+    return (ia->time > ib->time) - (ia->time < ib->time);
 }
 
 static int
@@ -48,16 +48,16 @@ ancestor_builder_check_state(ancestor_builder_t *self)
     size_t count;
     avl_node_t *a, *b;
     pattern_map_t *pattern_map;
-    age_map_t *age_map;
+    time_map_t *time_map;
     site_list_t *s;
 
-    for (a = self->age_map.head; a != NULL; a = a->next) {
-        age_map = (age_map_t *) a->item;
-        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+    for (a = self->time_map.head; a != NULL; a = a->next) {
+        time_map = (time_map_t *) a->item;
+        for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
             count = 0;
             for (s = pattern_map->sites; s != NULL; s = s->next) {
-                assert(self->sites[s->site].age == age_map->age);
+                assert(self->sites[s->site].time == time_map->time);
                 assert(self->sites[s->site].genotypes == pattern_map->genotypes);
                 count++;
             }
@@ -72,7 +72,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     size_t j, k;
     avl_node_t *a, *b;
     pattern_map_t *pattern_map;
-    age_map_t *age_map;
+    time_map_t *time_map;
     site_list_t *s;
 
     fprintf(out, "Ancestor builder\n");
@@ -82,16 +82,16 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
 
     fprintf(out, "Sites:\n");
     for (j = 0; j < self->num_sites; j++) {
-        fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].age,
+        fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].time,
                 self->sites[j].genotypes);
     }
-    fprintf(out, "Age map:\n");
+    fprintf(out, "Time map:\n");
 
-    for (a = self->age_map.head; a != NULL; a = a->next) {
-        age_map = (age_map_t *) a->item;
-        printf("Epoch: age = %f: %d ancestors\n",
-                age_map->age, avl_count(&age_map->pattern_map));
-        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+    for (a = self->time_map.head; a != NULL; a = a->next) {
+        time_map = (time_map_t *) a->item;
+        printf("Epoch: time = %f: %d ancestors\n",
+                time_map->time, avl_count(&time_map->pattern_map));
+        for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
             printf("\t");
             for (k = 0; k < self->num_samples; k++) {
@@ -106,7 +106,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     }
     fprintf(out, "Descriptors:\n");
     for (j = 0; j < self->num_ancestors; j++) {
-        fprintf(out, "%f\t%d: ",  self->descriptors[j].age,
+        fprintf(out, "%f\t%d: ",  self->descriptors[j].time,
                 (int) self->descriptors[j].num_focal_sites);
         for (k = 0; k < self->descriptors[j].num_focal_sites; k++) {
             fprintf(out, "%d, ", self->descriptors[j].focal_sites[k]);
@@ -142,7 +142,7 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t num_
     if (ret != 0) {
         goto out;
     }
-    avl_init_tree(&self->age_map, cmp_age_map, NULL);
+    avl_init_tree(&self->time_map, cmp_time_map, NULL);
 out:
     return ret;
 }
@@ -156,29 +156,29 @@ ancestor_builder_free(ancestor_builder_t *self)
     return 0;
 }
 
-static age_map_t *
-ancestor_builder_get_age_map(ancestor_builder_t *self, double age)
+static time_map_t *
+ancestor_builder_get_time_map(ancestor_builder_t *self, double time)
 {
-    age_map_t *ret = NULL;
-    age_map_t search, *age_map;
+    time_map_t *ret = NULL;
+    time_map_t search, *time_map;
     avl_node_t *avl_node;
 
-    search.age = age;
-    avl_node = avl_search(&self->age_map, &search);
+    search.time = time;
+    avl_node = avl_search(&self->time_map, &search);
     if (avl_node == NULL) {
         avl_node = block_allocator_get(&self->allocator, sizeof(*avl_node));
-        age_map = block_allocator_get(&self->allocator, sizeof(*age_map));
-        if (avl_node == NULL || age_map == NULL) {
+        time_map = block_allocator_get(&self->allocator, sizeof(*time_map));
+        if (avl_node == NULL || time_map == NULL) {
             goto out;
         }
-        age_map->age = age;
-        avl_init_tree(&age_map->pattern_map, cmp_pattern_map, NULL);
-        avl_init_node(avl_node, age_map);
-        avl_node = avl_insert_node(&self->age_map, avl_node);
+        time_map->time = time;
+        avl_init_tree(&time_map->pattern_map, cmp_pattern_map, NULL);
+        avl_init_node(avl_node, time_map);
+        avl_node = avl_insert_node(&self->time_map, avl_node);
         assert(avl_node != NULL);
-        ret = age_map;
+        ret = time_map;
     } else {
-        ret = (age_map_t *) avl_node->item;
+        ret = (time_map_t *) avl_node->item;
     }
 out:
     return ret;
@@ -212,7 +212,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
     int64_t l;
     node_id_t u;
     size_t j, ones, zeros, tmp_size, sample_set_size, min_sample_set_size;
-    double focal_site_age = self->sites[focal_site].age;
+    double focal_site_time = self->sites[focal_site].time;
     const site_t *restrict sites = self->sites;
     const size_t num_sites = self->num_sites;
     const allele_t *restrict genotypes;
@@ -229,7 +229,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
         /* printf("\tl = %d\n", (int) l); */
         ancestor[l] = 0;
         last_site = (site_id_t) l;
-        if (sites[l].age > focal_site_age) {
+        if (sites[l].time > focal_site_time) {
 
             /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
             /* /1* for (j = 0; j < sample_set_size; j++) { *1/ */
@@ -291,21 +291,21 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
     int ret = 0;
     site_id_t l;
     size_t j, k, ones, zeros, sample_set_size;
-    double focal_site_age;
+    double focal_site_time;
     const site_t *restrict sites = self->sites;
     const allele_t *restrict genotypes;
 
     assert(num_focal_sites > 0);
     ancestor_builder_get_consistent_samples(self, focal_sites[0],
             sample_set, &sample_set_size);
-    focal_site_age = self->sites[focal_sites[0]].age;
+    focal_site_time = self->sites[focal_sites[0]].time;
 
     ancestor[focal_sites[0]] = 1;
     for (j = 1; j < num_focal_sites; j++) {
         ancestor[focal_sites[j]] = 1;
         for (l = focal_sites[j - 1] + 1; l < focal_sites[j]; l++) {
             ancestor[l] = 0;
-            if (sites[l].age > focal_site_age) {
+            if (sites[l].time > focal_site_time) {
                 /* printf("\t%d\t%d:", l, (int) sample_set_size); */
                 /* for (k = 0; k < sample_set_size; k++) { */
                 /*     printf("%d, ", sample_set[k]); */
@@ -373,7 +373,7 @@ out:
 
 
 int WARN_UNUSED
-ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, double age,
+ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, double time,
         allele_t *genotypes)
 {
     int ret = 0;
@@ -382,17 +382,17 @@ ancestor_builder_add_site(ancestor_builder_t *self, site_id_t l, double age,
     site_list_t *list_node;
     pattern_map_t search, *map_elem;
     avl_tree_t *pattern_map;
-    age_map_t *age_map = ancestor_builder_get_age_map(self, age);
+    time_map_t *time_map = ancestor_builder_get_time_map(self, time);
 
-    if (age_map == NULL) {
+    if (time_map == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    pattern_map = &age_map->pattern_map;
+    pattern_map = &time_map->pattern_map;
 
     assert(l < (site_id_t) self->num_sites);
     site = &self->sites[l];
-    site->age = age;
+    site->time = time;
 
     search.genotypes = genotypes;
     search.num_samples = self->num_samples;
@@ -448,7 +448,7 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, site_id_t a,
     size_t ones;
 
     for (j = a + 1; j < b && !ret; j++) {
-        if (self->sites[j].age > self->sites[a].age) {
+        if (self->sites[j].time > self->sites[a].time) {
             ones = 0;
             for (k = 0; k < (site_id_t) num_samples; k++) {
                 ones += self->sites[j].genotypes[samples[k]];
@@ -468,7 +468,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     size_t j, num_consistent_samples;
     avl_node_t *a, *b;
     pattern_map_t *pattern_map;
-    age_map_t *age_map;
+    time_map_t *time_map;
     site_list_t *s;
     ancestor_descriptor_t *descriptor;
     site_id_t *focal_sites = NULL;
@@ -483,13 +483,13 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     self->num_ancestors = 0;
 
     /* Return the descriptors in *reverse* order */
-    for (a = self->age_map.tail; a != NULL; a = a->prev) {
-        age_map = (age_map_t *) a->item;
-        for (b = age_map->pattern_map.head; b != NULL; b = b->next) {
+    for (a = self->time_map.tail; a != NULL; a = a->prev) {
+        time_map = (time_map_t *) a->item;
+        for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
             descriptor = self->descriptors + self->num_ancestors;
             self->num_ancestors++;
-            descriptor->age = age_map->age;
+            descriptor->time = time_map->time;
             focal_sites = block_allocator_get(&self->allocator,
                     pattern_map->num_sites * sizeof(site_id_t));
             if (focal_sites == NULL) {
@@ -517,7 +517,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
                     descriptor->num_focal_sites = p - descriptor->focal_sites;
                     descriptor = self->descriptors + self->num_ancestors;
                     self->num_ancestors++;
-                    descriptor->age = age_map->age;
+                    descriptor->time = time_map->time;
                     descriptor->num_focal_sites = pattern_map->num_sites - j - 1;
                     descriptor->focal_sites = p;
                 }

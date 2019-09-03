@@ -49,9 +49,9 @@ class Edge(object):
 
 
 class Site(object):
-    def __init__(self, id, age, genotypes):
+    def __init__(self, id, time, genotypes):
         self.id = id
-        self.age = age
+        self.time = time
         self.genotypes = genotypes
 
 
@@ -64,39 +64,40 @@ class AncestorBuilder(object):
         self.num_samples = num_samples
         self.num_sites = num_sites
         self.sites = [None for _ in range(self.num_sites)]
-        # Create a mapping from age to sites. Different sites can exist at the same age,
-        # if we expect them to be part of the same ancestor node we can give them the
-        # same ancestor_uid: the age_map contains values keyed by age, with values
-        # consisting of a dictionary, d, of uid=>[array_of_site_ids]
+        # Create a mapping from time to sites. Different sites can exist at the same
+        # timepoint. If we expect them to be part of the same ancestor node we can give
+        # them the same ancestor_uid: the time_map contains values keyed by time, with
+        # values consisting of a dictionary, d, of uid=>[array_of_site_ids]
         # It is handy to be able to add to d without checking, so we make this a
         # defaultdict of defaultdicts
-        self.age_map = collections.defaultdict(lambda: collections.defaultdict(list))
+        self.time_map = collections.defaultdict(lambda: collections.defaultdict(list))
 
-    def add_site(self, site_id, age, genotypes):
+    def add_site(self, site_id, time, genotypes):
         """
         Adds a new site at the specified ID to the builder.
         """
-        self.sites[site_id] = Site(site_id, age, genotypes)
-        sites_at_fixed_age = self.age_map[age]
+        self.sites[site_id] = Site(site_id, time, genotypes)
+        sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
-        # genotypes.tobytes() value) and at the same age, are put into the same ancestor,
+        # genotypes.tobytes() value) and at the same time, are put into the same ancestor
         # to which we allocate a unique ID (just use the genotypes.tobytes() value)
         ancestor_uid = genotypes.tobytes()
-        # Add each site to the list for this ancestor_uid at this age
-        sites_at_fixed_age[ancestor_uid].append(site_id)
+        # Add each site to the list for this ancestor_uid at this timepoint
+        sites_at_fixed_timepoint[ancestor_uid].append(site_id)
 
     def print_state(self):
         print("Ancestor builder")
         print("Sites = ")
         for j in range(self.num_sites):
             site = self.sites[j]
-            print(j, site.genotypes, site.age, sep="\t")
-        print("Age map")
-        for age in sorted(self.age_map.keys()):
-            sites_at_fixed_age = self.age_map[age]
-            if len(sites_at_fixed_age) > 0:
-                print("age = ", age, "with ", len(sites_at_fixed_age), "ancestors")
-                for ancestor, sites in sites_at_fixed_age.items():
+            print(j, site.genotypes, site.time, sep="\t")
+        print("Time map")
+        for t in sorted(self.time_map.keys()):
+            sites_at_fixed_timepoint = self.time_map[t]
+            if len(sites_at_fixed_timepoint) > 0:
+                print(
+                    "timepoint =", t, "with", len(sites_at_fixed_timepoint), "ancestors")
+                for ancestor, sites in sites_at_fixed_timepoint.items():
                     print("\t", ancestor, ":", sites)
 
     def break_ancestor(self, a, b, samples):
@@ -107,7 +108,7 @@ class AncestorBuilder(object):
         # return True
         index = np.where(samples == 1)[0]
         for j in range(a + 1, b):
-            if self.sites[j].age > self.sites[a].age:
+            if self.sites[j].time > self.sites[a].time:
                 gj = self.sites[j].genotypes[index]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
@@ -115,27 +116,27 @@ class AncestorBuilder(object):
 
     def ancestor_descriptors(self):
         """
-        Returns a list of (age, focal_sites) tuples describing the ancestors in age order
-        (oldest first)
+        Returns a list of (time, focal_sites) tuples describing the ancestors in time
+        order (oldest first)
         """
         # self.print_state()
         ret = []
-        for age in sorted(self.age_map.keys(), reverse=True):
-            # Find all the ancestors at the same age
+        for t in sorted(self.time_map.keys(), reverse=True):
+            # Find all the ancestors at the same timepoint
             # We need to make the order in which these are returned deterministic,
             # or ancestor IDs are not replicable between runs. In the C implementation
             # We sort by the genotype patterns
-            keys = sorted(self.age_map[age].keys())
+            keys = sorted(self.time_map[t].keys())
             for key in keys:
-                focal_sites = np.array(self.age_map[age][key], dtype=np.int32)
-                samp = np.frombuffer(key, dtype=np.uint8)
+                focal_sites = np.array(self.time_map[t][key], dtype=np.int32)
+                samp = np.frombuffer(key, dtype=np.int8)
                 # print("focal_sites = ", key, samp, focal_sites)
                 start = 0
                 for j in range(len(focal_sites) - 1):
                     if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
-                        ret.append((age, focal_sites[start: j + 1]))
+                        ret.append((t, focal_sites[start: j + 1]))
                         start = j + 1
-                ret.append((age, focal_sites[start:]))
+                ret.append((t, focal_sites[start:]))
         return ret
 
     def compute_ancestral_states(self, a, focal_site, sites):
@@ -143,7 +144,7 @@ class AncestorBuilder(object):
         Together with make_ancestor, this is the main algorithm as implemented in Fig S2
         of the preprint, with the buffer.
         """
-        focal_age = self.sites[focal_site].age
+        focal_time = self.sites[focal_site].time
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
         # Break when we've lost half of S
         min_sample_set_size = len(S) // 2
@@ -152,7 +153,7 @@ class AncestorBuilder(object):
         for l in sites:
             a[l] = 0
             last_site = l
-            if self.sites[l].age > focal_age:
+            if self.sites[l].time > focal_time:
                 g_l = self.sites[l].genotypes
                 ones = sum(g_l[u] for u in S)
                 zeros = len(S) - ones
@@ -181,9 +182,9 @@ class AncestorBuilder(object):
         Fills out the array a with the haplotype
         return the start and end of an ancestor
         """
-        focal_age = self.sites[focal_sites[0]].age
-        # check all focal sites in this ancestor are at the same age
-        assert all([self.sites[fs].age == focal_age for fs in focal_sites])
+        focal_time = self.sites[focal_sites[0]].time
+        # check all focal sites in this ancestor are at the same timepoint
+        assert all([self.sites[fs].time == focal_time for fs in focal_sites])
 
         a[:] = tskit.MISSING_DATA
         for focal_site in focal_sites:
@@ -192,7 +193,7 @@ class AncestorBuilder(object):
         for j in range(len(focal_sites) - 1):
             for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
                 a[l] = 0
-                if self.sites[l].age > focal_age:
+                if self.sites[l].time > focal_time:
                     g_l = self.sites[l].genotypes
                     ones = sum(g_l[u] for u in S)
                     zeros = len(S) - ones
@@ -538,8 +539,8 @@ class TreeSequenceBuilder(object):
         print("TreeSequenceBuilder state")
         print("num_nodes = ", self.num_nodes)
         nodes = tskit.NodeTable()
-        flags, time = self.dump_nodes()
-        nodes.set_columns(flags=flags, time=time)
+        flags, times = self.dump_nodes()
+        nodes.set_columns(flags=flags, time=times)
         print("nodes = ")
         print(nodes)
         for child in range(len(nodes)):

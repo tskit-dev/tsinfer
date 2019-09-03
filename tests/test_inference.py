@@ -57,13 +57,13 @@ class TestRoundTrip(unittest.TestCase):
     Test that we can round-trip data tsinfer.
     """
     def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, ages=None):
+            self, genotypes, positions, sequence_length=None, times=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         sample_data = tsinfer.SampleData(sequence_length=sequence_length)
         for j in range(genotypes.shape[0]):
-            age = None if ages is None else ages[j]
-            sample_data.add_site(positions[j], genotypes[j], age=age)
+            t = None if times is None else times[j]
+            sample_data.add_site(positions[j], genotypes[j], time=t)
         sample_data.finalise()
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts = tsinfer.infer(sample_data, engine=engine)
@@ -92,13 +92,13 @@ class TestRoundTrip(unittest.TestCase):
 
     def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
-        ages = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
+        times = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, ages=ages)
-        # Do the same with pathological ages. We add one to make sure there are no zeros
-        ages += 1
+            ts.genotype_matrix(), positions, ts.sequence_length, times=times)
+        # Do the same with pathological times. We add one to make sure there are no zeros
+        times += 1
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, ages=ages[::-1])
+            ts.genotype_matrix(), positions, ts.sequence_length, times=times[::-1])
 
     def test_simple_example(self):
         rho = 2
@@ -171,13 +171,13 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
     Tests that we correctly round drip data when we have augmented ancestors.
     """
     def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, ages=None):
+            self, genotypes, positions, sequence_length=None, times=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
             for j in range(genotypes.shape[0]):
-                age = None if ages is None else ages[j]
-                sample_data.add_site(positions[j], genotypes[j], age=age)
+                t = None if times is None else times[j]
+                sample_data.add_site(positions[j], genotypes[j], time=t)
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
@@ -501,12 +501,12 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
     Tests for the ancestor generation process.
     """
 
-    def verify_ancestor_generator(self, genotypes, ages=None, num_threads=0):
+    def verify_ancestor_generator(self, genotypes, times=None, num_threads=0):
         m, n = genotypes.shape
         with tsinfer.SampleData() as sample_data:
             for j in range(m):
-                age = None if ages is None else ages[j]
-                sample_data.add_site(j, genotypes[j], age=age)
+                t = None if times is None else times[j]
+                sample_data.add_site(j, genotypes[j], time=t)
 
         adc = tsinfer.generate_ancestors(
             sample_data, engine=tsinfer.C_ENGINE, num_threads=num_threads)
@@ -553,12 +553,12 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def verify_tree_sequence(self, ts):
         self.verify_ancestor_generator(ts.genotype_matrix())
-        age = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
-        self.verify_ancestor_generator(ts.genotype_matrix(), age)
-        # Give some pathological ages.
-        age += 1
-        age = age[::-1]
-        self.verify_ancestor_generator(ts.genotype_matrix(), age)
+        t = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
+        self.verify_ancestor_generator(ts.genotype_matrix(), t)
+        # Give some pathological times.
+        t += 1
+        t = t[::-1]
+        self.verify_ancestor_generator(ts.genotype_matrix(), t)
 
     def test_no_recombination(self):
         ts = msprime.simulate(
@@ -671,12 +671,12 @@ class TestBuildAncestors(unittest.TestCase):
         position = sample_data.sites_position[:][inference_sites]
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
-        age = ancestor_data.ancestors_age[:]
+        times = ancestor_data.ancestors_time[:]
         focal_sites = ancestor_data.ancestors_focal_sites[:]
 
         self.assertEqual(ancestor_data.num_ancestors, ancestors.shape[0])
         self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
-        self.assertEqual(ancestor_data.num_ancestors, age.shape[0])
+        self.assertEqual(ancestor_data.num_ancestors, times.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, start.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, end.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, focal_sites.shape[0])
@@ -696,9 +696,9 @@ class TestBuildAncestors(unittest.TestCase):
             self.assertTrue(np.all(h[start[j]:end[j]] != tskit.MISSING_DATA))
             self.assertTrue(np.all(h[focal_sites[j]] == 1))
             used_sites.extend(focal_sites[j])
-            self.assertGreater(age[j], 0)
+            self.assertGreater(times[j], 0)
             if j > 0:
-                self.assertGreaterEqual(age[j - 1], age[j])
+                self.assertGreaterEqual(times[j - 1], times[j])
         self.assertEqual(sorted(used_sites), list(range(ancestor_data.num_sites)))
 
         # The provenance should be same as in the samples data file, plus an
@@ -1007,17 +1007,17 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=6, focal_sites=[], age=5, haplotype=[0, 0, 0, 0, 0, 0])
+            start=0, end=6, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=6, focal_sites=[], age=4, haplotype=[0, 0, 0, 0, 0, 0])
+            start=0, end=6, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], age=3,
+            start=0, end=3, focal_sites=[2], time=3,
             haplotype=[0, 0, 1, -1, -1, -1][0: 3])
         ancestor_data.add_ancestor(  # ID 3
-            start=3, end=6, focal_sites=[4], age=2,
+            start=3, end=6, focal_sites=[4], time=2,
             haplotype=[-1, -1, -1, 0, 1, 0][3: 6])
         ancestor_data.add_ancestor(  # ID 4
-            start=0, end=6, focal_sites=[0, 1, 3, 5], age=1,
+            start=0, end=6, focal_sites=[0, 1, 3, 5], time=1,
             haplotype=[1, 1, 1, 1, 1, 1])
         ancestor_data.finalise()
 
@@ -1038,17 +1038,17 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=7, focal_sites=[], age=5, haplotype=[0, 0, 0, 0, 0, 0, 0])
+            start=0, end=7, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=7, focal_sites=[], age=4, haplotype=[0, 0, 0, 0, 0, 0, 0])
+            start=0, end=7, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], age=3,
+            start=0, end=3, focal_sites=[2], time=3,
             haplotype=[0, 0, 1, 0, 0, 0, 0][0: 3])
         ancestor_data.add_ancestor(  # ID 3
-            start=3, end=7, focal_sites=[4, 6], age=2,
+            start=3, end=7, focal_sites=[4, 6], time=2,
             haplotype=[-1, -1, -1, 0, 1, 0, 1][3: 7])
         ancestor_data.add_ancestor(  # ID 4
-            start=0, end=7, focal_sites=[0, 1, 3, 5], age=1,
+            start=0, end=7, focal_sites=[0, 1, 3, 5], time=1,
             haplotype=[1, 1, 1, 1, 1, 1, 1])
         ancestor_data.finalise()
 
@@ -1068,28 +1068,28 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=12, focal_sites=[], age=8,
+            start=0, end=12, focal_sites=[], time=8,
             haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=12, focal_sites=[], age=7,
+            start=0, end=12, focal_sites=[], time=7,
             haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=4, focal_sites=[], age=6,
+            start=0, end=4, focal_sites=[], time=6,
             haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
         ancestor_data.add_ancestor(  # ID 3
-            start=4, end=12, focal_sites=[], age=5,
+            start=4, end=12, focal_sites=[], time=5,
             haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0][4: 12])
         ancestor_data.add_ancestor(  # ID 4
-            start=8, end=12, focal_sites=[9, 11], age=4,
+            start=8, end=12, focal_sites=[9, 11], time=4,
             haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1][8: 12])
         ancestor_data.add_ancestor(  # ID 5
-            start=4, end=8, focal_sites=[5, 7], age=3,
+            start=4, end=8, focal_sites=[5, 7], time=3,
             haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1][4: 8])
         ancestor_data.add_ancestor(  # ID 6
-            start=0, end=4, focal_sites=[1, 3], age=2,
+            start=0, end=4, focal_sites=[1, 3], time=2,
             haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
         ancestor_data.add_ancestor(  # ID 7
-            start=0, end=12, focal_sites=[0, 2, 4, 6, 8, 10], age=1,
+            start=0, end=12, focal_sites=[0, 2, 4, 6, 8, 10], time=1,
             haplotype=[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0])
         ancestor_data.finalise()
 

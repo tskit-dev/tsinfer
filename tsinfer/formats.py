@@ -585,7 +585,7 @@ class Site(object):
     ancestral_state = attr.ib()
     inference = attr.ib()
     metadata = attr.ib()
-    age = attr.ib()
+    time = attr.ib()
 
 
 @attr.s
@@ -753,7 +753,7 @@ class SampleData(DataContainer):
             "position", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.float64)
         sites_group.create_dataset(
-            "age", shape=(0,), chunks=chunks, compressor=self._compressor,
+            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.float64)
         sites_group.create_dataset(
             "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
@@ -848,8 +848,8 @@ class SampleData(DataContainer):
         return self.data["sites/position"]
 
     @property
-    def sites_age(self):
-        return self.data["sites/age"]
+    def sites_time(self):
+        return self.data["sites/time"]
 
     @property
     def sites_alleles(self):
@@ -892,7 +892,7 @@ class SampleData(DataContainer):
             ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
             ("sites/position", zarr_summary(self.sites_position)),
-            ("sites/age", zarr_summary(self.sites_age)),
+            ("sites/time", zarr_summary(self.sites_time)),
             ("sites/alleles", zarr_summary(self.sites_alleles)),
             ("sites/inference", zarr_summary(self.sites_inference)),
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
@@ -928,7 +928,7 @@ class SampleData(DataContainer):
             np.all(self.sites_position[:] == other.sites_position[:]) and
             np.all(self.sites_inference[:] == other.sites_inference[:]) and
             np.all(self.sites_genotypes[:] == other.sites_genotypes[:]) and
-            np.all(self.sites_age[:] == other.sites_age[:]) and
+            np.all(self.sites_time[:] == other.sites_time[:]) and
             # Need to take a different approach with np object arrays.
             all(itertools.starmap(np.array_equal, zip(
                 self.populations_metadata[:], other.populations_metadata[:]))) and
@@ -958,10 +958,10 @@ class SampleData(DataContainer):
             node = ts.node(u)
             self.add_individual(population=node.population, time=node.time, ploidy=1)
         for v in ts.variants():
-            age = None
+            time = None
             if len(v.site.mutations) == 1 and use_times:
-                age = ts.node(v.site.mutations[0].node).time
-            self.add_site(v.site.position, v.genotypes, v.alleles, age=age)
+                time = ts.node(v.site.mutations[0].node).time
+            self.add_site(v.site.position, v.genotypes, v.alleles, time=time)
         # Insert all the provenance from the original tree sequence.
         for prov in ts.provenances():
             self.add_provenance(prov.timestamp, json.loads(prov.record))
@@ -979,7 +979,7 @@ class SampleData(DataContainer):
             "alleles": self.sites_alleles,
             "metadata": self.sites_metadata,
             "inference": self.sites_inference,
-            "age": self.sites_age,
+            "time": self.sites_time,
         }
         self._sites_writer = BufferedItemWriter(
                 arrays, num_threads=self._num_flush_threads)
@@ -1067,7 +1067,7 @@ class SampleData(DataContainer):
 
     def add_site(
             self, position, genotypes, alleles=None, metadata=None, inference=None,
-            age=None):
+            time=None):
         """
         Adds a new site to this :class:`.SampleData` and returns its ID.
 
@@ -1114,10 +1114,10 @@ class SampleData(DataContainer):
             ``inference=None`` (the default), use any site in which the
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
-        :param float age: The age (pastwards) of the focal mutation at this
-            site. If not specified or None, the age is computed as the
-            frequency of the derived alleles (i.e., the number of non-zero
-            values in the genotypes). Defaults to None.
+        :param float time: The time (pastwards) at which the focal mutation at this
+            site occurred. If not specified or None, the frequency of the derived alleles
+            (i.e., the number of non-zero values in the genotypes) is used instead, which
+            should provide a reasonable estimate for relative time. Defaults to None.
         :return: The ID of the newly added site.
         :rtype: int
         """
@@ -1168,12 +1168,12 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError(
                     "Cannot specify singletons or fixed sites for inference")
-        if age is None:
-            age = count
+        if time is None:
+            time = count
         site_id = self._sites_writer.add(
             position=position, genotypes=genotypes,
             metadata=self._check_metadata(metadata),
-            inference=inference, alleles=alleles, age=age)
+            inference=inference, alleles=alleles, time=time)
         self._last_position = position
         return site_id
 
@@ -1227,12 +1227,12 @@ class SampleData(DataContainer):
         alleles = self.sites_alleles[:]
         inference = self.sites_inference[:]
         metadata = self.sites_metadata[:]
-        age = self.sites_age[:]
+        time = self.sites_time[:]
         for j, genotypes in self.genotypes(inference_sites):
             if inference_sites is None or inference[j] == inference_sites:
                 site = Site(
                     id=j, position=position[j], ancestral_state=alleles[j][0],
-                    inference=inference[j], metadata=metadata[j], age=age[j])
+                    inference=inference[j], metadata=metadata[j], time=time[j])
                 variant = Variant(
                     site=site, alleles=tuple(alleles[j]), genotypes=genotypes)
                 yield variant
@@ -1301,7 +1301,7 @@ class Ancestor(object):
     id = attr.ib()
     start = attr.ib()
     end = attr.ib()
-    age = attr.ib()
+    time = attr.ib()
     focal_sites = attr.ib()
     haplotype = attr.ib()
 
@@ -1362,7 +1362,7 @@ class AncestorData(DataContainer):
             "ancestors/end", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.int32)
         self.data.create_dataset(
-            "ancestors/age", shape=(0,), chunks=chunks, compressor=self._compressor,
+            "ancestors/time", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=np.float64)
         self.data.create_dataset(
             "ancestors/focal_sites", shape=(0,), chunks=chunks,
@@ -1374,7 +1374,7 @@ class AncestorData(DataContainer):
         self.item_writer = BufferedItemWriter({
             "start": self.ancestors_start,
             "end": self.ancestors_end,
-            "age": self.ancestors_age,
+            "time": self.ancestors_time,
             "focal_sites": self.ancestors_focal_sites,
             "haplotype": self.ancestors_haplotype},
             num_threads=self._num_flush_threads)
@@ -1396,7 +1396,7 @@ class AncestorData(DataContainer):
             ("sites/position", zarr_summary(self.sites_position)),
             ("ancestors/start", zarr_summary(self.ancestors_start)),
             ("ancestors/end", zarr_summary(self.ancestors_end)),
-            ("ancestors/age", zarr_summary(self.ancestors_age)),
+            ("ancestors/time", zarr_summary(self.ancestors_time)),
             ("ancestors/focal_sites", zarr_summary(self.ancestors_focal_sites)),
             ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype))]
         return super(AncestorData, self).__str__() + self._format_str(values)
@@ -1452,8 +1452,8 @@ class AncestorData(DataContainer):
         return self.data["ancestors/end"]
 
     @property
-    def ancestors_age(self):
-        return self.data["ancestors/age"]
+    def ancestors_time(self):
+        return self.data["ancestors/time"]
 
     @property
     def ancestors_focal_sites(self):
@@ -1479,10 +1479,10 @@ class AncestorData(DataContainer):
     # Write mode
     ####################################
 
-    def add_ancestor(self, start, end, age, focal_sites, haplotype):
+    def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material
-        over the interval [start:end], that is associated with the specified age
+        over the interval [start:end], that is associated with the specified timepoint
         and has new mutations at the specified list of focal sites.
         """
         self._check_build_mode()
@@ -1496,8 +1496,8 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
-        if age <= 0:
-            raise ValueError("age must be > 0")
+        if time <= 0:
+            raise ValueError("time must be > 0")
         if not np.all(haplotype[focal_sites - start] == 1):
             raise ValueError("haplotype[j] must be = 1 for all focal sites")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
@@ -1505,7 +1505,7 @@ class AncestorData(DataContainer):
         if np.any(haplotype[start: end] > 1):
             raise ValueError("Biallelic sites only supported.")
         self.item_writer.add(
-            start=start, end=end, age=age, focal_sites=focal_sites,
+            start=start, end=end, time=time, focal_sites=focal_sites,
             haplotype=haplotype)
 
     def finalise(self):
@@ -1521,11 +1521,11 @@ class AncestorData(DataContainer):
         # TODO document properly.
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
-        age = self.ancestors_age[:]
+        time = self.ancestors_time[:]
         focal_sites = self.ancestors_focal_sites[:]
         for j, h in enumerate(chunk_iterator(self.ancestors_haplotype)):
             yield Ancestor(
-                id=j, start=start[j], end=end[j], age=age[j],
+                id=j, start=start[j], end=end[j], time=time[j],
                 focal_sites=focal_sites[j], haplotype=h)
 
 

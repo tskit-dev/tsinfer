@@ -111,7 +111,7 @@ def variants(vcf_path, show_progress=False):
         except KeyError:
             pass
         if row.num_called == num_diploids and ancestral_state is not None:
-            a = np.zeros(num_samples, dtype=np.uint8)
+            a = np.zeros(num_samples, dtype=np.int8)
             all_alleles = set([ancestral_state])
             # Fill in a with genotypes.
             bases = np.array(row.gt_bases)

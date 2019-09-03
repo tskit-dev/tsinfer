@@ -86,10 +86,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file.add_individual(
                 ploidy=1, population=node.population, time=node.time)
         for v in ts.variants():
-            age = None
+            t = None
             if len(v.site.mutations) == 1:
-                age = ts.node(v.site.mutations[0].node).time
-            input_file.add_site(v.site.position, v.genotypes, v.alleles, age=age)
+                t = ts.node(v.site.mutations[0].node).time
+            input_file.add_site(v.site.position, v.genotypes, v.alleles, time=t)
         input_file.record_provenance("verify_data_round_trip")
         input_file.finalise()
         self.assertEqual(input_file.format_version, formats.SampleData.FORMAT_VERSION)
@@ -103,15 +103,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         genotypes = input_file.sites_genotypes[:]
         position = input_file.sites_position[:]
         alleles = input_file.sites_alleles[:]
-        age = input_file.sites_age[:]
+        times = input_file.sites_time[:]
         for j, variant in enumerate(ts.variants()):
             self.assertEqual(variant.site.position, position[j])
             self.assertTrue(np.all(variant.genotypes == genotypes[j]))
             self.assertEqual(alleles[j], list(variant.alleles))
-            the_age = 0
+            the_time = 0
             if len(variant.site.mutations) == 1:
-                the_age = ts.node(variant.site.mutations[0].node).time
-            self.assertEqual(the_age, age[j])
+                the_time = ts.node(variant.site.mutations[0].node).time
+            self.assertEqual(the_time, times[j])
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
@@ -828,9 +828,9 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         return sample_data, ancestors
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
-        for start, end, age, focal_sites, haplotype in ancestors:
+        for start, end, t, focal_sites, haplotype in ancestors:
             ancestor_data.add_ancestor(
-                start, end, age, focal_sites, haplotype[start: end])
+                start, end, t, focal_sites, haplotype[start: end])
         ancestor_data.record_provenance("verify_data_round_trip")
         ancestor_data.finalise()
 
@@ -850,14 +850,14 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         ancestors_list = [anc.haplotype for anc in ancestor_data.ancestors()]
         stored_start = ancestor_data.ancestors_start[:]
         stored_end = ancestor_data.ancestors_end[:]
-        stored_age = ancestor_data.ancestors_age[:]
+        stored_time = ancestor_data.ancestors_time[:]
         stored_ancestors = ancestor_data.ancestors_haplotype[:]
         stored_focal_sites = ancestor_data.ancestors_focal_sites[:]
         stored_length = ancestor_data.ancestors_length[:]
-        for j, (start, end, age, focal_sites, haplotype) in enumerate(ancestors):
+        for j, (start, end, t, focal_sites, haplotype) in enumerate(ancestors):
             self.assertEqual(stored_start[j], start)
             self.assertEqual(stored_end[j], end)
-            self.assertEqual(stored_age[j], age)
+            self.assertEqual(stored_time[j], t)
             self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
             self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
@@ -865,7 +865,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for j, anc in enumerate(ancestor_data.ancestors()):
             self.assertEqual(stored_start[j], anc.start)
             self.assertEqual(stored_end[j], anc.end)
-            self.assertEqual(stored_age[j], anc.age)
+            self.assertEqual(stored_time[j], anc.time)
             self.assertTrue(np.array_equal(stored_focal_sites[j], anc.focal_sites))
             self.assertTrue(np.array_equal(stored_ancestors[j], anc.haplotype))
             length = pos[anc.end] - pos[anc.start]
@@ -922,7 +922,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(ancestor_data.ancestors_focal_sites.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.ancestors_start.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.ancestors_end.chunks, (chunk_size,))
-            self.assertEqual(ancestor_data.ancestors_age.chunks, (chunk_size,))
+            self.assertEqual(ancestor_data.ancestors_time.chunks, (chunk_size,))
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
@@ -964,43 +964,43 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
-            start=0, end=num_sites, age=1, focal_sites=[], haplotype=haplotype)
+            start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype)
         for bad_start in [-1, -100, num_sites, num_sites + 1]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=bad_start, end=num_sites, age=0, focal_sites=[],
+                start=bad_start, end=num_sites, time=0, focal_sites=[],
                 haplotype=haplotype)
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=bad_end, age=1, focal_sites=[], haplotype=haplotype)
-        for bad_age in [-1, 0]:
+                start=0, end=bad_end, time=1, focal_sites=[], haplotype=haplotype)
+        for bad_time in [-1, 0]:
             self.assertRaises(
                 ValueError, ancestor_data.add_ancestor,
-                start=0, end=num_sites, age=bad_age, focal_sites=[],
+                start=0, end=num_sites, time=bad_time, focal_sites=[],
                 haplotype=haplotype)
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, age=1, focal_sites=[],
+            start=0, end=num_sites, time=1, focal_sites=[],
             haplotype=np.zeros(num_sites + 1, dtype=np.int8))
         # Haplotypes must be < 2
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, age=1, focal_sites=[],
-            haplotype=np.full(num_sites, 2, dtype=np.int8))
+            start=0, end=num_sites, time=1, focal_sites=[],
+            haplotype=np.zeros(num_sites, dtype=np.int8) + 2)
         # focal sites must be within start:end
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=1, end=num_sites, age=1, focal_sites=[0],
+            start=1, end=num_sites, time=1, focal_sites=[0],
             haplotype=np.ones(num_sites - 1, dtype=np.int8))
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites - 2, age=1, focal_sites=[num_sites - 1],
+            start=0, end=num_sites - 2, time=1, focal_sites=[num_sites - 1],
             haplotype=np.ones(num_sites, dtype=np.int8))
         # focal sites must be set to 1
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, age=1, focal_sites=[0],
+            start=0, end=num_sites, time=1, focal_sites=[0],
             haplotype=np.zeros(num_sites, dtype=np.int8))
 
     @unittest.skipIf(sys.platform == "win32",
