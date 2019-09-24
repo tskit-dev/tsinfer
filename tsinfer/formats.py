@@ -701,7 +701,7 @@ class SampleData(DataContainer):
         compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (2, 0)
+    FORMAT_VERSION = (3, 0)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
@@ -1335,7 +1335,7 @@ class AncestorData(DataContainer):
         compression level and algorithm performance. Default=1024.
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
-    FORMAT_VERSION = (2, 0)
+    FORMAT_VERSION = (3, 0)
 
     def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
