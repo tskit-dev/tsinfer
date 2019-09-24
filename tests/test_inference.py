@@ -136,48 +136,48 @@ class TestRoundTrip(unittest.TestCase):
     Test that we can round-trip data tsinfer.
     """
     def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, times=None):
+            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         sample_data = tsinfer.SampleData(sequence_length=sequence_length)
         for j in range(genotypes.shape[0]):
             t = None if times is None else times[j]
-            sample_data.add_site(positions[j], genotypes[j], time=t)
+            site_alleles = None if alleles is None else alleles[j]
+            sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
         sample_data.finalise()
-        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
-            ts = tsinfer.infer(sample_data, engine=engine)
+        test_params = [
+            {'engine': tsinfer.PY_ENGINE}, {"engine": tsinfer.C_ENGINE},
+            {'simplify': True}, {'simplify': False},
+            {'path_compression': True}, {'path_compression': False}]
+        for params in test_params:
+            ts = tsinfer.infer(sample_data, **params)
             self.assertEqual(ts.sequence_length, sequence_length)
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
-                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+                if alleles is None or len(alleles[v.index]) == 2:
+                    self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+                else:
+                    a = alleles[v.index]
+                    self.assertEqual(v.site.ancestral_state, a[0])
+                    self.assertTrue(set(v.alleles) <= set(a))
+                    a1 = np.array(a)
+                    a2 = np.array(v.alleles)
+                    self.assertTrue(
+                        np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
             self.assertGreater(ts.num_provenances, 0)
-
-        for simplify in [True, False]:
-            ts = tsinfer.infer(sample_data, simplify=simplify)
-            self.assertEqual(ts.sequence_length, sequence_length)
-            self.assertEqual(ts.num_sites, len(positions))
-            for v in ts.variants():
-                self.assertEqual(v.position, positions[v.index])
-                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
-
-        for path_compression in [True, False]:
-            ts = tsinfer.infer(sample_data, path_compression=path_compression)
-            self.assertEqual(ts.sequence_length, sequence_length)
-            self.assertEqual(ts.num_sites, len(positions))
-            for v in ts.variants():
-                self.assertEqual(v.position, positions[v.index])
-                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
 
     def verify_round_trip(self, ts):
         positions = [site.position for site in ts.sites()]
+        alleles = [v.alleles for v in ts.variants()]
         times = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, times=times)
+            ts.genotype_matrix(), positions, alleles, ts.sequence_length, times=times)
         # Do the same with pathological times. We add one to make sure there are no zeros
         times += 1
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, ts.sequence_length, times=times[::-1])
+            ts.genotype_matrix(), positions, alleles, ts.sequence_length,
+            times=times[::-1])
 
     def test_simple_example(self):
         rho = 2
@@ -220,9 +220,48 @@ class TestRoundTrip(unittest.TestCase):
         G[22, :] = 0
         self.verify_data_round_trip(G, positions)
 
-    def test_all_ancestral(self):
-        G = np.ones((10, 10), dtype=int)
-        self.verify_data_round_trip(G, np.arange(G.shape[0]))
+    def test_triallelic(self):
+        ts = msprime.simulate(10, mutation_rate=1, recombination_rate=0, random_seed=2)
+        mutation_0_node = next(ts.mutations()).node
+        parent_to_mutation_0 = ts.first().parent(mutation_0_node)
+        tables = ts.dump_tables()
+        # Add another mutation at site 0
+        tables.mutations.add_row(0, node=mutation_0_node, derived_state="2")
+        mutation_nodes = tables.mutations.node
+        mutation_nodes[0] = parent_to_mutation_0
+        tables.mutations.node = mutation_nodes
+        tables.sort()
+        tables.build_index()
+        tables.compute_mutation_parents()
+        ts = tables.tree_sequence()
+        # Check the first site is now triallelic
+        self.assertEqual(next(ts.variants()).num_alleles, 3)
+        self.verify_round_trip(ts)
+
+    def test_n_allelic(self):
+        G = np.zeros((10, 64), dtype=int)
+        G[:, 0] = 1
+        G[0] = np.arange(64)
+        alleles = [[str(x) for x in np.unique(a)] for a in G]
+        self.verify_data_round_trip(G, np.arange(G.shape[0]), alleles=alleles)
+
+    def test_too_many_alleles(self):
+        # Max number of alleles for map_mutations is 64
+        G = np.zeros((10, 65), dtype=int)
+        G[:, 0] = 1
+        G[0] = np.arange(65)
+        alleles = [[str(x) for x in np.unique(a)] for a in G]
+        self.assertRaises(
+            ValueError, self.verify_data_round_trip, G, np.arange(G.shape[0]),
+            alleles=alleles)
+
+    def test_not_all_alleles_in_genotypes(self):
+        G = np.zeros((10, 10), dtype=int)
+        G = np.zeros((10, 10), dtype=int)
+        G[:, 0] = 1
+        G[0] = np.repeat(np.arange(4, 9), 2)  # Miss some out
+        alleles = [[str(x) for x in np.arange(np.max(a)+1)] for a in G]
+        self.verify_data_round_trip(G, np.arange(G.shape[0]), alleles=alleles)
 
     def test_all_derived(self):
         G = np.zeros((10, 10), dtype=int)
@@ -247,16 +286,17 @@ class TestRoundTrip(unittest.TestCase):
 
 class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
     """
-    Tests that we correctly round drip data when we have augmented ancestors.
+    Tests that we correctly round trip data when we have augmented ancestors.
     """
     def verify_data_round_trip(
-            self, genotypes, positions, sequence_length=None, times=None):
+            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
             for j in range(genotypes.shape[0]):
                 t = None if times is None else times[j]
-                sample_data.add_site(positions[j], genotypes[j], time=t)
+                site_alleles = None if alleles is None else alleles[j]
+                sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
@@ -268,7 +308,16 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
             self.assertEqual(ts.num_sites, len(positions))
             for v in ts.variants():
                 self.assertEqual(v.position, positions[v.index])
-                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+                if alleles is None or len(alleles[v.index]) == 2:
+                    self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+                else:
+                    a = alleles[v.index]
+                    self.assertEqual(v.site.ancestral_state, a[0])
+                    self.assertTrue(set(v.alleles) <= set(a))
+                    a1 = np.array(a)
+                    a2 = np.array(v.alleles)
+                    self.assertTrue(
+                        np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
 
 
 class TestNonInferenceSitesRoundTrip(unittest.TestCase):

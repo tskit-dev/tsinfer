@@ -171,10 +171,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(variant.site.position, position[j])
             self.assertTrue(np.all(variant.genotypes == genotypes[j]))
             self.assertEqual(alleles[j], list(variant.alleles))
-            the_time = 0
             if len(variant.site.mutations) == 1:
                 the_time = ts.node(variant.site.mutations[0].node).time
-            self.assertEqual(the_time, site_times[j])
+                self.assertEqual(the_time, site_times[j])
             if variant.site.metadata:
                 self.assertEqual(site_metadata[j], json.loads(variant.site.metadata))
         self.assertEqual(input_file.num_populations, ts.num_populations)
@@ -259,6 +258,35 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         ts = self.get_example_ts(10, 10, 1)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
+        sd2 = formats.SampleData.from_tree_sequence(ts)
+        self.assertTrue(sd1.data_equal(sd2))
+
+    def test_from_tree_sequence_variable_allele_number(self):
+        ts = self.get_example_ts(10, 10)
+        # Create > 2 alles by scattering mutations on the tree nodes at the first site
+        tables = ts.dump_tables()
+        focal_site = ts.site(0)
+        tree = ts.at(focal_site.position)
+        # Reset the initial mutation to lie above the root, for correct mutation order
+        nodes = tables.mutations.node
+        nodes[0] = tree.root
+        tables.mutations.node = nodes
+        for i, node in enumerate(tree.nodes()):
+            if i % 3:  # add above every 3rd node - should create many alleles
+                tables.mutations.add_row(site=0, node=node, derived_state=str(i+2))
+        # Create < 2 alleles by adding a non-variable site at the end
+        extra_last_pos = (ts.site(ts.num_sites - 1).position + ts.sequence_length) / 2
+        tables.sites.add_row(position=extra_last_pos, ancestral_state="0")
+        tables.sort()
+        tables.build_index()
+        tables.compute_mutation_parents()
+        ts = tables.tree_sequence()
+        self.assertGreater(len(ts.site(0).mutations), 1)
+        self.assertEqual(len(ts.site(ts.num_sites-1).mutations), 0)
+        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, sd1)
+        self.assertFalse(sd1.sites_inference[0])
+        self.assertFalse(sd1.sites_inference[sd1.num_sites-1])
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
 
@@ -437,11 +465,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 ValueError, input_file.add_site, position=1,
                 alleles=["0", "1"], genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site, position=1,
-            alleles=["0", "1", "2"], genotypes=np.zeros(2, dtype=np.int8))
+            ValueError, input_file.add_site, position=1, inference=True,
+            alleles=["0", "1", "2"], genotypes=[0, 1])
         self.assertRaises(
             ValueError, input_file.add_site, position=1,
-            alleles=["0"], genotypes=np.array([0, 1], dtype=np.int8))
+            alleles=["0"], genotypes=[0, 1])
         self.assertRaises(
             ValueError, input_file.add_site, position=1,
             alleles=["0", "1"], genotypes=np.array([0, 2], dtype=np.int8))
