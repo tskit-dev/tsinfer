@@ -635,6 +635,7 @@ class AncestorMatcher(object):
         self.total_memory = 0
 
     def print_state(self):
+        # TODO - don't crash when self.max_likelihood_node or self.traceback == None
         print("Ancestor matcher state")
         print("max_L_node\ttraceback")
         for l in range(self.num_sites):

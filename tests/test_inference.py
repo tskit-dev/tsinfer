@@ -22,7 +22,9 @@ Tests for the inference code.
 import unittest
 import random
 import string
+import io
 import json
+import unittest.mock as mock
 
 import numpy as np
 import msprime
@@ -981,6 +983,56 @@ class TestAlgorithmsExactlyEqualNoPathCompression(
 class TestAlgorithmsExactlyEqualPathCompression(
         unittest.TestCase, AlgorithmsExactlyEqualMixin):
     path_compression_enabled = True
+
+
+class TestAlgorithmDebugOutput(unittest.TestCase):
+    """
+    Test routines used to debug output from the algorithm
+    """
+    def sample_example(self, n_samples, n_sites):
+        G, positions = get_random_data_example(n_samples, n_sites)
+        sample_data = tsinfer.SampleData(sequence_length=n_sites)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        return sample_data
+
+    def test_ancestor_builder_print_state(self):
+        n_samples = 20
+        n_sites = 50
+        sample_data = self.sample_example(n_samples, n_sites)
+        ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
+        for j, variant in enumerate(sample_data.variants(inference_sites=True)):
+            ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
+        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+            ancestor_builder.print_state()
+            # Simply check some text is output
+            self.assertTrue(isinstance(mockOutput.getvalue(), str))
+            self.assertGreater(len(mockOutput.getvalue()), 0)
+
+    def test_ancestor_matcher_print_state(self):
+        sample_data = self.sample_example(20, 50)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        matcher_container = tsinfer.AncestorMatcher(
+            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
+        matcher_container.match_ancestors()
+        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+            matcher_container.matcher[0].print_state()
+            # Simply check some text is output
+            self.assertTrue(isinstance(mockOutput.getvalue(), str))
+            self.assertGreater(len(mockOutput.getvalue()), 0)
+
+    def test_treeseq_builder_print_state(self):
+        sample_data = self.sample_example(20, 50)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        matcher_container = tsinfer.AncestorMatcher(
+            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
+        matcher_container.match_ancestors()
+        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+            matcher_container.tree_sequence_builder.print_state()
+            # Simply check some text is output
+            self.assertTrue(isinstance(mockOutput.getvalue(), str))
+            self.assertGreater(len(mockOutput.getvalue()), 0)
 
 
 class TestPartialAncestorMatching(unittest.TestCase):
