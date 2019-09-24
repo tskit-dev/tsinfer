@@ -607,6 +607,7 @@ class Individual(object):
     # TODO document properly.
     id = attr.ib()
     location = attr.ib()
+    time = attr.ib()
     metadata = attr.ib()
 
 
@@ -726,8 +727,11 @@ class SampleData(DataContainer):
         location = individuals_group.create_dataset(
             "location", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype="array:f8")
+        time = individuals_group.create_dataset(
+            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
+            dtype=np.float64)
         self._individuals_writer = BufferedItemWriter(
-            {"metadata": metadata, "location": location},
+            {"metadata": metadata, "location": location, "time": time},
             num_threads=self._num_flush_threads)
 
         samples_group = self.data.create_group("samples")
@@ -820,6 +824,10 @@ class SampleData(DataContainer):
         return self.data["individual/location"]
 
     @property
+    def individuals_time(self):
+        return self.data["individual/time"]
+
+    @property
     def samples_population(self):
         return self.data["samples/population"]
 
@@ -874,6 +882,7 @@ class SampleData(DataContainer):
             ("populations/metadata", zarr_summary(self.populations_metadata)),
             ("individuals/metadata", zarr_summary(self.individuals_metadata)),
             ("individuals/location", zarr_summary(self.individuals_location)),
+            ("individuals/time", zarr_summary(self.individuals_time)),
             ("samples/individual", zarr_summary(self.samples_individual)),
             ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
@@ -908,6 +917,7 @@ class SampleData(DataContainer):
             self.num_samples == other.num_samples and
             self.num_sites == other.num_sites and
             self.num_inference_sites == other.num_inference_sites and
+            np.all(self.individuals_time[:] == other.individuals_time[:]) and
             np.all(self.samples_individual[:] == other.samples_individual[:]) and
             np.all(self.samples_population[:] == other.samples_population[:]) and
             np.all(self.sites_position[:] == other.sites_position[:]) and
@@ -941,7 +951,7 @@ class SampleData(DataContainer):
             self.add_population()
         for u in ts.samples():
             node = ts.node(u)
-            self.add_individual(population=node.population, ploidy=1)
+            self.add_individual(population=node.population, time=node.time, ploidy=1)
         for v in ts.variants():
             age = None
             if len(v.site.mutations) == 1 and use_times:
@@ -987,7 +997,8 @@ class SampleData(DataContainer):
             raise ValueError("Cannot add populations after adding samples or sites")
         return self._populations_writer.add(metadata=self._check_metadata(metadata))
 
-    def add_individual(self, ploidy=1, metadata=None, population=None, location=None):
+    def add_individual(
+            self, ploidy=1, metadata=None, population=None, location=None, time=0):
         """
         Adds a new :ref:`sec_inference_data_model_individual` to this
         :class:`.SampleData` and returns its ID and those of the resulting additional
@@ -1012,6 +1023,9 @@ class SampleData(DataContainer):
         :param arraylike location: An array-like object defining n-dimensional
             spatial location of this individual. If not specified or None, the
             empty location is stored.
+        :param float time: The historical time into the past when the samples
+            associated with this individual were taken. By default we assume that
+            all samples come from the present time (i.e. the default time is 0).
         :return: The ID of the newly added individual and a list of the sample
             IDs also added.
         :rtype: tuple(int, list(int))
@@ -1024,6 +1038,9 @@ class SampleData(DataContainer):
         if self._build_state != self.ADDING_SAMPLES:
             raise ValueError("Cannot add individuals after adding sites")
 
+        time = np.float64(time).item()
+        if not np.isfinite(time):
+            raise ValueError("time must be a single finite number")
         if population is None:
             population = tskit.NULL
         if population >= self.num_populations:
@@ -1034,7 +1051,7 @@ class SampleData(DataContainer):
             location = []
         location = np.array(location, dtype=np.float64)
         individual_id = self._individuals_writer.add(
-            metadata=self._check_metadata(metadata), location=location)
+            metadata=self._check_metadata(metadata), location=location, time=time)
         sample_ids = []
         for _ in range(ploidy):
             # For now default the metadata to the empty dict.
@@ -1263,9 +1280,11 @@ class SampleData(DataContainer):
 
     def individuals(self):
         # TODO document
-        iterator = zip(self.individuals_location[:], self.individuals_metadata[:])
-        for j, (location, metadata) in enumerate(iterator):
-            yield Individual(j, location=location, metadata=metadata)
+        iterator = zip(
+            self.individuals_location[:], self.individuals_metadata[:],
+            self.individuals_time[:])
+        for j, (location, metadata, time) in enumerate(iterator):
+            yield Individual(j, location=location, metadata=metadata, time=time)
 
 
 @attr.s
