@@ -365,7 +365,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
     # the order to make it forwards time.
     A = A[ts.num_samples:][::-1]
     # We also only want the inference sites
-    A = A[:, sample_data.sites_inference[:] == 1]
+    A = A[:, sample_data.sites_inference[:]]
 
     # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
@@ -465,7 +465,7 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     We generally assume that this is a standard tree sequence output by
     tskit.simulate here.
     """
-    position = samples.sites_position[:][samples.sites_inference[:] == 1]
+    position = samples.sites_position[:][samples.sites_inference[:]]
     reduced = subset_sites(ts, position)
     minimised = inference.minimise(reduced)
 
@@ -551,7 +551,7 @@ def extract_ancestors(samples, ts):
     by tsinfer, return the same tree sequence with the samples removed, which can then
     be used as an ancestors tree sequence.
     """
-    position = samples.sites_position[:][samples.sites_inference[:] == 1]
+    position = samples.sites_position[:][samples.sites_inference[:]]
     ts = subset_sites(ts, position)
     tables = ts.dump_tables()
 
