@@ -70,13 +70,20 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             sample_size, recombination_rate=1, mutation_rate=10,
             length=sequence_length, random_seed=100)
 
+    def get_example_historical_sampled_ts(self, sample_times, sequence_length):
+        samples = [msprime.Sample(population=0, time=t) for t in sample_times]
+        return msprime.simulate(
+            samples=samples, recombination_rate=1, mutation_rate=10,
+            length=sequence_length, random_seed=100)
+
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for pop in ts.populations():
             input_file.add_population()
         for sample in ts.samples():
             node = ts.node(sample)
-            input_file.add_individual(ploidy=1, population=node.population)
+            input_file.add_individual(
+                ploidy=1, population=node.population, time=node.time)
         for v in ts.variants():
             age = None
             if len(v.site.mutations) == 1:
@@ -129,6 +136,14 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_from_tree_sequence(self):
         ts = self.get_example_ts(10, 10)
+        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, sd1)
+        sd2 = formats.SampleData.from_tree_sequence(ts)
+        self.assertTrue(sd1.data_equal(sd2))
+
+    def test_from_historical_tree_sequence(self):
+        sample_times = (5*[1] + 5*[0])
+        ts = self.get_example_historical_sampled_ts(sample_times, 10)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts)
@@ -387,6 +402,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
         self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
 
+    def test_add_individual_time(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.add_individual()
+        sample_data.add_individual(time=0.5)
+        sample_data.add_site(0, [0, 0])
+        sample_data.finalise()
+        self.assertEqual(sample_data.individuals_time[0], 0)
+        self.assertEqual(sample_data.individuals_time[1], 0.5)
+
     def test_add_individual_return(self):
         sample_data = formats.SampleData(sequence_length=10)
         iid, sids = sample_data.add_individual()
@@ -430,6 +454,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertRaises(ValueError, sample_data.add_individual, population=1)
         self.assertRaises(ValueError, sample_data.add_individual, location="x234")
         self.assertRaises(ValueError, sample_data.add_individual, ploidy=0)
+        self.assertRaises(ValueError, sample_data.add_individual, time=None)
+        self.assertRaises(ValueError, sample_data.add_individual, time=[1, 2])
 
     def test_no_data(self):
         sample_data = formats.SampleData(sequence_length=10)
