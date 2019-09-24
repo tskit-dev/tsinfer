@@ -1,4 +1,45 @@
 ********************
+[0.1.5] - 2019-09-25
+********************
+
+
+**Breaking changes**:
+
+- Bumped SampleData file format version to 2.0, then to 3.0 as a result of the additions
+  below. Older SampleData files will not be readable and must be regenerated.
+
+- Users can specify variant ages, via ``sample_data.add_sites(... , time=user_time)``.
+  If not ``None``, this overrides the default time position of an ancestor, otherwise
+  ancestors are ordered in time by using the frequency of the derived variant (#143).
+  This addition bumped the file format to 2.0
+
+- Change "age" to "time" to match tskit/msprime notation, and to avoid confusion
+  with the age since birth of an individual (#149). Together with the 2 changes below,
+  this addition bumped the file format to 3.0.
+
+- Add the ability to record user-specified times for individuals, and therefore
+  the samples contained in them (currently ignored during inference). Times are
+  added using ``sample_data.add_individual(... , time=user_time)`` (#190). Together
+  with the changes above and below, this addition bumped the file format to 3.0.
+
+- Change ``tsinfer.UNKNOWN_ALLELE`` to ``tskit.MISSING_DATA`` for marking unknown regions
+  of ancestral haplotypes (#188) . This also involves changing the allele storage to a
+  signed int from ``np.uint8`` which matches the tskit v0.2 format for allele storage 
+  (see https://github.com/tskit-dev/tskit/issues/144). Together with the 2 changes above,
+  this addition bumped the file format to 3.0.
+
+**New features**:
+
+- Map non-inference sites onto the tree by using the built-in tskit
+  ``map_mutatations`` method. With further work, this should allow triallelic sites
+  to be mapped (#185)
+  
+- The default tree sequence returned after inference when ``simplify=True`` retains
+  unary nodes (i.e. simplify is done with ``keep_unary=True``. This tends to result
+  in better compression.
+
+
+********************
 [0.1.4] - 2018-12-12
 ********************
 
