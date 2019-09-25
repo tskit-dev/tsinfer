@@ -693,7 +693,7 @@ class TestBuildAncestors(unittest.TestCase):
             self.assertEqual(a.shape[0], end[j] - start[j])
             h = np.zeros(ancestor_data.num_sites, dtype=np.uint8)
             h[start[j]: end[j]] = a
-            self.assertTrue(np.all(h[start[j]:end[j]] != tsinfer.UNKNOWN_ALLELE))
+            self.assertTrue(np.all(h[start[j]:end[j]] != tskit.MISSING_DATA))
             self.assertTrue(np.all(h[focal_sites[j]] == 1))
             used_sites.extend(focal_sites[j])
             self.assertGreater(age[j], 0)

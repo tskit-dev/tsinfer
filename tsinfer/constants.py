@@ -17,10 +17,8 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Collection of constants used in tsinfer.
+Collection of constants used in tsinfer. We also make use of constants defined in tskit.
 """
-
-UNKNOWN_ALLELE = 255
 
 C_ENGINE = "C"
 PY_ENGINE = "P"

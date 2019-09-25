@@ -123,7 +123,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
             &site_id, &age, &PyArray_Type, &genotypes)) {
         goto out;
     }
-    genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_UINT8,
+    genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
             NPY_ARRAY_IN_ARRAY);
     if (genotypes_array == NULL) {
         goto out;
@@ -188,7 +188,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         PyErr_SetString(PyExc_ValueError, "num_focal_sites must > 0 and <= num_sites");
         goto fail;
     }
-    ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_UINT8,
+    ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_INT8,
             NPY_ARRAY_INOUT_ARRAY);
     if (ancestor_array == NULL) {
         goto fail;
@@ -611,7 +611,7 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
     num_mutations = shape[0];
 
     /* derived_state */
-    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_UINT8,
+    derived_state_array = (PyArrayObject *) PyArray_FROM_OTF(derived_state, NPY_INT8,
             NPY_ARRAY_IN_ARRAY);
     if (derived_state_array == NULL) {
         goto out;
@@ -1308,7 +1308,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
                 &haplotype, &start, &end, &PyArray_Type, &match)) {
         goto out;
     }
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_UINT8,
+    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
             NPY_ARRAY_IN_ARRAY);
     if (haplotype_array == NULL) {
         goto out;
@@ -1323,7 +1323,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    match_array = (PyArrayObject *) PyArray_FROM_OTF(match, NPY_UINT8,
+    match_array = (PyArrayObject *) PyArray_FROM_OTF(match, NPY_INT8,
             NPY_ARRAY_INOUT_ARRAY);
     if (match_array == NULL) {
         goto out;
