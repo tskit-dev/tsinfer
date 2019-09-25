@@ -760,7 +760,7 @@ class SampleData(DataContainer):
             compressor=self._compressor, dtype=np.int8)
         sites_group.create_dataset(
             "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.uint8)
+            dtype=bool)
         sites_group.create_dataset(
             "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
             dtype=object, object_codec=self._metadata_codec)
@@ -866,10 +866,15 @@ class SampleData(DataContainer):
     @sites_inference.setter
     def sites_inference(self, value):
         self._check_edit_mode()
-        new_value = np.array(value, dtype=int)
-        if np.any(new_value > 1) or np.any(new_value < 0):
-            raise ValueError("Input values must be boolean 0/1")
-        self.data["sites/inference"][:] = new_value
+        if type(value) == np.ndarray and value.dtype == 'bool':
+            # Shortcut, can input directly
+            self.data["sites/inference"][:] = value
+        else:
+            # Check bounds, first cast to a tiny int, then check
+            new_value = tskit.util.safe_np_int_cast(value, np.uint8)
+            if np.any(new_value > 1) or np.any(new_value < 0):
+                raise ValueError("Input values must be boolean 0/1")
+            self.data["sites/inference"][:] = new_value.astype(bool)
 
     def __str__(self):
         values = [
@@ -1234,7 +1239,7 @@ class SampleData(DataContainer):
 
     def __all_haplotypes(self, inference_sites=None):
         if inference_sites is not None:
-            selection = self.sites_inference[:] == int(inference_sites)
+            selection = self.sites_inference[:] == inference_sites
         # We iterate over chunks vertically here, and it's not worth complicating
         # the chunk iterator to handle this.
         chunk_size = self.sites_genotypes.chunks[1]
@@ -1345,7 +1350,7 @@ class AncestorData(DataContainer):
         chunks = self._chunk_size
         # Add in the positions for the sites.
         sites_inference = self.sample_data.sites_inference[:]
-        position = self.sample_data.sites_position[:][sites_inference == 1]
+        position = self.sample_data.sites_position[:][sites_inference]
         self.data.create_dataset(
             "sites/position", data=position, chunks=chunks, compressor=self._compressor,
             dtype=np.float64)

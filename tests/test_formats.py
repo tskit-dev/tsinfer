@@ -558,7 +558,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             j += 1
         self.assertEqual(j, ts.num_samples)
 
-        selection = input_file.sites_inference[:] == 1
+        selection = input_file.sites_inference[:]
         j = 0
         for index, h in input_file.haplotypes(inference_sites=True):
             self.assertTrue(np.array_equal(h, G[selection, j]))
@@ -620,8 +620,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 input_file.add_site(j, G[j])
             input_file.finalise()
             self.assertEqual(input_file.num_sites, m)
-            self.assertTrue(
-                np.all(input_file.sites_inference[:] == np.zeros(m, dtype=int)))
+            self.assertTrue(np.all(~input_file.sites_inference[:]))
 
     def test_ts_with_invariant_sites(self):
         ts = self.get_example_ts(5, 3)
@@ -702,14 +701,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         editable_sample_data = input_file.copy()
         # Try editing: use setter in the normal way
-        editable_sample_data.sites_inference = np.array([0])
+        editable_sample_data.sites_inference = np.array([False])
         # Try editing: use setter via setattr
-        setattr(editable_sample_data, 'sites_inference', np.array([1]))
+        setattr(editable_sample_data, 'sites_inference', np.array([True]))
         editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
 
         editable_sample_data.finalise()
         self.assertRaises(
-            ValueError, setattr, editable_sample_data, 'sites_inference', np.array([1]))
+            ValueError, setattr, editable_sample_data, 'sites_inference',
+            np.array([True]))
         self.assertRaises(
             ValueError, editable_sample_data.add_provenance,
             datetime.datetime.now().isoformat(), {})
@@ -729,7 +729,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with formats.SampleData() as data:
             for j in range(4):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        self.assertEqual(list(data.sites_inference), [1, 1, 1, 1])
+        self.assertEqual(list(data.sites_inference), [True, True, True, True])
 
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
@@ -738,11 +738,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 copy.finalise()
                 self.assertTrue(copy.data_equal(data))
                 with data.copy(path=copy_path) as copy:
-                    inference = [0, 1, 0, 1]
+                    inference = [False, True, False, True]
                     copy.sites_inference = inference
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_inference), inference)
-                self.assertEqual(list(data.sites_inference), [1, 1, 1, 1])
+                self.assertEqual(list(data.sites_inference), [True, True, True, True])
 
     def test_update_inference_sites_bad_data(self):
         def set_value(data, value):
@@ -752,15 +752,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for j in range(4):
             data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
         data.finalise()
-        self.assertEqual(list(data.sites_inference), [1, 1, 1, 1])
+        self.assertEqual(list(data.sites_inference), [True, True, True, True])
         copy = data.copy()
         for bad_shape in [[], np.arange(100), np.zeros((2, 2))]:
-            self.assertRaises(ValueError, set_value, copy, bad_shape)
+            self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)
         bad_data = [
             ["a", "b", "c", "d"], [2**10 for _ in range(4)], [0, 1, 0, 2],
-            [0, 0, 0, -1]]
+            [0, 0, 0, -1], [0, 0.5, 0.2]]
         for a in bad_data:
-            self.assertRaises(ValueError, set_value, copy, a)
+            self.assertRaises((ValueError, TypeError, OverflowError), set_value, copy, a)
 
     def test_update_inference_sites_non_copy_mode(self):
         def set_value(data, value):
@@ -843,7 +843,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
         self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
         inference_position = sample_data.sites_position[:][
-            sample_data.sites_inference[:] == 1]
+            sample_data.sites_inference[:]]
         self.assertTrue(np.array_equal(
             inference_position, ancestor_data.sites_position[:]))
 

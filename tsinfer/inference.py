@@ -537,8 +537,7 @@ class Matcher(object):
         # identical to the inference sites in the sample data file.
         position = tables.sites.position
         sample_data_position = self.sample_data.sites_position[:]
-        sample_data_position = sample_data_position[
-            self.sample_data.sites_inference[:] == 1]
+        sample_data_position = sample_data_position[self.sample_data.sites_inference[:]]
         if not np.array_equal(position, sample_data_position):
             raise ValueError(
                 "Ancestors tree sequence not compatible with the the specified "
@@ -809,7 +808,7 @@ class Matcher(object):
         logger.debug("Adding tree sequence edges")
         tables.edges.clear()
         left, right, parent, child = tsb.dump_edges()
-        if np.all(inference_sites == 0):
+        if np.all(~inference_sites):
             # We have no inference sites, so no edges have been estimated. To ensure
             # we have a rooted tree, we add in edges for each sample to an artificial
             # root.
@@ -819,7 +818,7 @@ class Matcher(object):
                 tables.edges.add_row(0, tables.sequence_length, root, sample_id)
         else:
             # Subset down to the inference sites and map back to the site indexes.
-            position = position[inference_sites == 1]
+            position = position[inference_sites]
             pos_map = np.hstack([position, [tables.sequence_length]])
             pos_map[0] = 0
             tables.edges.set_columns(

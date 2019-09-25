@@ -668,7 +668,7 @@ class TestBuildAncestors(unittest.TestCase):
     def verify_ancestors(self, sample_data, ancestor_data):
         ancestors = ancestor_data.ancestors_haplotype[:]
         inference_sites = sample_data.sites_inference[:]
-        position = sample_data.sites_position[:][inference_sites == 1]
+        position = sample_data.sites_position[:][inference_sites]
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         age = ancestor_data.ancestors_age[:]
@@ -1290,19 +1290,19 @@ class TestMatchSiteSubsets(unittest.TestCase):
     def test_simple_case(self):
         ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=3)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
         self.verify(sample_data, position[:][::2])
 
     def test_one_sites(self):
         ts = msprime.simulate(15, mutation_rate=2, recombination_rate=2, random_seed=3)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
         self.verify(sample_data, position[:1])
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=4)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
         self.verify(sample_data, position[:][1::2])
 
     def test_random_data(self):
@@ -1313,7 +1313,7 @@ class TestMatchSiteSubsets(unittest.TestCase):
         for genotypes, position in zip(G, positions):
             sample_data.add_site(position, genotypes)
         sample_data.finalise()
-        position = sample_data.sites_position[:][sample_data.sites_inference[:] == 1]
+        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
         self.verify(sample_data, position[:][::2])
 
 
