@@ -163,7 +163,7 @@ def edges_performance_worker(args):
 
     before = time.perf_counter()
     estimated_ancestors_ts = run_infer(smc_ts, exact_ancestors=False, engine=engine)
-    estimated_ancestors_age = time.perf_counter() - before
+    estimated_ancestors_time = time.perf_counter() - before
     num_children = []
     for edgeset in estimated_ancestors_ts.edgesets():
         num_children.append(len(edgeset.children))
@@ -171,7 +171,7 @@ def edges_performance_worker(args):
 
     before = time.perf_counter()
     exact_ancestors_ts = run_infer(smc_ts, exact_ancestors=True, engine=engine)
-    exact_ancestors_age = time.perf_counter() - before
+    exact_ancestors_time = time.perf_counter() - before
     num_children = []
     for edgeset in exact_ancestors_ts.edgesets():
         num_children.append(len(edgeset.children))
@@ -179,8 +179,8 @@ def edges_performance_worker(args):
 
     results = {
         "sim_time": sim_time,
-        "estimated_anc_time": estimated_ancestors_age,
-        "exact_anc_time": exact_ancestors_age,
+        "estimated_anc_time": estimated_ancestors_time,
+        "exact_anc_time": exact_ancestors_time,
         "num_sites": smc_ts.num_sites,
         "source_num_trees": smc_ts.num_trees,
         "estimated_anc_trees": estimated_ancestors_ts.num_trees,
@@ -696,7 +696,7 @@ def run_ancestor_comparison(args):
     save_figure(name_format.format("length-dist"))
     plt.clf()
 
-    # NB ancestors_age is not exactly the same as frequency, because frequency
+    # NB ancestors_time is not exactly the same as frequency, because frequency
     # categories that are not represented in the data will be missed out. If we want a
     # true frequency, we therefore need to get it directly from the samples
     pos_to_ancestor = {}
@@ -735,7 +735,7 @@ def run_ancestor_comparison(args):
             plt.yscale('log')
             plt.xscale('log')
         if colorscale != "Frequency":
-            cs = exact_anc.ancestors_age[:][exact_v_estimated_indexes[:, 0]]
+            cs = exact_anc.ancestors_time[:][exact_v_estimated_indexes[:, 0]]
         else:
             cs = estimated_anc.ancestors_focal_freq[exact_v_estimated_indexes[:, 1]]
         plt.scatter(
@@ -753,10 +753,10 @@ def run_ancestor_comparison(args):
 
     # plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     # one point per variable site, so these should be directly comparable
-    # the exact ancestors have ancestors_age from 1..n_ancestors, ordered by real time
+    # the exact ancestors have ancestors_time from 1..n_ancestors, ordered by real time
     # in the simulation, so that each time is unique for a set of site on one ancestor
     for ancestors_are_estimated, anc in enumerate([exact_anc, estimated_anc]):
-        time = anc.ancestors_age[:] + (1 if ancestors_are_estimated else 0)
+        time = anc.ancestors_time[:] + (1 if ancestors_are_estimated else 0)
         df = pd.DataFrame({
             'start': anc.ancestors_start[:],
             'end': anc.ancestors_end[:],
@@ -921,7 +921,7 @@ def run_ancestor_quality(args):
     for i, focal_pos in enumerate(
         sorted(
             shared_positions,
-            key=lambda pos: -exact_anc.ancestors_age[:][anc_indices[pos][0]])):
+            key=lambda pos: -exact_anc.ancestors_time[:][anc_indices[pos][0]])):
         exact_index, estim_index = anc_indices[focal_pos]
         # left (start) is biggest of exact and estim
         exact_start = exact_positions[exact_anc.ancestors_start[:][exact_index]]
@@ -978,7 +978,7 @@ def run_ancestor_quality(args):
         olap_rgt[focal_pos] = olap_end
         true_len[focal_pos] = exact_anc.ancestors_length[:][exact_index]
         est_len[focal_pos] = estim_anc.ancestors_length[:][estim_index]
-        true_time[focal_pos] = exact_anc.ancestors_age[:][exact_index]
+        true_time[focal_pos] = exact_anc.ancestors_time[:][exact_index]
         sites_freq = estim_freq[olap_start_estim:olap_end_estim]
         higher_freq = sites_freq[small_estim_mask] > freq[focal_pos]
         olap_n_should_be_1_higher_freq[focal_pos] = np.sum(should_be_1 & higher_freq)
@@ -994,7 +994,7 @@ def run_ancestor_quality(args):
         if args.print_bad_ancestors and np.any(bad_sites):
             if i == 0:
                 print(
-                    "Freq & haplotype of bad ancestors, ordered by true age,"
+                    "Freq & haplotype of bad ancestors, ordered by true time,"
                     " oldest first (black = focal site, red or magenta = bad site "
                     " with > or < freq than focal)")
             if args.print_bad_ancestors == "all":
@@ -1002,8 +1002,8 @@ def run_ancestor_quality(args):
                     "TRUE ANCESTOR for focal site "
                     "#{} (pos {}, time_index = {}/{})".format(
                         i, focal_pos,
-                        exact_anc.ancestors_age[:][exact_index],
-                        max(exact_anc.ancestors_age[:])))
+                        exact_anc.ancestors_time[:][exact_index],
+                        max(exact_anc.ancestors_time[:])))
                 print("Haplotype (start @idx {}, pos {})".format(
                     offset1, exact_positions[offset1]))
                 print(" "*(olap_start_estim-offset2), end="")
@@ -1090,7 +1090,7 @@ def run_ancestor_quality(args):
     data['n_mismatches'] = (data["err_hiF should be 1"] + data["err_loF should be 1"] +
                             data["err_hiF should be 0"] + data["err_loF should be 0"])
     data['Inaccuracy'] = data.n_mismatches / data.n_sites
-    data['Inferred age inaccuracy'] = data.expected_Frequency - data.Frequency
+    data['Inferred time inaccuracy'] = data.expected_Frequency - data.Frequency
     data['Inference error bias'] = \
         (data["err_hiF should be 1"] + data["err_loF should be 1"]) / data.n_mismatches
     data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
@@ -1179,7 +1179,7 @@ def run_ancestor_quality(args):
 
     name = "quality-by-freq-with-ordererr"
     ax = data.plot.scatter(
-        x='Known time order', y="Inaccuracy", c='Inferred age inaccuracy', cmap='BrBG',
+        x='Known time order', y="Inaccuracy", c='Inferred time inaccuracy', cmap='BrBG',
         s=data.n_mismatches.values, norm=MidpointNormalize(midpoint=0))
     ax.set(**ax_params)
     ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")

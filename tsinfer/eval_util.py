@@ -389,7 +389,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         assert np.all(a[e:] == tskit.MISSING_DATA)
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
-            start=s, end=e, age=t, focal_sites=np.array(focal, dtype=np.int32),
+            start=s, end=e, time=t, focal_sites=np.array(focal, dtype=np.int32),
             haplotype=a[s:e])
 
 

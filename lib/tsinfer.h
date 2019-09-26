@@ -79,7 +79,7 @@ typedef struct _segment_t {
 } segment_t;
 
 typedef struct {
-    double age;
+    double time;
     allele_t *genotypes;
 } site_t;
 
@@ -103,16 +103,16 @@ typedef struct {
 } pattern_map_t;
 
 typedef struct {
-    double age;
+    double time;
     size_t num_focal_sites;
     site_id_t *focal_sites;
 } ancestor_descriptor_t;
 
-/* Maps all ancestors with a specific age to their genotype patterns  */
+/* Maps all ancestors with a specific time to their genotype patterns  */
 typedef struct {
-    double age;
+    double time;
     avl_tree_t pattern_map;
-} age_map_t;
+} time_map_t;
 
 typedef struct {
     size_t num_sites;
@@ -120,7 +120,7 @@ typedef struct {
     size_t num_ancestors;
     int flags;
     site_t *sites;
-    avl_tree_t age_map;
+    avl_tree_t time_map;
     block_allocator_t allocator;
     ancestor_descriptor_t *descriptors;
 } ancestor_builder_t;
@@ -207,7 +207,7 @@ int ancestor_builder_alloc(ancestor_builder_t *self,
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_add_site(ancestor_builder_t *self, site_id_t site,
-        double age, allele_t *genotypes);
+        double time, allele_t *genotypes);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
         size_t num_focal_sites, site_id_t *focal_sites,
         site_id_t *start, site_id_t *end, allele_t *haplotype);

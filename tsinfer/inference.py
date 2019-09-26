@@ -356,24 +356,25 @@ class AncestorsGenerator(object):
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
-            self.ancestor_builder.add_site(j, variant.site.age, variant.genotypes)
+            self.ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
         a = np.zeros(self.num_sites, dtype=np.int8)
-        for age, focal_sites in self.descriptors:
+        for t, focal_sites in self.descriptors:
             before = time.perf_counter()
             s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor in {:.2f}s with age {} (epoch {}) "
+                "Made ancestor in {:.2f}s at timepoint {} (epoch {}) "
                 "from {} to {} (len={}) with {} focal sites ({})".format(
-                    duration, age, self.age_to_epoch[age], s, e, e - s,
+                    duration, t, self.timepoint_to_epoch[t], s, e, e - s,
                     focal_sites.shape[0], focal_sites))
             self.ancestor_data.add_ancestor(
-                start=s, end=e, age=age, focal_sites=focal_sites, haplotype=a[s:e])
+                start=s, end=e, time=t, focal_sites=focal_sites,
+                haplotype=a[s:e])
             progress.update()
 
     def _run_threaded(self, progress):
@@ -393,10 +394,9 @@ class AncestorsGenerator(object):
             nonlocal next_add_index
             num_drained = 0
             while len(add_queue) > 0 and add_queue[0][0] == next_add_index:
-                _, age, focal_sites, start, end, haplotype = heapq.heappop(add_queue)
+                _, t, focal_sites, s, e, haplotype = heapq.heappop(add_queue)
                 self.ancestor_data.add_ancestor(
-                    start=start, end=end, age=age, focal_sites=focal_sites,
-                    haplotype=haplotype)
+                    start=s, end=e, time=t, focal_sites=focal_sites, haplotype=haplotype)
                 progress.update()
                 next_add_index += 1
                 num_drained += 1
@@ -408,12 +408,13 @@ class AncestorsGenerator(object):
                 work = build_queue.get()
                 if work is None:
                     break
-                index, age, focal_sites = work
+                index, t, focal_sites = work
                 start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
                 with add_lock:
                     haplotype = a[start: end].copy()
                     heapq.heappush(
-                        add_queue, (index, age, focal_sites, start, end, haplotype))
+                        add_queue,
+                        (index, t, focal_sites, start, end, haplotype))
                     drain_add_queue()
                 build_queue.task_done()
             build_queue.task_done()
@@ -425,8 +426,8 @@ class AncestorsGenerator(object):
             for j in range(self.num_threads)]
         logger.debug("Started {} build worker threads".format(self.num_threads))
 
-        for index, (age, focal_sites) in enumerate(self.descriptors):
-            build_queue.put((index, age, focal_sites))
+        for index, (t, focal_sites) in enumerate(self.descriptors):
+            build_queue.put((index, t, focal_sites))
 
         # Stop the the worker threads.
         for j in range(self.num_threads):
@@ -438,27 +439,27 @@ class AncestorsGenerator(object):
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
-        # Maps epoch numbers to their corresponding ancestor ages.
-        self.age_to_epoch = {}
-        for age, _ in reversed(self.descriptors):
-            if age not in self.age_to_epoch:
-                self.age_to_epoch[age] = len(self.age_to_epoch) + 1
+        # Maps epoch numbers to their corresponding ancestor times.
+        self.timepoint_to_epoch = {}
+        for t, _ in reversed(self.descriptors):
+            if t not in self.timepoint_to_epoch:
+                self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         if self.num_ancestors > 0:
             logger.info("Starting build for {} ancestors".format(self.num_ancestors))
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
             a = np.zeros(self.num_sites, dtype=np.int8)
-            root_age = max(self.age_to_epoch.keys()) + 1
-            ultimate_ancestor_age = root_age + 1
+            root_time = max(self.timepoint_to_epoch.keys()) + 1
+            ultimate_ancestor_time = root_time + 1
             # Add the ultimate ancestor. This is an awkward hack really; we don't
             # ever insert this ancestor. The only reason to add it here is that
             # it makes sure that the ancestor IDs we have in the ancestor file are
             # the same as in the ancestor tree sequence. This seems worthwhile.
             self.ancestor_data.add_ancestor(
-                start=0, end=self.num_sites, age=ultimate_ancestor_age,
+                start=0, end=self.num_sites, time=ultimate_ancestor_time,
                 focal_sites=[], haplotype=a)
             # Hack to ensure we always have a root with zeros at every position.
             self.ancestor_data.add_ancestor(
-                start=0, end=self.num_sites, age=root_age,
+                start=0, end=self.num_sites, time=root_time,
                 focal_sites=np.array([], dtype=np.int32), haplotype=a)
             if self.num_threads <= 0:
                 self._run_synchronous(progress)
@@ -586,9 +587,9 @@ class Matcher(object):
         tables = tskit.TableCollection(
             sequence_length=self.ancestor_data.sequence_length)
 
-        flags, time = tsb.dump_nodes()
+        flags, times = tsb.dump_nodes()
         num_pc_ancestors = count_pc_ancestors(flags)
-        tables.nodes.set_columns(flags=flags, time=time)
+        tables.nodes.set_columns(flags=flags, time=times)
 
         position = self.ancestor_data.sites_position
         pos_map = np.hstack([position, [tables.sequence_length]])
@@ -703,23 +704,23 @@ class Matcher(object):
         tables = self.ancestors_ts.dump_tables()
         num_pc_ancestors = count_pc_ancestors(tables.nodes.flags)
 
-        flags, time = tsb.dump_nodes()
+        flags, times = tsb.dump_nodes()
         s = 0
         for j in range(len(tables.nodes), len(flags)):
-            if time[j] == 0.0:
+            if times[j] == 0.0:
                 # This is an augmented ancestor node.
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
-                    time=time[j],
+                    time=times[j],
                     metadata=self.encode_metadata({"sample": int(sample_indexes[s])}))
                 s += 1
             else:
-                tables.nodes.add_row(flags=flags[j], time=time[j])
+                tables.nodes.add_row(flags=flags[j], time=times[j])
         assert s == len(sample_indexes)
         assert len(tables.nodes) == len(flags)
 
         # Increment the time for all nodes so the augmented samples are no longer
-        # at time 0.
+        # at timepoint 0.
         tables.nodes.set_columns(
             flags=tables.nodes.flags,
             time=tables.nodes.time + 1,
@@ -775,7 +776,7 @@ class Matcher(object):
                 location=ind.location, metadata=self.encode_metadata(ind.metadata))
 
         logger.debug("Adding tree sequence nodes")
-        flags, time = tsb.dump_nodes()
+        flags, times = tsb.dump_nodes()
         num_pc_ancestors = count_pc_ancestors(flags)
 
         # All true ancestors are samples in the ancestors tree sequence. We unset
@@ -797,13 +798,13 @@ class Matcher(object):
                 self.sample_data.samples_individual[:]):
             tables.nodes.add_row(
                 flags=flags[sample_id],
-                time=time[sample_id],
+                time=times[sample_id],
                 population=population,
                 individual=num_ancestral_individuals + individual,
                 metadata=self.encode_metadata(metadata))
         # Add in the remaining non-sample nodes.
         for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
-            tables.nodes.add_row(flags=flags[u], time=time[u])
+            tables.nodes.add_row(flags=flags[u], time=times[u])
 
         logger.debug("Adding tree sequence edges")
         tables.edges.clear()
@@ -849,7 +850,7 @@ class AncestorMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.ancestors_age[:]
+        self.epoch = self.ancestor_data.ancestors_time[:]
 
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
@@ -1098,12 +1099,12 @@ class SampleMatcher(Matcher):
                 # by reversing the IDs within a time slice. This is used for comparing
                 # tree sequences produced by perfect inference.
                 tables = ts.dump_tables()
-                time = tables.nodes.time
-                for t in range(1, int(time[0])):
-                    index = np.where(time == t)[0]
+                times = tables.nodes.time
+                for t in range(1, int(times[0])):
+                    index = np.where(times == t)[0]
                     k = index.shape[0]
-                    time[index] += np.arange(k)[::-1] / k
-                tables.nodes.set_columns(flags=tables.nodes.flags, time=time)
+                    times[index] += np.arange(k)[::-1] / k
+                tables.nodes.set_columns(flags=tables.nodes.flags, time=times)
                 tables.sort()
                 ts = tables.tree_sequence()
             ts = ts.simplify(

@@ -13,7 +13,7 @@ def main(infile, outfile):
     sample_data = tsinfer.SampleData.load(infile)
     print(sample_data)
     shape = (sample_data.num_inference_sites, sample_data.num_samples)
-    G = np.empty(shape, dtype=np.uint8)
+    G = np.empty(shape, dtype=np.int8)
     for j, (_, genotypes) in enumerate(sample_data.genotypes(inference_sites=True)):
         G[j] = genotypes
     with h5py.File(outfile, "w") as root:
