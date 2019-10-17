@@ -1042,13 +1042,14 @@ class TestPartialAncestorMatching(unittest.TestCase):
     """
     def verify_edges(self, sample_data, ancestor_data, expected_edges):
 
-        def key(e):
+        def edge_to_tuple(e):
             return (e.left, e.right, e.parent, e.child)
 
         for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
             ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
             self.assertEqual(
-                sorted(expected_edges, key=key), sorted(ts.edges(), key=key))
+                sorted([edge_to_tuple(e) for e in expected_edges]),
+                sorted([edge_to_tuple(e) for e in ts.edges()]))
 
     def test_easy_case(self):
         num_sites = 6
