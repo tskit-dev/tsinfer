@@ -434,6 +434,13 @@ class DataContainer(object):
         if self._mode not in (self.EDIT_MODE, self.BUILD_MODE):
             raise ValueError("Invalid operation: must be in edit or build mode")
 
+    def _check_finalised(self):
+        if not self.finalised:
+            error_msg = "The {} file".format(self.format_name)
+            if self.path is not None:
+                error_msg = " at `{}`".format(self.path)
+            raise ValueError(error_msg + " is not finalised")
+
     @property
     def file_size(self):
         """
@@ -1339,6 +1346,7 @@ class AncestorData(DataContainer):
 
     def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
+        sample_data._check_finalised()
         self.sample_data = sample_data
         # Cache the num_sites value here as it's expensive to compute.
         self._num_sites = self.sample_data.num_inference_sites
