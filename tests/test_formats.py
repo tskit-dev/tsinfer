@@ -725,8 +725,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertNotEqual(copy.uuid, data.uuid)
         self.assertTrue(copy.data_equal(data))
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_copy_update_sites_inference(self):
         with formats.SampleData() as data:
             for j in range(4):

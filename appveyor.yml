@@ -13,6 +13,7 @@ install:
   # We have symlinks in the repo, which need to be treated specially on Windows.
   - cmd: git config core.symlinks true
   - cmd: git reset --hard
+  - cmd: conda update -y -n base -c defaults conda
   - cmd: conda config --add channels conda-forge
   - cmd: conda create --yes -n testenv python=%PYTHON_VERSION%
   - cmd: activate testenv
