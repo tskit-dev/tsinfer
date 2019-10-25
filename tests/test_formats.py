@@ -701,15 +701,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         editable_sample_data = input_file.copy()
         # Try editing: use setter in the normal way
-        editable_sample_data.sites_inference = np.array([False])
+        editable_sample_data.sites_inference = [True]
+        editable_sample_data.sites_time = [0.0]
         # Try editing: use setter via setattr
-        setattr(editable_sample_data, 'sites_inference', np.array([True]))
+        setattr(editable_sample_data, 'sites_inference', [False])
+        setattr(editable_sample_data, 'sites_time', [1.0])
         editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
-
         editable_sample_data.finalise()
         self.assertRaises(
-            ValueError, setattr, editable_sample_data, 'sites_inference',
-            np.array([True]))
+            ValueError, setattr, editable_sample_data, 'sites_inference', [True])
+        self.assertRaises(
+            ValueError, setattr, editable_sample_data, 'sites_time', [0.0])
         self.assertRaises(
             ValueError, editable_sample_data.add_provenance,
             datetime.datetime.now().isoformat(), {})
@@ -725,7 +727,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
-    def test_copy_update_inference_sites(self):
+    def test_copy_update_sites_inference(self):
         with formats.SampleData() as data:
             for j in range(4):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
@@ -744,7 +746,28 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.assertEqual(list(copy.sites_inference), inference)
                 self.assertEqual(list(data.sites_inference), [True, True, True, True])
 
-    def test_update_inference_sites_bad_data(self):
+    @unittest.skipIf(sys.platform == "win32",
+                     "windows simultaneous file permissions issue")
+    def test_copy_update_sites_time(self):
+        with formats.SampleData() as data:
+            for j in range(4):
+                data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])  # Freq == 2.0
+
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            for copy_path in [None, filename]:
+                copy = data.copy(path=copy_path)
+                copy.finalise()
+                self.assertTrue(copy.data_equal(data))
+                with data.copy(path=copy_path) as copy:
+                    time = [0.0, 1.1, 2.2, 3.3]
+                    copy.sites_time = time
+                self.assertFalse(copy.data_equal(data))
+                self.assertEqual(list(copy.sites_time), time)
+                self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])
+
+    def test_update_sites_inference_bad_data(self):
         def set_value(data, value):
             data.sites_inference = value
 
@@ -762,15 +785,40 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for a in bad_data:
             self.assertRaises((ValueError, TypeError, OverflowError), set_value, copy, a)
 
-    def test_update_inference_sites_non_copy_mode(self):
+    def test_update_sites_time_bad_data(self):
+        def set_value(data, value):
+            data.sites_time = value
+
+        data = formats.SampleData()
+        for j in range(4):
+            data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        data.finalise()
+        self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])
+        copy = data.copy()
+        for bad_shape in [[], np.arange(100, dtype=np.float64), np.zeros((2, 2))]:
+            self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)
+        for bad_data in [["a", "b", "c", "d"]]:
+            self.assertRaises(ValueError, set_value, copy, bad_data)
+
+    def test_update_sites_inference_non_copy_mode(self):
         def set_value(data, value):
             data.sites_inference = value
 
         data = formats.SampleData()
         data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        self.assertRaises(ValueError, set_value, data, [])
+        self.assertRaises(ValueError, set_value, data, [True])
         data.finalise()
-        self.assertRaises(ValueError, set_value, data, [])
+        self.assertRaises(ValueError, set_value, data, [True])
+
+    def test_update_sites_time_non_copy_mode(self):
+        def set_value(data, value):
+            data.sites_time = value
+
+        data = formats.SampleData()
+        data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+        self.assertRaises(ValueError, set_value, data, [1.0])
+        data.finalise()
+        self.assertRaises(ValueError, set_value, data, [1.0])
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")

@@ -851,6 +851,11 @@ class SampleData(DataContainer):
     def sites_time(self):
         return self.data["sites/time"]
 
+    @sites_time.setter
+    def sites_time(self, value):
+        self._check_edit_mode()
+        self.data["sites/time"][:] = np.array(value, dtype=np.float64, copy=False)
+
     @property
     def sites_alleles(self):
         return self.data["sites/alleles"]
