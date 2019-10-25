@@ -235,13 +235,19 @@ class DataContainer(object):
     BUILD_MODE = 1
     EDIT_MODE = 2
 
+    # Currently lmdb windows allocates the entire file size rather than
+    # growing dynamically (see https://github.com/mozilla/lmdb-rs/issues/40).
+    # For the default setting on windows, we therefore hard code a smaller
+    # map_size to avoid filling up disk space.
+    win32_max_file_size = 2**30
+
     # Must be defined by subclasses.
     FORMAT_NAME = None
     FORMAT_VERSION = None
 
     def __init__(
             self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
-            chunk_size=1024):
+            chunk_size=1024, max_file_size=None):
         self._mode = self.BUILD_MODE
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
@@ -250,7 +256,9 @@ class DataContainer(object):
         self.data = zarr.group()
         self.path = path
         if path is not None:
-            store = self._new_lmdb_store()
+            if sys.platform == "win32" and max_file_size is None:
+                max_file_size = self.win32_max_file_size
+            store = self._new_lmdb_store(map_size=max_file_size)
             self.data = zarr.open_group(store=store, mode="w")
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
@@ -303,21 +311,18 @@ class DataContainer(object):
         self._check_format()
         self._mode = self.READ_MODE
 
-    def _new_lmdb_store(self):
+    def _new_lmdb_store(self, map_size):
         if os.path.exists(self.path):
             os.unlink(self.path)
         # The existence of a lock-file can confuse things, so delete it.
         remove_lmdb_lockfile(self.path)
-        if sys.platform == "win32":
-            # Currently lmdb windows allocates the entire file size rather than growing
-            # dynamically(see see https://github.com/mozilla/lmdb-rs/issues/40).
-            # On windows, we therefore hard code a smaller map_size to avoid filling up
-            # disk space. This is clearly a hack just to get tsinfer working on win32.
-            # Arbitrarily, we allocate 1GiB (2**30 bytes). Windows users who want to run
-            # large inferences may need to increase the hardcoded map_size below.
-            return zarr.LMDBStore(self.path, map_size=2**30, subdir=False)
-        else:
+        if map_size is None:
             return zarr.LMDBStore(self.path, subdir=False)
+        else:
+            map_size = int(map_size)
+            if map_size <= 0:
+                raise ValueError("max_file_size must be > 0")
+            return zarr.LMDBStore(self.path, subdir=False, map_size=map_size)
 
     @classmethod
     def load(cls, path):
@@ -344,7 +349,7 @@ class DataContainer(object):
         self.data = None
         self.mode = -1
 
-    def copy(self, path=None):
+    def copy(self, path=None, max_file_size=None):
         """
         Returns a copy of this DataContainer opened in 'edit' mode. If path
         is specified, this must not be equal to the path of the current
@@ -368,7 +373,9 @@ class DataContainer(object):
             for key, value in self.data.attrs.items():
                 other.data.attrs[key] = value
         else:
-            store = other._new_lmdb_store()
+            if sys.platform == "win32" and max_file_size is None:
+                max_file_size = self.win32_max_file_size
+            store = other._new_lmdb_store(max_file_size)
             zarr.copy_store(self.data.store, store)
             other.data = zarr.group(store)
         # Set a new UUID
@@ -620,7 +627,7 @@ class Individual(object):
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
-    compressor=DEFAULT_COMPRESSOR, chunk_size=1024)
+    compressor=DEFAULT_COMPRESSOR, chunk_size=1024, max_file_size=None)
 
     Class representing input sample data used for inference.
     See sample data file format :ref:`specifications <sec_file_formats_samples>`
@@ -686,6 +693,13 @@ class SampleData(DataContainer):
     sequence that we infer, allowing us to use it conveniently in downstream
     analyses.
 
+    .. note:: When specifying a ``path`` on windows systems, a file of size
+        ``max_file_size`` is allocated immediately. As this can cause disk space
+        issues when creating SampleData files, the default ``max_file_size`` on
+        windows is hardcoded to a relatively small value of 2**30 bytes (1GiB).
+        Windows users who want to run large inferences may need to explicitly
+        set a larger ``max_file_size`` below.
+
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
         :func:`tsinfer.infer` and :func:`tsinfer.match_samples`. If provided
@@ -695,14 +709,21 @@ class SampleData(DataContainer):
     :param int num_flush_threads: The number of background threads to use
         for compressing data and flushing to disc. If <= 0, do not spawn
         any threads but use a synchronous algorithm instead. Default=0.
-    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
-        to use for compressing data. Any codec may be used, but
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec`
+        instance to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
         Default=:class:`numcodecs.zstd.Zstd`.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
+    :param int max_file_size: If a file is being used to store this data, set
+        a maximum size in bytes for the stored file. If None, the default
+        value for `zarr.LMDBStore  <http://zarr.readthedocs.io/>` is used
+        (except on windows, see note above). If you are running on a system
+        with storage space constraints, you may wish to explictly set a value
+        that will not use up your storage quota. Default=None (or 2**30,
+        i.e. 1GiB, on windows systems).
     """
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (3, 0)
@@ -914,7 +935,7 @@ class SampleData(DataContainer):
         specified input file are equal. This compares every attribute except
         the UUID and provenance.
 
-        To compare two :class:`SampleData`` instances for exact equality of
+        To compare two :class:`SampleData` instances for exact equality of
         all data including UUIDs and provenance data, use ``s1 == s2``.
 
         :param SampleData other: The other :class:`SampleData` instance to
@@ -1414,12 +1435,19 @@ class Ancestor(object):
 class AncestorData(DataContainer):
     """
     AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
-    chunk_size=1024)
+    chunk_size=1024, max_file_size=None)
 
     Class representing the stored ancestor data produced by
     :func:`generate_ancestors`. See the samples file format
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
     of this file.
+
+    .. note:: When specifying a ``path`` on windows systems, a file of size
+        ``max_file_size`` is allocated immediately. As this can cause disk space
+        issues when creating AncestorData files, the default ``max_file_size`` on
+        windows is hardcoded to a relatively small value of 2**30 bytes (1GiB).
+        Windows users who want to run large inferences may need to explicitly
+        set a larger ``max_file_size`` below.
 
     :param SampleData sample_data: The :class:`.SampleData` instance
         that this ancestor data file was generated from.
@@ -1428,14 +1456,21 @@ class AncestorData(DataContainer):
     :param int num_flush_threads: The number of background threads to use
         for compressing data and flushing to disc. If <= 0, do not spawn
         any threads but use a synchronous algorithm instead. Default=0.
-    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec` instance
-        to use for compressing data. Any codec may be used, but
+    :param numcodecs.abc.Codec compressor: A :class:`numcodecs.abc.Codec`
+        instance to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
         Default=:class:`numcodecs.zstd.Zstd`.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
+    :param int max_file_size: If a file is being used to store this data, set
+        a maximum size in bytes for the stored file. If None, the default
+        value for `zarr.LMDBStore  <http://zarr.readthedocs.io/>` is used
+        (except on windows, see note above). If you are running on a system
+        with storage space constraints, you may wish to explictly set a value
+        that will not use up your storage quota. Default=None (or 2**30,
+        i.e. 1GiB, on windows systems).
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)

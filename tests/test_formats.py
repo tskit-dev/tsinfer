@@ -34,6 +34,7 @@ import msprime
 import numcodecs
 import numcodecs.blosc as blosc
 import zarr
+import lmdb
 import tskit
 
 import tsinfer
@@ -206,6 +207,58 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.assertEqual(array.compressor, compressor)
             with tsinfer.load(filename) as other:
                 self.assertEqual(other, input_file)
+
+    def test_bad_max_file_size(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            for bad_size in ['a', '', -1]:
+                self.assertRaises(
+                    ValueError, formats.SampleData, path=filename,
+                    max_file_size=bad_size)
+            for bad_size in [[1, 3], np.array([1, 2])]:
+                self.assertRaises(
+                    TypeError, formats.SampleData, path=filename, max_file_size=bad_size)
+
+    def test_too_small_max_file_size_init(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            # Fail immediately if the max_size is so small we can't even create a file
+            filename = os.path.join(tempdir, "samples.tmp")
+            self.assertRaises(
+                lmdb.MapFullError, formats.SampleData,
+                path=filename, sequence_length=1, max_file_size=1)
+
+    def test_too_small_max_file_size_add(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            base_size = 2**16  # Big enough to allow the initial file to be created
+            # Fail during adding a large amount of data
+            with self.assertRaises(lmdb.MapFullError):
+                filename = os.path.join(tempdir, "samples.tmp")
+                with formats.SampleData(path=filename, sequence_length=1,
+                                        max_file_size=base_size) as small_sample_file:
+                    small_sample_file.add_site(
+                        0, alleles=['0', '1'],
+                        genotypes=np.zeros(base_size, dtype=np.int8))
+            # Work around https://github.com/tskit-dev/tsinfer/issues/201
+            small_sample_file.close()
+
+    def test_acceptable_max_file_size(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            # set a reasonably large number of sites and samples, and check we
+            # don't bomb out
+            n_samples = 2**10
+            n_sites = 2**12
+            np.random.seed(123)
+            filename = os.path.join(tempdir, "samples.tmp")
+            with formats.SampleData(path=filename, sequence_length=n_sites,
+                                    compressor=False, max_file_size=None) as samples:
+                for pos in range(n_sites):
+                    samples.add_site(
+                        pos, alleles=['0', '1'],
+                        genotypes=np.random.randint(2, size=n_samples, dtype=np.int8))
+            self.assertEqual(samples.num_sites, n_sites)
+            self.assertEqual(samples.num_samples, n_samples)
+            self.assertGreater(samples.file_size, n_samples*n_sites)
+            samples.close()
 
     def test_defaults_no_path(self):
         ts = self.get_example_ts(10, 10)
@@ -1143,6 +1196,19 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
                 self.assertEqual(array.compressor, compressor)
             with tsinfer.load(filename) as other:
                 self.assertEqual(other, ancestor_data)
+
+    def test_bad_max_file_size(self):
+        sample_data, ancestors = self.get_example_data(10, 10, 40)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            filename = os.path.join(tempdir, "ancestors.tmp")
+            for bad_size in ['a', '', -1]:
+                self.assertRaises(
+                    ValueError, formats.AncestorData, sample_data,
+                    path=filename, max_file_size=bad_size)
+            for bad_size in [[1, 3], np.array([1, 2])]:
+                self.assertRaises(
+                    TypeError, formats.AncestorData, sample_data,
+                    path=filename, max_file_size=bad_size)
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
