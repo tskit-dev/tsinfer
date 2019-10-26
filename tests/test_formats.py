@@ -23,9 +23,12 @@ Tests for the data files.
 import sys
 import unittest
 import tempfile
-import os.path
+import os
+import stat
 import datetime
 import warnings
+import contextlib
+import shutil
 
 import numpy as np
 import msprime
@@ -37,6 +40,21 @@ import tskit
 import tsinfer
 import tsinfer.formats as formats
 import tsinfer.exceptions as exceptions
+
+
+def remove_readonly(func, path, _):
+    "Clear the readonly bit and reattempt the removal"
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+@contextlib.contextmanager
+def temporary_directory(*args, **kwargs):
+    d = tempfile.mkdtemp(*args, **kwargs)
+    try:
+        yield d
+    finally:
+        shutil.rmtree(d, onerror=remove_readonly)
 
 
 class DataContainerMixin(object):
@@ -731,7 +749,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
         self.assertEqual(list(data.sites_inference), [True, True, True, True])
 
-        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+        with temporary_directory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             for copy_path in [None, filename]:
                 copy = data.copy(path=copy_path)
