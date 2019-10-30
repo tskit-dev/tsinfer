@@ -24,11 +24,8 @@ import sys
 import unittest
 import tempfile
 import os
-import stat
 import datetime
 import warnings
-import contextlib
-import shutil
 
 import numpy as np
 import msprime
@@ -40,21 +37,6 @@ import tskit
 import tsinfer
 import tsinfer.formats as formats
 import tsinfer.exceptions as exceptions
-
-
-def remove_readonly(func, path, _):
-    "Clear the readonly bit and reattempt the removal"
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-
-@contextlib.contextmanager
-def temporary_directory(*args, **kwargs):
-    d = tempfile.mkdtemp(*args, **kwargs)
-    try:
-        yield d
-    finally:
-        shutil.rmtree(d, onerror=remove_readonly)
 
 
 class DataContainerMixin(object):
@@ -195,8 +177,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertIsNot(other_input_file, input_file)
             self.assertEqual(other_input_file, input_file)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_chunk_size_file_equal(self):
         ts = self.get_example_ts(13, 15)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -210,6 +190,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.verify_data_round_trip(ts, input_file)
                 self.assertEqual(
                     input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
+                input_file.close()
             # Now reload the files and check they are equal
             input_file0 = formats.SampleData.load(files[0])
             input_file1 = formats.SampleData.load(files[1])
@@ -749,7 +730,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
         self.assertEqual(list(data.sites_inference), [True, True, True, True])
 
-        with temporary_directory(prefix="tsinf_format_test") as tempdir:
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             for copy_path in [None, filename]:
                 copy = data.copy(path=copy_path)
@@ -761,6 +742,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_inference), inference)
                 self.assertEqual(list(data.sites_inference), [True, True, True, True])
+                if copy_path is not None:
+                    copy.close()
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
