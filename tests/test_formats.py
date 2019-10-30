@@ -195,6 +195,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file1 = formats.SampleData.load(files[1])
             # Can't use eq here because UUIDs will be equal.
             self.assertTrue(input_file0.data_equal(input_file1))
+            input_file0.close()
+            input_file1.close()
 
     def test_compressor(self):
         ts = self.get_example_ts(11, 17)
