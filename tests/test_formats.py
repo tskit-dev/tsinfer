@@ -177,8 +177,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertIsNot(other_input_file, input_file)
             self.assertEqual(other_input_file, input_file)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_chunk_size_file_equal(self):
         ts = self.get_example_ts(13, 15)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -186,17 +184,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             for chunk_size in [5, 7]:
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
-                input_file = formats.SampleData(
-                    sequence_length=ts.sequence_length, path=filename,
-                    chunk_size=chunk_size)
-                self.verify_data_round_trip(ts, input_file)
-                self.assertEqual(
-                    input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
+                with formats.SampleData(
+                        sequence_length=ts.sequence_length, path=filename,
+                        chunk_size=chunk_size) as input_file:
+                    self.verify_data_round_trip(ts, input_file)
+                    self.assertEqual(
+                        input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
             # Now reload the files and check they are equal
-            input_file0 = formats.SampleData.load(files[0])
-            input_file1 = formats.SampleData.load(files[1])
-            # Can't use eq here because UUIDs will be equal.
-            self.assertTrue(input_file0.data_equal(input_file1))
+            with formats.SampleData.load(files[0]) as input_file0:
+                with formats.SampleData.load(files[1]) as input_file1:
+                    # Can't use eq here because UUIDs will not be equal.
+                    self.assertTrue(input_file0.data_equal(input_file1))
 
     def test_compressor(self):
         ts = self.get_example_ts(11, 17)
@@ -987,8 +985,6 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertIsNot(other_ancestor_data, ancestor_data)
             self.assertEqual(other_ancestor_data, ancestor_data)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_chunk_size_file_equal(self):
         N = 60
         sample_data, ancestors = self.get_example_data(22, 16, N)
@@ -997,14 +993,15 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             for chunk_size in [5, 7]:
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
-                ancestor_data = tsinfer.AncestorData(
-                    sample_data, path=filename, chunk_size=chunk_size)
-                self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-                self.assertEqual(ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
+                with tsinfer.AncestorData(sample_data, path=filename,
+                                          chunk_size=chunk_size) as ancestor_data:
+                    self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+                    self.assertEqual(
+                        ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
             # Now reload the files and check they are equal
-            file0 = formats.AncestorData.load(files[0])
-            file1 = formats.AncestorData.load(files[1])
-            self.assertTrue(file0.data_equal(file1))
+            with formats.AncestorData.load(files[0]) as file0:
+                with formats.AncestorData.load(files[1]) as file1:
+                    self.assertTrue(file0.data_equal(file1))
 
     def test_add_ancestor_errors(self):
         sample_data, ancestors = self.get_example_data(22, 16, 30)
