@@ -272,7 +272,7 @@ class DataContainer(object):
     def __exit__(self, *args):
         if self._mode != self.READ_MODE:
             self.finalise()
-        else:
+        elif self.path is not None:
             self.close()
 
     def _open_lmbd_readonly(self):

@@ -130,10 +130,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_defaults_no_path(self):
         ts = self.get_example_ts(10, 10)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
-        self.verify_data_round_trip(ts, input_file)
-        for _, array in input_file.arrays():
-            self.assertEqual(array.compressor, None)
+        with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
+            self.verify_data_round_trip(ts, sample_data)
+            for _, array in sample_data.arrays():
+                self.assertEqual(array.compressor, None)
 
     def test_from_tree_sequence(self):
         ts = self.get_example_ts(10, 10)
