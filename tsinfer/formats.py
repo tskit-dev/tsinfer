@@ -384,24 +384,26 @@ class DataContainer(object):
         provenance for the current operation. The specified 'command' is used
         to fill the corresponding entry in the provenance dictionary.
         """
-        self._check_write_modes()
-        self.data.attrs[FINALISED_KEY] = True
-        if self.path is not None:
-            store = self.data.store
-            store.close()
-            logger.debug("Fixing up LMDB file size")
-            with lmdb.open(
-                    self.path, subdir=False, lock=False, writemap=True) as db:
-                # LMDB maps a very large amount of space by default. While this
-                # doesn't do any harm, it's annoying because we can't use ls to
-                # see the file sizes and the amount of RAM we're mapping can
-                # look like it's very large. So, we fix this up so that the
-                # map size is equal to the number of pages in use.
-                num_pages = db.info()["last_pgno"]
-                page_size = db.stat()["psize"]
-                db.set_mapsize(num_pages * page_size)
-            # Remove the lock file as we don't need it after this point.
-            remove_lmdb_lockfile(self.path)
+        try:
+            self._check_write_modes()
+            self.data.attrs[FINALISED_KEY] = True
+        finally:
+            # Always close the file if necessary
+            if self.path is not None:
+                self.data.store.close()
+                logger.debug("Fixing up LMDB file size")
+                with lmdb.open(
+                        self.path, subdir=False, lock=False, writemap=True) as db:
+                    # LMDB maps a very large amount of space by default. While this
+                    # doesn't do any harm, it's annoying because we can't use ls to
+                    # see the file sizes and the amount of RAM we're mapping can
+                    # look like it's very large. So, we fix this up so that the
+                    # map size is equal to the number of pages in use.
+                    num_pages = db.info()["last_pgno"]
+                    page_size = db.stat()["psize"]
+                    db.set_mapsize(num_pages * page_size)
+                # Remove the lock file as we don't need it after this point.
+                remove_lmdb_lockfile(self.path)
         self._open_readonly()
 
     def _check_format(self):
@@ -1183,22 +1185,23 @@ class SampleData(DataContainer):
         return site_id
 
     def finalise(self):
-        if self._mode == self.BUILD_MODE:
-            if self._build_state == self.ADDING_POPULATIONS:
-                raise ValueError("Must add at least one sample individual")
-            elif self._build_state == self.ADDING_SAMPLES:
-                self._individuals_writer.flush()
-                self._samples_writer.flush()
-            elif self._build_state == self.ADDING_SITES:
-                self._sites_writer.flush()
-            if self.num_sites == 0:
-                raise ValueError("Must add at least one site")
-            self._build_state = -1
-            if self.sequence_length == 0:
-                # Need to be careful that sequence_length is JSON serialisable here.
-                self.data.attrs["sequence_length"] = float(self._last_position) + 1
-
-        super(SampleData, self).finalise()
+        try:
+            if self._mode == self.BUILD_MODE:
+                if self._build_state == self.ADDING_POPULATIONS:
+                    raise ValueError("Must add at least one sample individual")
+                elif self._build_state == self.ADDING_SAMPLES:
+                    self._individuals_writer.flush()
+                    self._samples_writer.flush()
+                elif self._build_state == self.ADDING_SITES:
+                    self._sites_writer.flush()
+                if self.num_sites == 0:
+                    raise ValueError("Must add at least one site")
+                self._build_state = -1
+                if self.sequence_length == 0:
+                    # Need to be careful that sequence_length is JSON serialisable here.
+                    self.data.attrs["sequence_length"] = float(self._last_position) + 1
+        finally:
+            super(SampleData, self).finalise()
 
     ####################################
     # Read mode
@@ -1514,10 +1517,12 @@ class AncestorData(DataContainer):
             haplotype=haplotype)
 
     def finalise(self):
-        if self._mode == self.BUILD_MODE:
-            self.item_writer.flush()
-            self.item_writer = None
-        super(AncestorData, self).finalise()
+        try:
+            if self._mode == self.BUILD_MODE:
+                self.item_writer.flush()
+                self.item_writer = None
+        finally:
+            super(AncestorData, self).finalise()
 
     def ancestors(self):
         """
