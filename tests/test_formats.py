@@ -133,7 +133,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
             self.verify_data_round_trip(ts, sample_data)
             for _, array in sample_data.arrays():
-                self.assertEqual(array.compressor, None)
+                self.assertEqual(array.compressor, formats.DEFAULT_COMPRESSOR)
 
     def test_from_tree_sequence(self):
         ts = self.get_example_ts(10, 10)
@@ -202,12 +202,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
            None, formats.DEFAULT_COMPRESSOR,
            blosc.Blosc(cname='zlib', clevel=1, shuffle=blosc.NOSHUFFLE)
         ]
-        for compressor in compressors:
-            input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, compressor=compressor)
-            self.verify_data_round_trip(ts, input_file)
-            for _, array in input_file.arrays():
-                self.assertEqual(array.compressor, compressor)
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            for i, compressor in enumerate(compressors):
+                filename = os.path.join(tempdir, "samples_{}.tmp".format(i))
+                for path in [None, filename]:
+                    with formats.SampleData(sequence_length=ts.sequence_length,
+                                            path=path, compressor=compressor) as samples:
+                        self.verify_data_round_trip(ts, samples)
+                        for _, array in samples.arrays():
+                            self.assertEqual(array.compressor, compressor)
 
     def test_multichar_alleles(self):
         ts = self.get_example_ts(5, 17)
@@ -922,7 +925,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         ancestor_data = tsinfer.AncestorData(sample_data)
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
         for _, array in ancestor_data.arrays():
-            self.assertEqual(array.compressor, None)
+            self.assertEqual(array.compressor, formats.DEFAULT_COMPRESSOR)
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
