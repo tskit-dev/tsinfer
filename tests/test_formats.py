@@ -734,17 +734,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             for copy_path in [None, filename]:
-                copy = data.copy(path=copy_path)
-                copy.finalise()
-                self.assertTrue(copy.data_equal(data))
+                with data.copy(path=copy_path) as copy:
+                    self.assertTrue(copy.data_equal(data))
+                # Overwrite
                 with data.copy(path=copy_path) as copy:
                     inference = [False, True, False, True]
                     copy.sites_inference = inference
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_inference), inference)
                 self.assertEqual(list(data.sites_inference), [True, True, True, True])
-                if copy_path is not None:
-                    copy.close()
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
