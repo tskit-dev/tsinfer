@@ -184,13 +184,12 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             for chunk_size in [5, 7]:
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
-                input_file = formats.SampleData(
-                    sequence_length=ts.sequence_length, path=filename,
-                    chunk_size=chunk_size)
-                self.verify_data_round_trip(ts, input_file)
-                self.assertEqual(
-                    input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
-                input_file.close()
+                with formats.SampleData(
+                        sequence_length=ts.sequence_length, path=filename,
+                        chunk_size=chunk_size) as input_file:
+                    self.verify_data_round_trip(ts, input_file)
+                    self.assertEqual(
+                        input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
             # Now reload the files and check they are equal
             input_file0 = formats.SampleData.load(files[0])
             input_file1 = formats.SampleData.load(files[1])
