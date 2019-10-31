@@ -240,10 +240,9 @@ class DataContainer(object):
     FORMAT_VERSION = None
 
     def __init__(
-            self, path=None, num_flush_threads=0, compressor=None, chunk_size=1024):
+            self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
+            chunk_size=1024):
         self._mode = self.BUILD_MODE
-        if path is not None and compressor is None:
-            compressor = DEFAULT_COMPRESSOR
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
         self._metadata_codec = numcodecs.JSON()
@@ -614,7 +613,7 @@ class Individual(object):
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
-    compressor=None, chunk_size=1024)
+    compressor=DEFAULT_COMPRESSOR, chunk_size=1024)
 
     Class representing input sample data used for inference.
     See sample data file format :ref:`specifications <sec_file_formats_samples>`
@@ -693,9 +692,7 @@ class SampleData(DataContainer):
         to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
-        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
-        when data is written to a file, and no compression when data is
-        stored in memory.
+        Default=:class:`numcodecs.zstd.Zstd`.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
@@ -1332,9 +1329,7 @@ class AncestorData(DataContainer):
         to use for compressing data. Any codec may be used, but
         problems may occur with very large datasets on certain codecs as
         they cannot compress buffers >2GB. If None, do not use any compression.
-        By default, use the :class:`numcodecs.zstd.Zstd` codec is used
-        when data is written to a file, and no compression when data is
-        stored in memory.
+        Default=:class:`numcodecs.zstd.Zstd`.
     :param int chunk_size: The chunk size used for
         `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
         compression level and algorithm performance. Default=1024.
