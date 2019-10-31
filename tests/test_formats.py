@@ -162,8 +162,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 if name.endswith("genotypes"):
                     self.assertEqual(array.chunks[1], chunk_size)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_filename(self):
         ts = self.get_example_ts(14, 15)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -173,9 +171,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(ts, input_file)
+            # Make a copy so that we can close the original and reopen it
+            # without hitting simultaneous file access problems on Windows
+            input_copy = input_file.copy(path=None)
+            input_file.close()
             other_input_file = formats.SampleData.load(filename)
-            self.assertIsNot(other_input_file, input_file)
-            self.assertEqual(other_input_file, input_file)
+            self.assertIsNot(other_input_file, input_copy)
+            # Can't use eq here because UUIDs will not be equal.
+            self.assertTrue(other_input_file.data_equal(input_copy))
+            other_input_file.close()
 
     def test_chunk_size_file_equal(self):
         ts = self.get_example_ts(13, 15)
@@ -726,8 +730,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertNotEqual(copy.uuid, data.uuid)
         self.assertTrue(copy.data_equal(data))
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_copy_update_sites_inference(self):
         with formats.SampleData() as data:
             for j in range(4):
@@ -740,15 +742,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 copy = data.copy(path=copy_path)
                 copy.finalise()
                 self.assertTrue(copy.data_equal(data))
+                if copy_path is not None:
+                    copy.close()
                 with data.copy(path=copy_path) as copy:
                     inference = [False, True, False, True]
                     copy.sites_inference = inference
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_inference), inference)
                 self.assertEqual(list(data.sites_inference), [True, True, True, True])
+                if copy_path is not None:
+                    copy.close()
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_copy_update_sites_time(self):
         with formats.SampleData() as data:
             for j in range(4):
@@ -761,12 +765,16 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 copy = data.copy(path=copy_path)
                 copy.finalise()
                 self.assertTrue(copy.data_equal(data))
+                if copy_path is not None:
+                    copy.close()
                 with data.copy(path=copy_path) as copy:
                     time = [0.0, 1.1, 2.2, 3.3]
                     copy.sites_time = time
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_time), time)
                 self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])
+                if copy_path is not None:
+                    copy.close()
 
     def test_update_sites_inference_bad_data(self):
         def set_value(data, value):
@@ -973,8 +981,6 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(ancestor_data.ancestors_end.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.ancestors_time.chunks, (chunk_size,))
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -984,9 +990,15 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+            # Make a copy so that we can close the original and reopen it
+            # without hitting simultaneous file access problems on Windows
+            ancestor_copy = ancestor_data.copy(path=None)
+            ancestor_data.close()
             other_ancestor_data = formats.AncestorData.load(filename)
-            self.assertIsNot(other_ancestor_data, ancestor_data)
-            self.assertEqual(other_ancestor_data, ancestor_data)
+            self.assertIsNot(other_ancestor_data, ancestor_copy)
+            # Can't use eq here because UUIDs will not be equal.
+            self.assertTrue(other_ancestor_data.data_equal(ancestor_copy))
+            other_ancestor_data.close()
 
     def test_chunk_size_file_equal(self):
         N = 60
