@@ -21,10 +21,12 @@ Tests for the inference code.
 """
 import unittest
 import random
+import os.path
 import string
 import io
 import json
 import unittest.mock as mock
+import tempfile
 
 import numpy as np
 import msprime
@@ -52,6 +54,81 @@ class TsinferTestCase(unittest.TestCase):
         self.assertEqual(t1.edges, t2.edges)
         self.assertEqual(t1.sites, t2.sites)
         self.assertEqual(t1.mutations, t2.mutations)
+
+
+class TestUnfinalisedErrors(unittest.TestCase):
+    def make_ancestor_data_unfinalised(self, path=None):
+        with tsinfer.SampleData(path=path, sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+            self.assertRaises(ValueError, tsinfer.AncestorData, sample_data)
+        if path is not None:
+            sample_data.close()
+
+    def match_ancestors_ancestors_unfinalised(self, path=None):
+        with tsinfer.SampleData(sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        with tsinfer.AncestorData(sample_data, path=path) as ancestor_data:
+            ancestor_data.add_ancestor(
+                start=0, end=1, time=2.0, focal_sites=[0],
+                haplotype=np.array([1], dtype=np.int8))
+            # match_ancestors fails when ancestors unfinalised
+            self.assertRaises(
+                ValueError, tsinfer.match_ancestors, sample_data, ancestor_data)
+        if path is not None:
+            ancestor_data.close()
+
+    def test_make_ancestor_data(self):
+        self.make_ancestor_data_unfinalised()
+
+    def test_make_ancestor_data_file(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_inference_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            self.make_ancestor_data_unfinalised(filename)
+
+    def test_match_ancestors_ancestors(self):
+        self.match_ancestors_ancestors_unfinalised()
+
+    def test_match_ancestors_ancestors_file(self):
+        with tempfile.TemporaryDirectory(prefix="tsinf_inference_test") as tempdir:
+            filename = os.path.join(tempdir, "samples.tmp")
+            self.match_ancestors_ancestors_unfinalised(filename)
+
+    def test_generate_ancestors(self):
+        with tsinfer.SampleData(sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+            self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
+        tsinfer.generate_ancestors(sample_data)
+
+    def test_match_ancestors_samples(self):
+        with tsinfer.SampleData(sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        # match_ancestors fails when samples unfinalised
+        unfinalised = tsinfer.SampleData(sequence_length=2)
+        unfinalised.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        self.assertRaises(
+            ValueError, tsinfer.match_ancestors, unfinalised, ancestor_data)
+
+    def test_match_samples_unfinalised(self):
+        with tsinfer.SampleData(sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        anc_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        sample_data = tsinfer.SampleData(sequence_length=2)
+        sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        self.assertRaises(ValueError, tsinfer.match_samples, sample_data, anc_ts)
+        sample_data.finalise()
+        tsinfer.match_samples(sample_data, anc_ts)
+
+    def test_augment_ancestors_unfinalised(self):
+        with tsinfer.SampleData(sequence_length=2) as sample_data:
+            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        sample_data = tsinfer.SampleData(sequence_length=2)
+        sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
+        self.assertRaises(
+            ValueError, tsinfer.augment_ancestors,
+            sample_data, ancestor_data, np.arange(sample_data.num_samples))
 
 
 class TestRoundTrip(unittest.TestCase):

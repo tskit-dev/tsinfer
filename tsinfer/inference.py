@@ -204,6 +204,7 @@ def generate_ancestors(
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
+    sample_data._check_finalised()
     progress_monitor = _get_progress_monitor(progress_monitor)
     with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
         generator = AncestorsGenerator(
@@ -239,6 +240,8 @@ def match_ancestors(
         of the set of ancestors.
     :rtype: tskit.TreeSequence
     """
+    sample_data._check_finalised()
+    ancestor_data._check_finalised()
     matcher = AncestorMatcher(
         sample_data, ancestor_data, num_threads=num_threads,
         path_compression=path_compression, extended_checks=extended_checks,
@@ -275,6 +278,7 @@ def augment_ancestors(
         paths for the specified sample.
     :rtype: tskit.TreeSequence
     """
+    sample_data._check_finalised()
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
         path_compression=path_compression, extended_checks=extended_checks,
@@ -315,6 +319,7 @@ def match_samples(
         of the sample.
     :rtype: tskit.TreeSequence
     """
+    sample_data._check_finalised()
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
         path_compression=path_compression, extended_checks=extended_checks,
