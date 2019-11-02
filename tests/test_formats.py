@@ -239,7 +239,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                         0, alleles=['0', '1'],
                         genotypes=np.zeros(base_size, dtype=np.int8))
             # Work around https://github.com/tskit-dev/tsinfer/issues/201
-            small_sample_file.close()
+            small_sample_file.data.store.close()
 
     def test_acceptable_max_file_size(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
