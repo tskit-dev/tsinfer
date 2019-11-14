@@ -957,20 +957,98 @@ class SampleData(DataContainer):
     ####################################
 
     @classmethod
-    def from_tree_sequence(cls, ts, use_times=True, **kwargs):
+    def from_tree_sequence(cls, ts, use_times=True, use_metadata=True, **kwargs):
+        """
+        Create a SampleData instance from the sample nodes in an existing tree sequence.
+        Each sample node in the tree sequence results in a sample created in the returned
+        object. Populations in the tree sequence will be copied into the returned object.
+        Individuals in the tree sequence that are associated with any sample nodes will
+        also be incorporated: the ploidy of each individual is assumed to be the number
+        of sample nodes which reference that individual; individuals with no sample nodes
+        are omitted. A new haploid individual is created for any sample node which lacks
+        an associated individual in the existing tree sequence. Thus a tree sequence
+        with ``u`` sample nodes but no individuals will be translated into a SampleData
+        file with ``u`` haploid individuals and ``u`` samples.
+
+        :param TreeSequence ts: The :class:`tskit.TreeSequence` from which to generate
+            samples.
+        :param bool use_times: If True (default), the times of nodes in the tree sequence
+            are used to set a time for each site (which affects the relative temporal
+            order of ancestors during inference), and also to set a time for individuals
+            that contain non-contemporaneous sample nodes. Times for a site are only
+            used if there is a single mutation at that site, in which case the
+            node immediately below the mutation is taken as the origination time for the
+            variant. If False, the frequency of the variant is used as a proxy for the
+            relative variant time (see :meth:`.add_site`), and all samples are set at
+            time 0.
+        :param bool use_metadata: If True (default), metadata associated with sample
+            nodes, individuals, sites, and populations is stored in the SampleData file.
+            Metadata in a SampleData instance must be JSON encodable, but this is not
+            required for tree sequences in general. Hence if metadata exists in the input
+            tree sequence but is not in JSON format, you will need to omit copying any
+            metadata by setting this parameter to False.
+        :param \\**kwargs: Further arguments passed to the :class:`SampleData`
+            constructor.
+        :return: A :class:`.SampleData` object.
+        :rtype: SampleData
+        """
         self = cls.__new__(cls)
         self.__init__(sequence_length=ts.sequence_length, **kwargs)
-        # Assume this is a haploid tree sequence.
         for population in ts.populations():
-            self.add_population()
+            population_metadata = None
+            if use_metadata and population.metadata:
+                population_metadata = json.loads(population.metadata)
+            self.add_population(metadata=population_metadata)
+        for individual in ts.individuals():
+            nodes = individual.nodes
+            if len(nodes) > 0:
+                first_node = ts.node(nodes[0])
+                for u in nodes[1:]:
+                    if ts.node(u).time != first_node.time:
+                        raise ValueError(
+                            "All nodes for individual {} must have the same time"
+                            .format(individual.id))
+                    if ts.node(u).population != first_node.population:
+                        raise ValueError(
+                            "All nodes for individual {} must be in the same population"
+                            .format(individual.id))
+                individual_metadata = None
+                samples_metadata = [None for u in nodes]
+                if use_metadata:
+                    if individual.metadata:
+                        individual_metadata = json.loads(individual.metadata)
+                    for i, u in enumerate(nodes):
+                        if ts.node(u).metadata:
+                            samples_metadata[i] = json.loads(ts.node(u).metadata)
+                self.add_individual(
+                    location=individual.location,
+                    metadata=individual_metadata,
+                    population=first_node.population,
+                    time=first_node.time if use_times else 0,
+                    ploidy=len(nodes),
+                    samples_metadata=samples_metadata)
         for u in ts.samples():
             node = ts.node(u)
-            self.add_individual(population=node.population, time=node.time, ploidy=1)
+            if node.individual == tskit.NULL:
+                # The sample node has no individual: create a haploid individual for it
+                sample_metadata = None
+                if use_metadata and ts.node(u).metadata:
+                    sample_metadata = json.loads(ts.node(u).metadata)
+                self.add_individual(
+                    population=node.population,
+                    time=node.time if use_times else 0,
+                    ploidy=1,
+                    samples_metadata=[sample_metadata])
         for v in ts.variants():
-            time = None
-            if len(v.site.mutations) == 1 and use_times:
-                time = ts.node(v.site.mutations[0].node).time
-            self.add_site(v.site.position, v.genotypes, v.alleles, time=time)
+            variant_time = None
+            if use_times and len(v.site.mutations) == 1:
+                variant_time = ts.node(v.site.mutations[0].node).time
+            site_metadata = None
+            if use_metadata and v.site.metadata:
+                site_metadata = json.loads(v.site.metadata)
+            self.add_site(
+                v.site.position, v.genotypes, v.alleles, metadata=site_metadata,
+                time=variant_time)
         # Insert all the provenance from the original tree sequence.
         for prov in ts.provenances():
             self.add_provenance(prov.timestamp, json.loads(prov.record))
@@ -1012,7 +1090,8 @@ class SampleData(DataContainer):
         return self._populations_writer.add(metadata=self._check_metadata(metadata))
 
     def add_individual(
-            self, ploidy=1, metadata=None, population=None, location=None, time=0):
+            self, ploidy=1, metadata=None, population=None, location=None, time=0,
+            samples_metadata=None):
         """
         Adds a new :ref:`sec_inference_data_model_individual` to this
         :class:`.SampleData` and returns its ID and those of the resulting additional
@@ -1040,6 +1119,9 @@ class SampleData(DataContainer):
         :param float time: The historical time into the past when the samples
             associated with this individual were taken. By default we assume that
             all samples come from the present time (i.e. the default time is 0).
+        :param list samples_metadata: A list of JSON encodable dict-like objects,
+            of length ``ploidy``, giving metadata to be associated with each
+            sample, or None to give all samples an empty metadata field.
         :return: The ID of the newly added individual and a list of the sample
             IDs also added.
         :rtype: tuple(int, list(int))
@@ -1061,16 +1143,21 @@ class SampleData(DataContainer):
             raise ValueError("population ID out of bounds")
         if ploidy <= 0:
             raise ValueError("Ploidy must be at least 1")
+        if samples_metadata is not None and len(samples_metadata) != ploidy:
+            raise ValueError(
+                "If you specify samples_metadata, it must be a list of length `ploidy`")
+        if samples_metadata is None:
+            samples_metadata = [None] * ploidy
         if location is None:
             location = []
         location = np.array(location, dtype=np.float64)
         individual_id = self._individuals_writer.add(
             metadata=self._check_metadata(metadata), location=location, time=time)
         sample_ids = []
-        for _ in range(ploidy):
-            # For now default the metadata to the empty dict.
+        for sample_meta in samples_metadata:
+            sample_meta = self._check_metadata(sample_meta)
             sid = self._samples_writer.add(
-                population=population, individual=individual_id, metadata={})
+                population=population, individual=individual_id, metadata=sample_meta)
             sample_ids.append(sid)
         return individual_id, sample_ids
 
@@ -1159,7 +1246,8 @@ class SampleData(DataContainer):
         if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
             raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
-            raise ValueError("Must have num_samples genotypes.")
+            raise ValueError(
+                "Must have {} (num_samples) genotypes.".format(self.num_samples))
         if position < 0:
             raise ValueError("position must be > 0")
         if self.sequence_length > 0 and position >= self.sequence_length:
