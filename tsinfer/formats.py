@@ -55,6 +55,13 @@ FINALISED_KEY = "finalised"
 # bigger than 2GB, which can occur in a larger instances.
 DEFAULT_COMPRESSOR = numcodecs.Zstd()
 
+# Lmdb on windows allocates the entire file size rather than
+# growing dynamically (see https://github.com/mozilla/lmdb-rs/issues/40).
+# For the default setting on windows, we therefore hard code a smaller
+# map_size of 1GiB to avoid filling up disk space. On other platforms where
+# sparse files are supported, we default to 1TiB.
+DEFAULT_MAX_FILE_SIZE = 2**30 if sys.platform == "win32" else 2**40
+
 
 def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
@@ -235,12 +242,6 @@ class DataContainer(object):
     BUILD_MODE = 1
     EDIT_MODE = 2
 
-    # Currently lmdb windows allocates the entire file size rather than
-    # growing dynamically (see https://github.com/mozilla/lmdb-rs/issues/40).
-    # For the default setting on windows, we therefore hard code a smaller
-    # map_size to avoid filling up disk space.
-    win32_max_file_size = 2**30
-
     # Must be defined by subclasses.
     FORMAT_NAME = None
     FORMAT_VERSION = None
@@ -256,9 +257,7 @@ class DataContainer(object):
         self.data = zarr.group()
         self.path = path
         if path is not None:
-            if sys.platform == "win32" and max_file_size is None:
-                max_file_size = self.win32_max_file_size
-            store = self._new_lmdb_store(map_size=max_file_size)
+            store = self._new_lmdb_store(max_file_size)
             self.data = zarr.open_group(store=store, mode="w")
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
@@ -311,18 +310,18 @@ class DataContainer(object):
         self._check_format()
         self._mode = self.READ_MODE
 
-    def _new_lmdb_store(self, map_size):
+    def _new_lmdb_store(self, map_size=None):
         if os.path.exists(self.path):
             os.unlink(self.path)
         # The existence of a lock-file can confuse things, so delete it.
         remove_lmdb_lockfile(self.path)
         if map_size is None:
-            return zarr.LMDBStore(self.path, subdir=False)
+            map_size = DEFAULT_MAX_FILE_SIZE
         else:
             map_size = int(map_size)
             if map_size <= 0:
                 raise ValueError("max_file_size must be > 0")
-            return zarr.LMDBStore(self.path, subdir=False, map_size=map_size)
+        return zarr.LMDBStore(self.path, subdir=False, map_size=map_size)
 
     @classmethod
     def load(cls, path):
@@ -373,8 +372,6 @@ class DataContainer(object):
             for key, value in self.data.attrs.items():
                 other.data.attrs[key] = value
         else:
-            if sys.platform == "win32" and max_file_size is None:
-                max_file_size = self.win32_max_file_size
             store = other._new_lmdb_store(max_file_size)
             zarr.copy_store(self.data.store, store)
             other.data = zarr.group(store)
@@ -693,12 +690,17 @@ class SampleData(DataContainer):
     sequence that we infer, allowing us to use it conveniently in downstream
     analyses.
 
-    .. note:: When specifying a ``path`` on windows systems, a file of size
-        ``max_file_size`` is allocated immediately. As this can cause disk space
-        issues when creating SampleData files, the default ``max_file_size`` on
-        windows is hardcoded to a relatively small value of 2**30 bytes (1GiB).
-        Windows users who want to run large inferences may need to explicitly
-        set a larger ``max_file_size`` below.
+    When writing data to file by specifying a ``path``, the ``max_file_size``
+    option puts an upper limit on the possible size of the file. On Windows
+    systems, a file of this size is allocated immediate. On other platforms
+    this space is just "reserved" using sparse file systems, but not
+    actually allocated. Therefore, on Windows systems, we have a much smaller
+    default size of 1GiB to prevent us allocating very large files for
+    no reason. However, this means that users who wish to run large inferences
+    on Windows will need to specify an appropriate ``max_file_size``.
+    Note that the ``max_file_size`` is only used while the file is being
+    built: one the file has been finalised, it is shrunk to its minimum
+    size.
 
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
@@ -719,11 +721,8 @@ class SampleData(DataContainer):
         compression level and algorithm performance. Default=1024.
     :param int max_file_size: If a file is being used to store this data, set
         a maximum size in bytes for the stored file. If None, the default
-        value for `zarr.LMDBStore  <http://zarr.readthedocs.io/>` is used
-        (except on windows, see note above). If you are running on a system
-        with storage space constraints, you may wish to explictly set a value
-        that will not use up your storage quota. Default=None (or 2**30,
-        i.e. 1GiB, on windows systems).
+        value of 1GiB (2**30 bytes) is used on Windows and 1TiB (2**40 bytes)
+        on other platforms (see above for details).
     """
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (3, 0)
@@ -1442,12 +1441,8 @@ class AncestorData(DataContainer):
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
     of this file.
 
-    .. note:: When specifying a ``path`` on windows systems, a file of size
-        ``max_file_size`` is allocated immediately. As this can cause disk space
-        issues when creating AncestorData files, the default ``max_file_size`` on
-        windows is hardcoded to a relatively small value of 2**30 bytes (1GiB).
-        Windows users who want to run large inferences may need to explicitly
-        set a larger ``max_file_size`` below.
+    See the documentation for :class:`SampleData` for a discussion of the
+    ``max_file_size`` parameter.
 
     :param SampleData sample_data: The :class:`.SampleData` instance
         that this ancestor data file was generated from.
@@ -1466,11 +1461,8 @@ class AncestorData(DataContainer):
         compression level and algorithm performance. Default=1024.
     :param int max_file_size: If a file is being used to store this data, set
         a maximum size in bytes for the stored file. If None, the default
-        value for `zarr.LMDBStore  <http://zarr.readthedocs.io/>` is used
-        (except on windows, see note above). If you are running on a system
-        with storage space constraints, you may wish to explictly set a value
-        that will not use up your storage quota. Default=None (or 2**30,
-        i.e. 1GiB, on windows systems).
+        value of 1GiB is used on Windows and 1TiB on other
+        platforms (see above for details).
     """
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
