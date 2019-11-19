@@ -1175,11 +1175,14 @@ class SampleData(DataContainer):
         "T"]`` then the ancestral state is "A" and the derived state is "T".
         The observed state for each sample is then encoded using the
         ``genotypes`` parameter. Thus if we have ``n`` samples then
-        this must be a one dimensional array-like object with length ``n``. For
+        this must be a one dimensional array-like object with length ``n``.
+        The ``genotypes`` index into the list of ``alleles``, so that for
         a given array ``g`` and sample index ``j``, ``g[j]`` should contain
         ``0`` if sample ``j`` carries the ancestral state at this site and
-        ``1`` if it carries the derived state. All sites must have genotypes
-        for the same number of samples.
+        ``1`` if it carries the derived state. For multiple derived states,
+        there may be more than 2 ``alleles`, and ``g[j]`` can be greater
+        than ``1``, but such sites are not used for inference. All sites must
+        have genotypes for the same number of samples.
 
         All populations and individuals must be defined **before** this method
         is called. If no individuals have been defined using
@@ -1198,22 +1201,26 @@ class SampleData(DataContainer):
             that the input array is also of this type.
         :param list(str) alleles: A list of strings defining the alleles at this
             site. The zero'th element of this list is the **ancestral state**
-            and the one'th element is the **derived state**. Only biallelic
-            sites are currently supported. If not specified or None, defaults
-            to ["0", "1"].
+            and further elements are the **derived states**. Only biallelic
+            sites can currently be used for inference. Sites with 3 or more
+            alleles cannot have ``inference`` (below) set to ``True``. If not
+            specified or None, defaults to ["0", "1"].
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this site.
         :param bool inference: If True, use this site during the inference
             process. If False, do not use this sites for inference; in this
             case, :func:`match_samples` will place mutations on the existing
             tree in a way that encodes the supplied sample genotypes. If
-            ``inference=None`` (the default), use any site in which the
+            ``inference=None`` (the default), use any biallelic site in which the
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
-        :param float time: The time (pastwards) at which the focal mutation at this
-            site occurred. If not specified or None, the frequency of the derived alleles
-            (i.e., the number of non-zero values in the genotypes) is used instead, which
-            should provide a reasonable estimate for relative time. Defaults to None.
+        :param float time: The time of occurence (pastwards) of the mutation to the
+            derived state at this site. If not specified or None, the frequency of the
+            derived alleles (i.e., the number of non-zero values in the genotypes) is
+            used instead. For biallelic sites this should provide a reasonable estimate
+            of the relative time, as used to order ancestral haplotypes during the
+            inference process. For sites not used in inference, such as singletons or
+            sites with more than two alleles, the value is unused. Defaults to None.
         :return: The ID of the newly added site.
         :rtype: int
         """
@@ -1239,34 +1246,35 @@ class SampleData(DataContainer):
 
         if alleles is None:
             alleles = ["0", "1"]
-        if len(alleles) > 2:
-            raise ValueError("Only biallelic sites supported")
         if len(set(alleles)) != len(alleles):
             raise ValueError("Alleles must be distinct")
         if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
-            raise ValueError("Genotypes values must be between 0 and len(alleles) - 1")
+            raise ValueError("Genotype values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
             raise ValueError(
                 "Must have {} (num_samples) genotypes.".format(self.num_samples))
         if position < 0:
             raise ValueError("position must be > 0")
         if self.sequence_length > 0 and position >= self.sequence_length:
-            raise ValueError("If sequence_length is set, sites positions must be less.")
+            raise ValueError("Site position must be less than the sequence length")
         if position <= self._last_position:
             raise ValueError(
-                "Sites positions must be unique and added in increasing order")
-        count = np.sum(genotypes)
-        if count > 1 and count < self.num_samples:
-            if inference is None:
-                inference = True
-        else:
-            if inference is None:
-                inference = False
+                "Site positions must be unique and added in increasing order")
+        if len(alleles) > 2:
             if inference:
-                raise ValueError(
-                    "Cannot specify singletons or fixed sites for inference")
+                raise ValueError("Only biallelic sites supported for inference")
+            else:
+                inference = False
+        count_derived = np.sum(genotypes > 0)
+        if count_derived <= 1 or count_derived >= self.num_samples:
+            if inference:
+                raise ValueError("Cannot use singletons or fixed sites for inference")
+            else:
+                inference = False
+        if inference is None:  # We have now checked all non-inferable conditions
+            inference = True
         if time is None:
-            time = count
+            time = count_derived
         site_id = self._sites_writer.add(
             position=position, genotypes=genotypes,
             metadata=self._check_metadata(metadata),

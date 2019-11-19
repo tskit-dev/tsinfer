@@ -13,16 +13,17 @@ Suppose that we have observed the following data::
     sample  haplotype
     0       AGCGAT
     1       TGACAG
-    2       AGACAT
+    2       AGACAC
     3       ACCGCT
     4       ACCGCT
 
 Here we have phased haplotype data for five samples at six sites. We wish to infer the
-genealogies that gave rise to this data set. To import the data into ``tsinfer`` we must know the
-*ancestral state* for each site; there are many methods for achieving this, which are outside the
-scope of this manual. Assuming that we know the ancestral state, we can then import our into a
-``tsinfer`` :ref:`Sample data <sec_file_formats_samples>` file using the Python :ref:`API
-<sec_api_file_formats>`:
+genealogies that gave rise to this data set. To import the data into ``tsinfer`` we must
+know the *ancestral state* for each site we wish to use for inference; there are many
+methods for achieving this, which are outside the scope of this manual. Assuming that we
+know the ancestral state, we can then import our data into a ``tsinfer``
+:ref:`Sample data <sec_file_formats_samples>` file using the Python
+:ref:`API<sec_api_file_formats>`:
 
 .. code-block:: python
 
@@ -34,7 +35,7 @@ scope of this manual. Assuming that we know the ancestral state, we can then imp
         sample_data.add_site(2, [0, 1, 1, 0, 0], ["C", "A"])
         sample_data.add_site(3, [0, 1, 1, 0, 0], ["G", "C"])
         sample_data.add_site(4, [0, 0, 0, 1, 1], ["A", "C"])
-        sample_data.add_site(5, [0, 1, 0, 0, 0], ["T", "G"])
+        sample_data.add_site(5, [0, 1, 2, 0, 0], ["T", "G", "C"])
 
 Here we create a new :class:`.SampleData` object for five samples. We then
 sequentially add the data for each site one-by-one using the
@@ -44,15 +45,17 @@ position of the site in genome coordinates. This can be any positive value
 added in increasing order of position. For convenience we've given the sites
 position 0 to 5 here, but they could be any values. The second argument for
 ``add_site`` is a list of *genotypes* for the site. Each value in a genotypes
-array ``g`` is an integer: 0 represents the ancestral state for a site, and 1
-the derived state. The third argument to ``add_site`` is the list of *alleles*
-for the site. The first element of this list is the ancestral state and the
-second the derived state (currently only biallelic sites are supported). Thus,
-each call to ``add_site`` stores a single column of the original haplotype data
-above. For example, the ancestral and derived states for the site at position 0
-are "A"and "T" and the genotypes are 01000; together, these encode encode the
-first column, ATAAA.
-
+array ``g`` is an integer, giving an index into the list provided as the third
+argument to ``add_site``: the list of *alleles* for this site. The initial element
+in each list of alleles is assumed to be the ancestral state (so that a zero in
+the genotypes list always indicates an ancestral variant). Each call to ``add_site``
+thus stores a single column of the original haplotype data above. For example,
+the ancestral and derived states for the site at position 0 are "A" and "T" and the
+genotypes are 01000: this encodes the first column, ATAAA. Note that not all sites
+are used for inference: this includes fixed sites, singletons (in this example, the
+site at position 0) and sites with more than 2 alleles (e.g. the site at position 5);
+it is also possible to mark explicitly a site as not-for-inference when calling
+``add_site``, e.g. if the ancestral state designated for the site is questionable.
 
 Once we have stored our data in a :class:`.SampleData` object, we can easily infer a tree
 sequence using the Python API:
@@ -79,11 +82,11 @@ Which gives us the output::
     ┃ ┏┻┓ ┏┻┓
     0 3 4 1 2
 
-    0       AGCGAT
-    1       TGACAG
-    2       AGACAT
-    3       ACCGCT
-    4       ACCGCT
+    0	AGCGAT
+    1	TGACAG
+    2	AGACAC
+    3	ACCGCT
+    4	ACCGCT
 
 Note here that the inferred tree contains a *polytomy* at the root. This is a common feature of
 trees inferred by ``tsinfer`` and signals that there was not sufficient information to resolve

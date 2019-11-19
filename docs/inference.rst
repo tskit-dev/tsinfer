@@ -23,10 +23,10 @@ Data requirements
 Input haplotype data for tskit must satisfy the following requirements:
 
 - Data must be *phased*.
-- For each site we must know the *ancestral state*. Note that this is
+- For each site used for inference we must know the *ancestral state*. Note that this is
   not necessarily the same as the REF column from VCF, and ancestral
   states must be computed using some other method.
-- Only biallelic sites are currently supported.
+- Only biallelic sites can be used for inference.
 
 
 .. _sec_inference_data_model:
