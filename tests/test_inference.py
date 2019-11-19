@@ -1721,12 +1721,12 @@ class TestFlags(unittest.TestCase):
         self.assertEqual(count, tsinfer.count_pc_ancestors(flags))
 
 
-@unittest.skip("Need to update example files")
 class TestBugExamples(unittest.TestCase):
     """
     Run tests on some examples that provoked bugs.
     """
-    def test_path_compression_bad_times(self):
+    @unittest.skip("Need to update example files")
+    def test_path_compression_parent_child_identical_times(self):
         # This provoked a bug in which we created a pc ancestor
         # with the same time as its child, creating an invalid topology.
         sample_data = tsinfer.load(
@@ -1734,6 +1734,28 @@ class TestBugExamples(unittest.TestCase):
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             self.assertTrue(np.array_equal(var.genotypes, genotypes))
+
+    @unittest.skip("Need to solve https://github.com/tskit-dev/tsinfer/issues/210")
+    def test_path_compression_parent_child_small_times(self):
+        # If we allow the user to set variant times, they might create a pair of
+        # parent & child ancestors that are separated by < PC_ANCESTOR_INCREMENT
+        PC_ANCESTOR_INCREMENT = (1.0 / 65536)  # From tree_sequence_builder.c
+        ts = msprime.simulate(
+            10, recombination_rate=10, mutation_rate=5, random_seed=123)
+        # adjust the intermediate node times to squish them all together
+        tables = ts.dump_tables()
+        times = tables.nodes.time[:]
+        adjust_times = np.logical_and(times != np.min(times), times != np.max(times))
+        min_time = np.min(times[adjust_times])
+        time_order = np.argsort(times[adjust_times])
+        # Set < PC_ANCESTOR_INCREMENT apart
+        times[adjust_times] = min_time + (time_order+1) * PC_ANCESTOR_INCREMENT/2
+        tables.nodes.time = times
+        new_ts = tables.tree_sequence()
+        sample_data = tsinfer.SampleData.from_tree_sequence(new_ts)
+        # Next line breaks with _tsinfer.LibraryError: Error occured: -5
+        # see https://github.com/tskit-dev/tsinfer/issues/210
+        tsinfer.infer(sample_data)
 
 
 class TestVerify(unittest.TestCase):
