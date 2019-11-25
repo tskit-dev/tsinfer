@@ -13,9 +13,9 @@ lmdb
 attrs
 # Only needed for the Python implementation.
 sortedcontainers
-# Optional extras for debugging threads
-python-prctl
-numa
+# Optional extras for debugging threads - these modules mainly work on linux
+python-prctl; sys_platform == 'linux'
+numa; sys_platform == 'linux'
 # Needed for building docs.
 sphinx
 sphinx-argparse
