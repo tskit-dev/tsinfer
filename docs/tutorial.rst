@@ -271,16 +271,14 @@ there will be thousands more trees in each sequence. The output we get is::
     ┃ ┃ ┃ ┃ ┏┻┓
     0 1 2 3 4 5
 
-    Inferred tree: interval= (0.0, 3080.7017155601206)
-      3493
-    ┏━┻━┓
-    ┃   3440
-    ┃ ┏━┻━┓
-    ┃ ┃   2290
-    ┃ ┃ ┏━╋━━┓
-    ┃ ┃ ┃ ┃  667
-    ┃ ┃ ┃ ┃ ┏┻┓
-    1 0 2 3 4 5
+    Inferred tree: interval= (0.0, 6176.988890134446)
+       2386      
+     ┏━┳┻━━┓    
+     ┃ ┃ 1697   
+     ┃ ┃ ┏━╋━━┓ 
+     ┃ ┃ ┃ ┃ 480
+     ┃ ┃ ┃ ┃ ┏┻┓
+     0 1 2 3 4 5
 
 There are a number of things to note about these two trees. Firstly, it
 is important to note that the intervals over which these trees apply are
