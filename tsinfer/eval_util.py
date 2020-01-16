@@ -20,7 +20,6 @@
 Tools for evaluating the algorithm.
 """
 import collections
-import itertools
 import bisect
 import random
 import json
@@ -84,39 +83,6 @@ def insert_errors(ts, probability, seed=None):
     return tables.tree_sequence()
 
 
-def kc_distance(tree1, tree2):
-    """
-    Returns the Kendall-Colijn topological distance between the specified
-    pair of trees. This is a very simple and direct implementation for testing.
-    """
-    # print(tree1.draw(format="unicode"))
-    # print(tree2.draw(format="unicode"))
-    samples = tree1.tree_sequence.samples()
-    if not np.array_equal(samples, tree2.tree_sequence.samples()):
-        raise ValueError("Trees must have the same samples")
-    k = samples.shape[0]
-    n = (k * (k - 1)) // 2
-    M = [np.ones(n + k), np.ones(n + k)]
-    for tree_index, tree in enumerate([tree1, tree2]):
-        stack = [(tree.root, 0)]
-        while len(stack) > 0:
-            u, depth = stack.pop()
-            children = tree.children(u)
-            for v in children:
-                stack.append((v, depth + 1))
-            for c1, c2 in itertools.combinations(children, 2):
-                for u in tree.samples(c1):
-                    for v in tree.samples(c2):
-                        if u < v:
-                            a, b = u, v
-                        else:
-                            a, b = v, u
-                        pair_index = a * (a - 2 * k + 1) // -2 + b - a - 1
-                        assert M[tree_index][pair_index] == 1
-                        M[tree_index][pair_index] = depth
-    return np.linalg.norm(M[0] - M[1])
-
-
 def tree_pairs(ts1, ts2):
     """
     Returns an iterator over the pairs of trees for each distinct
@@ -152,7 +118,7 @@ def compare(ts1, ts2):
     metrics = []
     for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
         breakpoints.append(right)
-        metrics.append(kc_distance(tree1, tree2))
+        metrics.append(tree1.kc_distance(tree2))
     return np.array(breakpoints), np.array(metrics)
 
 
@@ -407,7 +373,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
         print("Source interval   =", tree1.interval)
         print("Inferred interval =", tree2.interval)
         if compute_distances:
-            distance = kc_distance(tree1, tree2)
+            distance = tree1.kc_distance(tree2)
             weighted_distance += (right - left) * distance
             trailer = ""
             if distance != 0:
