@@ -42,6 +42,53 @@ def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
         model="smc_prime")
 
 
+class TestTreeSequenceCompare(unittest.TestCase):
+    """
+    Tests of the engine to compare to tree sequences.
+    """
+    def test_same_ts(self):
+        n = 15
+        for seed in range(1, 10):
+            ts = msprime.simulate(n, recombination_rate=10, random_seed=seed)
+            self.assertGreater(ts.num_trees, 1)
+            bp, distance = tsinfer.compare(ts, ts)
+            self.assertEqual(list(bp), list(ts.breakpoints()))
+            self.assertEqual(distance.shape, (bp.shape[0] - 1,))
+            self.assertTrue(np.all(distance == 0))
+
+    def test_single_tree(self):
+        n = 15
+        for seed in range(1, 10):
+            ts1 = msprime.simulate(n, random_seed=seed)
+            ts2 = msprime.simulate(n, random_seed=seed + 1)
+            bp, distance = tsinfer.compare(ts1, ts2)
+            self.assertEqual(list(bp), [0, 1])
+            self.assertEqual(distance.shape, (1,))
+
+    def test_single_tree_many_trees(self):
+        n = 5
+        for seed in range(1, 10):
+            ts1 = msprime.simulate(n, recombination_rate=5, random_seed=seed)
+            ts2 = msprime.simulate(n, random_seed=seed + 1)
+            self.assertGreater(ts1.num_trees, 1)
+            bp, distance = tsinfer.compare(ts1, ts2)
+            self.assertEqual(list(bp), list(ts1.breakpoints()))
+            self.assertEqual(distance.shape, (ts1.num_trees,))
+
+    def test_single_many_trees(self):
+        n = 5
+        for seed in range(1, 10):
+            ts1 = msprime.simulate(n, recombination_rate=5, random_seed=seed)
+            ts2 = msprime.simulate(n, recombination_rate=5, random_seed=seed + 1)
+            self.assertGreater(ts1.num_trees, 1)
+            self.assertGreater(ts2.num_trees, 1)
+            bp, distance = tsinfer.compare(ts1, ts2)
+            breakpoints = set(ts1.breakpoints()) | set(ts2.breakpoints())
+            self.assertEqual(list(bp), sorted(breakpoints))
+            self.assertEqual(distance.shape, (len(breakpoints) - 1,))
+    # TODO add some examples testing for specific instances.
+
+
 class TestTreePairs(unittest.TestCase):
     """
     Tests of the engine to compare to tree sequences.
