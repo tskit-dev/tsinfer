@@ -49,7 +49,7 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        "tskit>=0.2.1",
+        "tskit>=0.2.3",
         "numcodecs>=0.6",
         "zarr>=2.2",
         "lmdb",
