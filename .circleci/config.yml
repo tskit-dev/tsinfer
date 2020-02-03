@@ -14,6 +14,12 @@ jobs:
               # way to set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
               echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
       - run:
+          name: Checkout submodules
+          command: |
+            git submodule update --init --recursive 
+            # Write out the status for debugging purposes. Are we checked out at tags?
+            git submodule status --recursive
+      - run:
           name: Install package and test basic usage.
           command: |
               pip install . --user 

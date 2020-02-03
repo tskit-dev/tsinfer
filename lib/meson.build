@@ -14,8 +14,6 @@ extra_c_args = [
     '-Wconversion', '-Wshadow', '-Wpointer-arith', '-Wcast-align',
     '-Wcast-qual', '-Wwrite-strings', '-Wnested-externs',
     '-fshort-enums', '-fno-common']
-extra_c_args = []
-    
 
 tsinfer_sources =[
     'ancestor_matcher.c', 'ancestor_builder.c', 'tree_sequence_builder.c']

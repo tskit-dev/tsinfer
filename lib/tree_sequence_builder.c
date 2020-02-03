@@ -355,7 +355,7 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
         }
     }
     assert(self->num_nodes < self->max_nodes);
-    ret = self->num_nodes;
+    ret = (int) self->num_nodes;
     self->time[ret] = time;
     self->node_flags[ret] = flags;
     self->num_nodes++;
