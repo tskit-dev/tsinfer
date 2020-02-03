@@ -29,9 +29,3 @@ unit_tests = executable('tests',
     sources: ['tests/tests.c'], 
     link_with: [tsinfer_lib], dependencies:[cunit_dep, kastore_dep, tskit_dep])
 test('Unit tests', unit_tests)
-
-# The development CLI. Don't use extra C args because argtable code won't pass
-executable('dev-cli', 
-    sources: ['dev-tools/dev-cli.c', 'dev-tools/argtable3.c'], 
-    link_with: [tsinfer_lib], dependencies: [kastore_dep, tskit_dep],
-    c_args:['-Dlint'])
