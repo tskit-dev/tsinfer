@@ -690,17 +690,16 @@ class SampleData(DataContainer):
     sequence that we infer, allowing us to use it conveniently in downstream
     analyses.
 
-    When writing data to file by specifying a ``path``, the ``max_file_size``
-    option puts an upper limit on the possible size of the file. On Windows
-    systems, a file of this size is allocated immediate. On other platforms
-    this space is just "reserved" using sparse file systems, but not
-    actually allocated. Therefore, on Windows systems, we have a much smaller
-    default size of 1GiB to prevent us allocating very large files for
-    no reason. However, this means that users who wish to run large inferences
-    on Windows will need to specify an appropriate ``max_file_size``.
-    Note that the ``max_file_size`` is only used while the file is being
-    built: one the file has been finalised, it is shrunk to its minimum
-    size.
+    .. note:: If a ``path`` is specified, the ``max_file_size`` option puts an
+        upper limit on the possible size of the created file. On non-Windows
+        systems, space for this file is not immediately allocated but just
+        "reserved" using sparse file systems. However, on Windows systems
+        the file is allocated immediately, so ``max_file_size`` takes a smaller
+        default value, to avoid allocating very large files for no reason.
+        Users who wish to run large inferences on Windows may therefore need to
+        explictly set an appropriate ``max_file_size``. Note that the
+        ``max_file_size`` is only used while the file is being built: one the
+        file has been finalised, it is shrunk to its minimum size.
 
     :param float sequence_length: If specified, this is the sequence length
         that will be associated with the tree sequence output by
