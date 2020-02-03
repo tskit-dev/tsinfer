@@ -607,16 +607,16 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start,
         right = pos;
         left = 0;
         if (out_index >= 0) {
-            left = TSI_MAX(left, out[out_index].left);
+            left = TSK_MAX(left, out[out_index].left);
         }
         if (in_index >= 0) {
-            left = TSI_MAX(left, in[in_index].right);
+            left = TSK_MAX(left, in[in_index].right);
         }
         pos = left;
 
         /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
-        for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
+        for (l = TSK_MIN(right, end) - 1; l >= (int) TSK_MAX(left, start); l--) {
             match[l] = 0;
             u = self->output.parent[self->output.size];
             /* Set the state of the matched haplotype */
@@ -757,10 +757,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
         left = pos;
         right = (tsk_id_t) self->num_sites;
         if (in_index < M) {
-            right = TSI_MIN(right, in[in_index].left);
+            right = TSK_MIN(right, in[in_index].left);
         }
         if (out_index < M) {
-            right = TSI_MIN(right, out[out_index].right);
+            right = TSK_MIN(right, out[out_index].right);
         }
         pos = right;
     }
@@ -831,7 +831,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
         if (self->flags & TSI_EXTENDED_CHECKS) {
             ancestor_matcher_check_state(self);
         }
-        for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
+        for (site = TSK_MAX(left, start); site < TSK_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
                     parent, L, L_cache);
             if (ret != 0) {
@@ -900,10 +900,10 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
         }
         right = (tsk_id_t) self->num_sites;
         if (in_index < M) {
-            right = TSI_MIN(right, in[in_index].left);
+            right = TSK_MIN(right, in[in_index].left);
         }
         if (out_index < M) {
-            right = TSI_MIN(right, out[out_index].right);
+            right = TSK_MIN(right, out[out_index].right);
         }
     }
 out:

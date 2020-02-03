@@ -42,7 +42,7 @@
 #define TSI_COMPRESS_PATH   1
 #define TSI_EXTENDED_CHECKS 2
 
-#define TSI_NODE_IS_PC_ANCESTOR ((uint32_t) (1u << 16))
+#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t) (1u << 16))
 
 typedef int8_t allele_t;
 
@@ -64,14 +64,6 @@ typedef struct _node_segment_list_node_t {
     tsk_id_t end;
     struct _node_segment_list_node_t *next;
 } node_segment_list_node_t;
-
-/* TODO rename this struct and see where we're actually using it.*/
-typedef struct _segment_t {
-    tsk_id_t start;
-    tsk_id_t end;
-    double value;
-    struct _segment_t *next;
-} segment_t;
 
 typedef struct {
     double time;
@@ -253,13 +245,13 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
         tsk_id_t *parent);
 
+int tree_sequence_builder_dump(tree_sequence_builder_t *self,
+        tsk_table_collection_t *tables, tsk_flags_t options);
+
 #define tsi_safe_free(pointer) \
 do {\
     if (pointer != NULL) {\
         free(pointer);\
     }\
 } while (0)
-
-#define TSI_MAX(a,b) ((a) > (b) ? (a) : (b))
-#define TSI_MIN(a,b) ((a) < (b) ? (a) : (b))
 

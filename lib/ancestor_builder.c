@@ -89,19 +89,19 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
 
     for (a = self->time_map.head; a != NULL; a = a->next) {
         time_map = (time_map_t *) a->item;
-        printf("Epoch: time = %f: %d ancestors\n",
+        fprintf(out, "Epoch: time = %f: %d ancestors\n",
                 time_map->time, avl_count(&time_map->pattern_map));
         for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
-            printf("\t");
+            fprintf(out, "\t");
             for (k = 0; k < self->num_samples; k++) {
-                printf("%d", pattern_map->genotypes[k]);
+                fprintf(out, "%d", pattern_map->genotypes[k]);
             }
-            printf("\t");
+            fprintf(out, "\t");
             for (s = pattern_map->sites; s != NULL; s = s->next) {
-                printf("%d ", s->site);
+                fprintf(out, "%d ", s->site);
             }
-            printf("\n");
+            fprintf(out, "\n");
         }
     }
     fprintf(out, "Descriptors:\n");

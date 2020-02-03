@@ -229,7 +229,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         goto out;
     }
     ret = tsk_blkalloc_init(&self->tsk_blkalloc,
-            TSI_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
+            TSK_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
     }
@@ -614,7 +614,7 @@ tree_sequence_builder_make_pc_node(tree_sequence_builder_t *self,
     min_parent_time = self->time[0] + 1;
     for (j = 0; j < num_mapped; j++) {
         assert(mapped[j].dest->edge.child == mapped_child);
-        min_parent_time = TSI_MIN(
+        min_parent_time = TSK_MIN(
             min_parent_time, self->time[mapped[j].source->edge.parent]);
     }
     min_parent_time -= PC_ANCESTOR_INCREMENT;
@@ -992,6 +992,61 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
     }
     return ret;
 }
+
+
+int
+tree_sequence_builder_dump(tree_sequence_builder_t *self,
+        tsk_table_collection_t *tables, tsk_flags_t TSK_UNUSED(options))
+{
+    int ret = 0;
+    indexed_edge_t *e;
+    tsk_id_t u, l, parent;
+    mutation_list_node_t *mln;
+    const char *states[] = {"0", "1"};
+
+    tsk_table_collection_clear(tables);
+
+    tables->sequence_length = (double) self->num_sites;
+
+    for (u = 0; u < (tsk_id_t) self->num_nodes; u++) {
+        ret = tsk_node_table_add_row(&tables->nodes, self->node_flags[u], self->time[u],
+                TSK_NULL, TSK_NULL, NULL, 0);
+        if (ret < 0) {
+            goto out;
+        }
+        for (e = self->path[u]; e != NULL; e = e->next) {
+            ret = tsk_edge_table_add_row(&tables->edges, e->edge.left, e->edge.right,
+                    e->edge.parent, e->edge.child);
+            if (ret < 0) {
+                goto out;
+            }
+        }
+    }
+
+    parent = TSK_NULL;
+    for (l = 0; l < (tsk_id_t) self->num_sites; l++) {
+        ret = tsk_site_table_add_row(&tables->sites, l, "0", 1, NULL, 0);
+        if (ret < 0) {
+            goto out;
+        }
+        for (mln = self->sites.mutations[l]; mln != NULL; mln = mln->next) {
+            if (mln == self->sites.mutations[l]) {
+                parent = TSK_NULL;
+            }
+            ret = tsk_mutation_table_add_row(&tables->mutations, l,
+                    mln->node, parent, states[mln->derived_state], 1,
+                    NULL, 0);
+            if (ret < 0) {
+                goto out;
+            }
+            parent = ret;
+        }
+    }
+
+out:
+    return ret;
+}
+
 
 size_t
 tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self)
