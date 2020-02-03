@@ -183,8 +183,8 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
                 edge->parent, edge->child);
     }
 
-    fprintf(out, "block_allocator = \n");
-    block_allocator_print_state(&self->block_allocator, out);
+    fprintf(out, "tsk_blkalloc = \n");
+    tsk_blkalloc_print_state(&self->tsk_blkalloc, out);
     fprintf(out, "avl_node_heap = \n");
     object_heap_print_state(&self->avl_node_heap, out);
     fprintf(out, "edge_heap = \n");
@@ -229,7 +229,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     if (ret != 0) {
         goto out;
     }
-    ret = block_allocator_alloc(&self->block_allocator,
+    ret = tsk_blkalloc_init(&self->tsk_blkalloc,
             TSI_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
@@ -250,7 +250,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->sites.mutations);
     tsi_safe_free(self->left_index_edges);
     tsi_safe_free(self->right_index_edges);
-    block_allocator_free(&self->block_allocator);
+    tsk_blkalloc_free(&self->tsk_blkalloc);
     object_heap_free(&self->avl_node_heap);
     object_heap_free(&self->edge_heap);
     return 0;
@@ -355,7 +355,7 @@ tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
         }
     }
     assert(self->num_nodes < self->max_nodes);
-    ret = self->num_nodes;
+    ret = (int) self->num_nodes;
     self->time[ret] = time;
     self->node_flags[ret] = flags;
     self->num_nodes++;
@@ -376,7 +376,7 @@ tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site
     assert(site < (site_id_t) self->num_sites);
     assert(site >= 0);
     assert(derived_state == 0 || derived_state == 1);
-    list_node = block_allocator_get(&self->block_allocator, sizeof(mutation_list_node_t));
+    list_node = tsk_blkalloc_get(&self->tsk_blkalloc, sizeof(mutation_list_node_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;

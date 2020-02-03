@@ -87,7 +87,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
-    block_allocator_print_state(&self->traceback_allocator, out);
+    tsk_blkalloc_print_state(&self->traceback_allocator, out);
 
     /* ancestor_matcher_check_state(self); */
     return 0;
@@ -119,7 +119,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    ret = block_allocator_alloc(&self->traceback_allocator, traceback_block_size);
+    ret = tsk_blkalloc_init(&self->traceback_allocator, traceback_block_size);
     if (ret != 0) {
         goto out;
     }
@@ -146,7 +146,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->output.left);
     tsi_safe_free(self->output.right);
     tsi_safe_free(self->output.parent);
-    block_allocator_free(&self->traceback_allocator);
+    tsk_blkalloc_free(&self->traceback_allocator);
     return 0;
 }
 
@@ -210,10 +210,10 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
         T[site_id].node = T[site_id - 1].node;
         T[site_id].recombination_required = T[site_id - 1].recombination_required;
     } else {
-        list_node = block_allocator_get(&self->traceback_allocator,
-                num_likelihood_nodes * sizeof(node_id_t));
-        list_R = block_allocator_get(&self->traceback_allocator,
-                num_likelihood_nodes * sizeof(int8_t));
+        list_node = tsk_blkalloc_get(&self->traceback_allocator,
+                (size_t) num_likelihood_nodes * sizeof(node_id_t));
+        list_R = tsk_blkalloc_get(&self->traceback_allocator,
+                (size_t) num_likelihood_nodes * sizeof(int8_t));
         if (list_node == NULL || list_R == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
@@ -227,7 +227,7 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
             list_R[j] = R[u];
         }
     }
-    self->total_traceback_size += num_likelihood_nodes;
+    self->total_traceback_size += (size_t) num_likelihood_nodes;
 out:
     return ret;
 }
@@ -293,7 +293,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             while (likely(v != NULL_NODE)
                     && likely(v != mutation_node)
                     && likely(path_cache[v] == CACHE_UNSET)) {
-                path_cache[v] = descendant;
+                path_cache[v] = (int8_t) descendant;
                 v = parent[v];
             }
         }
@@ -512,7 +512,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     assert(self->num_nodes <= self->max_nodes);
 
     memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));
-    ret = block_allocator_reset(&self->traceback_allocator);
+    ret = tsk_blkalloc_reset(&self->traceback_allocator);
     if (ret != 0) {
         goto out;
     }
@@ -561,7 +561,7 @@ ancestor_matcher_unset_recombination_required(ancestor_matcher_t *self, site_id_
 
 static int WARN_UNUSED
 ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
-        site_id_t end, allele_t *haplotype, allele_t *match)
+        site_id_t end, allele_t *TSK_UNUSED(haplotype), allele_t *match)
 {
     int ret = 0;
     site_id_t l;
@@ -591,7 +591,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     memset(parent, 0xff, self->num_nodes * sizeof(*parent));
     memset(recombination_required, 0xff,
             self->num_nodes * sizeof(*recombination_required));
-    pos = self->num_sites;
+    pos = (site_id_t) self->num_sites;
 
     while (pos > start) {
         while (out_index >= 0 && out[out_index].left == pos) {
@@ -735,7 +735,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     pos = 0;
     in_index = 0;
     out_index = 0;
-    right = self->num_sites;
+    right = (site_id_t) self->num_sites;
     if (in_index < M && start < in[in_index].left) {
         right = in[in_index].left;
     }
@@ -755,7 +755,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             in_index++;
         }
         left = pos;
-        right = self->num_sites;
+        right = (site_id_t) self->num_sites;
         if (in_index < M) {
             right = TSI_MIN(right, in[in_index].left);
         }
@@ -898,7 +898,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 self->num_likelihood_nodes++;
             }
         }
-        right = self->num_sites;
+        right = (site_id_t) self->num_sites;
         if (in_index < M) {
             right = TSI_MIN(right, in[in_index].left);
         }
@@ -932,9 +932,10 @@ ancestor_matcher_find_path(ancestor_matcher_t *self,
         goto out;
     }
     /* Reset some memory for the next call */
-    memset(self->traceback + start, 0, (end - start) * sizeof(*self->traceback));
+    memset(self->traceback + start, 0, ((size_t) (end - start))
+            * sizeof(*self->traceback));
     memset(self->max_likelihood_node + start, 0xff,
-            (end - start) * sizeof(*self->max_likelihood_node));
+            ((size_t) (end - start)) * sizeof(*self->max_likelihood_node));
 
     *left_output = self->output.left;
     *right_output = self->output.right;
@@ -947,7 +948,7 @@ out:
 double
 ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self)
 {
-    return self->total_traceback_size / ((double) self->num_sites);
+    return (double) self->total_traceback_size / ((double) self->num_sites);
 }
 
 size_t

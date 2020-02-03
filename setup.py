@@ -1,5 +1,9 @@
+import os
+import platform
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext as _build_ext
+
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # Obscure magic required to allow numpy be used as an 'setup_requires'.
@@ -12,17 +16,36 @@ class build_ext(_build_ext):
         self.include_dirs.append(numpy.get_include())
 
 
-d = "lib/"
+libdir = "lib"
+tskroot = os.path.join(libdir, "subprojects", "tskit")
+tskdir = os.path.join(tskroot, "tskit")
+kasdir = os.path.join(libdir, "subprojects", "kastore")
+includes = [libdir, tskroot, tskdir, kasdir]
+
+tsi_source_files = [
+    "ancestor_matcher.c", "ancestor_builder.c", "object_heap.c",
+    "tree_sequence_builder.c", "avl.c"]
+tsk_source_files = ["core.c", "tables.c", "trees.c"]
+kas_source_files = ["kastore.c"]
+
+sources = ["_tsinfermodule.c"] + [
+    os.path.join(libdir, f) for f in tsi_source_files] + [
+    os.path.join(tskdir, f) for f in tsk_source_files] + [
+    os.path.join(kasdir, f) for f in kas_source_files]
+
+libraries = []
+if IS_WINDOWS:
+    # Needed for generating UUIDs in tskit
+    libraries.append("Advapi32")
+
 _tsinfer_module = Extension(
     '_tsinfer',
-    sources=[
-        "_tsinfermodule.c", d + "ancestor_matcher.c",
-        d + "ancestor_builder.c", d + "object_heap.c",
-        d + "tree_sequence_builder.c", d + "block_allocator.c",
-        d + "avl.c"],
+    sources=sources,
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
     extra_compile_args=["-std=c99"],
+    include_dirs=includes,
+    libraries=libraries,
 )
 
 with open("README.rst") as f:
@@ -34,7 +57,7 @@ setup(
     long_description=long_description,
     packages=["tsinfer"],
     author="Jerome Kelleher",
-    author_email="jerome.kelleher@well.ox.ac.uk",
+    author_email="jerome.kelleher@bdi.ox.ac.uk",
     url="http://pypi.python.org/pypi/tsinfer",
     entry_points={
         'console_scripts': [

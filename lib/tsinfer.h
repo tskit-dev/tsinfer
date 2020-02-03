@@ -22,8 +22,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#include "tskit.h"
 #include "err.h"
-#include "block_allocator.h"
+/* #include "tsk_blkalloc.h" */
 #include "object_heap.h"
 #include "avl.h"
 
@@ -121,7 +122,7 @@ typedef struct {
     int flags;
     site_t *sites;
     avl_tree_t time_map;
-    block_allocator_t allocator;
+    tsk_blkalloc_t allocator;
     ancestor_descriptor_t *descriptors;
 } ancestor_builder_t;
 
@@ -152,7 +153,7 @@ typedef struct {
     size_t max_nodes;
     size_t num_nodes;
     size_t num_mutations;
-    block_allocator_t block_allocator;
+    tsk_blkalloc_t tsk_blkalloc;
     object_heap_t avl_node_heap;
     object_heap_t edge_heap;
     /* Dynamic edge indexes used for tree generation and path compression. The
@@ -191,7 +192,7 @@ typedef struct {
     node_id_t *likelihood_nodes_tmp;
     node_id_t *likelihood_nodes;
     node_state_list_t *traceback;
-    block_allocator_t traceback_allocator;
+    tsk_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
     struct {
         site_id_t *left;
