@@ -5,51 +5,101 @@ jobs:
       - image: circleci/python:3.6-stretch
     steps:
       - checkout
+
+      - restore_cache:
+          key: tsinfer-{{ .Branch }}
+
       - run:
           name: Install dependencies and set PATH
           command: |
-              # Need gsl-dev for msprime. When we move to tskit we should 
-              # be able to remove this.
-              sudo apt-get install libcap-dev libnuma-dev libgsl-dev
-              # way to set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
+              sudo apt-get install libgsl-dev libcap-dev libnuma-dev libcunit1-dev \
+                  libconfig-dev ninja-build valgrind clang
+              # set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
               echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
+
+      - run:
+          name: Install development dependencies
+          command: |
+              pip install -r requirements/development.txt --user
+              # Using numa results in lots of 'set_mempolicy: Operation not permitted'
+              # messages because of conflicts with Docker. So we just remove it.
+              pip uninstall numa -y
+              pip install --user meson twine
+
+      - save_cache:
+          key: tsinfer-{{ .Branch }}
+          paths:
+            - "/home/circleci/.local"
+
       - run:
           name: Checkout submodules
           command: |
             git submodule update --init --recursive 
             # Write out the status for debugging purposes. Are we checked out at tags?
             git submodule status --recursive
-      - run:
-          name: Install package and test basic usage.
-          command: |
-              pip install . --user 
-              tsinfer --help
-              pip uninstall tsinfer --yes
+
       - run:
           name: Compile Python
           command: |
               python setup.py build_ext --inplace
-      - run:
-          name: Install development dependencies
-          command: |
-              pip install -r requirements/development.txt --user
-              # On circle using numa results in lots of 'set_mempolicy: Operation not permitted'
-              # messages because of conflicts with Docker. So we just remove it.
-              pip uninstall numa -y
+
       - run:
           name: Lint Python
           command: |
               flake8 --max-line-length 89 tsinfer setup.py tests evaluation.py
       - run:
-          name: Run Python tests 
+          name: Run Python tests and upload coverage
           command: |
               nosetests -v --with-coverage --cover-package tsinfer \
                   --cover-branches --cover-erase --cover-xml \
                   --cover-inclusive tests
-              python3 -m codecov 
+              python3 -m codecov -X gcov -F python
+              rm .coverage
+
+      - run:
+          name: Compile C with gcc
+          command: |
+            CFLAGS=--coverage meson lib/ build-gcc && cd build-gcc && ninja
+
+      - run:
+          name: Compile C with clang
+          command: |
+            CC=clang CXX=clang++ meson lib/ build-clang 
+            ninja -C build-clang 
+
+      - run:
+          name: Run the low-level tests.
+          command: |
+            cd build-gcc
+            ./tests
+
+      - run:
+          name: Run gcov manually, as the one used in codecov doesn't work here.
+          command: |
+            gcov -pb -o ./build/temp.linux*/ _tsinfermodule.c
+            cd build-gcc
+            # TODO should be able to do this with 'find', but it's tricky and opaque.
+            gcov -pb ./tsinfer@sta/ancestor_builder.c.gcno ../lib/ancestor_builder.c
+            gcov -pb ./tsinfer@sta/ancestor_matcher.c.gcno ../lib/ancestor_matcher.c
+            gcov -pb ./tsinfer@sta/tree_sequence_builder.c.gcno ../lib/tree_sequence_builder.c
+            gcov -pb ./tsinfer@sta/object_heap.c.gcno ../lib/object_heap.c 
+            cd ..
+            codecov -X gcov -F C
+
+      - run:
+          name: Valgrind for C tests.
+          command: |
+            valgrind --leak-check=full --error-exitcode=1 ./build-gcc/tests
+
+      - run:
+          name: Run clang-compiled C tests
+          command: |
+            ninja -C build-clang test
+
       - run:
           name: Build the distribution tarball.
           command: python setup.py sdist
+
       - run:
           name: Test the docs will build on RTD minimal environment.
           command: |
@@ -57,6 +107,7 @@ jobs:
                source docs-venv/bin/activate 
                pip install -r requirements/readthedocs.txt
                make -C docs
+
       - run:
           name: Install from the distribution tarball
           command: |

@@ -83,7 +83,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     fprintf(out, "Sites:\n");
     for (j = 0; j < self->num_sites; j++) {
         fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].time,
-                self->sites[j].genotypes);
+                (void *) self->sites[j].genotypes);
     }
     fprintf(out, "Time map:\n");
 
