@@ -24,7 +24,6 @@
 
 #include "tskit.h"
 #include "err.h"
-/* #include "tsk_blkalloc.h" */
 #include "object_heap.h"
 #include "avl.h"
 
@@ -45,18 +44,13 @@
 
 #define TSI_NODE_IS_PC_ANCESTOR ((uint32_t) (1u << 16))
 
-/* TODO change all instances of this to node_id_t */
-typedef int32_t ancestor_id_t;
-typedef int32_t node_id_t;
 typedef int8_t allele_t;
-typedef int32_t site_id_t;
-typedef int32_t mutation_id_t;
 
 typedef struct {
-    site_id_t left;
-    site_id_t right;
-    node_id_t parent;
-    node_id_t child;
+    tsk_id_t left;
+    tsk_id_t right;
+    tsk_id_t parent;
+    tsk_id_t child;
 } edge_t;
 
 typedef struct _indexed_edge_t {
@@ -66,15 +60,15 @@ typedef struct _indexed_edge_t {
 } indexed_edge_t;
 
 typedef struct _node_segment_list_node_t {
-    ancestor_id_t start;
-    ancestor_id_t end;
+    tsk_id_t start;
+    tsk_id_t end;
     struct _node_segment_list_node_t *next;
 } node_segment_list_node_t;
 
 /* TODO rename this struct and see where we're actually using it.*/
 typedef struct _segment_t {
-    ancestor_id_t start;
-    ancestor_id_t end;
+    tsk_id_t start;
+    tsk_id_t end;
     double value;
     struct _segment_t *next;
 } segment_t;
@@ -85,14 +79,14 @@ typedef struct {
 } site_t;
 
 typedef struct {
-    ancestor_id_t *start;
-    ancestor_id_t *end;
+    tsk_id_t *start;
+    tsk_id_t *end;
     size_t num_segments;
     double position;
 } site_state_t;
 
 typedef struct _site_list_t {
-    site_id_t site;
+    tsk_id_t site;
     struct _site_list_t *next;
 } site_list_t;
 
@@ -106,7 +100,7 @@ typedef struct {
 typedef struct {
     double time;
     size_t num_focal_sites;
-    site_id_t *focal_sites;
+    tsk_id_t *focal_sites;
 } ancestor_descriptor_t;
 
 /* Maps all ancestors with a specific time to their genotype patterns  */
@@ -127,14 +121,14 @@ typedef struct {
 } ancestor_builder_t;
 
 typedef struct _mutation_list_node_t {
-    ancestor_id_t node;
+    tsk_id_t node;
     allele_t derived_state;
     struct _mutation_list_node_t *next;
 } mutation_list_node_t;
 
 typedef struct {
     int32_t size;
-    node_id_t *node;
+    tsk_id_t *node;
     int8_t *recombination_required;
 } node_state_list_t;
 
@@ -176,28 +170,28 @@ typedef struct {
     size_t num_sites;
     size_t max_nodes;
     /* The quintuply linked tree */
-    node_id_t *parent;
-    node_id_t *left_child;
-    node_id_t *right_child;
-    node_id_t *left_sib;
-    node_id_t *right_sib;
+    tsk_id_t *parent;
+    tsk_id_t *left_child;
+    tsk_id_t *right_child;
+    tsk_id_t *left_sib;
+    tsk_id_t *right_sib;
     int8_t *likelihood;
     int8_t *likelihood_cache;
     int8_t *path_cache;
     int num_likelihood_nodes;
     /* At each site, record a node with the maximum likelihood. */
-    node_id_t *max_likelihood_node;
+    tsk_id_t *max_likelihood_node;
     /* Used during traceback to map nodes where recombination is required. */
     int8_t *recombination_required;
-    node_id_t *likelihood_nodes_tmp;
-    node_id_t *likelihood_nodes;
+    tsk_id_t *likelihood_nodes_tmp;
+    tsk_id_t *likelihood_nodes;
     node_state_list_t *traceback;
     tsk_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
     struct {
-        site_id_t *left;
-        site_id_t *right;
-        node_id_t *parent;
+        tsk_id_t *left;
+        tsk_id_t *right;
+        tsk_id_t *parent;
         size_t size;
         size_t max_size;
     } output;
@@ -207,20 +201,20 @@ int ancestor_builder_alloc(ancestor_builder_t *self,
         size_t num_samples, size_t num_sites, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
-int ancestor_builder_add_site(ancestor_builder_t *self, site_id_t site,
+int ancestor_builder_add_site(ancestor_builder_t *self, tsk_id_t site,
         double time, allele_t *genotypes);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self,
-        size_t num_focal_sites, site_id_t *focal_sites,
-        site_id_t *start, site_id_t *end, allele_t *haplotype);
+        size_t num_focal_sites, tsk_id_t *focal_sites,
+        tsk_id_t *start, tsk_id_t *end, allele_t *haplotype);
 int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
         tree_sequence_builder_t *tree_sequence_builder, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self,
-        site_id_t start, site_id_t end, allele_t *haplotype,
+        tsk_id_t start, tsk_id_t end, allele_t *haplotype,
         allele_t *matched_haplotype, size_t *num_output_edges,
-        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output);
+        tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
@@ -232,10 +226,10 @@ int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
         double time, uint32_t flags);
 int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
-        node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
-        node_id_t *parent, int flags);
+        tsk_id_t child, size_t num_edges, tsk_id_t *left, tsk_id_t *right,
+        tsk_id_t *parent, int flags);
 int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
-        node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state);
+        tsk_id_t node, size_t num_mutations, tsk_id_t *site, allele_t *derived_state);
 int tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_edges(tree_sequence_builder_t *self);
@@ -245,19 +239,19 @@ size_t tree_sequence_builder_get_num_mutations(tree_sequence_builder_t *self);
 int tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self,
         size_t num_nodes, uint32_t *flags, double *time);
 int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self,
-        size_t num_edges, site_id_t *left, site_id_t *right, node_id_t *parent,
-        node_id_t *child);
+        size_t num_edges, tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent,
+        tsk_id_t *child);
 int tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
-        size_t num_mutations, site_id_t *site, node_id_t *node, allele_t *derived_state);
+        size_t num_mutations, tsk_id_t *site, tsk_id_t *node, allele_t *derived_state);
 
 /* Dump the state */
 int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
         uint32_t *flags, double *time);
 int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        site_id_t *left, site_id_t *right, ancestor_id_t *parent, ancestor_id_t *children);
+        tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
-        mutation_id_t *parent);
+        tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
+        tsk_id_t *parent);
 
 #define tsi_safe_free(pointer) \
 do {\

@@ -138,7 +138,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_add_site(self->builder, (site_id_t) site_id, time,
+    err = ancestor_builder_add_site(self->builder, (tsk_id_t) site_id, time,
             (allele_t *) PyArray_DATA(genotypes_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
@@ -162,7 +162,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     PyArrayObject *focal_sites_array = NULL;
     size_t num_focal_sites;
     size_t num_sites;
-    site_id_t start, end;
+    tsk_id_t start, end;
     npy_intp *shape;
 
     if (AncestorBuilder_check_state(self) != 0) {
@@ -254,7 +254,7 @@ AncestorBuilder_ancestor_descriptors(AncestorBuilder *self)
             goto out;
         }
         memcpy(PyArray_DATA(site_array), descriptor->focal_sites,
-                descriptor->num_focal_sites * sizeof(site_id_t));
+                descriptor->num_focal_sites * sizeof(tsk_id_t));
         py_descriptor = Py_BuildValue("dO", descriptor->time, site_array);
         if (py_descriptor == NULL) {
             Py_DECREF(site_array);
@@ -557,9 +557,9 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_add_path(self->tree_sequence_builder,
             child, num_edges,
-            (site_id_t *) PyArray_DATA(left_array),
-            (site_id_t *) PyArray_DATA(right_array),
-            (node_id_t *) PyArray_DATA(parent_array),
+            (tsk_id_t *) PyArray_DATA(left_array),
+            (tsk_id_t *) PyArray_DATA(right_array),
+            (tsk_id_t *) PyArray_DATA(parent_array),
             flags);
     Py_END_ALLOW_THREADS
 
@@ -632,7 +632,7 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_add_mutations(self->tree_sequence_builder,
             node, num_mutations,
-            (site_id_t *) PyArray_DATA(site_array),
+            (tsk_id_t *) PyArray_DATA(site_array),
             (allele_t *) PyArray_DATA(derived_state_array));
     Py_END_ALLOW_THREADS
 
@@ -796,10 +796,10 @@ TreeSequenceBuilder_restore_edges(TreeSequenceBuilder *self, PyObject *args, PyO
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_restore_edges(self->tree_sequence_builder,
             num_edges,
-            (site_id_t *) PyArray_DATA(left_array),
-            (site_id_t *) PyArray_DATA(right_array),
-            (node_id_t *) PyArray_DATA(parent_array),
-            (node_id_t *) PyArray_DATA(child_array));
+            (tsk_id_t *) PyArray_DATA(left_array),
+            (tsk_id_t *) PyArray_DATA(right_array),
+            (tsk_id_t *) PyArray_DATA(parent_array),
+            (tsk_id_t *) PyArray_DATA(child_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -900,8 +900,8 @@ TreeSequenceBuilder_restore_mutations(TreeSequenceBuilder *self, PyObject *args,
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_restore_mutations(self->tree_sequence_builder,
             num_mutations,
-            (site_id_t *) PyArray_DATA(site_array),
-            (site_id_t *) PyArray_DATA(node_array),
+            (tsk_id_t *) PyArray_DATA(site_array),
+            (tsk_id_t *) PyArray_DATA(node_array),
             (allele_t *) PyArray_DATA(derived_state_array));
     /* NOTE: we are ignoring parent here! */
     Py_END_ALLOW_THREADS
@@ -981,10 +981,10 @@ TreeSequenceBuilder_dump_edges(TreeSequenceBuilder *self)
     }
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_dump_edges(self->tree_sequence_builder,
-        (site_id_t *) PyArray_DATA(left),
-        (site_id_t *) PyArray_DATA(right),
-        (ancestor_id_t *) PyArray_DATA(parent),
-        (ancestor_id_t *) PyArray_DATA(child));
+        (tsk_id_t *) PyArray_DATA(left),
+        (tsk_id_t *) PyArray_DATA(right),
+        (tsk_id_t *) PyArray_DATA(parent),
+        (tsk_id_t *) PyArray_DATA(child));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -1030,10 +1030,10 @@ TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self)
     }
     Py_BEGIN_ALLOW_THREADS
     err = tree_sequence_builder_dump_mutations(self->tree_sequence_builder,
-        (site_id_t *) PyArray_DATA(site),
-        (ancestor_id_t *) PyArray_DATA(node),
+        (tsk_id_t *) PyArray_DATA(site),
+        (tsk_id_t *) PyArray_DATA(node),
         (allele_t *) PyArray_DATA(derived_state),
-        (mutation_id_t *) PyArray_DATA(parent));
+        (tsk_id_t *) PyArray_DATA(parent));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -1294,8 +1294,8 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     npy_intp *shape;
     size_t num_edges;
     int start, end;
-    site_id_t *ret_left, *ret_right;
-    node_id_t *ret_parent;
+    tsk_id_t *ret_left, *ret_right;
+    tsk_id_t *ret_parent;
     PyArrayObject *left = NULL;
     PyArrayObject *right = NULL;
     PyArrayObject *parent = NULL;
@@ -1340,7 +1340,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher_find_path(self->ancestor_matcher,
-            (site_id_t) start, (site_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
+            (tsk_id_t) start, (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
             (allele_t *) PyArray_DATA(match_array),
             &num_edges, &ret_left, &ret_right, &ret_parent);
     Py_END_ALLOW_THREADS

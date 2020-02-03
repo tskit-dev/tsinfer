@@ -16,14 +16,13 @@
 ** You should have received a copy of the GNU General Public License
 ** along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 */
-
-#include "tsinfer.h"
-#include "err.h"
-
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+
+#include "tsinfer.h"
+#include "err.h"
 
 #include "avl.h"
 
@@ -119,11 +118,11 @@ tree_sequence_builder_check_index_integrity(tree_sequence_builder_t *self)
 static void
 tree_sequence_builder_check_state(tree_sequence_builder_t *self)
 {
-    node_id_t child;
+    tsk_id_t child;
     indexed_edge_t *e;
     size_t total_edges = 0;
 
-    for (child = 0; child < (node_id_t) self->num_nodes; child++) {
+    for (child = 0; child < (tsk_id_t) self->num_nodes; child++) {
         for (e = self->path[child]; e != NULL; e = e->next) {
             total_edges++;
             assert(e->edge.child == child);
@@ -280,7 +279,7 @@ tree_sequence_builder_free_avl_node(tree_sequence_builder_t *self, avl_node_t *n
 
 static inline indexed_edge_t * WARN_UNUSED
 tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
-        site_id_t left, site_id_t right, node_id_t parent, node_id_t child,
+        tsk_id_t left, tsk_id_t right, tsk_id_t parent, tsk_id_t child,
         indexed_edge_t *next)
 {
     indexed_edge_t *ret = NULL;
@@ -290,8 +289,8 @@ tree_sequence_builder_alloc_edge(tree_sequence_builder_t *self,
             goto out;
         }
     }
-    assert(parent < (node_id_t) self->num_nodes);
-    assert(child < (node_id_t) self->num_nodes);
+    assert(parent < (tsk_id_t) self->num_nodes);
+    assert(child < (tsk_id_t) self->num_nodes);
     assert(self->time[parent] > self->time[child]);
     ret = (indexed_edge_t *) object_heap_alloc_object(&self->edge_heap);
     ret->edge.left = left;
@@ -342,7 +341,7 @@ out:
     return ret;
 }
 
-node_id_t WARN_UNUSED
+tsk_id_t WARN_UNUSED
 tree_sequence_builder_add_node(tree_sequence_builder_t *self, double time,
         uint32_t flags)
 {
@@ -365,15 +364,15 @@ out:
 
 
 static int WARN_UNUSED
-tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, site_id_t site,
-        node_id_t node, allele_t derived_state)
+tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, tsk_id_t site,
+        tsk_id_t node, allele_t derived_state)
 {
     int ret = 0;
     mutation_list_node_t *list_node, *tail;
 
-    assert(node < (node_id_t) self->num_nodes);
+    assert(node < (tsk_id_t) self->num_nodes);
     assert(node >= 0);
-    assert(site < (site_id_t) self->num_sites);
+    assert(site < (tsk_id_t) self->num_sites);
     assert(site >= 0);
     assert(derived_state == 0 || derived_state == 1);
     list_node = tsk_blkalloc_get(&self->tsk_blkalloc, sizeof(mutation_list_node_t));
@@ -456,7 +455,7 @@ out:
 }
 
 static int WARN_UNUSED
-tree_sequence_builder_index_edges(tree_sequence_builder_t *self, node_id_t node)
+tree_sequence_builder_index_edges(tree_sequence_builder_t *self, tsk_id_t node)
 {
     int ret = 0;
     indexed_edge_t *e;
@@ -522,7 +521,7 @@ typedef struct {
 
 
 static void
-tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node)
+tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, tsk_id_t node)
 {
     indexed_edge_t *x, *prev, *next;
 
@@ -547,7 +546,7 @@ tree_sequence_builder_squash_edges(tree_sequence_builder_t *self, node_id_t node
  * edges must be re-indexed. Some edges in the input chain may already be unindexed,
  * which are marked with a child value of NULL_NODE. */
 static int WARN_UNUSED
-tree_sequence_builder_squash_indexed_edges(tree_sequence_builder_t *self, node_id_t node)
+tree_sequence_builder_squash_indexed_edges(tree_sequence_builder_t *self, tsk_id_t node)
 {
     int ret = 0;
     indexed_edge_t *x, *prev, *next;
@@ -603,12 +602,12 @@ tree_sequence_builder_make_pc_node(tree_sequence_builder_t *self,
         edge_map_t *mapped, size_t num_mapped)
 {
     int ret = 0;
-    node_id_t pc_node;
+    tsk_id_t pc_node;
     indexed_edge_t *edge;
     indexed_edge_t *head = NULL;
     indexed_edge_t *prev = NULL;
     double min_parent_time;
-    node_id_t mapped_child = mapped[0].dest->edge.child;
+    tsk_id_t mapped_child = mapped[0].dest->edge.child;
     double mapped_child_time = self->time[mapped_child];
     size_t j;
 
@@ -672,7 +671,7 @@ out:
 }
 
 static int
-tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t child)
+tree_sequence_builder_compress_path(tree_sequence_builder_t *self, tsk_id_t child)
 {
     int ret = 0;
     indexed_edge_t *c_edge, *match_edge;
@@ -683,7 +682,7 @@ tree_sequence_builder_compress_path(tree_sequence_builder_t *self, node_id_t chi
     size_t num_contigs = 0;
     size_t num_mapped = 0;
     size_t j, k, contig_size;
-    node_id_t mapped_child;
+    tsk_id_t mapped_child;
 
     for (c_edge = self->path[child]; c_edge != NULL; c_edge = c_edge->next) {
         path_length++;
@@ -742,8 +741,8 @@ out:
 
 int
 tree_sequence_builder_add_path(tree_sequence_builder_t *self,
-        node_id_t child, size_t num_edges, site_id_t *left, site_id_t *right,
-        node_id_t *parent, int flags)
+        tsk_id_t child, size_t num_edges, tsk_id_t *left, tsk_id_t *right,
+        tsk_id_t *parent, int flags)
 {
     int ret = 0;
     indexed_edge_t *head = NULL;
@@ -752,7 +751,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     double child_time;
     int j;
 
-    if (child >= (node_id_t) self->num_nodes) {
+    if (child >= (tsk_id_t) self->num_nodes) {
         ret = TSI_ERR_GENERIC;
         goto out;
     }
@@ -761,7 +760,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     /* Edges must be provided in reverese order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
 
-        if (parent[j] >= (node_id_t) self->num_nodes) {
+        if (parent[j] >= (tsk_id_t) self->num_nodes) {
             ret = TSI_ERR_GENERIC;
             goto out;
         }
@@ -803,7 +802,7 @@ out:
 
 int
 tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
-        node_id_t node, size_t num_mutations, site_id_t *site, allele_t *derived_state)
+        tsk_id_t node, size_t num_mutations, tsk_id_t *site, allele_t *derived_state)
 {
     int ret = 0;
     size_t j;
@@ -875,7 +874,7 @@ out:
 
 int
 tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_edges,
-        site_id_t *left, site_id_t *right, node_id_t *parent, node_id_t *child)
+        tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *child)
 {
     int ret = -1;
     size_t j;
@@ -915,7 +914,7 @@ out:
 
 int
 tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
-        size_t num_mutations, site_id_t *site, node_id_t *node, allele_t *derived_state)
+        size_t num_mutations, tsk_id_t *site, tsk_id_t *node, allele_t *derived_state)
 {
     int ret = 0;
     size_t j = 0;
@@ -946,7 +945,7 @@ tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self, uint32_t *flags,
 
 int
 tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        node_id_t *left, node_id_t *right, ancestor_id_t *parent, ancestor_id_t *child)
+        tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *child)
 {
     int ret = 0;
     size_t j, u;
@@ -969,16 +968,16 @@ tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 
 int
 tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        site_id_t *site, ancestor_id_t *node, allele_t *derived_state,
-        mutation_id_t *parent)
+        tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
+        tsk_id_t *parent)
 {
     int ret = 0;
-    site_id_t l;
+    tsk_id_t l;
     mutation_list_node_t *u;
-    mutation_id_t p;
-    mutation_id_t j = 0;
+    tsk_id_t p;
+    tsk_id_t j = 0;
 
-    for (l = 0; l < (site_id_t) self->num_sites; l++) {
+    for (l = 0; l < (tsk_id_t) self->num_sites; l++) {
         p = j;
         for (u = self->sites.mutations[l]; u != NULL; u = u->next) {
             site[j] = l;
