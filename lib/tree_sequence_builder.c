@@ -152,6 +152,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_nodes = %d\n", (int) self->num_nodes);
     fprintf(out, "num_edges = %d\n", (int) tree_sequence_builder_get_num_edges(self));
+    fprintf(out, "num_frozen_edges = %d\n", (int) self->num_edges);
     fprintf(out, "max_nodes = %d\n", (int) self->max_nodes);
     fprintf(out, "nodes_chunk_size = %d\n", (int) self->nodes_chunk_size);
     fprintf(out, "edges_chunk_size = %d\n", (int) self->edges_chunk_size);
@@ -761,11 +762,11 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     for (j = (int) num_edges - 1; j >= 0; j--) {
 
         if (parent[j] >= (tsk_id_t) self->num_nodes) {
-            ret = TSI_ERR_GENERIC;
+            ret = TSI_ERR_BAD_PATH_PARENT;
             goto out;
         }
         if (self->time[parent[j]] <= child_time) {
-            ret = TSI_ERR_GENERIC;
+            ret = TSI_ERR_BAD_PATH_TIME;
             goto out;
         }
         e = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
@@ -820,6 +821,9 @@ out:
 /* Freeze the tree traversal indexes from the state of the dynamic AVL
  * tree based indexes. This is done because it is *much* more efficient
  * to get the edges sequentially than to find the randomly around memory
+ *
+ * This also means that edges and mutations added will have no effect
+ * on matching *until* freeze_indexes is called.
  */
 int
 tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self)
@@ -996,7 +1000,7 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
 
 int
 tree_sequence_builder_dump(tree_sequence_builder_t *self,
-        tsk_table_collection_t *tables, tsk_flags_t TSK_UNUSED(options))
+        tsk_table_collection_t *tables, tsk_flags_t options)
 {
     int ret = 0;
     indexed_edge_t *e;
@@ -1004,8 +1008,14 @@ tree_sequence_builder_dump(tree_sequence_builder_t *self,
     mutation_list_node_t *mln;
     const char *states[] = {"0", "1"};
 
-    tsk_table_collection_clear(tables);
-
+    if (options & TSK_NO_INIT) {
+        tsk_table_collection_clear(tables);
+    } else {
+        ret = tsk_table_collection_init(tables, 0);
+        if (ret != 0) {
+            goto out;
+        }
+    }
     tables->sequence_length = (double) self->num_sites;
 
     for (u = 0; u < (tsk_id_t) self->num_nodes; u++) {
@@ -1042,11 +1052,10 @@ tree_sequence_builder_dump(tree_sequence_builder_t *self,
             parent = ret;
         }
     }
-
+    ret = 0;
 out:
     return ret;
 }
-
 
 size_t
 tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self)
