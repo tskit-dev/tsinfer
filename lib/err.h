@@ -6,6 +6,8 @@
 #define TSI_ERR_NONCONTIGUOUS_EDGES                                 -3
 #define TSI_ERR_UNSORTED_EDGES                                      -4
 #define TSI_ERR_ASSERTION_FAILURE                                   -5
+#define TSI_ERR_BAD_PATH_PARENT                                     -6
+#define TSI_ERR_BAD_PATH_TIME                                       -7
 
 #ifdef __GNUC__
     #define WARN_UNUSED __attribute__ ((warn_unused_result))

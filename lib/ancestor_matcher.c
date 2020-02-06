@@ -26,8 +26,8 @@
 #include <stdbool.h>
 
 static inline bool
-is_nonzero_root(const node_id_t u, const node_id_t *restrict parent,
-        const node_id_t *restrict left_child)
+is_nonzero_root(const tsk_id_t u, const tsk_id_t *restrict parent,
+        const tsk_id_t *restrict left_child)
 {
     return u != 0 && parent[u] == NULL_NODE && left_child[u] == NULL_NODE;
 }
@@ -37,7 +37,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
 {
     int num_likelihoods;
     int j;
-    node_id_t u;
+    tsk_id_t u;
 
     /* Check the properties of the likelihood map */
     for (j = 0; j < self->num_likelihood_nodes; j++) {
@@ -46,7 +46,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
     }
     /* Make sure that there are no other non null likelihoods in the array */
     num_likelihoods = 0;
-    for (u = 0; u < (node_id_t) self->num_nodes; u++) {
+    for (u = 0; u < (tsk_id_t) self->num_nodes; u++) {
         if (self->likelihood[u] >= 0) {
             num_likelihoods++;
         }
@@ -61,7 +61,7 @@ int
 ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
     int j, k;
-    node_id_t u;
+    tsk_id_t u;
 
     fprintf(out, "Ancestor matcher state\n");
     fprintf(out, "tree = \n");
@@ -109,10 +109,10 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->num_sites = tree_sequence_builder->num_sites;
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->traceback = calloc(self->num_sites, sizeof(node_state_list_t));
-    self->max_likelihood_node = malloc(self->num_sites * sizeof(node_id_t));
-    self->output.left = malloc(self->output.max_size * sizeof(site_id_t));
-    self->output.right = malloc(self->output.max_size * sizeof(site_id_t));
-    self->output.parent = malloc(self->output.max_size * sizeof(node_id_t));
+    self->max_likelihood_node = malloc(self->num_sites * sizeof(tsk_id_t));
+    self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
+    self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
+    self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
     if (self->traceback == NULL || self->max_likelihood_node == NULL
             || self->output.left == NULL || self->output.right == NULL
             || self->output.parent == NULL) {
@@ -151,12 +151,12 @@ ancestor_matcher_free(ancestor_matcher_t *self)
 }
 
 static int
-ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const node_id_t node,
+ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const tsk_id_t node,
         int8_t *restrict L)
 {
     /* Remove the specified node from the list of nodes */
     int j, k;
-    node_id_t *restrict L_nodes = self->likelihood_nodes;
+    tsk_id_t *restrict L_nodes = self->likelihood_nodes;
 
     k = 0;
     for (j = 0; j < self->num_likelihood_nodes; j++) {
@@ -173,16 +173,16 @@ ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const node_id_t nod
 
 /* Store the recombination_required state in the traceback */
 static int WARN_UNUSED
-ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_id)
+ancestor_matcher_store_traceback(ancestor_matcher_t *self, const tsk_id_t site_id)
 {
     int ret = 0;
-    node_id_t u;
+    tsk_id_t u;
     int j;
     int8_t *restrict list_R;
-    node_id_t *restrict list_node;
+    tsk_id_t *restrict list_node;
     node_state_list_t *restrict list;
     node_state_list_t *restrict T = self->traceback;
-    const node_id_t *restrict nodes = self->likelihood_nodes;
+    const tsk_id_t *restrict nodes = self->likelihood_nodes;
     const int8_t *restrict R = self->recombination_required;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
     bool match;
@@ -211,7 +211,7 @@ ancestor_matcher_store_traceback(ancestor_matcher_t *self, const site_id_t site_
         T[site_id].recombination_required = T[site_id - 1].recombination_required;
     } else {
         list_node = tsk_blkalloc_get(&self->traceback_allocator,
-                (size_t) num_likelihood_nodes * sizeof(node_id_t));
+                (size_t) num_likelihood_nodes * sizeof(tsk_id_t));
         list_R = tsk_blkalloc_get(&self->traceback_allocator,
                 (size_t) num_likelihood_nodes * sizeof(int8_t));
         if (list_node == NULL || list_R == NULL) {
@@ -236,10 +236,10 @@ out:
  * path from u to root. Returns false in all other situations, including
  * error conditions. */
 static inline bool
-is_descendant(const node_id_t u, const node_id_t v, const node_id_t *restrict parent)
+is_descendant(const tsk_id_t u, const tsk_id_t v, const tsk_id_t *restrict parent)
 {
     bool ret = false;
-    node_id_t w = u;
+    tsk_id_t w = u;
 
     if (v != NULL_NODE) {
         while (w != NULL_NODE && w != v) {
@@ -252,16 +252,16 @@ is_descendant(const node_id_t u, const node_id_t v, const node_id_t *restrict pa
 
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
-        const site_id_t site, const node_id_t mutation_node, const char state,
-        const node_id_t *restrict parent, int8_t *restrict L)
+        const tsk_id_t site, const tsk_id_t mutation_node, const char state,
+        const tsk_id_t *restrict parent, int8_t *restrict L)
 {
     int ret = 0;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
-    const node_id_t *restrict L_nodes = self->likelihood_nodes;
+    const tsk_id_t *restrict L_nodes = self->likelihood_nodes;
     int8_t *restrict path_cache = self->path_cache;
     int8_t *restrict recombination_required = self->recombination_required;
     int j, descendant;
-    node_id_t u, v, max_L_node;
+    tsk_id_t u, v, max_L_node;
     int8_t max_L;
 
     max_L = -1;
@@ -334,14 +334,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
 static int WARN_UNUSED
 ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
-        const node_id_t *restrict parent, int8_t *restrict L, int8_t *restrict L_cache)
+        const tsk_id_t *restrict parent, int8_t *restrict L, int8_t *restrict L_cache)
 {
     int ret = 0;
     int8_t L_p;
-    node_id_t u, v, p;
-    node_id_t *restrict cached_paths = self->likelihood_nodes_tmp;
+    tsk_id_t u, v, p;
+    tsk_id_t *restrict cached_paths = self->likelihood_nodes_tmp;
     const int old_num_likelihood_nodes = self->num_likelihood_nodes;
-    node_id_t *restrict L_nodes = self->likelihood_nodes;
+    tsk_id_t *restrict L_nodes = self->likelihood_nodes;
     int j, num_cached_paths, num_likelihood_nodes;
 
     num_cached_paths = 0;
@@ -394,13 +394,13 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
 }
 
 static int
-ancestor_matcher_update_site_state(ancestor_matcher_t *self, const site_id_t site,
-        const allele_t state, node_id_t *restrict parent, int8_t *restrict L,
+ancestor_matcher_update_site_state(ancestor_matcher_t *self, const tsk_id_t site,
+        const allele_t state, tsk_id_t *restrict parent, int8_t *restrict L,
         int8_t *restrict L_cache)
 {
     int ret = 0;
-    node_id_t mutation_node = NULL_NODE;
-    node_id_t u;
+    tsk_id_t mutation_node = NULL_NODE;
+    tsk_id_t u;
 
     assert(self->num_likelihood_nodes > 0);
 
@@ -443,11 +443,11 @@ out:
 static void
 ancestor_matcher_reset_tree(ancestor_matcher_t *self)
 {
-    memset(self->parent, 0xff, self->num_nodes * sizeof(node_id_t));
-    memset(self->left_child, 0xff, self->num_nodes * sizeof(node_id_t));
-    memset(self->right_child, 0xff, self->num_nodes * sizeof(node_id_t));
-    memset(self->left_sib, 0xff, self->num_nodes * sizeof(node_id_t));
-    memset(self->right_sib, 0xff, self->num_nodes * sizeof(node_id_t));
+    memset(self->parent, 0xff, self->num_nodes * sizeof(tsk_id_t));
+    memset(self->left_child, 0xff, self->num_nodes * sizeof(tsk_id_t));
+    memset(self->right_child, 0xff, self->num_nodes * sizeof(tsk_id_t));
+    memset(self->left_sib, 0xff, self->num_nodes * sizeof(tsk_id_t));
+    memset(self->right_sib, 0xff, self->num_nodes * sizeof(tsk_id_t));
     memset(self->recombination_required, 0xff, self->num_nodes * sizeof(int8_t));
 }
 
@@ -469,16 +469,16 @@ ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
     tsi_safe_free(self->path_cache);
 
     assert(self->max_nodes > 0);
-    self->parent = malloc(self->max_nodes * sizeof(node_id_t));
-    self->left_child = malloc(self->max_nodes * sizeof(node_id_t));
-    self->right_child = malloc(self->max_nodes * sizeof(node_id_t));
-    self->left_sib = malloc(self->max_nodes * sizeof(node_id_t));
-    self->right_sib = malloc(self->max_nodes * sizeof(node_id_t));
+    self->parent = malloc(self->max_nodes * sizeof(tsk_id_t));
+    self->left_child = malloc(self->max_nodes * sizeof(tsk_id_t));
+    self->right_child = malloc(self->max_nodes * sizeof(tsk_id_t));
+    self->left_sib = malloc(self->max_nodes * sizeof(tsk_id_t));
+    self->right_sib = malloc(self->max_nodes * sizeof(tsk_id_t));
     self->recombination_required = malloc(self->max_nodes * sizeof(int8_t));
     self->likelihood = malloc(self->max_nodes * sizeof(int8_t));
     self->likelihood_cache = malloc(self->max_nodes * sizeof(int8_t));
-    self->likelihood_nodes = malloc(self->max_nodes * sizeof(node_id_t));
-    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(node_id_t));
+    self->likelihood_nodes = malloc(self->max_nodes * sizeof(tsk_id_t));
+    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(tsk_id_t));
     self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
 
     if (self->parent == NULL
@@ -526,12 +526,12 @@ out:
 /* Resets the recombination_required array from the traceback at the specified site.
  */
 static inline void
-ancestor_matcher_set_recombination_required(ancestor_matcher_t *self, site_id_t site,
+ancestor_matcher_set_recombination_required(ancestor_matcher_t *self, tsk_id_t site,
         int8_t *restrict recombination_required)
 {
     int j;
     const int8_t *restrict R = self->traceback[site].recombination_required;
-    const node_id_t *restrict node = self->traceback[site].node;
+    const tsk_id_t *restrict node = self->traceback[site].node;
     const int size = self->traceback[site].size;
 
     /* We always set recombination_required for node 0 to false for the cases
@@ -546,11 +546,11 @@ ancestor_matcher_set_recombination_required(ancestor_matcher_t *self, site_id_t 
 /* Unsets the likelihood array from the traceback at the specified site.
  */
 static inline void
-ancestor_matcher_unset_recombination_required(ancestor_matcher_t *self, site_id_t site,
+ancestor_matcher_unset_recombination_required(ancestor_matcher_t *self, tsk_id_t site,
         int8_t *restrict recombination_required)
 {
     int j;
-    const node_id_t *restrict node = self->traceback[site].node;
+    const tsk_id_t *restrict node = self->traceback[site].node;
     const int size = self->traceback[site].size;
 
     for (j = 0; j < size; j++) {
@@ -560,16 +560,16 @@ ancestor_matcher_unset_recombination_required(ancestor_matcher_t *self, site_id_
 }
 
 static int WARN_UNUSED
-ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
-        site_id_t end, allele_t *TSK_UNUSED(haplotype), allele_t *match)
+ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start,
+        tsk_id_t end, allele_t *TSK_UNUSED(haplotype), allele_t *match)
 {
     int ret = 0;
-    site_id_t l;
+    tsk_id_t l;
     edge_t edge;
-    node_id_t u, max_likelihood_node;
-    site_id_t left, right, pos;
+    tsk_id_t u, max_likelihood_node;
+    tsk_id_t left, right, pos;
     mutation_list_node_t *mut_list;
-    node_id_t *restrict parent = self->parent;
+    tsk_id_t *restrict parent = self->parent;
     int8_t *restrict recombination_required = self->recombination_required;
     const edge_t *restrict in = self->tree_sequence_builder->right_index_edges;
     const edge_t *restrict out = self->tree_sequence_builder->left_index_edges;
@@ -591,7 +591,7 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
     memset(parent, 0xff, self->num_nodes * sizeof(*parent));
     memset(recombination_required, 0xff,
             self->num_nodes * sizeof(*recombination_required));
-    pos = (site_id_t) self->num_sites;
+    pos = (tsk_id_t) self->num_sites;
 
     while (pos > start) {
         while (out_index >= 0 && out[out_index].left == pos) {
@@ -607,16 +607,16 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
         right = pos;
         left = 0;
         if (out_index >= 0) {
-            left = TSI_MAX(left, out[out_index].left);
+            left = TSK_MAX(left, out[out_index].left);
         }
         if (in_index >= 0) {
-            left = TSI_MAX(left, in[in_index].right);
+            left = TSK_MAX(left, in[in_index].right);
         }
         pos = left;
 
         /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
-        for (l = TSI_MIN(right, end) - 1; l >= (int) TSI_MAX(left, start); l--) {
+        for (l = TSK_MIN(right, end) - 1; l >= (int) TSK_MAX(left, start); l--) {
             match[l] = 0;
             u = self->output.parent[self->output.size];
             /* Set the state of the matched haplotype */
@@ -658,14 +658,14 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, site_id_t start,
 }
 
 static inline void
-remove_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_child,
-        node_id_t *restrict right_child, node_id_t *restrict left_sib,
-        node_id_t *restrict right_sib)
+remove_edge(edge_t edge, tsk_id_t *restrict parent, tsk_id_t *restrict left_child,
+        tsk_id_t *restrict right_child, tsk_id_t *restrict left_sib,
+        tsk_id_t *restrict right_sib)
 {
-    const node_id_t p = edge.parent;
-    const node_id_t c = edge.child;
-    const node_id_t lsib = left_sib[c];
-    const node_id_t rsib = right_sib[c];
+    const tsk_id_t p = edge.parent;
+    const tsk_id_t c = edge.child;
+    const tsk_id_t lsib = left_sib[c];
+    const tsk_id_t rsib = right_sib[c];
 
     if (lsib == NULL_NODE) {
         left_child[p] = rsib;
@@ -683,13 +683,13 @@ remove_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
 }
 
 static inline void
-insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_child,
-        node_id_t *restrict right_child, node_id_t *restrict left_sib,
-        node_id_t *restrict right_sib)
+insert_edge(edge_t edge, tsk_id_t *restrict parent, tsk_id_t *restrict left_child,
+        tsk_id_t *restrict right_child, tsk_id_t *restrict left_sib,
+        tsk_id_t *restrict right_sib)
 {
-    const node_id_t p = edge.parent;
-    const node_id_t c = edge.child;
-    const node_id_t u = right_child[p];
+    const tsk_id_t p = edge.parent;
+    const tsk_id_t c = edge.child;
+    const tsk_id_t u = right_child[p];
 
     parent[c] = p;
     if (u == NULL_NODE) {
@@ -705,13 +705,13 @@ insert_edge(edge_t edge, node_id_t *restrict parent, node_id_t *restrict left_ch
 }
 
 static int
-ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
-        site_id_t end, allele_t *haplotype)
+ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
+        tsk_id_t end, allele_t *haplotype)
 {
     int ret = 0;
-    site_id_t site;
+    tsk_id_t site;
     edge_t edge;
-    node_id_t u, root, last_root;
+    tsk_id_t u, root, last_root;
     int8_t L_child = 0;
     /* Use the restrict keyword here to try to improve performance by avoiding
      * unecessary loads. We must be very careful to to ensure that all references
@@ -719,15 +719,15 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
      */
     int8_t *restrict L = self->likelihood;
     int8_t *restrict L_cache = self->likelihood_cache;
-    node_id_t *restrict parent = self->parent;
-    node_id_t *restrict left_child = self->left_child;
-    node_id_t *restrict right_child = self->right_child;
-    node_id_t *restrict left_sib = self->left_sib;
-    node_id_t *restrict right_sib = self->right_sib;
-    site_id_t pos, left, right;
+    tsk_id_t *restrict parent = self->parent;
+    tsk_id_t *restrict left_child = self->left_child;
+    tsk_id_t *restrict right_child = self->right_child;
+    tsk_id_t *restrict left_sib = self->left_sib;
+    tsk_id_t *restrict right_sib = self->right_sib;
+    tsk_id_t pos, left, right;
     const edge_t *restrict in = self->tree_sequence_builder->left_index_edges;
     const edge_t *restrict out = self->tree_sequence_builder->right_index_edges;
-    const int_fast32_t M = (site_id_t) self->tree_sequence_builder->num_edges;
+    const int_fast32_t M = (tsk_id_t) self->tree_sequence_builder->num_edges;
     int_fast32_t in_index, out_index, l, remove_start;
 
     /* Load the tree for start */
@@ -735,7 +735,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     pos = 0;
     in_index = 0;
     out_index = 0;
-    right = (site_id_t) self->num_sites;
+    right = (tsk_id_t) self->num_sites;
     if (in_index < M && start < in[in_index].left) {
         right = in[in_index].left;
     }
@@ -755,12 +755,12 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
             in_index++;
         }
         left = pos;
-        right = (site_id_t) self->num_sites;
+        right = (tsk_id_t) self->num_sites;
         if (in_index < M) {
-            right = TSI_MIN(right, in[in_index].left);
+            right = TSK_MIN(right, in[in_index].left);
         }
         if (out_index < M) {
-            right = TSI_MIN(right, out[out_index].right);
+            right = TSK_MIN(right, out[out_index].right);
         }
         pos = right;
     }
@@ -768,7 +768,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
     /* Insert the initial likelihoods. All non-zero roots are marked with a
      * special value so we can identify them when the enter the tree */
     L_cache[0] = CACHE_UNSET;
-    for (u = 0; u < (node_id_t) self->num_nodes; u++) {
+    for (u = 0; u < (tsk_id_t) self->num_nodes; u++) {
         L_cache[u] = CACHE_UNSET;
         if (parent[u] != NULL_NODE) {
             L[u] = NULL_LIKELIHOOD;
@@ -831,7 +831,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
         if (self->flags & TSI_EXTENDED_CHECKS) {
             ancestor_matcher_check_state(self);
         }
-        for (site = TSI_MAX(left, start); site < TSI_MIN(right, end); site++) {
+        for (site = TSK_MAX(left, start); site < TSK_MIN(right, end); site++) {
             ret = ancestor_matcher_update_site_state(self, site, haplotype[site],
                     parent, L, L_cache);
             if (ret != 0) {
@@ -898,12 +898,12 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, site_id_t start,
                 self->num_likelihood_nodes++;
             }
         }
-        right = (site_id_t) self->num_sites;
+        right = (tsk_id_t) self->num_sites;
         if (in_index < M) {
-            right = TSI_MIN(right, in[in_index].left);
+            right = TSK_MIN(right, in[in_index].left);
         }
         if (out_index < M) {
-            right = TSI_MIN(right, out[out_index].right);
+            right = TSK_MIN(right, out[out_index].right);
         }
     }
 out:
@@ -912,9 +912,9 @@ out:
 
 int
 ancestor_matcher_find_path(ancestor_matcher_t *self,
-        site_id_t start, site_id_t end, allele_t *haplotype,
+        tsk_id_t start, tsk_id_t end, allele_t *haplotype,
         allele_t *matched_haplotype, size_t *num_output_edges,
-        site_id_t **left_output, site_id_t **right_output, node_id_t **parent_output)
+        tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output)
 {
     int ret = 0;
 
