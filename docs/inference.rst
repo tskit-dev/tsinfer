@@ -23,10 +23,13 @@ Data requirements
 Input haplotype data for tskit must satisfy the following requirements:
 
 - Data must be *phased*.
-- For each site used for inference we must know the *ancestral state*. Note that this is
-  not necessarily the same as the REF column from VCF, and ancestral
+- For each site used for inference we must know the *ancestral state*. Note that
+  this is not necessarily the same as the REF column from VCF, and ancestral
   states must be computed using some other method.
 - Only biallelic sites can be used for inference.
+- Missing data can be included in the haplotypes using the value
+  ``tskit.MISSING_DATA`` (-1). The inferred tree sequence will have values
+  imputed for the haplotypes at these sites.
 
 
 .. _sec_inference_data_model:
@@ -206,25 +209,7 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    (excluding by default any sites that are fixed or singletons)
    we then place mutations on the inferred trees in order to
    represent the information at these sites. This is done using
-   :meth:`tskit.Tree.map_mutations`. Edges in the inferred tree sequence
-   usually extend from one inference site up
-   to (but not including) another, covering the non-inference sites
-   between them. There are two exceptions to this, which allow us to
-   encompass any extra non-inference sites that might lie to the left
-   or right of the set of edges above a particular node:
-
-   a. For the set of edges connecting an *ancestor* to its parent ("internal edges") the
-      leftmost edge is extended leftwards. It is extended to include the site immediately
-      to the right of the previous inference site, or position 0 if there is no previous
-      inference site. The rightmost edge in the set is extended rightwards up to the next
-      inference site (or to the end of the sequence).
-   b. For the set of edges connecting a *sample* to its parent ("sample edges") the
-      leftmost edge is extended leftwards to encompass the leftmost non-missing site for
-      this sample, or genomic position 0 if it is the first site. Similarly, the
-      rightmost edge is extended so that it terminates either one site to the right of
-      the rightmost non-missing site, or to the end of the sequence if the rightmost
-      non-missing site is the last in the tree sequence.
-
+   :meth:`tskit.Tree.map_mutations`.
 
 3. Remove ancestral paths that do not lead to any of the samples by
    :meth:`simplifying <tskit.TreeSequence.simplify>`
