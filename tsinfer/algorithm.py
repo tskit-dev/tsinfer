@@ -210,12 +210,7 @@ class AncestorBuilder(object):
                     ones = sum(g_l[u] == 1 for u in S)
                     zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", l, ones, zeros, sep="\t")
-                    if ones >= zeros:  # Should probably be "ones > zeros" (see below)
-                        # Since this site should be older, this is a conflict
-                        # We just take the majority rule. If equal, we assume that
-                        # the derived variant is more likely (this is probably wrong)
-                        # (we could possibly do something more sophisticated for ancient
-                        #  samples by taking into account the sample age)
+                    if ones >= zeros:
                         a[l] = 1
         # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
