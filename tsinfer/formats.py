@@ -1236,9 +1236,10 @@ class SampleData(DataContainer):
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
         :param float time: The time of occurence (pastwards) of the mutation to the
-            derived state at this site. If not specified or None, the frequency of the
+            derived state at this site. If not specified or None, the count of the
             derived alleles (i.e., the number of non-zero values in the genotypes) is
-            used instead. For biallelic sites this should provide a reasonable estimate
+            used instead, with missing values contributing 0.5 to the count. For
+            biallelic sites this count should provide a reasonable estimate
             of the relative time, as used to order ancestral haplotypes during the
             inference process. For sites not used in inference, such as singletons or
             sites with more than two alleles, the value is unused. Defaults to None.
@@ -1283,6 +1284,10 @@ class SampleData(DataContainer):
         if genotypes.shape != (self.num_samples,):
             raise ValueError(
                 "Must have {} (num_samples) genotypes.".format(self.num_samples))
+        if np.any(genotypes[non_missing] < 0):
+            raise ValueError("Non-missing values for genotypes cannot be negative")
+        if np.any(genotypes[non_missing] >= n_alleles):
+            raise ValueError("Non-missing values for genotypes must be < num alleles")
         if position < 0:
             raise ValueError("Site position must be > 0")
         if self.sequence_length > 0 and position >= self.sequence_length:
