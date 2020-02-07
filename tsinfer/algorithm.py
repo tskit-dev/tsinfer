@@ -147,10 +147,6 @@ class AncestorBuilder(object):
         leftwards or rightwards), augment the haplotype array a with the inferred sites
         Together with `make_ancestor`, which calls this function, these describe the main
         algorithm as implemented in Fig S2 of the preprint, with the buffer.
-
-        TODO - account for tskit.MISSING_DATA in samples (e.g. when encountered in
-        the remove_buffer we should keep the sample in the buffer until we know that
-        there is a conflict, rather than clear the remove buffer on every iteration)
         """
         focal_time = self.sites[focal_site].time
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
@@ -555,10 +551,6 @@ class TreeSequenceBuilder(object):
         return flags, time
 
     def dump_edges(self):
-        """
-        Return all the edges, in path order (such that all edges for a child are gathered
-        together, and the edges for this child are always listed from left to right)
-        """
         left = np.zeros(self.num_edges, dtype=np.int32)
         right = np.zeros(self.num_edges, dtype=np.int32)
         parent = np.zeros(self.num_edges, dtype=np.int32)

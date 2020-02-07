@@ -767,19 +767,12 @@ class Matcher(object):
                     else:
                         inferred_anc_state, mapped_mutations = tree.map_mutations(
                             variant.genotypes, variant.alleles)
-                    if (predefined_anc_state != tskit.MISSING_DATA and
-                            inferred_anc_state != predefined_anc_state):
+                    if inferred_anc_state != predefined_anc_state:
                         # The user specified a specific ancestral state. However, the
                         # map_mutations method has reconstructed a different state at the
                         # root, so insert an extra mutation over each root to allow the
                         # ancestral state to be as the user specified
-                        sample_missing = set(
-                            ts.samples()[variant.genotypes == tskit.MISSING_DATA])
                         for root_node in tree.roots:
-                            # Add a transition at each root to the mapped value
-                            if tree.is_leaf(root_node) and root_node in sample_missing:
-                                # Except isolated tips (automatically flagged as missing)
-                                continue
                             tables.mutations.add_row(
                                 site=site.id, node=root_node,
                                 derived_state=inferred_anc_state)
@@ -872,16 +865,13 @@ class Matcher(object):
         Returns the current state of the build tree sequence. All samples and
         ancestors will have the sample node flag set. For correct sample reconstruction,
         the non-inference sites also need to be placed into the resulting tree sequence.
-        This can be tricky for non-inference sites to the left of the leftmost inference
-        site: we should simply extend the relevant edges as far as possible to the left.
         """
         tsb = self.tree_sequence_builder
 
+        inference_sites = self.sample_data.sites_inference[:]
+        position = self.sample_data.sites_position[:]
         tables = self.ancestors_ts.dump_tables()
         num_ancestral_individuals = len(tables.individuals)
-        # Positions include the end of the sequence, and have position[-1] == 0.0
-        positions = np.concatenate(
-            (self.sample_data.sites_position[:], [tables.sequence_length, 0.0]))
 
         # Currently there's no information about populations etc stored in the
         # ancestors ts.
@@ -925,68 +915,21 @@ class Matcher(object):
         logger.debug("Adding tree sequence edges")
         tables.edges.clear()
         left, right, parent, child = tsb.dump_edges()
-        logger.debug("Checking for the left/right extent of all available data")
-        # Store the leftmost and rightmost extent of edges leading to sample nodes
-        leftmost = np.zeros(tsb.num_nodes, dtype=positions.dtype)
-        rightmost = np.full(tsb.num_nodes, tables.sequence_length, dtype=positions.dtype)
-        is_sample = np.zeros(tsb.num_nodes, dtype=bool)
-        for sample_id, (_, h) in zip(self.sample_ids, self.sample_data.haplotypes()):
-            # We assume that the haplotypes are listed in the same order as sample_id
-            assert sample_id < tsb.num_nodes
-            is_sample[sample_id] = True
-            data_indices = np.nonzero(h != tskit.MISSING_DATA)[0]
-            if len(data_indices) == 0:
-                # This haplotype is entirely missing data, so should never have an edge
-                # Stick in a sentinal value which should raise an exception if ever used
-                leftmost[sample_id] = rightmost[sample_id] = np.nan
-            else:
-                if data_indices[0] != 0:
-                    # missing data on left: start edges at first non-missing site
-                    leftmost[sample_id] = positions[data_indices[0]]
-                if data_indices[-1] != self.sample_data.num_sites - 1:
-                    # missing data on right: end TS at first completely missing site
-                    rightmost[sample_id] = positions[data_indices[-1] + 1]
-
-        if len(child) > 0:  # We have some edges
-            # Include the end position when indexing into inference sites
-            inference_sites = np.append(self.sample_data.sites_inference[:], True)
-            inference_pos_map = np.where(inference_sites)[0]  # Map inference -> normal
-
-            right = inference_pos_map[right]
-            # The *leftmost* edge for a specific child must include non-inference sites
-            # to the left too. For this reason, we extend the edge leftwards to just
-            # this (rightwards) side of the next inference site to the left (or 0). For
-            # sample edges, we then trim down to cover only the missing region.
-            #
-            # To detect the leftmost edge per child, assume that each
-            # time the 'child' value from tsb.dump_edges() changes it marks a new child,
-            # with the first reported edge for that child being the leftmost.
-            leftmost_edge_for_child = np.concatenate(([True], np.diff(child) != 0))
-            left[leftmost_edge_for_child] -= 1
-            # Inference index -1 should point to site index -2, so that when increased
-            # by 1, it points to position[-1] == 0.0
-            inference_pos_map = np.append(inference_pos_map, -2)
-            left = inference_pos_map[left]
-            left[leftmost_edge_for_child] += 1
-
-            tables.edges.set_columns(
-                left=np.maximum(positions[left], leftmost[child]),
-                right=np.minimum(positions[right], rightmost[child]),
-                parent=parent, child=child)
-
-        # Some samples may have non-missing sites but no inferred edges (e.g. if there
-        # are no inference sites present). To ensure non-missing sites are placed, we add
-        # in edges for each valid sample to an artificial root.  NB: this root may not be
-        # attached to the rest of the tree, so we may create trees with multiple roots.
-        unlinked_samples = np.setdiff1d(self.sample_ids, child)
-        unlinked_samples = unlinked_samples[np.logical_and(
-            np.isfinite(leftmost[unlinked_samples]),
-            np.isfinite(rightmost[unlinked_samples]))]
-        if len(unlinked_samples):
+        if np.all(~inference_sites):
+            # We have no inference sites, so no edges have been estimated. To ensure
+            # we have a rooted tree, we add in edges for each sample to an artificial
+            # root.
+            assert left.shape[0] == 0
             root = tables.nodes.add_row(flags=0, time=tables.nodes.time.max() + 1)
-            for sample_id in unlinked_samples:
-                tables.edges.add_row(
-                    leftmost[sample_id], rightmost[sample_id], root, sample_id)
+            for sample_id in self.sample_ids:
+                tables.edges.add_row(0, tables.sequence_length, root, sample_id)
+        else:
+            # Subset down to the inference sites and map back to the site indexes.
+            position = position[inference_sites]
+            pos_map = np.hstack([position, [tables.sequence_length]])
+            pos_map[0] = 0
+            tables.edges.set_columns(
+                left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
         logger.debug("Sorting and building intermediate tree sequence.")
         tables.sites.clear()
@@ -1073,14 +1016,13 @@ class AncestorMatcher(Matcher):
         nodes_before = self.tree_sequence_builder.num_nodes
 
         for child_id in range(start, end):
-            if self.results.has_path(child_id):
-                left, right, parent = self.results.get_path(child_id)
-                self.tree_sequence_builder.add_path(
-                    child_id, left, right, parent,
-                    compress=self.path_compression,
-                    extended_checks=self.extended_checks)
-                site, derived_state = self.results.get_mutations(child_id)
-                self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
+            left, right, parent = self.results.get_path(child_id)
+            self.tree_sequence_builder.add_path(
+                child_id, left, right, parent,
+                compress=self.path_compression,
+                extended_checks=self.extended_checks)
+            site, derived_state = self.results.get_mutations(child_id)
+            self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
@@ -1238,13 +1180,11 @@ class SampleMatcher(Matcher):
             progress_monitor = self.progress_monitor.get("ms_paths", len(indexes))
             for j in indexes:
                 sample_id = int(self.sample_ids[j])
-                if self.results.has_path(sample_id):
-                    left, right, parent = self.results.get_path(sample_id)
-                    self.tree_sequence_builder.add_path(
-                        sample_id, left, right, parent, compress=self.path_compression)
-                    site, derived_state = self.results.get_mutations(sample_id)
-                    self.tree_sequence_builder.add_mutations(
-                        sample_id, site, derived_state)
+                left, right, parent = self.results.get_path(sample_id)
+                self.tree_sequence_builder.add_path(
+                    sample_id, left, right, parent, compress=self.path_compression)
+                site, derived_state = self.results.get_mutations(sample_id)
+                self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
 
@@ -1307,9 +1247,6 @@ class ResultBuffer(object):
         with self.lock:
             self.mutations[node_id] = site, derived_state
 
-    def has_path(self, node_id):
-        return node_id in self.paths
-
     def get_path(self, node_id):
         return self.paths[node_id]
 
@@ -1327,26 +1264,3 @@ def minimise(ts):
     over the simplify method.
     """
     return ts.simplify(reduce_to_site_topology=True, filter_sites=False)
-
-
-def trim_region(filt, trim_value=0., trim='fb'):
-    """
-    Copied from np.trim_zeros, but allows the trim value to be specified, and
-    returns a tuple of (first, last)
-    """
-    first = 0
-    trim = trim.upper()
-    if 'F' in trim:
-        for i in filt:
-            if i != trim_value:
-                break
-            else:
-                first = first + 1
-    last = len(filt)
-    if 'B' in trim:
-        for i in filt[::-1]:
-            if i != trim_value:
-                break
-            else:
-                last = last - 1
-    return first, last
