@@ -38,9 +38,9 @@ import tsinfer.eval_util as eval_util
 import tsutil
 
 
-def get_random_data_example(num_samples, num_sites, seed=42):
+def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
     np.random.seed(seed)
-    G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
+    G = np.random.randint(num_states, size=(num_sites, num_samples)).astype(np.int8)
     return G, np.arange(num_sites)
 
 
@@ -798,6 +798,12 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         G, _ = get_random_data_example(20, 50, seed=1234)
         # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G, num_threads=4)
+
+    def test_random_data_missing(self):
+        G, _ = get_random_data_example(20, 50, seed=1234, num_states=3)
+        G[G == 2] = tskit.MISSING_DATA
+        # G, _ = get_random_data_example(20, 10)
+        self.verify_ancestor_generator(G)
 
     def test_with_recombination_long_threads(self):
         ts = msprime.simulate(
