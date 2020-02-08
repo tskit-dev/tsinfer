@@ -759,6 +759,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         # print(adc)
         # print(adp)
         self.assertTrue(adp.data_equal(adc))
+        return adp, adc
 
     def verify_tree_sequence(self, ts):
         self.verify_ancestor_generator(ts.genotype_matrix())
@@ -804,6 +805,19 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         G[G == 2] = tskit.MISSING_DATA
         # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
+
+    def test_all_missing_at_adjacent_site(self):
+        u = tskit.MISSING_DATA
+        G = np.array([[1, 1, 0, 0, 0, 0],  # Site 0
+                      [u, u, 0, 1, 1, 1],  # Site 1
+                      [1, 1, 1, 0, 0, 0]])
+        # For the haplotype focussed on site 0, the relevant data at
+        # site 1 in this example is all missing and should default to 0
+        expected_hap_focal_site_0 = [1, 0, 1]
+        adp, adc = self.verify_ancestor_generator(G)
+        site_0_anc = [i for i, fs in enumerate(adp.ancestors_focal_sites[:]) if 0 in fs]
+        focal_site_0_haplotype = adp.ancestors_haplotype[:][site_0_anc]
+        assert np.all(focal_site_0_haplotype == expected_hap_focal_site_0)
 
     def test_with_recombination_long_threads(self):
         ts = msprime.simulate(
