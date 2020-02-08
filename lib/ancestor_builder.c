@@ -238,10 +238,17 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
 
             genotypes = self->sites[l].genotypes;
             ones = 0;
+            zeros = 0;
             for (j = 0; j < sample_set_size; j++) {
-                ones += (size_t) genotypes[sample_set[j]];
+                switch (genotypes[sample_set[j]]) {
+                    case 0:
+                        zeros++;
+                        break;
+                    case 1:
+                        ones++;
+                        break;
+                }
             }
-            zeros = sample_set_size - ones;
             consensus = 0;
             if (ones >= zeros) {
                 consensus = 1;
@@ -312,10 +319,18 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
                 /* } */
                 genotypes = self->sites[l].genotypes;
                 ones = 0;
+                zeros = 0;
                 for (k = 0; k < sample_set_size; k++) {
                     ones += (size_t) genotypes[sample_set[k]];
+                    switch (genotypes[sample_set[k]]) {
+                        case 0:
+                            zeros++;
+                            break;
+                        case 1:
+                            ones++;
+                            break;
+                    }
                 }
-                zeros = sample_set_size - ones;
                 if (ones >= zeros) {
                     ancestor[l] = 1;
                 }
