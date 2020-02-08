@@ -105,13 +105,15 @@ class AncestorBuilder(object):
     def break_ancestor(self, a, b, samples):
         """
         Returns True if we should split the ancestor with focal sites at
-        a and b into two separate ancestors.
+        a and b into two separate ancestors (if there is an older site between them
+        which is not compatible with the focal site distribution)
         """
         # return True
         index = np.where(samples == 1)[0]
         for j in range(a + 1, b):
             if self.sites[j].time > self.sites[a].time:
                 gj = self.sites[j].genotypes[index]
+                gj = gj[gj != tskit.MISSING_DATA]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
         return False
