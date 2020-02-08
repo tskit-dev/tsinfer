@@ -167,7 +167,7 @@ class AncestorBuilder(object):
                     consensus = 1
                 # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
                 for u in remove_buffer:
-                    if g_l[u] != consensus:
+                    if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                         # print("\t\tremoving", u)
                         S.remove(u)
                 # print("\t", len(S), remove_buffer, consensus, sep="\t")
@@ -176,7 +176,7 @@ class AncestorBuilder(object):
                     break
                 remove_buffer.clear()
                 for u in S:
-                    if g_l[u] != consensus:
+                    if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                         remove_buffer.append(u)
                 a[l] = consensus
         assert a[last_site] != tskit.MISSING_DATA
