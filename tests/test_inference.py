@@ -810,13 +810,20 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         u = tskit.MISSING_DATA
         G = np.array([[1, 1, 0, 0, 0, 0],  # Site 0
                       [u, u, 0, 1, 1, 1],  # Site 1
-                      [1, 1, 1, 0, 0, 0]])
-        # For the haplotype focussed on site 0, the relevant data at
-        # site 1 in this example is all missing and should default to 0
-        expected_hap_focal_site_0 = [1, 0, 1]
+                      [1, 1, 0, 0, 0, 0],  # Site 2
+                      [u, u, 1, 0, 1, 1],  # Site 3
+                      [1, 1, 1, 1, 0, 0]])
+        # For the haplotype focussed on sites 0 & 2, the relevant values at sites
+        # 1 and 3 in this example are all missing and should default to 0 in both cases
+        expected_hap_focal_site_0 = [1, 0, 1, 0, 1]
         adp, adc = self.verify_ancestor_generator(G)
-        site_0_anc = [i for i, fs in enumerate(adp.ancestors_focal_sites[:]) if 0 in fs]
-        focal_site_0_haplotype = adp.ancestors_haplotype[:][site_0_anc]
+        site_0_anc = [i for i, fs in enumerate(adc.ancestors_focal_sites[:]) if 0 in fs]
+        self.assertTrue(len(site_0_anc) == 1)
+        site_0_anc = site_0_anc[0]
+        # Sites 0 and 2 should share the same ancestor
+        assert np.all(adc.ancestors_focal_sites[:][site_0_anc] == [0, 2])
+        focal_site_0_haplotype = adc.ancestors_haplotype[:][site_0_anc]
+        # Sites with all missing data should default to 0
         assert np.all(focal_site_0_haplotype == expected_hap_focal_site_0)
 
     def test_with_recombination_long_threads(self):
