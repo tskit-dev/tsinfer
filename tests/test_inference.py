@@ -35,7 +35,6 @@ import tskit
 
 import tsinfer
 import tsinfer.eval_util as eval_util
-import tsutil
 
 
 def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
@@ -2359,122 +2358,59 @@ class TestAlgorithmResults(unittest.TestCase):
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
 
-class TestMissingSampleDataInference(unittest.TestCase):
+class TestMissingDataImputed(unittest.TestCase):
     """
-    Test that we can infer sites with tskit.MISSING_DATA, using both the PY and C engines
+    Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines
     """
-    def test_missing_haplotypes(self):
+    def test_missing_site(self):
         u = tskit.MISSING_DATA
         sites_by_samples = np.array([
-            [u, u, u, u],
-            [u, 1, 0, u],
-            [u, 0, 1, u],
-            [u, 1, 1, u]
+            [u, u, u, u, u],  # Site 0
+            [1, 1, 1, 0, 1],  # Site 1
+            [1, 0, 1, 1, 0],  # Site 2
+            [0, 0, 0, 1, 0],  # Site 3
             ], dtype=np.int8)
+        expected = sites_by_samples.copy()
+        expected[0, :] = [0, 0, 0, 0, 0]
         with tsinfer.SampleData() as sample_data:
-            for col in range(sites_by_samples.shape[1]):
-                sample_data.add_site(col, sites_by_samples[:, col])
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts = tsinfer.infer(sample_data, engine=e)
-            self.assertTrue(np.all(sites_by_samples == ts.genotype_matrix().T))
+            self.assertEquals(ts.num_trees, 2)
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
 
-    def test_samples_missing_inference_sites(self):
+    def test_missing_haplotype(self):
         u = tskit.MISSING_DATA
         sites_by_samples = np.array([
-            [1, 0, 0, u],
-            [1, 0, 0, u],
-            [0, 1, 1, 1],
-            [u, u, u, 1]], dtype=np.int8)
+            [u, 1, 1, 1, 0],  # Site 0
+            [u, 1, 1, 0, 0],  # Site 1
+            [u, 0, 0, 1, 0],  # Site 2
+            [u, 0, 1, 1, 0],  # Site 3
+            ], dtype=np.int8)
+        expected = sites_by_samples.copy()
+        expected[:, 0] = [0, 0, 0, 0]
         with tsinfer.SampleData() as sample_data:
-            for col in range(sites_by_samples.shape[1]):
-                sample_data.add_site(col, sites_by_samples[:, col])
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts = tsinfer.infer(sample_data, engine=e)
-            self.assertTrue(np.all(sites_by_samples == ts.genotype_matrix().T))
+            self.assertEquals(ts.num_trees, 2)
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
 
-    def test_samples_imputed_noninference_sites(self):
+    def test_missing_inference_sites(self):
         u = tskit.MISSING_DATA
         sites_by_samples = np.array([
-            [0, u, 1, 1],  # Sample A
-            [0, u, u, 1],  # Sample B
-            [0, u, 1, 1],  # Sample C
-            [1, u, 0, 0]   # Sample D
+            [u, 1, 1, 1, 0],  # Site 0
+            [1, 1, u, 0, 0],  # Site 1
             ], dtype=np.int8)
-        infer_site = [None, None, False, None]
-        # Sites all compatible with a single tree: ((A,B,C),D);
-        # Site 2 (all missing) should be imputed to all 0
-        # Site 3 should be imputed to have 1 at the missing site
+        expected = sites_by_samples.copy()
+        expected[:, 0] = [1, 1]
+        expected[:, 2] = [1, 0]
         with tsinfer.SampleData() as sample_data:
-            for col in range(sites_by_samples.shape[1]):
-                sample_data.add_site(
-                    col, sites_by_samples[:, col], inference=infer_site[col])
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts = tsinfer.infer(sample_data, engine=e)
             self.assertEquals(ts.num_trees, 1)
-            self.assertTrue(np.all(ts.genotype_matrix().T[:, 0] ==
-                            sites_by_samples[:, 0]))
-            self.assertTrue(np.all(ts.genotype_matrix().T[:, 1] ==
-                            np.array([0, 0, 0, 0])))
-            self.assertTrue(np.all(ts.genotype_matrix().T[:, 2] ==
-                            np.array([1, 1, 1, 0])))
-            self.assertTrue(np.all(ts.genotype_matrix().T[:, 3] ==
-                            sites_by_samples[:, 3]))
-
-    def test_small_truncated_fragments(self):
-        u = tskit.MISSING_DATA
-        sites_by_samples = np.array([
-            [u, u, u, 1, 1, 0, 1, 1, 1, u],
-            [u, u, u, 1, 0, 0, 1, 1, 0, u],
-            [u, u, u, 1, 0, 1, 1, 0, 1, u],
-            [u, 0, 0, 1, 0, 1, 1, u, u, u],
-            [u, 0, 1, 1, 0, 0, 1, u, u, u],
-            [u, 1, 1, 0, 0, 0, 0, u, u, u]
-            ], dtype=np.int8)
-        with tsinfer.SampleData() as sample_data:
-            for col in range(sites_by_samples.shape[1]):
-                sample_data.add_site(col, sites_by_samples[:, col])
-        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
-            ancestors = tsinfer.generate_ancestors(sample_data, engine=e)
-            ancestors_ts = tsinfer.match_ancestors(
-                sample_data, ancestors, engine=e, extended_checks=True)
-            ts = tsinfer.match_samples(
-                sample_data, ancestors_ts, engine=e, extended_checks=True)
-            self.assertTrue(1.0 in ts.breakpoints(True))  # End of lft unknown region
-            self.assertTrue(3.0 in ts.breakpoints(True))  # End of 1st unknown batch
-            self.assertTrue(7.0 in ts.breakpoints(True))  # Start of 2nd unknown batch
-            self.assertTrue(9.0 in ts.breakpoints(True))  # Start of rgt unknown region
-            for tree in ts.trees():
-                for s in ts.samples():
-                    if tree.interval[1] <= 1:
-                        self.assertTrue(tree.parent(s) == tskit.NULL)
-                    elif tree.interval[1] <= 3:
-                        if s in [0, 1, 2]:  # Missing data at pos <=3 for these samples
-                            self.assertTrue(tree.parent(s) == tskit.NULL)
-                        else:
-                            self.assertTrue(tree.parent(s) != tskit.NULL)
-                    elif tree.interval[0] >= 9:
-                        self.assertTrue(tree.parent(s) == tskit.NULL)
-                    elif tree.interval[0] >= 7:
-                        if s in [3, 4, 5]:  # Missing data at pos >=7 for these samples
-                            self.assertTrue(tree.parent(s) == tskit.NULL)
-                        else:
-                            self.assertTrue(tree.parent(s) != tskit.NULL)
-
-        self.assertTrue(np.all(sites_by_samples == ts.genotype_matrix().T))
-
-    def test_large_truncated_fragments(self):
-        """
-        A bit like fragments produced from a sequencer
-        """
-        ts = msprime.simulate(
-            10, Ne=1e2, length=400, recombination_rate=1e-4, mutation_rate=2e-4,
-            random_seed=1)
-        truncated_ts = tsutil.truncate_ts_samples(ts, average_span=200, random_seed=123)
-        sd = tsinfer.SampleData.from_tree_sequence(truncated_ts, use_times=False)
-        # Cannot use the normal `simplify` as this removes parts of the TS where only
-        # one sample is connected to the root (& the other samples have missing data)
-        ts_inferred = tsinfer.infer(sd, engine="P")
-        non_missing = truncated_ts.genotype_matrix() != tskit.MISSING_DATA
-        self.assertTrue(
-            np.all(ts_inferred.genotype_matrix()[non_missing] ==
-                   truncated_ts.genotype_matrix()[non_missing]))
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
