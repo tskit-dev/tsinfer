@@ -165,21 +165,23 @@ class AncestorBuilder(object):
                 zeros = sum(g_l[u] == 0 for u in S)
                 # print("\tsite", l, ones, zeros, sep="\t")
                 consensus = 0
-                if ones >= zeros:
-                    consensus = 1
-                # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
-                for u in remove_buffer:
-                    if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                        # print("\t\tremoving", u)
-                        S.remove(u)
-                # print("\t", len(S), remove_buffer, consensus, sep="\t")
-                if len(S) <= min_sample_set_size:
-                    # print("BREAKING", len(S), min_sample_set_size)
-                    break
-                remove_buffer.clear()
-                for u in S:
-                    if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                        remove_buffer.append(u)
+                if ones + zeros > 0:
+                    # We have some non-missing data
+                    if ones >= zeros:
+                        consensus = 1
+                    # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
+                    for u in remove_buffer:
+                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
+                            # print("\t\tremoving", u)
+                            S.remove(u)
+                    # print("\t", len(S), remove_buffer, consensus, sep="\t")
+                    if len(S) <= min_sample_set_size:
+                        # print("BREAKING", len(S), min_sample_set_size)
+                        break
+                    remove_buffer.clear()
+                    for u in S:
+                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
+                            remove_buffer.append(u)
                 a[l] = consensus
         assert a[last_site] != tskit.MISSING_DATA
         return last_site
@@ -208,8 +210,10 @@ class AncestorBuilder(object):
                     ones = sum(g_l[u] == 1 for u in S)
                     zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", l, ones, zeros, sep="\t")
-                    if ones >= zeros:
-                        a[l] = 1
+                    if ones + zeros > 0:
+                        # We have some non-missing data
+                        if ones >= zeros:
+                            a[l] = 1
         # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(

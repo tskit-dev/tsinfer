@@ -250,42 +250,45 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
                 }
             }
             consensus = 0;
-            if (ones >= zeros) {
-                consensus = 1;
-            }
-            /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
-            /* fflush(stdout); */
-            for (j = 0; j < sample_set_size; j++) {
-                u = sample_set[j];
-                if (disagree[u] && (genotypes[u] != consensus) &&
-                    (genotypes[u] != TSK_MISSING_DATA)) {
-                    /* This sample has disagreed with consensus twice in a row,
-                     * so remove it */
-                    /* printf("\t\tremoving %d\n", sample_set[j]); */
-                    sample_set[j] = -1;
+            if (ones + zeros > 0) {
+                /* We have valid (non-missing) data in the tracked samples at site l */
+                if (ones >= zeros) {
+                    consensus = 1;
                 }
-            }
-            /* Repack the sample set */
-            tmp_size = 0;
-            for (j = 0; j < sample_set_size; j++) {
-                if (sample_set[j] != -1) {
-                    sample_set[tmp_size] = sample_set[j];
-                    tmp_size++;
+                /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
+                /* fflush(stdout); */
+                for (j = 0; j < sample_set_size; j++) {
+                    u = sample_set[j];
+                    if (disagree[u] && (genotypes[u] != consensus) &&
+                        (genotypes[u] != TSK_MISSING_DATA)) {
+                        /* This sample has disagreed with consensus twice in a row,
+                         * so remove it */
+                        /* printf("\t\tremoving %d\n", sample_set[j]); */
+                        sample_set[j] = -1;
+                    }
                 }
-            }
-            sample_set_size = tmp_size;
-            if (sample_set_size <= min_sample_set_size) {
-                /* printf("BREAK\n"); */
-                break;
+                /* Repack the sample set */
+                tmp_size = 0;
+                for (j = 0; j < sample_set_size; j++) {
+                    if (sample_set[j] != -1) {
+                        sample_set[tmp_size] = sample_set[j];
+                        tmp_size++;
+                    }
+                }
+                sample_set_size = tmp_size;
+                if (sample_set_size <= min_sample_set_size) {
+                    /* printf("BREAK\n"); */
+                    break;
+                }
+                /* For the remaining sample set, set the disagree flags based
+                 * on whether they agree with the consensus for this site. */
+                for (j = 0; j < sample_set_size; j++) {
+                    u = sample_set[j];
+                    disagree[u] = ((genotypes[u] != consensus) &&
+                                   (genotypes[u] != TSK_MISSING_DATA));
+                }
             }
             ancestor[l] = consensus;
-            /* For the remaining sample set, set the disagree flags based
-             * on whether they agree with the consensus for this site. */
-            for (j = 0; j < sample_set_size; j++) {
-                u = sample_set[j];
-                disagree[u] = ((genotypes[u] != consensus) &&
-                               (genotypes[u] != TSK_MISSING_DATA));
-            }
         }
     }
     *last_site_ret = last_site;
@@ -332,8 +335,11 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
                             break;
                     }
                 }
-                if (ones >= zeros) {
-                    ancestor[l] = 1;
+                if (ones + zeros > 0) {
+                    /* We have valid (non-missing) data at this site */
+                    if (ones >= zeros) {
+                        ancestor[l] = 1;
+                    }
                 }
             }
         }
