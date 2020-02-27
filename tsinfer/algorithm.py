@@ -618,10 +618,11 @@ class AncestorMatcher(object):
 
     def __init__(
             self, tree_sequence_builder, recombination_rate=None, mutation_rate=None,
-            extended_checks=False):
+            precision=None, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
         self.mutation_rate = mutation_rate
         self.recombination_rate = recombination_rate
+        self.precision = precision
         self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
         self.parent = None
@@ -712,7 +713,7 @@ class AncestorMatcher(object):
             if d == state:
                 # p_e = 1 - (len(alleles) - 1) * mu
                 p_e = 1 - mu
-            self.likelihood[u] = p_t * p_e
+            self.likelihood[u] = round(p_t * p_e, self.precision)
 
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]

@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -140,7 +140,7 @@ def verify(samples, tree_sequence, progress_monitor=None):
 
 def infer(
         sample_data, num_threads=0, path_compression=True, simplify=True,
-        recombination_rate=None, mutation_rate=None,
+        recombination_rate=None, mutation_rate=None, precision=None,
         engine=constants.C_ENGINE, progress_monitor=None):
     """
     infer(sample_data, num_threads=0, path_compression=True, simplify=True)
@@ -170,10 +170,12 @@ def infer(
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
         recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        precision=precision,
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
         sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
         recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        precision=precision,
         path_compression=path_compression, simplify=simplify,
         progress_monitor=progress_monitor)
     return inferred_ts
@@ -221,7 +223,7 @@ def generate_ancestors(
 
 def match_ancestors(
         sample_data, ancestor_data, num_threads=0, path_compression=True,
-        recombination_rate=None, mutation_rate=None,
+        recombination_rate=None, mutation_rate=None, precision=None,
         extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
     match_ancestors(sample_data, ancestor_data, num_threads=0, path_compression=True)
@@ -249,6 +251,7 @@ def match_ancestors(
     matcher = AncestorMatcher(
         sample_data, ancestor_data, num_threads=num_threads,
         recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        precision=precision,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor)
     return matcher.match_ancestors()
@@ -256,7 +259,7 @@ def match_ancestors(
 
 def augment_ancestors(
         sample_data, ancestors_ts, indexes, num_threads=0, path_compression=True,
-        recombination_rate=None, mutation_rate=None,
+        recombination_rate=None, mutation_rate=None, precision=None,
         extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
     augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,\
@@ -288,6 +291,7 @@ def augment_ancestors(
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
         recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        precision=precision,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor
         )
@@ -298,7 +302,7 @@ def augment_ancestors(
 
 def match_samples(
         sample_data, ancestors_ts, num_threads=0, path_compression=True, simplify=True,
-        recombination_rate=None, mutation_rate=None,
+        recombination_rate=None, mutation_rate=None, precision=None,
         extended_checks=False, stabilise_node_ordering=False, engine=constants.C_ENGINE,
         progress_monitor=None):
     """
@@ -331,6 +335,7 @@ def match_samples(
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
         recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        precision=precision,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor)
     manager.match_samples()
@@ -487,7 +492,7 @@ class Matcher(object):
 
     def __init__(
             self, sample_data, num_threads=1, path_compression=True,
-            recombination_rate=None, mutation_rate=None,
+            recombination_rate=None, mutation_rate=None, precision=None,
             extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -497,6 +502,10 @@ class Matcher(object):
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
+
+        if precision is None:
+            # For now, default to high precision where round does nothing.
+            precision = 100
 
         if recombination_rate is None:
             # TODO is this a good value? I guess it depends on the default precision
@@ -510,6 +519,7 @@ class Matcher(object):
             mutation_rate = 0
         self.mutation_rate = np.zeros(self.num_sites)
         self.mutation_rate[:] = mutation_rate
+        self.precision = precision
 
         if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
@@ -543,6 +553,7 @@ class Matcher(object):
                 self.tree_sequence_builder,
                 recombination_rate=self.recombination_rate,
                 mutation_rate=self.mutation_rate,
+                precision=precision,
                 extended_checks=self.extended_checks)
             for _ in range(num_threads)]
 

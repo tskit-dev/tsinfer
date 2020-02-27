@@ -1247,20 +1247,21 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int err;
     int extended_checks = 0;
     static char *kwlist[] = {"tree_sequence_builder", "recombination_rate",
-        "mutation_rate", "extended_checks", NULL};
+        "mutation_rate", "precision", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     PyObject *recombination_rate = NULL;
     PyObject *mutation_rate = NULL;
     PyArrayObject *recombination_rate_array = NULL;
     PyArrayObject *mutation_rate_array = NULL;
     npy_intp *shape;
+    unsigned int precision = 22;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OOi", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &recombination_rate, &mutation_rate,
+                &recombination_rate, &mutation_rate, &precision,
                 &extended_checks)) {
         goto out;
     }
@@ -1306,7 +1307,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
             self->tree_sequence_builder->tree_sequence_builder,
             PyArray_DATA(recombination_rate_array),
             PyArray_DATA(mutation_rate_array),
-            flags);
+            precision, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;

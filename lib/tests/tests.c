@@ -215,7 +215,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
     ret = tree_sequence_builder_alloc(&tsb, num_sites, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rate,
-            mutation_rate, TSI_EXTENDED_CHECKS);
+            mutation_rate, 22, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -344,7 +344,7 @@ test_matching_one_site(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb,
-            &recombination_rate, &mutation_rate, 0);
+            &recombination_rate, &mutation_rate, 22, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,

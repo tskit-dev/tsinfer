@@ -59,13 +59,15 @@ class TestAncestorMatcher(unittest.TestCase):
         tsb = _tsinfer.TreeSequenceBuilder(num_sites=1, max_nodes=10, max_edges=10)
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb)
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb, [1])
-        self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb, [1], [1])
         for bad_type in [None, {}]:
             self.assertRaises(
                 TypeError, _tsinfer.AncestorMatcher, tsb, [1], [1],
                 extended_checks=bad_type)
+            self.assertRaises(
+                TypeError, _tsinfer.AncestorMatcher, tsb, [1], [1],
+                precision=bad_type)
         for bad_array in [[], [[], []], None, "sdf", [1, 2, 3]]:
             with self.assertRaises(ValueError):
-                _tsinfer.AncestorMatcher(tsb, bad_array, [1], True)
+                _tsinfer.AncestorMatcher(tsb, bad_array, [1])
             with self.assertRaises(ValueError):
-                _tsinfer.AncestorMatcher(tsb, [1], bad_array, True)
+                _tsinfer.AncestorMatcher(tsb, [1], bad_array)
