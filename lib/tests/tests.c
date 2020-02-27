@@ -188,6 +188,8 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
     ancestor_matcher_t ancestor_matcher;
     tree_sequence_builder_t tsb;
     ancestor_descriptor_t ad;
+    double *recombination_rate = calloc(num_sites, sizeof(double));
+    double *mutation_rate = calloc(num_sites, sizeof(double));
     allele_t **samples = generate_random_haplotypes(num_samples, num_sites, 2, seed);
     allele_t *genotypes = malloc(num_samples * sizeof(*genotypes));
     allele_t *haplotype = malloc(num_sites * sizeof(*haplotype));
@@ -198,13 +200,22 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
 
     CU_ASSERT_FATAL(genotypes != NULL);
     CU_ASSERT_FATAL(haplotype != NULL);
+    CU_ASSERT_FATAL(recombination_rate != NULL);
+    CU_ASSERT_FATAL(mutation_rate != NULL);
+
+    for (j = 0; j < num_sites; j++) {
+        recombination_rate[j] = 1e-3;
+        /* We need a nonzero mutation rate here */
+        mutation_rate[j] = 1e-20;
+    }
 
     CU_ASSERT_FATAL(num_samples >= 2);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = tree_sequence_builder_alloc(&tsb, num_sites, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, TSI_EXTENDED_CHECKS);
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rate,
+            mutation_rate, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -273,6 +284,8 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
     free(samples);
     free(haplotype);
     free(genotypes);
+    free(recombination_rate);
+    free(mutation_rate);
 }
 
 static void
@@ -318,6 +331,8 @@ test_matching_one_site(void)
     tree_sequence_builder_t tsb;
     allele_t haplotype[1] = {0};
     allele_t match[1];
+    double recombination_rate = 0;
+    double mutation_rate = 0;
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
 
@@ -328,7 +343,8 @@ test_matching_one_site(void)
     ret = tree_sequence_builder_freeze_indexes(&tsb);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, 0);
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb,
+            &recombination_rate, &mutation_rate, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,

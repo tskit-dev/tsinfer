@@ -1251,6 +1251,9 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     PyObject *recombination_rate = NULL;
     PyObject *mutation_rate = NULL;
+    PyArrayObject *recombination_rate_array = NULL;
+    PyArrayObject *mutation_rate_array = NULL;
+    npy_intp *shape;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
@@ -1267,11 +1270,29 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    /* TODO turn the input rate arrays into numpy and copy to ancestor matcher. */
-    /* NOTE: we should probably associate the rates with the tree sequence builder
-     * though, as there's not much point in having 40 copies of the same arrays
-     * lying around in memory. On the other hand, we might get better locality
-     * if we do. Hmmm. */
+    recombination_rate_array = (PyArrayObject *) PyArray_FromAny(recombination_rate,
+            PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
+            NPY_ARRAY_IN_ARRAY, NULL);
+    if (recombination_rate_array == NULL) {
+        goto out;
+    }
+    shape = PyArray_DIMS(recombination_rate_array);
+    if (shape[0] != tree_sequence_builder->tree_sequence_builder->num_sites) {
+        PyErr_SetString(PyExc_ValueError,
+                "Size of recombination_rate array must be num_sites");
+        goto out;
+    }
+    mutation_rate_array = (PyArrayObject *) PyArray_FromAny(mutation_rate,
+            PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
+            NPY_ARRAY_IN_ARRAY, NULL);
+    if (mutation_rate_array == NULL) {
+        goto out;
+    }
+    shape = PyArray_DIMS(mutation_rate_array);
+    if (shape[0] != tree_sequence_builder->tree_sequence_builder->num_sites) {
+        PyErr_SetString(PyExc_ValueError, "Size of mutation_rate array must be num_sites");
+        goto out;
+    }
 
     self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
     if (self->ancestor_matcher == NULL) {
@@ -1282,13 +1303,18 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         flags = TSI_EXTENDED_CHECKS;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
-            self->tree_sequence_builder->tree_sequence_builder, flags);
+            self->tree_sequence_builder->tree_sequence_builder,
+            PyArray_DATA(recombination_rate_array),
+            PyArray_DATA(mutation_rate_array),
+            flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
     ret = 0;
 out:
+    Py_XDECREF(recombination_rate_array);
+    Py_XDECREF(mutation_rate_array);
     return ret;
 }
 

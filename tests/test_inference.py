@@ -1239,12 +1239,6 @@ class TestPartialAncestorMatching(unittest.TestCase):
             tskit.Edge(0, 3, 1, 2)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
-    # Skipping this one for now as the difference between the C and Python
-    # engines looks harmless. We seem to just be breaking the matching
-    # path for child 7 at position 5 rather than 1, which might be an
-    # equally likely viterbi path and just a consequence of the slightly
-    # different implementation now.
-    @unittest.skip("INVESTIGATE")
     def test_edge_overlap_bug(self):
         num_sites = 12
         with tsinfer.SampleData() as sample_data:
@@ -1285,8 +1279,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
             tskit.Edge(8, 12, 1, 4),
             tskit.Edge(4, 8, 1, 5),
             tskit.Edge(0, 4, 1, 6),
-            tskit.Edge(0, 4, 1, 7),
-            tskit.Edge(4, 8, 5, 7),
+            tskit.Edge(0, 5, 1, 7),
+            tskit.Edge(5, 8, 5, 7),
             tskit.Edge(8, 12, 1, 7)]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 

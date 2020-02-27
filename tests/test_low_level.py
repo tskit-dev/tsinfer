@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -47,3 +47,25 @@ class TestOutOfMemory(unittest.TestCase):
         self.assertRaises(
             MemoryError, _tsinfer.TreeSequenceBuilder, num_sites=1, max_nodes=1,
             max_edges=big)
+
+
+class TestAncestorMatcher(unittest.TestCase):
+    """
+    Tests for the AncestorMatcher C Python interface.
+    """
+    def test_init(self):
+        self.assertRaises(TypeError, _tsinfer.AncestorMatcher)
+        self.assertRaises(TypeError, _tsinfer.AncestorMatcher, None)
+        tsb = _tsinfer.TreeSequenceBuilder(num_sites=1, max_nodes=10, max_edges=10)
+        self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb)
+        self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb, [1])
+        self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb, [1], [1])
+        for bad_type in [None, {}]:
+            self.assertRaises(
+                TypeError, _tsinfer.AncestorMatcher, tsb, [1], [1],
+                extended_checks=bad_type)
+        for bad_array in [[], [[], []], None, "sdf", [1, 2, 3]]:
+            with self.assertRaises(ValueError):
+                _tsinfer.AncestorMatcher(tsb, bad_array, [1], True)
+            with self.assertRaises(ValueError):
+                _tsinfer.AncestorMatcher(tsb, [1], bad_array, True)

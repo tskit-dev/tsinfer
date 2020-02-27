@@ -607,13 +607,6 @@ def is_descendant(pi, u, v):
     # print("IS_DESCENDENT(", u, v, ") = ", ret)
     return ret
 
-# FIXME Old
-# # We have a 3 valued number system for match likelihoods, plus two
-# # more values to indicate compressed paths tree and nodes that are
-# # currently not in the tree.
-# MISMATCH = 0
-# RECOMB = 1
-# MATCH = 2
 
 # Special values used to indicate compressed paths and nodes that are
 # not present in the current tree.
@@ -705,7 +698,6 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-
             p_last = self.likelihood[u]
             p_no_recomb = p_last * (1 - rho + rho / n)
             p_recomb = rho / n
@@ -722,24 +714,10 @@ class AncestorMatcher(object):
                 p_e = 1 - mu
             self.likelihood[u] = p_t * p_e
 
-            # print("u", u, "->", p_t, p_e, " = ", self.likelihood[u])
-
-            # self.traceback[site][u] = False
-            # if self.likelihood[u] == MISMATCH:
-            #     self.traceback[site][u] = True
-            # if mutation_node != -1 and d != state:
-            #     self.likelihood[u] = MISMATCH
-            # elif self.likelihood[u] == MISMATCH:
-            #     self.likelihood[u] = RECOMB
-
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        # if max_L != MATCH:
-        #     for u in self.likelihood_nodes:
-        #         if self.likelihood[u] == max_L:
-        #             self.likelihood[u] = MATCH
         if max_L == 0:
             assert self.mutation_rate[site] == 0
             raise ValueError(
@@ -758,44 +736,6 @@ class AncestorMatcher(object):
                 v = self.parent[v]
         assert np.all(path_cache == -1)
         self.compress_likelihoods()
-
-
-#     def finalise_site(self, l):
-#         max_st = ValueTransition(value=-1)
-#         for st in self.T:
-#             if st.value > max_st.value:
-#                 max_st = st
-#         if max_st.value == 0:
-#             assert self.mu[l] == 0
-#             raise ValueError(
-#                 "Trying to match non-existent allele with zero mutation rate")
-
-#         max_value = max_st.value
-#         for st in self.T:
-#             st.value /= max_value
-#         self.output.store_site(l, max_value, [(st.tree_node, st.value) for st in self.T])
-
-#     def compute_next_probability(self, site_id, p_last, is_match, node):
-#         rho = self.rho[site_id]
-#         mu = self.mu[site_id]
-#         alleles = self.alleles[site_id]
-#         n = self.ts.num_samples
-
-#         p_no_recomb = p_last * (1 - rho + rho / n)
-#         p_recomb = rho / n
-#         recombination_required = False
-#         if p_no_recomb > p_recomb:
-#             p_t = p_no_recomb
-#         else:
-#             p_t = p_recomb
-#             recombination_required = True
-#         self.output.add_recombination_required(site_id, node, recombination_required)
-#         p_e = mu
-#         if is_match:
-#             p_e = 1 - (len(alleles) - 1) * mu
-#         return p_t * p_e
-
-
 
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1

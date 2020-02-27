@@ -64,10 +64,14 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     tsk_id_t u;
 
     fprintf(out, "Ancestor matcher state\n");
+    fprintf(out, "site\trecomb_rate\tmut_rate\n");
+    for (j = 0; j < (int) self->num_sites; j++) {
+        fprintf(out, "%d\t%f\t%f\n", j, self->recombination_rate[j], self->mutation_rate[j]);
+    }
     fprintf(out, "tree = \n");
     fprintf(out, "id\tparent\tlchild\trchild\tlsib\trsib\tlikelihood\n");
     for (j = 0; j < (int) self->num_nodes; j++) {
-        fprintf(out, "%d\t%d\t%d\t%d\t%d\t%d\t%d\n", (int) j, self->parent[j],
+        fprintf(out, "%d\t%d\t%d\t%d\t%d\t%d\t%f\n", (int) j, self->parent[j],
                 self->left_child[j], self->right_child[j], self->left_sib[j],
                 self->right_sib[j], self->likelihood[j]);
     }
@@ -75,7 +79,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     /* Check the properties of the likelihood map */
     for (j = 0; j < self->num_likelihood_nodes; j++) {
         u = self->likelihood_nodes[j];
-        fprintf(out, "%d -> %d\n", u, self->likelihood[u]);
+        fprintf(out, "\t%d -> %f\n", u, self->likelihood[u]);
     }
     fprintf(out, "traceback\n");
     for (j = 0; j < (int) self->num_sites; j++) {
@@ -95,7 +99,8 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, int flags)
+        tree_sequence_builder_t *tree_sequence_builder,
+        double *recombination_rate, double *mutation_rate, int flags)
 {
     int ret = 0;
     /* TODO make these input parameters. */
@@ -107,13 +112,16 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->max_nodes = 0;
     self->tree_sequence_builder = tree_sequence_builder;
     self->num_sites = tree_sequence_builder->num_sites;
+    self->recombination_rate = malloc(self->num_sites * sizeof(*self->recombination_rate));
+    self->mutation_rate = malloc(self->num_sites * sizeof(*self->mutation_rate));
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->traceback = calloc(self->num_sites, sizeof(node_state_list_t));
     self->max_likelihood_node = malloc(self->num_sites * sizeof(tsk_id_t));
     self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
-    if (self->traceback == NULL || self->max_likelihood_node == NULL
+    if (self->recombination_rate == NULL || self->mutation_rate == NULL
+            || self->traceback == NULL || self->max_likelihood_node == NULL
             || self->output.left == NULL || self->output.right == NULL
             || self->output.parent == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -123,6 +131,10 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     if (ret != 0) {
         goto out;
     }
+    memcpy(self->recombination_rate, recombination_rate,
+            self->num_sites * sizeof(*self->recombination_rate));
+    memcpy(self->mutation_rate, mutation_rate,
+            self->num_sites * sizeof(*self->mutation_rate));
 out:
     return ret;
 }
@@ -130,6 +142,8 @@ out:
 int
 ancestor_matcher_free(ancestor_matcher_t *self)
 {
+    tsi_safe_free(self->recombination_rate);
+    tsi_safe_free(self->mutation_rate);
     tsi_safe_free(self->parent);
     tsi_safe_free(self->left_child);
     tsi_safe_free(self->right_child);
@@ -152,7 +166,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
 
 static int
 ancestor_matcher_delete_likelihood(ancestor_matcher_t *self, const tsk_id_t node,
-        int8_t *restrict L)
+        double *restrict L)
 {
     /* Remove the specified node from the list of nodes */
     int j, k;
@@ -253,7 +267,7 @@ is_descendant(const tsk_id_t u, const tsk_id_t v, const tsk_id_t *restrict paren
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         const tsk_id_t site, const tsk_id_t mutation_node, const char state,
-        const tsk_id_t *restrict parent, int8_t *restrict L)
+        const tsk_id_t *restrict parent, double *restrict L)
 {
     int ret = 0;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
@@ -262,7 +276,10 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     int8_t *restrict recombination_required = self->recombination_required;
     int j, descendant;
     tsk_id_t u, v, max_L_node;
-    int8_t max_L;
+    double max_L, p_last, p_no_recomb, p_recomb, p_t, p_e;
+    const double rho = self->recombination_rate[site];
+    const double mu = self->mutation_rate[site];
+    const double n = (double) self->tree_sequence_builder->num_nodes;
 
     max_L = -1;
     max_L_node = NULL_NODE;
@@ -298,31 +315,37 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             }
         }
 
-        /* assert(descendant == is_descendant(u, mutation_node, parent)); */
+        p_last = L[u];
+        p_no_recomb = p_last * (1 - rho + rho / n);
+        p_recomb = rho / n;
         recombination_required[u] = false;
-        if (L[u] == MISMATCH_LIKELIHOOD) {
+        if (p_no_recomb > p_recomb) {
+            p_t = p_no_recomb;
+        } else {
+            p_t = p_recomb;
             recombination_required[u] = true;
         }
-        if (mutation_node != NULL_NODE && descendant != state) {
-            L[u] = MISMATCH_LIKELIHOOD;
-        } else if (L[u] == MISMATCH_LIKELIHOOD) {
-            L[u] = RECOMB_LIKELIHOOD;
+        p_e = mu;
+        if (descendant == state) {
+            p_e = 1 - mu;
         }
+        L[u] = p_t * p_e;
+
         if (L[u] > max_L) {
             max_L = L[u];
             max_L_node = u;
         }
     }
-    assert(max_L >= 0);
+    /* ancestor_matcher_print_state(self, stdout); */
+    assert(max_L > 0);
     assert(max_L_node != NULL_NODE);
     self->max_likelihood_node[site] = max_L_node;
 
     /* Reset the path cache and renormalise the likelihoods. */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
-        if (L[u] == max_L) {
-            L[u] = MATCH_LIKELIHOOD;
-        }
+        L[u] /= max_L;
+
         v = u;
         while (likely(v != NULL_NODE) && likely(path_cache[v] != CACHE_UNSET)) {
             path_cache[v] = CACHE_UNSET;
@@ -334,10 +357,10 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
 
 static int WARN_UNUSED
 ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
-        const tsk_id_t *restrict parent, int8_t *restrict L, int8_t *restrict L_cache)
+        const tsk_id_t *restrict parent, double *restrict L, double *restrict L_cache)
 {
     int ret = 0;
-    int8_t L_p;
+    double L_p;
     tsk_id_t u, v, p;
     tsk_id_t *restrict cached_paths = self->likelihood_nodes_tmp;
     const int old_num_likelihood_nodes = self->num_likelihood_nodes;
@@ -378,6 +401,7 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
             num_likelihood_nodes++;
         }
     }
+    /* ancestor_matcher_print_state(self, stdout); */
     assert(num_likelihood_nodes > 0);
 
     self->num_likelihood_nodes = num_likelihood_nodes;
@@ -395,8 +419,8 @@ ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
 
 static int
 ancestor_matcher_update_site_state(ancestor_matcher_t *self, const tsk_id_t site,
-        const allele_t state, tsk_id_t *restrict parent, int8_t *restrict L,
-        int8_t *restrict L_cache)
+        const allele_t state, tsk_id_t *restrict parent, double *restrict L,
+        double *restrict L_cache)
 {
     int ret = 0;
     tsk_id_t mutation_node = NULL_NODE;
@@ -443,12 +467,13 @@ out:
 static void
 ancestor_matcher_reset_tree(ancestor_matcher_t *self)
 {
-    memset(self->parent, 0xff, self->num_nodes * sizeof(tsk_id_t));
-    memset(self->left_child, 0xff, self->num_nodes * sizeof(tsk_id_t));
-    memset(self->right_child, 0xff, self->num_nodes * sizeof(tsk_id_t));
-    memset(self->left_sib, 0xff, self->num_nodes * sizeof(tsk_id_t));
-    memset(self->right_sib, 0xff, self->num_nodes * sizeof(tsk_id_t));
-    memset(self->recombination_required, 0xff, self->num_nodes * sizeof(int8_t));
+    memset(self->parent, 0xff, self->num_nodes * sizeof(*self->parent));
+    memset(self->left_child, 0xff, self->num_nodes * sizeof(*self->left_child));
+    memset(self->right_child, 0xff, self->num_nodes * sizeof(*self->right_child));
+    memset(self->left_sib, 0xff, self->num_nodes * sizeof(*self->left_sib));
+    memset(self->right_sib, 0xff, self->num_nodes * sizeof(*self->right_sib));
+    memset(self->recombination_required, 0xff, self->num_nodes
+            * sizeof(*self->recombination_required));
 }
 
 static int WARN_UNUSED
@@ -469,17 +494,18 @@ ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
     tsi_safe_free(self->path_cache);
 
     assert(self->max_nodes > 0);
-    self->parent = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->left_child = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->right_child = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->left_sib = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->right_sib = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->recombination_required = malloc(self->max_nodes * sizeof(int8_t));
-    self->likelihood = malloc(self->max_nodes * sizeof(int8_t));
-    self->likelihood_cache = malloc(self->max_nodes * sizeof(int8_t));
-    self->likelihood_nodes = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(tsk_id_t));
-    self->path_cache = malloc(self->max_nodes * sizeof(int8_t));
+    self->parent = malloc(self->max_nodes * sizeof(*self->parent));
+    self->left_child = malloc(self->max_nodes * sizeof(*self->left_child));
+    self->right_child = malloc(self->max_nodes * sizeof(*self->right_child));
+    self->left_sib = malloc(self->max_nodes * sizeof(*self->left_sib));
+    self->right_sib = malloc(self->max_nodes * sizeof(*self->right_sib));
+    self->recombination_required = malloc(self->max_nodes *
+            sizeof(*self->recombination_required));
+    self->likelihood = malloc(self->max_nodes * sizeof(*self->likelihood));
+    self->likelihood_cache = malloc(self->max_nodes * sizeof(*self->likelihood_cache));
+    self->likelihood_nodes = malloc(self->max_nodes * sizeof(*self->likelihood_nodes));
+    self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(*self->likelihood_nodes_tmp));
+    self->path_cache = malloc(self->max_nodes * sizeof(*self->path_cache));
 
     if (self->parent == NULL
             || self->left_child == NULL || self->right_child == NULL
@@ -511,7 +537,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     self->num_nodes = self->tree_sequence_builder->num_nodes;
     assert(self->num_nodes <= self->max_nodes);
 
-    memset(self->path_cache, 0xff, self->num_nodes * sizeof(int8_t));
+    memset(self->path_cache, 0xff, self->num_nodes * sizeof(*self->path_cache));
     ret = tsk_blkalloc_reset(&self->traceback_allocator);
     if (ret != 0) {
         goto out;
@@ -712,13 +738,13 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
     tsk_id_t site;
     edge_t edge;
     tsk_id_t u, root, last_root;
-    int8_t L_child = 0;
+    double L_child = 0;
     /* Use the restrict keyword here to try to improve performance by avoiding
      * unecessary loads. We must be very careful to to ensure that all references
      * to this memory for the duration of this function is through these variables.
      */
-    int8_t *restrict L = self->likelihood;
-    int8_t *restrict L_cache = self->likelihood_cache;
+    double *restrict L = self->likelihood;
+    double *restrict L_cache = self->likelihood_cache;
     tsk_id_t *restrict parent = self->parent;
     tsk_id_t *restrict left_child = self->left_child;
     tsk_id_t *restrict right_child = self->right_child;
@@ -821,7 +847,7 @@ ancestor_matcher_run_forwards_match(ancestor_matcher_t *self, tsk_id_t start,
                 L[last_root] = NONZERO_ROOT_LIKELIHOOD;
             }
             if (L[root] == NONZERO_ROOT_LIKELIHOOD) {
-                L[root] = MISMATCH_LIKELIHOOD;
+                L[root] = 0;
                 self->likelihood_nodes[self->num_likelihood_nodes] = root;
                 self->num_likelihood_nodes++;
             }
