@@ -167,9 +167,13 @@ def infer(
     ancestor_data = generate_ancestors(
         sample_data, num_threads=num_threads,
         engine=engine, progress_monitor=progress_monitor)
+    # NOTE: we set mutation rate = 0 here when matching ancestors, since we're
+    # assuming that the ancestors we estimate are probably good. Seems likely
+    # that we don't want to use the same mu for ancestor matching and
+    # sample matching anyway --- something to nail down for the final interface.
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
-        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
+        recombination_rate=recombination_rate, mutation_rate=0,
         precision=precision,
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
@@ -675,17 +679,22 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
+        # NOTE: This is all quite confusing, but there's not much point in cleaning
+        # it up, when we'll be using tskit to work more directly with the
+        # tables.
         num_sites = self.sample_data.num_sites
         num_non_inference_sites = self.sample_data.num_non_inference_sites
         progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
 
-        _, node, derived_state, parent = self.tree_sequence_builder.dump_mutations()
+        site_id, node, derived_state, parent = \
+            self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
         if num_non_inference_sites > 0:
             assert ts.num_edges > 0
             logger.info(
                 "Starting mutation positioning for {} non inference sites".format(
                     num_non_inference_sites))
+            inferred_mutation = 0
             inferred_site = 0
             trees = ts.trees()
             tree = next(trees)
@@ -700,9 +709,14 @@ class Matcher(object):
                     ancestral_state=predefined_anc_state,
                     metadata=self.encode_metadata(site.metadata))
                 if site.inference == 1:
-                    tables.mutations.add_row(
-                        site=site.id, node=node[inferred_site],
-                        derived_state=variant.alleles[derived_state[inferred_site]])
+                    while (
+                            inferred_mutation < len(site_id) and
+                            site_id[inferred_mutation] == inferred_site):
+                        tables.mutations.add_row(
+                            site=site.id, node=node[inferred_mutation],
+                            derived_state=variant.alleles[
+                                derived_state[inferred_mutation]])
+                        inferred_mutation += 1
                     inferred_site += 1
                 else:
                     inferred_anc_state, mapped_mutations = tree.map_mutations(
@@ -727,13 +741,16 @@ class Matcher(object):
             position = self.sample_data.sites_position[:]
             alleles = self.sample_data.sites_alleles[:]
             metadata = self.sample_data.sites_metadata[:]
+            k = 0
             for j in range(self.num_sites):
                 tables.sites.add_row(
                     position=position[j],
                     ancestral_state=alleles[j][0],
                     metadata=self.encode_metadata(metadata[j]))
-                tables.mutations.add_row(
-                    site=j, node=node[j], derived_state=alleles[j][derived_state[j]])
+                while k < len(site_id) and site_id[k] == j:
+                    tables.mutations.add_row(
+                        site=j, node=node[k], derived_state=alleles[j][derived_state[k]])
+                    k += 1
                 progress_monitor.update()
         progress_monitor.close()
 
@@ -780,6 +797,7 @@ class Matcher(object):
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
         site, node, derived_state, parent = tsb.dump_mutations()
+
         derived_state += ord('0')
         tables.mutations.set_columns(
             site=site, node=node, derived_state=derived_state,
@@ -890,6 +908,8 @@ class AncestorMatcher(Matcher):
 
     def __init__(self, sample_data, ancestor_data, **kwargs):
         super().__init__(sample_data, **kwargs)
+        if not np.all(self.mutation_rate == 0):
+            raise ValueError("mutations not supported for ancestor matching yet")
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.ancestors_time[:]
@@ -1131,6 +1151,7 @@ class SampleMatcher(Matcher):
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
+        # print(ts.tables)
         if simplify:
             logger.info(
                 "Running simplify(keep_unary=True) on {} nodes and {} edges".format(

@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -24,6 +24,7 @@ import random
 import os.path
 import string
 import io
+import itertools
 import json
 import unittest.mock as mock
 import tempfile
@@ -135,6 +136,22 @@ class TestRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data tsinfer.
     """
+    def assert_lossless(self, ts, genotypes, positions, alleles, sequence_length):
+        self.assertEqual(ts.sequence_length, sequence_length)
+        self.assertEqual(ts.num_sites, len(positions))
+        for v in ts.variants():
+            self.assertEqual(v.position, positions[v.index])
+            if alleles is None or len(alleles[v.index]) == 2:
+                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+            else:
+                a = alleles[v.index]
+                self.assertEqual(v.site.ancestral_state, a[0])
+                self.assertTrue(set(v.alleles) <= set(a))
+                a1 = np.array(a)
+                a2 = np.array(v.alleles)
+                self.assertTrue(
+                    np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
+
     def verify_data_round_trip(
             self, genotypes, positions, alleles=None, sequence_length=None, times=None):
         if sequence_length is None:
@@ -151,20 +168,7 @@ class TestRoundTrip(unittest.TestCase):
             {'path_compression': True}, {'path_compression': False}]
         for params in test_params:
             ts = tsinfer.infer(sample_data, **params)
-            self.assertEqual(ts.sequence_length, sequence_length)
-            self.assertEqual(ts.num_sites, len(positions))
-            for v in ts.variants():
-                self.assertEqual(v.position, positions[v.index])
-                if alleles is None or len(alleles[v.index]) == 2:
-                    self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
-                else:
-                    a = alleles[v.index]
-                    self.assertEqual(v.site.ancestral_state, a[0])
-                    self.assertTrue(set(v.alleles) <= set(a))
-                    a1 = np.array(a)
-                    a2 = np.array(v.alleles)
-                    self.assertTrue(
-                        np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
             self.assertGreater(ts.num_provenances, 0)
 
     def verify_round_trip(self, ts):
@@ -304,20 +308,32 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
                 sample_data, ancestors_ts, np.arange(sample_data.num_samples),
                 engine=engine)
             ts = tsinfer.match_samples(sample_data, augmented_ts, engine=engine)
-            self.assertEqual(ts.sequence_length, sequence_length)
-            self.assertEqual(ts.num_sites, len(positions))
-            for v in ts.variants():
-                self.assertEqual(v.position, positions[v.index])
-                if alleles is None or len(alleles[v.index]) == 2:
-                    self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
-                else:
-                    a = alleles[v.index]
-                    self.assertEqual(v.site.ancestral_state, a[0])
-                    self.assertTrue(set(v.alleles) <= set(a))
-                    a1 = np.array(a)
-                    a2 = np.array(v.alleles)
-                    self.assertTrue(
-                        np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
+
+
+class TestSampleMutationsRoundTrip(TestRoundTrip):
+    """
+    Test that we can round-trip data when we allow mutations over samples.
+    """
+    def verify_data_round_trip(
+            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
+            for j in range(genotypes.shape[0]):
+                t = None if times is None else times[j]
+                site_alleles = None if alleles is None else alleles[j]
+                sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        rho = [1e-9, 1e-3, 1]
+        mu = [1e-9, 1e-3, 1]
+        engines = [tsinfer.PY_ENGINE]
+        for recomb_rate, mut_rate, engine in itertools.product(rho, mu, engines):
+            ts = tsinfer.match_samples(
+                sample_data, ancestors_ts,
+                recombination_rate=recomb_rate, mutation_rate=mut_rate, engine=engine)
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
 class TestNonInferenceSitesRoundTrip(unittest.TestCase):
