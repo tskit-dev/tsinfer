@@ -1246,14 +1246,18 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
-    static char *kwlist[] = {"tree_sequence_builder", "extended_checks", NULL};
+    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate",
+        "mutation_rate", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
+    PyObject *recombination_rate = NULL;
+    PyObject *mutation_rate = NULL;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!i", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OOi", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
+                &recombination_rate, &mutation_rate,
                 &extended_checks)) {
         goto out;
     }
@@ -1262,6 +1266,13 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     if (TreeSequenceBuilder_check_state(self->tree_sequence_builder) != 0) {
         goto out;
     }
+
+    /* TODO turn the input rate arrays into numpy and copy to ancestor matcher. */
+    /* NOTE: we should probably associate the rates with the tree sequence builder
+     * though, as there's not much point in having 40 copies of the same arrays
+     * lying around in memory. On the other hand, we might get better locality
+     * if we do. Hmmm. */
+
     self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
     if (self->ancestor_matcher == NULL) {
         PyErr_NoMemory();

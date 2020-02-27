@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -607,22 +607,28 @@ def is_descendant(pi, u, v):
     # print("IS_DESCENDENT(", u, v, ") = ", ret)
     return ret
 
-# We have a 3 valued number system for match likelihoods, plus two
-# more values to indicate compressed paths tree and nodes that are
-# currently not in the tree.
+# FIXME Old
+# # We have a 3 valued number system for match likelihoods, plus two
+# # more values to indicate compressed paths tree and nodes that are
+# # currently not in the tree.
+# MISMATCH = 0
+# RECOMB = 1
+# MATCH = 2
 
-
-MISMATCH = 0
-RECOMB = 1
-MATCH = 2
+# Special values used to indicate compressed paths and nodes that are
+# not present in the current tree.
 COMPRESSED = -1
 MISSING = -2
 
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, extended_checks=False):
+    def __init__(
+            self, tree_sequence_builder, recombination_rate=None, mutation_rate=None,
+            extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
+        self.mutation_rate = mutation_rate
+        self.recombination_rate = recombination_rate
         self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
         self.parent = None
@@ -660,6 +666,8 @@ class AncestorMatcher(object):
 
     def update_site(self, site, state):
         n = self.tree_sequence_builder.num_nodes
+        rho = self.recombination_rate[site]
+        mu = self.mutation_rate[site]
 
         mutation_node = tskit.NULL
         if site in self.tree_sequence_builder.mutations:
@@ -697,22 +705,49 @@ class AncestorMatcher(object):
                     path_cache[v] = d
                     v = self.parent[v]
 
-            self.traceback[site][u] = False
-            if self.likelihood[u] == MISMATCH:
-                self.traceback[site][u] = True
-            if mutation_node != -1 and d != state:
-                self.likelihood[u] = MISMATCH
-            elif self.likelihood[u] == MISMATCH:
-                self.likelihood[u] = RECOMB
+
+            p_last = self.likelihood[u]
+            p_no_recomb = p_last * (1 - rho + rho / n)
+            p_recomb = rho / n
+            recombination_required = False
+            if p_no_recomb > p_recomb:
+                p_t = p_no_recomb
+            else:
+                p_t = p_recomb
+                recombination_required = True
+            self.traceback[site][u] = recombination_required
+            p_e = mu
+            if d == state:
+                # p_e = 1 - (len(alleles) - 1) * mu
+                p_e = 1 - mu
+            self.likelihood[u] = p_t * p_e
+
+            # print("u", u, "->", p_t, p_e, " = ", self.likelihood[u])
+
+            # self.traceback[site][u] = False
+            # if self.likelihood[u] == MISMATCH:
+            #     self.traceback[site][u] = True
+            # if mutation_node != -1 and d != state:
+            #     self.likelihood[u] = MISMATCH
+            # elif self.likelihood[u] == MISMATCH:
+            #     self.likelihood[u] = RECOMB
 
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        if max_L != MATCH:
-            for u in self.likelihood_nodes:
-                if self.likelihood[u] == max_L:
-                    self.likelihood[u] = MATCH
+        # if max_L != MATCH:
+        #     for u in self.likelihood_nodes:
+        #         if self.likelihood[u] == max_L:
+        #             self.likelihood[u] = MATCH
+        if max_L == 0:
+            assert self.mutation_rate[site] == 0
+            raise ValueError(
+                "Trying to match non-existent allele with zero mutation rate")
+
+        for u in self.likelihood_nodes:
+            self.likelihood[u] /= max_L
+
         self.max_likelihood_node[site] = max_L_node
 
         # Reset the path cache
@@ -723,6 +758,44 @@ class AncestorMatcher(object):
                 v = self.parent[v]
         assert np.all(path_cache == -1)
         self.compress_likelihoods()
+
+
+#     def finalise_site(self, l):
+#         max_st = ValueTransition(value=-1)
+#         for st in self.T:
+#             if st.value > max_st.value:
+#                 max_st = st
+#         if max_st.value == 0:
+#             assert self.mu[l] == 0
+#             raise ValueError(
+#                 "Trying to match non-existent allele with zero mutation rate")
+
+#         max_value = max_st.value
+#         for st in self.T:
+#             st.value /= max_value
+#         self.output.store_site(l, max_value, [(st.tree_node, st.value) for st in self.T])
+
+#     def compute_next_probability(self, site_id, p_last, is_match, node):
+#         rho = self.rho[site_id]
+#         mu = self.mu[site_id]
+#         alleles = self.alleles[site_id]
+#         n = self.ts.num_samples
+
+#         p_no_recomb = p_last * (1 - rho + rho / n)
+#         p_recomb = rho / n
+#         recombination_required = False
+#         if p_no_recomb > p_recomb:
+#             p_t = p_no_recomb
+#         else:
+#             p_t = p_recomb
+#             recombination_required = True
+#         self.output.add_recombination_required(site_id, node, recombination_required)
+#         p_e = mu
+#         if is_match:
+#             p_e = 1 - (len(alleles) - 1) * mu
+#         return p_t * p_e
+
+
 
     def compress_likelihoods(self):
         L_cache = np.zeros_like(self.likelihood) - 1
@@ -809,7 +882,7 @@ class AncestorMatcher(object):
         self.traceback = [{} for _ in range(m)]
         self.max_likelihood_node = np.zeros(m, dtype=int) - 1
 
-        self.likelihood = np.zeros(n, dtype=np.int8) - 2
+        self.likelihood = np.zeros(n) - 2
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
@@ -846,7 +919,7 @@ class AncestorMatcher(object):
             last_root = self.left_child[0]
             assert self.right_sib[last_root] == -1
         self.likelihood_nodes.append(last_root)
-        self.likelihood[last_root] = MATCH
+        self.likelihood[last_root] = 1
 
         remove_start = k
         while left < end:
@@ -918,7 +991,7 @@ class AncestorMatcher(object):
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
                     if u != 0 and self.likelihood[u] == MISSING:
-                        self.likelihood[u] = MISMATCH
+                        self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
             right = m
             if j < M:

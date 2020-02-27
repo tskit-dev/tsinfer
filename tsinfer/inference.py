@@ -140,6 +140,7 @@ def verify(samples, tree_sequence, progress_monitor=None):
 
 def infer(
         sample_data, num_threads=0, path_compression=True, simplify=True,
+        recombination_rate=None, mutation_rate=None,
         engine=constants.C_ENGINE, progress_monitor=None):
     """
     infer(sample_data, num_threads=0, path_compression=True, simplify=True)
@@ -165,12 +166,14 @@ def infer(
     """
     ancestor_data = generate_ancestors(
         sample_data, num_threads=num_threads,
-        engine=engine, progress_monitor=progress_monitor,)
+        engine=engine, progress_monitor=progress_monitor)
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
+        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
         sample_data, ancestors_ts, engine=engine, num_threads=num_threads,
+        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
         path_compression=path_compression, simplify=simplify,
         progress_monitor=progress_monitor)
     return inferred_ts
@@ -218,6 +221,7 @@ def generate_ancestors(
 
 def match_ancestors(
         sample_data, ancestor_data, num_threads=0, path_compression=True,
+        recombination_rate=None, mutation_rate=None,
         extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
     match_ancestors(sample_data, ancestor_data, num_threads=0, path_compression=True)
@@ -244,6 +248,7 @@ def match_ancestors(
     ancestor_data._check_finalised()
     matcher = AncestorMatcher(
         sample_data, ancestor_data, num_threads=num_threads,
+        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor)
     return matcher.match_ancestors()
@@ -251,6 +256,7 @@ def match_ancestors(
 
 def augment_ancestors(
         sample_data, ancestors_ts, indexes, num_threads=0, path_compression=True,
+        recombination_rate=None, mutation_rate=None,
         extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
     """
     augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,\
@@ -281,6 +287,7 @@ def augment_ancestors(
     sample_data._check_finalised()
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
+        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor
         )
@@ -291,6 +298,7 @@ def augment_ancestors(
 
 def match_samples(
         sample_data, ancestors_ts, num_threads=0, path_compression=True, simplify=True,
+        recombination_rate=None, mutation_rate=None,
         extended_checks=False, stabilise_node_ordering=False, engine=constants.C_ENGINE,
         progress_monitor=None):
     """
@@ -322,6 +330,7 @@ def match_samples(
     sample_data._check_finalised()
     manager = SampleMatcher(
         sample_data, ancestors_ts, num_threads=num_threads,
+        recombination_rate=recombination_rate, mutation_rate=mutation_rate,
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor)
     manager.match_samples()
@@ -478,6 +487,7 @@ class Matcher(object):
 
     def __init__(
             self, sample_data, num_threads=1, path_compression=True,
+            recombination_rate=None, mutation_rate=None,
             extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -487,6 +497,19 @@ class Matcher(object):
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
+
+        if recombination_rate is None:
+            # TODO is this a good value? I guess it depends on the default precision
+            # as well. Will need to tune
+            recombination_rate = 1e-8
+
+        self.recombination_rate = np.zeros(self.num_sites)
+        # FIXME not quite right: we should check the rho[0] = 0
+        self.recombination_rate[:] = recombination_rate
+        if mutation_rate is None:
+            mutation_rate = 0
+        self.mutation_rate = np.zeros(self.num_sites)
+        self.mutation_rate[:] = mutation_rate
 
         if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
@@ -517,7 +540,10 @@ class Matcher(object):
         self.num_matches = np.zeros(num_threads)
         self.matcher = [
             self.ancestor_matcher_class(
-                self.tree_sequence_builder, extended_checks=self.extended_checks)
+                self.tree_sequence_builder,
+                recombination_rate=self.recombination_rate,
+                mutation_rate=self.mutation_rate,
+                extended_checks=self.extended_checks)
             for _ in range(num_threads)]
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
