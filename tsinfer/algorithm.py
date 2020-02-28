@@ -597,7 +597,7 @@ class TreeSequenceBuilder(object):
 # Special values used to indicate compressed paths and nodes that are
 # not present in the current tree.
 COMPRESSED = -1
-MISSING = -2
+NONZERO_ROOT = -2
 
 
 class AncestorMatcher(object):
@@ -809,7 +809,7 @@ class AncestorMatcher(object):
         self.max_likelihood_node = np.zeros(m, dtype=int) - 1
         self.allelic_state = np.zeros(n, dtype=int) - 1
 
-        self.likelihood = np.zeros(n) - 2
+        self.likelihood = np.full(n, NONZERO_ROOT, dtype=float)
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
@@ -856,7 +856,7 @@ class AncestorMatcher(object):
                 edge = Ir.peekitem(l)[1]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
-                        self.likelihood[u] = MISSING
+                        self.likelihood[u] = NONZERO_ROOT
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
             root = 0
@@ -866,9 +866,9 @@ class AncestorMatcher(object):
 
             if root != last_root:
                 if last_root == 0:
-                    self.likelihood[last_root] = MISSING
+                    self.likelihood[last_root] = NONZERO_ROOT
                     self.likelihood_nodes.remove(last_root)
-                if self.likelihood[root] == MISSING:
+                if self.likelihood[root] == NONZERO_ROOT:
                     self.likelihood[root] = 0
                     self.likelihood_nodes.append(root)
                 last_root = root
@@ -917,7 +917,7 @@ class AncestorMatcher(object):
                 # There's no point in compressing the likelihood tree here as we'll be
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
-                    if u != 0 and self.likelihood[u] == MISSING:
+                    if u != 0 and self.likelihood[u] == NONZERO_ROOT:
                         self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
             right = m

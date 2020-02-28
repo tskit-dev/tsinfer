@@ -169,7 +169,7 @@ typedef struct {
     tsk_id_t *right_sib;
     double *likelihood;
     double *likelihood_cache;
-    int8_t *path_cache;
+    allele_t *allelic_state;
     int num_likelihood_nodes;
     /* At each site, record a node with the maximum likelihood. */
     tsk_id_t *max_likelihood_node;

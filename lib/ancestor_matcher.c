@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018 University of Oxford
+** Copyright (C) 2018-2020 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -82,6 +82,7 @@ ancestor_matcher_check_state(ancestor_matcher_t *self)
         if (is_nonzero_root(u, self->parent, self->left_child)) {
             assert(self->likelihood[u] == NONZERO_ROOT_LIKELIHOOD);
         }
+        assert(self->allelic_state[u] == TSK_NULL);
     }
     assert(num_likelihoods == self->num_likelihood_nodes);
 }
@@ -185,7 +186,7 @@ ancestor_matcher_free(ancestor_matcher_t *self)
     tsi_safe_free(self->likelihood_cache);
     tsi_safe_free(self->likelihood_nodes);
     tsi_safe_free(self->likelihood_nodes_tmp);
-    tsi_safe_free(self->path_cache);
+    tsi_safe_free(self->allelic_state);
     tsi_safe_free(self->max_likelihood_node);
     tsi_safe_free(self->traceback);
     tsi_safe_free(self->output.left);
@@ -277,40 +278,55 @@ out:
     return ret;
 }
 
-/* Returns true if the node u is a descendant of v; i.e. if v is present on the
- * path from u to root. Returns false in all other situations, including
- * error conditions. */
-static inline bool
-is_descendant(const tsk_id_t u, const tsk_id_t v, const tsk_id_t *restrict parent)
+/* Sets the specified allelic state array to reflect the mutations at the
+ * specified site. */
+static inline void
+ancestor_matcher_set_allelic_state(ancestor_matcher_t *self, const tsk_id_t site,
+        allele_t *restrict allelic_state)
 {
-    bool ret = false;
-    tsk_id_t w = u;
+    mutation_list_node_t *mutation;
 
-    if (v != NULL_NODE) {
-        while (w != NULL_NODE && w != v) {
-            w = parent[w];
-        }
-        ret = w == v;
+    /* FIXME assuming that 0 is always the ancestral state */
+    allelic_state[0] = 0;
+
+    for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
+            mutation = mutation->next) {
+        allelic_state[mutation->node] = mutation->derived_state;
     }
-    return ret;
+}
+
+/* Resets the allelic state at this site to NULL. */
+static inline void
+ancestor_matcher_unset_allelic_state(ancestor_matcher_t *self, const tsk_id_t site,
+        allele_t *restrict allelic_state)
+{
+    mutation_list_node_t *mutation;
+
+    allelic_state[0] = NULL_NODE;
+    for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
+            mutation = mutation->next) {
+        allelic_state[mutation->node] = TSK_NULL;
+    }
 }
 
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
-        const tsk_id_t site, const tsk_id_t mutation_node, const char state,
-        const tsk_id_t *restrict parent, double *restrict L)
+        const tsk_id_t site, const char state, const tsk_id_t *restrict parent,
+        double *restrict L)
 {
     int ret = 0;
     const int num_likelihood_nodes = self->num_likelihood_nodes;
     const tsk_id_t *restrict L_nodes = self->likelihood_nodes;
-    int8_t *restrict path_cache = self->path_cache;
+    allele_t *restrict allelic_state = self->allelic_state;
     int8_t *restrict recombination_required = self->recombination_required;
-    int j, descendant;
+    int j;
     tsk_id_t u, v, max_L_node;
     double max_L, p_last, p_no_recomb, p_recomb, p_t, p_e;
     const double rho = self->recombination_rate[site];
     const double mu = self->mutation_rate[site];
     const double n = (double) self->tree_sequence_builder->num_nodes;
+
+    ancestor_matcher_set_allelic_state(self, site, allelic_state);
 
     max_L = -1;
     max_L_node = NULL_NODE;
@@ -318,34 +334,16 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     /* printf("likelihoods for node=%d, n=%d\n", mutation_node, self->num_likelihood_nodes); */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
-        /* Determine if the node this likelihood is associated with is a descendant
-         * of the mutation node. To avoid the cost of repeatedly traversing up the
-         * tree, we keep a cache of the paths that we have already traversed. When
-         * we meet one of these paths we can immediately finish.
-         */
-        descendant = 0;
-        if (mutation_node != NULL_NODE) {
-            v = u;
-            while (likely(v != NULL_NODE)
-                    && likely(v != mutation_node)
-                    && likely(path_cache[v] == CACHE_UNSET)) {
-                v = parent[v];
-            }
-            if (likely(v != NULL_NODE) && likely(path_cache[v] != CACHE_UNSET)) {
-                descendant = path_cache[v];
-            } else {
-                descendant = v == mutation_node;
-            }
-            /* Insert this path into the cache */
-            v = u;
-            while (likely(v != NULL_NODE)
-                    && likely(v != mutation_node)
-                    && likely(path_cache[v] == CACHE_UNSET)) {
-                path_cache[v] = (int8_t) descendant;
-                v = parent[v];
-            }
+        /* Get the allelic state at u. */
+        /* TODO we can cache the states here to save some time. One nice way we could
+         * do the caching is to save the L_node index in the allelic_state array as
+         * we traverse upwards, and then keep an array of the L_node states which
+         * we then look up. This would save a second upward traversal to mark the
+         * array after we've found the state value. */
+        v = u;
+        while (allelic_state[v] == TSK_NULL) {
+            v = parent[v];
         }
-
         p_last = L[u];
         p_no_recomb = p_last * (1 - rho + rho / n);
         p_recomb = rho / n;
@@ -357,7 +355,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             recombination_required[u] = true;
         }
         p_e = mu;
-        if (descendant == state) {
+        if (allelic_state[v] == state) {
             p_e = 1 - mu;
         }
         L[u] = tsk_round(p_t * p_e, self->precision);
@@ -372,17 +370,12 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     assert(max_L_node != NULL_NODE);
     self->max_likelihood_node[site] = max_L_node;
 
-    /* Reset the path cache and renormalise the likelihoods. */
+    /* Renormalise the likelihoods. */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
         L[u] /= max_L;
-
-        v = u;
-        while (likely(v != NULL_NODE) && likely(path_cache[v] != CACHE_UNSET)) {
-            path_cache[v] = CACHE_UNSET;
-            v = parent[v];
-        }
     }
+    ancestor_matcher_unset_allelic_state(self, site, allelic_state);
     return ret;
 }
 
@@ -454,32 +447,29 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const tsk_id_t site
         double *restrict L_cache)
 {
     int ret = 0;
-    tsk_id_t mutation_node = NULL_NODE;
+    mutation_list_node_t *mutation = self->tree_sequence_builder->sites.mutations[site];
     tsk_id_t u;
 
     assert(self->num_likelihood_nodes > 0);
 
-    if (self->tree_sequence_builder->sites.mutations[site] != NULL) {
-        mutation_node = self->tree_sequence_builder->sites.mutations[site]->node;
-    }
     if (self->flags & TSI_EXTENDED_CHECKS) {
         ancestor_matcher_check_state(self);
     }
-    if (mutation_node != NULL_NODE) {
+    for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
+            mutation = mutation->next) {
         /* Insert a new L-value for the mutation node if needed */
-        if (L[mutation_node] == NULL_LIKELIHOOD) {
-            u = mutation_node;
+        if (L[mutation->node] == NULL_LIKELIHOOD) {
+            u = mutation->node;
             while (L[u] == NULL_LIKELIHOOD) {
                 u = parent[u];
                 assert(u != NULL_NODE);
             }
-            L[mutation_node] = L[u];
-            self->likelihood_nodes[self->num_likelihood_nodes] = mutation_node;
+            L[mutation->node] = L[u];
+            self->likelihood_nodes[self->num_likelihood_nodes] = mutation->node;
             self->num_likelihood_nodes++;
         }
     }
-    ret = ancestor_matcher_update_site_likelihood_values(self, site,
-            mutation_node, state, parent, L);
+    ret = ancestor_matcher_update_site_likelihood_values(self, site, state, parent, L);
     if (ret != 0) {
         goto out;
     }
@@ -522,7 +512,7 @@ ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
     tsi_safe_free(self->likelihood_cache);
     tsi_safe_free(self->likelihood_nodes);
     tsi_safe_free(self->likelihood_nodes_tmp);
-    tsi_safe_free(self->path_cache);
+    tsi_safe_free(self->allelic_state);
 
     assert(self->max_nodes > 0);
     self->parent = malloc(self->max_nodes * sizeof(*self->parent));
@@ -536,7 +526,7 @@ ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
     self->likelihood_cache = malloc(self->max_nodes * sizeof(*self->likelihood_cache));
     self->likelihood_nodes = malloc(self->max_nodes * sizeof(*self->likelihood_nodes));
     self->likelihood_nodes_tmp = malloc(self->max_nodes * sizeof(*self->likelihood_nodes_tmp));
-    self->path_cache = malloc(self->max_nodes * sizeof(*self->path_cache));
+    self->allelic_state = malloc(self->max_nodes * sizeof(*self->allelic_state));
 
     if (self->parent == NULL
             || self->left_child == NULL || self->right_child == NULL
@@ -544,7 +534,7 @@ ancestor_matcher_expand_nodes(ancestor_matcher_t *self)
             || self->recombination_required == NULL
             || self->likelihood == NULL || self->likelihood_cache == NULL
             || self->likelihood_nodes == NULL
-            || self->likelihood_nodes_tmp == NULL || self->path_cache == NULL) {
+            || self->likelihood_nodes_tmp == NULL || self->allelic_state == NULL) {
         goto out;
     }
     ret = 0;
@@ -568,7 +558,7 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     self->num_nodes = self->tree_sequence_builder->num_nodes;
     assert(self->num_nodes <= self->max_nodes);
 
-    memset(self->path_cache, 0xff, self->num_nodes * sizeof(*self->path_cache));
+    memset(self->allelic_state, 0xff, self->num_nodes * sizeof(*self->allelic_state));
     ret = tsk_blkalloc_reset(&self->traceback_allocator);
     if (ret != 0) {
         goto out;
@@ -623,10 +613,10 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start,
     int ret = 0;
     tsk_id_t l;
     edge_t edge;
-    tsk_id_t u, max_likelihood_node;
+    tsk_id_t u, v, max_likelihood_node;
     tsk_id_t left, right, pos;
-    mutation_list_node_t *mut_list;
     tsk_id_t *restrict parent = self->parent;
+    allele_t *restrict allelic_state = self->allelic_state;
     int8_t *restrict recombination_required = self->recombination_required;
     const edge_t *restrict in = self->tree_sequence_builder->right_index_edges;
     const edge_t *restrict out = self->tree_sequence_builder->left_index_edges;
@@ -674,15 +664,15 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start,
         /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
         for (l = TSK_MIN(right, end) - 1; l >= (int) TSK_MAX(left, start); l--) {
-            match[l] = 0;
+            ancestor_matcher_set_allelic_state(self, l, allelic_state);
             u = self->output.parent[self->output.size];
-            /* Set the state of the matched haplotype */
-            mut_list = self->tree_sequence_builder->sites.mutations[l];
-            if (mut_list != NULL) {
-                if (is_descendant(u, mut_list->node, parent)) {
-                    match[l] = 1;
-                }
+            v = u;
+            while (allelic_state[v] == TSK_NULL) {
+                v = parent[v];
             }
+            match[l] = allelic_state[v];
+            ancestor_matcher_unset_allelic_state(self, l, allelic_state);
+
             /* Mark the traceback nodes on the tree */
             ancestor_matcher_set_recombination_required(self, l, recombination_required);
 
@@ -694,7 +684,6 @@ ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start,
             }
             if (recombination_required[u] && l > start) {
                 max_likelihood_node = self->max_likelihood_node[l - 1];
-                assert(max_likelihood_node != self->output.parent[self->output.size]);
                 assert(max_likelihood_node != NULL_NODE);
                 self->output.left[self->output.size] = l;
                 self->output.size++;

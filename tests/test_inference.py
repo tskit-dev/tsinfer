@@ -326,13 +326,23 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
                 sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
-        rho = [1e-9, 1e-3, 1]
-        mu = [1e-9, 1e-3, 1]
-        engines = [tsinfer.PY_ENGINE]
+        rho = [1e-9, 1e-3, 0.1]
+        mu = [1e-9, 1e-3, 0.1]
+        engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
         for recomb_rate, mut_rate, engine in itertools.product(rho, mu, engines):
             ts = tsinfer.match_samples(
                 sample_data, ancestors_ts,
                 recombination_rate=recomb_rate, mutation_rate=mut_rate, engine=engine)
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
+        # Either a zero mutation or recombination rate (but not both) will work.
+        for engine in engines:
+            ts = tsinfer.match_samples(
+                sample_data, ancestors_ts,
+                recombination_rate=1e-3, mutation_rate=0, engine=engine)
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
+            ts = tsinfer.match_samples(
+                sample_data, ancestors_ts,
+                recombination_rate=0, mutation_rate=1e-3, engine=engine)
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
