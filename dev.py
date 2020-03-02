@@ -114,21 +114,26 @@ def tsinfer_dev(
     assert ts.num_sites > 0
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
+    rho = recombination_rate
+    mu = 1e-3
 
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
         samples, ancestor_data, engine=engine, path_compression=True,
-        extended_checks=False)
+        extended_checks=False, recombination_rate=rho,
+        # FIXME mu must be zero for ancestor matching at the moment.
+        mutation_rate=0)
 
-
-    ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
-            [5, 6, 7], engine=engine)
-
+    # ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
+    #         [5, 6, 7], engine=engine)
 
     ts = tsinfer.match_samples(samples, ancestors_ts,
+            recombination_rate=rho, mutation_rate=mu,
             path_compression=False, engine=engine,
             simplify=True)
+
+    # print(ts.draw_text())
 
     # print(ts.tables.edges)
     # print(ts.dump_tables())
@@ -275,7 +280,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(10, 1.15, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(20, 0.15, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
 
     # minimise_dev()
 

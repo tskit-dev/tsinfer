@@ -118,7 +118,6 @@ add_haplotype(tree_sequence_builder_t *tsb, ancestor_matcher_t *ancestor_matcher
     for (k = start; k < end; k++) {
         if (haplotype[k] != match[k]) {
             mutation_site[num_mutations] = k;
-            CU_ASSERT_EQUAL_FATAL(haplotype[k], 1)
             mutation_derived_state[num_mutations] = haplotype[k];
             num_mutations++;
         }
@@ -181,13 +180,16 @@ initialise_builder(tree_sequence_builder_t *tsb, double oldest_time)
 }
 
 static void
-run_random_data(size_t num_samples, size_t num_sites, int seed)
+run_random_data(size_t num_samples, size_t num_sites, int seed, double recombination_rate,
+        double mutation_rate)
 {
     tsk_table_collection_t tables;
     ancestor_builder_t ancestor_builder;
     ancestor_matcher_t ancestor_matcher;
     tree_sequence_builder_t tsb;
     ancestor_descriptor_t ad;
+    double *recombination_rates = calloc(num_sites, sizeof(double));
+    double *mutation_rates = calloc(num_sites, sizeof(double));
     allele_t **samples = generate_random_haplotypes(num_samples, num_sites, 2, seed);
     allele_t *genotypes = malloc(num_samples * sizeof(*genotypes));
     allele_t *haplotype = malloc(num_sites * sizeof(*haplotype));
@@ -198,13 +200,21 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
 
     CU_ASSERT_FATAL(genotypes != NULL);
     CU_ASSERT_FATAL(haplotype != NULL);
+    CU_ASSERT_FATAL(recombination_rates != NULL);
+    CU_ASSERT_FATAL(mutation_rates != NULL);
+
+    for (j = 0; j < num_sites; j++) {
+        recombination_rates[j] = recombination_rate;
+        mutation_rates[j] = mutation_rate;
+    }
 
     CU_ASSERT_FATAL(num_samples >= 2);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = tree_sequence_builder_alloc(&tsb, num_sites, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, TSI_EXTENDED_CHECKS);
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
+            mutation_rates, 24, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -273,6 +283,8 @@ run_random_data(size_t num_samples, size_t num_sites, int seed)
     free(samples);
     free(haplotype);
     free(genotypes);
+    free(recombination_rates);
+    free(mutation_rates);
 }
 
 static void
@@ -318,6 +330,8 @@ test_matching_one_site(void)
     tree_sequence_builder_t tsb;
     allele_t haplotype[1] = {0};
     allele_t match[1];
+    double recombination_rate = 0;
+    double mutation_rate = 0;
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
 
@@ -328,7 +342,8 @@ test_matching_one_site(void)
     ret = tree_sequence_builder_freeze_indexes(&tsb);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, 0);
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb,
+            &recombination_rate, &mutation_rate, 12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
@@ -378,7 +393,8 @@ test_random_data_n5_m3(void)
 
     for (seed = 1; seed < 100; seed++) {
         /* printf("seed = %d\n", seed); */
-        run_random_data(5, 3, seed);
+        run_random_data(5, 3, seed, 1e-3, 1e-20);
+        run_random_data(5, 3, seed, 1e-20, 1e-3);
     }
 }
 
@@ -389,32 +405,37 @@ test_random_data_n5_m20(void)
     int seed;
 
     for (seed = 1; seed < 10; seed++) {
-        run_random_data(5, 20, seed);
+        run_random_data(5, 20, seed, 1e-3, 1e-20);
+        run_random_data(5, 20, seed, 1e-20, 1e-3);
     }
 }
 
 static void
 test_random_data_n10_m10(void)
 {
-    run_random_data(10, 10, 43);
+    run_random_data(10, 10, 43, 1e-3, 1e-20);
+    run_random_data(10, 10, 43, 1e-20, 1e-3);
 }
 
 static void
 test_random_data_n10_m100(void)
 {
-    run_random_data(10, 100, 43);
+    run_random_data(10, 100, 43, 1e-3, 1e-20);
+    run_random_data(10, 100, 43, 1e-20, 1e-3);
 }
 
 static void
 test_random_data_n100_m10(void)
 {
-    run_random_data(10, 10, 1243);
+    run_random_data(10, 10, 1243, 1e-3, 1e-20);
+    run_random_data(10, 10, 1243, 1e-20, 1e-3);
 }
 
 static void
 test_random_data_n100_m100(void)
 {
-    run_random_data(100, 100, 42);
+    run_random_data(100, 100, 42, 1e-3, 1e-20);
+    run_random_data(100, 100, 42, 1e-20, 1e-3);
 }
 
 static int

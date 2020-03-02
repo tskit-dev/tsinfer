@@ -27,12 +27,8 @@
 #include "object_heap.h"
 #include "avl.h"
 
-/* We have a 3 valued number system for match likelihoods, plus two
- * values to a compressed path (NULL_LIKELIHOOD) and to mark a node
- * that isn't currently in the tree */
-#define MISMATCH_LIKELIHOOD (0)
-#define RECOMB_LIKELIHOOD (1)
-#define MATCH_LIKELIHOOD (2)
+/* NULL_LIKELIHOOD represents a compressed path and NONZERO_ROOT_LIKELIHOOD
+ * marks a node that is not in the current tree. */
 #define NULL_LIKELIHOOD (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
 
@@ -161,15 +157,19 @@ typedef struct {
     size_t num_nodes;
     size_t num_sites;
     size_t max_nodes;
+    /* Input LS model rates */
+    unsigned int precision;
+    double *recombination_rate;
+    double *mutation_rate;
     /* The quintuply linked tree */
     tsk_id_t *parent;
     tsk_id_t *left_child;
     tsk_id_t *right_child;
     tsk_id_t *left_sib;
     tsk_id_t *right_sib;
-    int8_t *likelihood;
-    int8_t *likelihood_cache;
-    int8_t *path_cache;
+    double *likelihood;
+    double *likelihood_cache;
+    allele_t *allelic_state;
     int num_likelihood_nodes;
     /* At each site, record a node with the maximum likelihood. */
     tsk_id_t *max_likelihood_node;
@@ -201,7 +201,9 @@ int ancestor_builder_make_ancestor(ancestor_builder_t *self,
 int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder, int flags);
+        tree_sequence_builder_t *tree_sequence_builder,
+        double *recombination_rate, double *mutation_rate,
+        unsigned int precision, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self,
         tsk_id_t start, tsk_id_t end, allele_t *haplotype,

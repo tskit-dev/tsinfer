@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -543,9 +543,13 @@ class TreeSequenceBuilder(object):
         nodes.set_columns(flags=flags, time=times)
         print("nodes = ")
         print(nodes)
+        print("Paths")
         for child in range(len(nodes)):
             print("child = ", child, end="\t")
             self.print_chain(self.path[child])
+        print("Mutations")
+        for site in range(self.num_sites):
+            print(site, "->", self.mutations[site])
         self.check_state()
 
     def dump_nodes(self):
@@ -577,7 +581,7 @@ class TreeSequenceBuilder(object):
         parent = np.zeros(num_mutations, dtype=np.int32)
         derived_state = np.zeros(num_mutations, dtype=np.int8)
         j = 0
-        for l in sorted(self.mutations.keys()):
+        for l in range(self.num_sites):
             p = j
             for u, d in self.mutations[l]:
                 site[j] = l
@@ -590,39 +594,21 @@ class TreeSequenceBuilder(object):
         return site, node, derived_state, parent
 
 
-def is_descendant(pi, u, v):
-    """
-    Returns True if the specified node u is a descendent of node v. That is,
-    v is on the path to root from u.
-    """
-    ret = False
-    if v != tskit.NULL:
-        w = u
-        path = []
-        while w != v and w != tskit.NULL:
-            path.append(w)
-            w = pi[w]
-        # print("DESC:",v, u, path)
-        ret = w == v
-    # print("IS_DESCENDENT(", u, v, ") = ", ret)
-    return ret
-
-# We have a 3 valued number system for match likelihoods, plus two
-# more values to indicate compressed paths tree and nodes that are
-# currently not in the tree.
-
-
-MISMATCH = 0
-RECOMB = 1
-MATCH = 2
+# Special values used to indicate compressed paths and nodes that are
+# not present in the current tree.
 COMPRESSED = -1
-MISSING = -2
+NONZERO_ROOT = -2
 
 
 class AncestorMatcher(object):
 
-    def __init__(self, tree_sequence_builder, extended_checks=False):
+    def __init__(
+            self, tree_sequence_builder, recombination_rate=None, mutation_rate=None,
+            precision=None, extended_checks=False):
         self.tree_sequence_builder = tree_sequence_builder
+        self.mutation_rate = mutation_rate
+        self.recombination_rate = recombination_rate
+        self.precision = precision
         self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
         self.parent = None
@@ -632,6 +618,7 @@ class AncestorMatcher(object):
         self.max_likelihood_node = None
         self.likelihood = None
         self.likelihood_nodes = None
+        self.allelic_state = None
         self.total_memory = 0
 
     def print_state(self):
@@ -658,70 +645,82 @@ class AncestorMatcher(object):
                 # print("root: u = ", u, self.parent[u], self.left_child[u])
                 assert v == -2
 
-    def update_site(self, site, state):
-        n = self.tree_sequence_builder.num_nodes
+    def set_allelic_state(self, site):
+        """
+        Sets the allelic state array to reflect the mutations at this site.
+        """
+        # We know that 0 is always a root.
+        # FIXME assuming for now that the ancestral state is always zero.
+        self.allelic_state[0] = 0
+        for node, state in self.tree_sequence_builder.mutations[site]:
+            self.allelic_state[node] = state
 
-        mutation_node = tskit.NULL
-        if site in self.tree_sequence_builder.mutations:
-            mutation_node = self.tree_sequence_builder.mutations[site][0][0]
+    def unset_allelic_state(self, site):
+        """
+        Sets the allelic state values for this site back to null.
+        """
+        # We know that 0 is always a root.
+        self.allelic_state[0] = -1
+        for node, _ in self.tree_sequence_builder.mutations[site]:
+            self.allelic_state[node] = -1
+        assert np.all(self.allelic_state == -1)
+
+    def update_site(self, site, haplotype_state):
+        n = self.tree_sequence_builder.num_nodes
+        rho = self.recombination_rate[site]
+        mu = self.mutation_rate[site]
+
+        self.set_allelic_state(site)
+
+        for node, _ in self.tree_sequence_builder.mutations[site]:
             # Insert an new L-value for the mutation node if needed.
-            if self.likelihood[mutation_node] == COMPRESSED:
-                u = mutation_node
+            if self.likelihood[node] == COMPRESSED:
+                u = node
                 while self.likelihood[u] == COMPRESSED:
                     u = self.parent[u]
-                self.likelihood[mutation_node] = self.likelihood[u]
-                self.likelihood_nodes.append(mutation_node)
-                # print("inserted likelihood for ", mutation_node, self.likelihood[u])
+                self.likelihood[node] = self.likelihood[u]
+                self.likelihood_nodes.append(node)
 
-        # print("update_site", site, state, mutation_node)
-        # print("Site ", site, "mutation = ", mutation_node, "state = ", state,
-        #         {u:self.likelihood[u] for u in self.likelihood_nodes})
-
-        path_cache = np.zeros(n, dtype=np.int8) - 1
         max_L = -1
         max_L_node = -1
         for u in self.likelihood_nodes:
-            d = 0
-            if mutation_node != -1:
-                v = u
-                while v != -1 and v != mutation_node and path_cache[v] == -1:
-                    v = self.parent[v]
-                if v != -1 and path_cache[v] != -1:
-                    d = path_cache[v]
-                else:
-                    d = int(v == mutation_node)
-                assert d == is_descendant(self.parent, u, mutation_node)
-                # Insert this path into the cache.
-                v = u
-                while v != -1 and v != mutation_node and path_cache[v] == -1:
-                    path_cache[v] = d
-                    v = self.parent[v]
+            # Get the allelic_state at u. TODO we can cache these states to
+            # avoid some upward traversals.
+            v = u
+            while self.allelic_state[v] == -1:
+                v = self.parent[v]
+                assert v != -1
 
-            self.traceback[site][u] = False
-            if self.likelihood[u] == MISMATCH:
-                self.traceback[site][u] = True
-            if mutation_node != -1 and d != state:
-                self.likelihood[u] = MISMATCH
-            elif self.likelihood[u] == MISMATCH:
-                self.likelihood[u] = RECOMB
+            p_last = self.likelihood[u]
+            p_no_recomb = p_last * (1 - rho + rho / n)
+            p_recomb = rho / n
+            recombination_required = False
+            if p_no_recomb > p_recomb:
+                p_t = p_no_recomb
+            else:
+                p_t = p_recomb
+                recombination_required = True
+            self.traceback[site][u] = recombination_required
+            p_e = mu
+            if haplotype_state == self.allelic_state[v]:
+                # p_e = 1 - (len(alleles) - 1) * mu
+                p_e = 1 - mu
+            self.likelihood[u] = round(p_t * p_e, self.precision)
 
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
 
-        if max_L != MATCH:
-            for u in self.likelihood_nodes:
-                if self.likelihood[u] == max_L:
-                    self.likelihood[u] = MATCH
-        self.max_likelihood_node[site] = max_L_node
+        if max_L == 0:
+            assert self.mutation_rate[site] == 0
+            raise ValueError(
+                "Trying to match non-existent allele with zero mutation rate")
 
-        # Reset the path cache
         for u in self.likelihood_nodes:
-            v = u
-            while v != -1 and path_cache[v] != -1:
-                path_cache[v] = -1
-                v = self.parent[v]
-        assert np.all(path_cache == -1)
+            self.likelihood[u] /= max_L
+
+        self.max_likelihood_node[site] = max_L_node
+        self.unset_allelic_state(site)
         self.compress_likelihoods()
 
     def compress_likelihoods(self):
@@ -808,8 +807,9 @@ class AncestorMatcher(object):
         self.right_sib = np.zeros(n, dtype=int) - 1
         self.traceback = [{} for _ in range(m)]
         self.max_likelihood_node = np.zeros(m, dtype=int) - 1
+        self.allelic_state = np.zeros(n, dtype=int) - 1
 
-        self.likelihood = np.zeros(n, dtype=np.int8) - 2
+        self.likelihood = np.full(n, NONZERO_ROOT, dtype=float)
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
@@ -846,7 +846,7 @@ class AncestorMatcher(object):
             last_root = self.left_child[0]
             assert self.right_sib[last_root] == -1
         self.likelihood_nodes.append(last_root)
-        self.likelihood[last_root] = MATCH
+        self.likelihood[last_root] = 1
 
         remove_start = k
         while left < end:
@@ -856,7 +856,7 @@ class AncestorMatcher(object):
                 edge = Ir.peekitem(l)[1]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
-                        self.likelihood[u] = MISSING
+                        self.likelihood[u] = NONZERO_ROOT
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
             root = 0
@@ -866,9 +866,9 @@ class AncestorMatcher(object):
 
             if root != last_root:
                 if last_root == 0:
-                    self.likelihood[last_root] = MISSING
+                    self.likelihood[last_root] = NONZERO_ROOT
                     self.likelihood_nodes.remove(last_root)
-                if self.likelihood[root] == MISSING:
+                if self.likelihood[root] == NONZERO_ROOT:
                     self.likelihood[root] = 0
                     self.likelihood_nodes.append(root)
                 last_root = root
@@ -917,8 +917,8 @@ class AncestorMatcher(object):
                 # There's no point in compressing the likelihood tree here as we'll be
                 # doing it after we update the first site anyway.
                 for u in [edge.parent, edge.child]:
-                    if u != 0 and self.likelihood[u] == MISSING:
-                        self.likelihood[u] = MISMATCH
+                    if u != 0 and self.likelihood[u] == NONZERO_ROOT:
+                        self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
             right = m
             if j < M:
@@ -929,8 +929,6 @@ class AncestorMatcher(object):
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        # print("traceback", start, end)
-        # self.print_state()
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
@@ -953,7 +951,7 @@ class AncestorMatcher(object):
         self.right_child[:] = -1
         self.left_sib[:] = -1
         self.right_sib[:] = -1
-        # print("TB: max_likelihood node = ", u)
+
         pos = self.tree_sequence_builder.num_sites
         while pos > start:
             # print("Top of loop: pos = ", pos)
@@ -972,18 +970,17 @@ class AncestorMatcher(object):
             if j >= 0:
                 left = max(left, Ir.peekitem(j)[1].right)
             pos = left
-            # print("tree:", left, right, "j = ", j, "k = ", k)
 
             assert left < right
             for l in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
-                # print("TB: site = ", l, u)
-                if l in self.tree_sequence_builder.mutations:
-                    if is_descendant(
-                            self.parent, u,
-                            self.tree_sequence_builder.mutations[l][0][0]):
-                        match[l] = 1
-                # print("traceback = ", self.traceback[l])
+                self.set_allelic_state(l)
+                v = u
+                while self.allelic_state[v] == -1:
+                    v = self.parent[v]
+                match[l] = self.allelic_state[v]
+                self.unset_allelic_state(l)
+
                 for u, recombine in self.traceback[l].items():
                     # Mark the traceback nodes on the tree.
                     recombination_required[u] = recombine
@@ -995,7 +992,6 @@ class AncestorMatcher(object):
                 if recombination_required[u] and l > start:
                     output_edge.left = l
                     u = self.max_likelihood_node[l - 1]
-                    # print("\tSwitch to ", u)
                     output_edge = Edge(right=l, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.
@@ -1004,15 +1000,11 @@ class AncestorMatcher(object):
         output_edge.left = start
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
-        # print("match = ", match)
-        # for j, e in enumerate(output_edges):
 
         left = np.zeros(len(output_edges), dtype=np.uint32)
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
-        # print("returning edges:")
         for j, e in enumerate(output_edges):
-            # print("\t", e.left, e.right, e.parent)
             assert e.left >= start
             assert e.right <= end
             # TODO this does happen in the C code, so if it ever happends in a Python
