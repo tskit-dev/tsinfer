@@ -2158,3 +2158,45 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             self.assertEqual(expected_sample_ancestors, num_sample_ancestors)
             tsinfer.verify(samples, final_ts.simplify())
             ancestors_ts = augmented_ancestors
+
+
+class TestAlgorithmResults(unittest.TestCase):
+    """
+    Some features of the algorithm have expected outcomes in simple cases. Test these.
+    """
+    def verify_single_recombination_position(self, positions, G, breakpoint_index):
+        with tsinfer.SampleData() as sample_data:
+            for pos, genotypes in zip(positions, G):
+                sample_data.add_site(pos, genotypes)
+        ts = tsinfer.infer(
+            sample_data,
+            # Temporarily set rho manually until issues/236 is addressed
+            recombination_rate=np.pad(np.diff(sample_data.sites_position[:]), (1, 0)))
+        self.assertEqual(ts.num_trees, 2)
+        breakpoint_pos = set(ts.breakpoints()) - set([0.0, ts.sequence_length])
+        self.assertEqual(breakpoint_pos, set([positions[breakpoint_index+1]]))
+
+    def test_recombination_with_dist_high_freq_intermediate(self):
+        G = np.array([
+            [1, 1, 0, 0],
+            [1, 1, 1, 0],  # could break either side of this
+            [0, 1, 1, 0]])
+        self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
+        self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
+
+    def test_recombination_with_dist_low_freq_intermediate(self):
+        G = np.array([
+            [1, 1, 1, 0],
+            [1, 1, 0, 0],  # could break either side of this
+            [1, 1, 0, 1]])
+        self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
+        self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
+
+    @unittest.skip("Should work once the ancestors TS contains non-inference sites")
+    def test_recombination_with_dist_noninference_intermediate(self):
+        G = np.array([
+            [1, 1, 1, 0],
+            [1, 0, 0, 0],  # could break either side of this
+            [1, 1, 0, 1]])
+        self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
+        self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
