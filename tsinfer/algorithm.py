@@ -552,6 +552,36 @@ class TreeSequenceBuilder(object):
             print(site, "->", self.mutations[site])
         self.check_state()
 
+    def dump(self, lwt):
+        """
+        Dumps the state of this tree sequence builder in to the specified
+        LightweightTableCollection.
+        """
+        tables = tskit.TableCollection()
+        tables.nodes.set_columns(
+            flags=self.flags,
+            time=self.time)
+
+        for c in range(self.num_nodes):
+            edge = self.path[c]
+            while edge is not None:
+                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+                edge = edge.next
+
+        j = 0
+        for l in range(self.num_sites):
+            tables.sites.add_row(l, ancestral_state="0")
+            p = j
+            for u, d in self.mutations[l]:
+                parent = tskit.NULL
+                if d == 0:
+                    parent = p
+                tables.mutations.add_row(
+                    site=l, node=u, derived_state=f"{d}", parent=parent)
+                j += 1
+
+        lwt.fromdict(tables.asdict())
+
     def dump_nodes(self):
         time = np.array(self.time[:])
         flags = np.array(self.flags[:], dtype=np.uint32)

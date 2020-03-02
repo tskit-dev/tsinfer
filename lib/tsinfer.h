@@ -238,15 +238,6 @@ int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self,
 int tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
         size_t num_mutations, tsk_id_t *site, tsk_id_t *node, allele_t *derived_state);
 
-/* Dump the state */
-int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
-        uint32_t *flags, double *time);
-int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
-int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
-        tsk_id_t *parent);
-
 int tree_sequence_builder_load(tree_sequence_builder_t *self,
         tsk_table_collection_t *tables, tsk_id_t *inference_sites,
         tsk_size_t num_inference_sites, tsk_flags_t options);

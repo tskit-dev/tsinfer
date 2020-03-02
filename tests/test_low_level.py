@@ -71,3 +71,18 @@ class TestAncestorMatcher(unittest.TestCase):
                 _tsinfer.AncestorMatcher(tsb, bad_array, [1])
             with self.assertRaises(ValueError):
                 _tsinfer.AncestorMatcher(tsb, [1], bad_array)
+
+
+class TestTreeSequenceBuilder(unittest.TestCase):
+    """
+    Tests the TreeSequenceBuilder C Python interface.
+    """
+    def test_dump(self):
+        tsb = _tsinfer.TreeSequenceBuilder(1, 1, 1)
+        with self.assertRaises(TypeError):
+            tsb.dump()
+        for bad_type in [None, {}, "sdf"]:
+            with self.assertRaises(TypeError):
+                tsb.dump(bad_type)
+        lwt = _tsinfer.LightweightTableCollection()
+        tsb.dump(lwt)

@@ -2277,139 +2277,23 @@ out:
 }
 
 static PyObject *
-TreeSequenceBuilder_dump_nodes(TreeSequenceBuilder *self)
+TreeSequenceBuilder_dump(TreeSequenceBuilder *self, PyObject *args)
 {
     int err;
     PyObject *ret = NULL;
-    PyArrayObject *time = NULL;
-    PyArrayObject *flags= NULL;
-    npy_intp shape;
+    LightweightTableCollection *lwt = NULL;
 
-    if (TreeSequenceBuilder_check_state(self) != 0) {
+    if (!PyArg_ParseTuple(args, "O!", &LightweightTableCollectionType, &lwt)) {
         goto out;
     }
-    shape = self->tree_sequence_builder->num_nodes;
-    time = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_FLOAT64);
-    flags = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_UINT32);
-    if (time == NULL || flags == NULL) {
-       goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_dump_nodes(self->tree_sequence_builder,
-        (uint32_t *) PyArray_DATA(flags),
-        (double *) PyArray_DATA(time));
-    Py_END_ALLOW_THREADS
+
+    err = tree_sequence_builder_dump(self->tree_sequence_builder, lwt->tables, 0);
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("OO", flags, time);
-    if (ret == NULL) {
-        goto out;
-    }
-    time = NULL;
-    flags = NULL;
+    ret = Py_BuildValue("");
 out:
-    Py_XDECREF(time);
-    Py_XDECREF(flags);
-    return ret;
-}
-
-static PyObject *
-TreeSequenceBuilder_dump_edges(TreeSequenceBuilder *self)
-{
-    int err;
-    PyObject *ret = NULL;
-    PyArrayObject *left = NULL;
-    PyArrayObject *right = NULL;
-    PyArrayObject *parent = NULL;
-    PyArrayObject *child = NULL;
-    npy_intp shape;
-
-    if (TreeSequenceBuilder_check_state(self) != 0) {
-        goto out;
-    }
-    shape = tree_sequence_builder_get_num_edges(self->tree_sequence_builder);
-    left = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    right = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    parent = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    child = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    if (left == NULL || right == NULL || parent == NULL || child == NULL) {
-        goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_dump_edges(self->tree_sequence_builder,
-        (tsk_id_t *) PyArray_DATA(left),
-        (tsk_id_t *) PyArray_DATA(right),
-        (tsk_id_t *) PyArray_DATA(parent),
-        (tsk_id_t *) PyArray_DATA(child));
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("OOOO", left, right, parent ,child);
-    if (ret == NULL) {
-        goto out;
-    }
-    left = NULL;
-    right = NULL;
-    parent = NULL;
-    child = NULL;
-out:
-    Py_XDECREF(left);
-    Py_XDECREF(right);
-    Py_XDECREF(parent);
-    Py_XDECREF(child);
-    return ret;
-}
-
-static PyObject *
-TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self)
-{
-    int err;
-    PyObject *ret = NULL;
-    PyArrayObject *site = NULL;
-    PyArrayObject *node = NULL;
-    PyArrayObject *derived_state = NULL;
-    PyArrayObject *parent = NULL;
-    npy_intp shape;
-
-    if (TreeSequenceBuilder_check_state(self) != 0) {
-        goto out;
-    }
-    shape = self->tree_sequence_builder->num_mutations;
-    site = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    node = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    derived_state = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT8);
-    parent = (PyArrayObject *) PyArray_SimpleNew(1, &shape, NPY_INT32);
-    if (site == NULL || node == NULL || derived_state == NULL || parent == NULL) {
-        goto out;
-    }
-    Py_BEGIN_ALLOW_THREADS
-    err = tree_sequence_builder_dump_mutations(self->tree_sequence_builder,
-        (tsk_id_t *) PyArray_DATA(site),
-        (tsk_id_t *) PyArray_DATA(node),
-        (allele_t *) PyArray_DATA(derived_state),
-        (tsk_id_t *) PyArray_DATA(parent));
-    Py_END_ALLOW_THREADS
-    if (err != 0) {
-        handle_library_error(err);
-        goto out;
-    }
-    ret = Py_BuildValue("OOOO", site, node, derived_state, parent);
-    if (ret == NULL) {
-        goto out;
-    }
-    site = NULL;
-    node = NULL;
-    derived_state = NULL;
-    parent = NULL;
-out:
-    Py_XDECREF(site);
-    Py_XDECREF(node);
-    Py_XDECREF(derived_state);
-    Py_XDECREF(parent);
     return ret;
 }
 
@@ -2519,14 +2403,10 @@ static PyMethodDef TreeSequenceBuilder_methods[] = {
     {"restore_mutations", (PyCFunction) TreeSequenceBuilder_restore_mutations,
         METH_VARARGS|METH_KEYWORDS,
         "Restores the mutations in this tree sequence builder."},
-    {"dump_nodes", (PyCFunction) TreeSequenceBuilder_dump_nodes, METH_NOARGS,
-        "Dumps node data into numpy arrays."},
-    {"dump_edges", (PyCFunction) TreeSequenceBuilder_dump_edges, METH_NOARGS,
-        "Dumps edgeset data into numpy arrays."},
-    {"dump_mutations", (PyCFunction) TreeSequenceBuilder_dump_mutations, METH_NOARGS,
-        "Dumps mutation data into numpy arrays."},
     {"freeze_indexes", (PyCFunction) TreeSequenceBuilder_freeze_indexes, METH_NOARGS,
         "Freezes the indexes used for ancestor matching."},
+    {"dump", (PyCFunction) TreeSequenceBuilder_dump, METH_VARARGS,
+        "Dumps the tree sequence data into a LightweightTableCollection"},
     {NULL}  /* Sentinel */
 };
 
