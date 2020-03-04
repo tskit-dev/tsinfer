@@ -30,29 +30,31 @@ import collections
 import numpy as np
 import sortedcontainers
 import tskit
+import attr
 
 import tsinfer.constants as constants
 
 
+@attr.s
 class Edge(object):
-
-    def __init__(self, left=None, right=None, parent=None, child=None, next=None):
-        self.left = left
-        self.right = right
-        self.parent = parent
-        self.child = child
-        self.next = next
-
-    def __str__(self):
-        return "Edge(left={}, right={}, parent={}, child={})".format(
-            self.left, self.right, self.parent, self.child)
+    """
+    A singley linked list of edges.
+    """
+    left = attr.ib(default=None)
+    right = attr.ib(default=None)
+    parent = attr.ib(default=None)
+    child = attr.ib(default=None)
+    next = attr.ib(default=None)
 
 
+@attr.s
 class Site(object):
-    def __init__(self, id, time, genotypes):
-        self.id = id
-        self.time = time
-        self.genotypes = genotypes
+    """
+    A single site for the ancestor builder.
+    """
+    id = attr.ib()
+    time = attr.ib()
+    genotypes = attr.ib()
 
 
 class AncestorBuilder(object):
@@ -213,22 +215,6 @@ class AncestorBuilder(object):
         assert a[last_site] != tskit.MISSING_DATA
         start = last_site
         return start, end
-
-        # Version with 1 focal site
-        # assert len(focal_sites) == 1
-        # focal_site = focal_sites[0]
-        # a[:] = tskit.MISSING_DATA
-        # a[focal_site] = 1
-
-        # last_site = self.compute_ancestral_states(
-        #         a, focal_site, range(focal_site + 1, self.num_sites))
-        # assert a[last_site] != tskit.MISSING_DATA
-        # end = last_site + 1
-        # last_site = self.compute_ancestral_states(
-        #         a, focal_site, range(focal_site - 1, -1, -1))
-        # assert a[last_site] != tskit.MISSING_DATA
-        # start = last_site
-        # return start, end
 
 
 class TreeSequenceBuilder(object):
@@ -538,13 +524,14 @@ class TreeSequenceBuilder(object):
     def print_state(self):
         print("TreeSequenceBuilder state")
         print("num_nodes = ", self.num_nodes)
-        nodes = tskit.NodeTable()
-        flags, times = self.dump_nodes()
-        nodes.set_columns(flags=flags, time=times)
-        print("nodes = ")
-        print(nodes)
+        # FIXME
+        # nodes = tskit.NodeTable()
+        # flags, times = self.dump_nodes()
+        # nodes.set_columns(flags=flags, time=times)
+        # print("nodes = ")
+        # print(nodes)
         print("Paths")
-        for child in range(len(nodes)):
+        for child in range(self.num_nodes):
             print("child = ", child, end="\t")
             self.print_chain(self.path[child])
         print("Mutations")
@@ -581,47 +568,6 @@ class TreeSequenceBuilder(object):
                 j += 1
 
         lwt.fromdict(tables.asdict())
-
-    def dump_nodes(self):
-        time = np.array(self.time[:])
-        flags = np.array(self.flags[:], dtype=np.uint32)
-        return flags, time
-
-    def dump_edges(self):
-        left = np.zeros(self.num_edges, dtype=np.int32)
-        right = np.zeros(self.num_edges, dtype=np.int32)
-        parent = np.zeros(self.num_edges, dtype=np.int32)
-        child = np.zeros(self.num_edges, dtype=np.int32)
-        j = 0
-        for c in range(self.num_nodes):
-            edge = self.path[c]
-            while edge is not None:
-                left[j] = edge.left
-                right[j] = edge.right
-                parent[j] = edge.parent
-                child[j] = edge.child
-                edge = edge.next
-                j += 1
-        return left, right, parent, child
-
-    def dump_mutations(self):
-        num_mutations = sum(len(muts) for muts in self.mutations.values())
-        site = np.zeros(num_mutations, dtype=np.int32)
-        node = np.zeros(num_mutations, dtype=np.int32)
-        parent = np.zeros(num_mutations, dtype=np.int32)
-        derived_state = np.zeros(num_mutations, dtype=np.int8)
-        j = 0
-        for l in range(self.num_sites):
-            p = j
-            for u, d in self.mutations[l]:
-                site[j] = l
-                node[j] = u
-                derived_state[j] = d
-                parent[j] = tskit.NULL
-                if d == 0:
-                    parent[j] = p
-                j += 1
-        return site, node, derived_state, parent
 
 
 # Special values used to indicate compressed paths and nodes that are
