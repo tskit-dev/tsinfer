@@ -495,10 +495,11 @@ class AncestorsGenerator(object):
 class Matcher(object):
 
     def __init__(
-            self, sample_data, num_threads=1, path_compression=True,
+            self, sample_data, tables, num_threads=1, path_compression=True,
             recombination_rate=None, mutation_rate=None, precision=None,
             extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
+        self.tables = tables
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
@@ -541,8 +542,12 @@ class Matcher(object):
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
+
+        # Might as well allocate the tsb in the conditional  above. Might need
+        # to use different classes for the table collection
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            num_sites=self.num_sites, max_nodes=max_nodes, max_edges=max_edges)
+                self.tables, self.sample_data.sites_inference, max_nodes, max_edges)
+
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 
@@ -578,57 +583,57 @@ class Matcher(object):
             humanize.naturalsize(matcher.total_memory, binary=True)))
         return left, right, parent
 
-    def restore_tree_sequence_builder(self, ancestors_ts):
-        tables = ancestors_ts.dump_tables()
-        # Make sure that the set of positions in the ancestors tree sequence is
-        # identical to the inference sites in the sample data file.
-        position = tables.sites.position
-        sample_data_position = self.sample_data.sites_position[:]
-        sample_data_position = sample_data_position[self.sample_data.sites_inference[:]]
-        if not np.array_equal(position, sample_data_position):
-            raise ValueError(
-                "Ancestors tree sequence not compatible with the the specified "
-                "sample data.")
-        if np.any(tables.nodes.time <= 0):
-            raise ValueError("All nodes must have time > 0")
-        edges = tables.edges
-        # Get the indexes into the position array.
-        pos_map = np.hstack([position, [tables.sequence_length]])
-        pos_map[0] = 0
-        left = np.searchsorted(pos_map, edges.left)
-        if np.any(pos_map[left] != edges.left):
-            raise ValueError("Invalid left coordinates")
-        right = np.searchsorted(pos_map, edges.right)
-        if np.any(pos_map[right] != edges.right):
-            raise ValueError("Invalid right coordinates")
+    # def restore_tree_sequence_builder(self, ancestors_ts):
+    #     tables = ancestors_ts.dump_tables()
+    #     # Make sure that the set of positions in the ancestors tree sequence is
+    #     # identical to the inference sites in the sample data file.
+    #     position = tables.sites.position
+    #     sample_data_position = self.sample_data.sites_position[:]
+    #     sample_data_position = sample_data_position[self.sample_data.sites_inference[:]]
+    #     if not np.array_equal(position, sample_data_position):
+    #         raise ValueError(
+    #             "Ancestors tree sequence not compatible with the the specified "
+    #             "sample data.")
+    #     if np.any(tables.nodes.time <= 0):
+    #         raise ValueError("All nodes must have time > 0")
+    #     edges = tables.edges
+    #     # Get the indexes into the position array.
+    #     pos_map = np.hstack([position, [tables.sequence_length]])
+    #     pos_map[0] = 0
+    #     left = np.searchsorted(pos_map, edges.left)
+    #     if np.any(pos_map[left] != edges.left):
+    #         raise ValueError("Invalid left coordinates")
+    #     right = np.searchsorted(pos_map, edges.right)
+    #     if np.any(pos_map[right] != edges.right):
+    #         raise ValueError("Invalid right coordinates")
 
-        # Need to sort by child ID here and left so that we can efficiently
-        # insert the child paths.
-        index = np.lexsort((left, edges.child))
-        nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
-        # edges.set_columns(
-        #     left=left[index].astype(np.int32),
-        #     right=right[index].astype(np.int32),
-        #     parent=edges.parent[index],
-        #     child=edges.child[index])
-        self.tree_sequence_builder.restore_edges(
-            left[index].astype(np.int32),
-            right[index].astype(np.int32),
-            edges.parent[index],
-            edges.child[index])
-        mutations = tables.mutations
-        self.tree_sequence_builder.restore_mutations(
-            mutations.site, mutations.node, mutations.derived_state - ord('0'),
-            mutations.parent)
-        lwt = _tsinfer.LightweightTableCollection()
-        lwt.fromdict(tables.asdict())
-        # self.tree_sequence_builder.load(lwt)
-        self.mutated_sites = mutations.site
-        logger.info(
-            "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
-                ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
-                len(mutations)))
+    #     # Need to sort by child ID here and left so that we can efficiently
+    #     # insert the child paths.
+    #     index = np.lexsort((left, edges.child))
+    #     nodes = tables.nodes
+    #     self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
+    #     # edges.set_columns(
+    #     #     left=left[index].astype(np.int32),
+    #     #     right=right[index].astype(np.int32),
+    #     #     parent=edges.parent[index],
+    #     #     child=edges.child[index])
+    #     self.tree_sequence_builder.restore_edges(
+    #         left[index].astype(np.int32),
+    #         right[index].astype(np.int32),
+    #         edges.parent[index],
+    #         edges.child[index])
+    #     mutations = tables.mutations
+    #     self.tree_sequence_builder.restore_mutations(
+    #         mutations.site, mutations.node, mutations.derived_state - ord('0'),
+    #         mutations.parent)
+    #     lwt = _tsinfer.LightweightTableCollection()
+    #     lwt.fromdict(tables.asdict())
+    #     # self.tree_sequence_builder.load(lwt)
+    #     self.mutated_sites = mutations.site
+    #     logger.info(
+    #         "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
+    #             ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
+    #             len(mutations)))
 
     def get_ancestors_tree_sequence(self):
         """
@@ -637,45 +642,48 @@ class Matcher(object):
         are 0/1. All nodes have the sample flag bit set.
         """
         logger.debug("Building ancestors tree sequence")
-        tsb = self.tree_sequence_builder
-        lwt = _tsinfer.LightweightTableCollection()
-        tsb.dump(lwt)
-        tables_dict = lwt.asdict()
-        tables_dict["sequence_length"] = self.ancestor_data.sequence_length
-        tables = tskit.TableCollection.fromdict(tables_dict)
-        num_pc_ancestors = count_pc_ancestors(tables.nodes.flags)
+        # tsb = self.tree_sequence_builder
+        # lwt = _tsinfer.LightweightTableCollection()
+        # tsb.dump(lwt)
+        # tables_dict = lwt.asdict()
+        # tables_dict["sequence_length"] = self.ancestor_data.sequence_length
+        # tables = tskit.TableCollection.fromdict(tables_dict)
+        # num_pc_ancestors = count_pc_ancestors(tables.nodes.flags)
 
-        position = self.ancestor_data.sites_position
-        pos_map = np.hstack([position, [tables.sequence_length]])
-        pos_map[0] = 0
-        tables.edges.set_columns(
-            left=pos_map[tables.edges.left.astype(int)],
-            right=pos_map[tables.edges.right.astype(int)],
-            parent=tables.edges.parent, child=tables.edges.child)
+        # position = self.ancestor_data.sites_position
+        # pos_map = np.hstack([position, [tables.sequence_length]])
+        # pos_map[0] = 0
+        # tables.edges.set_columns(
+        #     left=pos_map[tables.edges.left.astype(int)],
+        #     right=pos_map[tables.edges.right.astype(int)],
+        #     parent=tables.edges.parent, child=tables.edges.child)
 
-        tables.sites.set_columns(
-            position=position,
-            ancestral_state=tables.sites.ancestral_state,
-            ancestral_state_offset=tables.sites.ancestral_state_offset)
-        tables.mutations.set_columns(
-            site=tables.mutations.site, node=tables.mutations.node,
-            derived_state=tables.mutations.derived_state,
-            derived_state_offset=tables.mutations.derived_state_offset,
-            parent=tables.mutations.parent)
-        for timestamp, record in self.ancestor_data.provenances():
-            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
-        record = provenance.get_provenance_dict(
-            command="match_ancestors",
-            source={"uuid": self.ancestor_data.uuid})
-        tables.provenances.add_row(record=json.dumps(record))
-        logger.debug("Sorting ancestors tree sequence")
+        # tables.sites.set_columns(
+        #     position=position,
+        #     ancestral_state=tables.sites.ancestral_state,
+        #     ancestral_state_offset=tables.sites.ancestral_state_offset)
+        # tables.mutations.set_columns(
+        #     site=tables.mutations.site, node=tables.mutations.node,
+        #     derived_state=tables.mutations.derived_state,
+        #     derived_state_offset=tables.mutations.derived_state_offset,
+        #     parent=tables.mutations.parent)
+        # for timestamp, record in self.ancestor_data.provenances():
+        #     tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        # record = provenance.get_provenance_dict(
+        #     command="match_ancestors",
+        #     source={"uuid": self.ancestor_data.uuid})
+        # tables.provenances.add_row(record=json.dumps(record))
+        # logger.debug("Sorting ancestors tree sequence")
+        # tables.sort()
+        # logger.debug("Sorting ancestors tree sequence done")
+        # logger.info(
+        #     "Built ancestors tree sequence: {} nodes ({} pc ancestors); {} edges; "
+        #     "{} sites; {} mutations".format(
+        #         len(tables.nodes), num_pc_ancestors, len(tables.edges),
+        #         len(tables.mutations), len(tables.sites)))
+        tables = tskit.TableCollection.fromdict(
+            self.tree_sequence_builder.tables.asdict())
         tables.sort()
-        logger.debug("Sorting ancestors tree sequence done")
-        logger.info(
-            "Built ancestors tree sequence: {} nodes ({} pc ancestors); {} edges; "
-            "{} sites; {} mutations".format(
-                len(tables.nodes), num_pc_ancestors, len(tables.edges),
-                len(tables.mutations), len(tables.sites)))
         return tables.tree_sequence()
 
     def encode_metadata(self, value):
@@ -931,7 +939,7 @@ class Matcher(object):
 class AncestorMatcher(Matcher):
 
     def __init__(self, sample_data, ancestor_data, **kwargs):
-        super().__init__(sample_data, **kwargs)
+        super().__init__(sample_data, sample_data.as_tables(), **kwargs)
         if not np.all(self.mutation_rate == 0):
             raise ValueError("mutations not supported for ancestor matching yet")
         self.ancestor_data = ancestor_data
@@ -1080,21 +1088,24 @@ class AncestorMatcher(Matcher):
         return ts
 
     def store_output(self):
-        if self.num_ancestors > 0:
-            ts = self.get_ancestors_tree_sequence()
-        else:
-            # Allocate an empty tree sequence.
-            tables = tskit.TableCollection(
-                sequence_length=self.ancestor_data.sequence_length)
-            ts = tables.tree_sequence()
+        # if self.num_ancestors > 0:
+        #     ts = self.get_ancestors_tree_sequence()
+        # else:
+        #     # Allocate an empty tree sequence.
+        #     tables = tskit.TableCollection(
+        #         sequence_length=self.ancestor_data.sequence_length)
+        #     ts = tables.tree_sequence()
+        self.tables.sort()
+        ts = self.tables.tree_sequence()
         return ts
 
 
 class SampleMatcher(Matcher):
 
     def __init__(self, sample_data, ancestors_ts, **kwargs):
-        super().__init__(sample_data, **kwargs)
-        self.restore_tree_sequence_builder(ancestors_ts)
+        tables = ancestors_ts.dump_tables()
+        super().__init__(sample_data, tables, **kwargs)
+        # self.restore_tree_sequence_builder(ancestors_ts)
         self.ancestors_ts = ancestors_ts
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
 

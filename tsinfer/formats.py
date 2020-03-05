@@ -801,6 +801,20 @@ class SampleData(DataContainer):
         return "SampleData(num_samples={}, num_sites={})".format(
             self.num_samples, self.num_sites)
 
+    def as_tables(self):
+        """
+        Returns the non-genotype data in this sample data files as a tskit
+        TableCollection.
+        """
+        tables = tskit.TableCollection(self.sequence_length)
+        # TODO add individuals, provenance, etc.
+        for site in self.sites():
+            tables.sites.add_row(
+                position=site.position,
+                ancestral_state=site.ancestral_state,
+                metadata=json.dumps(site.metadata).encode())
+        return tables
+
     @property
     def sequence_length(self):
         return self.data.attrs["sequence_length"]

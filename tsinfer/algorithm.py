@@ -219,38 +219,65 @@ class AncestorBuilder(object):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, max_nodes, max_edges):
-        self.num_sites = num_sites
-        self.num_nodes = 0
-        self.time = []
-        self.flags = []
+    def __init__(self, tables, sites_inference, max_nodes, max_edges):
+        self.tables = tables
+        self.sites_inference = sites_inference[:]
+        self.num_inference_sites = np.sum(sites_inference, dtype=int)
+        self.inference_site_position = tables.sites.position[sites_inference]
+        self.site_index_map = np.zeros(self.num_inference_sites, dtype=int)
+
+        reverse_site_map = {}
+        j = 0
+        for site_id in range(len(self.tables.sites)):
+            if sites_inference[site_id]:
+                self.site_index_map[j] = site_id
+                reverse_site_map[site_id] = j
+                j += 1
         self.mutations = collections.defaultdict(list)
         self.mean_traceback_size = 0
         self.left_index = sortedcontainers.SortedDict()
         self.right_index = sortedcontainers.SortedDict()
         self.path_index = sortedcontainers.SortedDict()
-        self.path = []
+        self.path = [None for _ in range(self.num_nodes)]
+
+        inference_site_id = 0
+        for mutation in tables.mutations:
+            if sites_inference[mutation.site]:
+                self.mutations[reverse_site_map[mutation.site]].append((
+                    mutation.node, mutation.derived_state))
+
+        # PICK UP HERE. Need to initialise the state of the builder
+        # correctly from the tables.
+        print(self.tables)
+
+
 
     def freeze_indexes(self):
         # This is a no-op in this implementation.
         pass
+
+    @property
+    def sequence_length(self):
+        return self.tables.sequence_length
+
+    @property
+    def num_nodes(self):
+        return len(self.tables.nodes)
 
     def restore_nodes(self, time, flags):
         for t, flag in zip(time, flags):
             self.add_node(t, flag)
 
     def add_node(self, time, flags=1):
-        self.num_nodes += 1
-        self.time.append(time)
-        self.flags.append(flags)
         self.path.append(None)
-        return self.num_nodes - 1
+        return self.tables.nodes.add_row(flags=flags, time=time)
 
     def index_edge(self, edge):
         # Adds the specified edge to the indexes. Break ties between identical values
         # using the child ID.
-        self.left_index[(edge.left, self.time[edge.child], edge.child)] = edge
-        self.right_index[(edge.right, -self.time[edge.child], edge.child)] = edge
+        time = self.tables.nodes.time
+        self.left_index[(edge.left, time[edge.child], edge.child)] = edge
+        self.right_index[(edge.right, -time[edge.child], edge.child)] = edge
         # We need to find edges with identical (left, right, parent) values for
         # path compression.
         self.path_index[(edge.left, edge.right, edge.parent, edge.child)] = edge
@@ -266,8 +293,9 @@ class TreeSequenceBuilder(object):
 
     def unindex_edge(self, edge):
         # Removes the specified edge from the indexes.
-        del self.left_index[(edge.left, self.time[edge.child], edge.child)]
-        del self.right_index[(edge.right, -self.time[edge.child], edge.child)]
+        time = self.tables.nodes.time
+        del self.left_index[(edge.left, time[edge.child], edge.child)]
+        del self.right_index[(edge.right, -time[edge.child], edge.child)]
         # We need to find edges with identical (left, right, parent) values for
         # path compression.
         del self.path_index[(edge.left, edge.right, edge.parent, edge.child)]
@@ -338,6 +366,15 @@ class TreeSequenceBuilder(object):
 
         self.check_state()
 
+    def store_edges(self, child):
+        """
+        Stores the edges for the specified child in the tables.
+        """
+        edge = self.path[child]
+        while edge is not None:
+            self.tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+            edge = edge.next
+
     def add_path(self, child, left, right, parent, compress=True, extended_checks=False):
         assert self.path[child] is None
         prev = None
@@ -356,6 +393,7 @@ class TreeSequenceBuilder(object):
         # Insert the chain into the global state.
         self.path[child] = head
         self.index_edges(child)
+        self.store_edges(child)
         # self.print_state()
         if extended_checks:
             self.check_state()
@@ -364,19 +402,21 @@ class TreeSequenceBuilder(object):
         """
         Updates the node time for the specified pc parent node ID.
         """
-        assert self.flags[pc_parent_id] == constants.NODE_IS_PC_ANCESTOR
+        flags = self.tables.nodes.flags
+        time = self.tables.nodes.time
+        assert flags[pc_parent_id] == constants.NODE_IS_PC_ANCESTOR
         edge = self.path[pc_parent_id]
         assert edge is not None
-        min_parent_time = self.time[0] + 1
+        min_parent_time = time[0] + 1
         while edge is not None:
-            min_parent_time = min(min_parent_time, self.time[edge.parent])
+            min_parent_time = min(min_parent_time, time[edge.parent])
             edge = edge.next
         assert min_parent_time >= 0
-        assert min_parent_time <= self.time[0]
+        assert min_parent_time <= time[0]
         # For the asserttion to be violated we would need to have 64K pc
         # ancestors sequentially copying from each other.
-        self.time[pc_parent_id] = min_parent_time - (1 / 2**16)
-        assert self.time[pc_parent_id] > self.time[child_id]
+        time[pc_parent_id] = min_parent_time - (1 / 2**16)
+        assert time[pc_parent_id] > time[child_id]
 
     def create_pc_node(self, matches):
         # If we have more than one edge matching to a given path, then we create
@@ -471,7 +511,7 @@ class TreeSequenceBuilder(object):
             if len(match_list) > 1:
                 child_id = match_list[0][1].child
                 # print("MATCH:", child_id)
-                if self.flags[child_id] == constants.NODE_IS_PC_ANCESTOR:
+                if self.tables.nodes.flags[child_id] == constants.NODE_IS_PC_ANCESTOR:
                     # print("EXISTING SYNTHETIC")
                     for edge, match in match_list:
                         # print("\t", edge, match)
@@ -481,13 +521,15 @@ class TreeSequenceBuilder(object):
                     self.create_pc_node(match_list)
         return self.squash_edges(head)
 
-    def restore_mutations(self, site, node, derived_state, parent):
-        for s, u, d in zip(site, node, derived_state):
-            self.mutations[s].append((u, d))
+    # def restore_mutations(self, site, node, derived_state, parent):
+    #     for s, u, d in zip(site, node, derived_state):
+    #         self.mutations[s].append((u, d))
 
     def add_mutations(self, node, site, derived_state):
         for s, d in zip(site, derived_state):
             self.mutations[s].append((node, d))
+            self.tables.mutations.add_row(
+                site=self.site_index_map[s], node=node, derived_state=f"{d}")
 
     @property
     def num_edges(self):
@@ -498,16 +540,17 @@ class TreeSequenceBuilder(object):
         return sum(len(node_state_list) for node_state_list in self.mutations.values())
 
     def check_state(self):
+        time = self.tables.nodes.time
         total_edges = 0
-        for child in range(len(self.time)):
+        for child in range(self.num_nodes):
             edge = self.path[child]
             while edge is not None:
                 assert edge.child == child
                 if edge.next is not None:
                     if self.flags[child] != 0:
                         assert edge.next.left >= edge.right
-                assert self.left_index[(edge.left, self.time[child], child)] == edge
-                assert self.right_index[(edge.right, -self.time[child], child)] == edge
+                assert self.left_index[(edge.left, time[child], child)] == edge
+                assert self.right_index[(edge.right, -time[child], child)] == edge
                 edge = edge.next
                 total_edges += 1
         assert len(self.left_index) == total_edges
@@ -524,18 +567,14 @@ class TreeSequenceBuilder(object):
     def print_state(self):
         print("TreeSequenceBuilder state")
         print("num_nodes = ", self.num_nodes)
-        # FIXME
-        # nodes = tskit.NodeTable()
-        # flags, times = self.dump_nodes()
-        # nodes.set_columns(flags=flags, time=times)
-        # print("nodes = ")
-        # print(nodes)
+        print("nodes = ")
+        print(self.tables.nodes)
         print("Paths")
         for child in range(self.num_nodes):
             print("child = ", child, end="\t")
             self.print_chain(self.path[child])
         print("Mutations")
-        for site in range(self.num_sites):
+        for site in range(self.num_inference_sites):
             print(site, "->", self.mutations[site])
         self.check_state()
 
@@ -546,8 +585,8 @@ class TreeSequenceBuilder(object):
         """
         tables = tskit.TableCollection()
         tables.nodes.set_columns(
-            flags=self.flags,
-            time=self.time)
+            flags=self.tables.nodes.flags,
+            time=self.tables.nodes.time)
 
         for c in range(self.num_nodes):
             edge = self.path[c]
@@ -556,7 +595,7 @@ class TreeSequenceBuilder(object):
                 edge = edge.next
 
         j = 0
-        for l in range(self.num_sites):
+        for l in range(self.num_inference_sites):
             tables.sites.add_row(l, ancestral_state="0")
             p = j
             for u, d in self.mutations[l]:
@@ -586,7 +625,7 @@ class AncestorMatcher(object):
         self.recombination_rate = recombination_rate
         self.precision = precision
         self.extended_checks = extended_checks
-        self.num_sites = tree_sequence_builder.num_sites
+        self.num_sites = tree_sequence_builder.num_inference_sites
         self.parent = None
         self.left_child = None
         self.right_sib = None
@@ -687,6 +726,10 @@ class AncestorMatcher(object):
                 max_L = self.likelihood[u]
                 max_L_node = u
 
+
+        self.tree_sequence_builder.print_state()
+        self.print_state()
+
         if max_L == 0:
             assert self.mutation_rate[site] == 0
             raise ValueError(
@@ -775,7 +818,10 @@ class AncestorMatcher(object):
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
         n = self.tree_sequence_builder.num_nodes
-        m = self.tree_sequence_builder.num_sites
+        m = self.num_sites
+        sequence_length = self.tree_sequence_builder.sequence_length
+        position_map = self.tree_sequence_builder.inference_site_position
+
         self.parent = np.zeros(n, dtype=int) - 1
         self.left_child = np.zeros(n, dtype=int) - 1
         self.right_child = np.zeros(n, dtype=int) - 1
@@ -789,12 +835,12 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        # print("MATCH: start=", start, "end = ", end, "h = ", h)
+        print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
         pos = 0
-        right = m
+        right = sequence_length
         if j < M and start < Il.peekitem(j)[1].left:
             right = Il.peekitem(j)[1].left
         while j < M and k < M and Il.peekitem(j)[1].left <= start:
@@ -805,13 +851,17 @@ class AncestorMatcher(object):
                 self.insert_edge(Il.peekitem(j)[1])
                 j += 1
             left = pos
-            right = m
+            right = sequence_length
             if j < M:
                 right = min(right, Il.peekitem(j)[1].left)
             if k < M:
                 right = min(right, Ir.peekitem(k)[1].right)
             pos = right
         assert left < right
+
+        site = start
+        while site < self.num_sites and position_map[site] < left:
+            site += 1
 
         for u in range(n):
             if not self.is_root(u):
@@ -851,8 +901,16 @@ class AncestorMatcher(object):
 
             if self.extended_checks:
                 self.check_likelihoods()
-            for site in range(max(left, start), min(right, end)):
+
+            while (
+                    site < self.num_sites and site < end and
+                    left <= position_map[site] < right):
+                print("HERE:", left, right, site, position_map[site])
                 self.update_site(site, h[site])
+                site += 1
+
+            # for site in range(max(left, start), min(right, end)):
+            #     self.update_site(site, h[site])
 
             remove_start = k
             while k < M and Ir.peekitem(k)[1].right == right:
@@ -896,7 +954,7 @@ class AncestorMatcher(object):
                     if u != 0 and self.likelihood[u] == NONZERO_ROOT:
                         self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
-            right = m
+            right = sequence_length
             if j < M:
                 right = min(right, Il.peekitem(j)[1].left)
             if k < M:
@@ -909,7 +967,16 @@ class AncestorMatcher(object):
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
         u = self.max_likelihood_node[end - 1]
-        output_edge = Edge(right=end, parent=u)
+        sequence_length = self.tree_sequence_builder.sequence_length
+        position_map = self.tree_sequence_builder.inference_site_position
+
+        end_pos = sequence_length
+        if end < self.num_sites:
+            end_pos = position_map[end]
+        start_pos = 0
+        if start > 0:
+            start_pos = position_map[start]
+        output_edge = Edge(right=end_pos, parent=u)
         output_edges = [output_edge]
         recombination_required = np.zeros(
             self.tree_sequence_builder.num_nodes, dtype=int) - 1
@@ -928,8 +995,9 @@ class AncestorMatcher(object):
         self.left_sib[:] = -1
         self.right_sib[:] = -1
 
-        pos = self.tree_sequence_builder.num_sites
-        while pos > start:
+        pos = sequence_length
+        site = end - 1
+        while pos > start_pos:
             # print("Top of loop: pos = ", pos)
             while k >= 0 and Il.peekitem(k)[1].left == pos:
                 edge = Il.peekitem(k)[1]
@@ -948,16 +1016,20 @@ class AncestorMatcher(object):
             pos = left
 
             assert left < right
-            for l in range(min(right, end) - 1, max(left, start) - 1, -1):
+            while site >= 0 and position_map[site] >= right:
+                site -= 1
+            while site >= 0 and site >= start and position_map[site] >= left:
+
+            # for site in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
-                self.set_allelic_state(l)
+                self.set_allelic_state(site)
                 v = u
                 while self.allelic_state[v] == -1:
                     v = self.parent[v]
-                match[l] = self.allelic_state[v]
-                self.unset_allelic_state(l)
+                match[site] = self.allelic_state[v]
+                self.unset_allelic_state(site)
 
-                for u, recombine in self.traceback[l].items():
+                for u, recombine in self.traceback[site].items():
                     # Mark the traceback nodes on the tree.
                     recombination_required[u] = recombine
                 # Now traverse up the tree from the current node. The first marked node
@@ -965,15 +1037,17 @@ class AncestorMatcher(object):
                 u = output_edge.parent
                 while u != 0 and recombination_required[u] == -1:
                     u = self.parent[u]
-                if recombination_required[u] and l > start:
-                    output_edge.left = l
-                    u = self.max_likelihood_node[l - 1]
-                    output_edge = Edge(right=l, parent=u)
+                if recombination_required[u] and site > start:
+                    x = position_map[site]
+                    output_edge.left = x
+                    u = self.max_likelihood_node[site - 1]
+                    output_edge = Edge(right=x, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.
-                for u in self.traceback[l].keys():
+                for u in self.traceback[site].keys():
                     recombination_required[u] = -1
-        output_edge.left = start
+                site -= 1
+        output_edge.left = start_pos
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
 
@@ -981,8 +1055,9 @@ class AncestorMatcher(object):
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
         for j, e in enumerate(output_edges):
-            assert e.left >= start
-            assert e.right <= end
+            print(e)
+            assert e.left >= start_pos
+            assert e.right <= end_pos
             # TODO this does happen in the C code, so if it ever happends in a Python
             # instance we need to pop the last edge off the list. Or, see why we're
             # generating it in the first place.
