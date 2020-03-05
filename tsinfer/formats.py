@@ -596,6 +596,7 @@ class Site(object):
     inference = attr.ib()
     metadata = attr.ib()
     time = attr.ib()
+    alleles = attr.ib()
 
 
 @attr.s
@@ -1323,6 +1324,23 @@ class SampleData(DataContainer):
     # Read mode
     ####################################
 
+    def sites(self, inference_sites=None):
+        """
+        Returns an iterator over the Site objects.
+        """
+        position = self.sites_position[:]
+        alleles = self.sites_alleles[:]
+        inference = self.sites_inference[:]
+        metadata = self.sites_metadata[:]
+        time = self.sites_time[:]
+        for j in range(self.num_sites):
+            if inference_sites is None or inference[j] == inference_sites:
+                site = Site(
+                    id=j, position=position[j], ancestral_state=alleles[j][0],
+                    alleles=tuple(alleles[j]), inference=inference[j],
+                    metadata=metadata[j], time=time[j])
+                yield site
+
     def genotypes(self, inference_sites=None):
         """
         Returns an iterator over the (site_id, genotypes) pairs.
@@ -1347,19 +1365,10 @@ class SampleData(DataContainer):
             genotypes at sites that have been marked for inference; if ``False``, return
             only genotypes at sites that are not marked for inference.
         """
-        position = self.sites_position[:]
-        alleles = self.sites_alleles[:]
-        inference = self.sites_inference[:]
-        metadata = self.sites_metadata[:]
-        time = self.sites_time[:]
-        for j, genotypes in self.genotypes(inference_sites):
-            if inference_sites is None or inference[j] == inference_sites:
-                site = Site(
-                    id=j, position=position[j], ancestral_state=alleles[j][0],
-                    inference=inference[j], metadata=metadata[j], time=time[j])
-                variant = Variant(
-                    site=site, alleles=tuple(alleles[j]), genotypes=genotypes)
-                yield variant
+        for (j, genotypes), site in zip(
+                self.genotypes(inference_sites), self.sites(inference_sites)):
+            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
+            yield variant
 
     def __all_haplotypes(self, inference_sites=None):
         if inference_sites is not None:
