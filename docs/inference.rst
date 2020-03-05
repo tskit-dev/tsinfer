@@ -50,12 +50,17 @@ Individual
 ++++++++++
 
 In ``tsinfer`` an individual defines one of the subjects for which we have
-genotype data. Individuals may have arbitrary ploidy levels (i.e., haploid,
+genotype data. Individuals may have arbitrary ploidy levels (i.e. haploid,
 diploid, tetraploid, etc.). Different individuals within a dataset can have
-different ploidy levels. Individuals are added using the
-:meth:`.SampleData.add_individual` method.
+different ploidy levels. You can add an individual, and specify arbitrary
+:ref:`sec_inference_data_model_metadata` for it, using the
+:meth:`.SampleData.add_individual` method; if you do not do so ``tsinfer``
+will create a default set of haploid individuals, one for each sampled genome.
 
-Arbitrary :ref:`sec_inference_data_model_metadata` can be associated with individuals.
+The tree sequence that you infer from your data will contain sample nodes
+(i.e. genomes) that are linked to these individuals: the ``tskit``
+documentation provides more detail on the
+:ref:`distinction between individuals and the genomes they contain<sec_nodes_or_individuals>`.
 
 .. _sec_inference_data_model_sample:
 
@@ -63,10 +68,10 @@ Arbitrary :ref:`sec_inference_data_model_metadata` can be associated with indivi
 Sample
 ++++++
 
-Each individual is composed of one or more ``samples``, depending on their
+Each individual is composed of one or more ``sample`` genomes, depending on their
 ploidy. If an individual is diploid they have two samples, one each for the
-maternal and paternal chromosomes copies. More generally, a ``node`` refers
-to a maternal or paternal chromosome that is either a sample or an
+maternal and paternal chromosome copies. More generally, a ``node`` refers
+to a maternal or paternal chromosome that is either a sample, or an
 ancestor of our samples.
 
 When we add an individual with ploidy ``k`` using
