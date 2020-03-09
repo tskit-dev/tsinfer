@@ -551,6 +551,8 @@ class Matcher(object):
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 
+        # self.tree_sequence_builder.print_state()
+
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
         self.match = [np.zeros(self.num_sites, np.int8) for _ in range(num_threads)]
@@ -681,6 +683,7 @@ class Matcher(object):
         #     "{} sites; {} mutations".format(
         #         len(tables.nodes), num_pc_ancestors, len(tables.edges),
         #         len(tables.mutations), len(tables.sites)))
+        self.tree_sequence_builder.flush_edges()
         tables = tskit.TableCollection.fromdict(
             self.tree_sequence_builder.tables.asdict())
         tables.sort()
@@ -689,90 +692,90 @@ class Matcher(object):
     def encode_metadata(self, value):
         return json.dumps(value).encode()
 
-    def insert_sites(self, tables, tsb_tables):
-        """
-        Insert the sites in the sample data that were not marked for inference,
-        updating the specified site and mutation tables. This is done by
-        iterating over the trees
-        """
-        # NOTE: This is all quite confusing, but there's not much point in cleaning
-        # it up, when we'll be using tskit to work more directly with the
-        # tables.
-        num_sites = self.sample_data.num_sites
-        num_non_inference_sites = self.sample_data.num_non_inference_sites
-        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
+    # def insert_sites(self, tables, tsb_tables):
+    #     """
+    #     Insert the sites in the sample data that were not marked for inference,
+    #     updating the specified site and mutation tables. This is done by
+    #     iterating over the trees
+    #     """
+    #     # NOTE: This is all quite confusing, but there's not much point in cleaning
+    #     # it up, when we'll be using tskit to work more directly with the
+    #     # tables.
+    #     num_sites = self.sample_data.num_sites
+    #     num_non_inference_sites = self.sample_data.num_non_inference_sites
+    #     progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
 
-        # NOTE: we're passing in the tsb_tables as an intermediate step towards
-        # removing the different table representations. The code is still making
-        # assumptions about the derived state, etc, which we need to change.
-        site_id = tsb_tables.mutations.site
-        node = tsb_tables.mutations.node
-        derived_state = tsb_tables.mutations.derived_state - ord("0")
-        ts = tables.tree_sequence()
-        if num_non_inference_sites > 0:
-            assert ts.num_edges > 0
-            logger.info(
-                "Starting mutation positioning for {} non inference sites".format(
-                    num_non_inference_sites))
-            inferred_mutation = 0
-            inferred_site = 0
-            trees = ts.trees()
-            tree = next(trees)
-            for variant in self.sample_data.variants():
-                site = variant.site
-                predefined_anc_state = site.ancestral_state
-                while tree.interval[1] <= site.position:
-                    tree = next(trees)
-                assert tree.interval[0] <= site.position < tree.interval[1]
-                tables.sites.add_row(
-                    position=site.position,
-                    ancestral_state=predefined_anc_state,
-                    metadata=self.encode_metadata(site.metadata))
-                if site.inference == 1:
-                    while (
-                            inferred_mutation < len(site_id) and
-                            site_id[inferred_mutation] == inferred_site):
-                        tables.mutations.add_row(
-                            site=site.id, node=node[inferred_mutation],
-                            derived_state=variant.alleles[
-                                derived_state[inferred_mutation]])
-                        inferred_mutation += 1
-                    inferred_site += 1
-                else:
-                    inferred_anc_state, mapped_mutations = tree.map_mutations(
-                        variant.genotypes, variant.alleles)
-                    if inferred_anc_state != predefined_anc_state:
-                        # We need to set the ancestral state to that defined in the
-                        # original file
-                        for root_node in tree.roots:
-                            # Add a transition at each root to the mapped value
-                            tables.mutations.add_row(
-                                site=site.id, node=root_node,
-                                derived_state=inferred_anc_state)
-                    for mutation in mapped_mutations:
-                        tables.mutations.add_row(
-                            site=site.id, node=mutation.node,
-                            derived_state=mutation.derived_state)
-                progress_monitor.update()
-        else:
-            # Simple case where all sites are inference sites. We save a lot of time here
-            # by not decoding the genotypes.
-            logger.info("Inserting detailed site information")
-            position = self.sample_data.sites_position[:]
-            alleles = self.sample_data.sites_alleles[:]
-            metadata = self.sample_data.sites_metadata[:]
-            k = 0
-            for j in range(self.num_sites):
-                tables.sites.add_row(
-                    position=position[j],
-                    ancestral_state=alleles[j][0],
-                    metadata=self.encode_metadata(metadata[j]))
-                while k < len(site_id) and site_id[k] == j:
-                    tables.mutations.add_row(
-                        site=j, node=node[k], derived_state=alleles[j][derived_state[k]])
-                    k += 1
-                progress_monitor.update()
-        progress_monitor.close()
+    #     # NOTE: we're passing in the tsb_tables as an intermediate step towards
+    #     # removing the different table representations. The code is still making
+    #     # assumptions about the derived state, etc, which we need to change.
+    #     site_id = tsb_tables.mutations.site
+    #     node = tsb_tables.mutations.node
+    #     derived_state = tsb_tables.mutations.derived_state - ord("0")
+    #     ts = tables.tree_sequence()
+    #     if num_non_inference_sites > 0:
+    #         assert ts.num_edges > 0
+    #         logger.info(
+    #             "Starting mutation positioning for {} non inference sites".format(
+    #                 num_non_inference_sites))
+    #         inferred_mutation = 0
+    #         inferred_site = 0
+    #         trees = ts.trees()
+    #         tree = next(trees)
+    #         for variant in self.sample_data.variants():
+    #             site = variant.site
+    #             predefined_anc_state = site.ancestral_state
+    #             while tree.interval[1] <= site.position:
+    #                 tree = next(trees)
+    #             assert tree.interval[0] <= site.position < tree.interval[1]
+    #             tables.sites.add_row(
+    #                 position=site.position,
+    #                 ancestral_state=predefined_anc_state,
+    #                 metadata=self.encode_metadata(site.metadata))
+    #             if site.inference == 1:
+    #                 while (
+    #                         inferred_mutation < len(site_id) and
+    #                         site_id[inferred_mutation] == inferred_site):
+    #                     tables.mutations.add_row(
+    #                         site=site.id, node=node[inferred_mutation],
+    #                         derived_state=variant.alleles[
+    #                             derived_state[inferred_mutation]])
+    #                     inferred_mutation += 1
+    #                 inferred_site += 1
+    #             else:
+    #                 inferred_anc_state, mapped_mutations = tree.map_mutations(
+    #                     variant.genotypes, variant.alleles)
+    #                 if inferred_anc_state != predefined_anc_state:
+    #                     # We need to set the ancestral state to that defined in the
+    #                     # original file
+    #                     for root_node in tree.roots:
+    #                         # Add a transition at each root to the mapped value
+    #                         tables.mutations.add_row(
+    #                             site=site.id, node=root_node,
+    #                             derived_state=inferred_anc_state)
+    #                 for mutation in mapped_mutations:
+    #                     tables.mutations.add_row(
+    #                         site=site.id, node=mutation.node,
+    #                         derived_state=mutation.derived_state)
+    #             progress_monitor.update()
+    #     else:
+    #         # Simple case where all sites are inference sites. We save a lot of time here
+    #         # by not decoding the genotypes.
+    #         logger.info("Inserting detailed site information")
+    #         position = self.sample_data.sites_position[:]
+    #         alleles = self.sample_data.sites_alleles[:]
+    #         metadata = self.sample_data.sites_metadata[:]
+    #         k = 0
+    #         for j in range(self.num_sites):
+    #             tables.sites.add_row(
+    #                 position=position[j],
+    #                 ancestral_state=alleles[j][0],
+    #                 metadata=self.encode_metadata(metadata[j]))
+    #             while k < len(site_id) and site_id[k] == j:
+    #                 tables.mutations.add_row(
+    #                     site=j, node=node[k], derived_state=alleles[j][derived_state[k]])
+    #                 k += 1
+    #             progress_monitor.update()
+    #     progress_monitor.close()
 
     def get_augmented_ancestors_tree_sequence(self, sample_indexes):
         """
@@ -841,6 +844,31 @@ class Matcher(object):
                 len(tables.mutations), len(tables.sites)))
         return tables.tree_sequence()
 
+    def add_non_inference_sites(self, ts):
+        """
+        Adds mutations for non-inference sites to the tables.
+        """
+        tree = ts.first()
+        for variant in self.sample_data.variants(inference_sites=False):
+            while tree.interval[1] < variant.site.position:
+                tree.next()
+            site = ts.site(variant.site.id)
+            inferred_anc_state, mapped_mutations = tree.map_mutations(
+                variant.genotypes, variant.alleles)
+            if inferred_anc_state != site.ancestral_state:
+                for root_node in tree.roots:
+                    # Add a transition at each root to the mapped value so that
+                    self.tables.mutations.add_row(
+                        site=site.id, node=root_node,
+                        derived_state=inferred_anc_state)
+            for mutation in mapped_mutations:
+                self.tables.mutations.add_row(
+                    site=site.id, node=mutation.node,
+                    derived_state=mutation.derived_state)
+        # TODO we should be iterating over the full list of mutations, keeping
+        # track of the parent values.
+        self.tables.sort()
+
     def get_samples_tree_sequence(self):
         """
         Returns the current state of the build tree sequence. All samples and
@@ -850,90 +878,79 @@ class Matcher(object):
 
         inference_sites = self.sample_data.sites_inference[:]
         position = self.sample_data.sites_position[:]
-        tables = self.ancestors_ts.dump_tables()
-        num_ancestral_individuals = len(tables.individuals)
+        num_ancestral_individuals = len(self.tables.individuals)
 
-        # Currently there's no information about populations etc stored in the
-        # ancestors ts.
-        for metadata in self.sample_data.populations_metadata[:]:
-            tables.populations.add_row(self.encode_metadata(metadata))
-        for ind in self.sample_data.individuals():
-            tables.individuals.add_row(
-                location=ind.location, metadata=self.encode_metadata(ind.metadata))
+        # # Currently there's no information about populations etc stored in the
+        # # ancestors ts.
+        # for metadata in self.sample_data.populations_metadata[:]:
+        #     tables.populations.add_row(self.encode_metadata(metadata))
+        # for ind in self.sample_data.individuals():
+        #     tables.individuals.add_row(
+        #         location=ind.location, metadata=self.encode_metadata(ind.metadata))
 
-        lwt = _tsinfer.LightweightTableCollection()
-        tsb.dump(lwt)
-        tsb_tables = tskit.TableCollection.fromdict(lwt.asdict())
-        logger.debug("Adding tree sequence nodes")
-        flags = tsb_tables.nodes.flags
-        times = tsb_tables.nodes.time
+        flags = self.tables.nodes.flags
         num_pc_ancestors = count_pc_ancestors(flags)
 
         # All true ancestors are samples in the ancestors tree sequence. We unset
         # the SAMPLE flag but keep other flags intact.
-        new_flags = np.bitwise_and(tables.nodes.flags, ~tskit.NODE_IS_SAMPLE)
-        tables.nodes.set_columns(
-            flags=new_flags.astype(np.uint32),
-            time=tables.nodes.time,
-            population=tables.nodes.population,
-            individual=tables.nodes.individual,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset)
-        assert len(tables.nodes) == self.sample_ids[0]
+        new_flags = np.bitwise_and(flags, ~tskit.NODE_IS_SAMPLE)
+        new_flags[self.sample_ids] = tskit.NODE_IS_SAMPLE
+        self.tables.nodes.flags = new_flags.astype(np.uint32)
+
+        # tables.nodes.set_columns(
+        #     flags=new_flags.astype(np.uint32)
+        #     time.nodes.time,
+        #     population=tables.nodes.population,
+        #     individual=tables.nodes.individual,
+        #     metadata=tables.nodes.metadata,
+        #     metadata_offset=tables.nodes.metadata_offset)
+        # assert len(tables.nodes) == self.sample_ids[0]
         # Now add in the sample nodes with metadata, etc.
-        for sample_id, metadata, population, individual in zip(
-                self.sample_ids,
-                self.sample_data.samples_metadata[:],
-                self.sample_data.samples_population[:],
-                self.sample_data.samples_individual[:]):
-            tables.nodes.add_row(
-                flags=flags[sample_id],
-                time=times[sample_id],
-                population=population,
-                individual=num_ancestral_individuals + individual,
-                metadata=self.encode_metadata(metadata))
-        # Add in the remaining non-sample nodes.
-        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
-            tables.nodes.add_row(flags=flags[u], time=times[u])
+        # for sample_id, metadata, population, individual in zip(
+        #         self.sample_ids,
+        #         self.sample_data.samples_metadata[:],
+        #         self.sample_data.samples_population[:],
+        #         self.sample_data.samples_individual[:]):
+        #     tables.nodes.add_row(
+        #         flags=flags[sample_id],
+        #         time=times[sample_id],
+        #         population=population,
+        #         individual=num_ancestral_individuals + individual,
+        #         metadata=self.encode_metadata(metadata))
+        # # Add in the remaining non-sample nodes.
+        # for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
+        #     tables.nodes.add_row(flags=flags[u], time=times[u])
 
         logger.debug("Adding tree sequence edges")
-        tables.edges.clear()
         if np.all(~inference_sites):
             # We have no inference sites, so no edges have been estimated. To ensure
             # we have a rooted tree, we add in edges for each sample to an artificial
             # root.
-            assert len(tsb_tables.edges) == 0
-            root = tables.nodes.add_row(flags=0, time=tables.nodes.time.max() + 1)
+            assert len(self.edges) == 0
+            root = self.tables.nodes.add_row(
+                flags=0, time=self.tables.nodes.time.max() + 1)
             for sample_id in self.sample_ids:
                 tables.edges.add_row(0, tables.sequence_length, root, sample_id)
-        else:
-            # Subset down to the inference sites and map back to the site indexes.
-            position = position[inference_sites]
-            pos_map = np.hstack([position, [tables.sequence_length]])
-            pos_map[0] = 0
-            tables.edges.set_columns(
-                left=pos_map[tsb_tables.edges.left.astype(int)],
-                right=pos_map[tsb_tables.edges.right.astype(int)],
-                parent=tsb_tables.edges.parent,
-                child=tsb_tables.edges.child)
 
         logger.debug("Sorting and building intermediate tree sequence.")
-        tables.sites.clear()
-        tables.mutations.clear()
-        tables.sort()
-        self.insert_sites(tables, tsb_tables)
+        self.tables.sort()
+        ts = self.tables.tree_sequence()
+        self.add_non_inference_sites(ts)
 
         # We don't have a source here because tree sequence files don't have a
         # UUID yet.
         record = provenance.get_provenance_dict(command="match-samples")
-        tables.provenances.add_row(record=json.dumps(record))
+        self.tables.provenances.add_row(record=json.dumps(record))
 
         logger.info(
             "Built samples tree sequence: {} nodes ({} pc); {} edges; "
             "{} sites; {} mutations".format(
-                len(tables.nodes), num_pc_ancestors,
-                len(tables.edges), len(tables.sites), len(tables.mutations)))
-        return tables.tree_sequence()
+                len(self.tables.nodes),
+                num_pc_ancestors,
+                len(self.tables.edges),
+                len(self.tables.sites),
+                len(self.tables.mutations)))
+        return self.tables.tree_sequence()
 
 
 class AncestorMatcher(Matcher):
@@ -1185,6 +1202,9 @@ class SampleMatcher(Matcher):
 
     def finalise(self, simplify=True, stabilise_node_ordering=False):
         logger.info("Finalising tree sequence")
+        # self.tables.sort()
+        # ts = self.tables.tree_sequence()
+        self.tree_sequence_builder.flush_edges()
         ts = self.get_samples_tree_sequence()
         # print(ts.tables)
         if simplify:

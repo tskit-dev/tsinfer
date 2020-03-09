@@ -113,7 +113,7 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    samples = tsinfer.SampleData.from_tree_sequence(ts)
+    samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
     rho = recombination_rate
     mu = 1e-3
 
@@ -123,7 +123,7 @@ def tsinfer_dev(
         samples, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
         samples, ancestor_data, engine=engine, path_compression=True,
-        extended_checks=False, recombination_rate=rho,
+        extended_checks=True, recombination_rate=rho,
         # FIXME mu must be zero for ancestor matching at the moment.
         mutation_rate=0)
 
@@ -132,12 +132,17 @@ def tsinfer_dev(
     # ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
     #         [5, 6, 7], engine=engine)
 
+    # print("MATCH SAMPLES")
+
     ts = tsinfer.match_samples(samples, ancestors_ts,
             recombination_rate=rho, mutation_rate=mu,
             path_compression=False, engine=engine,
             simplify=True)
 
     # print(ts.draw_text())
+    # for var in ts.variants():
+    #     print(var)
+
 
     # print(ts.tables.edges)
     # print(ts.dump_tables())
@@ -281,10 +286,10 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    # for j in range(1, 100):
-    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
+    for j in range(1, 100):
+        tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    # tsinfer_dev(17, 0.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
 
     # minimise_dev()
 

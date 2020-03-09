@@ -244,13 +244,25 @@ class TreeSequenceBuilder(object):
         for mutation in tables.mutations:
             if sites_inference[mutation.site]:
                 self.mutations[reverse_site_map[mutation.site]].append((
-                    mutation.node, mutation.derived_state))
+                    mutation.node,
+                    int(mutation.derived_state)))
 
-        # PICK UP HERE. Need to initialise the state of the builder
-        # correctly from the tables.
-        print(self.tables)
+        edges = [
+            Edge(edge.left, edge.right, edge.parent, edge.child)
+            for edge in tables.edges
+        ]
+        # Sort the edges by child and left so we can add them in order.
+        edges.sort(key=lambda e: (e.child, e.left))
+        prev = Edge(child=-1)
+        for edge in edges:
+            if edge.child == prev.child:
+                prev.next = edge
+            else:
+                self.path[edge.child] = edge
+            self.index_edge(edge)
+            prev = edge
 
-
+        self.check_state()
 
     def freeze_indexes(self):
         # This is a no-op in this implementation.
@@ -264,9 +276,28 @@ class TreeSequenceBuilder(object):
     def num_nodes(self):
         return len(self.tables.nodes)
 
-    def restore_nodes(self, time, flags):
-        for t, flag in zip(time, flags):
-            self.add_node(t, flag)
+    # def restore_nodes(self, time, flags):
+    #     for t, flag in zip(time, flags):
+    #         self.add_node(t, flag)
+
+    # def restore_edges(self, left, right, parent, child):
+    #     edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
+    #     # Sort the edges by child and left so we can add them in order.
+    #     edges.sort(key=lambda e: (e.child, e.left))
+    #     prev = Edge(child=-1)
+    #     for edge in edges:
+    #         if edge.child == prev.child:
+    #             prev.next = edge
+    #         else:
+    #             self.path[edge.child] = edge
+    #         self.index_edge(edge)
+    #         prev = edge
+
+    #     self.check_state()
+
+    # def restore_mutations(self, site, node, derived_state, parent):
+    #     for s, u, d in zip(site, node, derived_state):
+    #         self.mutations[s].append((u, d))
 
     def add_node(self, time, flags=1):
         self.path.append(None)
@@ -351,29 +382,16 @@ class TreeSequenceBuilder(object):
             x = x.next
         return head
 
-    def restore_edges(self, left, right, parent, child):
-        edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
-        # Sort the edges by child and left so we can add them in order.
-        edges.sort(key=lambda e: (e.child, e.left))
-        prev = Edge(child=-1)
-        for edge in edges:
-            if edge.child == prev.child:
-                prev.next = edge
-            else:
-                self.path[edge.child] = edge
-            self.index_edge(edge)
-            prev = edge
-
-        self.check_state()
-
-    def store_edges(self, child):
+    def flush_edges(self):
         """
-        Stores the edges for the specified child in the tables.
+        Flushes all edges to the output edge table.
         """
-        edge = self.path[child]
-        while edge is not None:
-            self.tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
-            edge = edge.next
+        self.tables.edges.clear()
+        for child in range(self.num_nodes):
+            edge = self.path[child]
+            while edge is not None:
+                self.tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
+                edge = edge.next
 
     def add_path(self, child, left, right, parent, compress=True, extended_checks=False):
         assert self.path[child] is None
@@ -393,7 +411,6 @@ class TreeSequenceBuilder(object):
         # Insert the chain into the global state.
         self.path[child] = head
         self.index_edges(child)
-        self.store_edges(child)
         # self.print_state()
         if extended_checks:
             self.check_state()
@@ -416,6 +433,7 @@ class TreeSequenceBuilder(object):
         # For the asserttion to be violated we would need to have 64K pc
         # ancestors sequentially copying from each other.
         time[pc_parent_id] = min_parent_time - (1 / 2**16)
+        self.tables.nodes.time = time
         assert time[pc_parent_id] > time[child_id]
 
     def create_pc_node(self, matches):
@@ -521,9 +539,6 @@ class TreeSequenceBuilder(object):
                     self.create_pc_node(match_list)
         return self.squash_edges(head)
 
-    # def restore_mutations(self, site, node, derived_state, parent):
-    #     for s, u, d in zip(site, node, derived_state):
-    #         self.mutations[s].append((u, d))
 
     def add_mutations(self, node, site, derived_state):
         for s, d in zip(site, derived_state):
@@ -541,13 +556,14 @@ class TreeSequenceBuilder(object):
 
     def check_state(self):
         time = self.tables.nodes.time
+        flags = self.tables.nodes.flags
         total_edges = 0
         for child in range(self.num_nodes):
             edge = self.path[child]
             while edge is not None:
                 assert edge.child == child
                 if edge.next is not None:
-                    if self.flags[child] != 0:
+                    if flags[child] != 0:
                         assert edge.next.left >= edge.right
                 assert self.left_index[(edge.left, time[child], child)] == edge
                 assert self.right_index[(edge.right, -time[child], child)] == edge
@@ -571,11 +587,11 @@ class TreeSequenceBuilder(object):
         print(self.tables.nodes)
         print("Paths")
         for child in range(self.num_nodes):
-            print("child = ", child, end="\t")
+            print("\t", "child = ", child, end="\t")
             self.print_chain(self.path[child])
         print("Mutations")
         for site in range(self.num_inference_sites):
-            print(site, "->", self.mutations[site])
+            print("\t", site, "->", self.mutations[site])
         self.check_state()
 
     def dump(self, lwt):
@@ -727,8 +743,8 @@ class AncestorMatcher(object):
                 max_L_node = u
 
 
-        self.tree_sequence_builder.print_state()
-        self.print_state()
+        # self.tree_sequence_builder.print_state()
+        # self.print_state()
 
         if max_L == 0:
             assert self.mutation_rate[site] == 0
@@ -821,6 +837,12 @@ class AncestorMatcher(object):
         m = self.num_sites
         sequence_length = self.tree_sequence_builder.sequence_length
         position_map = self.tree_sequence_builder.inference_site_position
+        end_pos = sequence_length
+        if end < self.num_sites:
+            end_pos = position_map[end]
+        start_pos = 0
+        if start > 0:
+            start_pos = position_map[start]
 
         self.parent = np.zeros(n, dtype=int) - 1
         self.left_child = np.zeros(n, dtype=int) - 1
@@ -835,15 +857,15 @@ class AncestorMatcher(object):
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
 
-        print("MATCH: start=", start, "end = ", end, "h = ", h)
+        # print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
         left = 0
         pos = 0
         right = sequence_length
-        if j < M and start < Il.peekitem(j)[1].left:
+        if j < M and start_pos < Il.peekitem(j)[1].left:
             right = Il.peekitem(j)[1].left
-        while j < M and k < M and Il.peekitem(j)[1].left <= start:
+        while j < M and k < M and Il.peekitem(j)[1].left <= start_pos:
             while Ir.peekitem(k)[1].right == pos:
                 self.remove_edge(Ir.peekitem(k)[1])
                 k += 1
@@ -875,8 +897,8 @@ class AncestorMatcher(object):
         self.likelihood[last_root] = 1
 
         remove_start = k
-        while left < end:
-            # print("START OF TREE LOOP", left, right)
+        while left < end_pos:
+            # print("START OF TREE LOOP", left, right, pos)
             assert left < right
             for l in range(remove_start, k):
                 edge = Ir.peekitem(l)[1]
@@ -905,7 +927,7 @@ class AncestorMatcher(object):
             while (
                     site < self.num_sites and site < end and
                     left <= position_map[site] < right):
-                print("HERE:", left, right, site, position_map[site])
+                # print("HERE:", left, right, site, position_map[site])
                 self.update_site(site, h[site])
                 site += 1
 
@@ -960,6 +982,7 @@ class AncestorMatcher(object):
             if k < M:
                 right = min(right, Ir.peekitem(k)[1].right)
 
+        # print("END", left, right, pos)
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
@@ -1055,7 +1078,7 @@ class AncestorMatcher(object):
         right = np.zeros(len(output_edges), dtype=np.uint32)
         parent = np.zeros(len(output_edges), dtype=np.int32)
         for j, e in enumerate(output_edges):
-            print(e)
+            # print(e)
             assert e.left >= start_pos
             assert e.right <= end_pos
             # TODO this does happen in the C code, so if it ever happends in a Python
