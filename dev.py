@@ -113,9 +113,13 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+    ts = msprime.mutate(
+        ts, rate=1e-8, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=2)
+
+    samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
     rho = recombination_rate
-    mu = 1e-3
+    # mu = 1e-3
+    mu = 0
 
     print(samples)
 
@@ -138,6 +142,8 @@ def tsinfer_dev(
             recombination_rate=rho, mutation_rate=mu,
             path_compression=False, engine=engine,
             simplify=True)
+
+    # print(ts.tables)
 
     # print(ts.draw_text())
     # for var in ts.variants():
@@ -289,7 +295,7 @@ if __name__ == "__main__":
     for j in range(1, 100):
         tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    # tsinfer_dev(17, 0.5, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    # tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
 
     # minimise_dev()
 

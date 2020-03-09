@@ -219,19 +219,23 @@ class AncestorBuilder(object):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, tables, sites_inference, max_nodes, max_edges):
+    def __init__(self, tables, alleles, max_nodes, max_edges):
         self.tables = tables
-        self.sites_inference = sites_inference[:]
-        self.num_inference_sites = np.sum(sites_inference, dtype=int)
-        self.inference_site_position = tables.sites.position[sites_inference]
+        assert len(self.tables.sites) == len(alleles)
+        self.num_inference_sites = sum(site is not None for site in alleles)
         self.site_index_map = np.zeros(self.num_inference_sites, dtype=int)
+        self.inference_site_position = np.zeros(self.num_inference_sites)
+        self.alleles = [None for _ in range(self.num_inference_sites)]
 
+        all_sites_position = self.tables.sites.position
         reverse_site_map = {}
         j = 0
         for site_id in range(len(self.tables.sites)):
-            if sites_inference[site_id]:
+            if alleles[site_id] is not None:
                 self.site_index_map[j] = site_id
                 reverse_site_map[site_id] = j
+                self.alleles[j] = alleles[site_id]
+                self.inference_site_position[j] = all_sites_position[site_id]
                 j += 1
         self.mutations = collections.defaultdict(list)
         self.mean_traceback_size = 0
@@ -242,10 +246,11 @@ class TreeSequenceBuilder(object):
 
         inference_site_id = 0
         for mutation in tables.mutations:
-            if sites_inference[mutation.site]:
+            if alleles[mutation.site] is not None:
+                allele_index = alleles[mutation.site].index(mutation.derived_state)
                 self.mutations[reverse_site_map[mutation.site]].append((
                     mutation.node,
-                    int(mutation.derived_state)))
+                    allele_index))
 
         edges = [
             Edge(edge.left, edge.right, edge.parent, edge.child)
@@ -275,29 +280,6 @@ class TreeSequenceBuilder(object):
     @property
     def num_nodes(self):
         return len(self.tables.nodes)
-
-    # def restore_nodes(self, time, flags):
-    #     for t, flag in zip(time, flags):
-    #         self.add_node(t, flag)
-
-    # def restore_edges(self, left, right, parent, child):
-    #     edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
-    #     # Sort the edges by child and left so we can add them in order.
-    #     edges.sort(key=lambda e: (e.child, e.left))
-    #     prev = Edge(child=-1)
-    #     for edge in edges:
-    #         if edge.child == prev.child:
-    #             prev.next = edge
-    #         else:
-    #             self.path[edge.child] = edge
-    #         self.index_edge(edge)
-    #         prev = edge
-
-    #     self.check_state()
-
-    # def restore_mutations(self, site, node, derived_state, parent):
-    #     for s, u, d in zip(site, node, derived_state):
-    #         self.mutations[s].append((u, d))
 
     def add_node(self, time, flags=1):
         self.path.append(None)
@@ -539,12 +521,14 @@ class TreeSequenceBuilder(object):
                     self.create_pc_node(match_list)
         return self.squash_edges(head)
 
-
     def add_mutations(self, node, site, derived_state):
         for s, d in zip(site, derived_state):
             self.mutations[s].append((node, d))
+            # print("add mutatins", s, d, self.alleles[s][d])
             self.tables.mutations.add_row(
-                site=self.site_index_map[s], node=node, derived_state=f"{d}")
+                site=self.site_index_map[s],
+                node=node,
+                derived_state=self.alleles[s][d])
 
     @property
     def num_edges(self):
@@ -589,40 +573,10 @@ class TreeSequenceBuilder(object):
         for child in range(self.num_nodes):
             print("\t", "child = ", child, end="\t")
             self.print_chain(self.path[child])
-        print("Mutations")
+        print("Sites:")
         for site in range(self.num_inference_sites):
-            print("\t", site, "->", self.mutations[site])
+            print("\t", site, "\t", self.alleles[site], "->", self.mutations[site])
         self.check_state()
-
-    def dump(self, lwt):
-        """
-        Dumps the state of this tree sequence builder in to the specified
-        LightweightTableCollection.
-        """
-        tables = tskit.TableCollection()
-        tables.nodes.set_columns(
-            flags=self.tables.nodes.flags,
-            time=self.tables.nodes.time)
-
-        for c in range(self.num_nodes):
-            edge = self.path[c]
-            while edge is not None:
-                tables.edges.add_row(edge.left, edge.right, edge.parent, edge.child)
-                edge = edge.next
-
-        j = 0
-        for l in range(self.num_inference_sites):
-            tables.sites.add_row(l, ancestral_state="0")
-            p = j
-            for u, d in self.mutations[l]:
-                parent = tskit.NULL
-                if d == 0:
-                    parent = p
-                tables.mutations.add_row(
-                    site=l, node=u, derived_state=f"{d}", parent=parent)
-                j += 1
-
-        lwt.fromdict(tables.asdict())
 
 
 # Special values used to indicate compressed paths and nodes that are
@@ -700,6 +654,7 @@ class AncestorMatcher(object):
         n = self.tree_sequence_builder.num_nodes
         rho = self.recombination_rate[site]
         mu = self.mutation_rate[site]
+        alleles = self.tree_sequence_builder.alleles[site]
 
         self.set_allelic_state(site)
 
@@ -734,14 +689,13 @@ class AncestorMatcher(object):
             self.traceback[site][u] = recombination_required
             p_e = mu
             if haplotype_state == self.allelic_state[v]:
-                # p_e = 1 - (len(alleles) - 1) * mu
-                p_e = 1 - mu
+                p_e = 1 - (len(alleles) - 1) * mu
+                # p_e = 1 - mu
             self.likelihood[u] = round(p_t * p_e, self.precision)
 
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
                 max_L_node = u
-
 
         # self.tree_sequence_builder.print_state()
         # self.print_state()
@@ -1043,7 +997,6 @@ class AncestorMatcher(object):
                 site -= 1
             while site >= 0 and site >= start and position_map[site] >= left:
 
-            # for site in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
                 self.set_allelic_state(site)
                 v = u

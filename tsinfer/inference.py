@@ -542,11 +542,14 @@ class Matcher(object):
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
+        # Use the alleles list to signal inference and non-inference sites.
+        alleles = self.sample_data.sites_alleles[:]
+        alleles[self.sample_data.sites_inference[:] == 0] = None
 
         # Might as well allocate the tsb in the conditional  above. Might need
         # to use different classes for the table collection
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-                self.tables, self.sample_data.sites_inference, max_nodes, max_edges)
+                self.tables, alleles, max_nodes, max_edges)
 
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
@@ -683,7 +686,7 @@ class Matcher(object):
         #     "{} sites; {} mutations".format(
         #         len(tables.nodes), num_pc_ancestors, len(tables.edges),
         #         len(tables.mutations), len(tables.sites)))
-        self.tree_sequence_builder.flush_edges()
+        print(self.tree_sequence_builder.tables)
         tables = tskit.TableCollection.fromdict(
             self.tree_sequence_builder.tables.asdict())
         tables.sort()
@@ -1112,6 +1115,7 @@ class AncestorMatcher(Matcher):
         #     tables = tskit.TableCollection(
         #         sequence_length=self.ancestor_data.sequence_length)
         #     ts = tables.tree_sequence()
+        self.tree_sequence_builder.flush_edges()
         self.tables.sort()
         ts = self.tables.tree_sequence()
         return ts
@@ -1122,7 +1126,6 @@ class SampleMatcher(Matcher):
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         tables = ancestors_ts.dump_tables()
         super().__init__(sample_data, tables, **kwargs)
-        # self.restore_tree_sequence_builder(ancestors_ts)
         self.ancestors_ts = ancestors_ts
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
 
