@@ -634,6 +634,16 @@ class Sample(object):
     metadata = attr.ib()
 
 
+@attr.s
+class Population(object):
+    """
+    A population object.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    metadata = attr.ib()
+
+
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
@@ -812,28 +822,6 @@ class SampleData(DataContainer):
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
             self.num_samples, self.num_sites)
-
-    def as_ancestors_tables(self):
-        """
-        Returns the non-genotype data in this sample data files as a tskit
-        TableCollection.
-        """
-        tables = tskit.TableCollection(self.sequence_length)
-
-        for metadata in self.populations_metadata:
-            tables.populations.add_row(metadata=json.dumps(metadata).encode())
-
-        for site in self.sites():
-            tables.sites.add_row(
-                position=site.position,
-                ancestral_state=site.ancestral_state,
-                metadata=json.dumps(site.metadata).encode())
-
-        for timestamp, record in self.provenances():
-            tables.provenances.add_row(
-                timestamp=timestamp,
-                record=json.dumps(record).encode())
-        return tables
 
     def add_samples(self, tables):
         """
@@ -1496,6 +1484,10 @@ class SampleData(DataContainer):
             yield Sample(
                 j, population=population, individual=individual, metadata=metadata)
 
+    def populations(self):
+        for j, metadata in enumerate(self.populations_metadata):
+            yield Population(j, metadata)
+
 
 @attr.s
 class Ancestor(object):
@@ -1738,6 +1730,28 @@ class AncestorData(DataContainer):
             yield Ancestor(
                 id=j, start=start[j], end=end[j], time=time[j],
                 focal_sites=focal_sites[j], haplotype=h)
+
+    def as_tables(self, sample_data):
+        """
+        Returns the non-genotype data in this ancestor data file as a tskit
+        TableCollection.
+        """
+        tables = tskit.TableCollection(self.sequence_length)
+
+        for metadata in sample_data.populations_metadata:
+            tables.populations.add_row(metadata=json.dumps(metadata).encode())
+
+        for site in sample_data.sites():
+            tables.sites.add_row(
+                position=site.position,
+                ancestral_state=site.ancestral_state,
+                metadata=json.dumps(site.metadata).encode())
+
+        for timestamp, record in self.provenances():
+            tables.provenances.add_row(
+                timestamp=timestamp,
+                record=json.dumps(record).encode())
+        return tables
 
 
 def load(path):

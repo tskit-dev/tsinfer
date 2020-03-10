@@ -123,41 +123,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             samples=samples, recombination_rate=1, mutation_rate=10,
             length=sequence_length, random_seed=100)
 
-    def verify_as_ancestors_tables(self, ts, input_file):
-        """
-        Verifies that the as_ancestors_tables method contains the data in the
-        specified source tree sequence.
-        """
-        tables1 = ts.tables
-        tables2 = input_file.as_ancestors_tables()
-
-        def check_metadata(m1, m2):
-            if m1 == b'':
-                self.assertEqual(m2, b'{}')
-            else:
-                self.assertEqual(json.loads(m1.decode()), json.loads(m2.decode()))
-
-        self.assertEqual(len(tables2.nodes), 0)
-        self.assertEqual(len(tables2.individuals), 0)
-        self.assertEqual(len(tables2.mutations), 0)
-        self.assertEqual(len(tables2.migrations), 0)
-
-        self.assertEqual(len(tables1.populations), len(tables2.populations))
-        for p1, p2 in zip(tables1.populations, tables2.populations):
-            check_metadata(p1.metadata, p2.metadata)
-
-        self.assertEqual(len(tables1.sites), len(tables2.sites))
-        for s1, s2 in zip(tables1.sites, tables2.sites):
-            self.assertEqual(s1.position, s2.position)
-            self.assertEqual(s1.ancestral_state, s2.ancestral_state)
-            check_metadata(s1.metadata, s2.metadata)
-
-        self.assertEqual(input_file.num_provenances, len(tables2.provenances))
-        for (timestamp1, record1), p2 in zip(
-                input_file.provenances(), tables2.provenances):
-            self.assertEqual(timestamp1, p2.timestamp)
-            self.assertEqual(record1, json.loads(p2.record.encode()))
-
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for pop in ts.populations():
@@ -227,8 +192,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                         json.loads(individual.metadata))
                 for n in individual.nodes:
                     self.assertTrue(ts.node(n).time == sample_time[individual.id])
-
-        self.verify_as_ancestors_tables(ts, input_file)
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
@@ -1198,6 +1161,34 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ancestors.append((start, end, 2 * j + 1, focal_sites, haplotype))
         return sample_data, ancestors
 
+    def verify_as_ancestors_tables(self, sample_data, ancestors_data):
+        """
+        Verifies that the as_ancestors_tables method contains the data in the
+        specified source tree sequence.
+        """
+        tables = ancestors_data.as_tables(sample_data)
+
+        self.assertEqual(len(tables.nodes), 0)
+        self.assertEqual(len(tables.individuals), 0)
+        self.assertEqual(len(tables.mutations), 0)
+        self.assertEqual(len(tables.migrations), 0)
+
+        self.assertEqual(sample_data.num_populations, len(tables.populations))
+        for p1, p2 in zip(sample_data.populations(), tables.populations):
+            self.assertEqual(p1.metadata, json.loads(p2.metadata.decode()))
+
+        self.assertEqual(sample_data.num_sites, len(tables.sites))
+        for s1, s2 in zip(sample_data.sites(), tables.sites):
+            self.assertEqual(s1.position, s2.position)
+            self.assertEqual(s1.ancestral_state, s2.ancestral_state)
+            self.assertEqual(s1.metadata, json.loads(s2.metadata.decode()))
+
+        self.assertEqual(ancestors_data.num_provenances, len(tables.provenances))
+        for (timestamp1, record1), p2 in zip(
+                ancestors_data.provenances(), tables.provenances):
+            self.assertEqual(timestamp1, p2.timestamp)
+            self.assertEqual(record1, json.loads(p2.record.encode()))
+
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for start, end, t, focal_sites, haplotype in ancestors:
             ancestor_data.add_ancestor(
@@ -1241,6 +1232,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(stored_ancestors[j], anc.haplotype))
             length = pos[anc.end] - pos[anc.start]
             self.assertEqual(stored_length[j], length)
+
+        self.verify_as_ancestors_tables(sample_data, ancestor_data)
 
     def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)

@@ -168,8 +168,9 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file access permissions issue")
+    # @unittest.skipIf(sys.platform == "win32",
+    #                  "windows simultaneous file access permissions issue")
+    @unittest.skip("augment ancestors")
     def test_augment_ancestors(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         augmented_ancestors = os.path.join(

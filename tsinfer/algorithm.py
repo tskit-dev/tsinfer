@@ -244,7 +244,6 @@ class TreeSequenceBuilder(object):
         self.path_index = sortedcontainers.SortedDict()
         self.path = [None for _ in range(self.num_nodes)]
 
-        inference_site_id = 0
         for mutation in tables.mutations:
             if alleles[mutation.site] is not None:
                 allele_index = alleles[mutation.site].index(mutation.derived_state)
@@ -551,14 +550,6 @@ class TreeSequenceBuilder(object):
                 if edge.next is not None:
                     if flags[child] != 0:
                         assert edge.next.left >= edge.right
-                if self.right_index[(edge.right, -time[child], child)] != edge:
-                    print("bad edge!")
-                    print(edge)
-                    print(self.right_index[(edge.right, -time[child], child)])
-                    print("====")
-
-
-                    self.print_state()
                 assert self.left_index[(edge.left, time[child], child)] == edge
                 assert self.right_index[(edge.right, -time[child], child)] == edge
                 edge = edge.next
