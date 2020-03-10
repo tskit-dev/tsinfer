@@ -622,6 +622,18 @@ class Individual(object):
     metadata = attr.ib()
 
 
+@attr.s
+class Sample(object):
+    """
+    A Sample object.
+    """
+    # TODO document properly.
+    id = attr.ib()
+    population = attr.ib()
+    individual = attr.ib()
+    metadata = attr.ib()
+
+
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
@@ -801,19 +813,55 @@ class SampleData(DataContainer):
         return "SampleData(num_samples={}, num_sites={})".format(
             self.num_samples, self.num_sites)
 
-    def as_tables(self):
+    def as_ancestors_tables(self):
         """
         Returns the non-genotype data in this sample data files as a tskit
         TableCollection.
         """
         tables = tskit.TableCollection(self.sequence_length)
-        # TODO add individuals, provenance, etc.
+
+        for metadata in self.populations_metadata:
+            tables.populations.add_row(metadata=json.dumps(metadata).encode())
+
         for site in self.sites():
             tables.sites.add_row(
                 position=site.position,
                 ancestral_state=site.ancestral_state,
                 metadata=json.dumps(site.metadata).encode())
+
+        for timestamp, record in self.provenances():
+            tables.provenances.add_row(
+                timestamp=timestamp,
+                record=json.dumps(record).encode())
         return tables
+
+    def add_samples(self, tables):
+        """
+        Adds sample information from the SampleData file to the specified
+        tables and returns the IDs of the sample nodes.
+        """
+        for individual in self.individuals():
+            table_id = tables.individuals.add_row(
+                location=individual.location,
+                metadata=json.dumps(individual.metadata).encode())
+            assert table_id == individual.id
+            # TODO get the time value from the individual, and use this to
+            # set the time of the sample node. We should then return a
+            # mapping of time values to the IDs of the nodes that exist
+            # at that time.
+            assert individual.time == 0
+        sample_ids = np.zeros(self.num_samples, dtype=np.int32)
+        for j, sample in enumerate(self.samples()):
+            node_id = tables.nodes.add_row(
+                time=0,
+                flags=tskit.NODE_IS_SAMPLE,
+                # TODO the population value should really be derived from the
+                # individual here, not the sample.
+                population=sample.population,
+                individual=sample.individual,
+                metadata=json.dumps(sample.metadata).encode())
+            sample_ids[j] = node_id
+        return sample_ids
 
     @property
     def sequence_length(self):
@@ -1437,6 +1485,16 @@ class SampleData(DataContainer):
             self.individuals_time[:])
         for j, (location, metadata, time) in enumerate(iterator):
             yield Individual(j, location=location, metadata=metadata, time=time)
+
+    def samples(self):
+        iterator = zip(
+            self.samples_population[:],
+            self.samples_individual[:],
+            self.samples_metadata[:])
+
+        for j, (population, individual, metadata) in enumerate(iterator):
+            yield Sample(
+                j, population=population, individual=individual, metadata=metadata)
 
 
 @attr.s

@@ -380,6 +380,7 @@ class TreeSequenceBuilder(object):
         prev = None
         head = None
         for l, r, p in reversed(list(zip(left, right, parent))):
+            assert l < r
             edge = Edge(l, r, p, child)
             if prev is None:
                 head = edge
@@ -546,9 +547,18 @@ class TreeSequenceBuilder(object):
             edge = self.path[child]
             while edge is not None:
                 assert edge.child == child
+                assert edge.left < edge.right
                 if edge.next is not None:
                     if flags[child] != 0:
                         assert edge.next.left >= edge.right
+                if self.right_index[(edge.right, -time[child], child)] != edge:
+                    print("bad edge!")
+                    print(edge)
+                    print(self.right_index[(edge.right, -time[child], child)])
+                    print("====")
+
+
+                    self.print_state()
                 assert self.left_index[(edge.left, time[child], child)] == edge
                 assert self.right_index[(edge.right, -time[child], child)] == edge
                 edge = edge.next
@@ -576,7 +586,7 @@ class TreeSequenceBuilder(object):
         print("Sites:")
         for site in range(self.num_inference_sites):
             print("\t", site, "\t", self.alleles[site], "->", self.mutations[site])
-        self.check_state()
+        # self.check_state()
 
 
 # Special values used to indicate compressed paths and nodes that are
@@ -1027,11 +1037,10 @@ class AncestorMatcher(object):
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
 
-        left = np.zeros(len(output_edges), dtype=np.uint32)
-        right = np.zeros(len(output_edges), dtype=np.uint32)
+        left = np.zeros(len(output_edges))
+        right = np.zeros(len(output_edges))
         parent = np.zeros(len(output_edges), dtype=np.int32)
         for j, e in enumerate(output_edges):
-            # print(e)
             assert e.left >= start_pos
             assert e.right <= end_pos
             # TODO this does happen in the C code, so if it ever happends in a Python

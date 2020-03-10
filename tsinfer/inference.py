@@ -526,16 +526,18 @@ class Matcher(object):
         self.mutation_rate[:] = mutation_rate
         self.precision = precision
 
-        if engine == constants.C_ENGINE:
+        # if engine == constants.C_ENGINE:
+        if False:
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
             self.ancestor_matcher_class = _tsinfer.AncestorMatcher
-        elif engine == constants.PY_ENGINE:
+        # elif engine == constants.PY_ENGINE:
+        else:
             logger.debug("Using Python matcher implementation")
             self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
-        else:
-            raise ValueError("Unknown engine:{}".format(engine))
+        # else:
+        #     raise ValueError("Unknown engine:{}".format(engine))
         self.tree_sequence_builder = None
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
@@ -929,14 +931,16 @@ class Matcher(object):
             # We have no inference sites, so no edges have been estimated. To ensure
             # we have a rooted tree, we add in edges for each sample to an artificial
             # root.
-            assert len(self.edges) == 0
+            assert len(self.tables.edges) == 0
             root = self.tables.nodes.add_row(
                 flags=0, time=self.tables.nodes.time.max() + 1)
             for sample_id in self.sample_ids:
-                tables.edges.add_row(0, tables.sequence_length, root, sample_id)
+                self.tables.edges.add_row(
+                    0, self.tables.sequence_length, root, sample_id)
 
         logger.debug("Sorting and building intermediate tree sequence.")
         self.tables.sort()
+        # print(self.tables.populations())
         ts = self.tables.tree_sequence()
         self.add_non_inference_sites(ts)
 
@@ -959,7 +963,7 @@ class Matcher(object):
 class AncestorMatcher(Matcher):
 
     def __init__(self, sample_data, ancestor_data, **kwargs):
-        super().__init__(sample_data, sample_data.as_tables(), **kwargs)
+        super().__init__(sample_data, sample_data.as_ancestors_tables(), **kwargs)
         if not np.all(self.mutation_rate == 0):
             raise ValueError("mutations not supported for ancestor matching yet")
         self.ancestor_data = ancestor_data
@@ -1125,9 +1129,9 @@ class SampleMatcher(Matcher):
 
     def __init__(self, sample_data, ancestors_ts, **kwargs):
         tables = ancestors_ts.dump_tables()
+        self.sample_ids = sample_data.add_samples(tables)
         super().__init__(sample_data, tables, **kwargs)
         self.ancestors_ts = ancestors_ts
-        self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -1179,9 +1183,10 @@ class SampleMatcher(Matcher):
     def match_samples(self, indexes=None):
         if indexes is None:
             indexes = np.arange(self.num_samples)
-        # Add in sample nodes.
-        for j in indexes:
-            self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
+        # # Add in sample nodes.
+        # for j in indexes:
+        #     self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
+
         logger.info("Started matching for {} samples".format(len(indexes)))
         if self.sample_data.num_inference_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", len(indexes))

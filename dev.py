@@ -104,6 +104,7 @@ def tsinfer_dev(
     L_megabases = int(L * 10**6)
 
     # daiquiri.setup(level=log_level)
+    # daiquiri.setup(level="DEBUG")
 
     ts = msprime.simulate(
             n, Ne=10**4, length=L_megabases,
@@ -126,7 +127,7 @@ def tsinfer_dev(
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
-        samples, ancestor_data, engine=engine, path_compression=True,
+        samples, ancestor_data, engine=engine, path_compression=False,
         extended_checks=True, recombination_rate=rho,
         # FIXME mu must be zero for ancestor matching at the moment.
         mutation_rate=0)
@@ -292,10 +293,12 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    for j in range(1, 100):
-        tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
+    # for j in range(1, 100):
+    # # for j in [15]:
+    #     # print("seed = ", j)
+    #     tsinfer_dev(15, 1.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    # tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
 
     # minimise_dev()
 
