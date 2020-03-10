@@ -122,6 +122,7 @@ typedef struct {
 
 typedef struct {
     int flags;
+    tsk_table_collection_t *tables;
     size_t num_sites;
     struct {
         mutation_list_node_t **mutations;
@@ -214,7 +215,8 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
+        tsk_table_collection_t *tables, char **alleles,
+        size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,

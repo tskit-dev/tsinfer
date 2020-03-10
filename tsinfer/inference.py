@@ -499,7 +499,6 @@ class Matcher(object):
             recombination_rate=None, mutation_rate=None, precision=None,
             extended_checks=False, engine=constants.C_ENGINE, progress_monitor=None):
         self.sample_data = sample_data
-        self.tables = tables
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
@@ -526,15 +525,19 @@ class Matcher(object):
         self.mutation_rate[:] = mutation_rate
         self.precision = precision
 
+        max_edges = 64 * 1024
+        max_nodes = 64 * 1024
         if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
             # self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
-            # self.ancestor_matcher_class = _tsinfer.AncestorMatcher
+            self.ancestor_matcher_class = _tsinfer.AncestorMatcher
             # Using Python always for now.
+            self.tables = tables
             self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
         elif engine == constants.PY_ENGINE:
             logger.debug("Using Python matcher implementation")
+            self.tables = tables
             self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
         else:
@@ -543,8 +546,6 @@ class Matcher(object):
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
-        max_edges = 64 * 1024
-        max_nodes = 64 * 1024
         # Use the alleles list to signal inference and non-inference sites.
         alleles = self.sample_data.sites_alleles[:]
         alleles[self.sample_data.sites_inference[:] == 0] = None
@@ -886,21 +887,29 @@ class Matcher(object):
         return self.tables.tree_sequence()
 
 
+def initial_ancestor_tables(sample_data, ancestor_data):
+    tables = ancestor_data.as_tables(sample_data)
+
+    ancestor_time = ancestor_data.ancestors_time[:]
+    for ancestor_id in range(ancestor_data.num_ancestors):
+        node_id = tables.nodes.add_row(
+            flags=tskit.NODE_IS_SAMPLE, time=ancestor_time[ancestor_id])
+        assert ancestor_id == node_id
+
+    return tables
+
 class AncestorMatcher(Matcher):
 
     def __init__(self, sample_data, ancestor_data, **kwargs):
-        super().__init__(sample_data, ancestor_data.as_tables(sample_data), **kwargs)
+        tables = initial_ancestor_tables(sample_data, ancestor_data)
+        super().__init__(sample_data, tables, **kwargs)
         if not np.all(self.mutation_rate == 0):
             raise ValueError("mutations not supported for ancestor matching yet")
-        self.ancestor_data = ancestor_data
-        self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.ancestors_time[:]
 
-        # Add nodes for all the ancestors so that the ancestor IDs are equal
-        # to the node IDs.
-        for ancestor_id in range(self.num_ancestors):
-            self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
-        self.ancestors = self.ancestor_data.ancestors()
+        self.num_ancestors = ancestor_data.num_ancestors
+        self.epoch = ancestor_data.ancestors_time[:]
+
+        self.ancestors = ancestor_data.ancestors()
         # Consume the first ancestor.
         a = next(self.ancestors, None)
         self.num_epochs = 0
@@ -1038,13 +1047,6 @@ class AncestorMatcher(Matcher):
         return ts
 
     def store_output(self):
-        # if self.num_ancestors > 0:
-        #     ts = self.get_ancestors_tree_sequence()
-        # else:
-        #     # Allocate an empty tree sequence.
-        #     tables = tskit.TableCollection(
-        #         sequence_length=self.ancestor_data.sequence_length)
-        #     ts = tables.tree_sequence()
         self.tree_sequence_builder.flush_edges()
         record = provenance.get_provenance_dict(command="match-ancestors")
         self.tables.provenances.add_row(record=json.dumps(record))

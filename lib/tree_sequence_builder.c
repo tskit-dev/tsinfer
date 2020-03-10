@@ -196,22 +196,35 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
+        tsk_table_collection_t *tables, char **alleles,
+        size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
 {
     int ret = 0;
+    tsk_size_t j, total_num_sites;
     memset(self, 0, sizeof(tree_sequence_builder_t));
 
-    assert(num_sites < INT32_MAX);
+    /* assert(num_sites < INT32_MAX); */
 
-    self->num_sites = num_sites;
+    self->tables = tables;
     self->nodes_chunk_size = nodes_chunk_size;
     self->edges_chunk_size = edges_chunk_size;
     self->flags = flags;
+
+    total_num_sites = tables->sites.num_rows;
+    self->num_sites = 0;
+    for (j = 0; j < total_num_sites; j++) {
+        if (alleles[j] == NULL) {
+            self->num_sites++;
+        }
+    }
+
     self->num_nodes = 0;
     self->max_nodes = nodes_chunk_size;
 
-    self->time = malloc(self->max_nodes * sizeof(double));
-    self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
+    /* self->num_alleles = num_alleles; */
+    /* self->time = malloc(self->max_nodes * sizeof(double)); */
+    /* self->node_flags = malloc(self->max_nodes * sizeof(uint32_t)); */
+
     self->path = calloc(self->max_nodes, sizeof(edge_t *));
     self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
     if (self->time == NULL || self->node_flags == NULL || self->path == NULL
@@ -230,7 +243,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         goto out;
     }
     ret = tsk_blkalloc_init(&self->tsk_blkalloc,
-            TSK_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
+            TSK_MAX(8192, self->num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
     }

@@ -1775,15 +1775,17 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
 {
     int ret = -1;
     int err;
-    unsigned long num_sites;
+    LightweightTableCollection *tables = NULL;
+    PyObject *alleles = NULL;
     unsigned long max_nodes;
     unsigned long max_edges;
-    static char *kwlist[] = {"num_sites", "max_nodes", "max_edges", NULL};
+    static char *kwlist[] = {"tables", "alleles", "max_nodes", "max_edges", NULL};
     int flags = 0;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "kkk", kwlist,
-                &num_sites, &max_nodes, &max_edges)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!Okk", kwlist,
+                &LightweightTableCollectionType, &tables,
+                &alleles, &max_nodes, &max_edges)) {
         goto out;
     }
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
@@ -1792,7 +1794,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
         goto out;
     }
     err = tree_sequence_builder_alloc(self->tree_sequence_builder,
-            num_sites, max_nodes, max_edges, flags);
+            0, max_nodes, max_edges, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
