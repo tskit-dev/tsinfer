@@ -36,8 +36,7 @@ class TestOutOfMemory(unittest.TestCase):
     def test_tree_sequence_builder_too_many_nodes(self):
         big = 2**62
         self.assertRaises(
-            MemoryError, _tsinfer.TreeSequenceBuilder, num_sites=1, max_nodes=big,
-            max_edges=1)
+            MemoryError, _tsinfer.TreeSequenceBuilder, [2], max_nodes=big)
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows raises an assert error not a memory error with 2**62 edges"
@@ -45,8 +44,7 @@ class TestOutOfMemory(unittest.TestCase):
     def test_tree_sequence_builder_too_many_edges(self):
         big = 2**62
         self.assertRaises(
-            MemoryError, _tsinfer.TreeSequenceBuilder, num_sites=1, max_nodes=1,
-            max_edges=big)
+            MemoryError, _tsinfer.TreeSequenceBuilder, [2], max_edges=big)
 
 
 class TestAncestorMatcher(unittest.TestCase):
@@ -56,7 +54,7 @@ class TestAncestorMatcher(unittest.TestCase):
     def test_init(self):
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher)
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher, None)
-        tsb = _tsinfer.TreeSequenceBuilder(num_sites=1, max_nodes=10, max_edges=10)
+        tsb = _tsinfer.TreeSequenceBuilder([2])
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb)
         self.assertRaises(TypeError, _tsinfer.AncestorMatcher, tsb, [1])
         for bad_type in [None, {}]:
@@ -71,3 +69,20 @@ class TestAncestorMatcher(unittest.TestCase):
                 _tsinfer.AncestorMatcher(tsb, bad_array, [1])
             with self.assertRaises(ValueError):
                 _tsinfer.AncestorMatcher(tsb, [1], bad_array)
+
+
+class TestTreeSequenceBuilder(unittest.TestCase):
+    """
+    Tests for the AncestorMatcher C Python interface.
+    """
+    def test_init(self):
+        self.assertRaises(TypeError, _tsinfer.TreeSequenceBuilder)
+        for bad_array in [None, "serf", [[], []], ["asdf"], {}]:
+            with self.assertRaises(ValueError):
+                _tsinfer.TreeSequenceBuilder(bad_array)
+
+        for bad_type in [None, "sdf", {}]:
+            with self.assertRaises(TypeError):
+                _tsinfer.TreeSequenceBuilder([2], max_nodes=bad_type)
+            with self.assertRaises(TypeError):
+                _tsinfer.TreeSequenceBuilder([2], max_edges=bad_type)

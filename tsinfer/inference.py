@@ -537,12 +537,15 @@ class Matcher(object):
             raise ValueError("Unknown engine:{}".format(engine))
         self.tree_sequence_builder = None
 
+        num_alleles = sample_data.num_alleles(inference_sites=True)
+        assert len(num_alleles) == self.num_sites
+
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            num_sites=self.num_sites, max_nodes=max_nodes, max_edges=max_edges)
+            num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges)
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 

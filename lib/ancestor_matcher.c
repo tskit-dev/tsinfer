@@ -325,6 +325,8 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     const double rho = self->recombination_rate[site];
     const double mu = self->mutation_rate[site];
     const double n = (double) self->tree_sequence_builder->num_nodes;
+    const double num_alleles =
+        (double) self->tree_sequence_builder->sites.num_alleles[site];
 
     ancestor_matcher_set_allelic_state(self, site, allelic_state);
 
@@ -356,7 +358,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         }
         p_e = mu;
         if (allelic_state[v] == state) {
-            p_e = 1 - mu;
+            p_e = 1 - (num_alleles - 1) * mu;
         }
         L[u] = tsk_round(p_t * p_e, self->precision);
 
