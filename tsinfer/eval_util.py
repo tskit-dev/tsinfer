@@ -552,18 +552,6 @@ def extract_ancestors(samples, ts):
         individual=tables.nodes.individual,
         metadata=tables.nodes.metadata,
         metadata_offset=tables.nodes.metadata_offset)
-    # Drop site metadata and set the ancestral_state to zeros
-    tables.sites.set_columns(
-        position=tables.sites.position,
-        ancestral_state=np.zeros(len(tables.sites), dtype=np.int8) + ord('0'),
-        ancestral_state_offset=np.arange(len(tables.sites) + 1, dtype=np.uint32))
-
-    # Drop mutation metadata and set the derived_state to ones
-    tables.mutations.set_columns(
-        site=tables.mutations.site,
-        node=tables.mutations.node,
-        derived_state=np.zeros(len(tables.mutations), dtype=np.int8) + ord('1'),
-        derived_state_offset=np.arange(len(tables.mutations) + 1, dtype=np.uint32))
 
     record = provenance.get_provenance_dict(command="extract_ancestors")
     tables.provenances.add_row(record=json.dumps(record))

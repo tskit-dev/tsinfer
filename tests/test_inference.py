@@ -510,6 +510,28 @@ def random_string(rng, max_len=10):
     return s
 
 
+def get_multichar_alleles_example(sample_size):
+    """
+    Returns an example dataset with multichar alleles.
+    """
+    ts = msprime.simulate(
+        10, mutation_rate=10, recombination_rate=1, random_seed=5)
+    assert ts.num_sites > 2
+    sample_data = tsinfer.SampleData(sequence_length=1)
+    rng = random.Random(32)
+    all_alleles = []
+    for variant in ts.variants():
+        ancestral = random_string(rng)
+        derived = ancestral
+        while derived == ancestral:
+            derived = random_string(rng)
+        alleles = ancestral, derived
+        sample_data.add_site(variant.site.position, variant.genotypes, alleles)
+        all_alleles.append(alleles)
+    sample_data.finalise()
+    return sample_data
+
+
 class TestMetadataRoundTrip(unittest.TestCase):
     """
     Tests if we can round-trip various forms of metadata.
@@ -941,6 +963,17 @@ class TestAncestorsTreeSequence(unittest.TestCase):
             sample_data.add_site(position, genotypes)
         sample_data.finalise()
         self.verify(sample_data)
+
+    def test_acgt_mutations(self):
+        ts = msprime.simulate(10, recombination_rate=2, random_seed=233)
+        ts = msprime.mutate(
+            ts, rate=2, random_seed=1234,
+            model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_multi_char_alleles(self):
+        samples = get_multichar_alleles_example(10)
+        self.verify(samples)
 
 
 class TestAncestorsTreeSequenceFlags(unittest.TestCase):
