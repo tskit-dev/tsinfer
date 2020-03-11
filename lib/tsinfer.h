@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018-2020 University of Oxford
+** Copyright (C) 2018 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -247,9 +247,6 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
         tsk_id_t *parent);
 
-int tree_sequence_builder_load(tree_sequence_builder_t *self,
-        tsk_table_collection_t *tables, tsk_id_t *inference_sites,
-        tsk_size_t num_inference_sites, tsk_flags_t options);
 int tree_sequence_builder_dump(tree_sequence_builder_t *self,
         tsk_table_collection_t *tables, tsk_flags_t options);
 
