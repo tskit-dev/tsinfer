@@ -388,7 +388,6 @@ tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, tsk_id_t site,
     assert(node >= 0);
     assert(site < (tsk_id_t) self->num_sites);
     assert(site >= 0);
-    assert(derived_state == 0 || derived_state == 1);
     list_node = tsk_blkalloc_get(&self->tsk_blkalloc, sizeof(mutation_list_node_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;

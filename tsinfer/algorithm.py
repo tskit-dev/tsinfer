@@ -655,9 +655,10 @@ class AncestorMatcher(object):
 
     def update_site(self, site, haplotype_state):
         n = self.tree_sequence_builder.num_nodes
-        num_alleles = self.tree_sequence_builder.num_alleles[site]
         rho = self.recombination_rate[site]
         mu = self.mutation_rate[site]
+        num_alleles = self.tree_sequence_builder.num_alleles[site]
+        assert haplotype_state < num_alleles
 
         self.set_allelic_state(site)
 

@@ -56,7 +56,9 @@ dump_tree_sequence_builder(tree_sequence_builder_t *tsb,
             * sizeof(*parent));
     tsk_id_t u;
     size_t j;
-    const char *states[] = {"0", "1"};
+    /* assume we don't have any more than 8 alleles */
+    size_t max_alleles = 8;
+    const char *states[] = {"0", "1", "2", "3", "4", "5", "6", "7"};
 
     if (options & TSK_NO_INIT) {
         tsk_table_collection_clear(tables);
@@ -91,12 +93,11 @@ dump_tree_sequence_builder(tree_sequence_builder_t *tsb,
     }
 
     for (j = 0; j < tree_sequence_builder_get_num_mutations(tsb); j++) {
-        assert(derived_state[j] < 2);
+        assert(derived_state[j] < max_alleles);
         ret = tsk_mutation_table_add_row(&tables->mutations,
             site[j], node[j], mut_parent[j], states[derived_state[j]], 1, NULL, 0);
         CU_ASSERT_EQUAL_FATAL(ret, j);
     }
-
 
     free(flags);
     free(time);
@@ -109,7 +110,6 @@ dump_tree_sequence_builder(tree_sequence_builder_t *tsb,
     free(derived_state);
     free(mut_parent);
 }
-
 
 /* Verifies the tree sequence encodes the specified set of sample haplotypes. */
 static void
@@ -459,6 +459,81 @@ test_matching_one_site(void)
 }
 
 static void
+test_matching_one_site_many_alleles(void)
+{
+    int ret;
+    tsk_table_collection_t tables;
+    ancestor_matcher_t ancestor_matcher;
+    size_t num_nodes = 8;
+    size_t j;
+    tree_sequence_builder_t tsb;
+    allele_t haplotype;
+    allele_t match[1];
+    double recombination_rate = 0;
+    double mutation_rate = 0;
+    size_t num_edges;
+    tsk_id_t *left, *right, *parent;
+    edge_t edge;
+    tsk_id_t site = 0;
+    allele_t derived_state;
+
+    /* Create a linear topology with a mutation over each node */
+    ret = tree_sequence_builder_alloc(&tsb, 1, NULL, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_add_node(&tsb, num_nodes, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (j = 0; j < num_nodes - 1; j++) {
+        ret = tree_sequence_builder_add_node(&tsb, num_nodes - j - 1, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j + 1);
+        edge.child = ret;
+        edge.parent = edge.child - 1;
+        edge.left = 0;
+        edge.right = 1;
+        ret = tree_sequence_builder_add_path(&tsb, edge.child, 1, &edge.left,
+                &edge.right, &edge.parent, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        derived_state = j + 1;
+        ret = tree_sequence_builder_add_mutations(&tsb, edge.child, 1, &site, &derived_state);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+    }
+    ret = tree_sequence_builder_freeze_indexes(&tsb);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb,
+            &recombination_rate, &mutation_rate, 12, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    haplotype = 0;
+    ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
+            &haplotype, match, &num_edges, &left, &right, &parent);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MATCH_IMPOSSIBLE);
+
+    for (j = 1; j < num_nodes - 1; j++) {
+        haplotype = j;
+        ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
+                &haplotype, match, &num_edges, &left, &right, &parent);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_EQUAL(num_edges, 1);
+        CU_ASSERT_EQUAL(left[0], 0);
+        CU_ASSERT_EQUAL(right[0], 1);
+        CU_ASSERT_EQUAL(parent[0], j);
+        CU_ASSERT_EQUAL(match[0], j);
+    }
+
+    dump_tree_sequence_builder(&tsb, &tables, 0);
+    CU_ASSERT_EQUAL(tables.sequence_length, 1);
+    CU_ASSERT_EQUAL(tables.nodes.num_rows, num_nodes);
+    CU_ASSERT_EQUAL(tables.edges.num_rows, num_nodes - 1);
+    CU_ASSERT_EQUAL(tables.sites.num_rows, 1);
+    CU_ASSERT_EQUAL(tables.mutations.num_rows, num_nodes - 1);
+
+    ancestor_matcher_free(&ancestor_matcher);
+    tree_sequence_builder_free(&tsb);
+    tsk_table_collection_free(&tables);
+}
+
+static void
 test_random_data_n5_m3(void)
 {
     int seed;
@@ -567,6 +642,7 @@ main(int argc, char **argv)
         {"test_ancestor_builder_one_site", test_ancestor_builder_one_site},
         /* TODO more ancestor builder tests */
         {"test_matching_one_site", test_matching_one_site},
+        {"test_matching_one_site_many_alleles", test_matching_one_site_many_alleles},
 
         {"test_random_data_n5_m3", test_random_data_n5_m3},
         {"test_random_data_n5_m20", test_random_data_n5_m20},

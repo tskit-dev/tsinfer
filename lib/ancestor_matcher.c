@@ -368,7 +368,10 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         }
     }
     /* ancestor_matcher_print_state(self, stdout); */
-    assert(max_L > 0);
+    if (max_L <= 0) {
+        ret = TSI_ERR_MATCH_IMPOSSIBLE;
+        goto out;
+    }
     assert(max_L_node != NULL_NODE);
     self->max_likelihood_node[site] = max_L_node;
 
@@ -378,6 +381,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         L[u] /= max_L;
     }
     ancestor_matcher_unset_allelic_state(self, site, allelic_state);
+out:
     return ret;
 }
 
