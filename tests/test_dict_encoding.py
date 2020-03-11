@@ -65,6 +65,7 @@ class TestRoundTrip(unittest.TestCase):
     """
     def verify(self, tables):
         lwt = c_module.LightweightTableCollection()
+        print(lwt)
         lwt.fromdict(tables.asdict())
         other_tables = tskit.TableCollection.fromdict(lwt.asdict())
         self.assertEqual(tables, other_tables)
