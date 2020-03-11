@@ -22,6 +22,7 @@
  */
 
 #include "tsinfer.h"
+#include "tskit.h"
 
 #include <float.h>
 #include <limits.h>
@@ -34,6 +35,81 @@
 
 char * _tmp_file_name;
 FILE * _devnull;
+
+
+static void
+dump_tree_sequence_builder(tree_sequence_builder_t *tsb,
+        tsk_table_collection_t *tables, tsk_flags_t options)
+{
+    int ret = 0;
+    uint32_t *flags = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*flags));
+    double *time = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*time));
+    tsk_id_t *left = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*left));
+    tsk_id_t *right = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*right));
+    tsk_id_t *parent = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*parent));
+    tsk_id_t *child = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*child));
+    tsk_id_t *site = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*site));
+    tsk_id_t *node = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*node));
+    allele_t *derived_state = malloc(tree_sequence_builder_get_num_mutations(tsb) *
+            sizeof(*derived_state));
+    tsk_id_t *mut_parent = malloc(tree_sequence_builder_get_num_mutations(tsb)
+            * sizeof(*parent));
+    tsk_id_t u;
+    size_t j;
+    const char *states[] = {"0", "1"};
+
+    if (options & TSK_NO_INIT) {
+        tsk_table_collection_clear(tables);
+    } else {
+        ret = tsk_table_collection_init(tables, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+    }
+    tables->sequence_length = (double) tsb->num_sites;
+
+    ret = tree_sequence_builder_dump_nodes(tsb, flags, time);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    for (u = 0; u < (tsk_id_t) tsb->num_nodes; u++) {
+        ret = tsk_node_table_add_row(&tables->nodes, flags[u], time[u],
+                TSK_NULL, TSK_NULL, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, u);
+    }
+
+    ret = tree_sequence_builder_dump_edges(tsb, left, right, parent, child);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    for (j = 0; j < tree_sequence_builder_get_num_edges(tsb); j++) {
+        ret = tsk_edge_table_add_row(&tables->edges, left[j], right[j],
+                parent[j], child[j]);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+    ret = tree_sequence_builder_dump_mutations(tsb, site, node, derived_state, mut_parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (j = 0; j < tsb->num_sites; j++) {
+        ret = tsk_site_table_add_row(&tables->sites, j, "0", 1, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+    for (j = 0; j < tree_sequence_builder_get_num_mutations(tsb); j++) {
+        assert(derived_state[j] < 2);
+        ret = tsk_mutation_table_add_row(&tables->mutations,
+            site[j], node[j], mut_parent[j], states[derived_state[j]], 1, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+
+    free(flags);
+    free(time);
+    free(left);
+    free(right);
+    free(parent);
+    free(child);
+    free(site);
+    free(node);
+    free(derived_state);
+    free(mut_parent);
+}
+
 
 /* Verifies the tree sequence encodes the specified set of sample haplotypes. */
 static void
@@ -211,7 +287,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed, double recombina
     CU_ASSERT_FATAL(num_samples >= 2);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = tree_sequence_builder_alloc(&tsb, num_sites, 1, 1, 0);
+    ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
             mutation_rates, 24, TSI_EXTENDED_CHECKS);
@@ -268,8 +344,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed, double recombina
     ancestor_matcher_print_state(&ancestor_matcher, _devnull);
     tree_sequence_builder_print_state(&tsb, _devnull);
 
-    ret = tree_sequence_builder_dump(&tsb, &tables, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    dump_tree_sequence_builder(&tsb, &tables, 0);
     verify_round_trip(&tables, num_samples, num_sites, samples);
 
     ancestor_builder_free(&ancestor_builder);
@@ -335,7 +410,7 @@ test_matching_one_site(void)
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
 
-    ret = tree_sequence_builder_alloc(&tsb, 1, 1, 1, 0);
+    ret = tree_sequence_builder_alloc(&tsb, 1, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = tree_sequence_builder_add_node(&tsb, 2.0, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -371,10 +446,7 @@ test_matching_one_site(void)
     CU_ASSERT_EQUAL(parent[0], 1);
     CU_ASSERT_EQUAL(match[0], 0);
 
-    ret = tsk_table_collection_init(&tables, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = tree_sequence_builder_dump(&tsb, &tables, TSK_NO_INIT);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    dump_tree_sequence_builder(&tsb, &tables, 0);
     CU_ASSERT_EQUAL(tables.sequence_length, 1);
     CU_ASSERT_EQUAL(tables.nodes.num_rows, 2);
     CU_ASSERT_EQUAL(tables.edges.num_rows, 1);

@@ -125,6 +125,7 @@ typedef struct {
     size_t num_sites;
     struct {
         mutation_list_node_t **mutations;
+        tsk_size_t *num_alleles;
     } sites;
     /* TODO add nodes struct */
     double *time;
@@ -214,7 +215,8 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
+        size_t num_sites, tsk_size_t *num_alleles,
+        size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
@@ -246,9 +248,6 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
         tsk_id_t *parent);
-
-int tree_sequence_builder_dump(tree_sequence_builder_t *self,
-        tsk_table_collection_t *tables, tsk_flags_t options);
 
 #define tsi_safe_free(pointer) \
 do {\

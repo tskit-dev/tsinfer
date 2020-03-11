@@ -196,9 +196,12 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
+        size_t num_sites, tsk_size_t *num_alleles,
+        size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
 {
     int ret = 0;
+    size_t j;
+
     memset(self, 0, sizeof(tree_sequence_builder_t));
 
     assert(num_sites < INT32_MAX);
@@ -210,10 +213,11 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     self->num_nodes = 0;
     self->max_nodes = nodes_chunk_size;
 
-    self->time = malloc(self->max_nodes * sizeof(double));
-    self->node_flags = malloc(self->max_nodes * sizeof(uint32_t));
-    self->path = calloc(self->max_nodes, sizeof(edge_t *));
-    self->sites.mutations = calloc(self->num_sites, sizeof(mutation_list_node_t));
+    self->time = malloc(self->max_nodes * sizeof(*self->time));
+    self->node_flags = malloc(self->max_nodes * sizeof(*self->node_flags));
+    self->path = calloc(self->max_nodes, sizeof(*self->path));
+    self->sites.mutations = calloc(self->num_sites, sizeof(*self->sites.mutations));
+    self->sites.num_alleles = calloc(self->num_sites, sizeof(*self->sites.num_alleles));
     if (self->time == NULL || self->node_flags == NULL || self->path == NULL
             || self->sites.mutations == NULL)  {
         ret = TSI_ERR_NO_MEMORY;
@@ -237,6 +241,14 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
     avl_init_tree(&self->left_index, cmp_edge_left_increasing_time, NULL);
     avl_init_tree(&self->right_index, cmp_edge_right_decreasing_time, NULL);
     avl_init_tree(&self->path_index, cmp_edge_path, NULL);
+
+    for (j = 0; j < num_sites; j++) {
+        if (num_alleles == NULL) {
+            self->sites.num_alleles[j] = 2;
+        } else {
+            self->sites.num_alleles[j] = num_alleles[j];
+        }
+    }
 out:
     return ret;
 }
@@ -248,6 +260,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->path);
     tsi_safe_free(self->node_flags);
     tsi_safe_free(self->sites.mutations);
+    tsi_safe_free(self->sites.num_alleles);
     tsi_safe_free(self->left_index_edges);
     tsi_safe_free(self->right_index_edges);
     tsk_blkalloc_free(&self->tsk_blkalloc);
@@ -994,66 +1007,6 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
             j++;
         }
     }
-    return ret;
-}
-
-
-int
-tree_sequence_builder_dump(tree_sequence_builder_t *self,
-        tsk_table_collection_t *tables, tsk_flags_t options)
-{
-    int ret = 0;
-    indexed_edge_t *e;
-    tsk_id_t u, l, parent;
-    mutation_list_node_t *mln;
-    const char *states[] = {"0", "1"};
-
-    if (options & TSK_NO_INIT) {
-        tsk_table_collection_clear(tables);
-    } else {
-        ret = tsk_table_collection_init(tables, 0);
-        if (ret != 0) {
-            goto out;
-        }
-    }
-    tables->sequence_length = (double) self->num_sites;
-
-    for (u = 0; u < (tsk_id_t) self->num_nodes; u++) {
-        ret = tsk_node_table_add_row(&tables->nodes, self->node_flags[u], self->time[u],
-                TSK_NULL, TSK_NULL, NULL, 0);
-        if (ret < 0) {
-            goto out;
-        }
-        for (e = self->path[u]; e != NULL; e = e->next) {
-            ret = tsk_edge_table_add_row(&tables->edges, e->edge.left, e->edge.right,
-                    e->edge.parent, e->edge.child);
-            if (ret < 0) {
-                goto out;
-            }
-        }
-    }
-
-    parent = TSK_NULL;
-    for (l = 0; l < (tsk_id_t) self->num_sites; l++) {
-        ret = tsk_site_table_add_row(&tables->sites, l, "0", 1, NULL, 0);
-        if (ret < 0) {
-            goto out;
-        }
-        for (mln = self->sites.mutations[l]; mln != NULL; mln = mln->next) {
-            if (mln == self->sites.mutations[l]) {
-                parent = TSK_NULL;
-            }
-            ret = tsk_mutation_table_add_row(&tables->mutations, l,
-                    mln->node, parent, states[mln->derived_state], 1,
-                    NULL, 0);
-            if (ret < 0) {
-                goto out;
-            }
-            parent = ret;
-        }
-    }
-    ret = 0;
-out:
     return ret;
 }
 
