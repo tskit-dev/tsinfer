@@ -1355,6 +1355,27 @@ class SampleData(DataContainer):
             if inference_sites is None or inference[j] == inference_sites:
                 yield j, a
 
+    def num_alleles(self, inference_sites=None):
+        """
+        Returns a numpy array of the number of alleles at each site.
+
+        :param bool inference_sites: Control the sites for which the number of alleles
+            is returned. If ``None``, return for all sites; if ``True``, return only
+            sites that have been marked for inference; if ``False``, return
+            only sites that are not marked for inference.
+        :return: A numpy array of the number of alleles at each site.
+        :rtype: numpy.ndarray(dtype=uint32)
+        """
+        alleles = self.sites_alleles[:]
+        inference = self.sites_inference[:]
+        num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
+        for j, alleles in enumerate(alleles):
+            num_alleles[j] = len(alleles)
+        if inference_sites is None:
+            return num_alleles
+        value = 1 if inference_sites else 0
+        return num_alleles[inference == value]
+
     def variants(self, inference_sites=None):
         """
         Returns an iterator over the Variant objects. This is equivalent to
