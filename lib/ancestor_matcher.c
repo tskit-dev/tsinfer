@@ -311,7 +311,7 @@ ancestor_matcher_unset_allelic_state(ancestor_matcher_t *self, const tsk_id_t si
 
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
-        const tsk_id_t site, const char state, const tsk_id_t *restrict parent,
+        const tsk_id_t site, const allele_t state, const tsk_id_t *restrict parent,
         double *restrict L)
 {
     int ret = 0;
@@ -325,6 +325,13 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     const double rho = self->recombination_rate[site];
     const double mu = self->mutation_rate[site];
     const double n = (double) self->tree_sequence_builder->num_nodes;
+    const double num_alleles =
+        (double) self->tree_sequence_builder->sites.num_alleles[site];
+
+    if (state >= num_alleles) {
+        ret = TSI_ERR_BAD_HAPLOTYPE_ALLELE;
+        goto out;
+    }
 
     ancestor_matcher_set_allelic_state(self, site, allelic_state);
 
@@ -356,7 +363,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         }
         p_e = mu;
         if (allelic_state[v] == state) {
-            p_e = 1 - mu;
+            p_e = 1 - (num_alleles - 1) * mu;
         }
         L[u] = tsk_round(p_t * p_e, self->precision);
 
@@ -366,7 +373,10 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         }
     }
     /* ancestor_matcher_print_state(self, stdout); */
-    assert(max_L > 0);
+    if (max_L <= 0) {
+        ret = TSI_ERR_MATCH_IMPOSSIBLE;
+        goto out;
+    }
     assert(max_L_node != NULL_NODE);
     self->max_likelihood_node[site] = max_L_node;
 
@@ -376,6 +386,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         L[u] /= max_L;
     }
     ancestor_matcher_unset_allelic_state(self, site, allelic_state);
+out:
     return ret;
 }
 

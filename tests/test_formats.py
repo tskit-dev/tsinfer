@@ -340,6 +340,14 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.verify_data_round_trip(ts, sd1)
         self.assertFalse(sd1.sites_inference[0])
         self.assertFalse(sd1.sites_inference[sd1.num_sites-1])
+
+        num_alleles = sd1.num_alleles()
+        for var in ts.variants():
+            self.assertEqual(len(var.alleles), num_alleles[var.site.id])
+        for inference_sites in [None, True, False]:
+            for var, num_alleles in itertools.zip_longest(
+                    sd1.variants(inference_sites), sd1.num_alleles(inference_sites)):
+                self.assertEqual(len(var.alleles), num_alleles)
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
 

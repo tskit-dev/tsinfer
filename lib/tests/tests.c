@@ -22,6 +22,7 @@
  */
 
 #include "tsinfer.h"
+#include "tskit.h"
 
 #include <float.h>
 #include <limits.h>
@@ -34,6 +35,146 @@
 
 char * _tmp_file_name;
 FILE * _devnull;
+
+
+static void
+dump_tree_sequence_builder(tree_sequence_builder_t *tsb,
+        tsk_table_collection_t *tables, tsk_flags_t options)
+{
+    int ret = 0;
+    uint32_t *flags = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*flags));
+    double *time = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*time));
+    tsk_id_t *left = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*left));
+    tsk_id_t *right = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*right));
+    tsk_id_t *parent = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*parent));
+    tsk_id_t *child = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*child));
+    tsk_id_t *site = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*site));
+    tsk_id_t *node = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*node));
+    allele_t *derived_state = malloc(tree_sequence_builder_get_num_mutations(tsb) *
+            sizeof(*derived_state));
+    tsk_id_t *mut_parent = malloc(tree_sequence_builder_get_num_mutations(tsb)
+            * sizeof(*parent));
+    tsk_id_t u;
+    size_t j;
+    /* assume we don't have any more than 8 alleles */
+    size_t max_alleles = 8;
+    const char *states[] = {"0", "1", "2", "3", "4", "5", "6", "7"};
+
+    if (options & TSK_NO_INIT) {
+        tsk_table_collection_clear(tables);
+    } else {
+        ret = tsk_table_collection_init(tables, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+    }
+    tables->sequence_length = (double) tsb->num_sites;
+
+    ret = tree_sequence_builder_dump_nodes(tsb, flags, time);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    for (u = 0; u < (tsk_id_t) tsb->num_nodes; u++) {
+        ret = tsk_node_table_add_row(&tables->nodes, flags[u], time[u],
+                TSK_NULL, TSK_NULL, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, u);
+    }
+
+    ret = tree_sequence_builder_dump_edges(tsb, left, right, parent, child);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    for (j = 0; j < tree_sequence_builder_get_num_edges(tsb); j++) {
+        ret = tsk_edge_table_add_row(&tables->edges, left[j], right[j],
+                parent[j], child[j]);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+    ret = tree_sequence_builder_dump_mutations(tsb, site, node, derived_state, mut_parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (j = 0; j < tsb->num_sites; j++) {
+        ret = tsk_site_table_add_row(&tables->sites, j, "0", 1, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+    for (j = 0; j < tree_sequence_builder_get_num_mutations(tsb); j++) {
+        assert(derived_state[j] < max_alleles);
+        ret = tsk_mutation_table_add_row(&tables->mutations,
+            site[j], node[j], mut_parent[j], states[derived_state[j]], 1, NULL, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j);
+    }
+
+    ret = tsk_table_collection_sort(tables, 0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    free(flags);
+    free(time);
+    free(left);
+    free(right);
+    free(parent);
+    free(child);
+    free(site);
+    free(node);
+    free(derived_state);
+    free(mut_parent);
+}
+
+/* Given that we have a tree_sequence_builder with the specified state reflected
+ * in the specified tables, check that we can population to another
+ * tree_sequence_builder_t and get the same output.
+ */
+static void
+verify_restore_tsb(tree_sequence_builder_t *tsb, tsk_table_collection_t *tables)
+{
+    int ret;
+
+    tree_sequence_builder_t other_tsb;
+    tsk_table_collection_t other_tables;
+    uint32_t *flags = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*flags));
+    double *time = malloc(tree_sequence_builder_get_num_nodes(tsb) * sizeof(*time));
+    tsk_id_t *left = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*left));
+    tsk_id_t *right = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*right));
+    tsk_id_t *parent = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*parent));
+    tsk_id_t *child = malloc(tree_sequence_builder_get_num_edges(tsb) * sizeof(*child));
+    tsk_id_t *site = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*site));
+    tsk_id_t *node = malloc(tree_sequence_builder_get_num_mutations(tsb) * sizeof(*node));
+    allele_t *derived_state = malloc(tree_sequence_builder_get_num_mutations(tsb) *
+            sizeof(*derived_state));
+    tsk_id_t *mut_parent = malloc(tree_sequence_builder_get_num_mutations(tsb)
+            * sizeof(*parent));
+
+    ret = tree_sequence_builder_dump_nodes(tsb, flags, time);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_dump_edges(tsb, left, right, parent, child);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_dump_mutations(tsb, site, node, derived_state, mut_parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = tree_sequence_builder_alloc(&other_tsb, tsb->num_sites, tsb->sites.num_alleles, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = tree_sequence_builder_restore_nodes(&other_tsb,
+            tree_sequence_builder_get_num_nodes(tsb), flags, time);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_restore_edges(&other_tsb,
+            tree_sequence_builder_get_num_edges(tsb), left, right, parent, child);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_restore_mutations(&other_tsb,
+            tree_sequence_builder_get_num_mutations(tsb), site, node, derived_state);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    dump_tree_sequence_builder(&other_tsb, &other_tables, 0);
+
+    CU_ASSERT_TRUE_FATAL(tsk_table_collection_equals(tables, &other_tables));
+
+    tree_sequence_builder_free(&other_tsb);
+    tsk_table_collection_free(&other_tables);
+    free(flags);
+    free(time);
+    free(left);
+    free(right);
+    free(parent);
+    free(child);
+    free(site);
+    free(node);
+    free(derived_state);
+    free(mut_parent);
+}
 
 /* Verifies the tree sequence encodes the specified set of sample haplotypes. */
 static void
@@ -211,7 +352,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed, double recombina
     CU_ASSERT_FATAL(num_samples >= 2);
     ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = tree_sequence_builder_alloc(&tsb, num_sites, 1, 1, 0);
+    ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
             mutation_rates, 24, TSI_EXTENDED_CHECKS);
@@ -268,9 +409,9 @@ run_random_data(size_t num_samples, size_t num_sites, int seed, double recombina
     ancestor_matcher_print_state(&ancestor_matcher, _devnull);
     tree_sequence_builder_print_state(&tsb, _devnull);
 
-    ret = tree_sequence_builder_dump(&tsb, &tables, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    dump_tree_sequence_builder(&tsb, &tables, 0);
     verify_round_trip(&tables, num_samples, num_sites, samples);
+    verify_restore_tsb(&tsb, &tables);
 
     ancestor_builder_free(&ancestor_builder);
     tree_sequence_builder_free(&tsb);
@@ -335,7 +476,7 @@ test_matching_one_site(void)
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
 
-    ret = tree_sequence_builder_alloc(&tsb, 1, 1, 1, 0);
+    ret = tree_sequence_builder_alloc(&tsb, 1, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = tree_sequence_builder_add_node(&tsb, 2.0, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -371,10 +512,7 @@ test_matching_one_site(void)
     CU_ASSERT_EQUAL(parent[0], 1);
     CU_ASSERT_EQUAL(match[0], 0);
 
-    ret = tsk_table_collection_init(&tables, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = tree_sequence_builder_dump(&tsb, &tables, TSK_NO_INIT);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    dump_tree_sequence_builder(&tsb, &tables, 0);
     CU_ASSERT_EQUAL(tables.sequence_length, 1);
     CU_ASSERT_EQUAL(tables.nodes.num_rows, 2);
     CU_ASSERT_EQUAL(tables.edges.num_rows, 1);
@@ -384,6 +522,183 @@ test_matching_one_site(void)
     ancestor_matcher_free(&ancestor_matcher);
     tree_sequence_builder_free(&tsb);
     tsk_table_collection_free(&tables);
+}
+
+static void
+test_matching_one_site_many_alleles(void)
+{
+    int ret;
+    tsk_table_collection_t tables;
+    ancestor_matcher_t ancestor_matcher;
+    size_t num_nodes = 8;
+    tsk_size_t num_alleles = num_nodes;
+    size_t j;
+    tree_sequence_builder_t tsb;
+    allele_t haplotype;
+    allele_t match[1];
+    double recombination_rate = 0;
+    double mutation_rate = 0;
+    size_t num_edges;
+    tsk_id_t *left, *right, *parent;
+    edge_t edge;
+    tsk_id_t site = 0;
+    allele_t derived_state;
+
+    /* Create a linear topology with a mutation over each node */
+    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_add_node(&tsb, num_nodes, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (j = 0; j < num_nodes - 1; j++) {
+        ret = tree_sequence_builder_add_node(&tsb, num_nodes - j - 1, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, j + 1);
+        edge.child = ret;
+        edge.parent = edge.child - 1;
+        edge.left = 0;
+        edge.right = 1;
+        ret = tree_sequence_builder_add_path(&tsb, edge.child, 1, &edge.left,
+                &edge.right, &edge.parent, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        if (j > 0) {
+            derived_state = j;
+            ret = tree_sequence_builder_add_mutations(&tsb, edge.child, 1, &site,
+                    &derived_state);
+            CU_ASSERT_EQUAL_FATAL(ret, 0);
+        }
+    }
+    ret = tree_sequence_builder_freeze_indexes(&tsb);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb,
+            &recombination_rate, &mutation_rate, 12, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    haplotype = 0;
+    ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
+            &haplotype, match, &num_edges, &left, &right, &parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(parent[0], 1);
+
+    haplotype = num_alleles;
+    ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
+            &haplotype, match, &num_edges, &left, &right, &parent);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_HAPLOTYPE_ALLELE);
+
+    for (j = 1; j < num_nodes - 1; j++) {
+        haplotype = j;
+        ret = ancestor_matcher_find_path(&ancestor_matcher, 0, 1,
+                &haplotype, match, &num_edges, &left, &right, &parent);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_EQUAL(num_edges, 1);
+        CU_ASSERT_EQUAL(left[0], 0);
+        CU_ASSERT_EQUAL(right[0], 1);
+        CU_ASSERT_EQUAL(parent[0], j + 1);
+        CU_ASSERT_EQUAL(match[0], j);
+    }
+
+    dump_tree_sequence_builder(&tsb, &tables, 0);
+    CU_ASSERT_EQUAL(tables.sequence_length, 1);
+    CU_ASSERT_EQUAL(tables.nodes.num_rows, num_nodes);
+    CU_ASSERT_EQUAL(tables.edges.num_rows, num_nodes - 1);
+    CU_ASSERT_EQUAL(tables.sites.num_rows, 1);
+    CU_ASSERT_EQUAL(tables.mutations.num_rows, num_nodes - 2);
+
+    ancestor_matcher_free(&ancestor_matcher);
+    tree_sequence_builder_free(&tsb);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_tsb_errors(void)
+{
+    int ret;
+    tree_sequence_builder_t tsb;
+    tsk_size_t num_alleles;
+    tsk_id_t left, right, parent;
+    tsk_id_t left_arr[2], right_arr[2], parent_arr[2];
+
+    num_alleles = 0;
+    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_ALLELES);
+    tree_sequence_builder_free(&tsb);
+
+    num_alleles = 1;
+    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_ALLELES);
+    tree_sequence_builder_free(&tsb);
+
+    num_alleles = INT8_MAX + 1;
+    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_ALLELES);
+    tree_sequence_builder_free(&tsb);
+
+    num_alleles = 2;
+    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, 1, 1, 0);
+    /* Add two nodes so we can test adding paths */
+    ret = tree_sequence_builder_add_node(&tsb, 2.0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_add_node(&tsb, 1.0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+
+    left = 0;
+    right = 1;
+    parent = 1;
+    ret = tree_sequence_builder_add_path(&tsb, 2, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_CHILD);
+    ret = tree_sequence_builder_add_path(&tsb, -1, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_CHILD);
+
+    parent = 2;
+    ret = tree_sequence_builder_add_path(&tsb, 0, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_PARENT);
+    parent = -1;
+    ret = tree_sequence_builder_add_path(&tsb, 0, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_PARENT);
+
+    parent = 0;
+    ret = tree_sequence_builder_add_path(&tsb, 0, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_TIME);
+
+    parent = 0;
+    left = 1;
+    right = 0;
+    ret = tree_sequence_builder_add_path(&tsb, 1, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_INTERVAL);
+    left = -1;
+    right = 1;
+    ret = tree_sequence_builder_add_path(&tsb, 1, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_LEFT_LESS_ZERO);
+    left = 0;
+    right = 2;
+    ret = tree_sequence_builder_add_path(&tsb, 1, 1, &left, &right, &parent, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_PATH_RIGHT_GREATER_NUM_SITES);
+
+    parent_arr[0] = 0;
+    parent_arr[1] = 0;
+    left_arr[0] = 0;
+    left_arr[1] = 0;
+    right_arr[0] = 1;
+    right_arr[1] = 1;
+    ret = tree_sequence_builder_add_path(&tsb, 1, 2, left_arr, right_arr, parent_arr, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NONCONTIGUOUS_EDGES);
+
+    ret = tree_sequence_builder_add_mutation(&tsb, 0, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_NODE);
+    ret = tree_sequence_builder_add_mutation(&tsb, 0, 2, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_NODE);
+
+    ret = tree_sequence_builder_add_mutation(&tsb, -1, 0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_SITE);
+    ret = tree_sequence_builder_add_mutation(&tsb, 1, 0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_SITE);
+
+    ret = tree_sequence_builder_add_mutation(&tsb, 0, 0, 1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_add_mutation(&tsb, 0, 0, 1);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_DUPLICATE_NODE);
+
+    tree_sequence_builder_free(&tsb);
 }
 
 static void
@@ -397,7 +712,6 @@ test_random_data_n5_m3(void)
         run_random_data(5, 3, seed, 1e-20, 1e-3);
     }
 }
-
 
 static void
 test_random_data_n5_m20(void)
@@ -495,6 +809,9 @@ main(int argc, char **argv)
         {"test_ancestor_builder_one_site", test_ancestor_builder_one_site},
         /* TODO more ancestor builder tests */
         {"test_matching_one_site", test_matching_one_site},
+        {"test_matching_one_site_many_alleles", test_matching_one_site_many_alleles},
+
+        {"test_tsb_errors", test_tsb_errors},
 
         {"test_random_data_n5_m3", test_random_data_n5_m3},
         {"test_random_data_n5_m20", test_random_data_n5_m20},

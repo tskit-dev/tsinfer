@@ -219,8 +219,9 @@ class AncestorBuilder(object):
 
 class TreeSequenceBuilder(object):
 
-    def __init__(self, num_sites, max_nodes, max_edges):
-        self.num_sites = num_sites
+    def __init__(self, num_alleles, max_nodes, max_edges):
+        self.num_alleles = num_alleles
+        self.num_sites = len(num_alleles)
         self.num_nodes = 0
         self.time = []
         self.flags = []
@@ -656,6 +657,8 @@ class AncestorMatcher(object):
         n = self.tree_sequence_builder.num_nodes
         rho = self.recombination_rate[site]
         mu = self.mutation_rate[site]
+        num_alleles = self.tree_sequence_builder.num_alleles[site]
+        assert haplotype_state < num_alleles
 
         self.set_allelic_state(site)
 
@@ -690,8 +693,7 @@ class AncestorMatcher(object):
             self.traceback[site][u] = recombination_required
             p_e = mu
             if haplotype_state == self.allelic_state[v]:
-                # p_e = 1 - (len(alleles) - 1) * mu
-                p_e = 1 - mu
+                p_e = 1 - (num_alleles - 1) * mu
             self.likelihood[u] = round(p_t * p_e, self.precision)
 
             if self.likelihood[u] > max_L:

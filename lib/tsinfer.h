@@ -125,6 +125,7 @@ typedef struct {
     size_t num_sites;
     struct {
         mutation_list_node_t **mutations;
+        tsk_size_t *num_alleles;
     } sites;
     /* TODO add nodes struct */
     double *time;
@@ -214,7 +215,8 @@ double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
+        size_t num_sites, tsk_size_t *num_alleles,
+        size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
 int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
@@ -222,9 +224,12 @@ int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
 int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         tsk_id_t child, size_t num_edges, tsk_id_t *left, tsk_id_t *right,
         tsk_id_t *parent, int flags);
+int tree_sequence_builder_add_mutation(tree_sequence_builder_t *self,
+        tsk_id_t node, tsk_id_t site, allele_t derived_state);
 int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
         tsk_id_t node, size_t num_mutations, tsk_id_t *site, allele_t *derived_state);
 int tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self);
+
 size_t tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_edges(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_mutations(tree_sequence_builder_t *self);
@@ -246,9 +251,6 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
         tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
         tsk_id_t *parent);
-
-int tree_sequence_builder_dump(tree_sequence_builder_t *self,
-        tsk_table_collection_t *tables, tsk_flags_t options);
 
 #define tsi_safe_free(pointer) \
 do {\

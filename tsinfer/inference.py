@@ -537,12 +537,15 @@ class Matcher(object):
             raise ValueError("Unknown engine:{}".format(engine))
         self.tree_sequence_builder = None
 
+        num_alleles = sample_data.num_alleles(inference_sites=True)
+        assert len(num_alleles) == self.num_sites
+
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            num_sites=self.num_sites, max_nodes=max_nodes, max_edges=max_edges)
+            num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges)
         logger.debug("Allocated tree sequence builder with max_nodes={}".format(
             max_nodes))
 
@@ -612,10 +615,16 @@ class Matcher(object):
             right[index].astype(np.int32),
             edges.parent[index],
             edges.child[index])
+
+        j = 0
         mutations = tables.mutations
+        derived_state = np.zeros(len(mutations), dtype=np.int8)
+        for site in self.sample_data.sites():
+            if site.inference:
+                derived_state[j] = site.alleles.index(mutations[j].derived_state)
+                j += 1
         self.tree_sequence_builder.restore_mutations(
-            mutations.site, mutations.node, mutations.derived_state - ord('0'),
-            mutations.parent)
+            mutations.site, mutations.node, derived_state, mutations.parent)
         self.mutated_sites = mutations.site
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
@@ -624,9 +633,8 @@ class Matcher(object):
 
     def get_ancestors_tree_sequence(self):
         """
-        Return the ancestors tree sequence. In this tree sequence the coordinates
-        are measured in units of site indexes and all ancestral and derived states
-        are 0/1. All nodes have the sample flag bit set.
+        Return the ancestors tree sequence. Only inference sites are included in this
+        tree sequence. All nodes have the sample flag bit set.
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
@@ -635,6 +643,7 @@ class Matcher(object):
 
         flags, times = tsb.dump_nodes()
         num_pc_ancestors = count_pc_ancestors(flags)
+        # TODO Write out the metadata here etc also
         tables.nodes.set_columns(flags=flags, time=times)
 
         position = self.ancestor_data.sites_position
@@ -644,16 +653,24 @@ class Matcher(object):
         tables.edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
-        tables.sites.set_columns(
-            position=position,
-            ancestral_state=np.zeros(tsb.num_sites, dtype=np.int8) + ord('0'),
-            ancestral_state_offset=np.arange(tsb.num_sites + 1, dtype=np.uint32))
-        site, node, derived_state, parent = tsb.dump_mutations()
-        derived_state += ord('0')
-        tables.mutations.set_columns(
-            site=site, node=node, derived_state=derived_state,
-            derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
-            parent=parent)
+        mut_site, node, derived_state, parent = tsb.dump_mutations()
+        site_id = 0
+        mutation_id = 0
+        num_mutations = len(mut_site)
+        for site in self.sample_data.sites():
+            if site.inference:
+                tables.sites.add_row(
+                    site.position,
+                    ancestral_state=site.alleles[0],
+                    metadata=self.encode_metadata(site.metadata))
+                while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
+                    tables.mutations.add_row(
+                        site_id,
+                        node=node[mutation_id],
+                        derived_state=site.alleles[derived_state[mutation_id]])
+                    mutation_id += 1
+                site_id += 1
+
         for timestamp, record in self.ancestor_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(

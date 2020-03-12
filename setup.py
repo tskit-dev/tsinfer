@@ -25,7 +25,9 @@ includes = [libdir, tskroot, tskdir, kasdir]
 tsi_source_files = [
     "ancestor_matcher.c", "ancestor_builder.c", "object_heap.c",
     "tree_sequence_builder.c", "avl.c"]
-tsk_source_files = ["core.c", "tables.c", "trees.c"]
+# We're not actually using very much of tskit at the moment, so
+# just build the stuff we need.
+tsk_source_files = ["core.c"]
 kas_source_files = ["kastore.c"]
 
 sources = ["_tsinfermodule.c"] + [
