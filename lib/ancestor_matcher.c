@@ -311,7 +311,7 @@ ancestor_matcher_unset_allelic_state(ancestor_matcher_t *self, const tsk_id_t si
 
 static int WARN_UNUSED
 ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
-        const tsk_id_t site, const char state, const tsk_id_t *restrict parent,
+        const tsk_id_t site, const allele_t state, const tsk_id_t *restrict parent,
         double *restrict L)
 {
     int ret = 0;
@@ -327,6 +327,11 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     const double n = (double) self->tree_sequence_builder->num_nodes;
     const double num_alleles =
         (double) self->tree_sequence_builder->sites.num_alleles[site];
+
+    if (state >= num_alleles) {
+        ret = TSI_ERR_BAD_HAPLOTYPE_ALLELE;
+        goto out;
+    }
 
     ancestor_matcher_set_allelic_state(self, site, allelic_state);
 

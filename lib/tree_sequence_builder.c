@@ -246,6 +246,10 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self,
         if (num_alleles == NULL) {
             self->sites.num_alleles[j] = 2;
         } else {
+            if (num_alleles[j] < 2 || num_alleles[j] > INT8_MAX) {
+                ret = TSI_ERR_BAD_NUM_ALLELES;
+                goto out;
+            }
             self->sites.num_alleles[j] = num_alleles[j];
         }
     }
@@ -376,18 +380,34 @@ out:
     return ret;
 }
 
-
-static int WARN_UNUSED
+int WARN_UNUSED
 tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, tsk_id_t site,
         tsk_id_t node, allele_t derived_state)
 {
     int ret = 0;
     mutation_list_node_t *list_node, *tail;
 
-    assert(node < (tsk_id_t) self->num_nodes);
-    assert(node >= 0);
-    assert(site < (tsk_id_t) self->num_sites);
-    assert(site >= 0);
+    if (node < 0 || node >= (tsk_id_t) self->num_nodes) {
+        ret = TSI_ERR_BAD_MUTATION_NODE;
+        goto out;
+    }
+    if (site < 0 || site >= (tsk_id_t) self->num_sites) {
+        ret = TSI_ERR_BAD_MUTATION_SITE;
+        goto out;
+    }
+    if (derived_state < 0 || derived_state >= (allele_t) self->sites.num_alleles[site]) {
+        ret = TSI_ERR_BAD_MUTATION_DERIVED_STATE;
+        goto out;
+    }
+    /* Make sure there are no other mutations on this node */
+    for (list_node = self->sites.mutations[site]; list_node != NULL;
+            list_node = list_node->next) {
+        if (list_node->node == node) {
+            ret = TSI_ERR_BAD_MUTATION_DUPLICATE_NODE;
+            goto out;
+        }
+    }
+
     list_node = tsk_blkalloc_get(&self->tsk_blkalloc, sizeof(mutation_list_node_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
@@ -752,6 +772,43 @@ out:
     return ret;
 }
 
+static int
+tree_sequence_builder_check_edge(tree_sequence_builder_t *self,
+        tsk_id_t left, tsk_id_t right, tsk_id_t parent, tsk_id_t child)
+{
+    int ret = 0;
+    double child_time;
+
+    if (child < 0 || child >= (tsk_id_t) self->num_nodes) {
+        ret = TSI_ERR_BAD_PATH_CHILD;
+        goto out;
+    }
+    child_time = self->time[child];
+
+    if (parent < 0 || parent >= (tsk_id_t) self->num_nodes) {
+        ret = TSI_ERR_BAD_PATH_PARENT;
+        goto out;
+    }
+    if (self->time[parent] <= child_time) {
+        ret = TSI_ERR_BAD_PATH_TIME;
+        goto out;
+    }
+    if (left < 0) {
+        ret = TSI_ERR_BAD_PATH_LEFT_LESS_ZERO;
+        goto out;
+    }
+    if (right > (tsk_id_t) self->num_sites) {
+        ret = TSI_ERR_BAD_PATH_RIGHT_GREATER_NUM_SITES;
+        goto out;
+    }
+    if (left >= right) {
+        ret = TSI_ERR_BAD_PATH_INTERVAL;
+        goto out;
+    }
+out:
+    return ret;
+}
+
 int
 tree_sequence_builder_add_path(tree_sequence_builder_t *self,
         tsk_id_t child, size_t num_edges, tsk_id_t *left, tsk_id_t *right,
@@ -761,24 +818,12 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self,
     indexed_edge_t *head = NULL;
     indexed_edge_t *prev = NULL;
     indexed_edge_t *e;
-    double child_time;
     int j;
 
-    if (child >= (tsk_id_t) self->num_nodes) {
-        ret = TSI_ERR_GENERIC;
-        goto out;
-    }
-    child_time = self->time[child];
-
-    /* Edges must be provided in reverese order */
+    /* Edges must be provided in reverse order */
     for (j = (int) num_edges - 1; j >= 0; j--) {
-
-        if (parent[j] >= (tsk_id_t) self->num_nodes) {
-            ret = TSI_ERR_BAD_PATH_PARENT;
-            goto out;
-        }
-        if (self->time[parent[j]] <= child_time) {
-            ret = TSI_ERR_BAD_PATH_TIME;
+        ret = tree_sequence_builder_check_edge(self, left[j], right[j], parent[j], child);
+        if (ret != 0) {
             goto out;
         }
         e = tree_sequence_builder_alloc_edge(self, left[j], right[j], parent[j],
@@ -898,6 +943,11 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
 
     prev = NULL;
     for (j = 0; j < num_edges; j++) {
+        ret = tree_sequence_builder_check_edge(self, left[j], right[j], parent[j],
+                child[j]);
+        if (ret != 0) {
+            goto out;
+        }
         if (j > 0 && child[j - 1] > child[j]) {
             ret = TSI_ERR_UNSORTED_EDGES;
             goto out;

@@ -6,9 +6,19 @@
 #define TSI_ERR_NONCONTIGUOUS_EDGES                                 -3
 #define TSI_ERR_UNSORTED_EDGES                                      -4
 #define TSI_ERR_ASSERTION_FAILURE                                   -5
-#define TSI_ERR_BAD_PATH_PARENT                                     -6
-#define TSI_ERR_BAD_PATH_TIME                                       -7
-#define TSI_ERR_MATCH_IMPOSSIBLE                                    -8
+#define TSI_ERR_BAD_PATH_CHILD                                      -6
+#define TSI_ERR_BAD_PATH_PARENT                                     -7
+#define TSI_ERR_BAD_PATH_TIME                                       -8
+#define TSI_ERR_BAD_PATH_INTERVAL                                   -9
+#define TSI_ERR_BAD_PATH_LEFT_LESS_ZERO                             -10
+#define TSI_ERR_BAD_PATH_RIGHT_GREATER_NUM_SITES                    -11
+#define TSI_ERR_MATCH_IMPOSSIBLE                                    -12
+#define TSI_ERR_BAD_HAPLOTYPE_ALLELE                                -13
+#define TSI_ERR_BAD_NUM_ALLELES                                     -14
+#define TSI_ERR_BAD_MUTATION_NODE                                   -15
+#define TSI_ERR_BAD_MUTATION_SITE                                   -16
+#define TSI_ERR_BAD_MUTATION_DERIVED_STATE                          -17
+#define TSI_ERR_BAD_MUTATION_DUPLICATE_NODE                         -18
 
 #ifdef __GNUC__
     #define WARN_UNUSED __attribute__ ((warn_unused_result))
