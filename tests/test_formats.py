@@ -1138,6 +1138,14 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         data.finalise()
         self.assertEqual(data.sequence_length, 1)
 
+    def test_too_many_alleles(self):
+        with tsinfer.SampleData() as sample_data:
+            sample_data.add_site(0, [0, 0], alleles=[str(x) for x in range(64)])
+            for num_alleles in [65, 66, 100]:
+                with self.assertRaises(ValueError):
+                    sample_data.add_site(
+                        0, [0, 0], alleles=[str(x) for x in range(num_alleles)])
+
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
@@ -1341,7 +1349,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, time=1, focal_sites=[],
             haplotype=np.zeros(num_sites + 1, dtype=np.int8))
-        # Haplotypes must be < 2
+        # Haplotypes must be < num_alleles
         self.assertRaises(
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites, time=1, focal_sites=[],
@@ -1355,11 +1363,6 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             ValueError, ancestor_data.add_ancestor,
             start=0, end=num_sites - 2, time=1, focal_sites=[num_sites - 1],
             haplotype=np.ones(num_sites, dtype=np.int8))
-        # focal sites must be set to 1
-        self.assertRaises(
-            ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time=1, focal_sites=[0],
-            haplotype=np.zeros(num_sites, dtype=np.int8))
 
     @unittest.skipIf(sys.platform == "win32",
                      "windows simultaneous file permissions issue")
