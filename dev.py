@@ -113,22 +113,46 @@ def tsinfer_dev(
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
 
-    ts = msprime.mutate(ts, rate=1e-8, random_seed=seed,
-            model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
+    # ts = msprime.mutate(ts, rate=1e-8, random_seed=seed,
+    #         model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
     rho = recombination_rate
-    mu = 1e-3
+    mu = 1e-3 #1e-15
+
+
+#     num_alleles = samples.num_alleles(inference_sites=True)
+#     num_sites = samples.num_inference_sites
+#     with tsinfer.AncestorData(samples) as ancestor_data:
+#         t = np.sum(num_alleles) + 1
+#         for j in range(num_sites):
+#             for allele in range(num_alleles[j]):
+#                 ancestor_data.add_ancestor(j, j + 1, t, [j], [allele])
+#                 t -= 1
 
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads)
+
     ancestors_ts = tsinfer.match_ancestors(
         samples, ancestor_data, engine=engine, path_compression=True,
         extended_checks=False, recombination_rate=rho,
-        # FIXME mu must be zero for ancestor matching at the moment.
-        mutation_rate=0)
+        mutation_rate=mu)
+    # print(ancestors_ts.tables)
+    # print("ancestors ts")
+    # for tree in ancestors_ts.trees():
+    #     print(tree.draw_text())
+    #     for site in tree.sites():
+    #         if len(site.mutations) > 1:
+    #             print(site.id)
+    #             for mutation in site.mutations:
+    #                 print("\t", mutation.node, mutation.derived_state)
 
-    print(ancestors_ts.tables)
+
+
+    # for var in ancestors_ts.variants():
+    #     print(var.genotypes)
+
+    # print(ancestors_ts.tables)
 
     # ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
     #         [5, 6, 7], engine=engine)
@@ -136,11 +160,19 @@ def tsinfer_dev(
     ts = tsinfer.match_samples(samples, ancestors_ts,
             recombination_rate=rho, mutation_rate=mu,
             path_compression=False, engine=engine,
-            simplify=True)
+            simplify=False)
 
-    # print(ts.draw_text())
+    # # print(ts.draw_text())
+    # for tree in ts.trees():
+    #     print(tree.draw_text())
+    #     for site in tree.sites():
+    #         if len(site.mutations) > 1:
+    #             print(site.id)
+    #             for mutation in site.mutations:
+    #                 print("\t", mutation.node, mutation.derived_state)
 
-    # print(ts.tables.edges)
+
+    # # print(ts.tables.edges)
     # print(ts.dump_tables())
 
     # simplified = ts.simplify()
@@ -285,7 +317,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(5, 0.05, seed=4, num_threads=0, engine="P", recombination_rate=1e-8)
+    tsinfer_dev(18, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
 
     # minimise_dev()
 

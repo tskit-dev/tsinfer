@@ -167,13 +167,10 @@ def infer(
     ancestor_data = generate_ancestors(
         sample_data, num_threads=num_threads,
         engine=engine, progress_monitor=progress_monitor)
-    # NOTE: we set mutation rate = 0 here when matching ancestors, since we're
-    # assuming that the ancestors we estimate are probably good. Seems likely
-    # that we don't want to use the same mu for ancestor matching and
-    # sample matching anyway --- something to nail down for the final interface.
     ancestors_ts = match_ancestors(
         sample_data, ancestor_data, engine=engine, num_threads=num_threads,
-        recombination_rate=recombination_rate, mutation_rate=0,
+        recombination_rate=recombination_rate,
+        mutation_rate=mutation_rate,
         precision=precision,
         path_compression=path_compression, progress_monitor=progress_monitor)
     inferred_ts = match_samples(
@@ -299,6 +296,11 @@ def augment_ancestors(
         path_compression=path_compression, extended_checks=extended_checks,
         engine=engine, progress_monitor=progress_monitor
         )
+    indexes = np.array(indexes)
+    if len(indexes) == 0:
+        raise ValueError("Must supply at least one sample to augment")
+    if np.any(indexes < 0) or np.any(indexes >= sample_data.num_samples):
+        raise ValueError("Sample index out of bounds")
     manager.match_samples(indexes)
     ts = manager.get_augmented_ancestors_tree_sequence(indexes)
     return ts
@@ -520,7 +522,8 @@ class Matcher(object):
         # FIXME not quite right: we should check the rho[0] = 0
         self.recombination_rate[:] = recombination_rate
         if mutation_rate is None:
-            mutation_rate = 0
+            # Setting a very small value for now.
+            mutation_rate = 1e-20
         self.mutation_rate = np.zeros(self.num_sites)
         self.mutation_rate[:] = mutation_rate
         self.precision = precision
@@ -576,10 +579,15 @@ class Matcher(object):
         self.match_progress.update()
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
+
+        match = self.match[thread_index]
+        diffs = start + np.where(haplotype[start: end] != match[start: end])[0]
+        derived_state = haplotype[diffs]
+        self.results.set_mutations(child_id, diffs.astype(np.int32), derived_state)
+
         logger.debug("matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
             child_id, left.shape[0], matcher.mean_traceback_size,
             humanize.naturalsize(matcher.total_memory, binary=True)))
-        return left, right, parent
 
     def restore_tree_sequence_builder(self, ancestors_ts):
         tables = ancestors_ts.tables
@@ -616,20 +624,50 @@ class Matcher(object):
             edges.parent[index],
             edges.child[index])
 
-        j = 0
         mutations = tables.mutations
         derived_state = np.zeros(len(mutations), dtype=np.int8)
+        mutation_site = mutations.site
+        site_id = 0
+        mutation_id = 0
         for site in self.sample_data.sites():
             if site.inference:
-                derived_state[j] = site.alleles.index(mutations[j].derived_state)
-                j += 1
+                while (
+                        mutation_id < len(mutations) and
+                        mutation_site[mutation_id] == site_id):
+                    allele = mutations[mutation_id].derived_state
+                    derived_state[mutation_id] = site.alleles.index(allele)
+                    mutation_id += 1
+                site_id += 1
         self.tree_sequence_builder.restore_mutations(
-            mutations.site, mutations.node, derived_state, mutations.parent)
+            mutation_site, mutations.node, derived_state, mutations.parent)
         self.mutated_sites = mutations.site
         logger.info(
             "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
                 ancestors_ts.num_samples, len(nodes), len(edges), ancestors_ts.num_sites,
                 len(mutations)))
+
+    def convert_inference_mutations(self, tables):
+        """
+        Convert the mutations stored in the tree sequence builder into the output
+        format.
+        """
+        mut_site, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
+        site_id = 0
+        mutation_id = 0
+        num_mutations = len(mut_site)
+        for site in self.sample_data.sites():
+            if site.inference:
+                tables.sites.add_row(
+                    site.position,
+                    ancestral_state=site.alleles[0],
+                    metadata=self.encode_metadata(site.metadata))
+                while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
+                    tables.mutations.add_row(
+                        site_id,
+                        node=node[mutation_id],
+                        derived_state=site.alleles[derived_state[mutation_id]])
+                    mutation_id += 1
+                site_id += 1
 
     def get_ancestors_tree_sequence(self):
         """
@@ -653,33 +691,21 @@ class Matcher(object):
         tables.edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
-        mut_site, node, derived_state, parent = tsb.dump_mutations()
-        site_id = 0
-        mutation_id = 0
-        num_mutations = len(mut_site)
-        for site in self.sample_data.sites():
-            if site.inference:
-                tables.sites.add_row(
-                    site.position,
-                    ancestral_state=site.alleles[0],
-                    metadata=self.encode_metadata(site.metadata))
-                while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
-                    tables.mutations.add_row(
-                        site_id,
-                        node=node[mutation_id],
-                        derived_state=site.alleles[derived_state[mutation_id]])
-                    mutation_id += 1
-                site_id += 1
+        self.convert_inference_mutations(tables)
 
+        logger.debug("Sorting ancestors tree sequence")
+        tables.sort()
+        # Note: it's probably possible to compute the mutation parents from the
+        # tsb data structures but we're not doing it for now.
+        tables.build_index()
+        tables.compute_mutation_parents()
+        logger.debug("Sorting ancestors tree sequence done")
         for timestamp, record in self.ancestor_data.provenances():
             tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(
             command="match_ancestors",
             source={"uuid": self.ancestor_data.uuid})
         tables.provenances.add_row(record=json.dumps(record))
-        logger.debug("Sorting ancestors tree sequence")
-        tables.sort()
-        logger.debug("Sorting ancestors tree sequence done")
         logger.info(
             "Built ancestors tree sequence: {} nodes ({} pc ancestors); {} edges; "
             "{} sites; {} mutations".format(
@@ -696,15 +722,12 @@ class Matcher(object):
         updating the specified site and mutation tables. This is done by
         iterating over the trees
         """
-        # NOTE: This is all quite confusing, but there's not much point in cleaning
-        # it up, when we'll be using tskit to work more directly with the
-        # tables.
+        # NOTE: This is all quite confusing and can hopefully be cleaned up.
         num_sites = self.sample_data.num_sites
         num_non_inference_sites = self.sample_data.num_non_inference_sites
         progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
 
-        site_id, node, derived_state, parent = \
-            self.tree_sequence_builder.dump_mutations()
+        site_id, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
         if num_non_inference_sites > 0:
             assert ts.num_edges > 0
@@ -813,13 +836,10 @@ class Matcher(object):
         tables.edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
 
-        site, node, derived_state, parent = tsb.dump_mutations()
+        tables.sites.clear()
+        tables.mutations.clear()
+        self.convert_inference_mutations(tables)
 
-        derived_state += ord('0')
-        tables.mutations.set_columns(
-            site=site, node=node, derived_state=derived_state,
-            derived_state_offset=np.arange(tsb.num_mutations + 1, dtype=np.uint32),
-            parent=parent)
         record = provenance.get_provenance_dict(command="augment_ancestors")
         tables.provenances.add_row(record=json.dumps(record))
         logger.debug("Sorting ancestors tree sequence")
@@ -908,6 +928,11 @@ class Matcher(object):
         tables.sort()
         self.insert_sites(tables)
 
+        # FIXME this is a shortcut. We should be computing the mutation parent above
+        # during insertion (probably)
+        tables.build_index()
+        tables.compute_mutation_parents()
+
         # We don't have a source here because tree sequence files don't have a
         # UUID yet.
         record = provenance.get_provenance_dict(command="match-samples")
@@ -925,8 +950,6 @@ class AncestorMatcher(Matcher):
 
     def __init__(self, sample_data, ancestor_data, **kwargs):
         super().__init__(sample_data, **kwargs)
-        if not np.all(self.mutation_rate == 0):
-            raise ValueError("mutations not supported for ancestor matching yet")
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.ancestors_time[:]
@@ -940,7 +963,7 @@ class AncestorMatcher(Matcher):
         a = next(self.ancestors, None)
         self.num_epochs = 0
         if a is not None:
-            assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
+            # assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
             # Create a list of all ID ranges in each epoch.
             breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
             start = np.hstack([[0], breaks + 1])
@@ -957,21 +980,16 @@ class AncestorMatcher(Matcher):
         ])
 
     def __ancestor_find_path(self, ancestor, thread_index=0):
+        # NOTE we're no longer using the ancestor's focal sites as a way
+        # of knowing where mutations happen but instead having a non-zero
+        # mutation rate and letting the mismatches do the work. We might
+        # want to have a version with a zero mutation rate.
         haplotype = np.full(self.num_sites, tskit.MISSING_DATA, dtype=np.int8)
-        focal_sites = ancestor.focal_sites
         start = ancestor.start
         end = ancestor.end
-        self.results.set_mutations(ancestor.id, focal_sites)
         assert ancestor.haplotype.shape[0] == (end - start)
         haplotype[start: end] = ancestor.haplotype
-        assert np.all(haplotype[focal_sites] == 1)
-        logger.debug(
-            "Finding path for ancestor {}; start={} end={} num_focal_sites={}".format(
-                ancestor.id, start, end, focal_sites.shape[0]))
-        haplotype[focal_sites] = 0
-        left, right, parent = self._find_path(
-                ancestor.id, haplotype, start, end, thread_index)
-        assert np.all(self.match[thread_index][start: end] == haplotype[start: end])
+        self._find_path(ancestor.id, haplotype, start, end, thread_index)
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -1093,10 +1111,6 @@ class SampleMatcher(Matcher):
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
-        match = self.match[thread_index]
-        diffs = np.where(haplotype != match)[0]
-        derived_state = haplotype[diffs]
-        self.results.set_mutations(sample_id, diffs.astype(np.int32), derived_state)
 
     def __match_samples_single_threaded(self, indexes):
         sample_haplotypes = self.sample_data.haplotypes(indexes, inference_sites=True)

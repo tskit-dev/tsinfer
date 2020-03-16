@@ -19,7 +19,6 @@
 """
 Test cases for the evaluation code.
 """
-import itertools
 import unittest
 import subprocess
 import sys
@@ -598,8 +597,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
         tables.sites.add_row(position=0.5, ancestral_state="0")
         tables.mutations.add_row(site=0, node=0, derived_state="1")
         tables.mutations.add_row(site=0, node=1, derived_state="0")
-        with self.assertRaises(ValueError):
-            tsinfer.check_ancestors_ts(tables.tree_sequence())
+        tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_msprime_output(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
@@ -818,6 +816,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
         S = np.zeros(ts.num_nodes)
         tree_iters = [ts.trees(tracked_samples=sample_set) for sample_set in sample_sets]
         for _ in range(ts.num_trees):
+
             trees = [next(tree_iter) for tree_iter in tree_iters]
             left, right = trees[0].interval
             length = right - left
@@ -846,12 +845,9 @@ class TestMeanSampleAncestry(unittest.TestCase):
         # print()
         # for node in ts.nodes():
         #     print(node.id, np.sum(A2[:, node.id]), A2[:, node.id], sep="\t")
-        if set(itertools.chain(*sample_sets)) == set(ts.samples()):
-            self.assertTrue(np.allclose(np.sum(A1, axis=0), 1))
-        else:
-            S = np.sum(A1, axis=0)
-            self.assertTrue(np.allclose(S[S != 0], 1))
         self.assertTrue(np.allclose(A1, A2))
+        S = np.sum(A1, axis=0)
+        self.assertTrue(np.allclose(S[S != 0], 1))
         return A1
 
     def two_populations_high_migration_example(self, mutation_rate=10):

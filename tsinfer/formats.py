@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -1266,9 +1266,10 @@ class SampleData(DataContainer):
 
         if alleles is None:
             alleles = ["0", "1"]
-        if len(set(alleles)) != len(alleles):
+        num_alleles = len(alleles)
+        if len(set(alleles)) != num_alleles:
             raise ValueError("Alleles must be distinct")
-        if np.any(genotypes >= len(alleles)) or np.any(genotypes < 0):
+        if np.any(genotypes >= num_alleles) or np.any(genotypes < 0):
             raise ValueError("Genotype values must be between 0 and len(alleles) - 1")
         if genotypes.shape != (self.num_samples,):
             raise ValueError(
@@ -1280,11 +1281,14 @@ class SampleData(DataContainer):
         if position <= self._last_position:
             raise ValueError(
                 "Site positions must be unique and added in increasing order")
-        if len(alleles) > 2:
+        if num_alleles > 2:
             if inference:
                 raise ValueError("Only biallelic sites supported for inference")
             else:
                 inference = False
+            if num_alleles > 64:
+                # This is mandated by tskit's map_mutations function.
+                raise ValueError("Cannot have more than 64 alleles")
         count_derived = np.sum(genotypes > 0)
         if count_derived <= 1 or count_derived >= self.num_samples:
             if inference:
@@ -1502,6 +1506,8 @@ class AncestorData(DataContainer):
         self.sample_data = sample_data
         # Cache the num_sites value here as it's expensive to compute.
         self._num_sites = self.sample_data.num_inference_sites
+        self._num_alleles = self.sample_data.num_alleles(inference_sites=True)
+        assert self._num_alleles.shape[0] == self._num_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
         if self.sample_data.sequence_length == 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero")
@@ -1656,14 +1662,12 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
+        if np.any(haplotype >= self._num_alleles[start: end]):
+            raise ValueError("haplotype values must be < num_alleles.")
         if time <= 0:
             raise ValueError("time must be > 0")
-        if not np.all(haplotype[focal_sites - start] == 1):
-            raise ValueError("haplotype[j] must be = 1 for all focal sites")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
-        if np.any(haplotype[start: end] > 1):
-            raise ValueError("Biallelic sites only supported.")
         self.item_writer.add(
             start=start, end=end, time=time, focal_sites=focal_sites,
             haplotype=haplotype)

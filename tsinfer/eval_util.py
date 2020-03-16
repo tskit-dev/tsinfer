@@ -505,10 +505,6 @@ def check_ancestors_ts(ts):
             if root != 0:
                 if tree.left_child(root) != tskit.NULL:
                     raise ValueError("All non empty subtrees must inherit from 0")
-        # Sites must have exactly one mutation
-        for site in tree.sites():
-            if len(site.mutations) != 1:
-                raise ValueError("Sites must have exactly one mutation")
 
 
 def extract_ancestors(samples, ts):

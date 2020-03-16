@@ -568,16 +568,15 @@ class TreeSequenceBuilder(object):
         node = np.zeros(num_mutations, dtype=np.int32)
         parent = np.zeros(num_mutations, dtype=np.int32)
         derived_state = np.zeros(num_mutations, dtype=np.int8)
+        # It's not clear how we'd compute the mutation parent here. We should
+        # remove it from the API if we don't figure out how to do it properly.
+        parent[:] = tskit.NULL
         j = 0
         for l in range(self.num_sites):
-            p = j
             for u, d in self.mutations[l]:
                 site[j] = l
                 node[j] = u
                 derived_state[j] = d
-                parent[j] = tskit.NULL
-                if d == 0:
-                    parent[j] = p
                 j += 1
         return site, node, derived_state, parent
 

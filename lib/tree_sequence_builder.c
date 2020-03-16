@@ -418,7 +418,6 @@ tree_sequence_builder_add_mutation(tree_sequence_builder_t *self, tsk_id_t site,
     list_node->next = NULL;
     if (self->sites.mutations[site] == NULL) {
         self->sites.mutations[site] = list_node;
-        assert(list_node->derived_state == 1);
     } else {
         tail = self->sites.mutations[site];
         while (tail->next != NULL) {
@@ -1040,19 +1039,16 @@ tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
     int ret = 0;
     tsk_id_t l;
     mutation_list_node_t *u;
-    tsk_id_t p;
     tsk_id_t j = 0;
 
     for (l = 0; l < (tsk_id_t) self->num_sites; l++) {
-        p = j;
         for (u = self->sites.mutations[l]; u != NULL; u = u->next) {
             site[j] = l;
             node[j] = u->node;
             derived_state[j] = u->derived_state;
+            /* For now we don't compute the mutation parent. We'd need to
+             * update the data structures in here to do this. */
             parent[j] = -1;
-            if (u->derived_state == 0) {
-                parent[j] = p;
-            }
             j++;
         }
     }
