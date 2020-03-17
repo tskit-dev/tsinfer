@@ -355,7 +355,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed, double recombina
     ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
-            mutation_rates, 24, TSI_EXTENDED_CHECKS);
+            mutation_rates, 6, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {

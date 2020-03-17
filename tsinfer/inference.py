@@ -510,12 +510,11 @@ class Matcher(object):
         self.extended_checks = extended_checks
 
         if precision is None:
-            # For now, default to high precision where round does nothing.
-            precision = 100
+            # TODO Is this a good default? Need to investigate the effects.
+            precision = 2
 
         if recombination_rate is None:
-            # TODO is this a good value? I guess it depends on the default precision
-            # as well. Will need to tune
+            # TODO is this a good value? Will need to tune
             recombination_rate = 1e-8
 
         self.recombination_rate = np.zeros(self.num_sites)
