@@ -365,7 +365,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
         if (allelic_state[v] == state) {
             p_e = 1 - (num_alleles - 1) * mu;
         }
-        L[u] = tsk_round(p_t * p_e, self->precision);
+        L[u] = p_t * p_e;
 
         if (L[u] > max_L) {
             max_L = L[u];
@@ -383,7 +383,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     /* Renormalise the likelihoods. */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
-        L[u] /= max_L;
+        L[u] = tsk_round(L[u] / max_L, self->precision);
     }
     ancestor_matcher_unset_allelic_state(self, site, allelic_state);
 out:
