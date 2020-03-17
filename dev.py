@@ -97,7 +97,7 @@ def generate_samples(ts, error_p):
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, engine="C", log_level="WARNING",
-        debug=True, progress=False, path_compression=True):
+        precision=None, debug=True, progress=False, path_compression=True):
 
     np.random.seed(seed)
     random.seed(seed)
@@ -135,7 +135,9 @@ def tsinfer_dev(
 
     ancestors_ts = tsinfer.match_ancestors(
         samples, ancestor_data, engine=engine, path_compression=True,
-        extended_checks=False, recombination_rate=rho,
+        extended_checks=False,
+        precision=precision,
+        recombination_rate=rho,
         mutation_rate=mu)
     # print(ancestors_ts.tables)
     # print("ancestors ts")
@@ -160,7 +162,9 @@ def tsinfer_dev(
     ts = tsinfer.match_samples(samples, ancestors_ts,
             recombination_rate=rho, mutation_rate=mu,
             path_compression=False, engine=engine,
-            simplify=False)
+            precision=precision, simplify=False)
+
+    print("num_edges = ", ts.num_edges)
 
     # # print(ts.draw_text())
     # for tree in ts.trees():
@@ -317,7 +321,7 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(18, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(118, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8, precision=0)
 
     # minimise_dev()
 

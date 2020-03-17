@@ -339,16 +339,6 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
                 sample_data, ancestors_ts,
                 recombination_rate=recomb_rate, mutation_rate=mut_rate, engine=engine)
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
-        # Either a zero mutation or recombination rate (but not both) will work.
-        for engine in engines:
-            ts = tsinfer.match_samples(
-                sample_data, ancestors_ts,
-                recombination_rate=1e-3, mutation_rate=0, engine=engine)
-            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
-            ts = tsinfer.match_samples(
-                sample_data, ancestors_ts,
-                recombination_rate=0, mutation_rate=1e-3, engine=engine)
-            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
 class TestSparseAncestorsRoundTrip(TestRoundTrip):
@@ -1145,7 +1135,10 @@ class AlgorithmsExactlyEqualMixin(object):
     For small example tree sequences, check that the Python and C implementations
     return precisely the same tree sequence when fed with perfect mutations.
     """
-    def infer(self, ts, engine, path_compression=False):
+    path_compression_enabled = True
+    precision = None
+
+    def infer(self, ts, engine, path_compression=False, precision=None):
         sample_data = tsinfer.SampleData(sequence_length=ts.sequence_length)
         for v in ts.variants():
             sample_data.add_site(v.site.position, v.genotypes, v.alleles)
@@ -1156,17 +1149,23 @@ class AlgorithmsExactlyEqualMixin(object):
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
             sample_data, ancestor_data, engine=engine,
-            path_compression=path_compression, extended_checks=True)
+            path_compression=path_compression,
+            precision=precision,
+            extended_checks=True)
         inferred_ts = tsinfer.match_samples(
             sample_data, ancestors_ts, engine=engine, simplify=True,
-            path_compression=path_compression, extended_checks=True)
+            path_compression=path_compression,
+            precision=precision,
+            extended_checks=True)
         return inferred_ts
 
     def verify(self, ts):
         tsp = self.infer(
-            ts, tsinfer.PY_ENGINE, path_compression=self.path_compression_enabled)
+            ts, tsinfer.PY_ENGINE, path_compression=self.path_compression_enabled,
+            precision=self.precision)
         tsc = self.infer(
-            ts, tsinfer.C_ENGINE, path_compression=self.path_compression_enabled)
+            ts, tsinfer.C_ENGINE, path_compression=self.path_compression_enabled,
+            precision=self.precision)
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
@@ -1231,6 +1230,26 @@ class TestAlgorithmsExactlyEqualNoPathCompression(
 class TestAlgorithmsExactlyEqualPathCompression(
         unittest.TestCase, AlgorithmsExactlyEqualMixin):
     path_compression_enabled = True
+
+
+class TestAlgorithmsExactlyEqualPrecision24(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    precision = 24
+
+
+class TestAlgorithmsExactlyEqualPrecision6(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    precision = 6
+
+
+class TestAlgorithmsExactlyEqualPrecision1(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    precision = 1
+
+
+class TestAlgorithmsExactlyEqualPrecision0(
+        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    precision = 0
 
 
 class TestAlgorithmDebugOutput(unittest.TestCase):

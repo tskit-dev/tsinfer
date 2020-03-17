@@ -693,7 +693,7 @@ class AncestorMatcher(object):
             p_e = mu
             if haplotype_state == self.allelic_state[v]:
                 p_e = 1 - (num_alleles - 1) * mu
-            self.likelihood[u] = round(p_t * p_e, self.precision)
+            self.likelihood[u] = p_t * p_e
 
             if self.likelihood[u] > max_L:
                 max_L = self.likelihood[u]
@@ -705,7 +705,8 @@ class AncestorMatcher(object):
                 "Trying to match non-existent allele with zero mutation rate")
 
         for u in self.likelihood_nodes:
-            self.likelihood[u] /= max_L
+            x = self.likelihood[u] / max_L
+            self.likelihood[u] = round(x, self.precision)
 
         self.max_likelihood_node[site] = max_L_node
         self.unset_allelic_state(site)
