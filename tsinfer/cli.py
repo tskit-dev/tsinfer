@@ -25,6 +25,7 @@ import os
 import os.path
 import logging
 import math
+
 try:
     import resource
 except ImportError:
@@ -47,9 +48,16 @@ class ProgressMonitor(object):
     """
     Class responsible for managing in the tqdm progress monitors.
     """
+
     def __init__(
-            self, enabled=True, generate_ancestors=False, match_ancestors=False,
-            augment_ancestors=False, match_samples=False, verify=False):
+        self,
+        enabled=True,
+        generate_ancestors=False,
+        match_ancestors=False,
+        augment_ancestors=False,
+        match_samples=False,
+        verify=False,
+    ):
         self.enabled = enabled
         self.num_bars = 0
         if generate_ancestors:
@@ -86,14 +94,21 @@ class ProgressMonitor(object):
     def get(self, key, total):
         self.current_count += 1
         desc = "{:<8} ({}/{})".format(
-            self.descriptions[key], self.current_count, self.num_bars)
+            self.descriptions[key], self.current_count, self.num_bars
+        )
         bar_format = (
             "{desc}{percentage:3.0f}%|{bar}"
-            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]")
+            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]"
+        )
         self.current_instance = tqdm.tqdm(
-            desc=desc, total=total, disable=not self.enabled,
-            bar_format=bar_format, dynamic_ncols=True, smoothing=0.01,
-            unit_scale=True)
+            desc=desc,
+            total=total,
+            disable=not self.enabled,
+            bar_format=bar_format,
+            dynamic_ncols=True,
+            smoothing=0.01,
+            unit_scale=True,
+        )
         return self.current_instance
 
 
@@ -110,9 +125,11 @@ def summarise_usage():
         maxmem_str = ""
     else:
         max_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if sys.platform != 'darwin':
+        if sys.platform != "darwin":
             max_mem *= 1024  # Linux and other OSs (e.g. freeBSD) report maxrss in kb
-        maxmem_str = "; max memory={}".format(humanize.naturalsize(max_mem, binary=True))
+        maxmem_str = "; max memory={}".format(
+            humanize.naturalsize(max_mem, binary=True)
+        )
     logger.info("wall time = {}".format(wall_time))
     logger.info("rusage: user={}; sys={:.2f}s".format(user_time, sys_time) + maxmem_str)
 
@@ -180,11 +197,15 @@ def run_list(args):
 def run_infer(args):
     setup_logging(args)
     progress_monitor = ProgressMonitor(
-        enabled=args.progress, generate_ancestors=True, match_ancestors=True,
-        match_samples=True)
+        enabled=args.progress,
+        generate_ancestors=True,
+        match_ancestors=True,
+        match_samples=True,
+    )
     sample_data = tsinfer.SampleData.load(args.samples)
     ts = tsinfer.infer(
-        sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads)
+        sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads
+    )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
@@ -197,8 +218,12 @@ def run_generate_ancestors(args):
     progress_monitor = ProgressMonitor(enabled=args.progress, generate_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.samples)
     tsinfer.generate_ancestors(
-        sample_data, progress_monitor=progress_monitor, path=ancestors_path,
-        num_flush_threads=args.num_flush_threads, num_threads=args.num_threads)
+        sample_data,
+        progress_monitor=progress_monitor,
+        path=ancestors_path,
+        num_flush_threads=args.num_flush_threads,
+        num_threads=args.num_threads,
+    )
     summarise_usage()
 
 
@@ -211,9 +236,12 @@ def run_match_ancestors(args):
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
     ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data,
-        num_threads=args.num_threads, progress_monitor=progress_monitor,
-        path_compression=not args.no_path_compression)
+        sample_data,
+        ancestor_data,
+        num_threads=args.num_threads,
+        progress_monitor=progress_monitor,
+        path_compression=not args.no_path_compression,
+    )
     logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
     ts.dump(ancestors_trees)
     summarise_usage()
@@ -236,9 +264,13 @@ def run_augment_ancestors(args):
 
     sample_indexes = np.linspace(0, N - 1, num=n).astype(int)
     ts = tsinfer.augment_ancestors(
-        sample_data, ancestors_trees, sample_indexes, num_threads=args.num_threads,
+        sample_data,
+        ancestors_trees,
+        sample_indexes,
+        num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
-        progress_monitor=progress_monitor)
+        progress_monitor=progress_monitor,
+    )
     logger.info("Writing output tree sequence to {}".format(output_path))
     ts.dump(output_path)
     summarise_usage()
@@ -254,10 +286,13 @@ def run_match_samples(args):
     ancestors_trees = tskit.load(ancestors_trees)
     progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
     ts = tsinfer.match_samples(
-        sample_data, ancestors_trees, num_threads=args.num_threads,
+        sample_data,
+        ancestors_trees,
+        num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
         simplify=not args.no_simplify,
-        progress_monitor=progress_monitor)
+        progress_monitor=progress_monitor,
+    )
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
     summarise_usage()
@@ -278,92 +313,126 @@ def add_samples_file_argument(parser):
         help=(
             "The input sample data in tsinfer 'samples' format. Please see the "
             "documentation at http://tsinfer.readthedocs.io/ for information on "
-            "how to import data into this format."))
+            "how to import data into this format."
+        ),
+    )
 
 
 def add_ancestors_file_argument(parser):
     parser.add_argument(
-        "-a", "--ancestors", default=None,
+        "-a",
+        "--ancestors",
+        default=None,
         help=(
             "The path to the ancestor data file in tsinfer 'ancestors' format. "
             "If not specified, this defaults to the input samples file stem "
             "with the extension '.ancestors'. For example, if '1kg-chr1.samples' "
             "is the input file then the default ancestors file would be "
-            "'1kg-chr1.ancestors'"))
+            "'1kg-chr1.ancestors'"
+        ),
+    )
 
 
 def add_ancestors_trees_argument(parser):
     parser.add_argument(
-        "-A", "--ancestors-trees", default=None,
+        "-A",
+        "--ancestors-trees",
+        default=None,
         help=(
             "The path to the ancestor trees file in tskit '.trees' format. "
             "If not specified, this defaults to the input samples file stem "
             "with the extension '.ancestors.trees'. For example, if '1kg-chr1.samples' "
             "is the input file then the default ancestors file would be "
-            "'1kg-chr1.ancestors.trees'"))
+            "'1kg-chr1.ancestors.trees'"
+        ),
+    )
 
 
 def add_output_trees_argument(parser):
     parser.add_argument(
-        "-O", "--output-trees", default=None,
+        "-O",
+        "--output-trees",
+        default=None,
         help=(
             "The path to the output trees file in tskit '.trees' format. "
             "If not specified, this defaults to the input samples file stem "
             "with the extension '.trees'. For example, if '1kg-chr1.samples' "
             "is the input file then the default output file would be "
-            "'1kg-chr1.trees'"))
+            "'1kg-chr1.trees'"
+        ),
+    )
 
 
 def add_progress_argument(parser):
     parser.add_argument(
-        "--progress", "-p", action="store_true",
-        help="Show a progress monitor.")
+        "--progress", "-p", action="store_true", help="Show a progress monitor."
+    )
 
 
 def add_path_compression_argument(parser):
     parser.add_argument(
-        "--no-path-compression", action="store_true",
-        help="Disable path compression")
+        "--no-path-compression", action="store_true", help="Disable path compression"
+    )
 
 
 def add_simplify_argument(parser):
     parser.add_argument(
-        "--no-simplify", action="store_true",
-        help="Do not simplify the output tree sequence")
+        "--no-simplify",
+        action="store_true",
+        help="Do not simplify the output tree sequence",
+    )
 
 
 def add_logging_arguments(parser):
     log_sections = ["tsinfer.inference", "tsinfer.formats", "tsinfer.threads"]
     parser.add_argument(
-        "-v", "--verbosity", action='count', default=0,
-        help="Increase the verbosity")
+        "-v", "--verbosity", action="count", default=0, help="Increase the verbosity"
+    )
     parser.add_argument(
-        "--log-section", "-L", choices=log_sections, default=None,
-        help=("Log messages only for the specified module"))
+        "--log-section",
+        "-L",
+        choices=log_sections,
+        default=None,
+        help=("Log messages only for the specified module"),
+    )
 
 
 def add_num_threads_argument(parser):
     parser.add_argument(
-        "--num-threads", "-t", type=int, default=0,
+        "--num-threads",
+        "-t",
+        type=int,
+        default=0,
         help=(
             "The number of worker threads to use. If < 1, use a simpler unthreaded "
-            "algorithm (default)."))
+            "algorithm (default)."
+        ),
+    )
 
 
 def add_num_flush_threads_argument(parser):
     parser.add_argument(
-        "--num-flush-threads", "-F", type=int, default=2,
+        "--num-flush-threads",
+        "-F",
+        type=int,
+        default=2,
         help=(
             "The number of data flush threads to use. If < 1, all data is flushed "
-            "synchronously in the main thread (default=2)"))
+            "synchronously in the main thread (default=2)"
+        ),
+    )
 
 
 def get_cli_parser():
     top_parser = argparse.ArgumentParser(
-        description="Command line interface for tsinfer.")
+        description="Command line interface for tsinfer."
+    )
     top_parser.add_argument(
-        "-V", "--version", action='version',
-        version='%(prog)s {}'.format(tsinfer.__version__))
+        "-V",
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(tsinfer.__version__),
+    )
 
     subparsers = top_parser.add_subparsers(dest="subcommand")
     subparsers.required = True
@@ -373,7 +442,9 @@ def get_cli_parser():
         aliases=["ga"],
         help=(
             "Generates a set of ancestors from the input sample data and stores "
-            "the results in a tsinfer ancestors file."))
+            "the results in a tsinfer ancestors file."
+        ),
+    )
     add_samples_file_argument(parser)
     add_ancestors_file_argument(parser)
     add_num_threads_argument(parser)
@@ -388,7 +459,9 @@ def get_cli_parser():
         help=(
             "Matches the ancestors built by the 'generate-ancestors' command against "
             "each other using the model information specified in the input file "
-            "and writes the output to a tskit .trees file."))
+            "and writes the output to a tskit .trees file."
+        ),
+    )
     add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_file_argument(parser)
@@ -401,14 +474,20 @@ def get_cli_parser():
     parser = subparsers.add_parser(
         "augment-ancestors",
         aliases=["aa"],
-        help="Augments the ancestors tree sequence by adding a subset of the samples")
+        help="Augments the ancestors tree sequence by adding a subset of the samples",
+    )
     add_samples_file_argument(parser)
     parser.add_argument(
         "augmented_ancestors",
-        help="The path to write the augmented ancestors tree sequence to")
+        help="The path to write the augmented ancestors tree sequence to",
+    )
     parser.add_argument(
-        "-n", "--num-samples", type=int, default=None,
-        help="The number of samples to use. Defaults to 10%% of the total.")
+        "-n",
+        "--num-samples",
+        type=int,
+        default=None,
+        help="The number of samples to use. Defaults to 10%% of the total.",
+    )
     add_ancestors_trees_argument(parser)
     add_logging_arguments(parser)
     add_path_compression_argument(parser)
@@ -421,7 +500,9 @@ def get_cli_parser():
         aliases=["ms"],
         help=(
             "Matches the samples against the tree sequence structure built "
-            "by the match-ancestors command"))
+            "by the match-ancestors command"
+        ),
+    )
     add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_ancestors_trees_argument(parser)
@@ -437,7 +518,9 @@ def get_cli_parser():
         help=(
             "Runs the generate-ancestors, match-ancestors and match-samples "
             "commands without writing the intermediate files to disk. Not "
-            "recommended for large inferences."))
+            "recommended for large inferences."
+        ),
+    )
     add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_output_trees_argument(parser)
@@ -448,25 +531,30 @@ def get_cli_parser():
     parser = subparsers.add_parser(
         "list",
         aliases=["ls"],
-        help=(
-            "Show a summary of the specified tsinfer related file."))
+        help=("Show a summary of the specified tsinfer related file."),
+    )
     add_logging_arguments(parser)
+    parser.add_argument("path", help="The tsinfer file to show information about.")
     parser.add_argument(
-        "path", help="The tsinfer file to show information about.")
-    parser.add_argument(
-        "--storage", "-s", action="store_true",
-        help="Show detailed information about data storage.")
+        "--storage",
+        "-s",
+        action="store_true",
+        help="Show detailed information about data storage.",
+    )
     parser.set_defaults(runner=run_list)
 
     parser = subparsers.add_parser(
         "verify",
         help=(
             "Verify that the specified tree sequence and samples files represent "
-            "the same data"))
+            "the same data"
+        ),
+    )
     add_logging_arguments(parser)
     add_samples_file_argument(parser)
     parser.add_argument(
-        "tree_sequence", help="The tree sequence to compare with in .trees format.")
+        "tree_sequence", help="The tree sequence to compare with in .trees format."
+    )
     add_progress_argument(parser)
     parser.set_defaults(runner=run_verify)
 

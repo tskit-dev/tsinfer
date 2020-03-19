@@ -13,8 +13,9 @@ import logging
 import numpy as np
 import pandas as pd
 import matplotlib as mp
+
 # Force matplotlib to not use any Xwindows backend.
-mp.use('Agg')  # NOQA
+mp.use("Agg")  # NOQA
 import matplotlib.pyplot as plt
 from matplotlib import collections as mc
 import seaborn as sns
@@ -67,7 +68,7 @@ def make_errors_genotype_model(g, error_probs):
     w = np.copy(g)
 
     # Make diploid (iterate each pair of alleles)
-    genos = [(w[i], w[i+1]) for i in range(0, w.shape[0], 2)]
+    genos = [(w[i], w[i + 1]) for i in range(0, w.shape[0], 2)]
 
     # Record the true genotypes
     g0 = [i for i, x in enumerate(genos) if x == (0, 0)]
@@ -77,26 +78,30 @@ def make_errors_genotype_model(g, error_probs):
 
     for idx in g0:
         result = [(0, 0), (1, 0), (1, 1)][
-            np.random.choice(3, p=error_probs[['p00', 'p01', 'p02']].values[0])]
+            np.random.choice(3, p=error_probs[["p00", "p01", "p02"]].values[0])
+        ]
         if result == (1, 0):
             genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
             genos[idx] = result
     for idx in g1a:
         genos[idx] = [(0, 0), (1, 0), (1, 1)][
-            np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
+            np.random.choice(3, p=error_probs[["p10", "p11", "p12"]].values[0])
+        ]
     for idx in g1b:
         genos[idx] = [(0, 0), (0, 1), (1, 1)][
-            np.random.choice(3, p=error_probs[['p10', 'p11', 'p12']].values[0])]
+            np.random.choice(3, p=error_probs[["p10", "p11", "p12"]].values[0])
+        ]
     for idx in g2:
         result = [(0, 0), (1, 0), (1, 1)][
-            np.random.choice(3, p=error_probs[['p20', 'p21', 'p22']].values[0])]
+            np.random.choice(3, p=error_probs[["p20", "p21", "p22"]].values[0])
+        ]
         if result == (1, 0):
             genos[idx] = [(0, 1), (1, 0)][np.random.choice(2)]
         else:
             genos[idx] = result
 
-    return(np.array(sum(genos, ())))
+    return np.array(sum(genos, ()))
 
 
 def generate_samples(ts, error_param=0):
@@ -120,7 +125,7 @@ def generate_samples(ts, error_param=0):
             m = v.genotypes.shape[0]
             frequency = np.sum(v.genotypes) / m
             # Find closest row in error matrix file
-            closest_row = (error_matrix['freq']-frequency).abs().argsort()[:1]
+            closest_row = (error_matrix["freq"] - frequency).abs().argsort()[:1]
             closest_freq = error_matrix.iloc[closest_row]
             g = make_errors_genotype_model(v.genotypes, closest_freq)
             sd.add_site(position=v.site.position, alleles=v.alleles, genotypes=g)
@@ -128,7 +133,9 @@ def generate_samples(ts, error_param=0):
     return sd
 
 
-def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False):
+def run_infer(
+    ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestors=False
+):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -142,11 +149,11 @@ def run_infer(ts, engine=tsinfer.C_ENGINE, path_compression=True, exact_ancestor
         ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
 
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, path_compression=path_compression,
-        engine=engine)
+        sample_data, ancestor_data, path_compression=path_compression, engine=engine
+    )
     inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, path_compression=path_compression,
-        engine=engine)
+        sample_data, ancestors_ts, path_compression=path_compression, engine=engine
+    )
     return inferred_ts
 
 
@@ -189,11 +196,9 @@ def edges_performance_worker(args):
         "estimated_anc_edges": estimated_ancestors_ts.num_edges,
         "exact_anc_edges": exact_ancestors_ts.num_edges,
         "estimated_anc_max_children": np.max(estimated_ancestors_num_children),
-        "estimated_anc_mean_children":
-            np.mean(estimated_ancestors_num_children),
+        "estimated_anc_mean_children": np.mean(estimated_ancestors_num_children),
         "exact_anc_max_children": np.max(exact_ancestors_num_children),
-        "exact_anc_mean_children":
-            np.mean(exact_ancestors_num_children),
+        "exact_anc_mean_children": np.mean(exact_ancestors_num_children),
     }
     results.update(simulation_args)
     if tree_metrics:
@@ -211,21 +216,23 @@ def edges_performance_worker(args):
         estimated_anc_perfect_trees = np.sum((kc_distance == 0) * d)
         estimated_anc_kc_mean = np.mean(kc_distance)
         tree_metrics_time = time.perf_counter() - before
-        results.update({
-            "tree_metrics_time": tree_metrics_time,
-            "exact_anc_kc_distance_weighted": exact_anc_kc_distance_weighted,
-            "exact_anc_perfect_trees": exact_anc_perfect_trees,
-            "exact_anc_kc_mean": exact_anc_kc_mean,
-            "estimated_anc_kc_distance_weighted": estimated_anc_kc_distance_weighted,
-            "estimated_anc_perfect_trees": estimated_anc_perfect_trees,
-            "estimated_anc_kc_mean": estimated_anc_kc_mean,
-        })
+        results.update(
+            {
+                "tree_metrics_time": tree_metrics_time,
+                "exact_anc_kc_distance_weighted": exact_anc_kc_distance_weighted,
+                "exact_anc_perfect_trees": exact_anc_perfect_trees,
+                "exact_anc_kc_mean": exact_anc_kc_mean,
+                "estimated_anc_kc_distance_weighted": estimated_anc_kc_distance_weighted,
+                "estimated_anc_perfect_trees": estimated_anc_perfect_trees,
+                "estimated_anc_kc_mean": estimated_anc_kc_mean,
+            }
+        )
     return results
 
 
 def run_edges_performance(args):
     num_lengths = 10
-    MB = 10**6
+    MB = 10 ** 6
 
     work = []
     rng = random.Random()
@@ -238,9 +245,10 @@ def run_edges_performance(args):
                 "length": L * MB,
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
-                "Ne": 10**4,
+                "Ne": 10 ** 4,
                 "model": "smc_prime",
-                "random_seed": rng.randint(1, 2**30)}
+                "random_seed": rng.randint(1, 2 ** 30),
+            }
             work.append((sim_args, args.compute_tree_metrics, args.engine))
 
     random.shuffle(work)
@@ -265,40 +273,73 @@ def run_edges_performance(args):
     name_format = os.path.join(
         args.destination_dir,
         "ancestors_n={}_L={}_mu={}_rho={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate
+        ),
+    )
 
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_edges / dfg.source_edges,
-        label="estimated ancestors")
+        dfg.num_sites,
+        dfg.estimated_anc_edges / dfg.source_edges,
+        label="estimated ancestors",
+    )
     plt.plot(
-        dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges,
-        label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+        dfg.num_sites, dfg.exact_anc_edges / dfg.source_edges, label="exact ancestors"
+    )
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     plt.ylabel("inferred # edges / source # edges")
     plt.xlabel("Num sites")
     plt.legend()
     save_figure(name_format.format("edges"))
 
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_mean_children,
-        label="estimated ancestors mean", color="blue")
+        dfg.num_sites,
+        dfg.estimated_anc_mean_children,
+        label="estimated ancestors mean",
+        color="blue",
+    )
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_max_children,
-        label="estimated ancestors max", color="blue", linestyle=":")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+        dfg.num_sites,
+        dfg.estimated_anc_max_children,
+        label="estimated ancestors max",
+        color="blue",
+        linestyle=":",
+    )
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     plt.plot(
-        dfg.num_sites, dfg.exact_anc_mean_children,
-        label="exact ancestors mean", color="red")
+        dfg.num_sites,
+        dfg.exact_anc_mean_children,
+        label="exact ancestors mean",
+        color="red",
+    )
     plt.plot(
-        dfg.num_sites, dfg.exact_anc_max_children,
-        label="exact ancestors max", color="red", linestyle=":")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+        dfg.num_sites,
+        dfg.exact_anc_max_children,
+        label="exact ancestors max",
+        color="red",
+        linestyle=":",
+    )
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     plt.ylabel("num_children")
     plt.xlabel("Num sites")
     plt.legend()
@@ -307,29 +348,37 @@ def run_edges_performance(args):
 
     if args.compute_tree_metrics:
         plt.plot(
-            dfg.num_sites, dfg.estimated_anc_kc_distance_weighted,
-            label="estimated ancestors")
+            dfg.num_sites,
+            dfg.estimated_anc_kc_distance_weighted,
+            label="estimated ancestors",
+        )
         plt.plot(
-            dfg.num_sites, dfg.exact_anc_kc_distance_weighted,
-            label="exact ancestors")
-        plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-            args.sample_size, args.mutation_rate, args.recombination_rate,
-            args.num_replicates))
+            dfg.num_sites, dfg.exact_anc_kc_distance_weighted, label="exact ancestors"
+        )
+        plt.title(
+            "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+                args.sample_size,
+                args.mutation_rate,
+                args.recombination_rate,
+                args.num_replicates,
+            )
+        )
         plt.ylabel("Distance weighted KC metric")
         plt.xlabel("Num sites")
         plt.legend()
         save_figure(name_format.format("kc_distance_weighted"))
         plt.clf()
 
-        plt.plot(
-            dfg.num_sites, dfg.estimated_anc_kc_mean,
-            label="estimated ancestors")
-        plt.plot(
-            dfg.num_sites, dfg.exact_anc_kc_mean,
-            label="exact ancestors")
-        plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-            args.sample_size, args.mutation_rate, args.recombination_rate,
-            args.num_replicates))
+        plt.plot(dfg.num_sites, dfg.estimated_anc_kc_mean, label="estimated ancestors")
+        plt.plot(dfg.num_sites, dfg.exact_anc_kc_mean, label="exact ancestors")
+        plt.title(
+            "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+                args.sample_size,
+                args.mutation_rate,
+                args.recombination_rate,
+                args.num_replicates,
+            )
+        )
         plt.ylabel("Mean KC metric")
         plt.xlabel("Num sites")
         plt.legend()
@@ -337,14 +386,17 @@ def run_edges_performance(args):
         plt.clf()
 
         plt.plot(
-            dfg.num_sites, dfg.estimated_anc_perfect_trees,
-            label="estimated ancestors")
-        plt.plot(
-            dfg.num_sites, dfg.exact_anc_perfect_trees,
-            label="exact ancestors")
-        plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-            args.sample_size, args.mutation_rate, args.recombination_rate,
-            args.num_replicates))
+            dfg.num_sites, dfg.estimated_anc_perfect_trees, label="estimated ancestors"
+        )
+        plt.plot(dfg.num_sites, dfg.exact_anc_perfect_trees, label="exact ancestors")
+        plt.title(
+            "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+                args.sample_size,
+                args.mutation_rate,
+                args.recombination_rate,
+                args.num_replicates,
+            )
+        )
         plt.ylabel("Mean KC metric")
         plt.xlabel("Num sites")
         plt.legend()
@@ -360,14 +412,14 @@ def unrank(samples, n):
     bitstring = np.zeros(n, dtype=int)
     for s in samples:
         bitstring[s] = 1
-    mult = 2**np.arange(n, dtype=int)
+    mult = 2 ** np.arange(n, dtype=int)
     unranked = np.sum(mult * bitstring)
     return unranked
 
 
 def edge_plot(ts, filename):
     n = ts.num_samples
-    pallete = sns.color_palette("husl", 2**n - 1)
+    pallete = sns.color_palette("husl", 2 ** n - 1)
     lines = []
     colours = []
     for tree in ts.trees():
@@ -389,7 +441,7 @@ def edge_plot(ts, filename):
 
 
 def run_hotspot_analysis(args):
-    MB = 10**6
+    MB = 10 ** 6
     L = args.length * MB
 
     rng = random.Random()
@@ -410,8 +462,9 @@ def run_hotspot_analysis(args):
         "sample_size": args.sample_size,
         "recombination_map": recomb_map,
         "mutation_rate": args.mutation_rate,
-        "Ne": 10**4,
-        "random_seed": rng.randint(1, 2**30)}
+        "Ne": 10 ** 4,
+        "random_seed": rng.randint(1, 2 ** 30),
+    }
     ts = msprime.simulate(**sim_args)
     print("simulated ", ts.num_trees, "trees and", ts.num_sites, "sites")
 
@@ -435,9 +488,15 @@ def run_hotspot_analysis(args):
         name_format = os.path.join(
             args.destination_dir,
             "hotspots_n={}_L={}_mu={}_rho={}_N={}_I={}_W={}_{{}}".format(
-                args.sample_size, args.length, args.mutation_rate,
-                args.recombination_rate, args.num_hotspots, args.hotspot_intensity,
-                args.hotspot_width))
+                args.sample_size,
+                args.length,
+                args.mutation_rate,
+                args.recombination_rate,
+                args.num_hotspots,
+                args.hotspot_intensity,
+                args.hotspot_width,
+            ),
+        )
         save_figure(name_format.format("breakpoints_density={}".format(density)))
         plt.clf()
 
@@ -485,11 +544,13 @@ def ancestor_properties_worker(args):
             focal = focal_sites[j]
             if len(focal) > 0:
                 exact_anc_focal_distance[j] = pos[focal[-1]] - pos[focal[0]]
-        results.update({
-            "exact_anc_num": exact_anc.num_ancestors,
-            "exact_anc_mean_len": np.mean(exact_anc_length),
-            "exact_anc_mean_focal_distance": np.mean(exact_anc_focal_distance),
-        })
+        results.update(
+            {
+                "exact_anc_num": exact_anc.num_ancestors,
+                "exact_anc_mean_len": np.mean(exact_anc_length),
+                "exact_anc_mean_focal_distance": np.mean(exact_anc_focal_distance),
+            }
+        )
 
     results.update(simulation_args)
     return results
@@ -497,7 +558,7 @@ def ancestor_properties_worker(args):
 
 def run_ancestor_properties(args):
     num_lengths = 10
-    MB = 10**6
+    MB = 10 ** 6
 
     work = []
     rng = random.Random()
@@ -510,9 +571,10 @@ def run_ancestor_properties(args):
                 "length": L * MB,
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
-                "Ne": 10**4,
+                "Ne": 10 ** 4,
                 "model": "smc_prime",
-                "random_seed": rng.randint(1, 2**30)}
+                "random_seed": rng.randint(1, 2 ** 30),
+            }
             work.append((sim_args, not args.skip_exact))
 
     random.shuffle(work)
@@ -533,15 +595,23 @@ def run_ancestor_properties(args):
     print(dfg)
 
     name_format = os.path.join(
-        args.destination_dir, "anc-prop_n={}_L={}_mu={}_rho={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir,
+        "anc-prop_n={}_L={}_mu={}_rho={}_{{}}".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate
+        ),
+    )
 
     plt.plot(dfg.num_sites, dfg.estimated_anc_num, label="estimated ancestors")
     if not args.skip_exact:
         plt.plot(dfg.num_sites, dfg.exact_anc_num, label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
@@ -551,9 +621,14 @@ def run_ancestor_properties(args):
     plt.plot(dfg.num_sites, dfg.estimated_anc_mean_len, label="estimated ancestors")
     if not args.skip_exact:
         plt.plot(dfg.num_sites, dfg.exact_anc_mean_len, label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
@@ -561,15 +636,22 @@ def run_ancestor_properties(args):
     plt.clf()
 
     plt.plot(
-        dfg.num_sites, dfg.estimated_anc_mean_focal_distance,
-        label="estimated ancestors")
+        dfg.num_sites,
+        dfg.estimated_anc_mean_focal_distance,
+        label="estimated ancestors",
+    )
     if not args.skip_exact:
         plt.plot(
-            dfg.num_sites, dfg.exact_anc_mean_focal_distance,
-            label="exact ancestors")
-    plt.title("n = {}, mut_rate={}, rec_rate={}, reps={}".format(
-        args.sample_size, args.mutation_rate, args.recombination_rate,
-        args.num_replicates))
+            dfg.num_sites, dfg.exact_anc_mean_focal_distance, label="exact ancestors"
+        )
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
     # plt.ylabel("inferred # ancestors / exact # ancestors")
     plt.xlabel("Num sites")
     plt.legend()
@@ -583,7 +665,7 @@ def running_mean(x, N):
 
 
 def running_median(x, N):
-    idx = np.arange(N) + np.arange(len(x)-N+1)[:, None]
+    idx = np.arange(N) + np.arange(len(x) - N + 1)[:, None]
     b = [row[row > 0] for row in x[idx]]
     return np.array(list(map(np.median, b)))
 
@@ -621,7 +703,7 @@ def sim_true_and_inferred_ancestors(args):
     Run a simulation under args and return the samples, plus the true and the inferred
     ancestors
     """
-    MB = 10**6
+    MB = 10 ** 6
     rng = random.Random(args.random_seed)
     np.random.seed(args.random_seed)
     sim_args = {
@@ -631,7 +713,8 @@ def sim_true_and_inferred_ancestors(args):
         "mutation_rate": args.mutation_rate,
         "Ne": args.Ne,
         "model": "smc_prime",
-        "random_seed": rng.randint(1, 2**30)}
+        "random_seed": rng.randint(1, 2 ** 30),
+    }
     ts = msprime.simulate(**sim_args)
 
     sample_data = generate_samples(ts, args.error)
@@ -651,16 +734,20 @@ def ancestor_data_by_pos(anc1, anc2):
     """
     anc_by_focal_pos = []
     for anc in (anc1, anc2):
-        position_to_index = {anc.sites_position[:][site_index]: i
-                             for i, sites in enumerate(anc.ancestors_focal_sites[:])
-                             for site_index in sites}
+        position_to_index = {
+            anc.sites_position[:][site_index]: i
+            for i, sites in enumerate(anc.ancestors_focal_sites[:])
+            for site_index in sites
+        }
         anc_by_focal_pos.append(position_to_index)
 
     # NB with error we may not have exactly the same focal sites in exact & estimated
     shared_indices = set.intersection(*[set(a.keys()) for a in anc_by_focal_pos])
 
-    return {pos: np.array([anc_by_focal_pos[0][pos], anc_by_focal_pos[1][pos]], np.int)
-            for pos in shared_indices}
+    return {
+        pos: np.array([anc_by_focal_pos[0][pos], anc_by_focal_pos[1][pos]], np.int)
+        for pos in shared_indices
+    }
 
 
 def run_ancestor_comparison(args):
@@ -674,23 +761,32 @@ def run_ancestor_comparison(args):
     except ValueError:
         err = args.error.replace("/", "_")
         if err.endswith(".csv"):
-            err = err[:-len(".csv")]
+            err = err[: -len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate,
-            args.recombination_rate, err))
+        args.destination_dir,
+        "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+            args.sample_size,
+            args.Ne,
+            args.length,
+            args.mutation_rate,
+            args.recombination_rate,
+            err,
+        ),
+    )
     if args.store_data:
         # TODO Are we using this option for anything?
         filename = name_format.format("length.json")
         # Don't store the longest (root) ancestor
         data = {
             "exact_ancestors": exact_anc_length[1:].tolist(),
-            "estimated_ancestors": estimated_anc_length[1:].tolist()}
+            "estimated_ancestors": estimated_anc_length[1:].tolist(),
+        }
         with open(filename, "w") as f:
             json.dump(data, f)
 
     plt.hist(
-        [exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"])
+        [exact_anc_length[1:], estimated_anc_length[1:]], label=["Exact", "Estimated"]
+    )
     plt.ylabel("Length (kb)")
     plt.legend()
     save_figure(name_format.format("length-dist"))
@@ -718,7 +814,8 @@ def run_ancestor_comparison(args):
     print("max_len = ", max_len)
     print(
         "fraction of ancestors with max length = ",
-        num_max_len / estimated_anc.num_ancestors)
+        num_max_len / estimated_anc.num_ancestors,
+    )
 
     plt.hist(estimated_anc_length[estimated_anc.ancestors_focal_freq == 2], bins=50)
     plt.xlabel("doubleton ancestor length")
@@ -732,8 +829,8 @@ def run_ancestor_comparison(args):
     for colorscale in ("Frequency", "True_time"):
         fig = plt.figure(figsize=(10, 10), dpi=100)
         if args.length_scale == "log":
-            plt.yscale('log')
-            plt.xscale('log')
+            plt.yscale("log")
+            plt.xscale("log")
         if colorscale != "Frequency":
             cs = exact_anc.ancestors_time[:][exact_v_estimated_indexes[:, 0]]
         else:
@@ -741,8 +838,12 @@ def run_ancestor_comparison(args):
         plt.scatter(
             exact_anc_length[exact_v_estimated_indexes[:, 0]],
             estimated_anc_length[exact_v_estimated_indexes[:, 1]],
-            c=cs, cmap='brg', s=2, norm=NormalizeBandWidths(band_widths=np.bincount(cs)))
-        plt.plot([1, max_length], [1, max_length], '-', color='grey', zorder=-1)
+            c=cs,
+            cmap="brg",
+            s=2,
+            norm=NormalizeBandWidths(band_widths=np.bincount(cs)),
+        )
+        plt.plot([1, max_length], [1, max_length], "-", color="grey", zorder=-1)
         plt.xlim(1, max_length)
         plt.ylim(1, max_length)
         cbar = plt.colorbar()
@@ -757,32 +858,41 @@ def run_ancestor_comparison(args):
     # in the simulation, so that each time is unique for a set of site on one ancestor
     for ancestors_are_estimated, anc in enumerate([exact_anc, estimated_anc]):
         time = anc.ancestors_time[:] + (1 if ancestors_are_estimated else 0)
-        df = pd.DataFrame({
-            'start': anc.ancestors_start[:],
-            'end': anc.ancestors_end[:],
-            'l': anc.ancestors_length / 1000,
-            'time': time,
-            'nsites': [len(x) for x in anc.ancestors_focal_sites[:]]})
+        df = pd.DataFrame(
+            {
+                "start": anc.ancestors_start[:],
+                "end": anc.ancestors_end[:],
+                "l": anc.ancestors_length / 1000,
+                "time": time,
+                "nsites": [len(x) for x in anc.ancestors_focal_sites[:]],
+            }
+        )
 
-        df_all = pd.DataFrame({
-            'lengths_per_site': np.repeat(df.l.values, df.nsites.values),
-            'time': np.repeat(df.time.values, df.nsites.values),
-            'const': 1
-        }).sort_values(by=['time'])
-        sum_per_timeslice = df_all.groupby('time').sum().const.values
-        df_all['x_pos'] = range(df_all.shape[0])
-        df_all['mean_x_pos'] = np.repeat(
-            df_all.groupby('time').mean().x_pos.values, sum_per_timeslice)
-        df_all['width'] = np.repeat(sum_per_timeslice, sum_per_timeslice)
+        df_all = pd.DataFrame(
+            {
+                "lengths_per_site": np.repeat(df.l.values, df.nsites.values),
+                "time": np.repeat(df.time.values, df.nsites.values),
+                "const": 1,
+            }
+        ).sort_values(by=["time"])
+        sum_per_timeslice = df_all.groupby("time").sum().const.values
+        df_all["x_pos"] = range(df_all.shape[0])
+        df_all["mean_x_pos"] = np.repeat(
+            df_all.groupby("time").mean().x_pos.values, sum_per_timeslice
+        )
+        df_all["width"] = np.repeat(sum_per_timeslice, sum_per_timeslice)
 
-        mean_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby(
-            'time', sort=True).mean()
-        median_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby(
-            'time', sort=True).median()
-        sum_by_anc_time = df.iloc[df['nsites'].nonzero()].groupby(
-            'time', sort=True).sum()
+        mean_by_anc_time = (
+            df.iloc[df["nsites"].nonzero()].groupby("time", sort=True).mean()
+        )
+        median_by_anc_time = (
+            df.iloc[df["nsites"].nonzero()].groupby("time", sort=True).median()
+        )
+        sum_by_anc_time = (
+            df.iloc[df["nsites"].nonzero()].groupby("time", sort=True).sum()
+        )
 
-        line_x = np.insert(np.cumsum(sum_by_anc_time['nsites']).values, 0, 0)
+        line_x = np.insert(np.cumsum(sum_by_anc_time["nsites"]).values, 0, 0)
 
         if ancestors_are_estimated:
             # averaging over times is probably more-or-less OK
@@ -797,15 +907,20 @@ def run_ancestor_comparison(args):
             pad_mean = np.pad(
                 running_mean(mean_by_anc_time.l.values, args.running_average_span),
                 (args.running_average_span - 1) // 2,
-                mode='constant', constant_values=(np.nan,))
+                mode="constant",
+                constant_values=(np.nan,),
+            )
             pad_median = np.pad(
                 running_median(median_by_anc_time.l.values, args.running_average_span),
                 (args.running_average_span - 1) // 2,
-                mode='constant', constant_values=(np.nan,))
+                mode="constant",
+                constant_values=(np.nan,),
+            )
             lines_y = [pad_mean, pad_median]
             names = [
                 "Running mean over {} ancestors".format(args.running_average_span),
-                "Running median over {} ancestors".format(args.running_average_span)]
+                "Running median over {} ancestors".format(args.running_average_span),
+            ]
             linestyles = ["-", ":"]
             colours = ["limegreen", "forestgreen"]
             # save some stuff for when we plot inferred lines
@@ -819,8 +934,13 @@ def run_ancestor_comparison(args):
         jitter = np.random.uniform(-w, w, len(df_all.mean_x_pos.values))
         x_jittered = df_all.mean_x_pos.values + jitter
         plt.scatter(
-            x_jittered, df_all.lengths_per_site.values,
-            marker='.', s=72./fig.dpi, alpha=0.75, color="black")
+            x_jittered,
+            df_all.lengths_per_site.values,
+            marker=".",
+            s=72.0 / fig.dpi,
+            alpha=0.75,
+            color="black",
+        )
         # plt.ylim(1 / (1000 if args.physical_length else 1), max_y*1.02)
         if args.length_scale == "log":
             plt.yscale("log")
@@ -829,48 +949,73 @@ def run_ancestor_comparison(args):
         if ancestors_are_estimated:
             plt.title("Ancestor lengths as estimated by tsinfer")
             ax.step(
-                exact_line_x[:-1], exact_mean_line_y, label="True mean",
-                where='post', color="limegreen")
+                exact_line_x[:-1],
+                exact_mean_line_y,
+                label="True mean",
+                where="post",
+                color="limegreen",
+            )
             ax.step(
-                exact_line_x[:-1], exact_median_line_y, label="True median",
-                where='post', color="forestgreen", linestyle=":")
+                exact_line_x[:-1],
+                exact_median_line_y,
+                label="True median",
+                where="post",
+                color="forestgreen",
+                linestyle=":",
+            )
             plt.xlabel("Ancestors_freq (youngest to oldest)")
             ax.set_xlim(xmin=0)
-            ax.tick_params(axis='x', which="major", length=0)
-            ax.set_xticklabels('', minor=True)
+            ax.tick_params(axis="x", which="major", length=0)
+            ax.set_xticklabels("", minor=True)
             ax.set_xticks(line_x[:-1], minor=True)
             ax.set_xticks(line_x[:-1] + np.diff(line_x) / 2)
-            ax.set_xticklabels(np.where(
-                np.isin(
+            ax.set_xticklabels(
+                np.where(
+                    np.isin(
+                        mean_by_anc_time.index,
+                        np.array([1, 2, 3, 4, 5, 6, 10, 50, 1000, 5000]),
+                    ),
                     mean_by_anc_time.index,
-                    np.array([1, 2, 3, 4, 5, 6, 10, 50, 1000, 5000])),
-                mean_by_anc_time.index,
-                ""))
+                    "",
+                )
+            )
         else:
             plt.title("True ancestor lengths, ordered by known simulation time")
             plt.xlabel("Ancestors_time index (youngest to oldest)")
 
         for y, label, linestyle, colour in zip(lines_y, names, linestyles, colours):
             ax.step(
-                line_x[:-1], y, label=label, where='post', color=colour,
-                linestyle=linestyle)
+                line_x[:-1],
+                y,
+                label=label,
+                where="post",
+                color=colour,
+                linestyle=linestyle,
+            )
         plt.ylabel("Length (kb)")
-        plt.legend(loc='upper center')
+        plt.legend(loc="upper center")
         save_figure(
-            name_format.format("time_{}".format(
-                "estimated" if ancestors_are_estimated else "true_ancestors")))
+            name_format.format(
+                "time_{}".format(
+                    "estimated" if ancestors_are_estimated else "true_ancestors"
+                )
+            )
+        )
 
 
 def binomial_confidence(x, n, z=1.96):
     """
     Calculate the Wilson binomial interval, e.g. from
     https://stackoverflow.com/questions/10029588/python-implementation-of-the-wilson-score-interval
-    """ # noqa
+    """  # noqa
     phat = x / n
-    d = z * np.sqrt((phat*(1-phat)+z*z/(4*n))/n)
-    return np.array([
-        (phat + z*z/(2*n) - d)/(1+z*z/n),
-        (phat + z*z/(2*n) + d)/(1+z*z/n)])
+    d = z * np.sqrt((phat * (1 - phat) + z * z / (4 * n)) / n)
+    return np.array(
+        [
+            (phat + z * z / (2 * n) - d) / (1 + z * z / n),
+            (phat + z * z / (2 * n) + d) / (1 + z * z / n),
+        ]
+    )
 
 
 def run_ancestor_quality(args):
@@ -887,25 +1032,38 @@ def run_ancestor_quality(args):
     except ValueError:
         err = args.error.replace("/", "_")
         if err.endswith(".csv"):
-            err = err[:-len(".csv")]
+            err = err[: -len(".csv")]
     name_format = os.path.join(
-        args.destination_dir, "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
-            args.sample_size, args.Ne, args.length, args.mutation_rate,
-            args.recombination_rate, err))
+        args.destination_dir,
+        "anc-qual_n={}_Ne={}_L={}_mu={}_rho={}_err={}_{{}}".format(
+            args.sample_size,
+            args.Ne,
+            args.length,
+            args.mutation_rate,
+            args.recombination_rate,
+            err,
+        ),
+    )
 
     anc_indices = ancestor_data_by_pos(exact_anc, estim_anc)
     shared_positions = np.array(list(sorted(anc_indices.keys())))
     # append sequence_length to pos so that ancestors_end[:] indices are always valid
-    exact_positions = np.append(exact_anc.sites_position[:], sample_data.sequence_length)
-    estim_positions = np.append(estim_anc.sites_position[:], sample_data.sequence_length)
+    exact_positions = np.append(
+        exact_anc.sites_position[:], sample_data.sequence_length
+    )
+    estim_positions = np.append(
+        estim_anc.sites_position[:], sample_data.sequence_length
+    )
     # only include sites which are focal in both exact and estim in the genome-wise masks
     exact_sites_mask = np.isin(exact_anc.sites_position[:], shared_positions)
     estim_sites_mask = np.isin(estim_anc.sites_position[:], shared_positions)
     assert np.sum(exact_sites_mask) == np.sum(estim_sites_mask) == len(anc_indices)
 
     # store the data to plot for each focal_site, keyed by position
-    freq = {sample_data.sites_position[:][i]: np.sum(g)
-            for i, g in sample_data.genotypes(inference_sites=None)}
+    freq = {
+        sample_data.sites_position[:][i]: np.sum(g)
+        for i, g in sample_data.genotypes(inference_sites=None)
+    }
     estim_freq = np.array([freq[p] for p in estim_anc.sites_position[:]], dtype=np.int)
     olap_n_sites = {}
     olap_n_should_be_1_higher_freq = {}
@@ -921,7 +1079,9 @@ def run_ancestor_quality(args):
     for i, focal_pos in enumerate(
         sorted(
             shared_positions,
-            key=lambda pos: -exact_anc.ancestors_time[:][anc_indices[pos][0]])):
+            key=lambda pos: -exact_anc.ancestors_time[:][anc_indices[pos][0]],
+        )
+    ):
         exact_index, estim_index = anc_indices[focal_pos]
         # left (start) is biggest of exact and estim
         exact_start = exact_positions[exact_anc.ancestors_start[:][exact_index]]
@@ -955,12 +1115,16 @@ def run_ancestor_quality(args):
 
         exact_full_hap = exact_anc.ancestors_haplotype[:][exact_index]
         # slice the full haplotype to include only the overlapping region
-        exact_olap = exact_full_hap[(olap_start_exact-offset1):(olap_end_exact-offset1)]
+        exact_olap = exact_full_hap[
+            (olap_start_exact - offset1) : (olap_end_exact - offset1)
+        ]
         # make a 1/0 array with only the comparable sites
         exact_comp = exact_olap[exact_sites_mask[olap_start_exact:olap_end_exact]]
 
         estim_full_hap = estim_anc.ancestors_haplotype[estim_index]
-        estim_olap = estim_full_hap[(olap_start_estim-offset2):(olap_end_estim-offset2)]
+        estim_olap = estim_full_hap[
+            (olap_start_estim - offset2) : (olap_end_estim - offset2)
+        ]
         small_estim_mask = estim_sites_mask[olap_start_estim:olap_end_estim]
         estim_comp = estim_olap[small_estim_mask]
 
@@ -985,83 +1149,133 @@ def run_ancestor_quality(args):
         olap_n_should_be_0_higher_freq[focal_pos] = np.sum(should_be_0 & higher_freq)
         olap_n_should_be_1_low_eq_freq[focal_pos] = np.sum(should_be_1 & ~higher_freq)
         olap_n_should_be_0_low_eq_freq[focal_pos] = np.sum(should_be_0 & ~higher_freq)
-        assert olap_rgt[focal_pos]-olap_lft[focal_pos] <= true_len[focal_pos]
-        assert (olap_n_should_be_1_higher_freq[focal_pos] +
-                olap_n_should_be_0_higher_freq[focal_pos] +
-                olap_n_should_be_1_low_eq_freq[focal_pos] +
-                olap_n_should_be_0_low_eq_freq[focal_pos] ==
-                np.sum(bad_sites))
+        assert olap_rgt[focal_pos] - olap_lft[focal_pos] <= true_len[focal_pos]
+        assert olap_n_should_be_1_higher_freq[
+            focal_pos
+        ] + olap_n_should_be_0_higher_freq[focal_pos] + olap_n_should_be_1_low_eq_freq[
+            focal_pos
+        ] + olap_n_should_be_0_low_eq_freq[
+            focal_pos
+        ] == np.sum(
+            bad_sites
+        )
         if args.print_bad_ancestors and np.any(bad_sites):
             if i == 0:
                 print(
                     "Freq & haplotype of bad ancestors, ordered by true time,"
                     " oldest first (black = focal site, red or magenta = bad site "
-                    " with > or < freq than focal)")
+                    " with > or < freq than focal)"
+                )
             if args.print_bad_ancestors == "all":
                 print(
                     "TRUE ANCESTOR for focal site "
                     "#{} (pos {}, time_index = {}/{})".format(
-                        i, focal_pos,
+                        i,
+                        focal_pos,
                         exact_anc.ancestors_time[:][exact_index],
-                        max(exact_anc.ancestors_time[:])))
-                print("Haplotype (start @idx {}, pos {})".format(
-                    offset1, exact_positions[offset1]))
-                print(" "*(olap_start_estim-offset2), end="")
+                        max(exact_anc.ancestors_time[:]),
+                    )
+                )
+                print(
+                    "Haplotype (start @idx {}, pos {})".format(
+                        offset1, exact_positions[offset1]
+                    )
+                )
+                print(" " * (olap_start_estim - offset2), end="")
                 hap = "".join(exact_full_hap.astype(str))
                 focal_index = np.argmax(exact_positions[offset1:] == focal_pos)
                 print(hap[:focal_index], end="")
-                print(colorama.Fore.WHITE + colorama.Back.BLACK +
-                      hap[focal_index] + colorama.Style.RESET_ALL, end="")
-                print(hap[focal_index+1:])
-                print("Match with inferred ancestor starts @idx {}, pos {}".format(
-                    olap_start_exact, exact_positions[olap_start_exact]))
-                print(" "*(olap_start_estim-offset2), end="")
-                print(" "*(olap_start_exact-offset1))
-                print("".join([str(x) for x in np.where(
-                            exact_sites_mask[olap_start_exact:olap_end_exact],
-                            exact_olap,
-                            '*')]))
                 print(
-                    "INFERRED ANCESTOR for focal site #{} (pos {})".format(i, focal_pos))
+                    colorama.Fore.WHITE
+                    + colorama.Back.BLACK
+                    + hap[focal_index]
+                    + colorama.Style.RESET_ALL,
+                    end="",
+                )
+                print(hap[focal_index + 1 :])
+                print(
+                    "Match with inferred ancestor starts @idx {}, pos {}".format(
+                        olap_start_exact, exact_positions[olap_start_exact]
+                    )
+                )
+                print(" " * (olap_start_estim - offset2), end="")
+                print(" " * (olap_start_exact - offset1))
+                print(
+                    "".join(
+                        [
+                            str(x)
+                            for x in np.where(
+                                exact_sites_mask[olap_start_exact:olap_end_exact],
+                                exact_olap,
+                                "*",
+                            )
+                        ]
+                    )
+                )
+                print(
+                    "INFERRED ANCESTOR for focal site #{} (pos {})".format(i, focal_pos)
+                )
                 print(
                     "Haplotype (start @idx {}, pos {})".format(
-                        offset2, estim_positions[offset2]))
-                print(" "*(olap_start_exact-offset1), end="")
+                        offset2, estim_positions[offset2]
+                    )
+                )
+                print(" " * (olap_start_exact - offset1), end="")
                 hap = "".join(estim_full_hap.astype(str))
                 focal_index = np.argmax(estim_positions[offset2:] == focal_pos)
                 print(hap[:focal_index], end="")
-                print(colorama.Fore.WHITE + colorama.Back.BLACK +
-                      hap[focal_index] + colorama.Style.RESET_ALL, end="")
-                print(hap[focal_index+1:])
+                print(
+                    colorama.Fore.WHITE
+                    + colorama.Back.BLACK
+                    + hap[focal_index]
+                    + colorama.Style.RESET_ALL,
+                    end="",
+                )
+                print(hap[focal_index + 1 :])
                 # now indicate in the inferred ancestor which sites are bad, and if it is
                 # a case of a 1 being mistakenly reconstructed as a 0, whether this is
                 # because this is a less frequent site, or whether it is actually more
                 # frequent but we are calling a consensus
-                print("Match with inferred ancestor starts @idx {}, pos {}".format(
-                    olap_start_estim, estim_positions[olap_start_estim]))
-                print(" "*(olap_start_exact-offset1), end="")
-                print(" "*(olap_start_estim-offset2), end="")
+                print(
+                    "Match with inferred ancestor starts @idx {}, pos {}".format(
+                        olap_start_estim, estim_positions[olap_start_estim]
+                    )
+                )
+                print(" " * (olap_start_exact - offset1), end="")
+                print(" " * (olap_start_estim - offset2), end="")
             elif args.print_bad_ancestors == "inferred":
                 print("{:<5}".format(int(freq[focal_pos])), end="")
             k = 0
             mask = estim_sites_mask[olap_start_estim:olap_end_estim]
             for j, (bit, curr_pos) in enumerate(
-                    zip(estim_olap, estim_positions[olap_start_estim:])):
+                zip(estim_olap, estim_positions[olap_start_estim:])
+            ):
                 if mask[j]:
                     if focal_pos == curr_pos:
-                        print(colorama.Fore.WHITE + colorama.Back.BLACK +
-                              str(bit) + colorama.Style.RESET_ALL, end="")
+                        print(
+                            colorama.Fore.WHITE
+                            + colorama.Back.BLACK
+                            + str(bit)
+                            + colorama.Style.RESET_ALL,
+                            end="",
+                        )
                     elif exact_comp[k] == bit:
                         print(str(bit), end="")
                     elif freq[focal_pos] < freq[curr_pos]:
-                        print(colorama.Back.RED +
-                              str(bit) + colorama.Style.RESET_ALL, end="")
+                        print(
+                            colorama.Back.RED + str(bit) + colorama.Style.RESET_ALL,
+                            end="",
+                        )
                     elif freq[focal_pos] > freq[curr_pos]:
-                        print(colorama.Back.MAGENTA +
-                              str(bit) + colorama.Style.RESET_ALL, end="")
+                        print(
+                            colorama.Back.MAGENTA + str(bit) + colorama.Style.RESET_ALL,
+                            end="",
+                        )
                     else:
-                        print(colorama.Back.YELLOW +
-                              str(bit) + colorama.Style.RESET_ALL, end="")
+                        print(
+                            colorama.Back.YELLOW + str(bit) + colorama.Style.RESET_ALL,
+                            end="",
+                        )
                     k += 1
                 else:
                     print("*", end="")
@@ -1069,16 +1283,38 @@ def run_ancestor_quality(args):
 
     # create the data for use, ordered by real time (and make a new time index)
     data = pd.DataFrame.from_records(
-        [(p, freq[p], olap_n_sites[p], true_len[p], est_len[p], olap_rgt[p]-olap_lft[p],
-          olap_n_should_be_1_higher_freq[p], olap_n_should_be_1_low_eq_freq[p],
-          olap_n_should_be_0_higher_freq[p], olap_n_should_be_0_low_eq_freq[p],
-          t, true_time[p])
-            for t, p in enumerate(sorted(shared_positions, key=lambda x: true_time[x]))],
+        [
+            (
+                p,
+                freq[p],
+                olap_n_sites[p],
+                true_len[p],
+                est_len[p],
+                olap_rgt[p] - olap_lft[p],
+                olap_n_should_be_1_higher_freq[p],
+                olap_n_should_be_1_low_eq_freq[p],
+                olap_n_should_be_0_higher_freq[p],
+                olap_n_should_be_0_low_eq_freq[p],
+                t,
+                true_time[p],
+            )
+            for t, p in enumerate(sorted(shared_positions, key=lambda x: true_time[x]))
+        ],
         columns=(
-            "position", "Frequency", "n_sites", "Real length", "Estim length", "Overlap",
-            "err_hiF should be 1", "err_loF should be 1",
-            "err_hiF should be 0", "err_loF should be 0",
-            "Known time order", "orig_time"))
+            "position",
+            "Frequency",
+            "n_sites",
+            "Real length",
+            "Estim length",
+            "Overlap",
+            "err_hiF should be 1",
+            "err_loF should be 1",
+            "err_hiF should be 0",
+            "err_loF should be 0",
+            "Known time order",
+            "orig_time",
+        ),
+    )
 
     # we want to know for each site whether it the frequency puts it within the same
     # bounds as the known time order, and if not, whether we have inferred it as
@@ -1086,20 +1322,36 @@ def run_ancestor_quality(args):
     freq_bins = np.bincount(data.Frequency)
     freq_repeated = np.repeat(np.arange(len(freq_bins)), freq_bins)
     # add another column on to the expected freq, as calculated from the actual time
-    data['expected_Frequency'] = freq_repeated[data["Known time order"].values]
-    data['n_mismatches'] = (data["err_hiF should be 1"] + data["err_loF should be 1"] +
-                            data["err_hiF should be 0"] + data["err_loF should be 0"])
-    data['Inaccuracy'] = data.n_mismatches / data.n_sites
-    data['Inferred time inaccuracy'] = data.expected_Frequency - data.Frequency
-    data['Inference error bias'] = \
-        (data["err_hiF should be 1"] + data["err_loF should be 1"]) / data.n_mismatches
-    data['err_hiF'] = (data["err_hiF should be 1"] + data["err_hiF should be 0"])
-    data['err_loF'] = (data["err_loF should be 1"] + data["err_loF should be 0"])
+    data["expected_Frequency"] = freq_repeated[data["Known time order"].values]
+    data["n_mismatches"] = (
+        data["err_hiF should be 1"]
+        + data["err_loF should be 1"]
+        + data["err_hiF should be 0"]
+        + data["err_loF should be 0"]
+    )
+    data["Inaccuracy"] = data.n_mismatches / data.n_sites
+    data["Inferred time inaccuracy"] = data.expected_Frequency - data.Frequency
+    data["Inference error bias"] = (
+        data["err_hiF should be 1"] + data["err_loF should be 1"]
+    ) / data.n_mismatches
+    data["err_hiF"] = data["err_hiF should be 1"] + data["err_hiF should be 0"]
+    data["err_loF"] = data["err_loF should be 1"] + data["err_loF should be 0"]
 
-    print("{} ancestors, {} with at least one error".format(
-        len(data), np.sum(data.n_mismatches != 0)))
-    print(data[["err_hiF should be 1", "err_loF should be 1",
-                "err_hiF should be 0", "err_loF should be 0"]].sum())
+    print(
+        "{} ancestors, {} with at least one error".format(
+            len(data), np.sum(data.n_mismatches != 0)
+        )
+    )
+    print(
+        data[
+            [
+                "err_hiF should be 1",
+                "err_loF should be 1",
+                "err_hiF should be 0",
+                "err_loF should be 0",
+            ]
+        ].sum()
+    )
     if args.csv_only:
         # Add some standard params to the CSV to make it easy to paste CSVs together
         data["sample_size"] = args.sample_size
@@ -1114,58 +1366,101 @@ def run_ancestor_quality(args):
     Inaccuracy_label = "Sequence difference in overlapping region"
     name = "quality-by-missingness"
     x_axis_length_metric = "fraction"  # or e.g. "fraction"
-    data['abs_missing_l'] = (data["Real length"] - data["Overlap"])+1
-    data['rel_missing_l'] = 1 - (data["Overlap"] / data["Real length"])
+    data["abs_missing_l"] = (data["Real length"] - data["Overlap"]) + 1
+    data["rel_missing_l"] = 1 - (data["Overlap"] / data["Real length"])
     if x_axis_length_metric == "absolute":
-        x_col = 'abs_missing_l'
+        x_col = "abs_missing_l"
         ax_params = {
             "xlabel": "Absolute length of missing ancestor + 1",
             "xscale": "log",
-            "xlim": (0.8, np.max(data[x_col]))}
+            "xlim": (0.8, np.max(data[x_col])),
+        }
     elif x_axis_length_metric == "fraction":
-        x_col = 'rel_missing_l'
-        ax_params = {
-            "xlabel": "Fraction of true ancestor missing from inferred"}
+        x_col = "rel_missing_l"
+        ax_params = {"xlabel": "Fraction of true ancestor missing from inferred"}
     else:
         assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
     ax = data.plot.scatter(
-        x=x_col, y="Inaccuracy", c="Frequency", cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins))
+        x=x_col,
+        y="Inaccuracy",
+        c="Frequency",
+        cmap="brg",
+        s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins),
+    )
     ax.errorbar(
-        x=data[x_col], y=data.Inaccuracy, fmt='none', zorder=-2, ecolor="0.9",
+        x=data[x_col],
+        y=data.Inaccuracy,
+        fmt="none",
+        zorder=-2,
+        ecolor="0.9",
         yerr=np.abs(
-            binomial_confidence(data.n_mismatches.values, data.n_sites.values) -
-            data.Inaccuracy.values))
+            binomial_confidence(data.n_mismatches.values, data.n_sites.values)
+            - data.Inaccuracy.values
+        ),
+    )
     data = data.sort_values(by=x_col)
     rolling_mean = data.Inaccuracy.rolling(
-        center=True, window=args.running_average_span, min_periods=1).mean()
-    ax.plot(data[x_col], rolling_mean.values, 'k-', lw=1, zorder=-1)
+        center=True, window=args.running_average_span, min_periods=1
+    ).mean()
+    ax.plot(data[x_col], rolling_mean.values, "k-", lw=1, zorder=-1)
     ax.set(ylabel=Inaccuracy_label, ylim=(-0.01, 1), **ax_params)
     save_figure(name_format.format(name))
 
     name = "quality-by-freq-with-time"
     ax = data.plot.scatter(
-        x='Frequency', y='Inaccuracy', c="Known time order", cmap='brg', s=2)
+        x="Frequency", y="Inaccuracy", c="Known time order", cmap="brg", s=2
+    )
     ax.set_ylabel(Inaccuracy_label)
     save_figure(name_format.format(name))
 
     ax_params = {
-        'xlim': (-1, np.max(data['Known time order'])*1.01),
-        'ylabel': "Sequence difference in overlapping region"}
+        "xlim": (-1, np.max(data["Known time order"]) * 1.01),
+        "ylabel": "Sequence difference in overlapping region",
+    }
     legend_elements = [
         mp.lines.Line2D(
-            [], [], linewidth=0, label="1", marker='o', color='k',
-            markeredgewidth=0.5, markerfacecolor='w', markersize=1**0.5),
+            [],
+            [],
+            linewidth=0,
+            label="1",
+            marker="o",
+            color="k",
+            markeredgewidth=0.5,
+            markerfacecolor="w",
+            markersize=1 ** 0.5,
+        ),
         mp.lines.Line2D(
-            [], [], linewidth=0, label="10", marker='o', color='k',
-            markeredgewidth=0.5, markerfacecolor='w', markersize=10**0.5),
+            [],
+            [],
+            linewidth=0,
+            label="10",
+            marker="o",
+            color="k",
+            markeredgewidth=0.5,
+            markerfacecolor="w",
+            markersize=10 ** 0.5,
+        ),
         mp.lines.Line2D(
-            [], [], linewidth=0, label="100", marker='o', color='k',
-            markeredgewidth=0.5, markerfacecolor='w', markersize=100**0.5)]
+            [],
+            [],
+            linewidth=0,
+            label="100",
+            marker="o",
+            color="k",
+            markeredgewidth=0.5,
+            markerfacecolor="w",
+            markersize=100 ** 0.5,
+        ),
+    ]
     name = "quality-by-freq-with-bias"
     ax = data.plot.scatter(
-        x='Known time order', y="Inaccuracy", c='Inference error bias', cmap='coolwarm',
-        s=data.n_mismatches.values+1)
+        x="Known time order",
+        y="Inaccuracy",
+        c="Inference error bias",
+        cmap="coolwarm",
+        s=data.n_mismatches.values + 1,
+    )
     """
     # Add some tiny labels, to aid identification in a pdf plot
     labels = ["{:.1f}\n{:.0f}\n{:.0f}".format(
@@ -1179,26 +1474,49 @@ def run_ancestor_quality(args):
 
     name = "quality-by-freq-with-ordererr"
     ax = data.plot.scatter(
-        x='Known time order', y="Inaccuracy", c='Inferred time inaccuracy', cmap='BrBG',
-        s=data.n_mismatches.values, norm=MidpointNormalize(midpoint=0))
+        x="Known time order",
+        y="Inaccuracy",
+        c="Inferred time inaccuracy",
+        cmap="BrBG",
+        s=data.n_mismatches.values,
+        norm=MidpointNormalize(midpoint=0),
+    )
     ax.set(**ax_params)
     ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
     save_figure(name_format.format(name))
 
     name = "error-type-by-freq-mean-sem"
     # show the (weighted) average for different types of error
-    g = data[['err_hiF', 'err_loF', 'n_sites']].groupby(data.Frequency)
+    g = data[["err_hiF", "err_loF", "n_sites"]].groupby(data.Frequency)
     f_data = pd.DataFrame.from_dict(
-        {'Frequency': g.sum().index,
-         'hi': g.sum().err_hiF.values/g.sum().n_sites.values,
-         'lo': g.sum().err_loF.values/g.sum().n_sites.values})
-    f_data = f_data.sort_values(by='Frequency')
-    plt.plot(f_data.Frequency, f_data.hi, marker="o", linestyle='none', markersize=5,
-             c="darkgoldenrod", label="Errors at higher freq than focal")
-    plt.plot(f_data.Frequency, f_data.lo, marker="o", linestyle='none', markersize=5,
-             c="mediumseagreen", label="Errors at lower freq than focal")
+        {
+            "Frequency": g.sum().index,
+            "hi": g.sum().err_hiF.values / g.sum().n_sites.values,
+            "lo": g.sum().err_loF.values / g.sum().n_sites.values,
+        }
+    )
+    f_data = f_data.sort_values(by="Frequency")
+    plt.plot(
+        f_data.Frequency,
+        f_data.hi,
+        marker="o",
+        linestyle="none",
+        markersize=5,
+        c="darkgoldenrod",
+        label="Errors at higher freq than focal",
+    )
+    plt.plot(
+        f_data.Frequency,
+        f_data.lo,
+        marker="o",
+        linestyle="none",
+        markersize=5,
+        c="mediumseagreen",
+        label="Errors at lower freq than focal",
+    )
     rolling_mean = f_data.rolling(
-        center=True, window=args.running_average_span, min_periods=1).mean()
+        center=True, window=args.running_average_span, min_periods=1
+    ).mean()
     plt.plot(f_data.Frequency, rolling_mean.hi, "-", c="darkgoldenrod")
     plt.plot(f_data.Frequency, rolling_mean.lo, "-", c="mediumseagreen")
     plt.ylim(None, args.diff_y_lim)
@@ -1215,8 +1533,13 @@ def run_ancestor_quality(args):
         # matplotlib warns for nans in error bars
         warnings.simplefilter("ignore")
         plt.errorbar(
-            g.sem().index, g.mean().values, yerr=g.sem().values,
-            marker="o", ls='none', ecolor='0.6')
+            g.sem().index,
+            g.mean().values,
+            yerr=g.sem().values,
+            marker="o",
+            ls="none",
+            ecolor="0.6",
+        )
     plt.ylabel(Inaccuracy_label)
     plt.xlabel("Frequency")
     plt.ylim(None, args.diff_y_lim)
@@ -1224,25 +1547,42 @@ def run_ancestor_quality(args):
 
     name = "quality-by-time"
     ax = data.plot.scatter(
-        x='Known time order', y='Inaccuracy', c='Frequency', cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins))
+        x="Known time order",
+        y="Inaccuracy",
+        c="Frequency",
+        cmap="brg",
+        s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins),
+    )
     data = data.sort_values(by="Known time order")
     ax.errorbar(
-        data['Known time order'], data['Inaccuracy'],
-        yerr=np.abs(binomial_confidence(
-            data.n_mismatches.values, data.n_sites.values) - data.Inaccuracy.values),
-        fmt='none', ecolor='0.9', zorder=-2)
+        data["Known time order"],
+        data["Inaccuracy"],
+        yerr=np.abs(
+            binomial_confidence(data.n_mismatches.values, data.n_sites.values)
+            - data.Inaccuracy.values
+        ),
+        fmt="none",
+        ecolor="0.9",
+        zorder=-2,
+    )
     rolling_mean = data.Inaccuracy.rolling(
-        center=True, window=args.running_average_span, min_periods=1).mean()
-    ax.plot(data['Known time order'].values, rolling_mean.values, "k-")
+        center=True, window=args.running_average_span, min_periods=1
+    ).mean()
+    ax.plot(data["Known time order"].values, rolling_mean.values, "k-")
     ax.set(ylabel=Inaccuracy_label, ylim=(-0.01, 1))
     save_figure(name_format.format(name))
 
     name = "quality-by-length"
     ax = data.plot.scatter(
-        x="Overlap", y="Inaccuracy", c="Frequency", cmap='brg', s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins))
-    ax.set(ylabel=Inaccuracy_label, xscale='log', ylim=(-0.01, 1), xlim=(1))
+        x="Overlap",
+        y="Inaccuracy",
+        c="Frequency",
+        cmap="brg",
+        s=2,
+        norm=NormalizeBandWidths(band_widths=freq_bins),
+    )
+    ax.set(ylabel=Inaccuracy_label, xscale="log", ylim=(-0.01, 1), xlim=(1))
     save_figure(name_format.format(name))
 
 
@@ -1266,7 +1606,7 @@ def get_node_degree_by_depth(ts):
 
 
 def run_node_degree(args):
-    MB = 10**6
+    MB = 10 ** 6
     rng = random.Random()
     if args.random_seed is not None:
         rng.seed(args.random_seed)
@@ -1275,40 +1615,69 @@ def run_node_degree(args):
         "length": args.length * MB,
         "recombination_rate": args.recombination_rate,
         "mutation_rate": args.mutation_rate,
-        "Ne": 10**4,
+        "Ne": 10 ** 4,
         "model": "smc_prime",
-        "random_seed": rng.randint(1, 2**30)}
+        "random_seed": rng.randint(1, 2 ** 30),
+    }
     smc_ts = msprime.simulate(**sim_args)
 
     engine = args.engine
     df = pd.DataFrame()
     for path_compression in [True, False]:
         estimated_ancestors_ts = run_infer(
-            smc_ts, engine=engine, exact_ancestors=False,
-            path_compression=path_compression)
+            smc_ts,
+            engine=engine,
+            exact_ancestors=False,
+            path_compression=path_compression,
+        )
         degree, depth = get_node_degree_by_depth(estimated_ancestors_ts)
-        df = df.append(pd.DataFrame({
-            "degree": degree, "depth": depth, "type": "estimated",
-            "path_compression": path_compression}))
+        df = df.append(
+            pd.DataFrame(
+                {
+                    "degree": degree,
+                    "depth": depth,
+                    "type": "estimated",
+                    "path_compression": path_compression,
+                }
+            )
+        )
         exact_ancestors_ts = run_infer(
-            smc_ts, engine=engine, exact_ancestors=True,
-            path_compression=path_compression)
+            smc_ts,
+            engine=engine,
+            exact_ancestors=True,
+            path_compression=path_compression,
+        )
         degree, depth = get_node_degree_by_depth(exact_ancestors_ts)
-        df = df.append(pd.DataFrame({
-            "degree": degree, "depth": depth, "type": "exact",
-            "path_compression": path_compression}))
+        df = df.append(
+            pd.DataFrame(
+                {
+                    "degree": degree,
+                    "depth": depth,
+                    "type": "exact",
+                    "path_compression": path_compression,
+                }
+            )
+        )
 
     name_format = os.path.join(
-        args.destination_dir, "node-degree_n={}_L={}_mu={}_rho={}_{{}}".format(
-            args.sample_size, args.length, args.mutation_rate, args.recombination_rate))
+        args.destination_dir,
+        "node-degree_n={}_L={}_mu={}_rho={}_{{}}".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate
+        ),
+    )
     print(df.describe())
 
     with warnings.catch_warnings():
         # Seaborn is throwing some warnings here. Presumably will be fixed at some point.
         warnings.filterwarnings("ignore", category=FutureWarning)
         sns.catplot(
-            x="depth", y="degree", hue="path_compression", col="type",
-            data=df, kind="bar")
+            x="depth",
+            y="degree",
+            hue="path_compression",
+            col="type",
+            data=df,
+            kind="bar",
+        )
     save_figure(name_format.format("path-compression"))
     plt.clf()
 
@@ -1336,22 +1705,35 @@ def run_perfect_inference(args):
         model = "hudson"
     for seed in range(1, args.num_replicates + 1):
         base_ts = msprime.simulate(
-            args.sample_size, Ne=args.Ne, length=args.length * 10**6,
-            recombination_rate=1e-8, random_seed=args.random_seed + seed,
-            model=model)
-        print("simulated ts with n={} and {} trees; seed={}".format(
-            base_ts.num_samples, base_ts.num_trees, seed))
+            args.sample_size,
+            Ne=args.Ne,
+            length=args.length * 10 ** 6,
+            recombination_rate=1e-8,
+            random_seed=args.random_seed + seed,
+            model=model,
+        )
+        print(
+            "simulated ts with n={} and {} trees; seed={}".format(
+                base_ts.num_samples, base_ts.num_trees, seed
+            )
+        )
         if not args.use_ts and multiple_recombinations(base_ts):
             print("Multiple recombinations; skipping")
             continue
         ts, inferred_ts = tsinfer.run_perfect_inference(
-            base_ts, num_threads=args.num_threads,
-            engine=args.engine, extended_checks=args.extended_checks,
+            base_ts,
+            num_threads=args.num_threads,
+            engine=args.engine,
+            extended_checks=args.extended_checks,
             time_chunking=not args.no_time_chunking,
             use_ts=args.use_ts,
-            path_compression=args.path_compression)
-        print("n={} num_trees={} num_sites={}".format(
-            ts.num_samples, ts.num_trees, ts.num_sites))
+            path_compression=args.path_compression,
+        )
+        print(
+            "n={} num_trees={} num_sites={}".format(
+                ts.num_samples, ts.num_trees, ts.num_sites
+            )
+        )
         assert ts.num_samples == inferred_ts.num_samples
         assert ts.num_sites == inferred_ts.num_sites
         if args.path_compression:
@@ -1382,220 +1764,325 @@ def setup_logging(args):
 if __name__ == "__main__":
 
     top_parser = argparse.ArgumentParser(
-        description="Simple inferface for running various tsinfer evaluations.")
+        description="Simple inferface for running various tsinfer evaluations."
+    )
     top_parser.add_argument(
-        "-V", "--version", action='version',
-        version='%(prog)s {}'.format(tsinfer.__version__))
+        "-V",
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(tsinfer.__version__),
+    )
     top_parser.add_argument(
-        "-o", "--output-format", default="png",
-        help="The output format for plots")
+        "-o", "--output-format", default="png", help="The output format for plots"
+    )
     top_parser.add_argument(
-        "-e", "--engine", default=tsinfer.C_ENGINE,
-        help="The implementation to use.")
+        "-e", "--engine", default=tsinfer.C_ENGINE, help="The implementation to use."
+    )
 
     subparsers = top_parser.add_subparsers(dest="subcommand")
     subparsers.required = True
 
     parser = subparsers.add_parser(
-        "perfect-inference", aliases=["pi"],
-        help="Runs the perfect inference process on simulated tree sequences.")
+        "perfect-inference",
+        aliases=["pi"],
+        help="Runs the perfect inference process on simulated tree sequences.",
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument("--Ne", "-N", type=int, default=10**4)
+    parser.add_argument("--Ne", "-N", type=int, default=10 ** 4)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument("--num-replicates", "-R", type=int, default=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
     parser.add_argument(
-        "--progress", "-P", action="store_true",
-        help="Show a progress monitor.")
+        "--progress", "-P", action="store_true", help="Show a progress monitor."
+    )
     parser.add_argument(
-        "--extended-checks", "-X", action="store_true",
-        help="Enable extra consistency checking (slow)")
+        "--extended-checks",
+        "-X",
+        action="store_true",
+        help="Enable extra consistency checking (slow)",
+    )
     parser.add_argument(
-        "--use-ts", action="store_true",
-        help="Use the original tree sequence as the ancestors tree sequence.")
+        "--use-ts",
+        action="store_true",
+        help="Use the original tree sequence as the ancestors tree sequence.",
+    )
     parser.add_argument(
-        "--no-time-chunking", action="store_true",
-        help="Disable time-chunking to give each ancestor a distinct time.")
+        "--no-time-chunking",
+        action="store_true",
+        help="Disable time-chunking to give each ancestor a distinct time.",
+    )
     parser.add_argument(
-        "--path-compression", "-c", action="store_true",
-        help="Turn on path compression. Makes verification much slower.")
+        "--path-compression",
+        "-c",
+        action="store_true",
+        help="Turn on path compression. Makes verification much slower.",
+    )
     parser.add_argument("--random-seed", "-s", type=int, default=1)
     # Not actually used here, but useful to have it for testing.
     parser.add_argument("--destination-dir", "-d", default="")
 
     parser = subparsers.add_parser(
-        "edges-performance", aliases=["ep"],
-        help="Runs a plot showing performance in terms of the edge ratio.")
+        "edges-performance",
+        aliases=["ep"],
+        help="Runs a plot showing performance in terms of the edge ratio.",
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_edges_performance)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-l", type=float, default=0.1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=0.1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--compute-tree-metrics", "-T", action="store_true",
-        help="Compute tree metrics")
+        "--compute-tree-metrics", "-T", action="store_true", help="Compute tree metrics"
+    )
     parser.add_argument(
-        "--progress", "-P", action="store_true",
-        help="Show a progress monitor.")
+        "--progress", "-P", action="store_true", help="Show a progress monitor."
+    )
 
     parser = subparsers.add_parser(
-        "hotspot-analysis", aliases=["ha"],
-        help="Runs plots analysing the effects of recombination hotspots.")
+        "hotspot-analysis",
+        aliases=["ha"],
+        help="Runs plots analysing the effects of recombination hotspots.",
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_hotspot_analysis)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument(
-        "--num-hotspots", "-N", type=int, default=1,
-        help="Number of hotspots")
+        "--num-hotspots", "-N", type=int, default=1, help="Number of hotspots"
+    )
     parser.add_argument(
-        "--hotspot-intensity", "-I", type=float, default=10,
-        help="Intensity of hotspots relative to background.")
+        "--hotspot-intensity",
+        "-I",
+        type=float,
+        default=10,
+        help="Intensity of hotspots relative to background.",
+    )
     parser.add_argument(
-        "--hotspot-width", "-W", type=float, default=0.01,
-        help="Width of hotspots as a fraction of total genome length.")
+        "--hotspot-width",
+        "-W",
+        type=float,
+        default=0.01,
+        help="Width of hotspots as a fraction of total genome length.",
+    )
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--progress", "-P", action="store_true",
-        help="Show a progress monitor.")
+        "--progress", "-P", action="store_true", help="Show a progress monitor."
+    )
 
     parser = subparsers.add_parser(
-        "ancestor-properties", aliases=["ap"],
-        help="Runs plots showing the properties of estimated ancestors.")
+        "ancestor-properties",
+        aliases=["ap"],
+        help="Runs plots showing the properties of estimated ancestors.",
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_properties)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument("--num-replicates", "-R", type=int, default=10)
     parser.add_argument("--num-processes", "-p", type=int, default=None)
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--progress", "-P", action="store_true",
-        help="Show a progress monitor.")
+        "--progress", "-P", action="store_true", help="Show a progress monitor."
+    )
     parser.add_argument(
-        "--skip-exact", "-S", action="store_true",
-        help="Skip computing the exact ancestors")
+        "--skip-exact",
+        "-S",
+        action="store_true",
+        help="Skip computing the exact ancestors",
+    )
 
     parser = subparsers.add_parser(
-        "ancestor-comparison", aliases=["ac"],
+        "ancestor-comparison",
+        aliases=["ac"],
         help=(
             "Runs plots comparing the real and simulated ancestors "
-            "for a single instance."))
+            "for a single instance."
+        ),
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_comparison)
     parser.add_argument("--sample-size", "-n", type=int, default=100)
     parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument(
-        "--error", "-e", default="0",
-        help="Error: either a probability or a csv filename to use for empirical error")
+        "--error",
+        "-e",
+        default="0",
+        help="Error: either a probability or a csv filename to use for empirical error",
+    )
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--store-data", "-S", action="store_true",
-        help="Store some raw data.")
+        "--store-data", "-S", action="store_true", help="Store some raw data."
+    )
     parser.add_argument(
-        "--length-scale", "-X", choices=['linear', 'log'], default="linear",
-        help='Length scale for distances when plotting')
+        "--length-scale",
+        "-X",
+        choices=["linear", "log"],
+        default="linear",
+        help="Length scale for distances when plotting",
+    )
     parser.add_argument(
-        "--running-average-span", "-A", type=int, default=51,
+        "--running-average-span",
+        "-A",
+        type=int,
+        default=51,
         help=(
             "How many ancestors should we average over when calculating "
-            "running means and medians (must be an odd number)"))
+            "running means and medians (must be an odd number)"
+        ),
+    )
 
     parser = subparsers.add_parser(
-        "ancestor-quality", aliases=["aq"],
+        "ancestor-quality",
+        aliases=["aq"],
         help=(
             "Runs plots comparing the quality of simulated compared to real ancestors"
-            "for a single instance."))
+            "for a single instance."
+        ),
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_quality)
     parser.add_argument("--sample-size", "-n", type=int, default=100)
     parser.add_argument("--Ne", "-N", type=int, default=5000)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument(
-        "--error", "-e", default="0",
-        help="Error: either a probability or a csv filename to use for empirical error")
+        "--error",
+        "-e",
+        default="0",
+        help="Error: either a probability or a csv filename to use for empirical error",
+    )
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
-        "--print-bad-ancestors", "-b", nargs='?', const="inferred",
-        choices=['inferred', 'all'], help="Also print out all the bad ancestor matches")
+        "--print-bad-ancestors",
+        "-b",
+        nargs="?",
+        const="inferred",
+        choices=["inferred", "all"],
+        help="Also print out all the bad ancestor matches",
+    )
     parser.add_argument(
-        "--csv-only", "-C", action="store_true",
-        help='Do not create plots, but output a csv file of the data for later plotting')
+        "--csv-only",
+        "-C",
+        action="store_true",
+        help="Do not create plots, but output a csv file of the data for later plotting",
+    )
     parser.add_argument(
-        "--length-scale", "-X", choices=['linear', 'log'], default="linear",
-        help='Length scale for distances when plotting')
+        "--length-scale",
+        "-X",
+        choices=["linear", "log"],
+        default="linear",
+        help="Length scale for distances when plotting",
+    )
     parser.add_argument(
-        "--diff-y-lim", help="The y-limit to use for sequence difference plots.",
-        default=None, type=float)
+        "--diff-y-lim",
+        help="The y-limit to use for sequence difference plots.",
+        default=None,
+        type=float,
+    )
     parser.add_argument(
-        "--running-average-span", "-A", type=int, default=51,
+        "--running-average-span",
+        "-A",
+        type=int,
+        default=51,
         help=(
             "How many ancestors should we average over when calculating "
-            "running means and medians (must be an odd number)"))
+            "running means and medians (must be an odd number)"
+        ),
+    )
 
     parser = subparsers.add_parser(
-        "node-degree", aliases=["nd"],
-        help="Plots node degree vs depth in the tree.")
+        "node-degree", aliases=["nd"], help="Plots node degree vs depth in the tree."
+    )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_node_degree)
     parser.add_argument("--sample-size", "-n", type=int, default=10)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB")
+        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    )
     parser.add_argument(
-        "--recombination-rate", "-r", type=float, default=1e-8,
-        help="Recombination rate")
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
     parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8,
-        help="Mutation rate")
+        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
+    )
     parser.add_argument("--random-seed", "-s", type=int, default=None)
     parser.add_argument("--destination-dir", "-d", default="")
 

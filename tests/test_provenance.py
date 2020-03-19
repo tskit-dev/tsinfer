@@ -34,6 +34,7 @@ class TestProvenanceValid(unittest.TestCase):
     Checks that the provenance information on the tree sequences is
     valid.
     """
+
     def validate_ts(self, ts):
         for prov in ts.provenances():
             p_doc = json.loads(prov.record)

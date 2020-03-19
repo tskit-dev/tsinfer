@@ -32,6 +32,7 @@ import tskit
 __version__ = "undefined"
 try:
     from . import _version
+
     __version__ = _version.version
 except ImportError:
     pass
@@ -44,18 +45,10 @@ def get_environment():
     """
     env = {
         "libraries": {
-            "zarr": {
-                "version": zarr.__version__
-            },
-            "numcodecs": {
-                "version": numcodecs.__version__
-            },
-            "lmdb": {
-                "version": lmdb.__version__
-            },
-            "tskit": {
-                "version": tskit.__version__
-            },
+            "zarr": {"version": zarr.__version__},
+            "numcodecs": {"version": numcodecs.__version__},
+            "lmdb": {"version": lmdb.__version__},
+            "tskit": {"version": tskit.__version__},
         },
         "os": {
             "system": platform.system(),
@@ -67,7 +60,7 @@ def get_environment():
         "python": {
             "implementation": platform.python_implementation(),
             "version": platform.python_version_tuple(),
-        }
+        },
     }
     return env
 
@@ -85,11 +78,8 @@ def get_provenance_dict(command=None, **kwargs):
     parameters["command"] = command
     document = {
         "schema_version": "1.0.0",
-        "software": {
-            "name": "tsinfer",
-            "version": __version__,
-        },
+        "software": {"name": "tsinfer", "version": __version__},
         "parameters": parameters,
-        "environment": get_environment()
+        "environment": get_environment(),
     }
     return document

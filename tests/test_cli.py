@@ -67,6 +67,7 @@ class TestMain(unittest.TestCase):
     """
     Simple tests for the main function.
     """
+
     def test_cli_main(self):
         with mock.patch("argparse.ArgumentParser.parse_args") as mocked_parse:
             cli.tsinfer_main()
@@ -82,6 +83,7 @@ class TestDefaultPaths(unittest.TestCase):
     """
     Tests for the default path creation routines.
     """
+
     def test_get_default_path(self):
         # The second argument is ignored if the input path is specified.
         for path in ["a", "a/b/c", "a.stuff"]:
@@ -104,17 +106,23 @@ class TestCli(unittest.TestCase):
     """
     Parent of all CLI test cases.
     """
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
         self.sample_file = str(pathlib.Path(self.tempdir.name, "input-data.samples"))
-        self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
+        self.ancestor_file = str(
+            pathlib.Path(self.tempdir.name, "input-data.ancestors")
+        )
         self.ancestor_trees = str(
-            pathlib.Path(self.tempdir.name, "input-data.ancestors.trees"))
+            pathlib.Path(self.tempdir.name, "input-data.ancestors.trees")
+        )
         self.output_trees = str(pathlib.Path(self.tempdir.name, "input-data.trees"))
         self.input_ts = msprime.simulate(
-            10, mutation_rate=10, recombination_rate=10, random_seed=10)
+            10, mutation_rate=10, recombination_rate=10, random_seed=10
+        )
         sample_data = tsinfer.SampleData(
-            sequence_length=self.input_ts.sequence_length, path=self.sample_file)
+            sequence_length=self.input_ts.sequence_length, path=self.sample_file
+        )
         for var in self.input_ts.variants():
             sample_data.add_site(var.site.position, var.genotypes, var.alleles)
         sample_data.finalise()
@@ -140,22 +148,27 @@ class TestCommandsDefaults(TestCli):
     """
     Tests that the basic commands work if we provide the default arguments.
     """
+
     def verify_output(self, output_path):
         output_trees = tskit.load(output_path)
         self.assertEqual(output_trees.num_samples, self.input_ts.num_samples)
         self.assertEqual(output_trees.sequence_length, self.input_ts.sequence_length)
         self.assertEqual(output_trees.num_sites, self.input_ts.num_sites)
         self.assertGreater(output_trees.num_sites, 1)
-        self.assertTrue(np.array_equal(
-            output_trees.genotype_matrix(), self.input_ts.genotype_matrix()))
+        self.assertTrue(
+            np.array_equal(
+                output_trees.genotype_matrix(), self.input_ts.genotype_matrix()
+            )
+        )
 
     def test_infer(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["generate-ancestors", self.sample_file])
@@ -168,18 +181,27 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file access permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file access permissions issue"
+    )
     def test_augment_ancestors(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         augmented_ancestors = os.path.join(
-            self.tempdir.name, "augmented_ancestors.trees")
+            self.tempdir.name, "augmented_ancestors.trees"
+        )
         self.run_command(["generate-ancestors", self.sample_file])
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["augment-ancestors", self.sample_file, augmented_ancestors])
-        self.run_command([
-            "match-samples", self.sample_file, "-O", output_trees,
-            "-A", augmented_ancestors])
+        self.run_command(
+            [
+                "match-samples",
+                self.sample_file,
+                "-O",
+                output_trees,
+                "-A",
+                augmented_ancestors,
+            ]
+        )
         self.verify_output(output_trees)
 
 
@@ -187,6 +209,7 @@ class TestProgress(TestCli):
     """
     Tests that we get some output when we use the progress bar.
     """
+
     # Need to mock out setup_logging here or we spew logging to the console
     # in later tests.
     @mock.patch("tsinfer.cli.setup_logging")
@@ -200,8 +223,9 @@ class TestProgress(TestCli):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["generate-ancestors", self.sample_file])
@@ -218,18 +242,27 @@ class TestMatchSamples(TestCli):
     """
     Tests for the match samples options.
     """
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_no_simplify(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         output_trees_no_simplify = os.path.join(
-            self.tempdir.name, "output-nosimplify.trees")
+            self.tempdir.name, "output-nosimplify.trees"
+        )
         self.run_command(["generate-ancestors", self.sample_file])
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["match-samples", self.sample_file, "-O", output_trees])
-        self.run_command([
-            "match-samples", self.sample_file, "--no-simplify", "-O",
-            output_trees_no_simplify])
+        self.run_command(
+            [
+                "match-samples",
+                self.sample_file,
+                "--no-simplify",
+                "-O",
+                output_trees_no_simplify,
+            ]
+        )
         t1 = tskit.load(output_trees).tables
         t2 = tskit.load(output_trees_no_simplify).tables
         self.assertNotEqual(t1.nodes, t2.nodes)
@@ -239,6 +272,7 @@ class TestList(TestCli):
     """
     Tests cases for the list command.
     """
+
     # Need to mock out setup_logging here or we spew logging to the console
     # in later tests.
     @mock.patch("tsinfer.cli.setup_logging")
@@ -290,7 +324,8 @@ class TestList(TestCli):
             f.write(bytearray(100))
         for bad_file in [zero_file]:
             self.assertRaises(
-                exceptions.FileFormatError, self.run_command, ["list", bad_file])
+                exceptions.FileFormatError, self.run_command, ["list", bad_file]
+            )
         if sys.platform == "win32":
             # Windows raises a PermissionError not IsADirectoryError when opening a dir
             self.assertRaises(PermissionError, self.run_command, ["list", "/"])

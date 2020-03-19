@@ -46,9 +46,11 @@ class DataContainerMixin(object):
     """
     Common tests for the the data container classes."
     """
+
     def test_load(self):
         self.assertRaises(
-            FileNotFoundError, self.tested_class.load, "/file/does/not/exist")
+            FileNotFoundError, self.tested_class.load, "/file/does/not/exist"
+        )
         if sys.platform != "win32":
             self.assertRaises(IsADirectoryError, self.tested_class.load, "/")
             bad_format_files = ["LICENSE", "/dev/urandom"]
@@ -60,25 +62,36 @@ class DataContainerMixin(object):
         for bad_format_file in bad_format_files:
             self.assertTrue(os.path.exists(bad_format_file))
             self.assertRaises(
-                exceptions.FileFormatError, self.tested_class.load, bad_format_file)
+                exceptions.FileFormatError, self.tested_class.load, bad_format_file
+            )
 
 
 class TestSampleData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.
     """
+
     tested_class = formats.SampleData
 
     def get_example_ts(self, sample_size, sequence_length, mutation_rate=10):
         return msprime.simulate(
-            sample_size, recombination_rate=1, mutation_rate=mutation_rate,
-            length=sequence_length, random_seed=100)
+            sample_size,
+            recombination_rate=1,
+            mutation_rate=mutation_rate,
+            length=sequence_length,
+            random_seed=100,
+        )
 
     def get_example_individuals_ts_with_metadata(
-            self, n_individuals, ploidy, sequence_length, mutation_rate=10):
+        self, n_individuals, ploidy, sequence_length, mutation_rate=10
+    ):
         ts = msprime.simulate(
-            n_individuals*ploidy, recombination_rate=1, mutation_rate=mutation_rate,
-            length=sequence_length, random_seed=100)
+            n_individuals * ploidy,
+            recombination_rate=1,
+            mutation_rate=mutation_rate,
+            length=sequence_length,
+            random_seed=100,
+        )
         tables = ts.dump_tables()
 
         for i in range(n_individuals - 1):  # Create individuals, leaving one out
@@ -86,9 +99,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             pop_meta = None
             if i % 2 == 0:
                 # Add unicode metadata to every other individual: 8544+i = Roman numerals
-                individual_meta = '{{"unicode id":"{}"}}'.format(chr(8544+i)).encode()
+                individual_meta = '{{"unicode id":"{}"}}'.format(chr(8544 + i)).encode()
                 # Also for populations: chr(127462) + chr(127462+i) give emoji flags
-                pop_meta = '{{"utf":"{}"}}'.format(chr(127462) + chr(127462+i)).encode()
+                pop_meta = '{{"utf":"{}"}}'.format(
+                    chr(127462) + chr(127462 + i)
+                ).encode()
             tables.individuals.add_row(location=[i, i], metadata=individual_meta)
             tables.populations.add_row(metadata=pop_meta)  # One pop for each individual
 
@@ -97,7 +112,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             if node.id % 3 == 0:  # Scatter metadata into nodes: once every 3rd row
                 node_metadata.append('{{"node id":{}}}'.format(node.id).encode())
             else:
-                node_metadata.append(b'')
+                node_metadata.append(b"")
         tables.nodes.packset_metadata(node_metadata)
 
         site_metadata = []
@@ -105,14 +120,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             if site.id % 4 == 0:  # Scatter metadata into sites: once every 4th row
                 site_metadata.append('{{"id":"site {}"}}'.format(site.id).encode())
             else:
-                site_metadata.append(b'')
+                site_metadata.append(b"")
         tables.sites.packset_metadata(site_metadata)
 
         nodes_individual = tables.nodes.individual  # Assign individuals to sample nodes
         sample_individuals = np.repeat(
-            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), ploidy)
+            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), ploidy
+        )
         # Leave the last sample nodes not assigned to an individual, for testing purposes
-        sample_individuals[sample_individuals == n_individuals-1] = tskit.NULL
+        sample_individuals[sample_individuals == n_individuals - 1] = tskit.NULL
         nodes_individual[ts.samples()] = sample_individuals
         tables.nodes.individual = nodes_individual
         return tables.tree_sequence()
@@ -120,35 +136,50 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def get_example_historical_sampled_ts(self, sample_times, sequence_length):
         samples = [msprime.Sample(population=0, time=t) for t in sample_times]
         return msprime.simulate(
-            samples=samples, recombination_rate=1, mutation_rate=10,
-            length=sequence_length, random_seed=100)
+            samples=samples,
+            recombination_rate=1,
+            mutation_rate=10,
+            length=sequence_length,
+            random_seed=100,
+        )
 
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for pop in ts.populations():
             input_file.add_population(metadata=json.loads(pop.metadata or "{}"))
         # For testing, depend on the sample nodes being sorted by individual
-        for i, group in itertools.groupby(ts.samples(), lambda n: ts.node(n).individual):
+        for i, group in itertools.groupby(
+            ts.samples(), lambda n: ts.node(n).individual
+        ):
             nodes = [ts.node(nd) for nd in group]
             if i == tskit.NULL:
                 for node in nodes:
                     input_file.add_individual(
-                        ploidy=1, population=node.population, time=node.time,
-                        samples_metadata=[json.loads(node.metadata or "{}")])
+                        ploidy=1,
+                        population=node.population,
+                        time=node.time,
+                        samples_metadata=[json.loads(node.metadata or "{}")],
+                    )
             else:
                 input_file.add_individual(
-                    ploidy=len(nodes), population=nodes[0].population,
+                    ploidy=len(nodes),
+                    population=nodes[0].population,
                     metadata=json.loads(ts.individual(i).metadata or "{}"),
                     location=ts.individual(i).location,
                     time=nodes[0].time,
-                    samples_metadata=[json.loads(n.metadata or "{}") for n in nodes])
+                    samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
+                )
         for v in ts.variants():
             t = None
             if len(v.site.mutations) == 1:
                 t = ts.node(v.site.mutations[0].node).time
             input_file.add_site(
-                v.site.position, v.genotypes, v.alleles,
-                metadata=json.loads(v.site.metadata or "{}"), time=t)
+                v.site.position,
+                v.genotypes,
+                v.alleles,
+                metadata=json.loads(v.site.metadata or "{}"),
+                time=t,
+            )
         input_file.record_provenance("verify_data_round_trip")
         input_file.finalise()
         self.assertEqual(input_file.format_version, formats.SampleData.FORMAT_VERSION)
@@ -189,18 +220,21 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 if individual.metadata:
                     self.assertEqual(
                         individual_metadata[individual.id],
-                        json.loads(individual.metadata))
+                        json.loads(individual.metadata),
+                    )
                 for n in individual.nodes:
                     self.assertTrue(ts.node(n).time == sample_time[individual.id])
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_defaults_with_path(self):
         ts = self.get_example_ts(10, 10)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             input_file = formats.SampleData(
-                path=filename, sequence_length=ts.sequence_length)
+                path=filename, sequence_length=ts.sequence_length
+            )
             self.verify_data_round_trip(ts, input_file)
             compressor = formats.DEFAULT_COMPRESSOR
             for _, array in input_file.arrays():
@@ -211,33 +245,44 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def test_bad_max_file_size(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
-            for bad_size in ['a', '', -1]:
+            for bad_size in ["a", "", -1]:
                 self.assertRaises(
-                    ValueError, formats.SampleData, path=filename,
-                    max_file_size=bad_size)
+                    ValueError,
+                    formats.SampleData,
+                    path=filename,
+                    max_file_size=bad_size,
+                )
             for bad_size in [[1, 3], np.array([1, 2])]:
                 self.assertRaises(
-                    TypeError, formats.SampleData, path=filename, max_file_size=bad_size)
+                    TypeError, formats.SampleData, path=filename, max_file_size=bad_size
+                )
 
     def test_too_small_max_file_size_init(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             # Fail immediately if the max_size is so small we can't even create a file
             filename = os.path.join(tempdir, "samples.tmp")
             self.assertRaises(
-                lmdb.MapFullError, formats.SampleData,
-                path=filename, sequence_length=1, max_file_size=1)
+                lmdb.MapFullError,
+                formats.SampleData,
+                path=filename,
+                sequence_length=1,
+                max_file_size=1,
+            )
 
     def test_too_small_max_file_size_add(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
-            base_size = 2**16  # Big enough to allow the initial file to be created
+            base_size = 2 ** 16  # Big enough to allow the initial file to be created
             # Fail during adding a large amount of data
             with self.assertRaises(lmdb.MapFullError):
                 filename = os.path.join(tempdir, "samples.tmp")
-                with formats.SampleData(path=filename, sequence_length=1,
-                                        max_file_size=base_size) as small_sample_file:
+                with formats.SampleData(
+                    path=filename, sequence_length=1, max_file_size=base_size
+                ) as small_sample_file:
                     small_sample_file.add_site(
-                        0, alleles=['0', '1'],
-                        genotypes=np.zeros(base_size, dtype=np.int8))
+                        0,
+                        alleles=["0", "1"],
+                        genotypes=np.zeros(base_size, dtype=np.int8),
+                    )
             # Work around https://github.com/tskit-dev/tsinfer/issues/201
             small_sample_file.data.store.close()
 
@@ -245,19 +290,25 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             # set a reasonably large number of sites and samples, and check we
             # don't bomb out
-            n_samples = 2**10
-            n_sites = 2**12
+            n_samples = 2 ** 10
+            n_sites = 2 ** 12
             np.random.seed(123)
             filename = os.path.join(tempdir, "samples.tmp")
-            with formats.SampleData(path=filename, sequence_length=n_sites,
-                                    compressor=False, max_file_size=None) as samples:
+            with formats.SampleData(
+                path=filename,
+                sequence_length=n_sites,
+                compressor=False,
+                max_file_size=None,
+            ) as samples:
                 for pos in range(n_sites):
                     samples.add_site(
-                        pos, alleles=['0', '1'],
-                        genotypes=np.random.randint(2, size=n_samples, dtype=np.int8))
+                        pos,
+                        alleles=["0", "1"],
+                        genotypes=np.random.randint(2, size=n_samples, dtype=np.int8),
+                    )
             self.assertEqual(samples.num_sites, n_sites)
             self.assertEqual(samples.num_samples, n_samples)
-            self.assertGreater(samples.file_size, n_samples*n_sites)
+            self.assertGreater(samples.file_size, n_samples * n_sites)
             samples.close()
 
     def test_defaults_no_path(self):
@@ -282,7 +333,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         # Associate nodes at different times with a single individual
         nodes_individual = tables.nodes.individual
         nodes_individual[ts.samples()] = np.repeat(
-            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), 2)
+            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), 2
+        )
         tables.nodes.individual = nodes_individual
         bad_ts = tables.tree_sequence()
         self.assertRaises(ValueError, formats.SampleData.from_tree_sequence, bad_ts)
@@ -302,7 +354,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         # Associate nodes with individuals
         nodes_individual = tables.nodes.individual
         nodes_individual[ts.samples()] = np.repeat(
-            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), 2)
+            np.arange(n_individuals, dtype=tables.nodes.individual.dtype), 2
+        )
         tables.nodes.individual = nodes_individual
         bad_ts = tables.tree_sequence()
         self.assertRaises(ValueError, formats.SampleData.from_tree_sequence, bad_ts)
@@ -326,7 +379,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         tables.mutations.node = nodes
         for i, node in enumerate(tree.nodes()):
             if i % 3:  # add above every 3rd node - should create many alleles
-                tables.mutations.add_row(site=0, node=node, derived_state=str(i+2))
+                tables.mutations.add_row(site=0, node=node, derived_state=str(i + 2))
         # Create < 2 alleles by adding a non-variable site at the end
         extra_last_pos = (ts.site(ts.num_sites - 1).position + ts.sequence_length) / 2
         tables.sites.add_row(position=extra_last_pos, ancestral_state="0")
@@ -335,18 +388,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         tables.compute_mutation_parents()
         ts = tables.tree_sequence()
         self.assertGreater(len(ts.site(0).mutations), 1)
-        self.assertEqual(len(ts.site(ts.num_sites-1).mutations), 0)
+        self.assertEqual(len(ts.site(ts.num_sites - 1).mutations), 0)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
         self.assertFalse(sd1.sites_inference[0])
-        self.assertFalse(sd1.sites_inference[sd1.num_sites-1])
+        self.assertFalse(sd1.sites_inference[sd1.num_sites - 1])
 
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
             self.assertEqual(len(var.alleles), num_alleles[var.site.id])
         for inference_sites in [None, True, False]:
             for var, num_alleles in itertools.zip_longest(
-                    sd1.variants(inference_sites), sd1.num_alleles(inference_sites)):
+                sd1.variants(inference_sites), sd1.num_alleles(inference_sites)
+            ):
                 self.assertEqual(len(var.alleles), num_alleles)
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
@@ -357,7 +411,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         tables = ts.dump_tables()
         tables.individuals.clear()
         tables.nodes.individual = np.full(
-            ts.num_nodes, tskit.NULL, dtype=tables.nodes.individual.dtype)
+            ts.num_nodes, tskit.NULL, dtype=tables.nodes.individual.dtype
+        )
         ts_no_individuals = tables.tree_sequence()
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts_no_individuals, sd1)
@@ -380,7 +435,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         tables.sites.packset_metadata([b"Not JSON!" for _ in range(ts.num_sites)])
         ts = tables.tree_sequence()
         self.assertRaises(
-            json.decoder.JSONDecodeError, formats.SampleData.from_tree_sequence, ts)
+            json.decoder.JSONDecodeError, formats.SampleData.from_tree_sequence, ts
+        )
         sd2 = formats.SampleData.from_tree_sequence(ts, use_metadata=False)
         # Copy tests from SampleData.data_equal, except the metadata
         self.assertTrue(np.all(sd2.individuals_time[:] == sd1.individuals_time[:]))
@@ -408,7 +464,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertGreater(ts.num_sites, 50)
         for chunk_size in [1, 2, 3, ts.num_sites - 1, ts.num_sites, ts.num_sites + 1]:
             input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, chunk_size=chunk_size)
+                sequence_length=ts.sequence_length, chunk_size=chunk_size
+            )
             self.verify_data_round_trip(ts, input_file)
             for name, array in input_file.arrays():
                 self.assertEqual(array.chunks[0], chunk_size)
@@ -420,7 +477,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, path=filename)
+                sequence_length=ts.sequence_length, path=filename
+            )
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(ts, input_file)
@@ -442,11 +500,14 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
                 with formats.SampleData(
-                        sequence_length=ts.sequence_length, path=filename,
-                        chunk_size=chunk_size) as input_file:
+                    sequence_length=ts.sequence_length,
+                    path=filename,
+                    chunk_size=chunk_size,
+                ) as input_file:
                     self.verify_data_round_trip(ts, input_file)
                     self.assertEqual(
-                        input_file.sites_genotypes.chunks, (chunk_size, chunk_size))
+                        input_file.sites_genotypes.chunks, (chunk_size, chunk_size)
+                    )
             # Now reload the files and check they are equal
             with formats.SampleData.load(files[0]) as input_file0:
                 with formats.SampleData.load(files[1]) as input_file1:
@@ -456,15 +517,19 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def test_compressor(self):
         ts = self.get_example_ts(11, 17)
         compressors = [
-           None, formats.DEFAULT_COMPRESSOR,
-           blosc.Blosc(cname='zlib', clevel=1, shuffle=blosc.NOSHUFFLE)
+            None,
+            formats.DEFAULT_COMPRESSOR,
+            blosc.Blosc(cname="zlib", clevel=1, shuffle=blosc.NOSHUFFLE),
         ]
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             for i, compressor in enumerate(compressors):
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(i))
                 for path in [None, filename]:
-                    with formats.SampleData(sequence_length=ts.sequence_length,
-                                            path=path, compressor=compressor) as samples:
+                    with formats.SampleData(
+                        sequence_length=ts.sequence_length,
+                        path=path,
+                        compressor=compressor,
+                    ) as samples:
                         self.verify_data_round_trip(ts, samples)
                         for _, array in samples.arrays():
                             self.assertEqual(array.compressor, compressor)
@@ -478,7 +543,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             t.sites.add_row(site.position, ancestral_state="A" * (site.id + 1))
             for mutation in site.mutations:
                 t.mutations.add_row(
-                    site=site.id, node=mutation.node, derived_state="T" * site.id)
+                    site=site.id, node=mutation.node, derived_state="T" * site.id
+                )
         ts = t.tree_sequence()
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
@@ -518,24 +584,45 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         input_file.add_site(0, alleles=["0", "1"], genotypes=genotypes)
         for bad_position in [-1, 10, 100]:
             self.assertRaises(
-                ValueError, input_file.add_site, position=bad_position,
-                alleles=["0", "1"], genotypes=genotypes)
+                ValueError,
+                input_file.add_site,
+                position=bad_position,
+                alleles=["0", "1"],
+                genotypes=genotypes,
+            )
         for bad_genotypes in [[0, 2], [-2, 0], [], [0], [0, 0, 0]]:
             self.assertRaises(
-                ValueError, input_file.add_site, position=1,
-                alleles=["0", "1"], genotypes=bad_genotypes)
+                ValueError,
+                input_file.add_site,
+                position=1,
+                alleles=["0", "1"],
+                genotypes=bad_genotypes,
+            )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1, inference=True,
-            alleles=["0", "1", "2"], genotypes=[0, 1])
+            ValueError,
+            input_file.add_site,
+            position=1,
+            inference=True,
+            alleles=["0", "1", "2"],
+            genotypes=[0, 1],
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1,
-            alleles=["0"], genotypes=[0, 1])
+            ValueError, input_file.add_site, position=1, alleles=["0"], genotypes=[0, 1]
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1,
-            alleles=["0", "1"], genotypes=[0, 2])
+            ValueError,
+            input_file.add_site,
+            position=1,
+            alleles=["0", "1"],
+            genotypes=[0, 2],
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1,
-            alleles=["0", "0"], genotypes=[0, 2])
+            ValueError,
+            input_file.add_site,
+            position=1,
+            alleles=["0", "0"],
+            genotypes=[0, 2],
+        )
 
     def test_invalid_inference_sites(self):
         # Trying to add singletons or fixed sites as inference sites
@@ -544,29 +631,58 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         # Make sure this is OK
         input_file.add_site(0, [0, 1, 1, tskit.MISSING_DATA], inference=True)
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[0, 0, 0, 0], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[0, 0, 0, 0],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[1, 0, 0, 0], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[1, 0, 0, 0],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[1, 1, 1, 1], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[1, 1, 1, 1],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[tskit.MISSING_DATA, 0, 0, 0], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[tskit.MISSING_DATA, 0, 0, 0],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[tskit.MISSING_DATA, 1, 1, 1], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[tskit.MISSING_DATA, 1, 1, 1],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[tskit.MISSING_DATA, 0, 1, 0], inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[tskit.MISSING_DATA, 0, 1, 0],
+            inference=True,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, genotypes=[tskit.MISSING_DATA] * 4, inference=True)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            genotypes=[tskit.MISSING_DATA] * 4,
+            inference=True,
+        )
         # Check we can still add at pos 1
         input_file.add_site(
-            position=1, genotypes=[1, 0, 1, tskit.MISSING_DATA], inference=True)
+            position=1, genotypes=[1, 0, 1, tskit.MISSING_DATA], inference=True
+        )
 
     def test_duplicate_sites(self):
         # Duplicate sites are not accepted.
@@ -575,18 +691,34 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         genotypes = [0, 1, 1]
         input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site, position=0, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=0,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=0, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=0,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site, position=1, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
 
     def test_unordered_sites(self):
         # Sites must be specified in sorted order.
@@ -596,41 +728,69 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site, position=0.5, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=0.5,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=0.9999, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=0.9999,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         input_file.add_site(position=2, alleles=alleles, genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site, position=0.5, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=0.5,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         self.assertRaises(
-            ValueError, input_file.add_site, position=1.88, alleles=alleles,
-            genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=1.88,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
 
     def test_insufficient_samples(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(
-            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
-            genotypes=[])
+            ValueError,
+            sample_data.add_site,
+            position=0,
+            alleles=["0", "1"],
+            genotypes=[],
+        )
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(
-            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
-            genotypes=[0])
+            ValueError,
+            sample_data.add_site,
+            position=0,
+            alleles=["0", "1"],
+            genotypes=[0],
+        )
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.add_individual(ploidy=3)
         self.assertRaises(
-            ValueError, sample_data.add_site, position=0, alleles=["0", "1"],
-            genotypes=[0])
+            ValueError,
+            sample_data.add_site,
+            position=0,
+            alleles=["0", "1"],
+            genotypes=[0],
+        )
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(
-            ValueError, sample_data.add_individual, ploidy=3, samples_metadata=[None])
+            ValueError, sample_data.add_individual, ploidy=3, samples_metadata=[None]
+        )
 
     def test_add_population_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
-        self.assertRaises(
-            TypeError, sample_data.add_population, metadata=234)
+        self.assertRaises(TypeError, sample_data.add_population, metadata=234)
 
     def test_add_state_machine(self):
         sample_data = formats.SampleData(sequence_length=10)
@@ -896,11 +1056,24 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
         subsets = [
             [],
-            [0], [1], [21], [22],
-            [0, 1], [1, 2], [4, 5], [10, 11], [23, 24],
-            [0, 1, 2], [1, 2, 3], [4, 5, 6], [1, 10, 20],
-            [0, 1, 2, 3], [0, 10, 11, 20], [10, 15, 20, 21],
-            np.arange(24), 1 + np.arange(24),
+            [0],
+            [1],
+            [21],
+            [22],
+            [0, 1],
+            [1, 2],
+            [4, 5],
+            [10, 11],
+            [23, 24],
+            [0, 1, 2],
+            [1, 2, 3],
+            [4, 5, 6],
+            [1, 10, 20],
+            [0, 1, 2, 3],
+            [0, 10, 11, 20],
+            [10, 15, 20, 21],
+            np.arange(24),
+            1 + np.arange(24),
             np.arange(25),
         ]
         G = ts.genotype_matrix()
@@ -979,11 +1152,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             genotypes = [0, 1, 1]
             input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         self.assertRaises(
-            ValueError, input_file.add_site,
-            position=1, alleles=alleles, genotypes=genotypes)
+            ValueError,
+            input_file.add_site,
+            position=1,
+            alleles=alleles,
+            genotypes=genotypes,
+        )
         self.assertRaises(
-            ValueError, input_file.add_provenance,
-            datetime.datetime.now().isoformat(), {})
+            ValueError,
+            input_file.add_provenance,
+            datetime.datetime.now().isoformat(),
+            {},
+        )
         self.assertRaises(ValueError, input_file._check_build_mode)
 
     def test_error_not_write_mode(self):
@@ -1006,17 +1186,22 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         editable_sample_data.sites_inference = [True]
         editable_sample_data.sites_time = [0.0]
         # Try editing: use setter via setattr
-        setattr(editable_sample_data, 'sites_inference', [False])
-        setattr(editable_sample_data, 'sites_time', [1.0])
+        setattr(editable_sample_data, "sites_inference", [False])
+        setattr(editable_sample_data, "sites_time", [1.0])
         editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
         editable_sample_data.finalise()
         self.assertRaises(
-            ValueError, setattr, editable_sample_data, 'sites_inference', [True])
+            ValueError, setattr, editable_sample_data, "sites_inference", [True]
+        )
         self.assertRaises(
-            ValueError, setattr, editable_sample_data, 'sites_time', [0.0])
+            ValueError, setattr, editable_sample_data, "sites_time", [0.0]
+        )
         self.assertRaises(
-            ValueError, editable_sample_data.add_provenance,
-            datetime.datetime.now().isoformat(), {})
+            ValueError,
+            editable_sample_data.add_provenance,
+            datetime.datetime.now().isoformat(),
+            {},
+        )
 
     def test_copy_new_uuid(self):
         data = formats.SampleData()
@@ -1086,10 +1271,16 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for bad_shape in [[], np.arange(100), np.zeros((2, 2))]:
             self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)
         bad_data = [
-            ["a", "b", "c", "d"], [2**10 for _ in range(4)], [0, 1, 0, 2],
-            [0, 0, 0, -1], [0, 0.5, 0.2]]
+            ["a", "b", "c", "d"],
+            [2 ** 10 for _ in range(4)],
+            [0, 1, 0, 2],
+            [0, 0, 0, -1],
+            [0, 0.5, 0.2],
+        ]
         for a in bad_data:
-            self.assertRaises((ValueError, TypeError, OverflowError), set_value, copy, a)
+            self.assertRaises(
+                (ValueError, TypeError, OverflowError), set_value, copy, a
+            )
 
     def test_update_sites_time_bad_data(self):
         def set_value(data, value):
@@ -1126,8 +1317,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         data.finalise()
         self.assertRaises(ValueError, set_value, data, [1.0])
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_overwrite_partial(self):
         # Check that we can correctly overwrite partially written and
         # unfinalised files. See
@@ -1156,18 +1348,22 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             for num_alleles in [65, 66, 100]:
                 with self.assertRaises(ValueError):
                     sample_data.add_site(
-                        0, [0, 0], alleles=[str(x) for x in range(num_alleles)])
+                        0, [0, 0], alleles=[str(x) for x in range(num_alleles)]
+                    )
 
     def test_missing_data(self):
         u = tskit.MISSING_DATA
-        sites_by_samples = np.array([
-            [u, u, u, 1, 1, 0, 1, 1, 1],
-            [u, u, u, 1, 1, 0, 1, 1, 0],
-            [u, u, u, 1, 0, 1, 1, 0, 1],
-            [u, 0, 0, 1, 1, 1, 1, u, u],
-            [u, 0, 1, 1, 1, 0, 1, u, u],
-            [u, 1, 1, 0, 0, 0, 0, u, u]
-            ], dtype=np.int8)
+        sites_by_samples = np.array(
+            [
+                [u, u, u, 1, 1, 0, 1, 1, 1],
+                [u, u, u, 1, 1, 0, 1, 1, 0],
+                [u, u, u, 1, 0, 1, 1, 0, 1],
+                [u, 0, 0, 1, 1, 1, 1, u, u],
+                [u, 0, 1, 1, 1, 0, 1, u, u],
+                [u, 1, 1, 0, 0, 0, 0, u, u],
+            ],
+            dtype=np.int8,
+        )
         with tsinfer.SampleData() as data:
             for col in range(sites_by_samples.shape[1]):
                 data.add_site(col, sites_by_samples[:, col])
@@ -1187,12 +1383,17 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.
     """
+
     tested_class = formats.AncestorData
 
     def get_example_data(self, sample_size, sequence_length, num_ancestors):
         ts = msprime.simulate(
-            sample_size, recombination_rate=1, mutation_rate=10,
-            length=sequence_length, random_seed=100)
+            sample_size,
+            recombination_rate=1,
+            mutation_rate=10,
+            length=sequence_length,
+            random_seed=100,
+        )
         sample_data = formats.SampleData.from_tree_sequence(ts)
 
         num_sites = sample_data.num_inference_sites
@@ -1202,9 +1403,9 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             start = j
             end = max(num_sites - j, start + 1)
             self.assertLess(start, end)
-            haplotype[start: end] = 0
+            haplotype[start:end] = 0
             if start + j < end:
-                haplotype[start + j: end] = 1
+                haplotype[start + j : end] = 1
             self.assertTrue(np.all(haplotype[:start] == tskit.MISSING_DATA))
             self.assertTrue(np.all(haplotype[end:] == tskit.MISSING_DATA))
             focal_sites = np.array([start + k for k in range(j)], dtype=np.int32)
@@ -1215,8 +1416,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for start, end, t, focal_sites, haplotype in ancestors:
-            ancestor_data.add_ancestor(
-                start, end, t, focal_sites, haplotype[start: end])
+            ancestor_data.add_ancestor(start, end, t, focal_sites, haplotype[start:end])
         ancestor_data.record_provenance("verify_data_round_trip")
         ancestor_data.finalise()
 
@@ -1225,13 +1425,16 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(ancestor_data.sequence_length, sample_data.sequence_length)
         self.assertEqual(ancestor_data.format_name, formats.AncestorData.FORMAT_NAME)
         self.assertEqual(
-            ancestor_data.format_version, formats.AncestorData.FORMAT_VERSION)
+            ancestor_data.format_version, formats.AncestorData.FORMAT_VERSION
+        )
         self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
         self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
         inference_position = sample_data.sites_position[:][
-            sample_data.sites_inference[:]]
-        self.assertTrue(np.array_equal(
-            inference_position, ancestor_data.sites_position[:]))
+            sample_data.sites_inference[:]
+        ]
+        self.assertTrue(
+            np.array_equal(inference_position, ancestor_data.sites_position[:])
+        )
 
         ancestors_list = [anc.haplotype for anc in ancestor_data.ancestors()]
         stored_start = ancestor_data.ancestors_start[:]
@@ -1245,8 +1448,8 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(stored_end[j], end)
             self.assertEqual(stored_time[j], t)
             self.assertTrue(np.array_equal(stored_focal_sites[j], focal_sites))
-            self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start: end]))
-            self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start: end]))
+            self.assertTrue(np.array_equal(stored_ancestors[j], haplotype[start:end]))
+            self.assertTrue(np.array_equal(ancestors_list[j], haplotype[start:end]))
         pos = list(ancestor_data.sites_position[:]) + [ancestor_data.sequence_length]
         for j, anc in enumerate(ancestor_data.ancestors()):
             self.assertEqual(stored_start[j], anc.start)
@@ -1264,8 +1467,9 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for _, array in ancestor_data.arrays():
             self.assertEqual(array.compressor, formats.DEFAULT_COMPRESSOR)
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_defaults_with_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -1282,14 +1486,22 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
-            for bad_size in ['a', '', -1]:
+            for bad_size in ["a", "", -1]:
                 self.assertRaises(
-                    ValueError, formats.AncestorData, sample_data,
-                    path=filename, max_file_size=bad_size)
+                    ValueError,
+                    formats.AncestorData,
+                    sample_data,
+                    path=filename,
+                    max_file_size=bad_size,
+                )
             for bad_size in [[1, 3], np.array([1, 2])]:
                 self.assertRaises(
-                    TypeError, formats.AncestorData, sample_data,
-                    path=filename, max_file_size=bad_size)
+                    TypeError,
+                    formats.AncestorData,
+                    sample_data,
+                    path=filename,
+                    max_file_size=bad_size,
+                )
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
@@ -1314,8 +1526,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
             sample_data, ancestors = self.get_example_data(6, 1, N)
             self.assertGreater(sample_data.num_inference_sites, 2 * N)
-            ancestor_data = tsinfer.AncestorData(
-                sample_data, chunk_size=chunk_size)
+            ancestor_data = tsinfer.AncestorData(sample_data, chunk_size=chunk_size)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
             self.assertEqual(ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
             self.assertEqual(ancestor_data.ancestors_focal_sites.chunks, (chunk_size,))
@@ -1327,8 +1538,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
-            ancestor_data = tsinfer.AncestorData(
-                sample_data, path=filename)
+            ancestor_data = tsinfer.AncestorData(sample_data, path=filename)
             self.assertTrue(os.path.exists(filename))
             self.assertFalse(os.path.isdir(filename))
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
@@ -1350,11 +1560,13 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             for chunk_size in [5, 7]:
                 filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
                 files.append(filename)
-                with tsinfer.AncestorData(sample_data, path=filename,
-                                          chunk_size=chunk_size) as ancestor_data:
+                with tsinfer.AncestorData(
+                    sample_data, path=filename, chunk_size=chunk_size
+                ) as ancestor_data:
                     self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
                     self.assertEqual(
-                        ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
+                        ancestor_data.ancestors_haplotype.chunks, (chunk_size,)
+                    )
             # Now reload the files and check they are equal
             with formats.AncestorData.load(files[0]) as file0:
                 with formats.AncestorData.load(files[1]) as file1:
@@ -1366,42 +1578,80 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
-            start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype)
+            start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype
+        )
         for bad_start in [-1, -100, num_sites, num_sites + 1]:
             self.assertRaises(
-                ValueError, ancestor_data.add_ancestor,
-                start=bad_start, end=num_sites, time=0, focal_sites=[],
-                haplotype=haplotype)
+                ValueError,
+                ancestor_data.add_ancestor,
+                start=bad_start,
+                end=num_sites,
+                time=0,
+                focal_sites=[],
+                haplotype=haplotype,
+            )
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             self.assertRaises(
-                ValueError, ancestor_data.add_ancestor,
-                start=0, end=bad_end, time=1, focal_sites=[], haplotype=haplotype)
+                ValueError,
+                ancestor_data.add_ancestor,
+                start=0,
+                end=bad_end,
+                time=1,
+                focal_sites=[],
+                haplotype=haplotype,
+            )
         for bad_time in [-1, 0]:
             self.assertRaises(
-                ValueError, ancestor_data.add_ancestor,
-                start=0, end=num_sites, time=bad_time, focal_sites=[],
-                haplotype=haplotype)
+                ValueError,
+                ancestor_data.add_ancestor,
+                start=0,
+                end=num_sites,
+                time=bad_time,
+                focal_sites=[],
+                haplotype=haplotype,
+            )
         self.assertRaises(
-            ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time=1, focal_sites=[],
-            haplotype=np.zeros(num_sites + 1, dtype=np.int8))
+            ValueError,
+            ancestor_data.add_ancestor,
+            start=0,
+            end=num_sites,
+            time=1,
+            focal_sites=[],
+            haplotype=np.zeros(num_sites + 1, dtype=np.int8),
+        )
         # Haplotypes must be < num_alleles
         self.assertRaises(
-            ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites, time=1, focal_sites=[],
-            haplotype=np.zeros(num_sites, dtype=np.int8) + 2)
+            ValueError,
+            ancestor_data.add_ancestor,
+            start=0,
+            end=num_sites,
+            time=1,
+            focal_sites=[],
+            haplotype=np.zeros(num_sites, dtype=np.int8) + 2,
+        )
         # focal sites must be within start:end
         self.assertRaises(
-            ValueError, ancestor_data.add_ancestor,
-            start=1, end=num_sites, time=1, focal_sites=[0],
-            haplotype=np.ones(num_sites - 1, dtype=np.int8))
+            ValueError,
+            ancestor_data.add_ancestor,
+            start=1,
+            end=num_sites,
+            time=1,
+            focal_sites=[0],
+            haplotype=np.ones(num_sites - 1, dtype=np.int8),
+        )
         self.assertRaises(
-            ValueError, ancestor_data.add_ancestor,
-            start=0, end=num_sites - 2, time=1, focal_sites=[num_sites - 1],
-            haplotype=np.ones(num_sites, dtype=np.int8))
+            ValueError,
+            ancestor_data.add_ancestor,
+            start=0,
+            end=num_sites - 2,
+            time=1,
+            focal_sites=[num_sites - 1],
+            haplotype=np.ones(num_sites, dtype=np.int8),
+        )
 
-    @unittest.skipIf(sys.platform == "win32",
-                     "windows simultaneous file permissions issue")
+    @unittest.skipIf(
+        sys.platform == "win32", "windows simultaneous file permissions issue"
+    )
     def test_zero_sequence_length(self):
         # Mangle a sample data file to force a zero sequence length.
         ts = msprime.simulate(10, mutation_rate=2, random_seed=5)
@@ -1423,6 +1673,7 @@ class BufferedItemWriterMixin(object):
     """
     Tests to ensure that the buffered item writer works as expected.
     """
+
     def filter_warnings_verify_round_trip(self, source):
         # Zarr currently emits an error when dealing with object arrays.
         # https://github.com/zarr-developers/zarr/issues/257
@@ -1480,7 +1731,8 @@ class BufferedItemWriterMixin(object):
         dtypes = [np.int8, np.uint8, np.int32, np.uint32, np.float64, np.float32]
         source = {
             str(dtype): zarr.array(np.arange(n, dtype=dtype), chunks=(chunk_size,))
-            for dtype in dtypes}
+            for dtype in dtypes
+        }
         dest = self.verify_round_trip(source)
         for dtype in dtypes:
             self.assertEqual(dest[str(dtype)].dtype, dtype)
@@ -1554,7 +1806,8 @@ class BufferedItemWriterMixin(object):
         for chunks in [1, 2, 5, 10, 100]:
             n = 10
             z = zarr.empty(
-                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,))
+                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,)
+            )
             for j in range(n):
                 z[j] = {str(k): k for k in range(j)}
             self.filter_warnings_verify_round_trip({"z": z})

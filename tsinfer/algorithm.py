@@ -40,6 +40,7 @@ class Edge(object):
     """
     A singley linked list of edges.
     """
+
     left = attr.ib(default=None)
     right = attr.ib(default=None)
     parent = attr.ib(default=None)
@@ -52,6 +53,7 @@ class Site(object):
     """
     A single site for the ancestor builder.
     """
+
     id = attr.ib()
     time = attr.ib()
     genotypes = attr.ib()
@@ -62,6 +64,7 @@ class AncestorBuilder(object):
     Builds inferred ancestors.
     This implementation partially allows for multiple focal sites per ancestor
     """
+
     def __init__(self, num_samples, num_sites):
         self.num_samples = num_samples
         self.num_sites = num_sites
@@ -98,7 +101,8 @@ class AncestorBuilder(object):
             sites_at_fixed_timepoint = self.time_map[t]
             if len(sites_at_fixed_timepoint) > 0:
                 print(
-                    "timepoint =", t, "with", len(sites_at_fixed_timepoint), "ancestors")
+                    "timepoint =", t, "with", len(sites_at_fixed_timepoint), "ancestors"
+                )
                 for ancestor, sites in sites_at_fixed_timepoint.items():
                     print("\t", ancestor, ":", sites)
 
@@ -138,7 +142,7 @@ class AncestorBuilder(object):
                 start = 0
                 for j in range(len(focal_sites) - 1):
                     if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
-                        ret.append((t, focal_sites[start: j + 1]))
+                        ret.append((t, focal_sites[start : j + 1]))
                         start = j + 1
                 ret.append((t, focal_sites[start:]))
         return ret
@@ -217,19 +221,20 @@ class AncestorBuilder(object):
         # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
-                a, focal_site, range(focal_site + 1, self.num_sites))
+            a, focal_site, range(focal_site + 1, self.num_sites)
+        )
         assert a[last_site] != tskit.MISSING_DATA
         end = last_site + 1
         # Extend ancestral haplotype leftwards from leftmost focal site
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
-                a, focal_site, range(focal_site - 1, -1, -1))
+            a, focal_site, range(focal_site - 1, -1, -1)
+        )
         start = last_site
         return start, end
 
 
 class TreeSequenceBuilder(object):
-
     def __init__(self, num_alleles, max_nodes, max_edges):
         self.num_alleles = num_alleles
         self.num_sites = len(num_alleles)
@@ -350,7 +355,9 @@ class TreeSequenceBuilder(object):
 
         self.check_state()
 
-    def add_path(self, child, left, right, parent, compress=True, extended_checks=False):
+    def add_path(
+        self, child, left, right, parent, compress=True, extended_checks=False
+    ):
         assert self.path[child] is None
         prev = None
         head = None
@@ -387,7 +394,7 @@ class TreeSequenceBuilder(object):
         assert min_parent_time <= self.time[0]
         # For the assertion to be violated we would need to have 64K pc
         # ancestors sequentially copying from each other.
-        self.time[pc_parent_id] = min_parent_time - (1 / 2**16)
+        self.time[pc_parent_id] = min_parent_time - (1 / 2 ** 16)
         assert self.time[pc_parent_id] > self.time[child_id]
 
     def create_pc_node(self, matches):
@@ -446,14 +453,16 @@ class TreeSequenceBuilder(object):
             # print("\tConsidering ", edge.left, edge.right, edge.parent)
             key = (edge.left, edge.right, edge.parent, -1)
             index = self.path_index.bisect(key)
-            if index < len(self.path_index) \
-                    and self.path_index.iloc[index][:3] == (
-                            edge.left, edge.right, edge.parent):
+            if index < len(self.path_index) and self.path_index.iloc[index][:3] == (
+                edge.left,
+                edge.right,
+                edge.parent,
+            ):
                 match = self.path_index.peekitem(index)[1]
                 matches.append((edge, match))
                 condition = (
-                    edge.left == last_match.right and
-                    match.child == last_match.child)
+                    edge.left == last_match.right and match.child == last_match.child
+                )
                 if not condition:
                     contig_offsets.append(len(matches) - 1)
                 last_match = match
@@ -464,22 +473,23 @@ class TreeSequenceBuilder(object):
         contiguous_matches = [[(None, tskit.Edge(-1, -1, -1, -1))]]  # Sentinel
         for edge, match in matches:
             condition = (
-                edge.left == contiguous_matches[-1][-1][1].right and
-                match.child == contiguous_matches[-1][-1][1].child)
+                edge.left == contiguous_matches[-1][-1][1].right
+                and match.child == contiguous_matches[-1][-1][1].child
+            )
             if condition:
                 contiguous_matches[-1].append((edge, match))
             else:
                 contiguous_matches.append([(edge, match)])
         other_matches = [None]
         for j in range(len(contig_offsets) - 1):
-            contigs = matches[contig_offsets[j]: contig_offsets[j + 1]]
+            contigs = matches[contig_offsets[j] : contig_offsets[j + 1]]
             other_matches.append(contigs)
         assert len(other_matches) == len(contiguous_matches)
         for c1, c2 in zip(contiguous_matches[1:], other_matches[1:]):
             assert c1 == c2
 
         for j in range(len(contig_offsets) - 1):
-            match_list = matches[contig_offsets[j]: contig_offsets[j + 1]]
+            match_list = matches[contig_offsets[j] : contig_offsets[j + 1]]
             if len(match_list) > 1:
                 child_id = match_list[0][1].child
                 # print("MATCH:", child_id)
@@ -528,8 +538,12 @@ class TreeSequenceBuilder(object):
     def print_chain(self, head):
         edge = head
         while edge is not None:
-            print("({}, {}, {}, {})".format(
-                edge.left, edge.right, edge.parent, edge.child), end="")
+            print(
+                "({}, {}, {}, {})".format(
+                    edge.left, edge.right, edge.parent, edge.child
+                ),
+                end="",
+            )
             edge = edge.next
         print()
 
@@ -599,10 +613,14 @@ NONZERO_ROOT = -2
 
 
 class AncestorMatcher(object):
-
     def __init__(
-            self, tree_sequence_builder, recombination_rate=None, mutation_rate=None,
-            precision=None, extended_checks=False):
+        self,
+        tree_sequence_builder,
+        recombination_rate=None,
+        mutation_rate=None,
+        precision=None,
+        extended_checks=False,
+    ):
         self.tree_sequence_builder = tree_sequence_builder
         self.mutation_rate = mutation_rate
         self.recombination_rate = recombination_rate
@@ -713,7 +731,8 @@ class AncestorMatcher(object):
         if max_L == 0:
             assert self.mutation_rate[site] == 0
             raise ValueError(
-                "Trying to match non-existent allele with zero mutation rate")
+                "Trying to match non-existent allele with zero mutation rate"
+            )
 
         for u in self.likelihood_nodes:
             x = self.likelihood[u] / max_L
@@ -935,8 +954,9 @@ class AncestorMatcher(object):
         u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
         output_edges = [output_edge]
-        recombination_required = np.zeros(
-            self.tree_sequence_builder.num_nodes, dtype=int) - 1
+        recombination_required = (
+            np.zeros(self.tree_sequence_builder.num_nodes, dtype=int) - 1
+        )
 
         # Now go back through the trees.
         j = M - 1

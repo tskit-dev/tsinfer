@@ -47,6 +47,7 @@ class TsinferTestCase(unittest.TestCase):
     """
     Superclass containing assert utilities for tsinfer test cases.
     """
+
     def assertTreeSequencesEqual(self, ts1, ts2):
         self.assertEqual(ts1.sequence_length, ts2.sequence_length)
         t1 = ts1.tables
@@ -70,11 +71,16 @@ class TestUnfinalisedErrors(unittest.TestCase):
             sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
         with tsinfer.AncestorData(sample_data, path=path) as ancestor_data:
             ancestor_data.add_ancestor(
-                start=0, end=1, time=2.0, focal_sites=[0],
-                haplotype=np.array([1], dtype=np.int8))
+                start=0,
+                end=1,
+                time=2.0,
+                focal_sites=[0],
+                haplotype=np.array([1], dtype=np.int8),
+            )
             # match_ancestors fails when ancestors unfinalised
             self.assertRaises(
-                ValueError, tsinfer.match_ancestors, sample_data, ancestor_data)
+                ValueError, tsinfer.match_ancestors, sample_data, ancestor_data
+            )
         if path is not None:
             ancestor_data.close()
 
@@ -108,7 +114,8 @@ class TestUnfinalisedErrors(unittest.TestCase):
         unfinalised = tsinfer.SampleData(sequence_length=2)
         unfinalised.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
         self.assertRaises(
-            ValueError, tsinfer.match_ancestors, unfinalised, ancestor_data)
+            ValueError, tsinfer.match_ancestors, unfinalised, ancestor_data
+        )
 
     def test_match_samples_unfinalised(self):
         with tsinfer.SampleData(sequence_length=2) as sample_data:
@@ -128,14 +135,19 @@ class TestUnfinalisedErrors(unittest.TestCase):
         sample_data = tsinfer.SampleData(sequence_length=2)
         sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
         self.assertRaises(
-            ValueError, tsinfer.augment_ancestors,
-            sample_data, ancestor_data, np.arange(sample_data.num_samples))
+            ValueError,
+            tsinfer.augment_ancestors,
+            sample_data,
+            ancestor_data,
+            np.arange(sample_data.num_samples),
+        )
 
 
 class TestRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data tsinfer.
     """
+
     def assert_lossless(self, ts, genotypes, positions, alleles, sequence_length):
         self.assertEqual(ts.sequence_length, sequence_length)
         self.assertEqual(ts.num_sites, len(positions))
@@ -143,7 +155,8 @@ class TestRoundTrip(unittest.TestCase):
         tables = ts.dump_tables()
         tables.compute_mutation_parents()
         self.assertTrue(
-            np.array_equal(ts.tables.mutations.parent, tables.mutations.parent))
+            np.array_equal(ts.tables.mutations.parent, tables.mutations.parent)
+        )
         for v in ts.variants():
             self.assertEqual(v.position, positions[v.index])
             if alleles is None or len(alleles[v.index]) == 2:
@@ -154,11 +167,11 @@ class TestRoundTrip(unittest.TestCase):
                 self.assertTrue(set(v.alleles) <= set(a))
                 a1 = np.array(a)
                 a2 = np.array(v.alleles)
-                self.assertTrue(
-                    np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
+                self.assertTrue(np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
 
     def verify_data_round_trip(
-            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         sample_data = tsinfer.SampleData(sequence_length=sequence_length)
@@ -168,9 +181,13 @@ class TestRoundTrip(unittest.TestCase):
             sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
         sample_data.finalise()
         test_params = [
-            {'engine': tsinfer.PY_ENGINE}, {"engine": tsinfer.C_ENGINE},
-            {'simplify': True}, {'simplify': False},
-            {'path_compression': True}, {'path_compression': False}]
+            {"engine": tsinfer.PY_ENGINE},
+            {"engine": tsinfer.C_ENGINE},
+            {"simplify": True},
+            {"simplify": False},
+            {"path_compression": True},
+            {"path_compression": False},
+        ]
         for params in test_params:
             ts = tsinfer.infer(sample_data, **params)
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
@@ -181,17 +198,23 @@ class TestRoundTrip(unittest.TestCase):
         alleles = [v.alleles for v in ts.variants()]
         times = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, alleles, ts.sequence_length, times=times)
+            ts.genotype_matrix(), positions, alleles, ts.sequence_length, times=times
+        )
         # Do the same with pathological times. We add one to make sure there are no zeros
         times += 1
         self.verify_data_round_trip(
-            ts.genotype_matrix(), positions, alleles, ts.sequence_length,
-            times=times[::-1])
+            ts.genotype_matrix(),
+            positions,
+            alleles,
+            ts.sequence_length,
+            times=times[::-1],
+        )
 
     def test_simple_example(self):
         rho = 2
         ts = msprime.simulate(
-            10, mutation_rate=10, recombination_rate=rho, random_seed=1)
+            10, mutation_rate=10, recombination_rate=rho, random_seed=1
+        )
         self.assertGreater(ts.num_sites, 0)
         self.verify_round_trip(ts)
 
@@ -261,15 +284,19 @@ class TestRoundTrip(unittest.TestCase):
         G[0] = np.arange(65)
         alleles = [[str(x) for x in np.unique(a)] for a in G]
         self.assertRaises(
-            ValueError, self.verify_data_round_trip, G, np.arange(G.shape[0]),
-            alleles=alleles)
+            ValueError,
+            self.verify_data_round_trip,
+            G,
+            np.arange(G.shape[0]),
+            alleles=alleles,
+        )
 
     def test_not_all_alleles_in_genotypes(self):
         G = np.zeros((10, 10), dtype=int)
         G = np.zeros((10, 10), dtype=int)
         G[:, 0] = 1
         G[0] = np.repeat(np.arange(4, 9), 2)  # Miss some out
-        alleles = [[str(x) for x in np.arange(np.max(a)+1)] for a in G]
+        alleles = [[str(x) for x in np.arange(np.max(a) + 1)] for a in G]
         self.verify_data_round_trip(G, np.arange(G.shape[0]), alleles=alleles)
 
     def test_all_derived(self):
@@ -297,8 +324,10 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
     """
     Tests that we correctly round trip data when we have augmented ancestors.
     """
+
     def verify_data_round_trip(
-            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
@@ -310,8 +339,11 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             augmented_ts = tsinfer.augment_ancestors(
-                sample_data, ancestors_ts, np.arange(sample_data.num_samples),
-                engine=engine)
+                sample_data,
+                ancestors_ts,
+                np.arange(sample_data.num_samples),
+                engine=engine,
+            )
             ts = tsinfer.match_samples(sample_data, augmented_ts, engine=engine)
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
@@ -320,8 +352,10 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
     """
     Test that we can round-trip data when we allow mutations over samples.
     """
+
     def verify_data_round_trip(
-            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
@@ -336,8 +370,12 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
         for recomb_rate, mut_rate, engine in itertools.product(rho, mu, engines):
             ts = tsinfer.match_samples(
-                sample_data, ancestors_ts,
-                recombination_rate=recomb_rate, mutation_rate=mut_rate, engine=engine)
+                sample_data,
+                ancestors_ts,
+                recombination_rate=recomb_rate,
+                mutation_rate=mut_rate,
+                engine=engine,
+            )
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
@@ -346,8 +384,10 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
     Tests that we correctly round trip data when we generate the sparsest possible
     set of ancestral haplotypes.
     """
+
     def verify_data_round_trip(
-            self, genotypes, positions, alleles=None, sequence_length=None, times=None):
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
@@ -371,10 +411,15 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
         for engine in engines:
             ancestors_ts = tsinfer.match_ancestors(
-                sample_data, ancestor_data, engine=engine)
+                sample_data, ancestor_data, engine=engine
+            )
             ts = tsinfer.match_samples(
-                sample_data, ancestors_ts,
-                recombination_rate=1e-3, mutation_rate=1e-3, engine=engine)
+                sample_data,
+                ancestors_ts,
+                recombination_rate=1e-3,
+                mutation_rate=1e-3,
+                engine=engine,
+            )
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
@@ -383,6 +428,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     Test that we can round-trip data when we have various combinations
     of inference and non inference sites.
     """
+
     def verify_round_trip(self, genotypes, inference):
         self.assertEqual(genotypes.shape[0], inference.shape[0])
         with tsinfer.SampleData() as sample_data:
@@ -452,6 +498,7 @@ class TestZeroNonInferenceSites(unittest.TestCase):
     """
     Test the case where we have no non-inference sites.
     """
+
     def verify(self, sample_data):
         with self.assertLogs("tsinfer.inference", level="INFO") as logs:
             ts = tsinfer.infer(sample_data)
@@ -496,6 +543,7 @@ class TestZeroInferenceSites(unittest.TestCase):
     """
     Tests for the degenerate case in which we have no inference sites.
     """
+
     def verify(self, genotypes):
         genotypes = np.array(genotypes, dtype=np.int8)
         m = genotypes.shape[0]
@@ -546,8 +594,7 @@ def get_multichar_alleles_example(sample_size):
     """
     Returns an example dataset with multichar alleles.
     """
-    ts = msprime.simulate(
-        10, mutation_rate=10, recombination_rate=1, random_seed=5)
+    ts = msprime.simulate(10, mutation_rate=10, recombination_rate=1, random_seed=5)
     assert ts.num_sites > 2
     sample_data = tsinfer.SampleData(sequence_length=1)
     rng = random.Random(32)
@@ -570,8 +617,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
     """
 
     def test_multichar_alleles(self):
-        ts = msprime.simulate(
-            10, mutation_rate=10, recombination_rate=1, random_seed=5)
+        ts = msprime.simulate(10, mutation_rate=10, recombination_rate=1, random_seed=5)
         self.assertGreater(ts.num_sites, 2)
         sample_data = tsinfer.SampleData(sequence_length=1)
         rng = random.Random(32)
@@ -594,8 +640,7 @@ class TestMetadataRoundTrip(unittest.TestCase):
         self.assertEqual(inferred_alleles, all_alleles)
 
     def test_site_metadata(self):
-        ts = msprime.simulate(
-            11, mutation_rate=5, recombination_rate=2, random_seed=15)
+        ts = msprime.simulate(11, mutation_rate=5, recombination_rate=2, random_seed=15)
         self.assertGreater(ts.num_sites, 2)
         sample_data = tsinfer.SampleData(sequence_length=1)
         rng = random.Random(32)
@@ -603,8 +648,11 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for variant in ts.variants():
             metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
             sample_data.add_site(
-                variant.site.position, variant.genotypes, alleles=["A", "T"],
-                metadata=metadata)
+                variant.site.position,
+                variant.genotypes,
+                alleles=["A", "T"],
+                metadata=metadata,
+            )
             all_metadata.append(metadata)
         sample_data.finalise()
 
@@ -616,7 +664,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
 
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
-            json.loads(site.metadata.decode()) for site in output_ts.sites()]
+            json.loads(site.metadata.decode()) for site in output_ts.sites()
+        ]
         self.assertEqual(all_metadata, output_metadata)
 
     def test_population_metadata(self):
@@ -633,7 +682,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
             sample_data.add_individual(population=j)
         for variant in ts.variants():
             sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles)
+                variant.site.position, variant.genotypes, variant.alleles
+            )
         sample_data.finalise()
 
         for j, metadata in enumerate(sample_data.populations_metadata[:]):
@@ -641,7 +691,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
             json.loads(population.metadata.decode())
-            for population in output_ts.populations()]
+            for population in output_ts.populations()
+        ]
         self.assertEqual(all_metadata, output_metadata)
         for j, sample in enumerate(output_ts.samples()):
             node = output_ts.node(sample)
@@ -659,7 +710,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
             all_metadata.append(metadata)
         for variant in ts.variants():
             sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles)
+                variant.site.position, variant.genotypes, variant.alleles
+            )
         sample_data.finalise()
 
         for j, metadata in enumerate(sample_data.individuals_metadata[:]):
@@ -667,7 +719,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
             json.loads(individual.metadata.decode())
-            for individual in output_ts.individuals()]
+            for individual in output_ts.individuals()
+        ]
         self.assertEqual(all_metadata, output_metadata)
 
     def test_individual_location(self):
@@ -682,7 +735,8 @@ class TestMetadataRoundTrip(unittest.TestCase):
             all_locations.append(location)
         for variant in ts.variants():
             sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles)
+                variant.site.position, variant.genotypes, variant.alleles
+            )
         sample_data.finalise()
 
         for j, location in enumerate(sample_data.individuals_location[:]):
@@ -694,7 +748,6 @@ class TestMetadataRoundTrip(unittest.TestCase):
 
 
 class TestThreads(TsinferTestCase):
-
     def test_equivalance(self):
         rho = 2
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
@@ -717,9 +770,11 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
                 sample_data.add_site(j, genotypes[j], time=t)
 
         adc = tsinfer.generate_ancestors(
-            sample_data, engine=tsinfer.C_ENGINE, num_threads=num_threads)
+            sample_data, engine=tsinfer.C_ENGINE, num_threads=num_threads
+        )
         adp = tsinfer.generate_ancestors(
-            sample_data, engine=tsinfer.PY_ENGINE, num_threads=num_threads)
+            sample_data, engine=tsinfer.PY_ENGINE, num_threads=num_threads
+        )
 
         # TODO clean this up when we're finished mucking around with the
         # ancestor generator.
@@ -771,20 +826,23 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def test_no_recombination(self):
         ts = msprime.simulate(
-            20, length=1, recombination_rate=0, mutation_rate=1, random_seed=1)
+            20, length=1, recombination_rate=0, mutation_rate=1, random_seed=1
+        )
         assert ts.num_sites > 0 and ts.num_sites < 50
         self.verify_tree_sequence(ts)
 
     def test_with_recombination_short(self):
         ts = msprime.simulate(
-            20, length=1, recombination_rate=1, mutation_rate=1, random_seed=1)
+            20, length=1, recombination_rate=1, mutation_rate=1, random_seed=1
+        )
         assert ts.num_trees > 1
         assert ts.num_sites > 0 and ts.num_sites < 50
         self.verify_tree_sequence(ts)
 
     def test_with_recombination_long(self):
         ts = msprime.simulate(
-            20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1)
+            20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1
+        )
         assert ts.num_trees > 1
         assert ts.num_sites > 100
         self.verify_tree_sequence(ts)
@@ -807,11 +865,15 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def test_all_missing_at_adjacent_site(self):
         u = tskit.MISSING_DATA
-        G = np.array([[1, 1, 0, 0, 0, 0],  # Site 0
-                      [u, u, 0, 1, 1, 1],  # Site 1
-                      [1, 1, 0, 0, 0, 0],  # Site 2
-                      [u, u, 1, 0, 1, 1],  # Site 3
-                      [1, 1, 1, 1, 0, 0]])
+        G = np.array(
+            [
+                [1, 1, 0, 0, 0, 0],  # Site 0
+                [u, u, 0, 1, 1, 1],  # Site 1
+                [1, 1, 0, 0, 0, 0],  # Site 2
+                [u, u, 1, 0, 1, 1],  # Site 3
+                [1, 1, 1, 1, 0, 0],
+            ]
+        )
         # For the haplotype focussed on sites 0 & 2, the relevant values at sites
         # 1 and 3 in this example are all missing and should default to 0 in both cases
         expected_hap_focal_site_0 = [1, 0, 1, 0, 1]
@@ -827,7 +889,8 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
 
     def test_with_recombination_long_threads(self):
         ts = msprime.simulate(
-            20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1)
+            20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1
+        )
         assert ts.num_trees > 1
         assert ts.num_sites > 100
         self.verify_ancestor_generator(ts.genotype_matrix(), num_threads=3)
@@ -838,6 +901,7 @@ class TestGeneratedAncestors(unittest.TestCase):
     Ensures we work correctly with the ancestors recovered from the
     simulations.
     """
+
     def verify_inserted_ancestors(self, ts):
         # Verifies that we can round-trip the specified tree sequence
         # using the generated ancestors. NOTE: this must be an SMC
@@ -850,43 +914,63 @@ class TestGeneratedAncestors(unittest.TestCase):
         ancestor_data.finalise()
 
         A = np.full(
-            (ancestor_data.num_sites, ancestor_data.num_ancestors), tskit.MISSING_DATA,
-            dtype=np.int8)
+            (ancestor_data.num_sites, ancestor_data.num_ancestors),
+            tskit.MISSING_DATA,
+            dtype=np.int8,
+        )
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         ancestors = ancestor_data.ancestors_haplotype[:]
         for j in range(ancestor_data.num_ancestors):
-            A[start[j]: end[j], j] = ancestors[j]
+            A[start[j] : end[j], j] = ancestors[j]
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ancestors_ts = tsinfer.match_ancestors(
-                sample_data, ancestor_data, engine=engine)
+                sample_data, ancestor_data, engine=engine
+            )
             tsinfer.check_ancestors_ts(ancestors_ts)
             self.assertEqual(ancestor_data.num_sites, ancestors_ts.num_sites)
             self.assertEqual(ancestor_data.num_ancestors, ancestors_ts.num_samples)
             self.assertTrue(np.array_equal(ancestors_ts.genotype_matrix(), A))
             inferred_ts = tsinfer.match_samples(
-                sample_data, ancestors_ts, engine=engine)
-            self.assertTrue(np.array_equal(
-                inferred_ts.genotype_matrix(), ts.genotype_matrix()))
+                sample_data, ancestors_ts, engine=engine
+            )
+            self.assertTrue(
+                np.array_equal(inferred_ts.genotype_matrix(), ts.genotype_matrix())
+            )
 
     def test_no_recombination(self):
         ts = msprime.simulate(
-            20, length=1, recombination_rate=0, mutation_rate=1,
-            random_seed=1, model="smc_prime")
+            20,
+            length=1,
+            recombination_rate=0,
+            mutation_rate=1,
+            random_seed=1,
+            model="smc_prime",
+        )
         assert ts.num_sites > 0 and ts.num_sites < 50
         self.verify_inserted_ancestors(ts)
 
     def test_small_sample_high_recombination(self):
         ts = msprime.simulate(
-            4, length=1, recombination_rate=5, mutation_rate=1,
-            random_seed=1, model="smc_prime")
+            4,
+            length=1,
+            recombination_rate=5,
+            mutation_rate=1,
+            random_seed=1,
+            model="smc_prime",
+        )
         assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
         self.verify_inserted_ancestors(ts)
 
     def test_high_recombination(self):
         ts = msprime.simulate(
-            30, length=1, recombination_rate=5, mutation_rate=1,
-            random_seed=1, model="smc_prime")
+            30,
+            length=1,
+            recombination_rate=5,
+            mutation_rate=1,
+            random_seed=1,
+            model="smc_prime",
+        )
         assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
         self.verify_inserted_ancestors(ts)
 
@@ -895,6 +979,7 @@ class TestBuildAncestors(unittest.TestCase):
     """
     Tests for the generate_ancestors function.
     """
+
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
@@ -927,8 +1012,8 @@ class TestBuildAncestors(unittest.TestCase):
             a = ancestors[j]
             self.assertEqual(a.shape[0], end[j] - start[j])
             h = np.zeros(ancestor_data.num_sites, dtype=np.uint8)
-            h[start[j]: end[j]] = a
-            self.assertTrue(np.all(h[start[j]:end[j]] != tskit.MISSING_DATA))
+            h[start[j] : end[j]] = a
+            self.assertTrue(np.all(h[start[j] : end[j]] != tskit.MISSING_DATA))
             self.assertTrue(np.all(h[focal_sites[j]] == 1))
             used_sites.extend(focal_sites[j])
             self.assertGreater(times[j], 0)
@@ -941,10 +1026,12 @@ class TestBuildAncestors(unittest.TestCase):
         self.assertEqual(ancestor_data.num_provenances, sample_data.num_provenances + 1)
         for j in range(sample_data.num_provenances):
             self.assertEqual(
-                ancestor_data.provenances_record[j], sample_data.provenances_record[j])
+                ancestor_data.provenances_record[j], sample_data.provenances_record[j]
+            )
             self.assertEqual(
                 ancestor_data.provenances_timestamp[j],
-                sample_data.provenances_timestamp[j])
+                sample_data.provenances_timestamp[j],
+            )
 
     def test_simulated_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=10, random_seed=10)
@@ -954,7 +1041,8 @@ class TestBuildAncestors(unittest.TestCase):
 
     def test_simulated_recombination(self):
         ts = msprime.simulate(
-            10, recombination_rate=10, mutation_rate=10, random_seed=10)
+            10, recombination_rate=10, mutation_rate=10, random_seed=10
+        )
         self.assertGreater(ts.num_sites, 10)
         sample_data, ancestor_data = self.get_simulated_example(ts)
         self.verify_ancestors(sample_data, ancestor_data)
@@ -979,12 +1067,17 @@ class TestAncestorsTreeSequence(unittest.TestCase):
     """
     Tests for the output of the match_ancestors function.
     """
+
     def verify(self, sample_data, mutation_rate=None, recombination_rate=None):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         for path_compression in [True, False]:
             ancestors_ts = tsinfer.match_ancestors(
-                sample_data, ancestor_data, path_compression=path_compression,
-                mutation_rate=mutation_rate, recombination_rate=recombination_rate)
+                sample_data,
+                ancestor_data,
+                path_compression=path_compression,
+                mutation_rate=mutation_rate,
+                recombination_rate=recombination_rate,
+            )
             tsinfer.check_ancestors_ts(ancestors_ts)
             tables = ancestors_ts.dump_tables()
 
@@ -992,25 +1085,33 @@ class TestAncestorsTreeSequence(unittest.TestCase):
             tables.compute_mutation_parents()
             self.assertTrue(
                 np.array_equal(
-                    ancestors_ts.tables.mutations.parent, tables.mutations.parent))
-            self.assertTrue(np.array_equal(
-                tables.sites.position, ancestor_data.sites_position[:]))
+                    ancestors_ts.tables.mutations.parent, tables.mutations.parent
+                )
+            )
+            self.assertTrue(
+                np.array_equal(tables.sites.position, ancestor_data.sites_position[:])
+            )
 
             self.assertEqual(ancestors_ts.num_samples, ancestor_data.num_ancestors)
             H = ancestors_ts.genotype_matrix().T
             for ancestor in ancestor_data.ancestors():
-                self.assertTrue(np.array_equal(
-                    H[ancestor.id, ancestor.start: ancestor.end],
-                    ancestor.haplotype))
+                self.assertTrue(
+                    np.array_equal(
+                        H[ancestor.id, ancestor.start : ancestor.end],
+                        ancestor.haplotype,
+                    )
+                )
 
             # The provenance should be same as in the ancestors data file, plus an
             # extra row.
             self.assertEqual(
-                ancestor_data.num_provenances + 1, ancestors_ts.num_provenances)
+                ancestor_data.num_provenances + 1, ancestors_ts.num_provenances
+            )
             for j in range(ancestor_data.num_provenances):
                 p = ancestors_ts.provenance(j)
                 self.assertEqual(
-                    ancestor_data.provenances_record[j], json.loads(p.record))
+                    ancestor_data.provenances_record[j], json.loads(p.record)
+                )
                 self.assertEqual(ancestor_data.provenances_timestamp[j], p.timestamp)
 
     def test_no_recombination(self):
@@ -1021,7 +1122,9 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
 
     def test_recombination(self):
-        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        ts = msprime.simulate(
+            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
         self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
@@ -1042,8 +1145,11 @@ class TestAncestorsTreeSequence(unittest.TestCase):
     def test_acgt_mutations(self):
         ts = msprime.simulate(10, recombination_rate=2, random_seed=233)
         ts = msprime.mutate(
-            ts, rate=2, random_seed=1234,
-            model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
+            ts,
+            rate=2,
+            random_seed=1234,
+            model=msprime.InfiniteSites(msprime.NUCLEOTIDES),
+        )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
         self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
@@ -1061,15 +1167,20 @@ class TestAncestorsTreeSequenceFlags(unittest.TestCase):
     Checks that arbitrary flags can be set in the ancestors tree
     sequence and recovered in the final ts.
     """
+
     def verify(self, sample_data, ancestors_ts):
         source_flags = ancestors_ts.tables.nodes.flags
         for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
             for path_compression in [True, False]:
                 ts = tsinfer.match_samples(
-                    sample_data, ancestors_ts, path_compression=path_compression,
-                    simplify=False, engine=engine)
+                    sample_data,
+                    ancestors_ts,
+                    path_compression=path_compression,
+                    simplify=False,
+                    engine=engine,
+                )
                 nodes = ts.tables.nodes
-                flags = nodes.flags[:source_flags.shape[0]]
+                flags = nodes.flags[: source_flags.shape[0]]
                 # Anything that's marked as a sample in the ancestors should be a
                 # 0 in the final outout
                 samples = np.where(source_flags == 1)[0]
@@ -1079,14 +1190,18 @@ class TestAncestorsTreeSequenceFlags(unittest.TestCase):
                 self.assertTrue(np.all(flags[non_samples] == source_flags[non_samples]))
 
     def test_no_flags_changes(self):
-        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        ts = msprime.simulate(
+            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        )
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
         self.verify(samples, ancestors_ts)
 
     def test_append_nodes(self):
-        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        ts = msprime.simulate(
+            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        )
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
@@ -1103,11 +1218,13 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
     Checks that we can have individuals in the ancestors tree sequence and
     that they are correctly preserved in the final TS.
     """
+
     def verify(self, sample_data, ancestors_ts):
         ts = tsinfer.match_samples(sample_data, ancestors_ts, simplify=False)
         self.assertEqual(
             ancestors_ts.num_individuals + sample_data.num_individuals,
-            ts.num_individuals)
+            ts.num_individuals,
+        )
         # The ancestors individiduals should come first.
         final_individuals = ts.individuals()
         for ind in ancestors_ts.individuals():
@@ -1127,14 +1244,18 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
                 self.assertTrue(node.is_sample())
 
     def test_zero_individuals(self):
-        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        ts = msprime.simulate(
+            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        )
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
         self.verify(samples, ancestors_ts)
 
     def test_diploid_individuals(self):
-        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
+        ts = msprime.simulate(
+            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        )
         tables = ts.dump_tables()
         for j in range(ts.num_samples // 2):
             tables.individuals.add_row(flags=j, location=[j, j], metadata=b"X" * j)
@@ -1144,9 +1265,8 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
         individual[2 * x] = x
         individual[2 * x + 1] = x
         tables.nodes.set_columns(
-            flags=tables.nodes.flags,
-            time=tables.nodes.time,
-            individual=individual)
+            flags=tables.nodes.flags, time=tables.nodes.time, individual=individual
+        )
         ts = tables.tree_sequence()
         with tsinfer.SampleData() as samples:
             for j in range(ts.num_samples // 2):
@@ -1162,6 +1282,7 @@ class AlgorithmsExactlyEqualMixin(object):
     For small example tree sequences, check that the Python and C implementations
     return precisely the same tree sequence when fed with perfect mutations.
     """
+
     path_compression_enabled = True
     precision = None
 
@@ -1175,24 +1296,37 @@ class AlgorithmsExactlyEqualMixin(object):
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, engine=engine,
+            sample_data,
+            ancestor_data,
+            engine=engine,
             path_compression=path_compression,
             precision=precision,
-            extended_checks=True)
+            extended_checks=True,
+        )
         inferred_ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, engine=engine, simplify=True,
+            sample_data,
+            ancestors_ts,
+            engine=engine,
+            simplify=True,
             path_compression=path_compression,
             precision=precision,
-            extended_checks=True)
+            extended_checks=True,
+        )
         return inferred_ts
 
     def verify(self, ts):
         tsp = self.infer(
-            ts, tsinfer.PY_ENGINE, path_compression=self.path_compression_enabled,
-            precision=self.precision)
+            ts,
+            tsinfer.PY_ENGINE,
+            path_compression=self.path_compression_enabled,
+            precision=self.precision,
+        )
         tsc = self.infer(
-            ts, tsinfer.C_ENGINE, path_compression=self.path_compression_enabled,
-            precision=self.precision)
+            ts,
+            tsinfer.C_ENGINE,
+            path_compression=self.path_compression_enabled,
+            precision=self.precision,
+        )
         self.assertEqual(ts.num_sites, tsp.num_sites)
         self.assertEqual(ts.num_sites, tsc.num_sites)
         self.assertEqual(tsc.num_samples, tsp.num_samples)
@@ -1212,70 +1346,93 @@ class AlgorithmsExactlyEqualMixin(object):
     def test_three_samples(self):
         for seed in range(10):
             ts = msprime.simulate(
-                3, recombination_rate=1, random_seed=seed + 1, model="smc_prime")
+                3, recombination_rate=1, random_seed=seed + 1, model="smc_prime"
+            )
             ts = tsinfer.insert_perfect_mutations(ts)
             self.verify(ts)
 
     def test_four_samples(self):
         for seed in range(5):
             ts = msprime.simulate(
-                4, recombination_rate=0.1, random_seed=seed + 1, length=10,
-                model="smc_prime")
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+                4,
+                recombination_rate=0.1,
+                random_seed=seed + 1,
+                length=10,
+                model="smc_prime",
+            )
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     def test_five_samples(self):
         for seed in range(5):
             ts = msprime.simulate(
-                5, recombination_rate=0.1, random_seed=seed + 100, length=10,
-                model="smc_prime")
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+                5,
+                recombination_rate=0.1,
+                random_seed=seed + 100,
+                length=10,
+                model="smc_prime",
+            )
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     def test_ten_samples(self):
         for seed in range(5):
             ts = msprime.simulate(
-                10, recombination_rate=0.1, random_seed=seed + 200, length=10,
-                model="smc_prime")
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+                10,
+                recombination_rate=0.1,
+                random_seed=seed + 200,
+                length=10,
+                model="smc_prime",
+            )
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     def test_twenty_samples(self):
         for seed in range(5):
             ts = msprime.simulate(
-                20, recombination_rate=0.1, random_seed=seed + 500, length=10,
-                model="smc_prime")
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1/8192)
+                20,
+                recombination_rate=0.1,
+                random_seed=seed + 500,
+                length=10,
+                model="smc_prime",
+            )
+            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
 
 class TestAlgorithmsExactlyEqualNoPathCompression(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     path_compression_enabled = False
 
 
 class TestAlgorithmsExactlyEqualPathCompression(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     path_compression_enabled = True
 
 
 class TestAlgorithmsExactlyEqualPrecision24(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     precision = 24
 
 
 class TestAlgorithmsExactlyEqualPrecision6(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     precision = 6
 
 
 class TestAlgorithmsExactlyEqualPrecision1(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     precision = 1
 
 
 class TestAlgorithmsExactlyEqualPrecision0(
-        unittest.TestCase, AlgorithmsExactlyEqualMixin):
+    unittest.TestCase, AlgorithmsExactlyEqualMixin
+):
     precision = 0
 
 
@@ -1283,6 +1440,7 @@ class TestAlgorithmDebugOutput(unittest.TestCase):
     """
     Test routines used to debug output from the algorithm
     """
+
     def sample_example(self, n_samples, n_sites):
         G, positions = get_random_data_example(n_samples, n_sites)
         sample_data = tsinfer.SampleData(sequence_length=n_sites)
@@ -1298,7 +1456,7 @@ class TestAlgorithmDebugOutput(unittest.TestCase):
         ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
         for j, variant in enumerate(sample_data.variants(inference_sites=True)):
             ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
-        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+        with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
             ancestor_builder.print_state()
             # Simply check some text is output
             self.assertTrue(isinstance(mockOutput.getvalue(), str))
@@ -1308,9 +1466,10 @@ class TestAlgorithmDebugOutput(unittest.TestCase):
         sample_data = self.sample_example(20, 50)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         matcher_container = tsinfer.AncestorMatcher(
-            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
+            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE
+        )
         matcher_container.match_ancestors()
-        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+        with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
             matcher_container.matcher[0].print_state()
             # Simply check some text is output
             self.assertTrue(isinstance(mockOutput.getvalue(), str))
@@ -1320,9 +1479,10 @@ class TestAlgorithmDebugOutput(unittest.TestCase):
         sample_data = self.sample_example(20, 50)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         matcher_container = tsinfer.AncestorMatcher(
-            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE)
+            sample_data, ancestor_data, engine=tsinfer.PY_ENGINE
+        )
         matcher_container.match_ancestors()
-        with mock.patch('sys.stdout', new=io.StringIO()) as mockOutput:
+        with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
             matcher_container.tree_sequence_builder.print_state()
             # Simply check some text is output
             self.assertTrue(isinstance(mockOutput.getvalue(), str))
@@ -1334,8 +1494,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
     Tests for copying process behaviour when we have partially
     defined ancestors.
     """
-    def verify_edges(self, sample_data, ancestor_data, expected_edges):
 
+    def verify_edges(self, sample_data, ancestor_data, expected_edges):
         def edge_to_tuple(e):
             return (float(e.left), float(e.right), e.parent, e.child)
 
@@ -1343,7 +1503,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
             ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
             self.assertEqual(
                 sorted([edge_to_tuple(e) for e in expected_edges]),
-                sorted([edge_to_tuple(e) for e in ts.edges()]))
+                sorted([edge_to_tuple(e) for e in ts.edges()]),
+            )
 
     def test_easy_case(self):
         num_sites = 6
@@ -1354,18 +1515,32 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=6, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0])
+            start=0, end=6, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0]
+        )
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=6, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0])
+            start=0, end=6, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0]
+        )
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], time=3,
-            haplotype=[0, 0, 1, -1, -1, -1][0: 3])
+            start=0,
+            end=3,
+            focal_sites=[2],
+            time=3,
+            haplotype=[0, 0, 1, -1, -1, -1][0:3],
+        )
         ancestor_data.add_ancestor(  # ID 3
-            start=3, end=6, focal_sites=[4], time=2,
-            haplotype=[-1, -1, -1, 0, 1, 0][3: 6])
+            start=3,
+            end=6,
+            focal_sites=[4],
+            time=2,
+            haplotype=[-1, -1, -1, 0, 1, 0][3:6],
+        )
         ancestor_data.add_ancestor(  # ID 4
-            start=0, end=6, focal_sites=[0, 1, 3, 5], time=1,
-            haplotype=[1, 1, 1, 1, 1, 1])
+            start=0,
+            end=6,
+            focal_sites=[0, 1, 3, 5],
+            time=1,
+            haplotype=[1, 1, 1, 1, 1, 1],
+        )
         ancestor_data.finalise()
 
         expected_edges = [
@@ -1373,7 +1548,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
             tskit.Edge(0, 3, 2, 4),
             tskit.Edge(3, 6, 3, 4),
             tskit.Edge(3, 6, 1, 3),
-            tskit.Edge(0, 3, 1, 2)]
+            tskit.Edge(0, 3, 1, 2),
+        ]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
     def test_partial_overlap(self):
@@ -1385,18 +1561,32 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=7, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0, 0])
+            start=0, end=7, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0, 0]
+        )
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=7, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0, 0])
+            start=0, end=7, focal_sites=[], time=4, haplotype=[0, 0, 0, 0, 0, 0, 0]
+        )
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=3, focal_sites=[2], time=3,
-            haplotype=[0, 0, 1, 0, 0, 0, 0][0: 3])
+            start=0,
+            end=3,
+            focal_sites=[2],
+            time=3,
+            haplotype=[0, 0, 1, 0, 0, 0, 0][0:3],
+        )
         ancestor_data.add_ancestor(  # ID 3
-            start=3, end=7, focal_sites=[4, 6], time=2,
-            haplotype=[-1, -1, -1, 0, 1, 0, 1][3: 7])
+            start=3,
+            end=7,
+            focal_sites=[4, 6],
+            time=2,
+            haplotype=[-1, -1, -1, 0, 1, 0, 1][3:7],
+        )
         ancestor_data.add_ancestor(  # ID 4
-            start=0, end=7, focal_sites=[0, 1, 3, 5], time=1,
-            haplotype=[1, 1, 1, 1, 1, 1, 1])
+            start=0,
+            end=7,
+            focal_sites=[0, 1, 3, 5],
+            time=1,
+            haplotype=[1, 1, 1, 1, 1, 1, 1],
+        )
         ancestor_data.finalise()
 
         expected_edges = [
@@ -1404,7 +1594,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
             tskit.Edge(0, 3, 2, 4),
             tskit.Edge(3, 7, 3, 4),
             tskit.Edge(3, 7, 1, 3),
-            tskit.Edge(0, 3, 1, 2)]
+            tskit.Edge(0, 3, 1, 2),
+        ]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
     def test_edge_overlap_bug(self):
@@ -1415,29 +1606,61 @@ class TestPartialAncestorMatching(unittest.TestCase):
         ancestor_data = tsinfer.AncestorData(sample_data)
 
         ancestor_data.add_ancestor(  # ID 0
-            start=0, end=12, focal_sites=[], time=8,
-            haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            start=0,
+            end=12,
+            focal_sites=[],
+            time=8,
+            haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        )
         ancestor_data.add_ancestor(  # ID 1
-            start=0, end=12, focal_sites=[], time=7,
-            haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            start=0,
+            end=12,
+            focal_sites=[],
+            time=7,
+            haplotype=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        )
         ancestor_data.add_ancestor(  # ID 2
-            start=0, end=4, focal_sites=[], time=6,
-            haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
+            start=0,
+            end=4,
+            focal_sites=[],
+            time=6,
+            haplotype=[0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1][0:4],
+        )
         ancestor_data.add_ancestor(  # ID 3
-            start=4, end=12, focal_sites=[], time=5,
-            haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0][4: 12])
+            start=4,
+            end=12,
+            focal_sites=[],
+            time=5,
+            haplotype=[-1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0][4:12],
+        )
         ancestor_data.add_ancestor(  # ID 4
-            start=8, end=12, focal_sites=[9, 11], time=4,
-            haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1][8: 12])
+            start=8,
+            end=12,
+            focal_sites=[9, 11],
+            time=4,
+            haplotype=[-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, 1][8:12],
+        )
         ancestor_data.add_ancestor(  # ID 5
-            start=4, end=8, focal_sites=[5, 7], time=3,
-            haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1][4: 8])
+            start=4,
+            end=8,
+            focal_sites=[5, 7],
+            time=3,
+            haplotype=[-1, -1, -1, -1, 0, 1, 0, 1, -1, -1, -1, -1][4:8],
+        )
         ancestor_data.add_ancestor(  # ID 6
-            start=0, end=4, focal_sites=[1, 3], time=2,
-            haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1][0: 4])
+            start=0,
+            end=4,
+            focal_sites=[1, 3],
+            time=2,
+            haplotype=[0, 1, 0, 1, -1, -1, -1, -1, -1, -1, -1, -1][0:4],
+        )
         ancestor_data.add_ancestor(  # ID 7
-            start=0, end=12, focal_sites=[0, 2, 4, 6, 8, 10], time=1,
-            haplotype=[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0])
+            start=0,
+            end=12,
+            focal_sites=[0, 2, 4, 6, 8, 10],
+            time=1,
+            haplotype=[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0],
+        )
         ancestor_data.finalise()
 
         expected_edges = [
@@ -1449,7 +1672,8 @@ class TestPartialAncestorMatching(unittest.TestCase):
             tskit.Edge(0, 4, 1, 6),
             tskit.Edge(0, 5, 1, 7),
             tskit.Edge(5, 8, 5, 7),
-            tskit.Edge(8, 12, 1, 7)]
+            tskit.Edge(8, 12, 1, 7),
+        ]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
 
 
@@ -1457,6 +1681,7 @@ class TestBadEngine(unittest.TestCase):
     """
     Check that we catch bad engines parameters.
     """
+
     bad_engines = ["CCCC", "c", "p", "Py", "python"]
 
     def get_example(self):
@@ -1472,15 +1697,20 @@ class TestBadEngine(unittest.TestCase):
         sample_data = self.get_example()
         for bad_engine in self.bad_engines:
             self.assertRaises(
-                ValueError, tsinfer.generate_ancestors, sample_data, engine=bad_engine)
+                ValueError, tsinfer.generate_ancestors, sample_data, engine=bad_engine
+            )
 
     def test_match_ancestors(self):
         sample_data = self.get_example()
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         for bad_engine in self.bad_engines:
             self.assertRaises(
-                ValueError, tsinfer.match_ancestors, sample_data, ancestor_data,
-                engine=bad_engine)
+                ValueError,
+                tsinfer.match_ancestors,
+                sample_data,
+                ancestor_data,
+                engine=bad_engine,
+            )
 
     def test_match_samples(self):
         sample_data = self.get_example()
@@ -1488,8 +1718,12 @@ class TestBadEngine(unittest.TestCase):
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         for bad_engine in self.bad_engines:
             self.assertRaises(
-                ValueError, tsinfer.match_samples, sample_data, ancestors_ts,
-                engine=bad_engine)
+                ValueError,
+                tsinfer.match_samples,
+                sample_data,
+                ancestors_ts,
+                engine=bad_engine,
+            )
 
 
 class TestWrongAncestorsTreeSequence(unittest.TestCase):
@@ -1498,6 +1732,7 @@ class TestWrongAncestorsTreeSequence(unittest.TestCase):
     as the ancestrors_ts.
     Initial issue: https://github.com/tskit-dev/tsinfer/issues/53
     """
+
     def test_wrong_ts_match_samples(self):
         sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
@@ -1559,6 +1794,7 @@ class TestSimplify(unittest.TestCase):
     """
     Check that the simplify argument to infer is correctly invoked.
     """
+
     def verify(self, ts):
         n = ts.num_samples
         self.assertGreater(ts.num_sites, 2)
@@ -1573,8 +1809,8 @@ class TestSimplify(unittest.TestCase):
         # the samples should be zero to N - n up to n
         ts2 = tsinfer.infer(sd, simplify=False, path_compression=False)
         self.assertEqual(
-            list(ts2.samples()),
-            list(range(ts2.num_nodes - n, ts2.num_nodes)))
+            list(ts2.samples()), list(range(ts2.num_nodes - n, ts2.num_nodes))
+        )
 
         # Check that we're calling simplify with the correct arguments.
         ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
@@ -1599,6 +1835,7 @@ class TestMatchSiteSubsets(unittest.TestCase):
     Tests that we can successfully run the algorithm on data in which we have
     a subset of the original sites.
     """
+
     def subset_sites(self, ts, position):
         """
         Return a copy of the specified tree sequence with sites reduced to those
@@ -1611,13 +1848,18 @@ class TestMatchSiteSubsets(unittest.TestCase):
         for site in ts.sites():
             if site.position in lookup:
                 site_id = tables.sites.add_row(
-                    site.position, ancestral_state=site.ancestral_state,
-                    metadata=site.metadata)
+                    site.position,
+                    ancestral_state=site.ancestral_state,
+                    metadata=site.metadata,
+                )
                 for mutation in site.mutations:
                     tables.mutations.add_row(
-                        site_id, node=mutation.node, parent=mutation.parent,
+                        site_id,
+                        node=mutation.node,
+                        parent=mutation.parent,
                         derived_state=mutation.derived_state,
-                        metadata=mutation.metadata)
+                        metadata=mutation.metadata,
+                    )
         self.assertTrue(np.array_equal(tables.sites.position, position))
         return tables.tree_sequence()
 
@@ -1627,12 +1869,14 @@ class TestMatchSiteSubsets(unittest.TestCase):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         subset_ancestors_ts = tsinfer.minimise(
-            self.subset_sites(ancestors_ts, position_subset))
+            self.subset_sites(ancestors_ts, position_subset)
+        )
         subset_ancestors_ts = subset_ancestors_ts.simplify()
         subset_sample_data = tsinfer.SampleData.from_tree_sequence(subset_ts)
         output_ts = tsinfer.match_samples(subset_sample_data, subset_ancestors_ts)
         self.assertTrue(
-            np.array_equal(output_ts.genotype_matrix(), subset_ts.genotype_matrix()))
+            np.array_equal(output_ts.genotype_matrix(), subset_ts.genotype_matrix())
+        )
 
     def test_simple_case(self):
         ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=3)
@@ -1668,6 +1912,7 @@ class PathCompressionMixin(object):
     """
     Common utilities for testing a tree sequence with path compression.
     """
+
     def verify_tree_sequence(self, ts):
         pc_nodes = [node for node in ts.nodes() if tsinfer.is_pc_ancestor(node.flags)]
         self.assertGreater(len(pc_nodes), 0)
@@ -1691,7 +1936,8 @@ class PathCompressionMixin(object):
             left = child_edges[0].left
             right = child_edges[-1].right
             original_matches = [
-                e for e in parent_edges if e.left == left and e.right == right]
+                e for e in parent_edges if e.left == left and e.right == right
+            ]
             # We must have at least two initial edges that exactly span the
             # pc interval.
             self.assertGreater(len(original_matches), 1)
@@ -1730,28 +1976,36 @@ class PathCompressionAncestorsMixin(PathCompressionMixin):
     """
     Tests for the results of path compression on an ancestors tree sequence.
     """
+
     def verify(self, sample_data):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, engine=self.engine, extended_checks=True)
+            sample_data, ancestor_data, engine=self.engine, extended_checks=True
+        )
         self.verify_tree_sequence(ts)
 
 
 class TestPathCompressionAncestorsPyEngine(
-        PathCompressionAncestorsMixin, unittest.TestCase):
+    PathCompressionAncestorsMixin, unittest.TestCase
+):
     engine = tsinfer.PY_ENGINE
 
 
 class TestPathCompressionAncestorsCEngine(
-        PathCompressionAncestorsMixin, unittest.TestCase):
+    PathCompressionAncestorsMixin, unittest.TestCase
+):
     engine = tsinfer.C_ENGINE
 
     def test_c_engine_fail_example(self):
         # Reproduce a failure that occured under the C engine.
         ts = msprime.simulate(
-            20, Ne=10**4, length=0.25 * 10**6,
-            recombination_rate=1e-8, mutation_rate=1e-8,
-            random_seed=4)
+            20,
+            Ne=10 ** 4,
+            length=0.25 * 10 ** 6,
+            recombination_rate=1e-8,
+            mutation_rate=1e-8,
+            random_seed=4,
+        )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
 
@@ -1760,25 +2014,31 @@ class PathCompressionSamplesMixin(PathCompressionMixin):
     """
     Tests for the results of path compression just on samples.
     """
+
     def verify(self, sample_data):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         # Turn off path compression in the ancestors to make this as difficult
         # as possible.
         ancestors_ts = tsinfer.match_ancestors(
-            sample_data, ancestor_data, path_compression=False)
+            sample_data, ancestor_data, path_compression=False
+        )
         ts = tsinfer.match_samples(
-            sample_data, ancestors_ts, path_compression=True, engine=self.engine,
-            extended_checks=True)
+            sample_data,
+            ancestors_ts,
+            path_compression=True,
+            engine=self.engine,
+            extended_checks=True,
+        )
         self.verify_tree_sequence(ts)
 
 
 class TestPathCompressionSamplesPyEngine(
-        PathCompressionSamplesMixin, unittest.TestCase):
+    PathCompressionSamplesMixin, unittest.TestCase
+):
     engine = tsinfer.PY_ENGINE
 
 
-class TestPathCompressionSamplesCEngine(
-        PathCompressionSamplesMixin, unittest.TestCase):
+class TestPathCompressionSamplesCEngine(PathCompressionSamplesMixin, unittest.TestCase):
     engine = tsinfer.C_ENGINE
 
 
@@ -1786,22 +2046,25 @@ class PathCompressionFullStackMixin(PathCompressionMixin):
     """
     Tests for the results of path compression just on samples.
     """
+
     def verify(self, sample_data):
         # We have to turn off simplify because it'll sometimes remove chunks
         # of pc ancestors, breaking out continguity requirements.
         ts = tsinfer.infer(
-            sample_data, path_compression=True, engine=self.engine,
-            simplify=False)
+            sample_data, path_compression=True, engine=self.engine, simplify=False
+        )
         self.verify_tree_sequence(ts)
 
 
 class TestPathCompressionFullStackPyEngine(
-        PathCompressionFullStackMixin, unittest.TestCase):
+    PathCompressionFullStackMixin, unittest.TestCase
+):
     engine = tsinfer.PY_ENGINE
 
 
 class TestPathCompressionFullStackCEngine(
-        PathCompressionFullStackMixin, unittest.TestCase):
+    PathCompressionFullStackMixin, unittest.TestCase
+):
     engine = tsinfer.C_ENGINE
 
 
@@ -1809,6 +2072,7 @@ class TestFlags(unittest.TestCase):
     """
     Tests if we can set and detect the pc node flag correctly.
     """
+
     PC_BIT_POSITION = 16
     SRB_BIT_POSITION = 17
 
@@ -1836,16 +2100,28 @@ class TestFlags(unittest.TestCase):
         self.assertEqual(tsinfer.count_pc_ancestors([0]), 0)
         self.assertEqual(tsinfer.count_pc_ancestors([tsinfer.NODE_IS_PC_ANCESTOR]), 1)
         self.assertEqual(tsinfer.count_pc_ancestors([0, 0]), 0)
-        self.assertEqual(tsinfer.count_pc_ancestors([0, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
-        self.assertEqual(tsinfer.count_pc_ancestors(
-            [tsinfer.NODE_IS_PC_ANCESTOR, tsinfer.NODE_IS_PC_ANCESTOR]), 2)
-        self.assertEqual(tsinfer.count_pc_ancestors([1, tsinfer.NODE_IS_PC_ANCESTOR]), 1)
-        self.assertEqual(tsinfer.count_pc_ancestors(
-            [1 | tsinfer.NODE_IS_PC_ANCESTOR, 1 | tsinfer.NODE_IS_PC_ANCESTOR]), 2)
+        self.assertEqual(
+            tsinfer.count_pc_ancestors([0, tsinfer.NODE_IS_PC_ANCESTOR]), 1
+        )
+        self.assertEqual(
+            tsinfer.count_pc_ancestors(
+                [tsinfer.NODE_IS_PC_ANCESTOR, tsinfer.NODE_IS_PC_ANCESTOR]
+            ),
+            2,
+        )
+        self.assertEqual(
+            tsinfer.count_pc_ancestors([1, tsinfer.NODE_IS_PC_ANCESTOR]), 1
+        )
+        self.assertEqual(
+            tsinfer.count_pc_ancestors(
+                [1 | tsinfer.NODE_IS_PC_ANCESTOR, 1 | tsinfer.NODE_IS_PC_ANCESTOR]
+            ),
+            2,
+        )
 
     def test_count_srb_ancestors_random(self):
         np.random.seed(42)
-        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
+        flags = np.random.randint(0, high=2 ** 32, size=100, dtype=np.uint32)
         count = sum(map(tsinfer.is_srb_ancestor, flags))
         self.assertEqual(count, tsinfer.count_srb_ancestors(flags))
 
@@ -1873,18 +2149,28 @@ class TestFlags(unittest.TestCase):
         self.assertEqual(tsinfer.count_srb_ancestors([0]), 0)
         self.assertEqual(tsinfer.count_srb_ancestors([tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
         self.assertEqual(tsinfer.count_srb_ancestors([0, 0]), 0)
-        self.assertEqual(tsinfer.count_srb_ancestors(
-            [0, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
-        self.assertEqual(tsinfer.count_srb_ancestors(
-            [tsinfer.NODE_IS_SRB_ANCESTOR, tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
-        self.assertEqual(tsinfer.count_srb_ancestors(
-            [1, tsinfer.NODE_IS_SRB_ANCESTOR]), 1)
-        self.assertEqual(tsinfer.count_srb_ancestors(
-            [1 | tsinfer.NODE_IS_SRB_ANCESTOR, 1 | tsinfer.NODE_IS_SRB_ANCESTOR]), 2)
+        self.assertEqual(
+            tsinfer.count_srb_ancestors([0, tsinfer.NODE_IS_SRB_ANCESTOR]), 1
+        )
+        self.assertEqual(
+            tsinfer.count_srb_ancestors(
+                [tsinfer.NODE_IS_SRB_ANCESTOR, tsinfer.NODE_IS_SRB_ANCESTOR]
+            ),
+            2,
+        )
+        self.assertEqual(
+            tsinfer.count_srb_ancestors([1, tsinfer.NODE_IS_SRB_ANCESTOR]), 1
+        )
+        self.assertEqual(
+            tsinfer.count_srb_ancestors(
+                [1 | tsinfer.NODE_IS_SRB_ANCESTOR, 1 | tsinfer.NODE_IS_SRB_ANCESTOR]
+            ),
+            2,
+        )
 
     def test_count_pc_ancestors_random(self):
         np.random.seed(42)
-        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
+        flags = np.random.randint(0, high=2 ** 32, size=100, dtype=np.uint32)
         count = sum(map(tsinfer.is_pc_ancestor, flags))
         self.assertEqual(count, tsinfer.count_pc_ancestors(flags))
 
@@ -1893,12 +2179,12 @@ class TestBugExamples(unittest.TestCase):
     """
     Run tests on some examples that provoked bugs.
     """
+
     @unittest.skip("Need to update example files")
     def test_path_compression_parent_child_identical_times(self):
         # This provoked a bug in which we created a pc ancestor
         # with the same time as its child, creating an invalid topology.
-        sample_data = tsinfer.load(
-            "tests/data/bugs/invalid_pc_ancestor_time.samples")
+        sample_data = tsinfer.load("tests/data/bugs/invalid_pc_ancestor_time.samples")
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             self.assertTrue(np.array_equal(var.genotypes, genotypes))
@@ -1907,9 +2193,10 @@ class TestBugExamples(unittest.TestCase):
     def test_path_compression_parent_child_small_times(self):
         # If we allow the user to set variant times, they might create a pair of
         # parent & child ancestors that are separated by < PC_ANCESTOR_INCREMENT
-        PC_ANCESTOR_INCREMENT = (1.0 / 65536)  # From tree_sequence_builder.c
+        PC_ANCESTOR_INCREMENT = 1.0 / 65536  # From tree_sequence_builder.c
         ts = msprime.simulate(
-            10, recombination_rate=10, mutation_rate=5, random_seed=123)
+            10, recombination_rate=10, mutation_rate=5, random_seed=123
+        )
         # adjust the intermediate node times to squish them all together
         tables = ts.dump_tables()
         times = tables.nodes.time[:]
@@ -1917,7 +2204,7 @@ class TestBugExamples(unittest.TestCase):
         min_time = np.min(times[adjust_times])
         time_order = np.argsort(times[adjust_times])
         # Set < PC_ANCESTOR_INCREMENT apart
-        times[adjust_times] = min_time + (time_order+1) * PC_ANCESTOR_INCREMENT/2
+        times[adjust_times] = min_time + (time_order + 1) * PC_ANCESTOR_INCREMENT / 2
         tables.nodes.time = times
         new_ts = tables.tree_sequence()
         sample_data = tsinfer.SampleData.from_tree_sequence(new_ts)
@@ -1979,7 +2266,8 @@ class TestVerify(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
             for var in ts.variants():
                 samples.add_site(
-                    position=var.site.position + 1e-6, genotypes=var.genotypes)
+                    position=var.site.position + 1e-6, genotypes=var.genotypes
+                )
 
         with self.assertRaises(ValueError):
             tsinfer.verify(samples, ts)
@@ -1991,8 +2279,10 @@ class TestVerify(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
             for var in ts.variants():
                 samples.add_site(
-                    position=var.site.position, alleles=["A", "T"],
-                    genotypes=var.genotypes)
+                    position=var.site.position,
+                    alleles=["A", "T"],
+                    genotypes=var.genotypes,
+                )
 
         with self.assertRaises(ValueError):
             tsinfer.verify(samples, ts)
@@ -2004,8 +2294,8 @@ class TestVerify(unittest.TestCase):
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
             for var in ts.variants():
                 samples.add_site(
-                    position=var.site.position, alleles=var.alleles,
-                    genotypes=[0, 0])
+                    position=var.site.position, alleles=var.alleles, genotypes=[0, 0]
+                )
 
         with self.assertRaises(ValueError):
             tsinfer.verify(samples, ts)
@@ -2016,12 +2306,14 @@ class TestExtractAncestors(unittest.TestCase):
     Checks whether the extract_ancestors function correctly returns an ancestors
     tree sequence with the required properties.
     """
+
     def verify(self, samples):
         ancestors = tsinfer.generate_ancestors(samples)
         # this ancestors TS has positions mapped only to inference sites
         ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
         ts = tsinfer.match_samples(
-            samples, ancestors_ts_1, path_compression=False, simplify=False)
+            samples, ancestors_ts_1, path_compression=False, simplify=False
+        )
         t1 = ancestors_ts_1.dump_tables()
 
         t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
@@ -2046,7 +2338,8 @@ class TestExtractAncestors(unittest.TestCase):
     def test_non_zero_one_mutations(self):
         ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
         ts = msprime.mutate(
-            ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15)
+            ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15
+        )
         self.assertGreater(ts.num_mutations, 0)
         self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_times=False))
 
@@ -2073,9 +2366,10 @@ class TestInsertSrbAncestors(unittest.TestCase):
         last_edge = edges[0]
         for edge in edges[1:]:
             condition = (
-                ts.node(edge.child).is_sample() and
-                edge.child == last_edge.child and
-                edge.left == last_edge.right)
+                ts.node(edge.child).is_sample()
+                and edge.child == last_edge.child
+                and edge.left == last_edge.right
+            )
             if condition:
                 key = edge.left, last_edge.parent, edge.parent
                 if key in srb_index:
@@ -2083,7 +2377,8 @@ class TestInsertSrbAncestors(unittest.TestCase):
                     srb_index[key] = (
                         count + 1,
                         max(left_bound, last_edge.left),
-                        min(right_bound, edge.right))
+                        min(right_bound, edge.right),
+                    )
                 else:
                     srb_index[key] = 1, last_edge.left, edge.right
             last_edge = edge
@@ -2149,16 +2444,19 @@ class TestAugmentedAncestors(unittest.TestCase):
     """
     Tests for augmenting an ancestors tree sequence with samples.
     """
+
     def verify_augmented_ancestors(
-            self, subset, ancestors_ts, augmented_ancestors, path_compression):
+        self, subset, ancestors_ts, augmented_ancestors, path_compression
+    ):
 
         t1 = ancestors_ts.dump_tables()
         t2 = augmented_ancestors.dump_tables()
         k = len(subset)
         m = len(t1.nodes)
         self.assertTrue(
-            np.all(t2.nodes.flags[m: m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR))
-        self.assertTrue(np.all(t2.nodes.time[m: m + k] == 1))
+            np.all(t2.nodes.flags[m : m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+        )
+        self.assertTrue(np.all(t2.nodes.time[m : m + k] == 1))
         for j, node_id in enumerate(subset):
             node = t2.nodes[m + j]
             self.assertEqual(node.flags, tsinfer.NODE_IS_SAMPLE_ANCESTOR)
@@ -2188,15 +2486,17 @@ class TestAugmentedAncestors(unittest.TestCase):
 
     def verify_example(self, subset, samples, ancestors, path_compression):
         ancestors_ts = tsinfer.match_ancestors(
-            samples, ancestors, path_compression=path_compression)
+            samples, ancestors, path_compression=path_compression
+        )
         augmented_ancestors = tsinfer.augment_ancestors(
-            samples, ancestors_ts, subset, path_compression=path_compression)
+            samples, ancestors_ts, subset, path_compression=path_compression
+        )
         self.verify_augmented_ancestors(
-            subset, ancestors_ts, augmented_ancestors, path_compression)
+            subset, ancestors_ts, augmented_ancestors, path_compression
+        )
 
         # Run the inference now
-        final_ts = tsinfer.match_samples(
-            samples, augmented_ancestors, simplify=False)
+        final_ts = tsinfer.match_samples(samples, augmented_ancestors, simplify=False)
         t1 = ancestors_ts.dump_tables()
         tables = final_ts.tables
         for j, index in enumerate(subset):
@@ -2208,7 +2508,8 @@ class TestAugmentedAncestors(unittest.TestCase):
             parent = edges[0].parent
             original_node = len(t1.nodes) + j
             self.assertEqual(
-                tables.nodes.flags[original_node], tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+                tables.nodes.flags[original_node], tsinfer.NODE_IS_SAMPLE_ANCESTOR
+            )
             # Most of the time the parent is the original node. However, in
             # simple cases it can be somewhere up the tree above it.
             if parent != original_node:
@@ -2289,20 +2590,25 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
     """
     Test that we can sequentially augment the ancestors.
     """
+
     def verify_example(self, full_subset, samples, ancestors, path_compression):
         ancestors_ts = tsinfer.match_ancestors(
-            samples, ancestors, path_compression=path_compression)
+            samples, ancestors, path_compression=path_compression
+        )
         expected_sample_ancestors = 0
         for j in range(1, len(full_subset)):
             subset = full_subset[:j]
             expected_sample_ancestors += len(subset)
             augmented_ancestors = tsinfer.augment_ancestors(
-                samples, ancestors_ts, subset, path_compression=path_compression)
+                samples, ancestors_ts, subset, path_compression=path_compression
+            )
             self.verify_augmented_ancestors(
-                subset, ancestors_ts, augmented_ancestors, path_compression)
+                subset, ancestors_ts, augmented_ancestors, path_compression
+            )
             # Run the inference now
             final_ts = tsinfer.match_samples(
-                samples, augmented_ancestors, simplify=False)
+                samples, augmented_ancestors, simplify=False
+            )
 
             # Make sure metadata has been preserved in the final ts.
             num_sample_ancestors = 0
@@ -2320,6 +2626,7 @@ class TestAlgorithmResults(unittest.TestCase):
     """
     Some features of the algorithm have expected outcomes in simple cases. Test these.
     """
+
     def verify_single_recombination_position(self, positions, G, breakpoint_index):
         with tsinfer.SampleData() as sample_data:
             for pos, genotypes in zip(positions, G):
@@ -2327,33 +2634,43 @@ class TestAlgorithmResults(unittest.TestCase):
         ts = tsinfer.infer(
             sample_data,
             # Temporarily set rho manually until issues/236 is addressed
-            recombination_rate=np.pad(np.diff(sample_data.sites_position[:]), (1, 0)))
+            recombination_rate=np.pad(np.diff(sample_data.sites_position[:]), (1, 0)),
+        )
         self.assertEqual(ts.num_trees, 2)
         breakpoint_pos = set(ts.breakpoints()) - set([0.0, ts.sequence_length])
-        self.assertEqual(breakpoint_pos, set([positions[breakpoint_index+1]]))
+        self.assertEqual(breakpoint_pos, set([positions[breakpoint_index + 1]]))
 
     def test_recombination_with_dist_high_freq_intermediate(self):
-        G = np.array([
-            [1, 1, 0, 0],
-            [1, 1, 1, 0],  # could break either side of this
-            [0, 1, 1, 0]])
+        G = np.array(
+            [
+                [1, 1, 0, 0],
+                [1, 1, 1, 0],  # could break either side of this
+                [0, 1, 1, 0],
+            ]
+        )
         self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
     def test_recombination_with_dist_low_freq_intermediate(self):
-        G = np.array([
-            [1, 1, 1, 0],
-            [1, 1, 0, 0],  # could break either side of this
-            [1, 1, 0, 1]])
+        G = np.array(
+            [
+                [1, 1, 1, 0],
+                [1, 1, 0, 0],  # could break either side of this
+                [1, 1, 0, 1],
+            ]
+        )
         self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
     @unittest.skip("Should work once the ancestors TS contains non-inference sites")
     def test_recombination_with_dist_noninference_intermediate(self):
-        G = np.array([
-            [1, 1, 1, 0],
-            [1, 0, 0, 0],  # could break either side of this
-            [1, 1, 0, 1]])
+        G = np.array(
+            [
+                [1, 1, 1, 0],
+                [1, 0, 0, 0],  # could break either side of this
+                [1, 1, 0, 1],
+            ]
+        )
         self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
@@ -2363,14 +2680,18 @@ class TestMissingDataImputed(unittest.TestCase):
     """
     Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines
     """
+
     def test_missing_site(self):
         u = tskit.MISSING_DATA
-        sites_by_samples = np.array([
-            [u, u, u, u, u],  # Site 0
-            [1, 1, 1, 0, 1],  # Site 1
-            [1, 0, 1, 1, 0],  # Site 2
-            [0, 0, 0, 1, 0],  # Site 3
-            ], dtype=np.int8)
+        sites_by_samples = np.array(
+            [
+                [u, u, u, u, u],  # Site 0
+                [1, 1, 1, 0, 1],  # Site 1
+                [1, 0, 1, 1, 0],  # Site 2
+                [0, 0, 0, 1, 0],  # Site 3
+            ],
+            dtype=np.int8,
+        )
         expected = sites_by_samples.copy()
         expected[0, :] = [0, 0, 0, 0, 0]
         with tsinfer.SampleData() as sample_data:
@@ -2383,12 +2704,15 @@ class TestMissingDataImputed(unittest.TestCase):
 
     def test_missing_haplotype(self):
         u = tskit.MISSING_DATA
-        sites_by_samples = np.array([
-            [u, 1, 1, 1, 0],  # Site 0
-            [u, 1, 1, 0, 0],  # Site 1
-            [u, 0, 0, 1, 0],  # Site 2
-            [u, 0, 1, 1, 0],  # Site 3
-            ], dtype=np.int8)
+        sites_by_samples = np.array(
+            [
+                [u, 1, 1, 1, 0],  # Site 0
+                [u, 1, 1, 0, 0],  # Site 1
+                [u, 0, 0, 1, 0],  # Site 2
+                [u, 0, 1, 1, 0],  # Site 3
+            ],
+            dtype=np.int8,
+        )
         expected = sites_by_samples.copy()
         expected[:, 0] = [0, 0, 0, 0]
         with tsinfer.SampleData() as sample_data:
@@ -2401,10 +2725,14 @@ class TestMissingDataImputed(unittest.TestCase):
 
     def test_missing_inference_sites(self):
         u = tskit.MISSING_DATA
-        sites_by_samples = np.array([
-            [u, 1, 1, 1, 0],  # Site 0
-            [1, 1, u, 0, 0],  # Site 1
-            ], dtype=np.int8)
+        sites_by_samples = np.array(
+            # fmt:off
+            [
+                [u, 1, 1, 1, 0],  # Site 0
+                [1, 1, u, 0, 0],  # Site 1
+            ], dtype=np.int8
+            # fmt: on
+        )
         expected = sites_by_samples.copy()
         expected[:, 0] = [1, 1]
         expected[:, 2] = [1, 0]

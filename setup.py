@@ -13,6 +13,7 @@ class build_ext(_build_ext):
         # Prevent numpy from thinking it is still in its setup process:
         __builtins__.__NUMPY_SETUP__ = False
         import numpy
+
         self.include_dirs.append(numpy.get_include())
 
 
@@ -23,17 +24,23 @@ kasdir = os.path.join(libdir, "subprojects", "kastore")
 includes = [libdir, tskroot, tskdir, kasdir]
 
 tsi_source_files = [
-    "ancestor_matcher.c", "ancestor_builder.c", "object_heap.c",
-    "tree_sequence_builder.c", "avl.c"]
+    "ancestor_matcher.c",
+    "ancestor_builder.c",
+    "object_heap.c",
+    "tree_sequence_builder.c",
+    "avl.c",
+]
 # We're not actually using very much of tskit at the moment, so
 # just build the stuff we need.
 tsk_source_files = ["core.c"]
 kas_source_files = ["kastore.c"]
 
-sources = ["_tsinfermodule.c"] + [
-    os.path.join(libdir, f) for f in tsi_source_files] + [
-    os.path.join(tskdir, f) for f in tsk_source_files] + [
-    os.path.join(kasdir, f) for f in kas_source_files]
+sources = (
+    ["_tsinfermodule.c"]
+    + [os.path.join(libdir, f) for f in tsi_source_files]
+    + [os.path.join(tskdir, f) for f in tsk_source_files]
+    + [os.path.join(kasdir, f) for f in kas_source_files]
+)
 
 libraries = []
 if IS_WINDOWS:
@@ -41,7 +48,7 @@ if IS_WINDOWS:
     libraries.append("Advapi32")
 
 _tsinfer_module = Extension(
-    '_tsinfer',
+    "_tsinfer",
     sources=sources,
     # Enable asserts by default.
     undef_macros=["NDEBUG"],
@@ -61,13 +68,9 @@ setup(
     author="Jerome Kelleher",
     author_email="jerome.kelleher@bdi.ox.ac.uk",
     url="http://pypi.python.org/pypi/tsinfer",
-    entry_points={
-        'console_scripts': [
-            'tsinfer=tsinfer.__main__:main',
-        ]
-    },
-    setup_requires=['setuptools_scm', 'numpy'],
-    cmdclass={'build_ext': build_ext},
+    entry_points={"console_scripts": ["tsinfer=tsinfer.__main__:main"]},
+    setup_requires=["setuptools_scm", "numpy"],
+    cmdclass={"build_ext": build_ext},
     install_requires=[
         "numpy",
         "six",
