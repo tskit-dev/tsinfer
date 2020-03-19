@@ -12,11 +12,12 @@ File formats
 
 .. autoclass:: tsinfer.SampleData
     :members:
+    :inherited-members:
 
 .. todo::
 
     1. Add documentation for the data attributes in read-mode.
-    2. Document copy() and define copy mode.
+    2. Define copy mode.
     3. Provide example of updating inference_sites
 
 .. autoclass:: tsinfer.AncestorData
