@@ -23,10 +23,13 @@ Data requirements
 Input haplotype data for tskit must satisfy the following requirements:
 
 - Data must be *phased*.
-- For each site used for inference we must know the *ancestral state*. Note that this is
-  not necessarily the same as the REF column from VCF, and ancestral
+- For each site used for inference we must know the *ancestral state*. Note that
+  this is not necessarily the same as the REF column from VCF, and ancestral
   states must be computed using some other method.
 - Only biallelic sites can be used for inference.
+- Missing data can be included in the haplotypes using the value
+  ``tskit.MISSING_DATA`` (-1). The inferred tree sequence will have values
+  imputed for the haplotypes at these sites.
 
 
 .. _sec_inference_data_model:
@@ -36,7 +39,7 @@ Data model
 **********
 
 The data model for ``tsinfer`` is tightly integrated with
-``tskit``'s `data model <https://tskit.readthedocs.io/en/latest/data-model.html>`_
+``tskit``'s :ref:`data model <sec_data_model>`
 and uses the same concepts throughout. The intermediate file formats and APIs
 described here provide a bridge between this model and existing data sources. For
 convenience, we provide a brief description of concepts needed for importing
@@ -183,10 +186,8 @@ paths, "path compression".
 
 The copying path for each ancestor then describes its ancestry at every
 point in the sequence: from a genealogical perspective, we know its
-parent node. This information is encoded precisely as an `edge
-<https://tskit.readthedocs.io/en/latest/data-model.html#edge-table>`_ in a
-`tree sequence
-<https://tskit.readthedocs.io/en/latest/data-model.html>`_.
+parent node. This information is encoded precisely as an :ref:`edge
+<sec_edge_table_definition>` in a :ref:`tree sequence <sec_data_model>`.
 Thus, we refer to the output of this step as the "ancestors tree sequence",
 which is conventionally stored in a file ending with ``.ancestors.trees``.
 
@@ -204,18 +205,14 @@ The final phase of a ``tsinfer`` inference consists of a number steps:
    way as for ancestors, and the path compression algorithm can be equally
    applied here.
 
-
 2. As we only use a subset of the available sites for inference
    (excluding by default any sites that are fixed or singletons)
    we then place mutations on the inferred trees in order to
-   represent the information at these sites. This is done using the tskit
-   `map_mutations <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.Tree.map_mutations>`_.
-   method.
-   
+   represent the information at these sites. This is done using
+   :meth:`tskit.Tree.map_mutations`.
 
 3. Remove ancestral paths that do not lead to any of the samples by
-   `simplifying
-   <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.simplify>`_
+   :meth:`simplifying <tskit.TreeSequence.simplify>`
    the final tree sequence. When simplifying, we keep non-branching ("unary")
    nodes, as they indicate ancestors which we have actively inferred, and
    for technical reasons keeping unary ancestors can also lead to better

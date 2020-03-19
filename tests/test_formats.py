@@ -514,17 +514,16 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_variant_errors(self):
         input_file = formats.SampleData(sequence_length=10)
-        genotypes = np.zeros(2, np.int8)
+        genotypes = [0, 0]
         input_file.add_site(0, alleles=["0", "1"], genotypes=genotypes)
         for bad_position in [-1, 10, 100]:
             self.assertRaises(
                 ValueError, input_file.add_site, position=bad_position,
                 alleles=["0", "1"], genotypes=genotypes)
-        for bad_genotypes in [[0, 2], [-1, 0], [], [0], [0, 0, 0]]:
-            genotypes = np.array(bad_genotypes, dtype=np.int8)
+        for bad_genotypes in [[0, 2], [-2, 0], [], [0], [0, 0, 0]]:
             self.assertRaises(
                 ValueError, input_file.add_site, position=1,
-                alleles=["0", "1"], genotypes=genotypes)
+                alleles=["0", "1"], genotypes=bad_genotypes)
         self.assertRaises(
             ValueError, input_file.add_site, position=1, inference=True,
             alleles=["0", "1", "2"], genotypes=[0, 1])
@@ -533,28 +532,41 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             alleles=["0"], genotypes=[0, 1])
         self.assertRaises(
             ValueError, input_file.add_site, position=1,
-            alleles=["0", "1"], genotypes=np.array([0, 2], dtype=np.int8))
+            alleles=["0", "1"], genotypes=[0, 2])
         self.assertRaises(
             ValueError, input_file.add_site, position=1,
-            alleles=["0", "0"], genotypes=np.array([0, 2], dtype=np.int8))
+            alleles=["0", "0"], genotypes=[0, 2])
 
     def test_invalid_inference_sites(self):
         # Trying to add singletons or fixed sites as inference sites
         # raise and error
         input_file = formats.SampleData()
         # Make sure this is OK
-        input_file.add_site(0, [0, 1, 1], inference=True)
+        input_file.add_site(0, [0, 1, 1, tskit.MISSING_DATA], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, genotypes=[0, 0, 0], inference=True)
+            position=1, genotypes=[0, 0, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, genotypes=[1, 0, 0], inference=True)
+            position=1, genotypes=[1, 0, 0, 0], inference=True)
         self.assertRaises(
             ValueError, input_file.add_site,
-            position=1, genotypes=[1, 1, 1], inference=True)
+            position=1, genotypes=[1, 1, 1, 1], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, genotypes=[tskit.MISSING_DATA, 0, 0, 0], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, genotypes=[tskit.MISSING_DATA, 1, 1, 1], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, genotypes=[tskit.MISSING_DATA, 0, 1, 0], inference=True)
+        self.assertRaises(
+            ValueError, input_file.add_site,
+            position=1, genotypes=[tskit.MISSING_DATA] * 4, inference=True)
+        # Check we can still add at pos 1
         input_file.add_site(
-            position=1, genotypes=[1, 0, 1], inference=True)
+            position=1, genotypes=[1, 0, 1, tskit.MISSING_DATA], inference=True)
 
     def test_duplicate_sites(self):
         # Duplicate sites are not accepted.
@@ -1145,6 +1157,30 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 with self.assertRaises(ValueError):
                     sample_data.add_site(
                         0, [0, 0], alleles=[str(x) for x in range(num_alleles)])
+
+    def test_missing_data(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array([
+            [u, u, u, 1, 1, 0, 1, 1, 1],
+            [u, u, u, 1, 1, 0, 1, 1, 0],
+            [u, u, u, 1, 0, 1, 1, 0, 1],
+            [u, 0, 0, 1, 1, 1, 1, u, u],
+            [u, 0, 1, 1, 1, 0, 1, u, u],
+            [u, 1, 1, 0, 0, 0, 0, u, u]
+            ], dtype=np.int8)
+        with tsinfer.SampleData() as data:
+            for col in range(sites_by_samples.shape[1]):
+                data.add_site(col, sites_by_samples[:, col])
+
+        self.assertEqual(data.sequence_length, 9.0)
+        self.assertEqual(data.num_sites, 9)
+        # First site is a entirely missing, second is singleton with missing data =>
+        # neither should be marked for inference
+        inference_sites = data.sites_inference[:]
+        self.assertEqual(inference_sites[0], 0)  # Entirely missing data
+        self.assertEqual(inference_sites[1], 0)  # Singleton with missing data
+        for i in inference_sites[2:]:
+            self.assertEqual(i, 1)
 
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):

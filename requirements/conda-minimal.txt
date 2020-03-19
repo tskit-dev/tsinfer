@@ -3,7 +3,7 @@ numpy
 six
 tqdm
 humanize
-tskit
+tskit>=0.2.3
 msprime
 zarr
 lmdb

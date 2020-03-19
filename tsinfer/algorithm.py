@@ -105,13 +105,15 @@ class AncestorBuilder(object):
     def break_ancestor(self, a, b, samples):
         """
         Returns True if we should split the ancestor with focal sites at
-        a and b into two separate ancestors.
+        a and b into two separate ancestors (if there is an older site between them
+        which is not compatible with the focal site distribution)
         """
         # return True
         index = np.where(samples == 1)[0]
         for j in range(a + 1, b):
             if self.sites[j].time > self.sites[a].time:
                 gj = self.sites[j].genotypes[index]
+                gj = gj[gj != tskit.MISSING_DATA]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
         return False
@@ -143,8 +145,10 @@ class AncestorBuilder(object):
 
     def compute_ancestral_states(self, a, focal_site, sites):
         """
-        Together with make_ancestor, this is the main algorithm as implemented in Fig S2
-        of the preprint, with the buffer.
+        For a given focal site, and set of sites to fill in (usually all the ones
+        leftwards or rightwards), augment the haplotype array a with the inferred sites
+        Together with `make_ancestor`, which calls this function, these describe the main
+        algorithm as implemented in Fig S2 of the preprint, with the buffer.
         """
         focal_time = self.sites[focal_site].time
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
@@ -157,26 +161,29 @@ class AncestorBuilder(object):
             last_site = l
             if self.sites[l].time > focal_time:
                 g_l = self.sites[l].genotypes
-                ones = sum(g_l[u] for u in S)
-                zeros = len(S) - ones
+                ones = sum(g_l[u] == 1 for u in S)
+                zeros = sum(g_l[u] == 0 for u in S)
                 # print("\tsite", l, ones, zeros, sep="\t")
                 consensus = 0
-                if ones >= zeros:
-                    consensus = 1
-                # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
-                for u in remove_buffer:
-                    if g_l[u] != consensus:
-                        # print("\t\tremoving", u)
-                        S.remove(u)
-                # print("\t", len(S), remove_buffer, consensus, sep="\t")
-                if len(S) <= min_sample_set_size:
-                    # print("BREAKING", len(S), min_sample_set_size)
-                    break
-                remove_buffer.clear()
-                for u in S:
-                    if g_l[u] != consensus:
-                        remove_buffer.append(u)
+                if ones + zeros > 0:
+                    # We have some non-missing data
+                    if ones >= zeros:
+                        consensus = 1
+                    # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
+                    for u in remove_buffer:
+                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
+                            # print("\t\tremoving", u)
+                            S.remove(u)
+                    # print("\t", len(S), remove_buffer, consensus, sep="\t")
+                    if len(S) <= min_sample_set_size:
+                        # print("BREAKING", len(S), min_sample_set_size)
+                        break
+                    remove_buffer.clear()
+                    for u in S:
+                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
+                            remove_buffer.append(u)
                 a[l] = consensus
+        assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
     def make_ancestor(self, focal_sites, a):
@@ -192,27 +199,31 @@ class AncestorBuilder(object):
         for focal_site in focal_sites:
             a[focal_site] = 1
         S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
+        # Interpolate ancestral haplotype within focal region (i.e. region
+        #  spanning from leftmost to rightmost focal site)
         for j in range(len(focal_sites) - 1):
+            # Interpolate region between focal site j and focal site j+1
             for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
                 a[l] = 0
                 if self.sites[l].time > focal_time:
                     g_l = self.sites[l].genotypes
-                    ones = sum(g_l[u] for u in S)
-                    zeros = len(S) - ones
+                    ones = sum(g_l[u] == 1 for u in S)
+                    zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", l, ones, zeros, sep="\t")
-                    if ones >= zeros:
-                        a[l] = 1
-        # Go rightwards
+                    if ones + zeros > 0:
+                        # We have some non-missing data
+                        if ones >= zeros:
+                            a[l] = 1
+        # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site + 1, self.num_sites))
         assert a[last_site] != tskit.MISSING_DATA
         end = last_site + 1
-        # Go leftwards
+        # Extend ancestral haplotype leftwards from leftmost focal site
         focal_site = focal_sites[0]
         last_site = self.compute_ancestral_states(
                 a, focal_site, range(focal_site - 1, -1, -1))
-        assert a[last_site] != tskit.MISSING_DATA
         start = last_site
         return start, end
 
@@ -374,7 +385,7 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # For the asserttion to be violated we would need to have 64K pc
+        # For the assertion to be violated we would need to have 64K pc
         # ancestors sequentially copying from each other.
         self.time[pc_parent_id] = min_parent_time - (1 / 2**16)
         assert self.time[pc_parent_id] > self.time[child_id]

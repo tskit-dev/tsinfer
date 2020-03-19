@@ -635,7 +635,7 @@ def run_perfect_inference(
     sample_data = formats.SampleData.from_tree_sequence(ts)
 
     if use_ts:
-        # Use the actual tree sequenc that was provided as the basis for copying.
+        # Use the actual tree sequence that was provided as the basis for copying.
         ancestors_ts = make_ancestors_ts(sample_data, ts, remove_leaves=True)
     else:
         ancestor_data = formats.AncestorData(sample_data)

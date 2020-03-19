@@ -238,45 +238,57 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self,
 
             genotypes = self->sites[l].genotypes;
             ones = 0;
+            zeros = 0;
             for (j = 0; j < sample_set_size; j++) {
-                ones += (size_t) genotypes[sample_set[j]];
+                switch (genotypes[sample_set[j]]) {
+                    case 0:
+                        zeros++;
+                        break;
+                    case 1:
+                        ones++;
+                        break;
+                }
             }
-            zeros = sample_set_size - ones;
             consensus = 0;
-            if (ones >= zeros) {
-                consensus = 1;
-            }
-            /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
-            /* fflush(stdout); */
-            for (j = 0; j < sample_set_size; j++) {
-                u = sample_set[j];
-                if (disagree[u] && genotypes[u] != consensus) {
-                    /* This sample has disagreed with consensus twice in a row,
-                     * so remove it */
-                    /* printf("\t\tremoving %d\n", sample_set[j]); */
-                    sample_set[j] = -1;
+            if (ones + zeros > 0) {
+                /* We have valid (non-missing) data in the tracked samples at site l */
+                if (ones >= zeros) {
+                    consensus = 1;
                 }
-            }
-            /* Repack the sample set */
-            tmp_size = 0;
-            for (j = 0; j < sample_set_size; j++) {
-                if (sample_set[j] != -1) {
-                    sample_set[tmp_size] = sample_set[j];
-                    tmp_size++;
+                /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
+                /* fflush(stdout); */
+                for (j = 0; j < sample_set_size; j++) {
+                    u = sample_set[j];
+                    if (disagree[u] && (genotypes[u] != consensus) &&
+                        (genotypes[u] != TSK_MISSING_DATA)) {
+                        /* This sample has disagreed with consensus twice in a row,
+                         * so remove it */
+                        /* printf("\t\tremoving %d\n", sample_set[j]); */
+                        sample_set[j] = -1;
+                    }
                 }
-            }
-            sample_set_size = tmp_size;
-            if (sample_set_size <= min_sample_set_size) {
-                /* printf("BREAK\n"); */
-                break;
+                /* Repack the sample set */
+                tmp_size = 0;
+                for (j = 0; j < sample_set_size; j++) {
+                    if (sample_set[j] != -1) {
+                        sample_set[tmp_size] = sample_set[j];
+                        tmp_size++;
+                    }
+                }
+                sample_set_size = tmp_size;
+                if (sample_set_size <= min_sample_set_size) {
+                    /* printf("BREAK\n"); */
+                    break;
+                }
+                /* For the remaining sample set, set the disagree flags based
+                 * on whether they agree with the consensus for this site. */
+                for (j = 0; j < sample_set_size; j++) {
+                    u = sample_set[j];
+                    disagree[u] = ((genotypes[u] != consensus) &&
+                                   (genotypes[u] != TSK_MISSING_DATA));
+                }
             }
             ancestor[l] = consensus;
-            /* For the remaining sample set, set the disagree flags based
-             * on whether they agree with the consensus for this site. */
-            for (j = 0; j < sample_set_size; j++) {
-                u = sample_set[j];
-                disagree[u] = genotypes[u] != consensus;
-            }
         }
     }
     *last_site_ret = last_site;
@@ -312,12 +324,22 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
                 /* } */
                 genotypes = self->sites[l].genotypes;
                 ones = 0;
+                zeros = 0;
                 for (k = 0; k < sample_set_size; k++) {
-                    ones += (size_t) genotypes[sample_set[k]];
+                    switch (genotypes[sample_set[k]]) {
+                        case 0:
+                            zeros++;
+                            break;
+                        case 1:
+                            ones++;
+                            break;
+                    }
                 }
-                zeros = sample_set_size - ones;
-                if (ones >= zeros) {
-                    ancestor[l] = 1;
+                if (ones + zeros > 0) {
+                    /* We have valid (non-missing) data at this site */
+                    if (ones >= zeros) {
+                        ancestor[l] = 1;
+                    }
                 }
             }
         }
@@ -445,15 +467,23 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, tsk_id_t a,
 {
     bool ret = false;
     tsk_id_t j, k;
-    size_t ones;
+    size_t ones, missing;
 
     for (j = a + 1; j < b && !ret; j++) {
         if (self->sites[j].time > self->sites[a].time) {
             ones = 0;
+            missing = 0;
             for (k = 0; k < (tsk_id_t) num_samples; k++) {
-                ones += (size_t) self->sites[j].genotypes[samples[k]];
+                switch (self->sites[j].genotypes[samples[k]]) {
+                    case TSK_MISSING_DATA:
+                        missing++;
+                        break;
+                    case 1:
+                        ones++;
+                        break;
+                }
             }
-            if (ones != num_samples && ones != 0) {
+            if (ones != (num_samples - missing) && ones != 0) {
                 ret = true;
             }
         }

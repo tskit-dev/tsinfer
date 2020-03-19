@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018 University of Oxford
+** Copyright (C) 2018-2020 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -26,6 +26,9 @@
 #include "err.h"
 #include "object_heap.h"
 #include "avl.h"
+
+/* TODO remove this when we update tskit version. */
+#define TSK_MISSING_DATA (-1)
 
 /* NULL_LIKELIHOOD represents a compressed path and NONZERO_ROOT_LIKELIHOOD
  * marks a node that is not in the current tree. */

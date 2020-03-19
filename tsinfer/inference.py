@@ -553,7 +553,9 @@ class Matcher(object):
 
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
-        self.match = [np.zeros(self.num_sites, np.int8) for _ in range(num_threads)]
+        self.match = [
+            np.full(self.num_sites, tskit.MISSING_DATA, np.int8)
+            for _ in range(num_threads)]
         self.results = ResultBuffer()
         self.mean_traceback_size = np.zeros(num_threads)
         self.num_matches = np.zeros(num_threads)
@@ -683,7 +685,7 @@ class Matcher(object):
         # TODO Write out the metadata here etc also
         tables.nodes.set_columns(flags=flags, time=times)
 
-        position = self.ancestor_data.sites_position
+        position = self.ancestor_data.sites_position[:]
         pos_map = np.hstack([position, [tables.sequence_length]])
         pos_map[0] = 0
         left, right, parent, child = tsb.dump_edges()
@@ -758,13 +760,19 @@ class Matcher(object):
                         inferred_mutation += 1
                     inferred_site += 1
                 else:
-                    inferred_anc_state, mapped_mutations = tree.map_mutations(
-                        variant.genotypes, variant.alleles)
+                    if np.all(variant.genotypes == tskit.MISSING_DATA):
+                        # Map_mutations has to have at least 1 non-missing value to work
+                        inferred_anc_state = predefined_anc_state
+                        mapped_mutations = []
+                    else:
+                        inferred_anc_state, mapped_mutations = tree.map_mutations(
+                            variant.genotypes, variant.alleles)
                     if inferred_anc_state != predefined_anc_state:
-                        # We need to set the ancestral state to that defined in the
-                        # original file
+                        # The user specified a specific ancestral state. However, the
+                        # map_mutations method has reconstructed a different state at the
+                        # root, so insert an extra mutation over each root to allow the
+                        # ancestral state to be as the user specified
                         for root_node in tree.roots:
-                            # Add a transition at each root to the mapped value
                             tables.mutations.add_row(
                                 site=site.id, node=root_node,
                                 derived_state=inferred_anc_state)
@@ -831,6 +839,7 @@ class Matcher(object):
         position = tables.sites.position
         pos_map = np.hstack([position, [tables.sequence_length]])
         pos_map[0] = 0
+        # TODO - check this works for augmented ancestors with missing data
         left, right, parent, child = tsb.dump_edges()
         tables.edges.set_columns(
             left=pos_map[left], right=pos_map[right], parent=parent, child=child)
@@ -854,7 +863,8 @@ class Matcher(object):
     def get_samples_tree_sequence(self):
         """
         Returns the current state of the build tree sequence. All samples and
-        ancestors will have the sample node flag set.
+        ancestors will have the sample node flag set. For correct sample reconstruction,
+        the non-inference sites also need to be placed into the resulting tree sequence.
         """
         tsb = self.tree_sequence_builder
 

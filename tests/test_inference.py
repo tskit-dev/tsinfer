@@ -37,9 +37,9 @@ import tsinfer
 import tsinfer.eval_util as eval_util
 
 
-def get_random_data_example(num_samples, num_sites, seed=42):
+def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
     np.random.seed(seed)
-    G = np.random.randint(2, size=(num_sites, num_samples)).astype(np.uint8)
+    G = np.random.randint(num_states, size=(num_sites, num_samples)).astype(np.int8)
     return G, np.arange(num_sites)
 
 
@@ -758,6 +758,7 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         # print(adc)
         # print(adp)
         self.assertTrue(adp.data_equal(adc))
+        return adp, adc
 
     def verify_tree_sequence(self, ts):
         self.verify_ancestor_generator(ts.genotype_matrix())
@@ -798,6 +799,32 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G, num_threads=4)
 
+    def test_random_data_missing(self):
+        G, _ = get_random_data_example(20, 50, seed=1234, num_states=3)
+        G[G == 2] = tskit.MISSING_DATA
+        # G, _ = get_random_data_example(20, 10)
+        self.verify_ancestor_generator(G)
+
+    def test_all_missing_at_adjacent_site(self):
+        u = tskit.MISSING_DATA
+        G = np.array([[1, 1, 0, 0, 0, 0],  # Site 0
+                      [u, u, 0, 1, 1, 1],  # Site 1
+                      [1, 1, 0, 0, 0, 0],  # Site 2
+                      [u, u, 1, 0, 1, 1],  # Site 3
+                      [1, 1, 1, 1, 0, 0]])
+        # For the haplotype focussed on sites 0 & 2, the relevant values at sites
+        # 1 and 3 in this example are all missing and should default to 0 in both cases
+        expected_hap_focal_site_0 = [1, 0, 1, 0, 1]
+        adp, adc = self.verify_ancestor_generator(G)
+        site_0_anc = [i for i, fs in enumerate(adc.ancestors_focal_sites[:]) if 0 in fs]
+        self.assertTrue(len(site_0_anc) == 1)
+        site_0_anc = site_0_anc[0]
+        # Sites 0 and 2 should share the same ancestor
+        self.assertTrue(np.all(adc.ancestors_focal_sites[:][site_0_anc] == [0, 2]))
+        focal_site_0_haplotype = adc.ancestors_haplotype[:][site_0_anc]
+        # Sites with all missing data should default to 0
+        self.assertTrue(np.all(focal_site_0_haplotype == expected_hap_focal_site_0))
+
     def test_with_recombination_long_threads(self):
         ts = msprime.simulate(
             20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1)
@@ -823,8 +850,8 @@ class TestGeneratedAncestors(unittest.TestCase):
         ancestor_data.finalise()
 
         A = np.full(
-            (ancestor_data.num_sites, ancestor_data.num_ancestors),
-            tskit.MISSING_DATA, dtype=np.int8)
+            (ancestor_data.num_sites, ancestor_data.num_ancestors), tskit.MISSING_DATA,
+            dtype=np.int8)
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         ancestors = ancestor_data.ancestors_haplotype[:]
@@ -1991,10 +2018,12 @@ class TestExtractAncestors(unittest.TestCase):
     """
     def verify(self, samples):
         ancestors = tsinfer.generate_ancestors(samples)
+        # this ancestors TS has positions mapped only to inference sites
         ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
         ts = tsinfer.match_samples(
             samples, ancestors_ts_1, path_compression=False, simplify=False)
         t1 = ancestors_ts_1.dump_tables()
+
         t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
         self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
         t1.provenances.clear()
@@ -2003,14 +2032,6 @@ class TestExtractAncestors(unittest.TestCase):
         # Population data isn't carried through in ancestors tree sequences
         # for now.
         t2.populations.clear()
-
-        self.assertEqual(t1.nodes, t2.nodes)
-        self.assertEqual(t1.edges, t2.edges)
-        self.assertEqual(t1.sites, t2.sites)
-        self.assertEqual(t1.mutations, t2.mutations)
-        self.assertEqual(t1.populations, t2.populations)
-        self.assertEqual(t1.individuals, t2.individuals)
-        self.assertEqual(t1.sites, t2.sites)
 
         self.assertEqual(t1, t2)
 
@@ -2025,8 +2046,7 @@ class TestExtractAncestors(unittest.TestCase):
     def test_non_zero_one_mutations(self):
         ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
         ts = msprime.mutate(
-            ts, rate=5, model=msprime.InfiniteSites(msprime.NUCLEOTIDES),
-            random_seed=15)
+            ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15)
         self.assertGreater(ts.num_mutations, 0)
         self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_times=False))
 
@@ -2336,3 +2356,62 @@ class TestAlgorithmResults(unittest.TestCase):
             [1, 1, 0, 1]])
         self.verify_single_recombination_position([0.0, 1.1, 2.0], G, 0)
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
+
+
+@unittest.skip("Missing data not yet implemented")
+class TestMissingDataImputed(unittest.TestCase):
+    """
+    Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines
+    """
+    def test_missing_site(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array([
+            [u, u, u, u, u],  # Site 0
+            [1, 1, 1, 0, 1],  # Site 1
+            [1, 0, 1, 1, 0],  # Site 2
+            [0, 0, 0, 1, 0],  # Site 3
+            ], dtype=np.int8)
+        expected = sites_by_samples.copy()
+        expected[0, :] = [0, 0, 0, 0, 0]
+        with tsinfer.SampleData() as sample_data:
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts = tsinfer.infer(sample_data, engine=e)
+            self.assertEquals(ts.num_trees, 2)
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
+
+    def test_missing_haplotype(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array([
+            [u, 1, 1, 1, 0],  # Site 0
+            [u, 1, 1, 0, 0],  # Site 1
+            [u, 0, 0, 1, 0],  # Site 2
+            [u, 0, 1, 1, 0],  # Site 3
+            ], dtype=np.int8)
+        expected = sites_by_samples.copy()
+        expected[:, 0] = [0, 0, 0, 0]
+        with tsinfer.SampleData() as sample_data:
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts = tsinfer.infer(sample_data, engine=e)
+            self.assertEquals(ts.num_trees, 2)
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
+
+    def test_missing_inference_sites(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array([
+            [u, 1, 1, 1, 0],  # Site 0
+            [1, 1, u, 0, 0],  # Site 1
+            ], dtype=np.int8)
+        expected = sites_by_samples.copy()
+        expected[:, 0] = [1, 1]
+        expected[:, 2] = [1, 0]
+        with tsinfer.SampleData() as sample_data:
+            for row in range(sites_by_samples.shape[0]):
+                sample_data.add_site(row, sites_by_samples[row, :])
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            ts = tsinfer.infer(sample_data, engine=e)
+            self.assertEquals(ts.num_trees, 1)
+            self.assertTrue(np.all(expected == ts.genotype_matrix()))
