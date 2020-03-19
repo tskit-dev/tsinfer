@@ -1,61 +1,15 @@
-
 import random
 import os
-import h5py
-import zarr
 import sys
-import pandas as pd
-import daiquiri
-#import bsddb3
-import time
-import scipy
-import pickle
-import collections
-import itertools
+
 import tqdm
-import shutil
 import pprint
 import numpy as np
 import json
 
-import matplotlib as mp
-# Force matplotlib to not use any Xwindows backend.
-mp.use('Agg')
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 import tsinfer
 import msprime
-
-
-
-def plot_breakpoints(ts, map_file, output_file):
-    # Read in the recombination map using the read_hapmap engine,
-    recomb_map = msprime.RecombinationMap.read_hapmap(map_file)
-
-    # Now we get the positions and rates from the recombination
-    # map and plot these using 500 bins.
-    positions = np.array(recomb_map.get_positions()[1:])
-    rates = np.array(recomb_map.get_rates()[1:])
-    num_bins = 500
-    v, bin_edges, _ = scipy.stats.binned_statistic(
-        positions, rates, bins=num_bins)
-    x = bin_edges[:-1][np.logical_not(np.isnan(v))]
-    y = v[np.logical_not(np.isnan(v))]
-    fig, ax1 = plt.subplots(figsize=(16, 6))
-    ax1.plot(x, y, color="blue", label="Recombination rate")
-    ax1.set_ylabel("Recombination rate")
-    ax1.set_xlabel("Chromosome position")
-
-    # Now plot the density of breakpoints along the chromosome
-    breakpoints = np.array(list(ts.breakpoints()))
-    ax2 = ax1.twinx()
-    v, bin_edges = np.histogram(breakpoints, num_bins, density=True)
-    ax2.plot(bin_edges[:-1], v, color="green", label="Breakpoint density")
-    ax2.set_ylabel("Breakpoint density")
-    ax2.set_xlim(1.5e7, 5.3e7)
-    plt.legend()
-    fig.savefig(output_file)
 
 
 def make_errors(v, p):
@@ -94,21 +48,36 @@ def generate_samples(ts, error_p):
             done = 0 < s < ts.sample_size
     return S.T
 
+
 def tsinfer_dev(
-        n, L, seed, num_threads=1, recombination_rate=1e-8,
-        error_rate=0, engine="C", log_level="WARNING",
-        precision=None, debug=True, progress=False, path_compression=True):
+    n,
+    L,
+    seed,
+    num_threads=1,
+    recombination_rate=1e-8,
+    error_rate=0,
+    engine="C",
+    log_level="WARNING",
+    precision=None,
+    debug=True,
+    progress=False,
+    path_compression=True,
+):
 
     np.random.seed(seed)
     random.seed(seed)
-    L_megabases = int(L * 10**6)
+    L_megabases = int(L * 10 ** 6)
 
     # daiquiri.setup(level=log_level)
 
     ts = msprime.simulate(
-            n, Ne=10**4, length=L_megabases,
-            recombination_rate=recombination_rate, mutation_rate=1e-8,
-            random_seed=seed)
+        n,
+        Ne=10 ** 4,
+        length=L_megabases,
+        recombination_rate=recombination_rate,
+        mutation_rate=1e-8,
+        random_seed=seed,
+    )
     if debug:
         print("num_sites = ", ts.num_sites)
     assert ts.num_sites > 0
@@ -118,27 +87,31 @@ def tsinfer_dev(
 
     samples = tsinfer.SampleData.from_tree_sequence(ts)
     rho = recombination_rate
-    mu = 1e-3 #1e-15
+    mu = 1e-3  # 1e-15
 
-
-#     num_alleles = samples.num_alleles(inference_sites=True)
-#     num_sites = samples.num_inference_sites
-#     with tsinfer.AncestorData(samples) as ancestor_data:
-#         t = np.sum(num_alleles) + 1
-#         for j in range(num_sites):
-#             for allele in range(num_alleles[j]):
-#                 ancestor_data.add_ancestor(j, j + 1, t, [j], [allele])
-#                 t -= 1
+    #     num_alleles = samples.num_alleles(inference_sites=True)
+    #     num_sites = samples.num_inference_sites
+    #     with tsinfer.AncestorData(samples) as ancestor_data:
+    #         t = np.sum(num_alleles) + 1
+    #         for j in range(num_sites):
+    #             for allele in range(num_alleles[j]):
+    #                 ancestor_data.add_ancestor(j, j + 1, t, [j], [allele])
+    #                 t -= 1
 
     ancestor_data = tsinfer.generate_ancestors(
-        samples, engine=engine, num_threads=num_threads)
+        samples, engine=engine, num_threads=num_threads
+    )
 
     ancestors_ts = tsinfer.match_ancestors(
-        samples, ancestor_data, engine=engine, path_compression=True,
+        samples,
+        ancestor_data,
+        engine=engine,
+        path_compression=True,
         extended_checks=False,
         precision=precision,
         recombination_rate=rho,
-        mutation_rate=mu)
+        mutation_rate=mu,
+    )
     # print(ancestors_ts.tables)
     # print("ancestors ts")
     # for tree in ancestors_ts.trees():
@@ -149,8 +122,6 @@ def tsinfer_dev(
     #             for mutation in site.mutations:
     #                 print("\t", mutation.node, mutation.derived_state)
 
-
-
     # for var in ancestors_ts.variants():
     #     print(var.genotypes)
 
@@ -159,10 +130,16 @@ def tsinfer_dev(
     # ancestors_ts = tsinfer.augment_ancestors(samples, ancestors_ts,
     #         [5, 6, 7], engine=engine)
 
-    ts = tsinfer.match_samples(samples, ancestors_ts,
-            recombination_rate=rho, mutation_rate=mu,
-            path_compression=False, engine=engine,
-            precision=precision, simplify=False)
+    ts = tsinfer.match_samples(
+        samples,
+        ancestors_ts,
+        recombination_rate=rho,
+        mutation_rate=mu,
+        path_compression=False,
+        engine=engine,
+        precision=precision,
+        simplify=False,
+    )
 
     print("num_edges = ", ts.num_edges)
 
@@ -175,7 +152,6 @@ def tsinfer_dev(
     #             for mutation in site.mutations:
     #                 print("\t", mutation.node, mutation.derived_state)
 
-
     # # print(ts.tables.edges)
     # print(ts.dump_tables())
 
@@ -187,10 +163,9 @@ def tsinfer_dev(
     #         path_compression=False, engine=engine,
     #         simplify=True)
 
-
-#     for tree in ts.trees():
-#         print(tree.interval)
-#         print(tree.draw(format="unicode"))
+    #     for tree in ts.trees():
+    #         print(tree.interval)
+    #         print(tree.draw(format="unicode"))
 
     # print(ts.tables.edges)
     # for tree in ts.trees():
@@ -226,25 +201,37 @@ def dump_provenance(ts):
 
 
 def build_profile_inputs(n, num_megabases):
-    L = num_megabases * 10**6
+    L = num_megabases * 10 ** 6
     input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(
-            n, num_megabases)
+        n, num_megabases
+    )
     if os.path.exists(input_file):
         ts = msprime.load(input_file)
     else:
         ts = msprime.simulate(
-            n, length=L, Ne=10**4, recombination_rate=1e-8, mutation_rate=1e-8,
-            random_seed=10)
-        print("Ran simulation: n = ", n, " num_sites = ", ts.num_sites,
-                "num_trees =", ts.num_trees)
+            n,
+            length=L,
+            Ne=10 ** 4,
+            recombination_rate=1e-8,
+            mutation_rate=1e-8,
+            random_seed=10,
+        )
+        print(
+            "Ran simulation: n = ",
+            n,
+            " num_sites = ",
+            ts.num_sites,
+            "num_trees =",
+            ts.num_trees,
+        )
         ts.dump(input_file)
     filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
     if os.path.exists(filename):
         os.unlink(filename)
     # daiquiri.setup(level="DEBUG")
     with tsinfer.SampleData(
-            sequence_length=ts.sequence_length, path=filename,
-            num_flush_threads=4) as sample_data:
+        sequence_length=ts.sequence_length, path=filename, num_flush_threads=4
+    ) as sample_data:
         # progress_monitor = tqdm.tqdm(total=ts.num_samples)
         # for j in range(ts.num_samples):
         #     sample_data.add_sample(metadata={"name": "sample_{}".format(j)})
@@ -258,12 +245,14 @@ def build_profile_inputs(n, num_megabases):
 
     print(sample_data)
 
+
 #     filename = "tmp__NOBACKUP__/profile-n={}_m={}.ancestors".format(n, num_megabases)
 #     if os.path.exists(filename):
 #         os.unlink(filename)
 #     ancestor_data = tsinfer.AncestorData.initialise(sample_data, filename=filename)
 #     tsinfer.build_ancestors(sample_data, ancestor_data, progress=True)
 #     ancestor_data.finalise()
+
 
 def copy_1kg():
     source = "tmp__NOBACKUP__/1kg_chr22.samples"
@@ -274,22 +263,29 @@ def copy_1kg():
     print("copy = ")
     print(copy)
 
+
 def tutorial_samples():
     import tqdm
     import msprime
     import tsinfer
 
     ts = msprime.simulate(
-        sample_size=10000, Ne=10**4, recombination_rate=1e-8,
-        mutation_rate=1e-8, length=10*10**6, random_seed=42)
+        sample_size=10000,
+        Ne=10 ** 4,
+        recombination_rate=1e-8,
+        mutation_rate=1e-8,
+        length=10 * 10 ** 6,
+        random_seed=42,
+    )
     ts.dump("tmp__NOBACKUP__/simulation-source.trees")
-    print("simulation done:", ts.num_trees, "trees and", ts.num_sites,  "sites")
+    print("simulation done:", ts.num_trees, "trees and", ts.num_sites, "sites")
 
     progress = tqdm.tqdm(total=ts.num_sites)
     with tsinfer.SampleData(
-            path="tmp__NOBACKUP__/simulation.samples",
-            sequence_length=ts.sequence_length,
-            num_flush_threads=2) as sample_data:
+        path="tmp__NOBACKUP__/simulation.samples",
+        sequence_length=ts.sequence_length,
+        num_flush_threads=2,
+    ) as sample_data:
         for var in ts.variants():
             sample_data.add_site(var.site.position, var.genotypes, var.alleles)
             progress.update()
@@ -321,7 +317,15 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(118, 0.05, seed=4, num_threads=0, engine="C", recombination_rate=1e-8, precision=0)
+    tsinfer_dev(
+        118,
+        0.05,
+        seed=4,
+        num_threads=0,
+        engine="C",
+        recombination_rate=1e-8,
+        precision=0,
+    )
 
     # minimise_dev()
 

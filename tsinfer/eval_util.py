@@ -1,4 +1,3 @@
-
 # Copyright (C) 2018 University of Oxford
 #
 # This file is part of tsinfer.
@@ -55,7 +54,9 @@ def insert_errors(ts, probability, seed=None):
         for site in tree.sites():
             assert len(site.mutations) == 1
             mutation_node = site.mutations[0].node
-            tables.mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
+            tables.mutations.add_row(
+                site=site.id, node=mutation_node, derived_state="1"
+            )
             for sample in samples:
                 # We disallow any fixations. There are two possibilities:
                 # (1) We have a singleton and the sample
@@ -78,8 +79,11 @@ def insert_errors(ts, probability, seed=None):
                     if u == tskit.NULL:
                         parent = len(tables.mutations) - 1
                     tables.mutations.add_row(
-                        site=site.id, node=sample, parent=parent,
-                        derived_state=derived_state)
+                        site=site.id,
+                        node=sample,
+                        parent=parent,
+                        derived_state=derived_state,
+                    )
     return tables.tree_sequence()
 
 
@@ -134,20 +138,27 @@ def strip_singletons(ts):
             site_id = tables.sites.add_row(
                 position=variant.site.position,
                 ancestral_state=variant.site.ancestral_state,
-                metadata=variant.site.metadata)
+                metadata=variant.site.metadata,
+            )
             assert len(variant.site.mutations) >= 1
             mutation = variant.site.mutations[0]
             parent_id = tables.mutations.add_row(
-                site=site_id, node=mutation.node,
+                site=site_id,
+                node=mutation.node,
                 derived_state=mutation.derived_state,
-                metadata=mutation.metadata)
+                metadata=mutation.metadata,
+            )
             for error in variant.site.mutations[1:]:
                 parent = -1
                 if error.parent != -1:
                     parent = parent_id
                 tables.mutations.add_row(
-                    site=site_id, node=error.node, derived_state=error.derived_state,
-                    parent=parent, metadata=error.metadata)
+                    site=site_id,
+                    node=error.node,
+                    derived_state=error.derived_state,
+                    parent=parent,
+                    metadata=error.metadata,
+                )
     return tables.tree_sequence()
 
 
@@ -250,7 +261,7 @@ def get_ancestral_haplotypes(ts):
         if sites[end - 1] == edge.right:
             end -= 1
         A[edge.parent, start:end] = B[edge.parent, start:end]
-    A[:ts.num_samples] = B[:ts.num_samples]
+    A[: ts.num_samples] = B[: ts.num_samples]
     return A
 
 
@@ -329,7 +340,7 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
     A = get_ancestral_haplotypes(ts)
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
-    A = A[ts.num_samples:][::-1]
+    A = A[ts.num_samples :][::-1]
     # We also only want the inference sites
     A = A[:, sample_data.sites_inference[:]]
 
@@ -341,10 +352,10 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         intersect_mask = np.zeros(A.shape[1], dtype=int)
         t = 0
         for j in range(N):
-            if np.any(intersect_mask[start[j]: end[j]] == 1):
+            if np.any(intersect_mask[start[j] : end[j]] == 1):
                 t += 1
                 intersect_mask[:] = 0
-            intersect_mask[start[j]: end[j]] = 1
+            intersect_mask[start[j] : end[j]] = 1
             time[j] = t
     else:
         time = np.arange(N)
@@ -355,8 +366,12 @@ def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=Fals
         assert np.all(a[e:] == tskit.MISSING_DATA)
         assert all(s <= site < e for site in focal)
         ancestor_data.add_ancestor(
-            start=s, end=e, time=t, focal_sites=np.array(focal, dtype=np.int32),
-            haplotype=a[s:e])
+            start=s,
+            end=e,
+            time=t,
+            focal_sites=np.array(focal, dtype=np.int32),
+            haplotype=a[s:e],
+        )
 
 
 def print_tree_pairs(ts1, ts2, compute_distances=True):
@@ -377,7 +392,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
             weighted_distance += (right - left) * distance
             trailer = ""
             if distance != 0:
-                total_mismatch_interval += (right - left)
+                total_mismatch_interval += right - left
                 total_mismatches += 1
                 trailer = "[MISMATCH over {:.2f}]".format(right - left)
             print("KC distance       =", distance, trailer)
@@ -412,13 +427,18 @@ def subset_sites(ts, position):
     for site in ts.sites():
         if site.position in lookup:
             site_id = tables.sites.add_row(
-                site.position, ancestral_state=site.ancestral_state,
-                metadata=site.metadata)
+                site.position,
+                ancestral_state=site.ancestral_state,
+                metadata=site.metadata,
+            )
             for mutation in site.mutations:
                 tables.mutations.add_row(
-                    site_id, node=mutation.node, parent=mutation.parent,
+                    site_id,
+                    node=mutation.node,
+                    parent=mutation.parent,
                     derived_state=mutation.derived_state,
-                    metadata=mutation.metadata)
+                    metadata=mutation.metadata,
+                )
     return tables.tree_sequence()
 
 
@@ -444,14 +464,17 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
         flags=np.ones_like(nodes.flags),  # Everything is a sample
         time=nodes.time + 1,  # Make sure that all times are > 0
         population=nodes.population,
-        individual=nodes.individual, metadata=nodes.metadata,
-        metadata_offset=nodes.metadata_offset)
+        individual=nodes.individual,
+        metadata=nodes.metadata,
+        metadata_offset=nodes.metadata_offset,
+    )
     # Add one to all node references to account for this.
     tables.edges.set_columns(
         left=tables.edges.left,
         right=tables.edges.right,
         parent=tables.edges.parent + 1,
-        child=tables.edges.child + 1)
+        child=tables.edges.child + 1,
+    )
     tables.mutations.set_columns(
         node=tables.mutations.node + 1,
         site=tables.mutations.site,
@@ -459,7 +482,8 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
         derived_state=tables.mutations.derived_state,
         derived_state_offset=tables.mutations.derived_state_offset,
         metadata=tables.mutations.metadata,
-        metadata_offset=tables.mutations.metadata_offset)
+        metadata_offset=tables.mutations.metadata_offset,
+    )
 
     trees = minimised.trees()
     tree = next(trees)
@@ -528,10 +552,12 @@ def extract_ancestors(samples, ts):
         population=tables.nodes.population,
         individual=tables.nodes.individual,
         metadata=tables.nodes.metadata,
-        metadata_offset=tables.nodes.metadata_offset)
+        metadata_offset=tables.nodes.metadata_offset,
+    )
     # Now simplify down the tables to get rid of all sample edges.
     node_id_map = tables.simplify(
-        samples, filter_sites=False, filter_individuals=True, filter_populations=False)
+        samples, filter_sites=False, filter_individuals=True, filter_populations=False
+    )
 
     # We cannot have flags that are both samples and have other flags set,
     # so we need to unset all the sample flags for these.
@@ -547,7 +573,8 @@ def extract_ancestors(samples, ts):
         population=tables.nodes.population,
         individual=tables.nodes.individual,
         metadata=tables.nodes.metadata,
-        metadata_offset=tables.nodes.metadata_offset)
+        metadata_offset=tables.nodes.metadata_offset,
+    )
 
     record = provenance.get_provenance_dict(command="extract_ancestors")
     tables.provenances.add_row(record=json.dumps(record))
@@ -575,14 +602,16 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
     srb_index = {}
     last_edge = edges[index[0]]
     progress = tqdm.tqdm(
-        total=len(edges) - 1, desc="scan edges", disable=not show_progress)
+        total=len(edges) - 1, desc="scan edges", disable=not show_progress
+    )
     for j in index[1:]:
         progress.update()
         edge = edges[j]
         condition = (
-            flags[edge.child] == tskit.NODE_IS_SAMPLE and
-            edge.child == last_edge.child and
-            edge.left == last_edge.right)
+            flags[edge.child] == tskit.NODE_IS_SAMPLE
+            and edge.child == last_edge.child
+            and edge.left == last_edge.right
+        )
         if condition:
             key = edge.left, last_edge.parent, edge.parent
             if key in srb_index:
@@ -590,7 +619,8 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
                 srb_index[key] = (
                     count + 1,
                     max(left_bound, last_edge.left),
-                    min(right_bound, edge.right))
+                    min(right_bound, edge.right),
+                )
             else:
                 srb_index[key] = 1, last_edge.left, edge.right
         last_edge = edge
@@ -603,7 +633,8 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
 
     num_extra = 0
     progress = tqdm.tqdm(
-        total=len(srb_index), desc="scan index", disable=not show_progress)
+        total=len(srb_index), desc="scan index", disable=not show_progress
+    )
     for k, v in srb_index.items():
         progress.update()
         if v[0] > 1:
@@ -625,9 +656,15 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
 
 
 def run_perfect_inference(
-        base_ts, num_threads=1, path_compression=False,
-        extended_checks=True, time_chunking=True, progress_monitor=None,
-        use_ts=False, engine=constants.C_ENGINE):
+    base_ts,
+    num_threads=1,
+    path_compression=False,
+    extended_checks=True,
+    time_chunking=True,
+    progress_monitor=None,
+    use_ts=False,
+    engine=constants.C_ENGINE,
+):
     """
     Runs the perfect inference process on the specified tree sequence.
     """
@@ -640,20 +677,31 @@ def run_perfect_inference(
     else:
         ancestor_data = formats.AncestorData(sample_data)
         build_simulated_ancestors(
-            sample_data, ancestor_data, ts, time_chunking=time_chunking)
+            sample_data, ancestor_data, ts, time_chunking=time_chunking
+        )
         ancestor_data.finalise()
 
         ancestors_ts = inference.match_ancestors(
-            sample_data, ancestor_data, engine=engine, path_compression=path_compression,
-            num_threads=num_threads, extended_checks=extended_checks,
-            progress_monitor=progress_monitor)
+            sample_data,
+            ancestor_data,
+            engine=engine,
+            path_compression=path_compression,
+            num_threads=num_threads,
+            extended_checks=extended_checks,
+            progress_monitor=progress_monitor,
+        )
     # If time_chunking is turned on we need to stabilise the node ordering in the output
     # to ensure that the node IDs are comparable.
     inferred_ts = inference.match_samples(
-        sample_data, ancestors_ts, engine=engine, path_compression=path_compression,
-        num_threads=num_threads, extended_checks=extended_checks,
+        sample_data,
+        ancestors_ts,
+        engine=engine,
+        path_compression=path_compression,
+        num_threads=num_threads,
+        extended_checks=extended_checks,
         progress_monitor=progress_monitor,
-        stabilise_node_ordering=time_chunking and not path_compression)
+        stabilise_node_ordering=time_chunking and not path_compression,
+    )
     # to compare against the original, we need to remove unary nodes from the inferred TS
     inferred_ts = inferred_ts.simplify(keep_unary=False, filter_sites=False)
     return ts, inferred_ts
@@ -747,7 +795,8 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
             sample_count[j][u] = 1
 
     progress_iter = tqdm.tqdm(
-        ts.edge_diffs(), total=ts.num_trees, disable=not show_progress)
+        ts.edge_diffs(), total=ts.num_trees, disable=not show_progress
+    )
     for (left, right), edges_out, edges_in in progress_iter:
         for edge in edges_out:
             parent[edge.child] = -1
@@ -793,7 +842,8 @@ def snip_centromere(ts, left, right):
         left=edges.left[index],
         right=edges.right[index],
         parent=edges.parent[index],
-        child=edges.child[index])
+        child=edges.child[index],
+    )
     # Get all edges that intersect and add two edges for each.
     index = np.logical_not(index)
     i_parent = edges.parent[index]
@@ -808,7 +858,8 @@ def snip_centromere(ts, left, right):
         left=i_left[index],
         right=np.full(num_intersecting, left, dtype=np.float64),
         parent=i_parent[index],
-        child=i_child[index])
+        child=i_child[index],
+    )
 
     # Only insert valid edges (remove any entirely lost topology)
     index = right < i_right
@@ -817,9 +868,11 @@ def snip_centromere(ts, left, right):
         left=np.full(num_intersecting, right, dtype=np.float64),
         right=i_right[index],
         parent=i_parent[index],
-        child=i_child[index])
+        child=i_child[index],
+    )
     tables.sort()
     record = provenance.get_provenance_dict(
-        command="snip_centromere", left=left, right=right)
+        command="snip_centromere", left=left, right=right
+    )
     tables.provenances.add_row(record=json.dumps(record))
     return tables.tree_sequence()

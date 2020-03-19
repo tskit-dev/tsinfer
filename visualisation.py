@@ -41,12 +41,16 @@ class AncestorBuilderViz(object):
         n, m = A.shape
 
         for site in focal_sites:
-            dwg.add(dwg.rect(
-                (self.x_trans(site), self.y_trans(n)),
-                (self.x_unit, n * self.y_unit), fill="grey"))
+            dwg.add(
+                dwg.rect(
+                    (self.x_trans(site), self.y_trans(n)),
+                    (self.x_unit, n * self.y_unit),
+                    fill="grey",
+                )
+            )
 
         labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
-        lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+        lines = dwg.add(dwg.g(id="lines", stroke="black", stroke_width=3))
         for x in range(m + 1):
             a = self.x_trans(x), self.y_trans(0)
             b = self.x_trans(x), self.y_trans(n)
@@ -59,13 +63,18 @@ class AncestorBuilderViz(object):
 
         for x in range(m):
             for y in range(n):
-                labels.add(dwg.text(
-                    str(A[y, x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))))
+                labels.add(
+                    dwg.text(
+                        str(A[y, x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))
+                    )
+                )
         y = n + 1
         for x in range(m):
-            labels.add(dwg.text(
-                str(ancestor[x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))))
-
+            labels.add(
+                dwg.text(
+                    str(ancestor[x]), (self.x_trans(x + 0.5), self.y_trans(y + 0.5))
+                )
+            )
 
     def draw(self, ancestor_id, filename_pattern):
         start = self.ancestor_data.ancestors_start[ancestor_id]
@@ -73,15 +82,13 @@ class AncestorBuilderViz(object):
         focal_sites = self.ancestor_data.ancestors_focal_sites[ancestor_id]
         a = np.zeros(self.sample_data.num_sites, dtype=int)
         a[:] = -1
-        a[start: end] = self.ancestor_data.ancestors_haplotype[ancestor_id]
+        a[start:end] = self.ancestor_data.ancestors_haplotype[ancestor_id]
         print(start, end, focal_sites, a)
-
 
         dwg = svgwrite.Drawing(size=(self.width, self.height), debug=True)
         self.draw_matrix(dwg, focal_sites, a)
         with open(filename_pattern.format(0), "w") as f:
             f.write(dwg.tostring())
-
 
 
 def draw_edges(ts, width=800, height=600):
@@ -100,16 +107,21 @@ def draw_edges(ts, width=800, height=600):
     def y_trans(v):
         return height - (y_pad + v * y_unit)
 
-    lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+    lines = dwg.add(dwg.g(id="lines", stroke="black", stroke_width=3))
     left_labels = dwg.add(dwg.g(font_size=14, text_anchor="start"))
     mid_labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
     for u in range(ts.num_nodes):
         left_labels.add(dwg.text(str(u), (0, y_trans(u))))
     for x in ts.breakpoints():
-        dwg.add(dwg.line(
-            (x_trans(x), 2 * y_pad), (x_trans(x), height), stroke="grey",
-            stroke_width=1))
-        dwg.add(dwg.text(str(x), (x_trans(x), y_pad),  writing_mode="tb"))
+        dwg.add(
+            dwg.line(
+                (x_trans(x), 2 * y_pad),
+                (x_trans(x), height),
+                stroke="grey",
+                stroke_width=1,
+            )
+        )
+        dwg.add(dwg.text(str(x), (x_trans(x), y_pad), writing_mode="tb"))
 
     for edge in ts.edges():
         a = x_trans(edge.left), y_trans(edge.child)
@@ -148,16 +160,21 @@ def draw_ancestors(ts, width=800, height=600):
     def y_trans(v):
         return height - (y_pad + v * y_unit)
 
-    lines = dwg.add(dwg.g(id='lines', stroke='black', stroke_width=3))
+    lines = dwg.add(dwg.g(id="lines", stroke="black", stroke_width=3))
     left_labels = dwg.add(dwg.g(font_size=14, text_anchor="start"))
     mid_labels = dwg.add(dwg.g(font_size=14, text_anchor="middle"))
     for u in range(ts.num_nodes):
         left_labels.add(dwg.text(str(u), (0, y_trans(u))))
     for x in ts.breakpoints():
-        dwg.add(dwg.line(
-            (x_trans(x), 2 * y_pad), (x_trans(x), height), stroke="grey",
-            stroke_width=1))
-        dwg.add(dwg.text("{}".format(x), (x_trans(x), y_pad),  writing_mode="tb"))
+        dwg.add(
+            dwg.line(
+                (x_trans(x), 2 * y_pad),
+                (x_trans(x), height),
+                stroke="grey",
+                stroke_width=1,
+            )
+        )
+        dwg.add(dwg.text("{}".format(x), (x_trans(x), y_pad), writing_mode="tb"))
 
     for e in ts.edgesets():
         a = x_trans(e.left), y_trans(e.parent)
@@ -179,8 +196,9 @@ def draw_ancestors(ts, width=800, height=600):
 
 
 class Visualiser(object):
-
-    def __init__(self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8):
+    def __init__(
+        self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8
+    ):
         # Make sure the singletons have been removed.
         for v in original_ts.variants():
             if np.sum(v.genotypes) < 2:
@@ -196,11 +214,12 @@ class Visualiser(object):
         node_time = inferred_ts.tables.nodes.time
         self.num_ancestors = np.where(node_time > 0)[0].shape[0]
         self.ancestors = np.zeros(
-            (self.num_ancestors, original_ts.num_sites), dtype=np.uint8)
+            (self.num_ancestors, original_ts.num_sites), dtype=np.uint8
+        )
         for j, a in enumerate(ancestor_data.ancestors()):
-            self.ancestors[j, a.start: a.end] = a.haplotype
-            self.ancestors[j, :a.start] = tsinfer.UNKNOWN_ALLELE
-            self.ancestors[j, a.end:] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, a.start : a.end] = a.haplotype
+            self.ancestors[j, : a.start] = tsinfer.UNKNOWN_ALLELE
+            self.ancestors[j, a.end :] = tsinfer.UNKNOWN_ALLELE
 
         # TODO This only partially works for extra ancestors created by path
         # compression. We'll get -1 lines for extra ancestors created from
@@ -222,14 +241,17 @@ class Visualiser(object):
         self.colours = {
             255: ImageColor.getrgb("pink"),
             0: ImageColor.getrgb("blue"),
-            1: ImageColor.getrgb("red")}
+            1: ImageColor.getrgb("red"),
+        }
         self.copy_colours = {
             255: ImageColor.getrgb("white"),
             0: ImageColor.getrgb("black"),
-            1: ImageColor.getrgb("green")}
+            1: ImageColor.getrgb("green"),
+        }
         self.error_colours = {
             0: ImageColor.getrgb("purple"),
-            1: ImageColor.getrgb("orange")}
+            1: ImageColor.getrgb("orange"),
+        }
 
         # Make the haplotype box
         num_haplotype_rows = 1
@@ -249,19 +271,22 @@ class Visualiser(object):
 
         self.width = box_size * self.num_sites + self.left_padding + self.right_padding
         self.height = (
-            self.top_padding + self.bottom_padding + self.mid_padding
-            + num_haplotype_rows * box_size)
+            self.top_padding
+            + self.bottom_padding
+            + self.mid_padding
+            + num_haplotype_rows * box_size
+        )
         self.ts_origin = (self.left_padding, self.top_padding)
-        self.haplotype_origin = (
-                self.left_padding,
-                self.top_padding + self.mid_padding)
+        self.haplotype_origin = (self.left_padding, self.top_padding + self.mid_padding)
         self.base_image = Image.new(
-            "RGB", (self.width, self.height), color=self.background_colour)
+            "RGB", (self.width, self.height), color=self.background_colour
+        )
 
         b = self.box_size
         origin = self.haplotype_origin
         self.x_coordinate_map = {
-            site.position: origin[0] + site.id * b for site in original_ts.sites()}
+            site.position: origin[0] + site.id * b for site in original_ts.sites()
+        }
         self.draw_base()
 
     def draw_base(self):
@@ -281,7 +306,6 @@ class Visualiser(object):
                 fill = self.error_colours[int(mut.derived_state)]
                 print("error at", site.id, mut.node, mut.derived_state)
                 draw.rectangle([(x, y), (x + b, y + b)], fill=fill)
-
 
     def draw_true_breakpoints(self, draw):
         b = self.box_size
@@ -328,7 +352,6 @@ class Visualiser(object):
                 x = k * b + origin[0]
                 draw.rectangle([(x, y), (x + b, y + b)], fill=self.colours[a[k]])
 
-
     def draw_haplotypes(self, filename):
         self.base_image.save(filename)
 
@@ -340,7 +363,9 @@ class Visualiser(object):
         draw = ImageDraw.Draw(image)
         y = self.row_map[child_row] * b + origin[1]
         x = origin[0]
-        draw.rectangle([(x, y), (x + m * b, y + b)], outline=self.copying_outline_colour)
+        draw.rectangle(
+            [(x, y), (x + m * b, y + b)], outline=self.copying_outline_colour
+        )
         for k in range(m):
             if parents[k] != -1:
                 row = self.row_map[parents[k]]
@@ -359,7 +384,7 @@ class Visualiser(object):
         font = ImageFont.load_default()
         for site in self.original_ts.sites():
             label = "{} {:.6f}".format(site.id, site.position)
-            img_txt = Image.new('L', font.getsize(label), color="white")
+            img_txt = Image.new("L", font.getsize(label), color="white")
             draw_txt = ImageDraw.Draw(img_txt)
             draw_txt.text((0, 0), label, font=font)
             t = img_txt.rotate(90, expand=1)
@@ -393,62 +418,103 @@ class Visualiser(object):
 
 
 def visualise(
-        ts, recombination_rate, error_rate, engine="C", box_size=8,
-        perfect_ancestors=False, path_compression=False, time_chunking=False):
+    ts,
+    recombination_rate,
+    error_rate,
+    engine="C",
+    box_size=8,
+    perfect_ancestors=False,
+    path_compression=False,
+    time_chunking=False,
+):
 
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
     if perfect_ancestors:
         ancestor_data = tsinfer.AncestorData(sample_data)
         tsinfer.build_simulated_ancestors(
-            sample_data, ancestor_data, ts, time_chunking=time_chunking)
+            sample_data, ancestor_data, ts, time_chunking=time_chunking
+        )
         ancestor_data.finalise()
     else:
         ancestor_data = tsinfer.generate_ancestors(sample_data, engine=engine)
 
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, engine=engine, path_compression=path_compression,
-        extended_checks=True)
+        sample_data,
+        ancestor_data,
+        engine=engine,
+        path_compression=path_compression,
+        extended_checks=True,
+    )
     inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, engine=engine, simplify=False,
-        path_compression=path_compression, extended_checks=True)
+        sample_data,
+        ancestors_ts,
+        engine=engine,
+        simplify=False,
+        path_compression=path_compression,
+        extended_checks=True,
+    )
 
     prefix = "tmp__NOBACKUP__/"
     visualiser = Visualiser(
-        ts, sample_data, ancestor_data, inferred_ts, box_size=box_size)
+        ts, sample_data, ancestor_data, inferred_ts, box_size=box_size
+    )
     visualiser.draw_copying_paths(os.path.join(prefix, "copying_{}.png"))
 
     # tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=False)
     inferred_ts = tsinfer.match_samples(
-        sample_data, ancestors_ts, engine=engine, simplify=True,
-        path_compression=False, stabilise_node_ordering=True)
+        sample_data,
+        ancestors_ts,
+        engine=engine,
+        simplify=True,
+        path_compression=False,
+        stabilise_node_ordering=True,
+    )
 
     tsinfer.print_tree_pairs(ts, inferred_ts, compute_distances=True)
     sys.stdout.flush()
     print(
-        "num_sites = ", inferred_ts.num_sites, "num_mutations= ", inferred_ts.num_mutations)
+        "num_sites = ",
+        inferred_ts.num_sites,
+        "num_mutations= ",
+        inferred_ts.num_mutations,
+    )
 
     for site in inferred_ts.sites():
         if len(site.mutations) > 1:
             print(
-                "Multiple mutations at ", site.id, "over",
-                [mut.node for mut in site.mutations])
+                "Multiple mutations at ",
+                site.id,
+                "over",
+                [mut.node for mut in site.mutations],
+            )
 
 
 def run_viz(
-        n, L, rate, seed, mutation_rate=0, engine="C",
-        perfect_ancestors=True, perfect_mutations=True, path_compression=False,
-        time_chunking=True, error_rate=0):
-    recomb_map = msprime.RecombinationMap.uniform_map(
-            length=L, rate=rate, num_loci=L)
+    n,
+    L,
+    rate,
+    seed,
+    mutation_rate=0,
+    engine="C",
+    perfect_ancestors=True,
+    perfect_mutations=True,
+    path_compression=False,
+    time_chunking=True,
+    error_rate=0,
+):
+    recomb_map = msprime.RecombinationMap.uniform_map(length=L, rate=rate, num_loci=L)
     ts = msprime.simulate(
-        n, recombination_map=recomb_map, random_seed=seed,
-        model="smc_prime", mutation_rate=mutation_rate)
+        n,
+        recombination_map=recomb_map,
+        random_seed=seed,
+        model="smc_prime",
+        mutation_rate=mutation_rate,
+    )
     if perfect_mutations:
-        ts = tsinfer.insert_perfect_mutations(ts, delta=1/512)
+        ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 512)
     else:
-        ts = tsinfer.strip_singletons(
-            tsinfer.insert_errors(ts, error_rate, seed))
+        ts = tsinfer.strip_singletons(tsinfer.insert_errors(ts, error_rate, seed))
     print("num_sites = ", ts.num_sites)
 
     with open("tmp__NOBACKUP__/edges.svg", "w") as f:
@@ -456,8 +522,15 @@ def run_viz(
     with open("tmp__NOBACKUP__/ancestors.svg", "w") as f:
         f.write(draw_ancestors(ts))
     visualise(
-        ts, rate, 0, engine=engine, box_size=26, perfect_ancestors=perfect_ancestors,
-        path_compression=path_compression, time_chunking=time_chunking)
+        ts,
+        rate,
+        0,
+        engine=engine,
+        box_size=26,
+        perfect_ancestors=perfect_ancestors,
+        path_compression=path_compression,
+        time_chunking=time_chunking,
+    )
 
 
 def visualise_ancestors():
@@ -480,6 +553,7 @@ def main():
     #     error_rate=0.00)
 
     run_viz(15, 1000, 0.002, 2, engine=tsinfer.PY_ENGINE, perfect_ancestors=False)
+
 
 if __name__ == "__main__":
     main()

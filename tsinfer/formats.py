@@ -60,7 +60,7 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 # For the default setting on windows, we therefore hard code a smaller
 # map_size of 1GiB to avoid filling up disk space. On other platforms where
 # sparse files are supported, we default to 1TiB.
-DEFAULT_MAX_FILE_SIZE = 2**30 if sys.platform == "win32" else 2**40
+DEFAULT_MAX_FILE_SIZE = 2 ** 30 if sys.platform == "win32" else 2 ** 40
 
 
 def remove_lmdb_lockfile(lmdb_file):
@@ -75,6 +75,7 @@ class BufferedItemWriter(object):
     buffering writes and flushing them to the destination arrays
     asynchronosly using threads.
     """
+
     def __init__(self, array_map, num_threads=0):
         self.chunk_size = -1
         for key, array in array_map.items():
@@ -127,9 +128,12 @@ class BufferedItemWriter(object):
             # Make the flush threads.
             self.flush_threads = [
                 threads.queue_consumer_thread(
-                    self._flush_worker, self.flush_queue,
-                    name="flush-worker-{}".format(j))
-                for j in range(self.num_threads)]
+                    self._flush_worker,
+                    self.flush_queue,
+                    name="flush-worker-{}".format(j),
+                )
+                for j in range(self.num_threads)
+            ]
             logger.info("Started {} flush worker threads".format(self.num_threads))
 
     def _commit_write_buffer(self, write_buffer):
@@ -146,7 +150,7 @@ class BufferedItemWriter(object):
                     array.resize(*shape)
         for key, array in self.arrays.items():
             buffered = self.buffers[key][write_buffer][:n]
-            array[start: end] = buffered
+            array[start:end] = buffered
         logger.debug("Buffer {} flush done".format(write_buffer))
 
     def _flush_worker(self, thread_index):
@@ -229,7 +233,7 @@ def chunk_iterator(array):
     chunk_size = array.chunks[0]
     for j in range(array.shape[0]):
         if j % chunk_size == 0:
-            chunk = array[j: j + chunk_size][:]
+            chunk = array[j : j + chunk_size][:]
         yield chunk[j % chunk_size]
 
 
@@ -238,6 +242,7 @@ class DataContainer(object):
     Superclass of objects used to represent a collection of related
     data. Each datacontainer in a wrapper around a zarr group.
     """
+
     READ_MODE = 0
     BUILD_MODE = 1
     EDIT_MODE = 2
@@ -247,8 +252,13 @@ class DataContainer(object):
     FORMAT_VERSION = None
 
     def __init__(
-            self, path=None, num_flush_threads=0, compressor=DEFAULT_COMPRESSOR,
-            chunk_size=1024, max_file_size=None):
+        self,
+        path=None,
+        num_flush_threads=0,
+        compressor=DEFAULT_COMPRESSOR,
+        chunk_size=1024,
+        max_file_size=None,
+    ):
         self._mode = self.BUILD_MODE
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
@@ -266,11 +276,21 @@ class DataContainer(object):
         chunks = self._chunk_size
         provenances_group = self.data.create_group("provenances")
         provenances_group.create_dataset(
-            "timestamp", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "timestamp",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
         provenances_group.create_dataset(
-            "record", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "record",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
 
     def __enter__(self):
         return self
@@ -292,10 +312,12 @@ class DataContainer(object):
             raise exceptions.FileFormatError(str(e)) from e
         try:
             store = zarr.LMDBStore(
-                self.path, map_size=map_size, readonly=True, subdir=False, lock=False)
+                self.path, map_size=map_size, readonly=True, subdir=False, lock=False
+            )
         except lmdb.InvalidError as e:
             raise exceptions.FileFormatError(
-                    "Unknown file format:{}".format(str(e))) from e
+                "Unknown file format:{}".format(str(e))
+            ) from e
         except lmdb.Error as e:
             raise exceptions.FileFormatError(str(e)) from e
         return store
@@ -393,8 +415,7 @@ class DataContainer(object):
             store = self.data.store
             store.close()
             logger.debug("Fixing up LMDB file size")
-            with lmdb.open(
-                    self.path, subdir=False, lock=False, writemap=True) as db:
+            with lmdb.open(self.path, subdir=False, lock=False, writemap=True) as db:
                 # LMDB maps a very large amount of space by default. While this
                 # doesn't do any harm, it's annoying because we can't use ls to
                 # see the file sizes and the amount of RAM we're mapping can
@@ -416,15 +437,21 @@ class DataContainer(object):
         if format_name != self.FORMAT_NAME:
             raise exceptions.FileFormatError(
                 "Incorrect file format: expected '{}' got '{}'".format(
-                    self.FORMAT_NAME, format_name))
+                    self.FORMAT_NAME, format_name
+                )
+            )
         if format_version[0] < self.FORMAT_VERSION[0]:
             raise exceptions.FileFormatError(
                 "Format version {} too old. Current version = {}".format(
-                    format_version, self.FORMAT_VERSION))
+                    format_version, self.FORMAT_VERSION
+                )
+            )
         if format_version[0] > self.FORMAT_VERSION[0]:
             raise exceptions.FileFormatError(
                 "Format version {} too new. Current version = {}".format(
-                    format_version, self.FORMAT_VERSION))
+                    format_version, self.FORMAT_VERSION
+                )
+            )
 
     def _check_build_mode(self):
         if self._mode != self.BUILD_MODE:
@@ -473,7 +500,8 @@ class DataContainer(object):
         if self._mode not in (self.BUILD_MODE, self.EDIT_MODE):
             raise ValueError(
                 "Invalid operation: cannot add provenances unless in BUILD "
-                "or EDIT mode")
+                "or EDIT mode"
+            )
         n = self.num_provenances
         self.provenances_timestamp.resize(n + 1)
         self.provenances_record.resize(n + 1)
@@ -547,7 +575,8 @@ class DataContainer(object):
             ("uuid", self.uuid),
             ("num_provenances", self.num_provenances),
             ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
-            ("provenances/record", zarr_summary(self.provenances_record))]
+            ("provenances/record", zarr_summary(self.provenances_record)),
+        ]
         return self._format_str(values)
 
     def arrays(self):
@@ -559,6 +588,7 @@ class DataContainer(object):
         def visitor(name, obj):
             if isinstance(obj, zarr.Array):
                 ret.append((name, obj))
+
         self.data.visititems(visitor)
         return ret
 
@@ -589,6 +619,7 @@ class Site(object):
     """
     A single site. Mirrors the definition in tskit with some additional fields.
     """
+
     # TODO document properly.
     id = attr.ib()
     position = attr.ib()
@@ -604,6 +635,7 @@ class Variant(object):
     """
     A single variant. Mirrors the definition in tskit but with some extra fields.
     """
+
     # TODO document properly.
     site = attr.ib()
     genotypes = attr.ib()
@@ -615,6 +647,7 @@ class Individual(object):
     """
     An Individual object.
     """
+
     # TODO document properly.
     id = attr.ib()
     location = attr.ib()
@@ -724,6 +757,7 @@ class SampleData(DataContainer):
         value of 1GiB (2**30 bytes) is used on Windows and 1TiB (2**40 bytes)
         on other platforms (see above for details).
     """
+
     FORMAT_NAME = "tsinfer-sample-data"
     FORMAT_VERSION = (3, 0)
 
@@ -736,61 +770,121 @@ class SampleData(DataContainer):
 
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
-        chunks = self._chunk_size,
+        chunks = (self._chunk_size,)
         populations_group = self.data.create_group("population")
         metadata = populations_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "metadata",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
         self._populations_writer = BufferedItemWriter(
-            {"metadata": metadata}, num_threads=self._num_flush_threads)
+            {"metadata": metadata}, num_threads=self._num_flush_threads
+        )
 
         individuals_group = self.data.create_group("individual")
         metadata = individuals_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "metadata",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
         location = individuals_group.create_dataset(
-            "location", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype="array:f8")
+            "location",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype="array:f8",
+        )
         time = individuals_group.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
+            "time",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.float64,
+        )
         self._individuals_writer = BufferedItemWriter(
             {"metadata": metadata, "location": location, "time": time},
-            num_threads=self._num_flush_threads)
+            num_threads=self._num_flush_threads,
+        )
 
         samples_group = self.data.create_group("samples")
         population = samples_group.create_dataset(
-            "population", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
+            "population",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.int32,
+        )
         individual = samples_group.create_dataset(
-            "individual", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
+            "individual",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.int32,
+        )
         metadata = samples_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "metadata",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
         self._samples_writer = BufferedItemWriter(
             {"individual": individual, "population": population, "metadata": metadata},
-            num_threads=self._num_flush_threads)
+            num_threads=self._num_flush_threads,
+        )
 
         sites_group = self.data.create_group("sites")
         sites_group.create_dataset(
-            "position", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
+            "position",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.float64,
+        )
         sites_group.create_dataset(
-            "time", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
+            "time",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.float64,
+        )
         sites_group.create_dataset(
-            "genotypes", shape=(0, 0), chunks=(self._chunk_size, self._chunk_size),
-            compressor=self._compressor, dtype=np.int8)
+            "genotypes",
+            shape=(0, 0),
+            chunks=(self._chunk_size, self._chunk_size),
+            compressor=self._compressor,
+            dtype=np.int8,
+        )
         sites_group.create_dataset(
-            "inference", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=bool)
+            "inference",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=bool,
+        )
         sites_group.create_dataset(
-            "alleles", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "alleles",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
         sites_group.create_dataset(
-            "metadata", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=object, object_codec=self._metadata_codec)
+            "metadata",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=object,
+            object_codec=self._metadata_codec,
+        )
 
         self._last_position = 0
         self._sites_writer = None
@@ -799,7 +893,8 @@ class SampleData(DataContainer):
 
     def summary(self):
         return "SampleData(num_samples={}, num_sites={})".format(
-            self.num_samples, self.num_sites)
+            self.num_samples, self.num_sites
+        )
 
     @property
     def sequence_length(self):
@@ -895,7 +990,7 @@ class SampleData(DataContainer):
     @sites_inference.setter
     def sites_inference(self, value):
         self._check_edit_mode()
-        if type(value) == np.ndarray and value.dtype == 'bool':
+        if type(value) == np.ndarray and value.dtype == "bool":
             # Shortcut, can input directly
             self.data["sites/inference"][:] = value
         else:
@@ -925,7 +1020,8 @@ class SampleData(DataContainer):
             ("sites/alleles", zarr_summary(self.sites_alleles)),
             ("sites/inference", zarr_summary(self.sites_inference)),
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
-            ("sites/metadata", zarr_summary(self.sites_metadata))]
+            ("sites/metadata", zarr_summary(self.sites_metadata)),
+        ]
         return super(SampleData, self).__str__() + self._format_str(values)
 
     def data_equal(self, other):
@@ -944,33 +1040,56 @@ class SampleData(DataContainer):
         :rtype: bool
         """
         return (
-            self.format_name == other.format_name and
-            self.format_version == other.format_version and
-            self.num_populations == other.num_populations and
-            self.num_individuals == other.num_individuals and
-            self.num_samples == other.num_samples and
-            self.num_sites == other.num_sites and
-            self.num_inference_sites == other.num_inference_sites and
-            np.all(self.individuals_time[:] == other.individuals_time[:]) and
-            np.all(self.samples_individual[:] == other.samples_individual[:]) and
-            np.all(self.samples_population[:] == other.samples_population[:]) and
-            np.all(self.sites_position[:] == other.sites_position[:]) and
-            np.all(self.sites_inference[:] == other.sites_inference[:]) and
-            np.all(self.sites_genotypes[:] == other.sites_genotypes[:]) and
-            np.all(self.sites_time[:] == other.sites_time[:]) and
+            self.format_name == other.format_name
+            and self.format_version == other.format_version
+            and self.num_populations == other.num_populations
+            and self.num_individuals == other.num_individuals
+            and self.num_samples == other.num_samples
+            and self.num_sites == other.num_sites
+            and self.num_inference_sites == other.num_inference_sites
+            and np.all(self.individuals_time[:] == other.individuals_time[:])
+            and np.all(self.samples_individual[:] == other.samples_individual[:])
+            and np.all(self.samples_population[:] == other.samples_population[:])
+            and np.all(self.sites_position[:] == other.sites_position[:])
+            and np.all(self.sites_inference[:] == other.sites_inference[:])
+            and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
+            and np.all(self.sites_time[:] == other.sites_time[:])
             # Need to take a different approach with np object arrays.
-            all(itertools.starmap(np.array_equal, zip(
-                self.populations_metadata[:], other.populations_metadata[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.individuals_metadata[:], other.individuals_metadata[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.individuals_location[:], other.individuals_location[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.samples_metadata[:], other.samples_metadata[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.sites_metadata[:], other.sites_metadata[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.sites_alleles[:], other.sites_alleles[:]))))
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.populations_metadata[:], other.populations_metadata[:]),
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.individuals_metadata[:], other.individuals_metadata[:]),
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.individuals_location[:], other.individuals_location[:]),
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.samples_metadata[:], other.samples_metadata[:]),
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
+                )
+            )
+        )
 
     ####################################
     # Write mode
@@ -1026,12 +1145,16 @@ class SampleData(DataContainer):
                 for u in nodes[1:]:
                     if ts.node(u).time != first_node.time:
                         raise ValueError(
-                            "All nodes for individual {} must have the same time"
-                            .format(individual.id))
+                            "All nodes for individual {} must have the same time".format(
+                                individual.id
+                            )
+                        )
                     if ts.node(u).population != first_node.population:
                         raise ValueError(
-                            "All nodes for individual {} must be in the same population"
-                            .format(individual.id))
+                            "All nodes for individual {} must be in the same population".format(
+                                individual.id
+                            )
+                        )
                 individual_metadata = None
                 samples_metadata = [None for u in nodes]
                 if use_metadata:
@@ -1046,7 +1169,8 @@ class SampleData(DataContainer):
                     population=first_node.population,
                     time=first_node.time if use_times else 0,
                     ploidy=len(nodes),
-                    samples_metadata=samples_metadata)
+                    samples_metadata=samples_metadata,
+                )
         for u in ts.samples():
             node = ts.node(u)
             if node.individual == tskit.NULL:
@@ -1058,7 +1182,8 @@ class SampleData(DataContainer):
                     population=node.population,
                     time=node.time if use_times else 0,
                     ploidy=1,
-                    samples_metadata=[sample_metadata])
+                    samples_metadata=[sample_metadata],
+                )
         for v in ts.variants():
             variant_time = None
             if use_times and len(v.site.mutations) == 1:
@@ -1067,8 +1192,12 @@ class SampleData(DataContainer):
             if use_metadata and v.site.metadata:
                 site_metadata = json.loads(v.site.metadata)
             self.add_site(
-                v.site.position, v.genotypes, v.alleles, metadata=site_metadata,
-                time=variant_time)
+                v.site.position,
+                v.genotypes,
+                v.alleles,
+                metadata=site_metadata,
+                time=variant_time,
+            )
         # Insert all the provenance from the original tree sequence.
         for prov in ts.provenances():
             self.add_provenance(prov.timestamp, json.loads(prov.record))
@@ -1089,7 +1218,8 @@ class SampleData(DataContainer):
             "time": self.sites_time,
         }
         self._sites_writer = BufferedItemWriter(
-                arrays, num_threads=self._num_flush_threads)
+            arrays, num_threads=self._num_flush_threads
+        )
 
     def add_population(self, metadata=None):
         """
@@ -1110,8 +1240,14 @@ class SampleData(DataContainer):
         return self._populations_writer.add(metadata=self._check_metadata(metadata))
 
     def add_individual(
-            self, ploidy=1, metadata=None, population=None, location=None, time=0,
-            samples_metadata=None):
+        self,
+        ploidy=1,
+        metadata=None,
+        population=None,
+        location=None,
+        time=0,
+        samples_metadata=None,
+    ):
         """
         Adds a new :ref:`sec_inference_data_model_individual` to this
         :class:`.SampleData` and returns its ID and those of the resulting additional
@@ -1165,25 +1301,34 @@ class SampleData(DataContainer):
             raise ValueError("Ploidy must be at least 1")
         if samples_metadata is not None and len(samples_metadata) != ploidy:
             raise ValueError(
-                "If you specify samples_metadata, it must be a list of length `ploidy`")
+                "If you specify samples_metadata, it must be a list of length `ploidy`"
+            )
         if samples_metadata is None:
             samples_metadata = [None] * ploidy
         if location is None:
             location = []
         location = np.array(location, dtype=np.float64)
         individual_id = self._individuals_writer.add(
-            metadata=self._check_metadata(metadata), location=location, time=time)
+            metadata=self._check_metadata(metadata), location=location, time=time
+        )
         sample_ids = []
         for sample_meta in samples_metadata:
             sample_meta = self._check_metadata(sample_meta)
             sid = self._samples_writer.add(
-                population=population, individual=individual_id, metadata=sample_meta)
+                population=population, individual=individual_id, metadata=sample_meta
+            )
             sample_ids.append(sid)
         return individual_id, sample_ids
 
     def add_site(
-            self, position, genotypes, alleles=None, metadata=None, inference=None,
-            time=None):
+        self,
+        position,
+        genotypes,
+        alleles=None,
+        metadata=None,
+        inference=None,
+        time=None,
+    ):
         """
         Adds a new site to this :class:`.SampleData` and returns its ID.
 
@@ -1279,7 +1424,8 @@ class SampleData(DataContainer):
             raise ValueError("Non-missing values for genotypes cannot be negative")
         if genotypes.shape != (self.num_samples,):
             raise ValueError(
-                "Must have {} (num_samples) genotypes.".format(self.num_samples))
+                "Must have {} (num_samples) genotypes.".format(self.num_samples)
+            )
         if np.any(genotypes[non_missing] >= n_alleles):
             raise ValueError("Non-missing values for genotypes must be < num alleles")
         if position < 0:
@@ -1288,7 +1434,8 @@ class SampleData(DataContainer):
             raise ValueError("Site position must be less than the sequence length")
         if position <= self._last_position:
             raise ValueError(
-                "Site positions must be unique and added in increasing order")
+                "Site positions must be unique and added in increasing order"
+            )
 
         n_known = np.sum(genotypes != tskit.MISSING_DATA)
         n_unknown = self.num_samples - n_known
@@ -1314,9 +1461,13 @@ class SampleData(DataContainer):
             time = n_derived  # If n_alleles > 2, then this may not be a sensible approx
             time += n_unknown / 2.0  # Unknown alleles create intermediate age
         site_id = self._sites_writer.add(
-            position=position, genotypes=genotypes,
+            position=position,
+            genotypes=genotypes,
             metadata=self._check_metadata(metadata),
-            inference=inference, alleles=alleles, time=time)
+            inference=inference,
+            alleles=alleles,
+            time=time,
+        )
         self._last_position = position
         return site_id
 
@@ -1354,9 +1505,14 @@ class SampleData(DataContainer):
         for j in range(self.num_sites):
             if inference_sites is None or inference[j] == inference_sites:
                 site = Site(
-                    id=j, position=position[j], ancestral_state=alleles[j][0],
-                    alleles=tuple(alleles[j]), inference=inference[j],
-                    metadata=metadata[j], time=time[j])
+                    id=j,
+                    position=position[j],
+                    ancestral_state=alleles[j][0],
+                    alleles=tuple(alleles[j]),
+                    inference=inference[j],
+                    metadata=metadata[j],
+                    time=time[j],
+                )
                 yield site
 
     def genotypes(self, inference_sites=None):
@@ -1405,7 +1561,8 @@ class SampleData(DataContainer):
             only genotypes at sites that are not marked for inference.
         """
         for (j, genotypes), site in zip(
-                self.genotypes(inference_sites), self.sites(inference_sites)):
+            self.genotypes(inference_sites), self.sites(inference_sites)
+        ):
             variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
             yield variant
 
@@ -1417,7 +1574,7 @@ class SampleData(DataContainer):
         chunk_size = self.sites_genotypes.chunks[1]
         for j in range(self.num_samples):
             if j % chunk_size == 0:
-                chunk = self.sites_genotypes[:, j: j + chunk_size].T
+                chunk = self.sites_genotypes[:, j : j + chunk_size].T
             a = chunk[j % chunk_size]
             if inference_sites is None:
                 yield j, a
@@ -1458,8 +1615,10 @@ class SampleData(DataContainer):
     def individuals(self):
         # TODO document
         iterator = zip(
-            self.individuals_location[:], self.individuals_metadata[:],
-            self.individuals_time[:])
+            self.individuals_location[:],
+            self.individuals_metadata[:],
+            self.individuals_time[:],
+        )
         for j, (location, metadata, time) in enumerate(iterator):
             yield Individual(j, location=location, metadata=metadata, time=time)
 
@@ -1469,6 +1628,7 @@ class Ancestor(object):
     """
     An ancestor object.
     """
+
     # TODO document properly.
     id = attr.ib()
     start = attr.ib()
@@ -1511,6 +1671,7 @@ class AncestorData(DataContainer):
         value of 1GiB is used on Windows and 1TiB on other
         platforms (see above for details).
     """
+
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
@@ -1532,32 +1693,59 @@ class AncestorData(DataContainer):
         sites_inference = self.sample_data.sites_inference[:]
         position = self.sample_data.sites_position[:][sites_inference]
         self.data.create_dataset(
-            "sites/position", data=position, chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
+            "sites/position",
+            data=position,
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.float64,
+        )
 
         self.data.create_dataset(
-            "ancestors/start", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
+            "ancestors/start",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.int32,
+        )
         self.data.create_dataset(
-            "ancestors/end", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.int32)
+            "ancestors/end",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.int32,
+        )
         self.data.create_dataset(
-            "ancestors/time", shape=(0,), chunks=chunks, compressor=self._compressor,
-            dtype=np.float64)
+            "ancestors/time",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.float64,
+        )
         self.data.create_dataset(
-            "ancestors/focal_sites", shape=(0,), chunks=chunks,
-            dtype="array:i4", compressor=self._compressor)
+            "ancestors/focal_sites",
+            shape=(0,),
+            chunks=chunks,
+            dtype="array:i4",
+            compressor=self._compressor,
+        )
         self.data.create_dataset(
-            "ancestors/haplotype", shape=(0,), chunks=chunks,
-            dtype="array:i1", compressor=self._compressor)
+            "ancestors/haplotype",
+            shape=(0,),
+            chunks=chunks,
+            dtype="array:i1",
+            compressor=self._compressor,
+        )
 
-        self.item_writer = BufferedItemWriter({
-            "start": self.ancestors_start,
-            "end": self.ancestors_end,
-            "time": self.ancestors_time,
-            "focal_sites": self.ancestors_focal_sites,
-            "haplotype": self.ancestors_haplotype},
-            num_threads=self._num_flush_threads)
+        self.item_writer = BufferedItemWriter(
+            {
+                "start": self.ancestors_start,
+                "end": self.ancestors_end,
+                "time": self.ancestors_time,
+                "focal_sites": self.ancestors_focal_sites,
+                "haplotype": self.ancestors_haplotype,
+            },
+            num_threads=self._num_flush_threads,
+        )
 
         # Add in the provenance trail from the sample_data file.
         for timestamp, record in sample_data.provenances():
@@ -1565,7 +1753,8 @@ class AncestorData(DataContainer):
 
     def summary(self):
         return "AncestorData(num_ancestors={}, num_sites={})".format(
-            self.num_ancestors, self.num_sites)
+            self.num_ancestors, self.num_sites
+        )
 
     def __str__(self):
         values = [
@@ -1578,7 +1767,8 @@ class AncestorData(DataContainer):
             ("ancestors/end", zarr_summary(self.ancestors_end)),
             ("ancestors/time", zarr_summary(self.ancestors_time)),
             ("ancestors/focal_sites", zarr_summary(self.ancestors_focal_sites)),
-            ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype))]
+            ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype)),
+        ]
         return super(AncestorData, self).__str__() + self._format_str(values)
 
     def data_equal(self, other):
@@ -1588,20 +1778,29 @@ class AncestorData(DataContainer):
         the UUID.
         """
         return (
-            self.sequence_length == other.sequence_length and
-            self.sample_data_uuid == other.sample_data_uuid and
-            self.format_name == other.format_name and
-            self.format_version == other.format_version and
-            self.num_ancestors == other.num_ancestors and
-            self.num_sites == other.num_sites and
-            np.array_equal(self.sites_position[:], other.sites_position[:]) and
-            np.array_equal(self.ancestors_start[:], other.ancestors_start[:]) and
-            np.array_equal(self.ancestors_end[:], other.ancestors_end[:]) and
+            self.sequence_length == other.sequence_length
+            and self.sample_data_uuid == other.sample_data_uuid
+            and self.format_name == other.format_name
+            and self.format_version == other.format_version
+            and self.num_ancestors == other.num_ancestors
+            and self.num_sites == other.num_sites
+            and np.array_equal(self.sites_position[:], other.sites_position[:])
+            and np.array_equal(self.ancestors_start[:], other.ancestors_start[:])
+            and np.array_equal(self.ancestors_end[:], other.ancestors_end[:])
             # Need to take a different approach with np object arrays.
-            all(itertools.starmap(np.array_equal, zip(
-                self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]))) and
-            all(itertools.starmap(np.array_equal, zip(
-                self.ancestors_haplotype[:], other.ancestors_haplotype[:]))))
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]),
+                )
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.ancestors_haplotype[:], other.ancestors_haplotype[:]),
+                )
+            )
+        )
 
     @property
     def sequence_length(self):
@@ -1667,7 +1866,9 @@ class AncestorData(DataContainer):
         """
         self._check_build_mode()
         haplotype = tskit.util.safe_np_int_cast(haplotype, dtype=np.int8, copy=True)
-        focal_sites = tskit.util.safe_np_int_cast(focal_sites, dtype=np.int32, copy=True)
+        focal_sites = tskit.util.safe_np_int_cast(
+            focal_sites, dtype=np.int32, copy=True
+        )
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self._num_sites:
@@ -1676,15 +1877,19 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
-        if np.any(haplotype >= self._num_alleles[start: end]):
+        if np.any(haplotype >= self._num_alleles[start:end]):
             raise ValueError("haplotype values must be < num_alleles.")
         if time <= 0:
             raise ValueError("time must be > 0")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
         self.item_writer.add(
-            start=start, end=end, time=time, focal_sites=focal_sites,
-            haplotype=haplotype)
+            start=start,
+            end=end,
+            time=time,
+            focal_sites=focal_sites,
+            haplotype=haplotype,
+        )
 
     def finalise(self):
         if self._mode == self.BUILD_MODE:
@@ -1703,8 +1908,13 @@ class AncestorData(DataContainer):
         focal_sites = self.ancestors_focal_sites[:]
         for j, h in enumerate(chunk_iterator(self.ancestors_haplotype)):
             yield Ancestor(
-                id=j, start=start[j], end=end[j], time=time[j],
-                focal_sites=focal_sites[j], haplotype=h)
+                id=j,
+                start=start[j],
+                end=end[j],
+                time=time[j],
+                focal_sites=focal_sites[j],
+                haplotype=h,
+            )
 
 
 def load(path):
@@ -1739,5 +1949,6 @@ def load(path):
     if tsinfer_file is None:
         raise exceptions.FileFormatError(
             "Unrecognised file format. Try running with -vv and check the log "
-            "for more details on what went wrong")
+            "for more details on what went wrong"
+        )
     return tsinfer_file

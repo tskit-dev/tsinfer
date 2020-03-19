@@ -30,6 +30,7 @@ import _thread
 _prctl_available = False
 try:
     import prctl
+
     _prctl_available = True
 except ImportError:
     pass
@@ -37,6 +38,7 @@ except ImportError:
 _numa_available = False
 try:
     import numa
+
     _numa_available = True
 except ImportError:
     pass
@@ -54,7 +56,8 @@ def _queue_thread(worker, work_queue, name="tsinfer-worker", index=0, consumer=T
             if _numa_available and numa.available():
                 numa.set_localalloc()
                 logger.debug(
-                    "Set NUMA local allocation policy on thread {}".format(name))
+                    "Set NUMA local allocation policy on thread {}".format(name)
+                )
             worker(index)
             logger.debug("thread '{}' finishing".format(name))
         except Exception:

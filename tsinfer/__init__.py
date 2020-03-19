@@ -30,6 +30,7 @@ if sys.version_info[0] < 3:
 __version__ = "undefined"
 try:
     from . import _version
+
     __version__ = _version.version
 except ImportError:
     pass
