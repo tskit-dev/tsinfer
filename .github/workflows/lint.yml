@@ -19,10 +19,10 @@ jobs:
     - name: install run-clang-format
       run: wget https://raw.githubusercontent.com/Sarcasm/run-clang-format/de6e8ca07d171a7f378d379ff252a00f2905e81d/run-clang-format.py
     # The exlude patterns for -r is pretty weak, and we can't use shell globbing here.
+    # Also we can't split this across multiple lines as the whitespace ends up being
+    # significant. Sigh.
     - name: clang-format
-      run: python run-clang-format.py --clang-format-executable=clang-format \
-        lib/ancestor_matcher.c lib/ancestor_builder.c lib/err.h lib/object_heap.c \
-        lib/object_heap.h lib/tree_sequence_builder.c lib/tsinfer.h lib/tests/tests.c
+      run: python run-clang-format.py --clang-format-executable=clang-format lib/ancestor_matcher.c lib/ancestor_builder.c lib/err.h lib/object_heap.c lib/object_heap.h lib/tree_sequence_builder.c lib/tsinfer.h lib/tests/tests.c
   pre-commit:
     runs-on: ubuntu-18.04
     steps:

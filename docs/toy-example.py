@@ -1,8 +1,9 @@
 import os
 import msprime
 import sys
-sys.path.insert(0, os.path.abspath('..'))
-import tsinfer
+
+sys.path.insert(0, os.path.abspath(".."))
+import tsinfer  # noqa
 
 
 ts = msprime.simulate(5, mutation_rate=0.7, random_seed=10)
