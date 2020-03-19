@@ -38,10 +38,10 @@
 #define NULL_NODE (-1)
 #define CACHE_UNSET (-1)
 
-#define TSI_COMPRESS_PATH   1
+#define TSI_COMPRESS_PATH 1
 #define TSI_EXTENDED_CHECKS 2
 
-#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t) (1u << 16))
+#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t)(1u << 16))
 
 typedef int8_t allele_t;
 
@@ -193,44 +193,40 @@ typedef struct {
     } output;
 } ancestor_matcher_t;
 
-int ancestor_builder_alloc(ancestor_builder_t *self,
-        size_t num_samples, size_t num_sites, int flags);
+int ancestor_builder_alloc(
+    ancestor_builder_t *self, size_t num_samples, size_t num_sites, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
-int ancestor_builder_add_site(ancestor_builder_t *self, tsk_id_t site,
-        double time, allele_t *genotypes);
-int ancestor_builder_make_ancestor(ancestor_builder_t *self,
-        size_t num_focal_sites, tsk_id_t *focal_sites,
-        tsk_id_t *start, tsk_id_t *end, allele_t *haplotype);
+int ancestor_builder_add_site(
+    ancestor_builder_t *self, tsk_id_t site, double time, allele_t *genotypes);
+int ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
+    tsk_id_t *focal_sites, tsk_id_t *start, tsk_id_t *end, allele_t *haplotype);
 int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
-        tree_sequence_builder_t *tree_sequence_builder,
-        double *recombination_rate, double *mutation_rate,
-        unsigned int precision, int flags);
+    tree_sequence_builder_t *tree_sequence_builder, double *recombination_rate,
+    double *mutation_rate, unsigned int precision, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
-int ancestor_matcher_find_path(ancestor_matcher_t *self,
-        tsk_id_t start, tsk_id_t end, allele_t *haplotype,
-        allele_t *matched_haplotype, size_t *num_output_edges,
-        tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output);
+int ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
+    allele_t *haplotype, allele_t *matched_haplotype, size_t *num_output_edges,
+    tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output);
 int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
 double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
 size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
-int tree_sequence_builder_alloc(tree_sequence_builder_t *self,
-        size_t num_sites, tsk_size_t *num_alleles,
-        size_t nodes_chunk_size, size_t edges_chunk_size, int flags);
+int tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
+    tsk_size_t *num_alleles, size_t nodes_chunk_size, size_t edges_chunk_size,
+    int flags);
 int tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out);
 int tree_sequence_builder_free(tree_sequence_builder_t *self);
-int tree_sequence_builder_add_node(tree_sequence_builder_t *self,
-        double time, uint32_t flags);
-int tree_sequence_builder_add_path(tree_sequence_builder_t *self,
-        tsk_id_t child, size_t num_edges, tsk_id_t *left, tsk_id_t *right,
-        tsk_id_t *parent, int flags);
-int tree_sequence_builder_add_mutation(tree_sequence_builder_t *self,
-        tsk_id_t node, tsk_id_t site, allele_t derived_state);
-int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self,
-        tsk_id_t node, size_t num_mutations, tsk_id_t *site, allele_t *derived_state);
+int tree_sequence_builder_add_node(
+    tree_sequence_builder_t *self, double time, uint32_t flags);
+int tree_sequence_builder_add_path(tree_sequence_builder_t *self, tsk_id_t child,
+    size_t num_edges, tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, int flags);
+int tree_sequence_builder_add_mutation(
+    tree_sequence_builder_t *self, tsk_id_t node, tsk_id_t site, allele_t derived_state);
+int tree_sequence_builder_add_mutations(tree_sequence_builder_t *self, tsk_id_t node,
+    size_t num_mutations, tsk_id_t *site, allele_t *derived_state);
 int tree_sequence_builder_freeze_indexes(tree_sequence_builder_t *self);
 
 size_t tree_sequence_builder_get_num_nodes(tree_sequence_builder_t *self);
@@ -238,27 +234,24 @@ size_t tree_sequence_builder_get_num_edges(tree_sequence_builder_t *self);
 size_t tree_sequence_builder_get_num_mutations(tree_sequence_builder_t *self);
 
 /* Restore the state of a previous tree sequence builder. */
-int tree_sequence_builder_restore_nodes(tree_sequence_builder_t *self,
-        size_t num_nodes, uint32_t *flags, double *time);
-int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self,
-        size_t num_edges, tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent,
-        tsk_id_t *child);
+int tree_sequence_builder_restore_nodes(
+    tree_sequence_builder_t *self, size_t num_nodes, uint32_t *flags, double *time);
+int tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_edges,
+    tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *child);
 int tree_sequence_builder_restore_mutations(tree_sequence_builder_t *self,
-        size_t num_mutations, tsk_id_t *site, tsk_id_t *node, allele_t *derived_state);
+    size_t num_mutations, tsk_id_t *site, tsk_id_t *node, allele_t *derived_state);
 
 /* Dump the state */
-int tree_sequence_builder_dump_nodes(tree_sequence_builder_t *self,
-        uint32_t *flags, double *time);
-int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self,
-        tsk_id_t *left, tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
-int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self,
-        tsk_id_t *site, tsk_id_t *node, allele_t *derived_state,
-        tsk_id_t *parent);
+int tree_sequence_builder_dump_nodes(
+    tree_sequence_builder_t *self, uint32_t *flags, double *time);
+int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self, tsk_id_t *left,
+    tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
+int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t *site,
+    tsk_id_t *node, allele_t *derived_state, tsk_id_t *parent);
 
-#define tsi_safe_free(pointer) \
-do {\
-    if (pointer != NULL) {\
-        free(pointer);\
-    }\
-} while (0)
-
+#define tsi_safe_free(pointer)                                                          \
+    do {                                                                                \
+        if (pointer != NULL) {                                                          \
+            free(pointer);                                                              \
+        }                                                                               \
+    } while (0)

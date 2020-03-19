@@ -34,7 +34,7 @@ jobs:
       - run:
           name: Checkout submodules
           command: |
-            git submodule update --init --recursive 
+            git submodule update --init --recursive
             # Write out the status for debugging purposes. Are we checked out at tags?
             git submodule status --recursive
 
@@ -43,10 +43,7 @@ jobs:
           command: |
               python setup.py build_ext --inplace
 
-      - run:
-          name: Lint Python
-          command: |
-              flake8 --max-line-length 89 tsinfer setup.py tests evaluation.py
+
       - run:
           name: Run Python tests and upload coverage
           command: |
@@ -64,8 +61,8 @@ jobs:
       - run:
           name: Compile C with clang
           command: |
-            CC=clang CXX=clang++ meson lib/ build-clang 
-            ninja -C build-clang 
+            CC=clang CXX=clang++ meson lib/ build-clang
+            ninja -C build-clang
 
       - run:
           name: Run the low-level tests.
@@ -82,7 +79,7 @@ jobs:
             gcov -pb ./tsinfer@sta/ancestor_builder.c.gcno ../lib/ancestor_builder.c
             gcov -pb ./tsinfer@sta/ancestor_matcher.c.gcno ../lib/ancestor_matcher.c
             gcov -pb ./tsinfer@sta/tree_sequence_builder.c.gcno ../lib/tree_sequence_builder.c
-            gcov -pb ./tsinfer@sta/object_heap.c.gcno ../lib/object_heap.c 
+            gcov -pb ./tsinfer@sta/object_heap.c.gcno ../lib/object_heap.c
             cd ..
             codecov -X gcov -F C
 
@@ -104,7 +101,7 @@ jobs:
           name: Test the docs will build on RTD minimal environment.
           command: |
                python -m venv docs-venv
-               source docs-venv/bin/activate 
+               source docs-venv/bin/activate
                pip install -r requirements/readthedocs.txt
                make -C docs
 
@@ -112,6 +109,6 @@ jobs:
           name: Install from the distribution tarball
           command: |
                python -m venv venv
-               source venv/bin/activate 
+               source venv/bin/activate
                pip install --upgrade setuptools pip
-               pip install dist/*.tar.gz 
+               pip install dist/*.tar.gz

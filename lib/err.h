@@ -1,6 +1,7 @@
 #ifndef __ERR_H__
 #define __ERR_H__
 
+// clang-format off
 #define TSI_ERR_GENERIC                                             -1
 #define TSI_ERR_NO_MEMORY                                           -2
 #define TSI_ERR_NONCONTIGUOUS_EDGES                                 -3
@@ -19,18 +20,18 @@
 #define TSI_ERR_BAD_MUTATION_SITE                                   -16
 #define TSI_ERR_BAD_MUTATION_DERIVED_STATE                          -17
 #define TSI_ERR_BAD_MUTATION_DUPLICATE_NODE                         -18
+// clang-format on
 
 #ifdef __GNUC__
-    #define WARN_UNUSED __attribute__ ((warn_unused_result))
-    #define unlikely(expr) __builtin_expect (!!(expr), 0)
-    #define likely(expr) __builtin_expect (!!(expr), 1)
+#define WARN_UNUSED __attribute__((warn_unused_result))
+#define unlikely(expr) __builtin_expect(!!(expr), 0)
+#define likely(expr) __builtin_expect(!!(expr), 1)
 #else
-    /* On windows we don't do any perf related stuff */
-    #define WARN_UNUSED
-    #define restrict
-    #define unlikely(expr) (expr)
-    #define likely(expr)   (expr)
+/* On windows we don't do any perf related stuff */
+#define WARN_UNUSED
+#define restrict
+#define unlikely(expr) (expr)
+#define likely(expr) (expr)
 #endif
-
 
 #endif /*__ERR_H__*/
