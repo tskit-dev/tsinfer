@@ -1268,24 +1268,18 @@ class SampleData(DataContainer):
 
         if alleles is None:
             alleles = ["0", "1"]
-        else:
-            # Don't modify the input parameter
-            alleles = list(alleles)
         n_alleles = len(alleles)
+        non_missing = genotypes != tskit.MISSING_DATA
         if len(set(alleles)) != n_alleles:
             raise ValueError("Alleles must be distinct")
         if np.any(genotypes == tskit.MISSING_DATA) and alleles[-1] is not None:
-            alleles.append(None)
-        if np.any(genotypes >= n_alleles):
-            raise ValueError(
-                "Non-missing genotype values must be between 0 and len(alleles) - 1")
+            # Don't modify the input parameter
+            alleles = list(alleles) + [None]
         if np.any(np.logical_and(genotypes < 0, genotypes != tskit.MISSING_DATA)):
             raise ValueError("Non-missing values for genotypes cannot be negative")
         if genotypes.shape != (self.num_samples,):
             raise ValueError(
                 "Must have {} (num_samples) genotypes.".format(self.num_samples))
-        if np.any(genotypes[non_missing] < 0):
-            raise ValueError("Non-missing values for genotypes cannot be negative")
         if np.any(genotypes[non_missing] >= n_alleles):
             raise ValueError("Non-missing values for genotypes must be < num alleles")
         if position < 0:

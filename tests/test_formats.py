@@ -1183,7 +1183,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(i, 1)
 
 
-
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the sample data file format.

@@ -820,10 +820,10 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
         self.assertTrue(len(site_0_anc) == 1)
         site_0_anc = site_0_anc[0]
         # Sites 0 and 2 should share the same ancestor
-        assert np.all(adc.ancestors_focal_sites[:][site_0_anc] == [0, 2])
+        self.assertTrue(np.all(adc.ancestors_focal_sites[:][site_0_anc] == [0, 2]))
         focal_site_0_haplotype = adc.ancestors_haplotype[:][site_0_anc]
         # Sites with all missing data should default to 0
-        assert np.all(focal_site_0_haplotype == expected_hap_focal_site_0)
+        self.assertTrue(np.all(focal_site_0_haplotype == expected_hap_focal_site_0))
 
     def test_with_recombination_long_threads(self):
         ts = msprime.simulate(
@@ -2358,6 +2358,7 @@ class TestAlgorithmResults(unittest.TestCase):
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
 
+@unittest.skip("Missing data not yet implemented")
 class TestMissingDataImputed(unittest.TestCase):
     """
     Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines
