@@ -469,7 +469,7 @@ class AncestorsGenerator(object):
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
-            self.ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
+            self.ancestor_builder.add_site(j, variant.inference_time, variant.genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")

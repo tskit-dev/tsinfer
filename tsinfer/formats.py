@@ -20,6 +20,7 @@
 Manage tsinfer's various file formats.
 """
 import collections.abc as abc
+import collections
 import datetime
 import itertools
 import logging
@@ -67,6 +68,20 @@ def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
     if os.path.exists(lockfile):
         os.unlink(lockfile)
+
+
+AlleleCounts = collections.namedtuple("AlleleCounts", "known ancestral derived")
+
+
+def allele_counts(genotypes):
+    """
+    Return summary counts of the number of different allele types for a genotypes array
+    """
+    n_known = np.sum(genotypes != tskit.MISSING_DATA)
+    n_ancestral = np.sum(genotypes == 0)
+    return AlleleCounts(
+        known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
+    )
 
 
 class BufferedItemWriter(object):
@@ -634,11 +649,15 @@ class Site(object):
 class Variant(object):
     """
     A single variant. Mirrors the definition in tskit but with some extra fields.
+    The inference_time field returns the time used for inference: where a site
+    is using frequency as a proxy for time, this will contain the frequency, otherwise
+    it will simply contain the site.time value.
     """
 
     # TODO document properly.
     site = attr.ib()
     genotypes = attr.ib()
+    inference_time = attr.ib()
     alleles = attr.ib()
 
 
@@ -765,6 +784,10 @@ class SampleData(DataContainer):
     ADDING_POPULATIONS = 0
     ADDING_SAMPLES = 1
     ADDING_SITES = 2
+
+    # Marker constants for time value
+    USE_FREQ_AS_TIME = -np.inf  # Report inference_time as the freq of derived alleles
+    MEANINGLESS_TIME = np.inf  # Placeholder for e.g. time value for a nonvariable site
 
     def __init__(self, sequence_length=0, **kwargs):
 
@@ -1185,9 +1208,13 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
-            variant_time = None
-            if use_times and len(v.site.mutations) == 1:
-                variant_time = ts.node(v.site.mutations[0].node).time
+            if use_times:
+                if len(v.site.mutations) == 1:
+                    variant_time = ts.node(v.site.mutations[0].node).time
+                else:
+                    variant_time = self.MEANINGLESS_TIME
+            else:
+                variant_time = None
             site_metadata = None
             if use_metadata and v.site.metadata:
                 site_metadata = json.loads(v.site.metadata)
@@ -1383,7 +1410,7 @@ class SampleData(DataContainer):
         :param float time: The time of occurence (pastwards) of the mutation to the
             derived state at this site. If not specified or None, the frequency of the
             derived alleles (i.e., the proportion of non-zero values in the genotypes,
-            out of all the non-missing values) is used instead. For
+            out of all the non-missing values) will be used in inference. For
             biallelic sites this frequency should provide a reasonable estimate
             of the relative time, as used to order ancestral haplotypes during the
             inference process. For sites not used in inference, such as singletons or
@@ -1437,9 +1464,7 @@ class SampleData(DataContainer):
                 "Site positions must be unique and added in increasing order"
             )
 
-        n_known = np.sum(genotypes != tskit.MISSING_DATA)
-        n_ancestral = np.sum(genotypes == 0)
-        n_derived = n_known - n_ancestral
+        counts = allele_counts(genotypes)
         if n_alleles > 2:
             if inference is None:
                 inference = False
@@ -1448,7 +1473,7 @@ class SampleData(DataContainer):
             if n_alleles > 64:
                 # This is mandated by tskit's map_mutations function.
                 raise ValueError("Cannot have more than 64 alleles")
-        if n_derived > 1 and n_derived < n_known:
+        if counts.derived > 1 and counts.derived < counts.known:
             if inference is None:
                 inference = True
         else:
@@ -1457,7 +1482,7 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError("Cannot use singletons or fixed sites for inference")
         if time is None:
-            time = n_derived / n_known  # If n_alleles>2 this may not be sensible
+            time = self.USE_FREQ_AS_TIME
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
@@ -1551,7 +1576,10 @@ class SampleData(DataContainer):
     def variants(self, inference_sites=None):
         """
         Returns an iterator over the Variant objects. This is equivalent to
-        the TreeSequence.variants iterator.
+        the TreeSequence.variants iterator, with the addition of an ``inference_time``
+        attribute which returns either the site time as specified by the user or
+        if no time is specified, the frequency of all the derived alleles at this
+        site, which can be used as a proxy for time.
 
         :param bool inference_sites: Control the sites for which variants are returned.
             If ``None``, return genotypes for all sites; if ``True``, return only
@@ -1561,7 +1589,23 @@ class SampleData(DataContainer):
         for (j, genotypes), site in zip(
             self.genotypes(inference_sites), self.sites(inference_sites)
         ):
-            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
+            time = site.time
+            if time == self.USE_FREQ_AS_TIME:
+                counts = allele_counts(genotypes)
+                if counts.known == counts.derived or counts.known == counts.ancestral:
+                    # This is a non-variable site
+                    time = self.MEANINGLESS_TIME
+                else:
+                    # NB: if n_alleles > 2 the following line may not be sensible: we
+                    # should probably set time=MEANINGLESS_TIME, but this would require
+                    # counting alleles (which is slow: quickest way is via np.bincount())
+                    time = counts.derived / counts.known
+            variant = Variant(
+                site=site,
+                alleles=site.alleles,
+                genotypes=genotypes,
+                inference_time=time,
+            )
             yield variant
 
     def __all_haplotypes(self, inference_sites=None):

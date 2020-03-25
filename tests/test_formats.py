@@ -173,6 +173,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             t = None
             if len(v.site.mutations) == 1:
                 t = ts.node(v.site.mutations[0].node).time
+            else:
+                t = input_file.MEANINGLESS_TIME
             input_file.add_site(
                 v.site.position,
                 v.genotypes,
@@ -369,7 +371,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_from_tree_sequence_variable_allele_number(self):
         ts = self.get_example_ts(10, 10)
-        # Create > 2 alles by scattering mutations on the tree nodes at the first site
+        # Create > 2 alleles by scattering mutations on the tree nodes at the first site
         tables = ts.dump_tables()
         focal_site = ts.site(0)
         tree = ts.at(focal_site.position)
@@ -393,7 +395,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.verify_data_round_trip(ts, sd1)
         self.assertFalse(sd1.sites_inference[0])
         self.assertFalse(sd1.sites_inference[sd1.num_sites - 1])
-
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
             self.assertEqual(len(var.alleles), num_alleles[var.site.id])
@@ -1239,8 +1240,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with formats.SampleData() as data:
             for j in range(4):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        # Freq == 0.5
-        self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
+        for v in data.variants():
+            self.assertAlmostEqual(v.site.time, data.USE_FREQ_AS_TIME)
+            self.assertAlmostEqual(v.inference_time, 0.5)  # Freq == 0.5
 
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
@@ -1255,7 +1257,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     copy.sites_time = time
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_time), time)
-                self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
+                for v in data.variants():
+                    self.assertAlmostEqual(v.site.time, data.USE_FREQ_AS_TIME)
+                    self.assertAlmostEqual(v.inference_time, 0.5)  # Freq == 0.5
                 if copy_path is not None:
                     copy.close()
 
@@ -1291,7 +1295,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for j in range(4):
             data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
         data.finalise()
-        self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
+        for v in data.variants():
+            self.assertAlmostEqual(v.inference_time, 0.5)
         copy = data.copy()
         for bad_shape in [[], np.arange(100, dtype=np.float64), np.zeros((2, 2))]:
             self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)

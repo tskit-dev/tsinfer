@@ -6,8 +6,8 @@
 
 - The ancestors tree sequence now contains the real alleles and not
   0/1 values as before.
-- The time value for a node is now measured on a 0..1 (frequency) scale, not as a count
-  from 1..num_samples
+- Times for undated sites now use frequencies (0..1), not as counts (1..num_samples),
+  and are now stored as -inf, then calculated on the fly in the variants() iterator.
 
 ********************
 [0.1.5] - 2019-09-25
