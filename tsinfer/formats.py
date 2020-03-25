@@ -1381,10 +1381,10 @@ class SampleData(DataContainer):
             number of samples carrying the derived state is greater than
             1 and less than the number of samples.
         :param float time: The time of occurence (pastwards) of the mutation to the
-            derived state at this site. If not specified or None, the count of the
-            derived alleles (i.e., the number of non-zero values in the genotypes) is
-            used instead, with missing values contributing 0.5 to the count. For
-            biallelic sites this count should provide a reasonable estimate
+            derived state at this site. If not specified or None, the frequency of the
+            derived alleles (i.e., the proportion of non-zero values in the genotypes,
+            out of all the non-missing values) is used instead. For
+            biallelic sites this frequency should provide a reasonable estimate
             of the relative time, as used to order ancestral haplotypes during the
             inference process. For sites not used in inference, such as singletons or
             sites with more than two alleles, the value is unused. Defaults to None.
@@ -1438,7 +1438,6 @@ class SampleData(DataContainer):
             )
 
         n_known = np.sum(genotypes != tskit.MISSING_DATA)
-        n_unknown = self.num_samples - n_known
         n_ancestral = np.sum(genotypes == 0)
         n_derived = n_known - n_ancestral
         if n_alleles > 2:
@@ -1458,8 +1457,7 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError("Cannot use singletons or fixed sites for inference")
         if time is None:
-            time = n_derived  # If n_alleles > 2, then this may not be a sensible approx
-            time += n_unknown / 2.0  # Unknown alleles create intermediate age
+            time = n_derived / n_known  # If n_alleles>2 this may not be sensible
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
