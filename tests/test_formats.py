@@ -1239,7 +1239,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with formats.SampleData() as data:
             for j in range(4):
                 data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])  # Freq == 2.0
+        # Freq == 0.5
+        self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
 
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
@@ -1254,7 +1255,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     copy.sites_time = time
                 self.assertFalse(copy.data_equal(data))
                 self.assertEqual(list(copy.sites_time), time)
-                self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])
+                self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
                 if copy_path is not None:
                     copy.close()
 
@@ -1290,7 +1291,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for j in range(4):
             data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
         data.finalise()
-        self.assertEqual(list(data.sites_time), [2.0, 2.0, 2.0, 2.0])
+        self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
         copy = data.copy()
         for bad_shape in [[], np.arange(100, dtype=np.float64), np.zeros((2, 2))]:
             self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)
