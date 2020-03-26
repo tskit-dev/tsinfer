@@ -85,6 +85,20 @@ def allele_counts(genotypes):
     )
 
 
+def inferrable_site(genotypes):
+    """
+    Check whether this set of genotypes at a site can be used for inference
+    (non-variable sites or singletons cannot be used for inference)
+    """
+    counts = allele_counts(genotypes)
+    if counts.derived > 1 and counts.derived < counts.known:
+        # Can be used for inference
+        return True
+    else:
+        # Can't be used for inference
+        return False
+
+
 class BufferedItemWriter(object):
     """
     Class that writes items sequentially into a set of zarr arrays,
@@ -388,7 +402,7 @@ class DataContainer(object):
 
     def copy(self, path=None, max_file_size=None):
         """
-        Returns a copy of this DataContainer opened in 'edit' mode. If path
+        Returns a copy of this object opened in 'edit' mode. If path
         is specified, this must not be equal to the path of the current
         data container. The new container will have a different UUID to the
         current.
@@ -423,7 +437,8 @@ class DataContainer(object):
         """
         Ensures that the state of the data is flushed and writes the
         provenance for the current operation. The specified 'command' is used
-        to fill the corresponding entry in the provenance dictionary.
+        to fill the corresponding entry in the provenance dictionary. This is
+        done automatically if opened using a context manager.
         """
         self._check_write_modes()
         self.data.attrs[FINALISED_KEY] = True
@@ -1159,7 +1174,7 @@ class SampleData(DataContainer):
         assert self.sites_equal(other)
 
     ####################################
-    # Write mode
+    # Other creation methods
     ####################################
 
     @classmethod
@@ -1273,6 +1288,79 @@ class SampleData(DataContainer):
         self.record_provenance(command="from-tree-sequence", **kwargs)
         self.finalise()
         return self
+
+    def delete(self, *, samples=None, sites=None, **kwargs):
+        """
+        Return a new sample data object with the specified samples
+        and/or sites removed. This removal will change the sample
+        nodes ids and/or site ids. If samples is not None, any sites previously
+        assumed to be or marked as inferrable are re-checked; if they no longer meet
+        the criteria for inference (e.g. have become singletons or invariant), they
+        are marked as not-for-inference, and the ``sites_inference`` array is updated
+        accordingly.
+
+        .. note:: Data that is not stored per site or sample remains untouched. This
+            includes information on  individuals and populations which means, for
+            example, that the returned sample data object can contain individuals that
+            are not associated with any sample.
+
+        :param arraylike samples: An array of sites to delete, either a list of
+            site indices or a numpy boolean array of size self.num_samples.
+            If None (the default) do not delete any samples
+        :param arraylike sites: An array of sites to delete, either a list of
+            site indices or a numpy boolean array of size self.num_sites.
+            If None (the default) keep all the sites
+        :param \\**kwargs:
+            Further arguments passed to self.copy(), notably ``path``
+
+        :return: A new :class:`.SampleData` object with a reduced number of sites
+            or samples.
+        :rtype: :class:`.SampleData`.
+        """
+        # First make an in-memory copy to alter: file-stored copies won't allow
+        # subsequent reduction in on-disk filesize due to LMDB constraints
+        check_inference_sites = False
+        keep_samples = np.ones(self.num_samples, dtype=bool)
+        keep_sites = np.ones(self.num_sites, dtype=bool)
+        if samples is not None:
+            check_inference_sites = True  # Check if sites are still valid for inference
+            keep_samples[samples] = False
+        if sites is not None:
+            keep_sites[sites] = False
+
+        if not np.any(keep_samples):
+            raise ValueError("Cannot delete all samples")
+        if not np.any(keep_sites):
+            raise ValueError("Cannot delete all sites")
+        sample_data = self.copy()
+        for _, arr in sample_data.data.samples.arrays():
+            new_data = arr[:][keep_samples]
+            arr.resize(*new_data.shape)
+            arr[:] = new_data
+        for name, arr in sample_data.data.sites.arrays():
+            if arr.ndim > 1:
+                new_data = arr[:][keep_sites, :][:, keep_samples]
+            else:
+                new_data = arr[:][keep_sites]
+            arr.resize(*new_data.shape)
+            arr[:] = new_data
+        if check_inference_sites:
+            inference = sample_data.sites_inference[:]
+            for i, g in sample_data.genotypes():
+                if inference[i]:
+                    # Previously marked for inference: is it still OK?
+                    inference[i] = inferrable_site(g)
+            sample_data.sites_inference[:] = inference
+        sample_data.finalise()
+        if "path" in kwargs:
+            # Turn into a (smaller) on-disk copy if necessary
+            sample_data = sample_data.copy(**kwargs)
+            sample_data.finalise()
+        return sample_data
+
+    ####################################
+    # Write mode
+    ####################################
 
     def _alloc_site_writer(self):
         if self.num_samples < 2:
@@ -1506,7 +1594,6 @@ class SampleData(DataContainer):
                 "Site positions must be unique and added in increasing order"
             )
 
-        counts = allele_counts(genotypes)
         if n_alleles > 2:
             if inference is None:
                 inference = False
@@ -1515,14 +1602,13 @@ class SampleData(DataContainer):
             if n_alleles > 64:
                 # This is mandated by tskit's map_mutations function.
                 raise ValueError("Cannot have more than 64 alleles")
-        if counts.derived > 1 and counts.derived < counts.known:
-            if inference is None:
-                inference = True
-        else:
-            if inference is None:
-                inference = False
-            if inference:
-                raise ValueError("Cannot use singletons or fixed sites for inference")
+
+        inferrable = inferrable_site(genotypes)
+        if inference is None:
+            inference = inferrable
+        elif inference and not inferrable:
+            raise ValueError("Cannot use singletons or fixed sites for inference")
+
         if time is None:
             time = constants.TIME_UNSPECIFIED
         site_id = self._sites_writer.add(

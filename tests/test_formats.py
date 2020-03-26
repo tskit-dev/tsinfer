@@ -147,7 +147,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             random_seed=100,
         )
 
-    def verify_data_round_trip(self, ts, input_file):
+    def verify_data_round_trip(self, ts, input_file, use_times=True):
         self.assertGreater(ts.num_sites, 1)
         for pop in ts.populations():
             input_file.add_population(metadata=json.loads(pop.metadata or "{}"))
@@ -161,7 +161,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     input_file.add_individual(
                         ploidy=1,
                         population=node.population,
-                        time=node.time,
+                        time=node.time if use_times else 0,
                         samples_metadata=[json.loads(node.metadata or "{}")],
                     )
             else:
@@ -170,13 +170,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     population=nodes[0].population,
                     metadata=json.loads(ts.individual(i).metadata or "{}"),
                     location=ts.individual(i).location,
-                    time=nodes[0].time,
+                    time=nodes[0].time if use_times else 0,
                     samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
                 )
         for v in ts.variants():
-            t = np.nan  # default is that a site has no meaningful time
-            if len(v.site.mutations) == 1:
-                t = ts.node(v.site.mutations[0].node).time
+            t = None
+            if use_times:
+                t = np.nan  # default when setting times is no meaningful time
+                if len(v.site.mutations) == 1:
+                    t = ts.node(v.site.mutations[0].node).time
             input_file.add_site(
                 v.site.position,
                 v.genotypes,
@@ -207,7 +209,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(variant.site.position, position[j])
             self.assertTrue(np.all(variant.genotypes == genotypes[j]))
             self.assertEqual(alleles[j], list(variant.alleles))
-            if len(variant.site.mutations) == 1:
+            if use_times and len(variant.site.mutations) == 1:
                 the_time = ts.node(variant.site.mutations[0].node).time
                 self.assertEqual(the_time, site_times[j])
             if variant.site.metadata:
@@ -226,8 +228,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                         individual_metadata[individual.id],
                         json.loads(individual.metadata),
                     )
-                for n in individual.nodes:
-                    self.assertTrue(ts.node(n).time == sample_time[individual.id])
+                if use_times:
+                    for n in individual.nodes:
+                        self.assertTrue(ts.node(n).time == sample_time[individual.id])
 
     @unittest.skipIf(
         sys.platform == "win32", "windows simultaneous file permissions issue"
@@ -485,6 +488,103 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
+
+    def test_delete(self):
+        ts = self.get_example_ts(10, 10, 1)
+        sd_orig = formats.SampleData.from_tree_sequence(ts, use_times=False)
+        del_samples = np.arange(0, ts.num_samples, 2)  # delete every other sample
+        del_sites = np.arange(1, ts.num_sites, 2)  # delete every other site
+        keep_samples = np.delete(ts.samples(), del_samples)
+        small_ts = ts.simplify(keep_samples, filter_sites=False).delete_sites(del_sites)
+        sd_simplified = formats.SampleData(sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(small_ts, sd_simplified, use_times=False)
+        sd_subset = sd_orig.delete(samples=del_samples, sites=del_sites)
+        for grp in sd_orig.data.group_keys():
+            if grp == "provenances":
+                continue
+            for (name, subset), (_, simplified), (_, orig) in zip(
+                sd_subset.data.get(grp).arrays(),
+                sd_simplified.data.get(grp).arrays(),
+                sd_orig.data.get(grp).arrays(),
+            ):
+                if grp == "sites" and name != "alleles":
+                    # Sites data should be like the sample sites from the simplified ts
+                    # (except alleles, which are not simplified)
+                    if subset.dtype == np.object_:
+                        self.assertTrue(
+                            all(
+                                itertools.starmap(
+                                    np.array_equal, zip(subset[:], simplified[:])
+                                )
+                            )
+                        )
+                    else:
+                        self.assertTrue(np.array_equal(subset[:], simplified[:]))
+                elif grp == "samples":
+                    # Samples data should like a simple subset of the original samples
+                    self.assertTrue(np.array_equal(subset[:], orig[:][keep_samples]))
+                else:
+                    if subset.dtype == np.object_:
+                        self.assertTrue(
+                            all(
+                                itertools.starmap(
+                                    np.array_equal, zip(subset[:], orig[:])
+                                )
+                            )
+                        )
+                    else:
+                        self.assertTrue(np.array_equal(subset[:], orig[:]))
+
+    def test_delete_sites_only(self):
+        ts = self.get_example_ts(10, 10, 1)
+        del_sites = np.arange(1, ts.num_sites, 2)  # delete every other site
+        sd_orig = formats.SampleData(sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, sd_orig)
+        sd1 = sd_orig.delete(sites=del_sites)
+        sd2 = formats.SampleData.from_tree_sequence(ts.delete_sites(del_sites))
+        self.assertTrue(sd1.data_equal(sd2))
+
+    def test_delete_bad_sites(self):
+        ts = self.get_example_ts(10, 10, 1)
+        sd = formats.SampleData.from_tree_sequence(ts)
+        self.assertRaises(
+            IndexError, sd.delete, sites=np.zeros(ts.num_sites - 1, dtype=bool)
+        )
+        self.assertRaises(
+            IndexError, sd.delete, sites=np.zeros(ts.num_sites + 1, dtype=bool)
+        )
+        self.assertRaises(IndexError, sd.delete, sites=np.array([ts.num_sites + 1]))
+        # Cannot delete all sites
+        self.assertRaises(ValueError, sd.delete, sites=np.arange(ts.num_sites))
+
+    def test_delete_bad_samples(self):
+        ts = self.get_example_ts(10, 10, 1)
+        sd = formats.SampleData.from_tree_sequence(ts)
+        self.assertRaises(
+            IndexError, sd.delete, samples=np.zeros(ts.num_samples - 1, dtype=bool)
+        )
+        self.assertRaises(
+            IndexError, sd.delete, samples=np.zeros(ts.num_samples + 1, dtype=bool)
+        )
+        self.assertRaises(IndexError, sd.delete, samples=np.array([ts.num_samples + 1]))
+        # Cannot delete all samples
+        self.assertRaises(ValueError, sd.delete, samples=np.arange(ts.num_samples))
+
+    def test_subset_smaller_file(self):
+        ts = self.get_example_ts(10, 10, 1)
+        del_sites = np.arange(1, ts.num_sites, 2)  # delete every other site
+        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
+            fn1 = os.path.join(tempdir, "samples1.tmp")
+            fn2 = os.path.join(tempdir, "samples2.tmp")
+            sd_orig = formats.SampleData(sequence_length=ts.sequence_length, path=fn1)
+            self.verify_data_round_trip(ts, sd_orig)
+            sd1 = sd_orig.delete(sites=del_sites, path=fn2)
+            self.assertGreater(sd1.file_size, 0)
+            self.assertLess(sd1.file_size, sd_orig.file_size)
+            sd2 = formats.SampleData.from_tree_sequence(ts.delete_sites(del_sites))
+            self.assertTrue(sd1.data_equal(sd2))
+            sd_orig.close()
+            sd1.close()
 
     def test_chunk_size(self):
         ts = self.get_example_ts(4, 2)
