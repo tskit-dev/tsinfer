@@ -364,7 +364,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
             recombination_required[u] = true;
         }
         p_e = mu;
-        if (allelic_state[v] == state) {
+        if (allelic_state[v] == state || state == TSK_MISSING_DATA) {
             p_e = 1 - (num_alleles - 1) * mu;
         }
         L[u] = p_t * p_e;

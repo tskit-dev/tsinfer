@@ -6,10 +6,10 @@ import tqdm
 import pprint
 import numpy as np
 import json
-
+import tskit
+import msprime
 
 import tsinfer
-import msprime
 
 
 def make_errors(v, p):
@@ -70,7 +70,7 @@ def tsinfer_dev(
 
     # daiquiri.setup(level=log_level)
 
-    ts = msprime.simulate(
+    source_ts = msprime.simulate(
         n,
         Ne=10 ** 4,
         length=L_megabases,
@@ -79,13 +79,23 @@ def tsinfer_dev(
         random_seed=seed,
     )
     if debug:
-        print("num_sites = ", ts.num_sites)
-    assert ts.num_sites > 0
+        print("num_sites = ", source_ts.num_sites)
+    assert source_ts.num_sites > 0
 
     # ts = msprime.mutate(ts, rate=1e-8, random_seed=seed,
     #         model=msprime.InfiniteSites(msprime.NUCLEOTIDES))
 
-    samples = tsinfer.SampleData.from_tree_sequence(ts)
+    # samples = tsinfer.SampleData.from_tree_sequence(ts)
+
+    with tsinfer.SampleData(sequence_length=source_ts.sequence_length) as samples:
+        for var in source_ts.variants():
+            var.genotypes[var.site.id % source_ts.num_samples] = tskit.MISSING_DATA
+            samples.add_site(var.site.position, var.genotypes, var.alleles)
+
+    # print(samples)
+    # for variant in samples.variants():
+    #     print(variant)
+
     rho = recombination_rate
     mu = 1e-3  # 1e-15
 
@@ -138,8 +148,18 @@ def tsinfer_dev(
         path_compression=False,
         engine=engine,
         precision=precision,
+        impute_missing=False,
         simplify=False,
     )
+
+    for var1, var2, var3 in zip(
+        source_ts.variants(), ts.variants(), samples.variants()
+    ):
+        if np.any(var1.genotypes != var2.genotypes):
+            print("mismatch at ", var1.site.id)
+            print(var1.genotypes)
+            print(var2.genotypes)
+            print(var3.genotypes)
 
     print("num_edges = ", ts.num_edges)
 
@@ -171,21 +191,8 @@ def tsinfer_dev(
     # for tree in ts.trees():
     #     print(tree.draw(format="unicode"))
 
-    tsinfer.verify(samples, ts)
+    # tsinfer.verify(samples, ts)
 
-
-#     for node in ts.nodes():
-#         if tsinfer.is_synthetic(node.flags):
-#             print("Synthetic node", node.id, node.time)
-#             parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
-#             child_edges = [edge for edge in ts.edges() if edge.child == node.id]
-#             child_edges.sort(key=lambda e: e.left)
-#             print("parent edges")
-#             for edge in parent_edges:
-#                 print("\t", edge)
-#             print("child edges")
-#             for edge in child_edges:
-#                 print("\t", edge)
 
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
 #     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
@@ -318,11 +325,11 @@ if __name__ == "__main__":
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
     tsinfer_dev(
-        118,
+        8,
         0.05,
         seed=4,
         num_threads=0,
-        engine="C",
+        engine="P",
         recombination_rate=1e-8,
         precision=0,
     )
