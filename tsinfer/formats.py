@@ -648,16 +648,12 @@ class Site(object):
 @attr.s
 class Variant(object):
     """
-    A single variant. Mirrors the definition in tskit but with some extra fields.
-    The inference_time field returns the time used for inference: where a site
-    is using frequency as a proxy for time, this will contain the frequency, otherwise
-    it will simply contain the site.time value.
+    A single variant. Mirrors the definition in tskit.
     """
 
     # TODO document properly.
     site = attr.ib()
     genotypes = attr.ib()
-    inference_time = attr.ib()
     alleles = attr.ib()
 
 
@@ -786,7 +782,7 @@ class SampleData(DataContainer):
     ADDING_SITES = 2
 
     # Marker constants for time value
-    USE_FREQ_AS_TIME = -np.inf  # Report inference_time as the freq of derived alleles
+    USE_FREQ_AS_TIME = -np.inf  # Placeholder to mark freq of derived alleles as time
     MEANINGLESS_TIME = np.inf  # Placeholder for e.g. time value for a nonvariable site
 
     def __init__(self, sequence_length=0, **kwargs):
@@ -1208,13 +1204,11 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
+            variant_time = self.USE_FREQ_AS_TIME
             if use_times:
+                variant_time = self.MEANINGLESS_TIME
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
-                else:
-                    variant_time = self.MEANINGLESS_TIME
-            else:
-                variant_time = None
             site_metadata = None
             if use_metadata and v.site.metadata:
                 site_metadata = json.loads(v.site.metadata)
@@ -1576,10 +1570,7 @@ class SampleData(DataContainer):
     def variants(self, inference_sites=None):
         """
         Returns an iterator over the Variant objects. This is equivalent to
-        the TreeSequence.variants iterator, with the addition of an ``inference_time``
-        attribute which returns either the site time as specified by the user or
-        if no time is specified, the frequency of all the derived alleles at this
-        site, which can be used as a proxy for time.
+        the TreeSequence.variants iterator.
 
         :param bool inference_sites: Control the sites for which variants are returned.
             If ``None``, return genotypes for all sites; if ``True``, return only
@@ -1589,23 +1580,7 @@ class SampleData(DataContainer):
         for (j, genotypes), site in zip(
             self.genotypes(inference_sites), self.sites(inference_sites)
         ):
-            time = site.time
-            if time == self.USE_FREQ_AS_TIME:
-                counts = allele_counts(genotypes)
-                if counts.known == counts.derived or counts.known == counts.ancestral:
-                    # This is a non-variable site
-                    time = self.MEANINGLESS_TIME
-                else:
-                    # NB: if n_alleles > 2 the following line may not be sensible: we
-                    # should probably set time=MEANINGLESS_TIME, but this would require
-                    # counting alleles (which is slow: quickest way is via np.bincount())
-                    time = counts.derived / counts.known
-            variant = Variant(
-                site=site,
-                alleles=site.alleles,
-                genotypes=genotypes,
-                inference_time=time,
-            )
+            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes,)
             yield variant
 
     def __all_haplotypes(self, inference_sites=None):

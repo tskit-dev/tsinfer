@@ -469,7 +469,16 @@ class AncestorsGenerator(object):
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
-            self.ancestor_builder.add_site(j, variant.inference_time, variant.genotypes)
+            time = variant.site.time
+            if time == self.sample_data.USE_FREQ_AS_TIME:
+                counts = formats.allele_counts(variant.genotypes)
+                # Non-variable sites have no obvious freq-as-time values
+                assert counts.known != counts.derived
+                assert counts.known != counts.ancestral
+                # Time = freq of *all* derived alleles. Note that if n_alleles > 2 this
+                # may not be sensible, but checking it means counting alleles (=slow)
+                time = counts.derived / counts.known
+            self.ancestor_builder.add_site(j, time, variant.genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
