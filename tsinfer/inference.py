@@ -470,7 +470,7 @@ class AncestorsGenerator(object):
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
             time = variant.site.time
-            if time == self.sample_data.USE_FREQ_AS_TIME:
+            if time == self.sample_data.TIME_UNSPECIFIED:
                 counts = formats.allele_counts(variant.genotypes)
                 # Non-variable sites have no obvious freq-as-time values
                 assert counts.known != counts.derived

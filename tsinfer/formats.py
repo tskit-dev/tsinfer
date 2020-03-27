@@ -782,8 +782,8 @@ class SampleData(DataContainer):
     ADDING_SITES = 2
 
     # Marker constants for time value
-    USE_FREQ_AS_TIME = -np.inf  # Placeholder to mark freq of derived alleles as time
-    MEANINGLESS_TIME = np.inf  # Placeholder for e.g. time value for a nonvariable site
+    TIME_UNSPECIFIED = -np.inf  # Placeholder to mark freq of derived alleles as time
+    TIME_MEANINGLESS = np.inf  # Placeholder for e.g. freq value for a nonvariable site
 
     def __init__(self, sequence_length=0, **kwargs):
 
@@ -1204,9 +1204,9 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
-            variant_time = self.USE_FREQ_AS_TIME
+            variant_time = self.TIME_UNSPECIFIED
             if use_times:
-                variant_time = self.MEANINGLESS_TIME
+                variant_time = self.TIME_MEANINGLESS
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
             site_metadata = None
@@ -1476,7 +1476,7 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError("Cannot use singletons or fixed sites for inference")
         if time is None:
-            time = self.USE_FREQ_AS_TIME
+            time = self.TIME_UNSPECIFIED
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
