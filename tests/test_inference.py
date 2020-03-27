@@ -423,6 +423,37 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
 
 
+@unittest.skip("Need to support non-adjacent edges")
+class TestMissingDataRoundTrip(TestRoundTrip):
+    """
+    Tests that we losslessly round trip missing data when infer_missing is False.
+    """
+
+    def verify_data_round_trip(
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        # Mark the first sample as all missing.
+        genotypes[:, 0] = tskit.MISSING_DATA
+        with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
+            for j in range(genotypes.shape[0]):
+                t = None if times is None else times[j]
+                site_alleles = None if alleles is None else alleles[j]
+                sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
+
+        engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
+        for engine in engines:
+            ts = tsinfer.infer(
+                sample_data,
+                impute_missing=False,
+                recombination_rate=1e-3,
+                mutation_rate=1e-3,
+                engine=engine,
+            )
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
+
+
 class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     """
     Test that we can round-trip data when we have various combinations
@@ -2675,7 +2706,6 @@ class TestAlgorithmResults(unittest.TestCase):
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
 
-@unittest.skip("Missing data not yet implemented")
 class TestMissingDataImputed(unittest.TestCase):
     """
     Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines
@@ -2743,3 +2773,258 @@ class TestMissingDataImputed(unittest.TestCase):
             ts = tsinfer.infer(sample_data, engine=e)
             self.assertEquals(ts.num_trees, 1)
             self.assertTrue(np.all(expected == ts.genotype_matrix()))
+
+
+def naive_split_edges(missing, left, right, parent):
+    """
+    A naive implementation of split edges where we iterate base-by-base.
+    """
+    assert len(left) == len(right) == len(parent)
+    out = []
+    for l, r, p in zip(left, right, parent):
+        current_edge = None
+        for x in range(l, r):
+            if not missing[x]:
+                if current_edge is None:
+                    current_edge = tskit.Edge(x, -1, p, -1)
+                    out.append(current_edge)
+                else:
+                    current_edge.right = x
+            else:
+                if current_edge is not None:
+                    current_edge.right = x
+                    current_edge = None
+        if current_edge is not None:
+            current_edge.right = r
+    left_out = []
+    right_out = []
+    parent_out = []
+    for e in out:
+        left_out.append(e.left)
+        right_out.append(e.right)
+        parent_out.append(e.parent)
+    return tsinfer.EdgeBundle(left_out, right_out, parent_out)
+
+
+class TestSplitEdges(unittest.TestCase):
+    """
+    Tests for splitting edges when we have missing data.
+    """
+
+    def get_adjacent_edges(self, m, size=1):
+        left = np.arange(0, m, size)
+        right = left + size
+        assert right[-1] == m
+        return left, right, left
+
+    def verify(
+        self, missing, left_in, right_in, parent_in, expected=None,
+    ):
+        out1 = tsinfer.split_edges(missing, left_in, right_in, parent_in)
+        out2 = naive_split_edges(missing, left_in, right_in, parent_in)
+        self.assertTrue(np.array_equal(out1.left, out2.left))
+        self.assertTrue(np.array_equal(out1.right, out2.right))
+        self.assertTrue(np.array_equal(out1.parent, out2.parent))
+        if expected is not None:
+            self.assertEqual(len(out1.left), len(expected))
+            self.assertEqual(len(out1.right), len(expected))
+            self.assertEqual(len(out1.parent), len(expected))
+            for l, r, p, edge in zip(*out1, expected):
+                self.assertEqual(l, edge.left)
+                self.assertEqual(r, edge.right)
+                self.assertEqual(p, edge.parent)
+
+    def test_one_edge_none_missing(self):
+        for m in range(1, 10):
+            left = [0]
+            right = [m]
+            parent = [0]
+            missing = np.zeros(m, dtype=bool)
+            self.verify(missing, left, right, parent, [tskit.Edge(0, m, 0, -1)])
+
+    def test_one_edge_one_missing_middle(self):
+        for m in range(3, 10):
+            missing = np.zeros(m, dtype=bool)
+            x = m // 2
+            missing[x] = True
+            expected = [
+                tskit.Edge(0, x, 0, -1),
+                tskit.Edge(x + 1, m, 0, -1),
+            ]
+            self.verify(missing, [0], [m], [0], expected)
+
+    def test_one_edge_missing_ends(self):
+        m = 10
+        for j in range(1, m - 1):
+            # Left missing
+            missing = np.zeros(m, dtype=bool)
+            missing[:j] = True
+            expected = [tskit.Edge(j, m, 0, -1)]
+            self.verify(missing, [0], [m], [0], expected)
+
+            # Right missing
+            missing[:] = False
+            missing[j:] = True
+            expected = [tskit.Edge(0, j, 0, -1)]
+            self.verify(missing, [0], [m], [0], expected)
+
+    def test_one_edge_many_missing(self):
+        m = 10
+        missing = np.zeros(m, dtype=bool)
+        missing[::2] = True
+        expected = [tskit.Edge(j, j + 1, 1, -1) for j in range(m) if j % 2 == 1]
+        self.verify(missing, [0], [m], [1], expected)
+
+        missing[:] = False
+        missing[1::2] = True
+        expected = [tskit.Edge(j, j + 1, 1, -1) for j in range(m) if j % 2 == 0]
+        self.verify(missing, [0], [m], [1], expected)
+
+    def test_one_edge_all_missing(self):
+        m = 10
+        missing = np.full(m, True, dtype=bool)
+        self.verify(missing, [0], [m], [1], [])
+
+    def test_adjacent_edges_all_missing(self):
+        m = 10
+        left, right, parent = self.get_adjacent_edges(m)
+        missing = np.full(m, True, dtype=bool)
+        self.verify(missing, left, right, parent, [])
+
+    def test_adjacent_edges_none_missing(self):
+        m = 10
+        left, right, parent = self.get_adjacent_edges(m)
+        missing = np.full(m, False, dtype=bool)
+        expected = [tskit.Edge(l, r, p, -1) for l, r, p in zip(left, right, parent)]
+        self.verify(missing, left, right, parent, expected)
+
+    def test_adjacent_edges_middle_missing(self):
+        for m in range(3, 10):
+            left, right, parent = self.get_adjacent_edges(m)
+            missing = np.full(m, False, dtype=bool)
+            missing[1 : m - 1] = True
+            expected = [
+                tskit.Edge(left[0], right[0], parent[0], -1),
+                tskit.Edge(left[-1], right[-1], parent[-1], -1),
+            ]
+            self.verify(missing, left, right, parent, expected)
+
+    def test_adjacent_edges_ends_missing(self):
+        for m in range(3, 10):
+            left, right, parent = self.get_adjacent_edges(m)
+            missing = np.full(m, True, dtype=bool)
+            missing[1 : m - 1] = False
+            expected = [
+                tskit.Edge(left[j], right[j], parent[j], -1) for j in range(1, m - 1)
+            ]
+            self.verify(missing, left, right, parent, expected)
+
+    def test_adjacent_edges_size_2_middle_missing(self):
+        m = 10
+        left, right, parent = self.get_adjacent_edges(m, 2)
+        missing = np.full(m, False, dtype=bool)
+        missing[1 : m - 1] = True
+        expected = [
+            tskit.Edge(left[0], 1, parent[0], -1),
+            tskit.Edge(m - 1, m, parent[-1], -1),
+        ]
+        self.verify(missing, left, right, parent, expected)
+
+    def test_adjacent_edges(self):
+        L = 100
+        left, right, parent = self.get_adjacent_edges(L, 10)
+        missing = np.zeros(L, dtype=bool)
+        self.verify(missing, left, right, parent)
+        missing[:] = True
+        self.verify(missing, left, right, parent)
+        missing[:] = False
+        missing[::2] = True
+        self.verify(missing, left, right, parent)
+        missing[:] = True
+        missing[::2] = False
+        self.verify(missing, left, right, parent)
+
+    def test_non_adjacent_edges(self):
+        L = 35
+        left = [10, 20, 30]
+        right = [15, 25, L]
+        parent = [1, 2, 3]
+        missing = np.zeros(L, dtype=bool)
+        self.verify(missing, left, right, parent)
+
+        missing[:] = False
+        missing[::2] = True
+        self.verify(missing, left, right, parent)
+        missing[:] = True
+        missing[::2] = False
+        self.verify(missing, left, right, parent)
+
+        for j in range(L):
+            missing[:] = False
+            missing[j] = True
+            self.verify(missing, left, right, parent)
+
+            missing[:] = True
+            missing[j] = False
+            self.verify(missing, left, right, parent)
+
+            missing[:] = False
+            missing[:j] = True
+            self.verify(missing, left, right, parent)
+
+            missing[:] = True
+            missing[:j] = False
+            self.verify(missing, left, right, parent)
+
+
+class TestDistinctRuns(unittest.TestCase):
+    """
+    Tests for function that returns switches in boolean array.
+    """
+
+    def verify(self, examples):
+        for a, result in examples:
+            ret = list(tsinfer.inference.distinct_runs(a))
+            self.assertEqual(result, ret)
+
+    def test_empty(self):
+        self.verify([[[], []]])
+
+    def test_single_value(self):
+        examples = [
+            [[True], [(0, 1, True)]],
+            [[False], [(0, 1, False)]],
+            [[False] * 100, [(0, 100, False)]],
+            [[True] * 100, [(0, 100, True)]],
+        ]
+        self.verify(examples)
+
+    def test_two_values(self):
+        examples = [
+            [[True, False], [(0, 1, True), (1, 2, False)]],
+            [[False, True], [(0, 1, False), (1, 2, True)]],
+            [[False] * 10 + [True], [(0, 10, False), (10, 11, True)]],
+            [[False] * 10 + [True] * 10, [(0, 10, False), (10, 20, True)]],
+        ]
+        self.verify(examples)
+
+    def test_three_values(self):
+        examples = [
+            [[True, False, True], [(0, 1, True), (1, 2, False), (2, 3, True)]],
+            [[False, True, False], [(0, 1, False), (1, 2, True), (2, 3, False)]],
+            [
+                [False] * 10 + [True] * 10 + [False],
+                [(0, 10, False), (10, 20, True), (20, 21, False)],
+            ],
+            [
+                [False] * 10 + [True] + [False] * 10,
+                [(0, 10, False), (10, 11, True), (11, 21, False)],
+            ],
+        ]
+        self.verify(examples)
+
+    def test_many_switches(self):
+        for n in range(1, 10):
+            a = [bool(j % 2 == 0) for j in range(n)]
+            result = [(j, j + 1, bool(j % 2 == 0)) for j in range(n)]
+            self.verify([[a, result]])

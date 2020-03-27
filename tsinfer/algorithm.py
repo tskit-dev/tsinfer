@@ -720,7 +720,7 @@ class AncestorMatcher(object):
                 recombination_required = True
             self.traceback[site][u] = recombination_required
             p_e = mu
-            if haplotype_state == self.allelic_state[v]:
+            if haplotype_state in (tskit.MISSING_DATA, self.allelic_state[v]):
                 p_e = 1 - (num_alleles - 1) * mu
             self.likelihood[u] = p_t * p_e
 
