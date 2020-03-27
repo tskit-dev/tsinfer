@@ -43,6 +43,7 @@ import attr
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
+import tsinfer.constants as constants
 
 
 logger = logging.getLogger(__name__)
@@ -781,10 +782,6 @@ class SampleData(DataContainer):
     ADDING_SAMPLES = 1
     ADDING_SITES = 2
 
-    # Marker constants for time value
-    TIME_UNSPECIFIED = -np.inf  # Placeholder to mark freq of derived alleles as time
-    TIME_MEANINGLESS = np.inf  # Placeholder for e.g. freq value for a nonvariable site
-
     def __init__(self, sequence_length=0, **kwargs):
 
         super().__init__(**kwargs)
@@ -1204,9 +1201,9 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
-            variant_time = self.TIME_UNSPECIFIED
+            variant_time = constants.TIME_UNSPECIFIED
             if use_times:
-                variant_time = self.TIME_MEANINGLESS
+                variant_time = constants.TIME_MEANINGLESS
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
             site_metadata = None
@@ -1476,7 +1473,7 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError("Cannot use singletons or fixed sites for inference")
         if time is None:
-            time = self.TIME_UNSPECIFIED
+            time = constants.TIME_UNSPECIFIED
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
