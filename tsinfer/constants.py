@@ -36,4 +36,3 @@ NODE_IS_SAMPLE_ANCESTOR = 1 << 18
 
 # Marker constants for node & site time values
 TIME_UNSPECIFIED = -np.inf
-TIME_MEANINGLESS = np.inf  # Placeholder for e.g. freq value for a nonvariable site

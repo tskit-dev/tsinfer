@@ -40,7 +40,6 @@ import tskit
 import tsinfer
 import tsinfer.formats as formats
 import tsinfer.exceptions as exceptions
-import tsinfer.constants as constants
 
 
 class DataContainerMixin(object):
@@ -171,11 +170,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
                 )
         for v in ts.variants():
-            t = None
+            t = np.nan  # default is that a site has no meaningful time
             if len(v.site.mutations) == 1:
                 t = ts.node(v.site.mutations[0].node).time
-            else:
-                t = constants.TIME_MEANINGLESS
             input_file.add_site(
                 v.site.position,
                 v.genotypes,

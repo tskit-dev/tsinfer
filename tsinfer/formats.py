@@ -1063,13 +1063,15 @@ class SampleData(DataContainer):
             and self.num_samples == other.num_samples
             and self.num_sites == other.num_sites
             and self.num_inference_sites == other.num_inference_sites
-            and np.all(self.individuals_time[:] == other.individuals_time[:])
+            and np.allclose(
+                self.individuals_time[:], other.individuals_time[:], equal_nan=True
+            )
             and np.all(self.samples_individual[:] == other.samples_individual[:])
             and np.all(self.samples_population[:] == other.samples_population[:])
             and np.all(self.sites_position[:] == other.sites_position[:])
             and np.all(self.sites_inference[:] == other.sites_inference[:])
             and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
-            and np.all(self.sites_time[:] == other.sites_time[:])
+            and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
             # Need to take a different approach with np object arrays.
             and all(
                 itertools.starmap(
@@ -1203,7 +1205,7 @@ class SampleData(DataContainer):
         for v in ts.variants():
             variant_time = constants.TIME_UNSPECIFIED
             if use_times:
-                variant_time = constants.TIME_MEANINGLESS
+                variant_time = np.nan
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
             site_metadata = None
