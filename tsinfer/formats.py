@@ -20,6 +20,7 @@
 Manage tsinfer's various file formats.
 """
 import collections.abc as abc
+import collections
 import datetime
 import itertools
 import logging
@@ -42,6 +43,7 @@ import attr
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
+import tsinfer.constants as constants
 
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,20 @@ def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
     if os.path.exists(lockfile):
         os.unlink(lockfile)
+
+
+AlleleCounts = collections.namedtuple("AlleleCounts", "known ancestral derived")
+
+
+def allele_counts(genotypes):
+    """
+    Return summary counts of the number of different allele types for a genotypes array
+    """
+    n_known = np.sum(genotypes != tskit.MISSING_DATA)
+    n_ancestral = np.sum(genotypes == 0)
+    return AlleleCounts(
+        known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
+    )
 
 
 class BufferedItemWriter(object):
@@ -633,7 +649,7 @@ class Site(object):
 @attr.s
 class Variant(object):
     """
-    A single variant. Mirrors the definition in tskit but with some extra fields.
+    A single variant. Mirrors the definition in tskit.
     """
 
     # TODO document properly.
@@ -1047,13 +1063,15 @@ class SampleData(DataContainer):
             and self.num_samples == other.num_samples
             and self.num_sites == other.num_sites
             and self.num_inference_sites == other.num_inference_sites
-            and np.all(self.individuals_time[:] == other.individuals_time[:])
+            and np.allclose(
+                self.individuals_time[:], other.individuals_time[:], equal_nan=True
+            )
             and np.all(self.samples_individual[:] == other.samples_individual[:])
             and np.all(self.samples_population[:] == other.samples_population[:])
             and np.all(self.sites_position[:] == other.sites_position[:])
             and np.all(self.sites_inference[:] == other.sites_inference[:])
             and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
-            and np.all(self.sites_time[:] == other.sites_time[:])
+            and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
             # Need to take a different approach with np object arrays.
             and all(
                 itertools.starmap(
@@ -1185,9 +1203,11 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
-            variant_time = None
-            if use_times and len(v.site.mutations) == 1:
-                variant_time = ts.node(v.site.mutations[0].node).time
+            variant_time = constants.TIME_UNSPECIFIED
+            if use_times:
+                variant_time = np.nan
+                if len(v.site.mutations) == 1:
+                    variant_time = ts.node(v.site.mutations[0].node).time
             site_metadata = None
             if use_metadata and v.site.metadata:
                 site_metadata = json.loads(v.site.metadata)
@@ -1383,7 +1403,7 @@ class SampleData(DataContainer):
         :param float time: The time of occurence (pastwards) of the mutation to the
             derived state at this site. If not specified or None, the frequency of the
             derived alleles (i.e., the proportion of non-zero values in the genotypes,
-            out of all the non-missing values) is used instead. For
+            out of all the non-missing values) will be used in inference. For
             biallelic sites this frequency should provide a reasonable estimate
             of the relative time, as used to order ancestral haplotypes during the
             inference process. For sites not used in inference, such as singletons or
@@ -1437,9 +1457,7 @@ class SampleData(DataContainer):
                 "Site positions must be unique and added in increasing order"
             )
 
-        n_known = np.sum(genotypes != tskit.MISSING_DATA)
-        n_ancestral = np.sum(genotypes == 0)
-        n_derived = n_known - n_ancestral
+        counts = allele_counts(genotypes)
         if n_alleles > 2:
             if inference is None:
                 inference = False
@@ -1448,7 +1466,7 @@ class SampleData(DataContainer):
             if n_alleles > 64:
                 # This is mandated by tskit's map_mutations function.
                 raise ValueError("Cannot have more than 64 alleles")
-        if n_derived > 1 and n_derived < n_known:
+        if counts.derived > 1 and counts.derived < counts.known:
             if inference is None:
                 inference = True
         else:
@@ -1457,7 +1475,7 @@ class SampleData(DataContainer):
             if inference:
                 raise ValueError("Cannot use singletons or fixed sites for inference")
         if time is None:
-            time = n_derived / n_known  # If n_alleles>2 this may not be sensible
+            time = constants.TIME_UNSPECIFIED
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
@@ -1561,7 +1579,7 @@ class SampleData(DataContainer):
         for (j, genotypes), site in zip(
             self.genotypes(inference_sites), self.sites(inference_sites)
         ):
-            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
+            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes,)
             yield variant
 
     def __all_haplotypes(self, inference_sites=None):

@@ -19,6 +19,8 @@
 """
 Collection of constants used in tsinfer. We also make use of constants defined in tskit.
 """
+import numpy as np
+
 
 C_ENGINE = "C"
 PY_ENGINE = "P"
@@ -31,3 +33,6 @@ NODE_IS_SRB_ANCESTOR = 1 << 17
 # Bit 18 is set in node flags when they are samples inserted to augment existing
 # ancestors.
 NODE_IS_SAMPLE_ANCESTOR = 1 << 18
+
+# Marker constants for node & site time values
+TIME_UNSPECIFIED = -np.inf

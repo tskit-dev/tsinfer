@@ -1950,7 +1950,7 @@ class PathCompressionMixin(object):
     def test_simulation_with_error(self):
         ts = msprime.simulate(50, mutation_rate=5, random_seed=4, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.2, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         self.verify(sample_data)
 
     def test_small_random_data(self):
@@ -2552,19 +2552,19 @@ class TestAugmentedAncestors(unittest.TestCase):
     def test_simulation_with_error(self):
         ts = msprime.simulate(50, mutation_rate=5, random_seed=5, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         self.verify(sample_data)
 
     def test_intermediate_simulation_with_error(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=78, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         self.verify(sample_data)
 
     def test_small_simulation_with_error(self):
         ts = msprime.simulate(5, mutation_rate=5, random_seed=5, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
         self.verify(sample_data)
 
     def test_small_random_data(self):

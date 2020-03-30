@@ -170,7 +170,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
                 )
         for v in ts.variants():
-            t = None
+            t = np.nan  # default is that a site has no meaningful time
             if len(v.site.mutations) == 1:
                 t = ts.node(v.site.mutations[0].node).time
             input_file.add_site(
@@ -369,7 +369,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
     def test_from_tree_sequence_variable_allele_number(self):
         ts = self.get_example_ts(10, 10)
-        # Create > 2 alles by scattering mutations on the tree nodes at the first site
+        # Create > 2 alleles by scattering mutations on the tree nodes at the first site
         tables = ts.dump_tables()
         focal_site = ts.site(0)
         tree = ts.at(focal_site.position)
@@ -393,7 +393,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.verify_data_round_trip(ts, sd1)
         self.assertFalse(sd1.sites_inference[0])
         self.assertFalse(sd1.sites_inference[sd1.num_sites - 1])
-
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
             self.assertEqual(len(var.alleles), num_alleles[var.site.id])
@@ -1238,8 +1237,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def test_copy_update_sites_time(self):
         with formats.SampleData() as data:
             for j in range(4):
-                data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        # Freq == 0.5
+                data.add_site(
+                    position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0], time=0.5
+                )
         self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
 
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -1289,7 +1289,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
         data = formats.SampleData()
         for j in range(4):
-            data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
+            data.add_site(
+                position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0], time=0.5
+            )
         data.finalise()
         self.assertAlmostEqual(list(data.sites_time), [0.5, 0.5, 0.5, 0.5])
         copy = data.copy()

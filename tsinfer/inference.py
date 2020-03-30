@@ -464,12 +464,23 @@ class AncestorsGenerator(object):
 
     def add_sites(self):
         """
-        Add all sites from the sample_data object into the ancestor builder.
+        Add all sites marked for inference in the sample_data object into the
+        ancestor builder.
         """
         logger.info("Starting addition of {} sites".format(self.num_sites))
         progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
         for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
-            self.ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
+            time = variant.site.time
+            if time == constants.TIME_UNSPECIFIED:
+                counts = formats.allele_counts(variant.genotypes)
+                # Non-variable sites have no obvious freq-as-time values
+                assert counts.known != counts.derived
+                assert counts.known != counts.ancestral
+                assert counts.known > 0
+                # Time = freq of *all* derived alleles. Note that if n_alleles > 2 this
+                # may not be sensible: https://github.com/tskit-dev/tsinfer/issues/228
+                time = counts.derived / counts.known
+            self.ancestor_builder.add_site(j, time, variant.genotypes)
             progress.update()
         progress.close()
         logger.info("Finished adding sites")
