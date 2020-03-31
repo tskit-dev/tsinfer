@@ -743,6 +743,9 @@ class TestCli(unittest.TestCase):
     def test_ancestor_quality(self):
         self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1"])
 
+    def test_imputation_accuracy(self):
+        self.run_command(["imputation-accuracy", "-n", "5", "-l", "0.1"])
+
 
 class TestCountSampleChildEdges(unittest.TestCase):
     """
