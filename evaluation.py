@@ -236,8 +236,7 @@ def run_edges_performance(args):
 
     work = []
     rng = random.Random()
-    if args.random_seed is not None:
-        rng.seed(args.random_seed)
+    rng.seed(args.random_seed)
     for L in np.linspace(0, args.length, num_lengths + 1)[1:]:
         for _ in range(args.num_replicates):
             sim_args = {
@@ -1615,7 +1614,7 @@ def run_node_degree(args):
         "length": args.length * MB,
         "recombination_rate": args.recombination_rate,
         "mutation_rate": args.mutation_rate,
-        "Ne": 10 ** 4,
+        "Ne": args.Ne,
         "model": "smc_prime",
         "random_seed": rng.randint(1, 2 ** 30),
     }
@@ -1703,13 +1702,16 @@ def run_perfect_inference(args):
     model = "smc_prime"
     if args.use_ts:
         model = "hudson"
-    for seed in range(1, args.num_replicates + 1):
+    rng = random.Random()
+    rng.seed(args.random_seed)
+    for _ in range(args.num_replicates):
+        seed = rng.randint(1, 2 ** 30)
         base_ts = msprime.simulate(
             args.sample_size,
             Ne=args.Ne,
             length=args.length * 10 ** 6,
             recombination_rate=1e-8,
-            random_seed=args.random_seed + seed,
+            random_seed=seed,
             model=model,
         )
         print(
@@ -1761,6 +1763,42 @@ def setup_logging(args):
         logger.setLevel(log_level)
 
 
+def add_standard_arguments(
+    parser, sample_size=10, length=1, mutation_rate=1e-8, num_replicates=10
+):
+    parser.add_argument("--destination-dir", "-d", default="")
+    parser.add_argument("--sample-size", "-n", type=int, default=sample_size)
+    parser.add_argument("--Ne", "-N", type=int, default=10 ** 4)
+    parser.add_argument(
+        "--length", "-l", type=float, default=length, help="Sequence length in MB"
+    )
+    parser.add_argument(
+        "--recombination-rate",
+        "-r",
+        type=float,
+        default=1e-8,
+        help="Recombination rate",
+    )
+    parser.add_argument("--random-seed", "-s", type=int, default=None)
+    if mutation_rate is not None:
+        parser.add_argument(
+            "--mutation-rate",
+            "-u",
+            type=float,
+            default=mutation_rate,
+            help="Mutation rate",
+        )
+    if num_replicates is not None:
+        parser.add_argument("--num-replicates", "-R", type=int, default=num_replicates)
+
+
+def add_worker_arguments(parser):
+    parser.add_argument("--num-processes", "-p", type=int, default=None)
+    parser.add_argument(
+        "--progress", "-P", action="store_true", help="Show a progress monitor."
+    )
+
+
 if __name__ == "__main__":
 
     top_parser = argparse.ArgumentParser(
@@ -1782,6 +1820,9 @@ if __name__ == "__main__":
     subparsers = top_parser.add_subparsers(dest="subcommand")
     subparsers.required = True
 
+    #
+    # Perfect inference
+    #
     parser = subparsers.add_parser(
         "perfect-inference",
         aliases=["pi"],
@@ -1789,16 +1830,8 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_perfect_inference)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument("--Ne", "-N", type=int, default=10 ** 4)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
-    )
-    parser.add_argument("--num-replicates", "-R", type=int, default=1)
+    add_standard_arguments(parser, mutation_rate=None, num_replicates=1)
     parser.add_argument("--num-threads", "-t", type=int, default=0)
-    parser.add_argument(
-        "--progress", "-P", action="store_true", help="Show a progress monitor."
-    )
     parser.add_argument(
         "--extended-checks",
         "-X",
@@ -1821,10 +1854,10 @@ if __name__ == "__main__":
         action="store_true",
         help="Turn on path compression. Makes verification much slower.",
     )
-    parser.add_argument("--random-seed", "-s", type=int, default=1)
-    # Not actually used here, but useful to have it for testing.
-    parser.add_argument("--destination-dir", "-d", default="")
 
+    #
+    # Edges performance
+    #
     parser = subparsers.add_parser(
         "edges-performance",
         aliases=["ep"],
@@ -1832,31 +1865,15 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_edges_performance)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument(
-        "--length", "-l", type=float, default=0.1, help="Sequence length in MB"
-    )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
-    parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-p", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
+    add_standard_arguments(parser, length=0.1)
+    add_worker_arguments(parser)
     parser.add_argument(
         "--compute-tree-metrics", "-T", action="store_true", help="Compute tree metrics"
     )
-    parser.add_argument(
-        "--progress", "-P", action="store_true", help="Show a progress monitor."
-    )
 
+    #
+    # Hotspot analysis
+    #
     parser = subparsers.add_parser(
         "hotspot-analysis",
         aliases=["ha"],
@@ -1864,22 +1881,10 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_hotspot_analysis)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
+    add_standard_arguments(parser)
+    add_worker_arguments(parser)
     parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
-    )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
-    parser.add_argument(
-        "--num-hotspots", "-N", type=int, default=1, help="Number of hotspots"
+        "--num-hotspots", "-H", type=int, default=1, help="Number of hotspots"
     )
     parser.add_argument(
         "--hotspot-intensity",
@@ -1895,14 +1900,10 @@ if __name__ == "__main__":
         default=0.01,
         help="Width of hotspots as a fraction of total genome length.",
     )
-    parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-p", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
-    parser.add_argument(
-        "--progress", "-P", action="store_true", help="Show a progress monitor."
-    )
 
+    #
+    # Ancestor properties
+    #
     parser = subparsers.add_parser(
         "ancestor-properties",
         aliases=["ap"],
@@ -1910,28 +1911,8 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_properties)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument("--Ne", "-N", type=int, default=5000)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
-    )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
-    parser.add_argument("--num-replicates", "-R", type=int, default=10)
-    parser.add_argument("--num-processes", "-p", type=int, default=None)
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
-    parser.add_argument(
-        "--progress", "-P", action="store_true", help="Show a progress monitor."
-    )
+    add_standard_arguments(parser)
+    add_worker_arguments(parser)
     parser.add_argument(
         "--skip-exact",
         "-S",
@@ -1939,6 +1920,9 @@ if __name__ == "__main__":
         help="Skip computing the exact ancestors",
     )
 
+    #
+    # Ancestor comparison
+    #
     parser = subparsers.add_parser(
         "ancestor-comparison",
         aliases=["ac"],
@@ -1949,29 +1933,13 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_comparison)
-    parser.add_argument("--sample-size", "-n", type=int, default=100)
-    parser.add_argument("--Ne", "-N", type=int, default=5000)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
-    )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
+    add_standard_arguments(parser, sample_size=100, num_replicates=None)
     parser.add_argument(
         "--error",
         "-e",
         default="0",
         help="Error: either a probability or a csv filename to use for empirical error",
     )
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--store-data", "-S", action="store_true", help="Store some raw data."
     )
@@ -1993,6 +1961,9 @@ if __name__ == "__main__":
         ),
     )
 
+    #
+    # Ancestor quality
+    #
     parser = subparsers.add_parser(
         "ancestor-quality",
         aliases=["aq"],
@@ -2003,29 +1974,13 @@ if __name__ == "__main__":
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_ancestor_quality)
-    parser.add_argument("--sample-size", "-n", type=int, default=100)
-    parser.add_argument("--Ne", "-N", type=int, default=5000)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
-    )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
+    add_standard_arguments(parser, sample_size=100, num_replicates=None)
     parser.add_argument(
         "--error",
         "-e",
         default="0",
         help="Error: either a probability or a csv filename to use for empirical error",
     )
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument(
         "--print-bad-ancestors",
         "-b",
@@ -2064,27 +2019,27 @@ if __name__ == "__main__":
         ),
     )
 
+    #
+    # Node degree
+    #
     parser = subparsers.add_parser(
         "node-degree", aliases=["nd"], help="Plots node degree vs depth in the tree."
     )
     cli.add_logging_arguments(parser)
     parser.set_defaults(runner=run_node_degree)
-    parser.add_argument("--sample-size", "-n", type=int, default=10)
-    parser.add_argument(
-        "--length", "-l", type=float, default=1, help="Sequence length in MB"
+    add_standard_arguments(parser, num_replicates=None)
+
+    #
+    # Imputation accuracy
+    #
+    parser = subparsers.add_parser(
+        "imputation-accuracy",
+        aliases=["ia"],
+        help="Runs plots analysing the quality of imputation.",
     )
-    parser.add_argument(
-        "--recombination-rate",
-        "-r",
-        type=float,
-        default=1e-8,
-        help="Recombination rate",
-    )
-    parser.add_argument(
-        "--mutation-rate", "-u", type=float, default=1e-8, help="Mutation rate"
-    )
-    parser.add_argument("--random-seed", "-s", type=int, default=None)
-    parser.add_argument("--destination-dir", "-d", default="")
+    cli.add_logging_arguments(parser)
+    parser.set_defaults(runner=run_hotspot_analysis)
+    add_standard_arguments(parser)
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
