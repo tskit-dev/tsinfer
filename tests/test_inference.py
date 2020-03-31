@@ -158,16 +158,29 @@ class TestRoundTrip(unittest.TestCase):
             np.array_equal(ts.tables.mutations.parent, tables.mutations.parent)
         )
         for v in ts.variants():
-            self.assertEqual(v.position, positions[v.index])
-            if alleles is None or len(alleles[v.index]) == 2:
-                self.assertTrue(np.array_equal(genotypes[v.index], v.genotypes))
+            site_id = v.site.id
+            missing = genotypes[site_id] == tskit.MISSING_DATA
+            non_missing = genotypes[site_id] != tskit.MISSING_DATA
+            self.assertEqual(v.position, positions[site_id])
+            if alleles is None or len(alleles[site_id]) == 2:
+                self.assertTrue(
+                    np.array_equal(
+                        genotypes[site_id, non_missing], v.genotypes[non_missing]
+                    )
+                )
             else:
-                a = alleles[v.index]
+                a = alleles[site_id]
                 self.assertEqual(v.site.ancestral_state, a[0])
                 self.assertTrue(set(v.alleles) <= set(a))
                 a1 = np.array(a)
                 a2 = np.array(v.alleles)
-                self.assertTrue(np.array_equal(a1[genotypes[v.index]], a2[v.genotypes]))
+                self.assertTrue(
+                    np.array_equal(
+                        a1[genotypes[site_id, non_missing]],
+                        a2[v.genotypes[non_missing]],
+                    )
+                )
+            self.assertTrue(np.all(v.genotypes[missing] >= 0))
 
     def verify_data_round_trip(
         self, genotypes, positions, alleles=None, sequence_length=None, times=None
@@ -418,6 +431,40 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 ancestors_ts,
                 recombination_rate=1e-3,
                 mutation_rate=1e-3,
+                engine=engine,
+            )
+            self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
+
+
+class TestMissingDataRoundTrip(TestRoundTrip):
+    """
+    Tests that we correctly round trip genotypes when missing data is present.
+    We expect all non-missing values to be exactly round tripped and missing
+    data to be non-missing in the output.
+    """
+
+    def verify_data_round_trip(
+        self, genotypes, positions, alleles=None, sequence_length=None, times=None
+    ):
+        if sequence_length is None:
+            sequence_length = positions[-1] + 1
+        genotypes = genotypes.copy()
+        m, n = genotypes.shape
+        with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
+            for j in range(m):
+                t = None if times is None else times[j]
+                site_alleles = None if alleles is None else alleles[j]
+                # Set one sample to missing for every site cyclically.
+                genotypes[j, j % n] = tskit.MISSING_DATA
+                sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
+
+        engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
+        for engine in engines:
+            ts = tsinfer.infer(
+                sample_data,
+                recombination_rate=1e-3,
+                mutation_rate=1e-6,
+                precision=10,
                 engine=engine,
             )
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
