@@ -22,8 +22,9 @@ import seaborn as sns
 import tqdm
 import daiquiri
 import colorama
-
 import msprime
+import tskit
+
 import tsinfer
 import tsinfer.cli as cli
 
@@ -244,7 +245,7 @@ def run_edges_performance(args):
                 "length": L * MB,
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
-                "Ne": 10 ** 4,
+                "Ne": args.Ne,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2 ** 30),
             }
@@ -461,7 +462,7 @@ def run_hotspot_analysis(args):
         "sample_size": args.sample_size,
         "recombination_map": recomb_map,
         "mutation_rate": args.mutation_rate,
-        "Ne": 10 ** 4,
+        "Ne": args.Ne,
         "random_seed": rng.randint(1, 2 ** 30),
     }
     ts = msprime.simulate(**sim_args)
@@ -570,7 +571,7 @@ def run_ancestor_properties(args):
                 "length": L * MB,
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
-                "Ne": 10 ** 4,
+                "Ne": args.Ne,
                 "model": "smc_prime",
                 "random_seed": rng.randint(1, 2 ** 30),
             }
@@ -656,6 +657,103 @@ def run_ancestor_properties(args):
     plt.legend()
     save_figure(name_format.format("mean_focal_distance"))
     plt.clf()
+
+
+def imputation_accuracy_worker(args):
+    simulation_args, missing_proportion = args
+    ts = msprime.simulate(**simulation_args)
+    np.random.seed(simulation_args["random_seed"])
+    G = ts.genotype_matrix()
+    missing = np.random.rand(ts.num_sites, ts.num_samples) < missing_proportion
+    G[missing] = tskit.MISSING_DATA
+    with tsinfer.SampleData(ts.sequence_length) as sample_data:
+        for var in ts.variants():
+            sample_data.add_site(
+                var.site.position, alleles=var.alleles, genotypes=G[var.site.id]
+            )
+
+    # FIXME need to turn off path compression when running this with n=1000
+    # as we get a ASSERTION_ERROR otherwise.
+    ts_inferred = tsinfer.infer(sample_data, path_compression=False)
+    assert ts_inferred.num_sites == ts.num_sites
+    total_missing = np.sum(missing)
+    num_correct = 0
+    for v1, v2 in zip(ts.variants(), ts_inferred.variants()):
+        site_id = v1.site.id
+        a1 = np.array(v1.alleles)[v1.genotypes]
+        a2 = np.array(v2.alleles)[v2.genotypes]
+        original = a1[missing[site_id]]
+        inferred = a2[missing[site_id]]
+        num_correct += np.sum(original == inferred)
+    accuracy = 1
+    if total_missing > 0:
+        accuracy = num_correct / total_missing
+
+    results = {
+        "num_trees": ts.num_trees,
+        "num_sites": ts.num_sites,
+        "num_samples": ts.num_samples,
+        "missing_proportion": missing_proportion,
+        "accuracy": accuracy,
+    }
+    return results
+
+
+def run_imputation_accuracy(args):
+    MB = 10 ** 6
+
+    work = []
+    rng = random.Random()
+    if args.random_seed is not None:
+        rng.seed(args.random_seed)
+    for missing_proportion in np.linspace(0.01, 0.1, 10):
+        for _ in range(args.num_replicates):
+            sim_args = {
+                "sample_size": args.sample_size,
+                "length": args.length * MB,
+                "recombination_rate": args.recombination_rate,
+                "mutation_rate": args.mutation_rate,
+                "Ne": args.Ne,
+                "random_seed": rng.randint(1, 2 ** 30),
+            }
+            work.append((sim_args, missing_proportion))
+            # imputation_accuracy_worker((sim_args, missing_proportion))
+
+    random.shuffle(work)
+    progress = tqdm.tqdm(total=len(work), disable=not args.progress)
+    results = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(args.num_processes) as executor:
+            for result in executor.map(imputation_accuracy_worker, work):
+                results.append(result)
+                progress.update()
+
+    except KeyboardInterrupt:
+        pass
+    progress.close()
+
+    df = pd.DataFrame(results)
+    dfg = df.groupby(df.missing_proportion).mean()
+    print(dfg)
+
+    name_format = os.path.join(
+        args.destination_dir,
+        "imputation-accuracy_n={}_L={}_mu={}_rho={}_{{}}".format(
+            args.sample_size, args.length, args.mutation_rate, args.recombination_rate
+        ),
+    )
+    sns.lineplot(x="missing_proportion", y="accuracy", data=df)
+    plt.title(
+        "n = {}, mut_rate={}, rec_rate={}, reps={}".format(
+            args.sample_size,
+            args.mutation_rate,
+            args.recombination_rate,
+            args.num_replicates,
+        )
+    )
+    plt.ylabel("Fraction of missing genotypes imputed correctly")
+    plt.xlabel("Fraction of genotypes missing")
+    save_figure(name_format.format("num"))
 
 
 def running_mean(x, N):
@@ -2038,8 +2136,9 @@ if __name__ == "__main__":
         help="Runs plots analysing the quality of imputation.",
     )
     cli.add_logging_arguments(parser)
-    parser.set_defaults(runner=run_hotspot_analysis)
+    parser.set_defaults(runner=run_imputation_accuracy)
     add_standard_arguments(parser)
+    add_worker_arguments(parser)
 
     args = top_parser.parse_args()
     cli.setup_logging(args)
