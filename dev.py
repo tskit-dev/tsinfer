@@ -148,7 +148,6 @@ def tsinfer_dev(
         path_compression=False,
         engine=engine,
         precision=precision,
-        impute_missing=False,
         simplify=False,
     )
 
@@ -326,7 +325,7 @@ if __name__ == "__main__":
     # copy_1kg()
     tsinfer_dev(
         8,
-        0.05,
+        0.15,
         seed=4,
         num_threads=0,
         engine="P",

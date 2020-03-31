@@ -77,45 +77,6 @@ def count_srb_ancestors(flags):
     return np.sum(np.bitwise_and(flags, constants.NODE_IS_SRB_ANCESTOR) != 0)
 
 
-EdgeBundle = collections.namedtuple("EdgeBundle", ["left", "right", "parent"])
-
-
-def distinct_runs(a):
-    """
-    Given a boolean array a, return an iterator of (left, right, value) tuples of the
-    distinct runs of values in the array.
-
-    Based on https://stackoverflow.com/a/1068397
-    """
-    if len(a) > 0:
-        a = np.array(a, dtype=bool)
-        switch = a[:-1] ^ a[1:]
-        breaks = np.hstack([1 + np.where(switch)[0], [a.shape[0]]])
-        left = 0
-        for right in breaks:
-            yield left, right, a[left]
-            left = right
-
-
-def split_edges(missing, left, right, parent):
-    """
-    Returns the edges specified by the left, right, parent arrays with gaps
-    inserted at positions indicated by the missing array.
-    """
-    new_edges = []
-    for l, r, p in zip(left, right, parent):
-        for start, end, is_missing in distinct_runs(missing[l:r]):
-            if not is_missing:
-                current_left = l + start
-                current_right = l + end
-                new_edges.append(tskit.Edge(current_left, current_right, p, tskit.NULL))
-    return EdgeBundle(
-        np.array([e.left for e in new_edges], dtype=np.uint32),
-        np.array([e.right for e in new_edges], dtype=np.uint32),
-        np.array([e.parent for e in new_edges], dtype=np.int32),
-    )
-
-
 class DummyProgress(object):
     """
     Class that mimics the subset of the tqdm API that we use in this module.
@@ -191,7 +152,6 @@ def infer(
     recombination_rate=None,
     mutation_rate=None,
     precision=None,
-    impute_missing=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
 ):
@@ -242,7 +202,6 @@ def infer(
         recombination_rate=recombination_rate,
         mutation_rate=mutation_rate,
         precision=precision,
-        impute_missing=impute_missing,
         path_compression=path_compression,
         simplify=simplify,
         progress_monitor=progress_monitor,
@@ -420,7 +379,6 @@ def match_samples(
     recombination_rate=None,
     mutation_rate=None,
     precision=None,
-    impute_missing=None,
     extended_checks=False,
     stabilise_node_ordering=False,
     engine=constants.C_ENGINE,
@@ -460,7 +418,6 @@ def match_samples(
         recombination_rate=recombination_rate,
         mutation_rate=mutation_rate,
         precision=precision,
-        impute_missing=impute_missing,
         path_compression=path_compression,
         extended_checks=extended_checks,
         engine=engine,
@@ -663,7 +620,6 @@ class Matcher(object):
         recombination_rate=None,
         mutation_rate=None,
         precision=None,
-        impute_missing=None,
         extended_checks=False,
         engine=constants.C_ENGINE,
         progress_monitor=None,
@@ -676,12 +632,6 @@ class Matcher(object):
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
-
-        if impute_missing is None:
-            # Note: using None here as we might want to have more flexible defaults
-            # later depending on the other inputs.
-            impute_missing = True
-        self.impute_missing = impute_missing
 
         if precision is None:
             # TODO Is this a good default? Need to investigate the effects.
@@ -754,14 +704,9 @@ class Matcher(object):
         """
         matcher = self.matcher[thread_index]
         match = self.match[thread_index]
-        left, right, parent = matcher.find_path(haplotype, start, end, match)
-
-        match = self.match[thread_index]
         missing = haplotype == tskit.MISSING_DATA
-        num_missing = np.sum(missing)
-        if num_missing > 0 and not self.impute_missing:
-            left, right, parent = split_edges(missing, left, right, parent)
 
+        left, right, parent = matcher.find_path(haplotype, start, end, match)
         self.results.set_path(child_id, left, right, parent)
         match[missing] = tskit.MISSING_DATA
         diffs = start + np.where(haplotype[start:end] != match[start:end])[0]
@@ -1440,9 +1385,10 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def finalise(self, simplify=True, stabilise_node_ordering=False):
+    def finalise(self, simplify, stabilise_node_ordering):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
+
         # print(ts.tables)
         if simplify:
             logger.info(
