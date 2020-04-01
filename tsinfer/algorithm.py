@@ -392,9 +392,9 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # For the assertion to be violated we would need to have 64K pc
-        # ancestors sequentially copying from each other.
-        self.time[pc_parent_id] = min_parent_time - (1 / 2 ** 16)
+        # 1 / 2**32 is the value used in the low-level code.
+        # We'll want to make this more sophisticated in the future
+        self.time[pc_parent_id] = min_parent_time - (1 / 2 ** 32)
         assert self.time[pc_parent_id] > self.time[child_id]
 
     def create_pc_node(self, matches):
