@@ -28,8 +28,11 @@
 
 /* Time increment between path compression ancestors and their parents.
  * Power-of-two value chosen here so that we can manipulate time values
- * reasonably losslessly. */
-#define PC_ANCESTOR_INCREMENT (1.0 / 65536)
+ * reasonably losslessly. This is about 2.3e-10. This should be enough
+ * that even with very large samples (and therefore small frequency
+ * values) we have enough space to add many synthetic ancestors. It's a
+ * hack though, and we should have a better approach. */
+#define PC_ANCESTOR_INCREMENT (1.0 / (1LL << 32))
 
 static int
 cmp_edge_left_increasing_time(const void *a, const void *b)

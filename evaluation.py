@@ -672,9 +672,7 @@ def imputation_accuracy_worker(args):
                 var.site.position, alleles=var.alleles, genotypes=G[var.site.id]
             )
 
-    # FIXME need to turn off path compression when running this with n=1000
-    # as we get a ASSERTION_ERROR otherwise.
-    ts_inferred = tsinfer.infer(sample_data, path_compression=False)
+    ts_inferred = tsinfer.infer(sample_data)
     assert ts_inferred.num_sites == ts.num_sites
     total_missing = np.sum(missing)
     num_correct = 0
