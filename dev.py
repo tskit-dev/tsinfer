@@ -6,8 +6,9 @@ import tqdm
 import pprint
 import numpy as np
 import json
-import tskit
 import msprime
+
+# import tskit
 
 import tsinfer
 
@@ -89,7 +90,7 @@ def tsinfer_dev(
 
     with tsinfer.SampleData(sequence_length=source_ts.sequence_length) as samples:
         for var in source_ts.variants():
-            var.genotypes[var.site.id % source_ts.num_samples] = tskit.MISSING_DATA
+            # var.genotypes[var.site.id % source_ts.num_samples] = tskit.MISSING_DATA
             samples.add_site(var.site.position, var.genotypes, var.alleles)
 
     # print(samples)
@@ -123,6 +124,7 @@ def tsinfer_dev(
         mutation_rate=mu,
     )
     # print(ancestors_ts.tables)
+
     # print("ancestors ts")
     # for tree in ancestors_ts.trees():
     #     print(tree.draw_text())
@@ -325,7 +327,7 @@ if __name__ == "__main__":
     # copy_1kg()
     tsinfer_dev(
         8,
-        0.15,
+        0.05,
         seed=4,
         num_threads=0,
         engine="P",
