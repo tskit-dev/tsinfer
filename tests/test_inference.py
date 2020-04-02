@@ -1315,7 +1315,7 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
             flags=tables.nodes.flags, time=tables.nodes.time, individual=individual
         )
         ts = tables.tree_sequence()
-        with tsinfer.SampleData() as samples:
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
             for j in range(ts.num_samples // 2):
                 samples.add_individual(ploidy=2, location=[100 * j], metadata={"X": j})
             for var in ts.variants():
@@ -1785,6 +1785,7 @@ class TestWrongAncestorsTreeSequence(unittest.TestCase):
         sample_data = tsinfer.SampleData.from_tree_sequence(sim)
         inferred_ts = tsinfer.infer(sample_data)
         self.assertRaises(ValueError, tsinfer.match_samples, sample_data, inferred_ts)
+        # tsinfer.match_samples(sample_data, inferred_ts)
 
     def test_original_ts_match_samples(self):
         sim = msprime.simulate(sample_size=6, random_seed=1, mutation_rate=6)
