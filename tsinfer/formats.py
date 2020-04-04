@@ -1660,7 +1660,7 @@ class AncestorData(DataContainer):
     chunk_size=1024, max_file_size=None)
 
     Class representing the stored ancestor data produced by
-    :func:`generate_ancestors`. See the samples file format
+    :func:`generate_ancestors`. See the ancestor data file format
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
     of this file.
 
@@ -1669,7 +1669,7 @@ class AncestorData(DataContainer):
 
     :param SampleData sample_data: The :class:`.SampleData` instance
         that this ancestor data file was generated from.
-    :param str path: The path of the file to store the sample data. If None,
+    :param str path: The path of the file to store the ancestor data. If None,
         the information is stored in memory and not persistent.
     :param int num_flush_threads: The number of background threads to use
         for compressing data and flushing to disc. If <= 0, do not spawn
