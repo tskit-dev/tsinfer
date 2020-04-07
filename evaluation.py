@@ -892,15 +892,19 @@ def run_ancestor_comparison(args):
     # true frequency, we therefore need to get it directly from the samples
     pos_to_ancestor = {}
     estimated_anc.ancestors_focal_freq = np.zeros(estimated_anc.num_ancestors, np.int)
+    ancestor_site_position = estimated_anc.sites_position
     for a, focal_sites in enumerate(estimated_anc.ancestors_focal_sites[:]):
         for focal_site in focal_sites:
-            pos_to_ancestor[estimated_anc.sites_position[:][focal_site]] = a
-    for i, g in sample_data.genotypes(inference_sites=True):
-        pos = sample_data.sites_position[:][i]
+            pos_to_ancestor[ancestor_site_position[focal_site]] = a
+    for var in sample_data.variants(ancestor_site_position):
+        # for i, g in sample_data.genotypes(inference_sites=True):
+        # pos = sample_data.sites_position[:][i]
+        pos = var.site.position
+        freq = np.sum(var.genotypes)
         if estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]:
             # check all focal sites in an ancestor have the same freq
-            assert np.sum(g) == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
-        estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = np.sum(g)
+            assert freq == estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]]
+        estimated_anc.ancestors_focal_freq[pos_to_ancestor[pos]] = freq
 
     print("mean estimated ancestor length", np.mean(estimated_anc_length))
     # Get the number of ancestors that have the maximum length
@@ -1155,11 +1159,8 @@ def run_ancestor_quality(args):
     assert np.sum(exact_sites_mask) == np.sum(estim_sites_mask) == len(anc_indices)
 
     # store the data to plot for each focal_site, keyed by position
-    freq = {
-        sample_data.sites_position[:][i]: np.sum(g)
-        for i, g in sample_data.genotypes(inference_sites=None)
-    }
-    estim_freq = np.array([freq[p] for p in estim_anc.sites_position[:]], dtype=np.int)
+    freq = {var.site.position: np.sum(var.genotypes) for var in sample_data.variants()}
+    estim_freq = np.array([freq[p] for p in estim_anc.sites_position], dtype=np.int)
     olap_n_sites = {}
     olap_n_should_be_1_higher_freq = {}
     olap_n_should_be_0_higher_freq = {}

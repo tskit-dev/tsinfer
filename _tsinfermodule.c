@@ -88,13 +88,13 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_samples", "num_sites", NULL};
-    int num_samples, num_sites;
+    static char *kwlist[] = {"num_samples", "max_sites", NULL};
+    int num_samples, max_sites;
     int flags = 0;
 
     self->builder = NULL;
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii", kwlist,
-                &num_samples, &num_sites)) {
+                &num_samples, &max_sites)) {
         goto out;
     }
     self->builder = PyMem_Malloc(sizeof(ancestor_builder_t));
@@ -103,7 +103,7 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_alloc(self->builder, num_samples, num_sites, flags);
+    err = ancestor_builder_alloc(self->builder, num_samples, max_sites, flags);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
@@ -118,9 +118,8 @@ static PyObject *
 AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"site_id", "time", "genotypes", NULL};
+    static char *kwlist[] = {"time", "genotypes", NULL};
     PyObject *ret = NULL;
-    int site_id;
     double time;
     PyObject *genotypes = NULL;
     PyArrayObject *genotypes_array = NULL;
@@ -129,8 +128,8 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "idO!", kwlist,
-            &site_id, &time, &PyArray_Type, &genotypes)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dO", kwlist,
+            &time, &genotypes)) {
         goto out;
     }
     genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
@@ -148,7 +147,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_add_site(self->builder, (tsk_id_t) site_id, time,
+    err = ancestor_builder_add_site(self->builder, time,
             (allele_t *) PyArray_DATA(genotypes_array));
     Py_END_ALLOW_THREADS
     if (err != 0) {

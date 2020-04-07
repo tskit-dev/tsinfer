@@ -96,3 +96,40 @@ class TestTreeSequenceBuilder(unittest.TestCase):
                 _tsinfer.TreeSequenceBuilder([2], max_nodes=bad_type)
             with self.assertRaises(TypeError):
                 _tsinfer.TreeSequenceBuilder([2], max_edges=bad_type)
+
+
+class TestAncestorBuilder(unittest.TestCase):
+    """
+    Tests for the AncestorBuilder C Python interface.
+    """
+
+    def test_init(self):
+        self.assertRaises(TypeError, _tsinfer.AncestorBuilder)
+        for bad_value in [None, "serf", [[], []], ["asdf"], {}]:
+            with self.assertRaises(TypeError):
+                _tsinfer.AncestorBuilder(num_samples=2, max_sites=bad_value)
+                _tsinfer.AncestorBuilder(num_samples=bad_value, max_sites=2)
+
+        for bad_num_samples in [0, 1]:
+            with self.assertRaises(_tsinfer.LibraryError):
+                _tsinfer.AncestorBuilder(num_samples=bad_num_samples, max_sites=0)
+
+    def test_add_site(self):
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=10)
+        for bad_type in ["sdf", {}, None]:
+            with self.assertRaises(TypeError):
+                ab.add_site(time=bad_type, genotypes=[0, 0])
+        for bad_genotypes in ["asdf", [[], []], [0, 1, 2]]:
+            with self.assertRaises(ValueError):
+                ab.add_site(time=0, genotypes=bad_genotypes)
+
+    def test_add_too_many_sites(self):
+        for max_sites in range(10):
+            ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=max_sites)
+            for j in range(max_sites):
+                ab.add_site(time=1, genotypes=[0, 1])
+            for j in range(2 * max_sites):
+                with self.assertRaises(_tsinfer.LibraryError):
+                    ab.add_site(time=1, genotypes=[0, 1])
+
+    # TODO need tester methods for the remaining methonds in the class.

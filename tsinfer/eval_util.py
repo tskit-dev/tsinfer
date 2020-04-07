@@ -336,13 +336,11 @@ def assert_single_recombination(ts):
 def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=False):
     # Any non-smc tree sequences are rejected.
     assert_smc(ts)
-    assert sample_data.num_inference_sites > 0
+    assert ancestor_data.num_sites > 0
     A = get_ancestral_haplotypes(ts)
     # This is all nodes, but we only want the non samples. We also reverse
     # the order to make it forwards time.
     A = A[ts.num_samples :][::-1]
-    # We also only want the inference sites
-    A = A[:, sample_data.sites_inference[:]]
 
     # get_ancestor_descriptors ensures that the ultimate ancestor is included.
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
@@ -449,9 +447,13 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     data. If remove_leaves is True, remove any nodes that are at time zero.
 
     We generally assume that this is a standard tree sequence output by
-    tskit.simulate here.
+    msprime.simulate here.
     """
-    position = samples.sites_position[:][samples.sites_inference[:]]
+    # Get the non-singleton sites
+    position = []
+    for var in ts.variants():
+        if np.sum(var.genotypes) > 1:
+            position.append(var.site.position)
     reduced = subset_sites(ts, position)
     minimised = inference.minimise(reduced)
 
@@ -531,13 +533,26 @@ def check_ancestors_ts(ts):
                     raise ValueError("All non empty subtrees must inherit from 0")
 
 
+def get_tsinfer_inference_sites(ts):
+    """
+    Returns the list of site positions from the specified tsinfer generated
+    tree sequence that were used as inference sites.
+    """
+    positions = []
+    for site in ts.sites():
+        md = json.loads(site.metadata)
+        if md["inference_type"] == "full":
+            positions.append(site.position)
+    return np.array(positions)
+
+
 def extract_ancestors(samples, ts):
     """
     Given the specified sample data file and final (unsimplified) tree sequence output
     by tsinfer, return the same tree sequence with the samples removed, which can then
     be used as an ancestors tree sequence.
     """
-    position = samples.sites_position[:][samples.sites_inference[:]]
+    position = get_tsinfer_inference_sites(ts)
     ts = subset_sites(ts, position)
     tables = ts.dump_tables()
 

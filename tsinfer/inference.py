@@ -43,6 +43,14 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
+def update_site_metadata(current_metadata, inference_type):
+    assert inference_type in {
+        constants.INFERENCE_FULL,
+        constants.INFERENCE_FITCH_PARSIMONY,
+    }
+    return {"inference_type": inference_type, **current_metadata}
+
+
 def is_pc_ancestor(flags):
     """
     Returns True if the path compression ancestor flag is set on the specified
@@ -75,6 +83,20 @@ def count_srb_ancestors(flags):
     """
     flags = np.array(flags, dtype=np.uint32, copy=False)
     return np.sum(np.bitwise_and(flags, constants.NODE_IS_SRB_ANCESTOR) != 0)
+
+
+AlleleCounts = collections.namedtuple("AlleleCounts", "known ancestral derived")
+
+
+def allele_counts(genotypes):
+    """
+    Return summary counts of the number of different allele types for a genotypes array
+    """
+    n_known = np.sum(genotypes != tskit.MISSING_DATA)
+    n_ancestral = np.sum(genotypes == 0)
+    return AlleleCounts(
+        known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
+    )
 
 
 class DummyProgress(object):
@@ -168,11 +190,13 @@ def infer(
     recombination_rate=None,
     mismatch_rate=None,
     precision=None,
+    exclude_positions=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
 ):
     """
-    infer(sample_data, *, num_threads=0, path_compression=True, simplify=True)
+    infer(sample_data, *, num_threads=0, path_compression=True, simplify=True,\
+            exclude_positions=None)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
@@ -189,6 +213,13 @@ def infer(
         on a path between the root and any of the samples. To do so, the final tree
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
         with ``keep_unary`` set to True (default = ``True``).
+    :param: array_like exclude_positions: A list of site positions to exclude
+        for full inference. Sites with these positions will not be used to generate
+        ancestors, and not used during the copying process. Any such sites that
+        exist in the sample data file will be included in the trees after the
+        main inference process using parsimony. The list does not need to be
+        in to be in any particular order, and can include site positions that
+        are not present in the sample data file.
     :returns: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
     :rtype: tskit.TreeSequence
@@ -196,6 +227,7 @@ def infer(
     ancestor_data = generate_ancestors(
         sample_data,
         num_threads=num_threads,
+        exclude_positions=exclude_positions,
         engine=engine,
         progress_monitor=progress_monitor,
     )
@@ -230,12 +262,14 @@ def generate_ancestors(
     *,
     num_threads=0,
     path=None,
+    exclude_positions=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
     **kwargs,
 ):
     """
-    generate_ancestors(sample_data, *, num_threads=0, path=None, **kwargs)
+    generate_ancestors(sample_data, *, num_threads=0, path=None, \
+            exclude_positions=None, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
     on the specified :class:`SampleData` instance and returns the resulting
@@ -256,6 +290,10 @@ def generate_ancestors(
         simpler synchronous algorithm.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
+    :param: array_like exclude_positions: A list of site positions to exclude
+        for full inference. Sites with these positions will not be used to generate
+        ancestors, and not used during the copying process. The list does not
+        need be in any particular order.
     :rtype: AncestorData
     :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
@@ -269,7 +307,7 @@ def generate_ancestors(
             engine=engine,
             progress_monitor=progress_monitor,
         )
-        generator.add_sites()
+        generator.add_sites(exclude_positions)
         generator.run()
         ancestor_data.record_provenance("generate-ancestors")
     return ancestor_data
@@ -468,50 +506,72 @@ class AncestorsGenerator(object):
         self.sample_data = sample_data
         self.ancestor_data = ancestor_data
         self.progress_monitor = progress_monitor
-        self.num_sites = sample_data.num_inference_sites
+        self.max_sites = sample_data.num_sites
+        self.num_sites = 0
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
         if engine == constants.C_ENGINE:
             logger.debug("Using C AncestorBuilder implementation")
             self.ancestor_builder = _tsinfer.AncestorBuilder(
-                self.num_samples, self.num_sites
+                self.num_samples, self.max_sites
             )
         elif engine == constants.PY_ENGINE:
             logger.debug("Using Python AncestorBuilder implementation")
             self.ancestor_builder = algorithm.AncestorBuilder(
-                self.num_samples, self.num_sites
+                self.num_samples, self.max_sites
             )
         else:
             raise ValueError("Unknown engine:{}".format(engine))
 
-    def add_sites(self):
+    def add_sites(self, exclude_positions=None):
         """
-        Add all sites marked for inference in the sample_data object into the
-        ancestor builder.
+        Add all sites that are suitable for inference into the
+        ancestor builder (and subsequent inference), unless they
+        are held in the specified list of excluded site positions.
         """
-        logger.info("Starting addition of {} sites".format(self.num_sites))
-        progress = self.progress_monitor.get("ga_add_sites", self.num_sites)
-        for j, variant in enumerate(self.sample_data.variants(inference_sites=True)):
-            time = variant.site.time
-            if time == constants.TIME_UNSPECIFIED:
-                counts = formats.allele_counts(variant.genotypes)
-                # Non-variable sites have no obvious freq-as-time values
-                assert counts.known != counts.derived
-                assert counts.known != counts.ancestral
-                assert counts.known > 0
-                # Time = freq of *all* derived alleles. Note that if n_alleles > 2 this
-                # may not be sensible: https://github.com/tskit-dev/tsinfer/issues/228
-                time = counts.derived / counts.known
-            self.ancestor_builder.add_site(j, time, variant.genotypes)
+        if exclude_positions is None:
+            exclude_positions = set()
+        else:
+            exclude_positions = np.array(exclude_positions, dtype=np.float64)
+            if len(exclude_positions.shape) != 1:
+                raise ValueError("exclude_positions must be a 1D array of numbers")
+        exclude_positions = set(exclude_positions)
+
+        logger.info("Starting addition of {} sites".format(self.max_sites))
+        progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
+        inference_site_id = []
+        for variant in self.sample_data.variants():
+            # If there's missing data the last allele is None
+            num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
+            counts = allele_counts(variant.genotypes)
+            use_site = False
+            if variant.site.position not in exclude_positions:
+                if num_alleles == 2:
+                    if counts.derived > 1 and counts.derived < counts.known:
+                        use_site = True
+            if use_site:
+                time = variant.site.time
+                if time == constants.TIME_UNSPECIFIED:
+                    # Non-variable sites have no obvious freq-as-time values
+                    assert counts.known != counts.derived
+                    assert counts.known != counts.ancestral
+                    assert counts.known > 0
+                    # Time = freq of *all* derived alleles. Note that if n_alleles > 2 this
+                    # may not be sensible: https://github.com/tskit-dev/tsinfer/issues/228
+                    time = counts.derived / counts.known
+                self.ancestor_builder.add_site(time, variant.genotypes)
+                inference_site_id.append(variant.site.id)
+                self.num_sites += 1
             progress.update()
         progress.close()
+        self.ancestor_data.set_inference_sites(inference_site_id)
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
         a = np.zeros(self.num_sites, dtype=np.int8)
         for t, focal_sites in self.descriptors:
             before = time.perf_counter()
-            s, e = self.ancestor_builder.make_ancestor(focal_sites, a)
+            start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
                 "Made ancestor in {:.2f}s at timepoint {} (epoch {}) "
@@ -519,15 +579,19 @@ class AncestorsGenerator(object):
                     duration,
                     t,
                     self.timepoint_to_epoch[t],
-                    s,
-                    e,
-                    e - s,
+                    start,
+                    end,
+                    end - start,
                     focal_sites.shape[0],
                     focal_sites,
                 )
             )
             self.ancestor_data.add_ancestor(
-                start=s, end=e, time=t, focal_sites=focal_sites, haplotype=a[s:e]
+                start=start,
+                end=end,
+                time=t,
+                focal_sites=focal_sites,
+                haplotype=a[start:end],
             )
             progress.update()
 
@@ -700,6 +764,7 @@ class Matcher(object):
                 "the sample data file."
             )
         num_alleles = sample_data.num_alleles()[index]
+        self.inference_site_id = index
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
@@ -772,21 +837,23 @@ class Matcher(object):
         site_id = 0
         mutation_id = 0
         num_mutations = len(mut_site)
-        for site in self.sample_data.sites():
-            if site.inference:
-                tables.sites.add_row(
-                    site.position,
-                    ancestral_state=site.alleles[0],
-                    metadata=self.encode_metadata(site.metadata),
+        for site in self.sample_data.sites(self.inference_site_id):
+            metadata = update_site_metadata(
+                site.metadata, inference_type=constants.INFERENCE_FULL
+            )
+            tables.sites.add_row(
+                site.position,
+                ancestral_state=site.alleles[0],
+                metadata=self.encode_metadata(metadata),
+            )
+            while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
+                tables.mutations.add_row(
+                    site_id,
+                    node=node[mutation_id],
+                    derived_state=site.alleles[derived_state[mutation_id]],
                 )
-                while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
-                    tables.mutations.add_row(
-                        site_id,
-                        node=node[mutation_id],
-                        derived_state=site.alleles[derived_state[mutation_id]],
-                    )
-                    mutation_id += 1
-                site_id += 1
+                mutation_id += 1
+            site_id += 1
 
 
 class AncestorMatcher(Matcher):
@@ -946,6 +1013,7 @@ class AncestorMatcher(Matcher):
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
+
         tables = tskit.TableCollection(
             sequence_length=self.ancestor_data.sequence_length
         )
@@ -1047,16 +1115,14 @@ class SampleMatcher(Matcher):
         mutation_site = mutations.site
         site_id = 0
         mutation_id = 0
-        for site in self.sample_data.sites():
-            if site.inference:
-                while (
-                    mutation_id < len(mutations)
-                    and mutation_site[mutation_id] == site_id
-                ):
-                    allele = mutations[mutation_id].derived_state
-                    derived_state[mutation_id] = site.alleles.index(allele)
-                    mutation_id += 1
-                site_id += 1
+        for site in self.sample_data.sites(self.inference_site_id):
+            while (
+                mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
+            ):
+                allele = mutations[mutation_id].derived_state
+                derived_state[mutation_id] = site.alleles.index(allele)
+                mutation_id += 1
+            site_id += 1
         self.tree_sequence_builder.restore_mutations(
             mutation_site, mutations.node, derived_state, mutations.parent
         )
@@ -1074,8 +1140,11 @@ class SampleMatcher(Matcher):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
 
     def __match_samples_single_threaded(self, indexes):
-        sample_haplotypes = self.sample_data.haplotypes(indexes, inference_sites=True)
+        sample_haplotypes = self.sample_data.haplotypes(
+            indexes, sites=self.inference_site_id
+        )
         for j, a in sample_haplotypes:
+            assert len(a) == self.num_sites
             self.__process_sample(self.sample_id_map[j], a)
 
     def __match_samples_multi_threaded(self, indexes):
@@ -1105,7 +1174,9 @@ class SampleMatcher(Matcher):
         ]
         logger.debug("Started {} match worker threads".format(self.num_threads))
 
-        sample_haplotypes = self.sample_data.haplotypes(indexes, inference_sites=True)
+        sample_haplotypes = self.sample_data.haplotypes(
+            indexes, sites=self.inference_site_id
+        )
         for j, a in sample_haplotypes:
             match_queue.put((self.sample_id_map[j], a))
 
@@ -1193,6 +1264,8 @@ class SampleMatcher(Matcher):
         site_id, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
         sample_indexes = np.array(list(self.sample_id_map.keys()), dtype=int)
+        inference = np.full(num_sites, False, dtype=bool)
+        inference[self.inference_site_id] = True
         if num_non_inference_sites > 0:
             assert ts.num_edges > 0
             logger.info(
@@ -1210,12 +1283,21 @@ class SampleMatcher(Matcher):
                 while tree.interval[1] <= site.position:
                     tree = next(trees)
                 assert tree.interval[0] <= site.position < tree.interval[1]
+
+                inference_type = (
+                    constants.INFERENCE_FULL
+                    if inference[site.id]
+                    else constants.INFERENCE_FITCH_PARSIMONY
+                )
+                metadata = update_site_metadata(
+                    site.metadata, inference_type=inference_type
+                )
                 tables.sites.add_row(
                     position=site.position,
                     ancestral_state=predefined_anc_state,
-                    metadata=self.encode_metadata(site.metadata),
+                    metadata=self.encode_metadata(metadata),
                 )
-                if site.inference == 1:
+                if inference[site.id]:
                     while (
                         inferred_mutation < len(site_id)
                         and site_id[inferred_mutation] == inferred_site
@@ -1265,10 +1347,13 @@ class SampleMatcher(Matcher):
             metadata = self.sample_data.sites_metadata[:]
             k = 0
             for j in range(self.num_sites):
+                site_metadata = update_site_metadata(
+                    metadata[j], inference_type=constants.INFERENCE_FULL
+                )
                 tables.sites.add_row(
                     position=position[j],
                     ancestral_state=alleles[j][0],
-                    metadata=self.encode_metadata(metadata[j]),
+                    metadata=self.encode_metadata(site_metadata),
                 )
                 while k < len(site_id) and site_id[k] == j:
                     tables.mutations.add_row(
@@ -1470,9 +1555,7 @@ class ResultBuffer(object):
             self.paths[node_id] = left, right, parent
             self.total_edges += len(left)
 
-    def set_mutations(self, node_id, site, derived_state=None):
-        if derived_state is None:
-            derived_state = np.ones(site.shape[0], dtype=np.int8)
+    def set_mutations(self, node_id, site, derived_state):
         with self.lock:
             self.mutations[node_id] = site, derived_state
 
