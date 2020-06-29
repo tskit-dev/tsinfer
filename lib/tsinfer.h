@@ -164,7 +164,7 @@ typedef struct {
     /* Input LS model rates */
     unsigned int precision;
     double *recombination_rate;
-    double *mutation_rate;
+    double *mismatch_rate;
     /* The quintuply linked tree */
     tsk_id_t *parent;
     tsk_id_t *left_child;
@@ -205,7 +205,7 @@ int ancestor_builder_finalise(ancestor_builder_t *self);
 
 int ancestor_matcher_alloc(ancestor_matcher_t *self,
     tree_sequence_builder_t *tree_sequence_builder, double *recombination_rate,
-    double *mutation_rate, unsigned int precision, int flags);
+    double *mismatch_rate, unsigned int precision, int flags);
 int ancestor_matcher_free(ancestor_matcher_t *self);
 int ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
     allele_t *haplotype, allele_t *matched_haplotype, size_t *num_output_edges,

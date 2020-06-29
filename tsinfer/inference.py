@@ -150,7 +150,7 @@ def infer(
     path_compression=True,
     simplify=True,
     recombination_rate=None,
-    mutation_rate=None,
+    mismatch_rate=None,
     precision=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
@@ -189,7 +189,7 @@ def infer(
         engine=engine,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mutation_rate=mutation_rate,
+        mismatch_rate=mismatch_rate,
         precision=precision,
         path_compression=path_compression,
         progress_monitor=progress_monitor,
@@ -200,7 +200,7 @@ def infer(
         engine=engine,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mutation_rate=mutation_rate,
+        mismatch_rate=mismatch_rate,
         precision=precision,
         path_compression=path_compression,
         simplify=simplify,
@@ -264,7 +264,7 @@ def match_ancestors(
     num_threads=0,
     path_compression=True,
     recombination_rate=None,
-    mutation_rate=None,
+    mismatch_rate=None,
     precision=None,
     extended_checks=False,
     engine=constants.C_ENGINE,
@@ -298,7 +298,7 @@ def match_ancestors(
         ancestor_data,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mutation_rate=mutation_rate,
+        mismatch_rate=mismatch_rate,
         precision=precision,
         path_compression=path_compression,
         extended_checks=extended_checks,
@@ -315,7 +315,7 @@ def augment_ancestors(
     num_threads=0,
     path_compression=True,
     recombination_rate=None,
-    mutation_rate=None,
+    mismatch_rate=None,
     precision=None,
     extended_checks=False,
     engine=constants.C_ENGINE,
@@ -353,7 +353,7 @@ def augment_ancestors(
         ancestors_ts,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mutation_rate=mutation_rate,
+        mismatch_rate=mismatch_rate,
         precision=precision,
         path_compression=path_compression,
         extended_checks=extended_checks,
@@ -377,7 +377,7 @@ def match_samples(
     path_compression=True,
     simplify=True,
     recombination_rate=None,
-    mutation_rate=None,
+    mismatch_rate=None,
     precision=None,
     extended_checks=False,
     stabilise_node_ordering=False,
@@ -416,7 +416,7 @@ def match_samples(
         ancestors_ts,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mutation_rate=mutation_rate,
+        mismatch_rate=mismatch_rate,
         precision=precision,
         path_compression=path_compression,
         extended_checks=extended_checks,
@@ -619,7 +619,7 @@ class Matcher(object):
         num_threads=1,
         path_compression=True,
         recombination_rate=None,
-        mutation_rate=None,
+        mismatch_rate=None,
         precision=None,
         extended_checks=False,
         engine=constants.C_ENGINE,
@@ -651,11 +651,11 @@ class Matcher(object):
         self.recombination_rate = np.zeros(self.num_sites)
         # FIXME not quite right: we should check the rho[0] = 0
         self.recombination_rate[:] = recombination_rate
-        if mutation_rate is None:
+        if mismatch_rate is None:
             # Setting a very small value for now.
-            mutation_rate = 1e-20
-        self.mutation_rate = np.zeros(self.num_sites)
-        self.mutation_rate[:] = mutation_rate
+            mismatch_rate = 1e-20
+        self.mismatch_rate = np.zeros(self.num_sites)
+        self.mismatch_rate[:] = mismatch_rate
         self.precision = precision
 
         if engine == constants.C_ENGINE:
@@ -703,7 +703,7 @@ class Matcher(object):
             self.ancestor_matcher_class(
                 self.tree_sequence_builder,
                 recombination_rate=self.recombination_rate,
-                mutation_rate=self.mutation_rate,
+                mismatch_rate=self.mismatch_rate,
                 precision=precision,
                 extended_checks=self.extended_checks,
             )
