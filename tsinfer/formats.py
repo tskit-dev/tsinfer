@@ -1043,73 +1043,73 @@ class SampleData(DataContainer):
     def formats_equal(self, other):
         return (
             self.format_name == other.format_name
-                and self.format_version == other.format_version
-            )
+            and self.format_version == other.format_version
+        )
 
     def populations_equal(self, other):
         return (
-                self.num_populations == other.num_populations
-                # Need to take a different approach with np object arrays.
-                and all(
-                    itertools.starmap(
-                        np.array_equal,
-                        zip(self.populations_metadata[:], other.populations_metadata[:]),
-                    )
+            self.num_populations == other.num_populations
+            # Need to take a different approach with np object arrays.
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.populations_metadata[:], other.populations_metadata[:]),
                 )
             )
-    
+        )
+
     def individuals_equal(self, other):
         return (
-                self.num_individuals == other.num_individuals
-                and np.allclose(
-                    self.individuals_time[:], other.individuals_time[:], equal_nan=True
-                )
-                and all(
-                    itertools.starmap(
-                        np.array_equal,
-                        zip(self.individuals_metadata[:], other.individuals_metadata[:]),
-                    )
-                )
-                and all(
-                    itertools.starmap(
-                        np.array_equal,
-                        zip(self.individuals_location[:], other.individuals_location[:]),
-                    )
+            self.num_individuals == other.num_individuals
+            and np.allclose(
+                self.individuals_time[:], other.individuals_time[:], equal_nan=True
+            )
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.individuals_metadata[:], other.individuals_metadata[:]),
                 )
             )
-    
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.individuals_location[:], other.individuals_location[:]),
+                )
+            )
+        )
+
     def samples_equal(self, other):
         return (
-                self.num_samples == other.num_samples
-                and np.all(self.samples_individual[:] == other.samples_individual[:])
-                and np.all(self.samples_population[:] == other.samples_population[:])
-                and all(
-                    itertools.starmap(
-                        np.array_equal,
-                        zip(self.samples_metadata[:], other.samples_metadata[:]),
-                    )
+            self.num_samples == other.num_samples
+            and np.all(self.samples_individual[:] == other.samples_individual[:])
+            and np.all(self.samples_population[:] == other.samples_population[:])
+            and all(
+                itertools.starmap(
+                    np.array_equal,
+                    zip(self.samples_metadata[:], other.samples_metadata[:]),
                 )
             )
+        )
 
     def sites_equal(self, other):
         return (
-                self.num_sites == other.num_sites
-                and self.num_inference_sites == other.num_inference_sites
-                and np.all(self.sites_position[:] == other.sites_position[:])
-                and np.all(self.sites_inference[:] == other.sites_inference[:])
-                and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
-                and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
-                and all(
-                    itertools.starmap(
-                        np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
-                    )
-                )
-                and all(
-                    itertools.starmap(
-                        np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
-                    )
+            self.num_sites == other.num_sites
+            and self.num_inference_sites == other.num_inference_sites
+            and np.all(self.sites_position[:] == other.sites_position[:])
+            and np.all(self.sites_inference[:] == other.sites_inference[:])
+            and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
+            and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
+            and all(
+                itertools.starmap(
+                    np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
                 )
             )
+            and all(
+                itertools.starmap(
+                    np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
+                )
+            )
+        )
 
     def data_equal(self, other):
         """
@@ -1134,6 +1134,18 @@ class SampleData(DataContainer):
             and self.samples_equal(other)
             and self.sites_equal(other)
         )
+
+    def assert_data_equal(self, other):
+        """
+        The same as :meth:`.data_equal`, but raises an assertion rather than returning
+        False. This is useful for testing.
+        """
+        assert self.sequence_length == other.sequence_length
+        assert self.formats_equal(other)
+        assert self.populations_equal(other)
+        assert self.individuals_equal(other)
+        assert self.samples_equal(other)
+        assert self.sites_equal(other)
 
     ####################################
     # Write mode
@@ -1512,6 +1524,41 @@ class SampleData(DataContainer):
         )
         self._last_position = position
         return site_id
+
+    def append_sites(self, *additional_samples):
+        # Append sites from additional sample data objects to the current object. This
+        # allows input files (e.g. vcf files) to be read in parallel into separate
+        # sample data files and the combined together. The additional samples should have
+        # exactly the same populations, individuals, and samples, but with additional
+        # sites. The additional sample data objects must be provided in the correct order
+        # such that site positions are monotonically ascending.
+        # The method is deliberately undocumented, as a more capable way of representing
+        # variant data is planned in the future, which should include this functionality.
+        self._check_write_modes()
+        last_pos = self.sites_position[-1]
+        for other in additional_samples:
+            other._check_finalised()
+            if other.sites_position[0] <= last_pos:
+                raise ValueError(
+                    "sample data files must be in ascending order of genome position"
+                )
+            last_pos = other.sites_position[-1]
+            if not self.sequence_length == other.sequence_length:
+                raise ValueError(
+                    f"sample data files must have the same sequence length"
+                )
+            if not self.formats_equal(other):
+                raise ValueError(f"sample data files must be of the same format")
+            if not self.samples_equal(other):
+                raise ValueError(f"sample data files must have identical samples")
+            if not self.individuals_equal(other):
+                raise ValueError(f"sample data files must have identical individuals")
+            if not self.populations_equal(other):
+                raise ValueError(f"sample data files must have identical populations")
+        for other in additional_samples:
+            for name, arr in self.arrays():
+                if name.startswith("sites/"):
+                    arr.append(other.data[name])
 
     def finalise(self):
         if self._mode == self.BUILD_MODE:

@@ -108,11 +108,15 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             tables.populations.add_row(metadata=pop_meta)  # One pop for each individual
 
         node_metadata = []
+        node_populations = tables.nodes.population
         for node in ts.nodes():
+            if node.is_sample():
+                node_populations[node.id] = node.id // ploidy
             if node.id % 3 == 0:  # Scatter metadata into nodes: once every 3rd row
                 node_metadata.append('{{"node id":{}}}'.format(node.id).encode())
             else:
                 node_metadata.append(b"")
+        tables.nodes.population = node_populations
         tables.nodes.packset_metadata(node_metadata)
 
         site_metadata = []
@@ -1380,6 +1384,66 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(inference_sites[1], 0)  # Singleton with missing data
         for i in inference_sites[2:]:
             self.assertEqual(i, 1)
+
+    def test_append_sites(self):
+        ts = self.get_example_individuals_ts_with_metadata(4, 2, 10)
+        sd1 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[0, 2]]))
+        sd2 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[2, 5]]))
+        sd3 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[5, 10]]))
+        sd = sd1.copy()  # put into write mode
+        sd.append_sites(sd2, sd3)
+        sd.finalise()
+        sd.assert_data_equal(tsinfer.SampleData.from_tree_sequence(ts))
+        # Test that the full file passes though invisibly if no args given
+        sd_full = sd.copy()
+        sd_full.append_sites()
+        sd_full.finalise()
+        sd_full.assert_data_equal(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_append_sites_bad_order(self):
+        ts = self.get_example_individuals_ts_with_metadata(4, 2, 10)
+        sd1 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[0, 2]]))
+        sd2 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[2, 5]]))
+        sd3 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[5, 10]]))
+        sd = sd1.copy()  # put into write mode
+        self.assertRaisesRegexp(ValueError, "ascending", sd.append_sites, sd3, sd2)
+
+    def test_append_sites_incompatible_files(self):
+        ts = self.get_example_individuals_ts_with_metadata(4, 2, 10)
+        sd1 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[0, 2]]))
+        mid_ts = ts.keep_intervals([[2, 5]])
+        sd2 = tsinfer.SampleData.from_tree_sequence(mid_ts)
+        sd3 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[5, 10]]))
+        # Fails if altered SD is not in write mode
+        self.assertRaisesRegexp(ValueError, "build", sd1.append_sites, sd2, sd3)
+        # Fails if added SDs are in write mode
+        sd = sd1.copy()  # put into write mode
+        sd.append_sites(sd2, sd3)  # now works
+        self.assertRaisesRegexp(
+            ValueError, "finalise", sd.append_sites, sd2.copy(), sd3
+        )
+        sd = sd1.copy()  # put into write mode
+
+        # Wrong seq length
+        sd2 = tsinfer.SampleData.from_tree_sequence(mid_ts.rtrim())
+        self.assertRaisesRegexp(ValueError, "length", sd.append_sites, sd2, sd3)
+        # Wrong num samples
+        sd2 = tsinfer.SampleData.from_tree_sequence(mid_ts.simplify(list(range(7))))
+        self.assertRaisesRegexp(ValueError, "samples", sd.append_sites, sd2, sd3)
+        # Wrong individuals
+        tables = mid_ts.dump_tables()
+        tables.individuals.packset_metadata([b""] * mid_ts.num_individuals)
+        sd2 = tsinfer.SampleData.from_tree_sequence(tables.tree_sequence())
+        self.assertRaisesRegexp(ValueError, "individuals", sd.append_sites, sd2, sd3)
+        # Wrong populations
+        tables = mid_ts.dump_tables()
+        tables.populations.packset_metadata([b""] * mid_ts.num_populations)
+        sd2 = tsinfer.SampleData.from_tree_sequence(tables.tree_sequence())
+        self.assertRaisesRegexp(ValueError, "populations", sd.append_sites, sd2, sd3)
+        # Wrong format version
+        sd.data.attrs[tsinfer.FORMAT_VERSION_KEY] = (-1, 0)
+        sd2 = tsinfer.SampleData.from_tree_sequence(mid_ts)
+        self.assertRaisesRegexp(ValueError, "format", sd.append_sites, sd2, sd3)
 
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
