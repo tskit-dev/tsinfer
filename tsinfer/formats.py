@@ -1040,6 +1040,77 @@ class SampleData(DataContainer):
         ]
         return super(SampleData, self).__str__() + self._format_str(values)
 
+    def formats_equal(self, other):
+        return (
+            self.format_name == other.format_name
+                and self.format_version == other.format_version
+            )
+
+    def populations_equal(self, other):
+        return (
+                self.num_populations == other.num_populations
+                # Need to take a different approach with np object arrays.
+                and all(
+                    itertools.starmap(
+                        np.array_equal,
+                        zip(self.populations_metadata[:], other.populations_metadata[:]),
+                    )
+                )
+            )
+    
+    def individuals_equal(self, other):
+        return (
+                self.num_individuals == other.num_individuals
+                and np.allclose(
+                    self.individuals_time[:], other.individuals_time[:], equal_nan=True
+                )
+                and all(
+                    itertools.starmap(
+                        np.array_equal,
+                        zip(self.individuals_metadata[:], other.individuals_metadata[:]),
+                    )
+                )
+                and all(
+                    itertools.starmap(
+                        np.array_equal,
+                        zip(self.individuals_location[:], other.individuals_location[:]),
+                    )
+                )
+            )
+    
+    def samples_equal(self, other):
+        return (
+                self.num_samples == other.num_samples
+                and np.all(self.samples_individual[:] == other.samples_individual[:])
+                and np.all(self.samples_population[:] == other.samples_population[:])
+                and all(
+                    itertools.starmap(
+                        np.array_equal,
+                        zip(self.samples_metadata[:], other.samples_metadata[:]),
+                    )
+                )
+            )
+
+    def sites_equal(self, other):
+        return (
+                self.num_sites == other.num_sites
+                and self.num_inference_sites == other.num_inference_sites
+                and np.all(self.sites_position[:] == other.sites_position[:])
+                and np.all(self.sites_inference[:] == other.sites_inference[:])
+                and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
+                and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
+                and all(
+                    itertools.starmap(
+                        np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
+                    )
+                )
+                and all(
+                    itertools.starmap(
+                        np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
+                    )
+                )
+            )
+
     def data_equal(self, other):
         """
         Returns True if all the data attributes of this input file and the
@@ -1056,57 +1127,12 @@ class SampleData(DataContainer):
         :rtype: bool
         """
         return (
-            self.format_name == other.format_name
-            and self.format_version == other.format_version
-            and self.num_populations == other.num_populations
-            and self.num_individuals == other.num_individuals
-            and self.num_samples == other.num_samples
-            and self.num_sites == other.num_sites
-            and self.num_inference_sites == other.num_inference_sites
-            and np.allclose(
-                self.individuals_time[:], other.individuals_time[:], equal_nan=True
-            )
-            and np.all(self.samples_individual[:] == other.samples_individual[:])
-            and np.all(self.samples_population[:] == other.samples_population[:])
-            and np.all(self.sites_position[:] == other.sites_position[:])
-            and np.all(self.sites_inference[:] == other.sites_inference[:])
-            and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
-            and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
-            # Need to take a different approach with np object arrays.
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.populations_metadata[:], other.populations_metadata[:]),
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.individuals_metadata[:], other.individuals_metadata[:]),
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.individuals_location[:], other.individuals_location[:]),
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.samples_metadata[:], other.samples_metadata[:]),
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
-                )
-            )
+            self.sequence_length == other.sequence_length
+            and self.formats_equal(other)
+            and self.populations_equal(other)
+            and self.individuals_equal(other)
+            and self.samples_equal(other)
+            and self.sites_equal(other)
         )
 
     ####################################
