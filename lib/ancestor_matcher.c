@@ -97,7 +97,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
     fprintf(out, "site\trecomb_rate\tmut_rate\n");
     for (j = 0; j < (int) self->num_sites; j++) {
         fprintf(
-            out, "%d\t%f\t%f\n", j, self->recombination_rate[j], self->mutation_rate[j]);
+            out, "%d\t%f\t%f\n", j, self->recombination_rate[j], self->mismatch_rate[j]);
     }
     fprintf(out, "tree = \n");
     fprintf(out, "id\tparent\tlchild\trchild\tlsib\trsib\tlikelihood\n");
@@ -131,7 +131,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
     tree_sequence_builder_t *tree_sequence_builder, double *recombination_rate,
-    double *mutation_rate, unsigned int precision, int flags)
+    double *mismatch_rate, unsigned int precision, int flags)
 {
     int ret = 0;
     /* TODO make these input parameters. */
@@ -146,14 +146,14 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     self->num_sites = tree_sequence_builder->num_sites;
     self->recombination_rate
         = malloc(self->num_sites * sizeof(*self->recombination_rate));
-    self->mutation_rate = malloc(self->num_sites * sizeof(*self->mutation_rate));
+    self->mismatch_rate = malloc(self->num_sites * sizeof(*self->mismatch_rate));
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->traceback = calloc(self->num_sites, sizeof(node_state_list_t));
     self->max_likelihood_node = malloc(self->num_sites * sizeof(tsk_id_t));
     self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
-    if (self->recombination_rate == NULL || self->mutation_rate == NULL
+    if (self->recombination_rate == NULL || self->mismatch_rate == NULL
         || self->traceback == NULL || self->max_likelihood_node == NULL
         || self->output.left == NULL || self->output.right == NULL
         || self->output.parent == NULL) {
@@ -166,8 +166,8 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     }
     memcpy(self->recombination_rate, recombination_rate,
         self->num_sites * sizeof(*self->recombination_rate));
-    memcpy(self->mutation_rate, mutation_rate,
-        self->num_sites * sizeof(*self->mutation_rate));
+    memcpy(self->mismatch_rate, mismatch_rate,
+        self->num_sites * sizeof(*self->mismatch_rate));
 out:
     return ret;
 }
@@ -176,7 +176,7 @@ int
 ancestor_matcher_free(ancestor_matcher_t *self)
 {
     tsi_safe_free(self->recombination_rate);
-    tsi_safe_free(self->mutation_rate);
+    tsi_safe_free(self->mismatch_rate);
     tsi_safe_free(self->parent);
     tsi_safe_free(self->left_child);
     tsi_safe_free(self->right_child);
@@ -324,7 +324,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     tsk_id_t u, v, max_L_node;
     double max_L, p_last, p_no_recomb, p_recomb, p_t, p_e;
     const double rho = self->recombination_rate[site];
-    const double mu = self->mutation_rate[site];
+    const double mu = self->mismatch_rate[site];
     const double n = (double) self->tree_sequence_builder->num_nodes;
     const double num_alleles
         = (double) self->tree_sequence_builder->sites.num_alleles[site];

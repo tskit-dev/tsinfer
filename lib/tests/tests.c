@@ -331,7 +331,7 @@ initialise_builder(tree_sequence_builder_t *tsb, double oldest_time)
 
 static void
 run_random_data(size_t num_samples, size_t num_sites, int seed,
-    double recombination_rate, double mutation_rate)
+    double recombination_rate, double mismatch_rate)
 {
     tsk_table_collection_t tables;
     ancestor_builder_t ancestor_builder;
@@ -339,7 +339,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     tree_sequence_builder_t tsb;
     ancestor_descriptor_t ad;
     double *recombination_rates = calloc(num_sites, sizeof(double));
-    double *mutation_rates = calloc(num_sites, sizeof(double));
+    double *mismatch_rates = calloc(num_sites, sizeof(double));
     allele_t **samples = generate_random_haplotypes(num_samples, num_sites, 2, seed);
     allele_t *genotypes = malloc(num_samples * sizeof(*genotypes));
     allele_t *haplotype = malloc(num_sites * sizeof(*haplotype));
@@ -351,11 +351,11 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     CU_ASSERT_FATAL(genotypes != NULL);
     CU_ASSERT_FATAL(haplotype != NULL);
     CU_ASSERT_FATAL(recombination_rates != NULL);
-    CU_ASSERT_FATAL(mutation_rates != NULL);
+    CU_ASSERT_FATAL(mismatch_rates != NULL);
 
     for (j = 0; j < num_sites; j++) {
         recombination_rates[j] = recombination_rate;
-        mutation_rates[j] = mutation_rate;
+        mismatch_rates[j] = mismatch_rate;
     }
 
     CU_ASSERT_FATAL(num_samples >= 2);
@@ -364,7 +364,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
-        mutation_rates, 6, TSI_EXTENDED_CHECKS);
+        mismatch_rates, 6, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -433,7 +433,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     free(haplotype);
     free(genotypes);
     free(recombination_rates);
-    free(mutation_rates);
+    free(mismatch_rates);
 }
 
 static void
@@ -480,7 +480,7 @@ test_matching_one_site(void)
     allele_t haplotype[1] = { 0 };
     allele_t match[1];
     double recombination_rate = 0;
-    double mutation_rate = 0;
+    double mismatch_rate = 0;
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
 
@@ -492,7 +492,7 @@ test_matching_one_site(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, &recombination_rate, &mutation_rate, 12, 0);
+        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_find_path(
@@ -545,7 +545,7 @@ test_matching_one_site_many_alleles(void)
     allele_t haplotype;
     allele_t match[1];
     double recombination_rate = 0;
-    double mutation_rate = 0;
+    double mismatch_rate = 0;
     size_t num_edges;
     tsk_id_t *left, *right, *parent;
     edge_t edge;
@@ -579,7 +579,7 @@ test_matching_one_site_many_alleles(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, &recombination_rate, &mutation_rate, 12, 0);
+        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     haplotype = 0;

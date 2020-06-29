@@ -121,7 +121,7 @@ def tsinfer_dev(
         extended_checks=False,
         precision=precision,
         recombination_rate=rho,
-        mutation_rate=mu,
+        mismatch_rate=mu,
     )
     # print(ancestors_ts.tables)
 
@@ -146,7 +146,7 @@ def tsinfer_dev(
         samples,
         ancestors_ts,
         recombination_rate=rho,
-        mutation_rate=mu,
+        mismatch_rate=mu,
         path_compression=False,
         engine=engine,
         precision=precision,

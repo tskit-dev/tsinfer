@@ -379,14 +379,14 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         rho = [1e-9, 1e-3, 0.1]
-        mu = [1e-9, 1e-3, 0.1]
+        mis = [1e-9, 1e-3, 0.1]
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
-        for recomb_rate, mut_rate, engine in itertools.product(rho, mu, engines):
+        for recomb_rate, mis_rate, engine in itertools.product(rho, mis, engines):
             ts = tsinfer.match_samples(
                 sample_data,
                 ancestors_ts,
                 recombination_rate=recomb_rate,
-                mutation_rate=mut_rate,
+                mismatch_rate=mis_rate,
                 engine=engine,
             )
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
@@ -430,7 +430,7 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 sample_data,
                 ancestors_ts,
                 recombination_rate=1e-3,
-                mutation_rate=1e-3,
+                mismatch_rate=1e-3,
                 engine=engine,
             )
             self.assert_lossless(ts, genotypes, positions, alleles, sequence_length)
@@ -463,7 +463,7 @@ class TestMissingDataRoundTrip(TestRoundTrip):
             ts = tsinfer.infer(
                 sample_data,
                 recombination_rate=1e-3,
-                mutation_rate=1e-6,
+                mismatch_rate=1e-6,
                 precision=10,
                 engine=engine,
             )
@@ -1115,14 +1115,14 @@ class TestAncestorsTreeSequence(unittest.TestCase):
     Tests for the output of the match_ancestors function.
     """
 
-    def verify(self, sample_data, mutation_rate=None, recombination_rate=None):
+    def verify(self, sample_data, mismatch_rate=None, recombination_rate=None):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         for path_compression in [True, False]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data,
                 ancestor_data,
                 path_compression=path_compression,
-                mutation_rate=mutation_rate,
+                mismatch_rate=mismatch_rate,
                 recombination_rate=recombination_rate,
             )
             tsinfer.check_ancestors_ts(ancestors_ts)
@@ -1165,8 +1165,8 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
 
     def test_recombination(self):
         ts = msprime.simulate(
@@ -1174,8 +1174,8 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
 
     def test_random_data(self):
         n = 25
@@ -1186,8 +1186,8 @@ class TestAncestorsTreeSequence(unittest.TestCase):
             sample_data.add_site(position, genotypes)
         sample_data.finalise()
         self.verify(sample_data)
-        self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
 
     def test_acgt_mutations(self):
         ts = msprime.simulate(10, recombination_rate=2, random_seed=233)
@@ -1199,14 +1199,14 @@ class TestAncestorsTreeSequence(unittest.TestCase):
         )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
 
     def test_multi_char_alleles(self):
         sample_data = get_multichar_alleles_example(10)
         self.verify(sample_data)
-        self.verify(sample_data, mutation_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mutation_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
 
 
 class TestAncestorsTreeSequenceFlags(unittest.TestCase):
