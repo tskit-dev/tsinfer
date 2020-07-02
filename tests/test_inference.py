@@ -1159,7 +1159,7 @@ class TestAncestorGeneratorsEquivalant:
         #     j += 1
         # print(adc)
         # print(adp)
-        assert adp.data_equal(adc)
+        adp.assert_data_equal(adc)
         return adp, adc
 
     def verify_tree_sequence(self, ts):

@@ -57,6 +57,7 @@ class Site:
 
     id = attr.ib()
     time = attr.ib()
+    n_derived = attr.ib()
     genotypes = attr.ib()
 
 
@@ -86,7 +87,7 @@ class AncestorBuilder:
         Adds a new site at the specified ID to the builder.
         """
         site_id = len(self.sites)
-        self.sites.append(Site(site_id, time, genotypes))
+        self.sites.append(Site(site_id, time, np.sum(genotypes>0), genotypes))
         sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) and at the same time, are put into the same ancestor
@@ -159,40 +160,58 @@ class AncestorBuilder:
         Together with `make_ancestor`, which calls this function, these describe the main
         algorithm as implemented in Fig S2 of the preprint, with the buffer.
         """
-        focal_time = self.sites[focal_site].time
-        S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
-        # Break when we've lost half of S
-        min_sample_set_size = len(S) // 2
-        remove_buffer = []
         last_site = focal_site
-        # print("Focal site", focal_site, "time", focal_time)
-        for site_index in sites:
-            a[site_index] = 0
-            last_site = site_index
-            if self.sites[site_index].time > focal_time:
-                g_l = self.sites[site_index].genotypes
-                ones = sum(g_l[u] == 1 for u in S)
-                zeros = sum(g_l[u] == 0 for u in S)
-                # print("pos", site_index, ". Ones:", ones, ". Zeros:", zeros)
-                if ones + zeros == 0:
-                    a[site_index] = tskit.MISSING_DATA
+        S = np.where(self.sites[focal_site].genotypes == 1)[0]
+        # original_S = S.copy()  # for use with the alternative longer ancestors version
+        # Break when we've lost half of S
+        remove_buffer = np.zeros(self.num_samples, dtype=bool)
+        min_sample_set_size = len(S) // 2
+        # print("\nsite=%i, min_sample_size=%i, derived=%i" % (
+        #     focal_site, min_sample_set_size, self.sites[focal_site].n_derived))
+        for i in sites:
+            a[i] = 0
+            last_site = i
+            g_i = self.sites[i].genotypes
+            zeros = np.count_nonzero(g_i[S] == 0)
+            ones = np.count_nonzero(g_i[S] == 1)
+            # Or for longer ancestors, only count conflicts against the original set by
+            # has_derived_outside_S = self.sites[i].n_derived > np.count_nonzero(g_i[original_S] == 1)
+            if ones + zeros == 0:
+                a[i] = tskit.MISSING_DATA
+            elif self.sites[i].n_derived > ones and ones > 0:
+                # Ones both inside and outside the set
+                if zeros == 0:
+                    a[i] = 1  # Fully nested
                 else:
-                    consensus = 1 if ones >= zeros else 0
-                    # print("\tP", site_index, "\t", len(S), ":ones=", ones, consensus)
-                    for u in remove_buffer:
-                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                            # print("\t\tremoving", u)
-                            S.remove(u)
-                    a[site_index] = consensus
+                    # We have both ones and zeros in the set, which breaks 4GT
+                    #print(focal_site, "site", i, ones, zeros, len(S), sep="\t")
+                    consensus = 0
+                    # We have some non-missing data
+                    if ones >= zeros:
+                        consensus = 1
+                    #print("\tP", i, "\t", len(S), ":ones=", ones, consensus)
+                    for j, u in enumerate(S):
+                        if g_i[u] == consensus:
+                            # Don't need to remove: this wasn't a conflict, but an error
+                            remove_buffer[u] = 0
+                        else:
+                            if g_i[u] == tskit.MISSING_DATA:
+                                # We don't know, so keep the remove buffer as-is
+                                pass
+                            else:
+                                if remove_buffer[u] == 1:
+                                    # two conflicts in a row. Remove
+                                    # print("\t\tremoving", u)
+                                    S[j] = tskit.NULL
+                                else:
+                                    # print("\t\tbuffering", u)
+                                    remove_buffer[u] = 1
+                    S = S[S != tskit.NULL]
                     # print("\t", len(S), remove_buffer, consensus, sep="\t")
+                    a[i] = consensus
                     if len(S) <= min_sample_set_size:
                         # print("BREAKING", len(S), min_sample_set_size)
                         break
-                    remove_buffer.clear()
-                    for u in S:
-                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                            remove_buffer.append(u)
-        assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
     def make_ancestor(self, focal_sites, a):

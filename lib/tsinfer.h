@@ -66,6 +66,7 @@ typedef struct _node_segment_list_node_t {
 
 typedef struct {
     double time;
+    size_t n_derived;
     allele_t *genotypes;
 } site_t;
 

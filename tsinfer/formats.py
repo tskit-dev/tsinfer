@@ -2242,6 +2242,26 @@ class AncestorData(DataContainer):
             and np_obj_equal(self.ancestors_haplotype[:], other.ancestors_haplotype[:])
         )
 
+    def assert_data_equal(self, other):
+        """
+        The same as :meth:`.data_equal`, but raises an assertion rather than returning
+        False. This is useful for testing.
+        """
+        assert self.sequence_length == other.sequence_length
+        assert self.sample_data_uuid == other.sample_data_uuid
+        assert self.format_name == other.format_name
+        assert self.format_version == other.format_version
+        assert self.num_ancestors == other.num_ancestors
+        assert self.num_sites == other.num_sites
+        assert np.array_equal(self.sites_position[:], other.sites_position[:])
+        assert np.array_equal(self.ancestors_start[:], other.ancestors_start[:])
+        assert np.array_equal(self.ancestors_end[:], other.ancestors_end[:])
+        # Need to take a different approach with np object arrays.
+        assert np_obj_equal(
+            self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]
+        )
+        assert np_obj_equal(self.ancestors_haplotype[:], other.ancestors_haplotype[:])
+
     @property
     def sequence_length(self):
         return self.data.attrs["sequence_length"]

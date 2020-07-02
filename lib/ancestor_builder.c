@@ -208,14 +208,13 @@ ancestor_builder_get_consistent_samples(
 static int
 ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int direction,
     tsk_id_t focal_site, allele_t *ancestor, tsk_id_t *restrict sample_set,
-    bool *restrict disagree, tsk_id_t *last_site_ret)
+    bool *restrict remove_buffer, tsk_id_t *last_site_ret)
 {
     int ret = 0;
     tsk_id_t last_site = focal_site;
-    int64_t l;
+    int64_t i;
     tsk_id_t u;
     size_t j, ones, zeros, tmp_size, sample_set_size, min_sample_set_size;
-    double focal_site_time = self->sites[focal_site].time;
     const site_t *restrict sites = self->sites;
     const size_t num_sites = self->num_sites;
     const allele_t *restrict genotypes;
@@ -226,57 +225,69 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
     /* This can't happen because we've already tested for it in
      * ancestor_builder_compute_between_focal_sites */
     assert(sample_set_size > 0);
-    memset(disagree, 0, self->num_samples * sizeof(*disagree));
+    memset(remove_buffer, 0, self->num_samples * sizeof(*remove_buffer));
     min_sample_set_size = sample_set_size / 2;
-
-    /* printf("site=%d, direction=%d min_sample_size=%d\n", (int) focal_site, direction,
-     */
-    /*         (int) min_sample_set_size); */
-    for (l = focal_site + direction; l >= 0 && l < (int64_t) num_sites; l += direction) {
+    /* printf("site=%d, direction=%d min_sample_size=%d, derived=%d\n",
+        (int) focal_site, direction,
+        (int) min_sample_set_size, (int) sites[focal_site].n_derived); */
+    for (i = focal_site + direction; i >= 0 && i < (int64_t) num_sites; i += direction) {
         /* printf("\tl = %d\n", (int) l); */
-        ancestor[l] = 0;
-        last_site = (tsk_id_t) l;
-        if (sites[l].time > focal_site_time) {
-
+        ancestor[i] = 0;
+        last_site = (tsk_id_t) i;
+        genotypes = sites[i].genotypes;
+        zeros = 0;
+        ones = 0;
+        for (j = 0; j < sample_set_size; j++) {
+            switch (genotypes[sample_set[j]]) {
+                case 0:
+                    zeros++;
+                    break;
+                case 1:
+                    ones++;
+                    break;
+            }
+        }
+        if (ones + zeros == 0) {
+            ancestor[i] = TSK_MISSING_DATA;
+        } else if ((sites[i].n_derived > ones) && (ones > 0)) {
             /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
             /* /1* for (j = 0; j < sample_set_size; j++) { *1/ */
             /* /1*     printf("%d, ", sample_set[j]); *1/ */
             /* /1* } *1/ */
-
-            genotypes = self->sites[l].genotypes;
-            ones = 0;
-            zeros = 0;
-            for (j = 0; j < sample_set_size; j++) {
-                switch (genotypes[sample_set[j]]) {
-                    case 0:
-                        zeros++;
-                        break;
-                    case 1:
-                        ones++;
-                        break;
-                }
-            }
-            if (ones + zeros == 0) {
-                ancestor[l] = TSK_MISSING_DATA;
+            if (zeros == 0) {
+                ancestor[i] = 1;
             } else {
+                /* We have both ones and zeros in the set, which breaks 4GT */
+                /* printf("%d\tsite\t%d\t%d\t%d\t%d\n",
+                    (int) focal_site, (int) l, (int) ones, (int) zeros,
+                    (int) sample_set_size); */
+                consensus = 0;
+                /* We have valid (non-missing) data in the tracked samples at site l */
                 if (ones >= zeros) {
                     consensus = 1;
-                } else {
-                    consensus = 0;
                 }
                 /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
                 /* fflush(stdout); */
                 for (j = 0; j < sample_set_size; j++) {
                     u = sample_set[j];
-                    if (disagree[u] && (genotypes[u] != consensus)
-                        && (genotypes[u] != TSK_MISSING_DATA)) {
-                        /* This sample has disagreed with consensus twice in a row,
-                         * so remove it */
-                        /* printf("\t\tremoving %d\n", sample_set[j]); */
-                        sample_set[j] = -1;
+                    if (genotypes[u] == consensus) {
+                        remove_buffer[u] = 0;
+                    } else {
+                        if (genotypes[u] == TSK_MISSING_DATA) {
+                            /* Leave the buffer as-is */
+                        } else {
+                            if (remove_buffer[u] == 1) {
+                                /* This sample has disagreed with consensus twice in a
+                                 * row, so remove it */
+                                /* printf("\t\tremoving %d\n", sample_set[j]); */
+                                sample_set[j] = -1;
+                            } else {
+                                remove_buffer[u] = 1;
+                            }
+                        }
                     }
                 }
-                ancestor[l] = consensus;
+                ancestor[i] = consensus;
                 /* Repack the sample set */
                 tmp_size = 0;
                 for (j = 0; j < sample_set_size; j++) {
@@ -286,16 +297,10 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     }
                 }
                 sample_set_size = tmp_size;
+                ancestor[i] = consensus;
                 if (sample_set_size <= min_sample_set_size) {
                     /* printf("BREAK\n"); */
                     break;
-                }
-                /* For the remaining sample set, set the disagree flags based
-                 * on whether they agree with the consensus for this site. */
-                for (j = 0; j < sample_set_size; j++) {
-                    u = sample_set[j];
-                    disagree[u] = ((genotypes[u] != consensus)
-                                   && (genotypes[u] != TSK_MISSING_DATA));
                 }
             }
         }
@@ -368,9 +373,9 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     int ret = 0;
     tsk_id_t focal_site, last_site;
     tsk_id_t *sample_set = malloc(self->num_samples * sizeof(tsk_id_t));
-    bool *restrict disagree = calloc(self->num_samples, sizeof(*disagree));
+    bool *restrict remove_buffer = calloc(self->num_samples, sizeof(*remove_buffer));
 
-    if (sample_set == NULL || disagree == NULL) {
+    if (sample_set == NULL || remove_buffer == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -384,7 +389,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
 
     focal_site = focal_sites[num_focal_sites - 1];
     ret = ancestor_builder_compute_ancestral_states(
-        self, +1, focal_site, ancestor, sample_set, disagree, &last_site);
+        self, +1, focal_site, ancestor, sample_set, remove_buffer, &last_site);
     if (ret != 0) {
         goto out;
     }
@@ -392,20 +397,21 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
 
     focal_site = focal_sites[0];
     ret = ancestor_builder_compute_ancestral_states(
-        self, -1, focal_site, ancestor, sample_set, disagree, &last_site);
+        self, -1, focal_site, ancestor, sample_set, remove_buffer, &last_site);
     if (ret != 0) {
         goto out;
     }
     *ret_start = last_site;
 out:
     tsi_safe_free(sample_set);
-    tsi_safe_free(disagree);
+    tsi_safe_free(remove_buffer);
     return ret;
 }
 
 int WARN_UNUSED
 ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes)
 {
+    size_t j;
     int ret = 0;
     site_t *site;
     avl_node_t *avl_node;
@@ -427,6 +433,12 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     pattern_map = &time_map->pattern_map;
     site = &self->sites[site_id];
     site->time = time;
+    site->n_derived = 0;
+    for (j = 0; j < self->num_samples; j++) {
+        if (genotypes[j] > 0) {
+            site->n_derived++;
+        }
+    }
 
     search.genotypes = genotypes;
     search.num_samples = self->num_samples;
