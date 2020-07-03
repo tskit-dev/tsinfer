@@ -226,7 +226,11 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
      * ancestor_builder_compute_between_focal_sites */
     assert(sample_set_size > 0);
     memset(remove_buffer, 0, self->num_samples * sizeof(*remove_buffer));
-    min_sample_set_size = sample_set_size / 2;
+    if (sample_set_size<3) {
+        min_sample_set_size = 1;
+    } else {
+        min_sample_set_size = sample_set_size / 3;
+    }
     /* printf("site=%d, direction=%d min_sample_size=%d, derived=%d\n",
         (int) focal_site, direction,
         (int) min_sample_set_size, (int) sites[focal_site].n_derived); */
@@ -273,21 +277,16 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     if (genotypes[u] == consensus) {
                         remove_buffer[u] = 0;
                     } else {
-                        if (genotypes[u] == TSK_MISSING_DATA) {
-                            /* Leave the buffer as-is */
+                        if (remove_buffer[u] == 1) {
+                            /* This sample has disagreed with consensus twice in a
+                             * row, so remove it */
+                            /* printf("\t\tremoving %d\n", sample_set[j]); */
+                            sample_set[j] = -1;
                         } else {
-                            if (remove_buffer[u] == 1) {
-                                /* This sample has disagreed with consensus twice in a
-                                 * row, so remove it */
-                                /* printf("\t\tremoving %d\n", sample_set[j]); */
-                                sample_set[j] = -1;
-                            } else {
-                                remove_buffer[u] = 1;
-                            }
+                            remove_buffer[u] = 1;
                         }
                     }
                 }
-                ancestor[i] = consensus;
                 /* Repack the sample set */
                 tmp_size = 0;
                 for (j = 0; j < sample_set_size; j++) {
