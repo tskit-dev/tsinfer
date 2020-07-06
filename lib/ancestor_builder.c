@@ -229,7 +229,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
     if (sample_set_size<3) {
         min_sample_set_size = 1;
     } else {
-        min_sample_set_size = sample_set_size / 3;
+        min_sample_set_size = 3 * sample_set_size / 4;
     }
     /* printf("site=%d, direction=%d min_sample_size=%d, derived=%d\n",
         (int) focal_site, direction,
