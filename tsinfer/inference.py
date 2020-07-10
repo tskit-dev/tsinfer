@@ -388,10 +388,11 @@ def match_samples(
     stabilise_node_ordering=False,
     engine=constants.C_ENGINE,
     progress_monitor=None,
+    samples=None,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, num_threads=0, path_compression=True,\
-        simplify=True)
+        simplify=True, samples=None)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
@@ -411,6 +412,8 @@ def match_samples(
         on a path between the root and any of the samples. To do so, the final tree
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
         with ``keep_unary`` set to True (default = ``True``).
+    :param array_like samples: An array of sample IDs from the sample_data file to
+        match, or None for all samples. Default: None.
     :return: The tree sequence representing the inferred history
         of the sample.
     :rtype: tskit.TreeSequence
@@ -428,7 +431,7 @@ def match_samples(
         engine=engine,
         progress_monitor=progress_monitor,
     )
-    manager.match_samples()
+    manager.match_samples(indexes=samples)
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering
     )
@@ -990,7 +993,7 @@ class SampleMatcher(Matcher):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
         super().__init__(sample_data, self.ancestors_ts_tables.sites.position, **kwargs)
         self.restore_tree_sequence_builder()
-        self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
+        self.sample_ids = np.full(self.num_samples, tskit.NULL, dtype=np.int32)
 
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
@@ -1101,6 +1104,8 @@ class SampleMatcher(Matcher):
             indexes = np.arange(self.num_samples)
         # Add in sample nodes.
         for j in indexes:
+            if j < 0:
+                raise ValueError("Sample indexes must be positive")
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
         logger.info("Started matching for {} samples".format(len(indexes)))
         if self.num_sites > 0:
@@ -1151,7 +1156,9 @@ class SampleMatcher(Matcher):
                 tables.sort()
                 ts = tables.tree_sequence()
             ts = ts.simplify(
-                samples=self.sample_ids, filter_sites=False, keep_unary=True
+                samples=self.sample_ids[self.sample_ids >= 0],
+                filter_sites=False,
+                keep_unary=True,
             )
             logger.info(
                 "Finished simplify; now have {} nodes and {} edges".format(
@@ -1173,6 +1180,7 @@ class SampleMatcher(Matcher):
 
         site_id, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
         ts = tables.tree_sequence()
+        samples_used = self.sample_ids >= 0
         if num_non_inference_sites > 0:
             assert ts.num_edges > 0
             logger.info(
@@ -1216,7 +1224,7 @@ class SampleMatcher(Matcher):
                         mapped_mutations = []
                     else:
                         inferred_anc_state, mapped_mutations = tree.map_mutations(
-                            variant.genotypes, variant.alleles
+                            variant.genotypes[samples_used], variant.alleles
                         )
                     if inferred_anc_state != predefined_anc_state:
                         # The user specified a specific ancestral state. However, the
@@ -1293,7 +1301,7 @@ class SampleMatcher(Matcher):
             metadata=tables.nodes.metadata,
             metadata_offset=tables.nodes.metadata_offset,
         )
-        assert len(tables.nodes) == self.sample_ids[0]
+        assert len(tables.nodes) == np.min(self.sample_ids[self.sample_ids >= 0])
         # Now add in the sample nodes with metadata, etc.
         for sample_id, metadata, population, individual in zip(
             self.sample_ids,
@@ -1301,15 +1309,16 @@ class SampleMatcher(Matcher):
             self.sample_data.samples_population[:],
             self.sample_data.samples_individual[:],
         ):
-            tables.nodes.add_row(
-                flags=flags[sample_id],
-                time=times[sample_id],
-                population=population,
-                individual=num_ancestral_individuals + individual,
-                metadata=self.encode_metadata(metadata),
-            )
+            if sample_id >= 0:
+                tables.nodes.add_row(
+                    flags=flags[sample_id],
+                    time=times[sample_id],
+                    population=population,
+                    individual=num_ancestral_individuals + individual,
+                    metadata=self.encode_metadata(metadata),
+                )
         # Add in the remaining non-sample nodes.
-        for u in range(self.sample_ids[-1] + 1, tsb.num_nodes):
+        for u in range(np.max(self.sample_ids) + 1, tsb.num_nodes):
             tables.nodes.add_row(flags=flags[u], time=times[u])
 
         logger.debug("Adding tree sequence edges")

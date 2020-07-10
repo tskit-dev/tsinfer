@@ -1324,6 +1324,47 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
         self.verify(samples, ancestors_ts)
 
 
+class TestMatchSamples(unittest.TestCase):
+    """
+    Test specific features of the match_samples stage
+    """
+
+    def test_partial_samples(self):
+        sd = tsinfer.SampleData.from_tree_sequence(
+            msprime.simulate(
+                10, mutation_rate=2, recombination_rate=2, random_seed=233
+            ),
+            use_times=False,
+        )
+        ts1 = tsinfer.infer(sd)
+        ancestors = tsinfer.generate_ancestors(sd)
+        ancestors_ts = tsinfer.match_ancestors(sd, ancestors)
+        # test indices missing from start, end, and in the middle
+        for subset in (np.arange(8), np.arange(2, 10), np.arange(5) * 2):
+            t1 = ts1.simplify(subset).dump_tables()
+            t1.provenances.clear()
+            t2 = tsinfer.match_samples(sd, ancestors_ts, samples=subset).dump_tables()
+            t2.simplify()
+            t2.provenances.clear()
+            self.assertEqual(t1, t2)
+
+    def test_partial_bad_indices(self):
+        sd = tsinfer.SampleData.from_tree_sequence(
+            msprime.simulate(
+                10, mutation_rate=2, recombination_rate=2, random_seed=233
+            ),
+            use_times=False,
+        )
+        ancestors = tsinfer.generate_ancestors(sd)
+        a_ts = tsinfer.match_ancestors(sd, ancestors)
+        self.assertRaises(
+            ValueError, tsinfer.match_samples, sd, a_ts, samples=np.arange(-1, 9)
+        )
+        self.assertRaises(
+            ValueError, tsinfer.match_samples, sd, a_ts, samples=np.arange(10)[::-1]
+        )
+
+
 class AlgorithmsExactlyEqualMixin(object):
     """
     For small example tree sequences, check that the Python and C implementations
