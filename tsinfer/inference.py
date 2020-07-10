@@ -146,6 +146,7 @@ def verify(samples, tree_sequence, progress_monitor=None):
 
 def infer(
     sample_data,
+    *,
     num_threads=0,
     path_compression=True,
     simplify=True,
@@ -156,7 +157,7 @@ def infer(
     progress_monitor=None,
 ):
     """
-    infer(sample_data, num_threads=0, path_compression=True, simplify=True)
+    infer(sample_data, *, num_threads=0, path_compression=True, simplify=True)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
@@ -211,14 +212,15 @@ def infer(
 
 def generate_ancestors(
     sample_data,
+    *,
     num_threads=0,
     path=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
-    **kwargs
+    **kwargs,
 ):
     """
-    generate_ancestors(sample_data, num_threads=0, path=None, **kwargs)
+    generate_ancestors(sample_data, *, num_threads=0, path=None, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
     on the specified :class:`SampleData` instance and returns the resulting
@@ -261,6 +263,7 @@ def generate_ancestors(
 def match_ancestors(
     sample_data,
     ancestor_data,
+    *,
     num_threads=0,
     path_compression=True,
     recombination_rate=None,
@@ -271,7 +274,7 @@ def match_ancestors(
     progress_monitor=None,
 ):
     """
-    match_ancestors(sample_data, ancestor_data, num_threads=0, path_compression=True)
+    match_ancestors(sample_data, ancestor_data, *, num_threads=0, path_compression=True)
 
     Runs the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
     on the specified :class:`SampleData` and :class:`AncestorData` instances,
@@ -312,6 +315,7 @@ def augment_ancestors(
     sample_data,
     ancestors_ts,
     indexes,
+    *,
     num_threads=0,
     path_compression=True,
     recombination_rate=None,
@@ -322,7 +326,7 @@ def augment_ancestors(
     progress_monitor=None,
 ):
     """
-    augment_ancestors(sample_data, ancestors_ts, indexes, num_threads=0,\
+    augment_ancestors(sample_data, ancestors_ts, indexes, *, num_threads=0,\
         path_compression=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
@@ -373,6 +377,7 @@ def augment_ancestors(
 def match_samples(
     sample_data,
     ancestors_ts,
+    *,
     num_threads=0,
     path_compression=True,
     simplify=True,
@@ -385,7 +390,7 @@ def match_samples(
     progress_monitor=None,
 ):
     """
-    match_samples(sample_data, ancestors_ts, num_threads=0, path_compression=True,\
+    match_samples(sample_data, ancestors_ts, *, num_threads=0, path_compression=True,\
         simplify=True)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
