@@ -1701,6 +1701,14 @@ class SampleData(DataContainer):
                 yield index, a
                 j += 1
 
+    def individual(self, id_):
+        return Individual(
+            id_,
+            location=self.individuals_location[id_],
+            metadata=self.individuals_metadata[id_],
+            time=self.individuals_time[id_],
+        )
+
     def individuals(self):
         # TODO document
         iterator = zip(
