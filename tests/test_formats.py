@@ -882,6 +882,20 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(samples_metadata[0], {})
         self.assertEqual(samples_metadata[1], {})
 
+    def test_get_single_individual(self):
+        with formats.SampleData(sequence_length=10) as sample_data:
+            sample_data.add_individual(
+                ploidy=1, location=[0, 0], metadata={"name": "zero"}
+            )
+            sample_data.add_individual(
+                ploidy=2, location=[1, 1], metadata={"name": "one"}
+            )
+            sample_data.add_site(0, [0, 0, 0])
+        self.assertEqual(sample_data.individual(1).id, 1)
+        self.assertTrue(np.array_equal(sample_data.individual(1).location, [1, 1]))
+        self.assertEqual(sample_data.individual(1).metadata, {"name": "one"})
+        self.assertEqual(np.sum(sample_data.samples_individual[:] == 1), 2)
+
     def test_add_individual_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
         self.assertRaises(TypeError, sample_data.add_individual, metadata=234)
