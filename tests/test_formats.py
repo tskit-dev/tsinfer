@@ -1496,8 +1496,13 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         return sample_data, ancestors
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
-        for start, end, t, focal_sites, haplotype in ancestors:
-            ancestor_data.add_ancestor(start, end, t, focal_sites, haplotype[start:end])
+        for i, (start, end, t, focal_sites, haplotype) in enumerate(ancestors):
+            self.assertEqual(
+                i,
+                ancestor_data.add_ancestor(
+                    start, end, t, focal_sites, haplotype[start:end]
+                ),
+            )
         ancestor_data.record_provenance("verify_data_round_trip")
         ancestor_data.finalise()
 
