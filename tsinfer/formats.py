@@ -1959,7 +1959,8 @@ class AncestorData(DataContainer):
         """
         Adds an ancestor with the specified haplotype, with ancestral material
         over the interval [start:end], that is associated with the specified timepoint
-        and has new mutations at the specified list of focal sites.
+        and has new mutations at the specified list of focal sites. The id of the added
+        ancestor is returned
         """
         self._check_build_mode()
         haplotype = tskit.util.safe_np_int_cast(haplotype, dtype=np.int8, copy=True)
@@ -1980,7 +1981,7 @@ class AncestorData(DataContainer):
             raise ValueError("time must be > 0")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
-        self.item_writer.add(
+        return self.item_writer.add(
             start=start,
             end=end,
             time=time,
