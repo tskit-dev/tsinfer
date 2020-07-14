@@ -327,6 +327,30 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
             self.verify_data_round_trip(ts, sample_data)
 
+    def test_access_individuals(self):
+        ts = self.get_example_individuals_ts_with_metadata(5, 2, 10, 1)
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        self.assertGreater(sd.num_individuals, 0)
+        has_some_metadata = False
+        for i, individual in enumerate(sd.individuals()):
+            if individual.metadata:
+                has_some_metadata = True  # Check that we do compare something sometimes
+            self.assertTrue(individual.metadata == sd.individual(i).metadata)
+        self.assertTrue(has_some_metadata)
+        self.assertEqual(i, sd.num_individuals - 1)
+
+    def test_access_populations(self):
+        ts = self.get_example_individuals_ts_with_metadata(5, 2, 10, 1)
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        self.assertGreater(sd.num_individuals, 0)
+        has_some_metadata = False
+        for i, population in enumerate(sd.populations()):
+            if population.metadata:
+                has_some_metadata = True  # Check that we do compare something sometimes
+            self.assertTrue(population.metadata == sd.population(i).metadata)
+        self.assertTrue(has_some_metadata)
+        self.assertEqual(i, sd.num_populations - 1)
+
     def test_from_tree_sequence_bad_times(self):
         n_individuals = 4
         sample_times = np.arange(n_individuals * 2)  # Diploids

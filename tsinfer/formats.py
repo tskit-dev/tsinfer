@@ -671,6 +671,17 @@ class Individual(object):
     metadata = attr.ib()
 
 
+@attr.s
+class Population(object):
+    """
+    An Population object. Mirrors the definition in tskit.
+    """
+
+    # TODO document properly.
+    id = attr.ib()
+    metadata = attr.ib()
+
+
 class SampleData(DataContainer):
     """
     SampleData(sequence_length=0, path=None, num_flush_threads=0, \
@@ -1702,6 +1713,7 @@ class SampleData(DataContainer):
                 j += 1
 
     def individual(self, id_):
+        # TODO document
         return Individual(
             id_,
             location=self.individuals_location[id_],
@@ -1718,6 +1730,16 @@ class SampleData(DataContainer):
         )
         for j, (location, metadata, time) in enumerate(iterator):
             yield Individual(j, location=location, metadata=metadata, time=time)
+
+    def population(self, id_):
+        # TODO document
+        return Population(id_, metadata=self.populations_metadata[id_],)
+
+    def populations(self):
+        # TODO document
+        iterator = self.populations_metadata[:]
+        for j, metadata in enumerate(iterator):
+            yield Population(j, metadata=metadata)
 
 
 @attr.s
