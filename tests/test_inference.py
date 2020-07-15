@@ -552,6 +552,7 @@ class TestZeroNonInferenceSites(unittest.TestCase):
         messages = [record.msg for record in logs.records]
         self.assertIn("Inserting detailed site information", messages)
         tsinfer.verify(sample_data, ts)
+        return ts
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -769,6 +770,53 @@ class TestMetadataRoundTrip(unittest.TestCase):
             for individual in output_ts.individuals()
         ]
         self.assertEqual(all_metadata, output_metadata)
+
+    def test_individual_metadata_subset(self):
+        ts = msprime.simulate(15, mutation_rate=4, random_seed=16)
+        self.assertGreater(ts.num_sites, 2)
+        sample_data = tsinfer.SampleData(sequence_length=1)
+        rng = random.Random(132)
+        all_metadata = []
+        for j in range(ts.num_samples):
+            sample_data.add_population()
+        for j in range(ts.num_samples):
+            metadata = {str(j): random_string(rng) for j in range(rng.randint(1, 6))}
+            location = [rng.randint(-100, 100)]
+            sample_data.add_individual(
+                metadata=metadata, location=location, population=j
+            )
+            all_metadata.append(metadata)
+        for variant in ts.variants():
+            sample_data.add_site(
+                variant.site.position, variant.genotypes, variant.alleles
+            )
+        sample_data.finalise()
+
+        output_ts = tsinfer.infer(sample_data)
+        output_metadata = [
+            json.loads(individual.metadata.decode())
+            for individual in output_ts.individuals()
+        ]
+        self.assertEqual(all_metadata, output_metadata)
+        for j, metadata in enumerate(sample_data.individuals_metadata[:]):
+            self.assertEqual(all_metadata[j], metadata)
+
+        # Now do this for various subsets of the data and make sure
+        # that metadata comes through correctly.
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        for subset in [[0], [0, 1], [1], [2, 3, 4, 5]]:
+            t1 = output_ts.simplify(subset).dump_tables()
+            self.assertGreater(len(t1.nodes.metadata), 0)
+            self.assertGreater(len(t1.individuals.metadata), 0)
+            self.assertGreater(len(t1.individuals.location), 0)
+            t1.provenances.clear()
+            t2 = tsinfer.match_samples(
+                sample_data, ancestors_ts, indexes=subset
+            ).dump_tables()
+            t2.simplify()
+            t2.provenances.clear()
+            self.assertEqual(t1, t2)
 
     def test_individual_location(self):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
@@ -1322,6 +1370,44 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
                 samples.add_site(var.site.position, var.genotypes)
         ancestors_ts = eval_util.make_ancestors_ts(samples, ts)
         self.verify(samples, ancestors_ts)
+
+
+class TestMatchSamples(unittest.TestCase):
+    """
+    Test specific features of the match_samples stage
+    """
+
+    def test_partial_samples(self):
+        sd = tsinfer.SampleData.from_tree_sequence(
+            msprime.simulate(
+                10, mutation_rate=2, recombination_rate=2, random_seed=233
+            ),
+            use_times=False,
+        )
+        ts1 = tsinfer.infer(sd)
+        ancestors = tsinfer.generate_ancestors(sd)
+        ancestors_ts = tsinfer.match_ancestors(sd, ancestors)
+        # test indices missing from start, end, and in the middle
+        for subset in (np.arange(8), np.arange(2, 10), np.arange(5) * 2):
+            t1 = ts1.simplify(subset).dump_tables()
+            t1.provenances.clear()
+            t2 = tsinfer.match_samples(sd, ancestors_ts, indexes=subset).dump_tables()
+            t2.simplify()
+            t2.provenances.clear()
+            self.assertEqual(t1, t2)
+
+    def test_partial_bad_indexes(self):
+        sd = tsinfer.SampleData.from_tree_sequence(
+            msprime.simulate(
+                10, mutation_rate=2, recombination_rate=2, random_seed=233
+            ),
+            use_times=False,
+        )
+        ancestors = tsinfer.generate_ancestors(sd)
+        a_ts = tsinfer.match_ancestors(sd, ancestors)
+        for bad_samples in [[], [-1, 0], [0, 10]]:
+            with self.assertRaises(ValueError):
+                tsinfer.match_samples(sd, a_ts, indexes=bad_samples)
 
 
 class AlgorithmsExactlyEqualMixin(object):
