@@ -1321,7 +1321,7 @@ class TestAncestorsTreeSequenceIndividuals(unittest.TestCase):
             ts.num_individuals,
         )
         # The ancestors individiduals should come first.
-        final_individuals = ts.individuals()
+        final_individuals = iter(ts.individuals())
         for ind in ancestors_ts.individuals():
             final_ind = next(final_individuals)
             self.assertEqual(final_ind, ind)
