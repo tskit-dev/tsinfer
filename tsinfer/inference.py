@@ -1314,7 +1314,7 @@ class SampleMatcher(Matcher):
             metadata_offset=tables.nodes.metadata_offset,
         )
         sample_ids = list(self.sample_id_map.values())
-        assert len(tables.nodes) == sample_ids[0]
+        assert len(tables.nodes) == min(sample_ids)
         samples_metadata = self.sample_data.samples_metadata[:]
         samples_population = self.sample_data.samples_population[:]
         samples_individual = self.sample_data.samples_individual[:]
@@ -1327,7 +1327,7 @@ class SampleMatcher(Matcher):
                 metadata=self.encode_metadata(samples_metadata[index]),
             )
         # Add in the remaining non-sample nodes.
-        for u in range(sample_ids[-1] + 1, tsb.num_nodes):
+        for u in range(max(sample_ids) + 1, tsb.num_nodes):
             tables.nodes.add_row(flags=flags[u], time=times[u])
 
         logger.debug("Adding tree sequence edges")
