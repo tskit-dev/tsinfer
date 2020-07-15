@@ -669,6 +669,7 @@ class Individual(object):
     location = attr.ib()
     time = attr.ib()
     metadata = attr.ib()
+    samples = attr.ib()
 
 
 @attr.s
@@ -1157,6 +1158,97 @@ class SampleData(DataContainer):
         assert self.individuals_equal(other)
         assert self.samples_equal(other)
         assert self.sites_equal(other)
+
+    def subset(self, individuals=None, sites=None, **kwargs):
+        """
+        Returns a subset of this sample data file consisting of the specified
+        individuals and sites. It is important to note that these are
+        *individual* IDs and not *sample* IDs (corresponding to distinct
+        haplotypes within an individual). When working with haploid data, the
+        individual and site IDs are guaranteed to be the same, and so can be
+        used interchangably.
+
+        :param arraylike individuals: The individual IDs to retain in the
+            returned subset. IDs must be unique, and refer to valid individuals
+            in the current dataset. IDs can be supplied in any order,
+            and the order will be preserved in the returned data file (i.e.,
+            ``individuals[0]`` will be the first individual in the new
+            dataset, etc).
+        :param arraylike sites: The site IDs to retain in the
+            returned subset. IDs must be unique, and refer to valid sites
+            in the current dataset. Site IDs can be supplied in any order,
+            but the order will *not* be preserved in the returned data file,
+            so that sites are always in position sorted order in the output.
+        :param \\**kwargs: Further arguments passed to the :class:`SampleData`
+            constructor.
+        :return: A :class:`.SampleData` object.
+        :rtype: SampleData
+        """
+        if individuals is None:
+            individuals = np.arange(self.num_individuals)
+        individuals = np.array(individuals, dtype=np.int32)
+        if np.any(individuals < 0) or np.any(individuals >= self.num_individuals):
+            raise ValueError("Individual ID out of bounds")
+        if len(set(individuals)) != len(individuals):
+            raise ValueError("Duplicate individual IDs")
+        if sites is None:
+            sites = np.arange(self.num_sites)
+        sites = np.array(sites, dtype=np.int32)
+        if np.any(sites < 0) or np.any(sites >= self.num_sites):
+            raise ValueError("Site ID out of bounds")
+        num_sites = len(sites)
+        # Store the sites as a set for quick lookup.
+        sites = set(sites)
+        if len(sites) != num_sites:
+            raise ValueError("Duplicate site IDS")
+        all_samples_metadata = self.samples_metadata[:]
+        all_samples_population = self.samples_population[:]
+        with SampleData(sequence_length=self.sequence_length, **kwargs) as subset:
+            # NOTE We don't bother filtering the populations, but we could.
+            for population in self.populations():
+                subset.add_population(population.metadata)
+            sample_selection = []
+            for individual in self.individuals():
+                if individual.id in individuals:
+                    sample_selection.extend(individual.samples)
+                    samples_metadata = [
+                        all_samples_metadata[sample_id]
+                        for sample_id in individual.samples
+                    ]
+                    subset.add_individual(
+                        location=individual.location,
+                        metadata=individual.metadata,
+                        time=individual.time,
+                        # We're assuming this is the same for all samples
+                        population=all_samples_population[individual.samples[0]],
+                        samples_metadata=samples_metadata,
+                        ploidy=len(samples_metadata),
+                    )
+            sample_selection = np.array(sample_selection, dtype=int)
+            if len(sample_selection) < 2:
+                raise ValueError("Must have at least two samples")
+            for variant in self.variants():
+                if variant.site.id in sites:
+                    subset.add_site(
+                        position=variant.site.position,
+                        genotypes=variant.genotypes[sample_selection],
+                        alleles=variant.alleles,
+                        metadata=variant.site.metadata,
+                        inference=None,
+                        # We would prefer to inherit the inference status from
+                        # the original file, but it's too tedious with the error
+                        # checking that we have. Since we're going to push the
+                        # inference_sites guessing to inference time rather than
+                        # data set build time before the next release, there's
+                        # no point in fiddling with this, as it will likely
+                        # do what you want most of the time.
+                        # inference=variant.site.inference,
+                        time=variant.site.time,
+                    )
+            for timestamp, record in self.provenances():
+                subset.add_provenance(timestamp, record)
+            subset.record_provenance(command="subset", **kwargs)
+        return subset
 
     ####################################
     # Write mode
@@ -1714,14 +1806,21 @@ class SampleData(DataContainer):
 
     def individual(self, id_):
         # TODO document
+        samples = np.where(self.samples_individual[:] == id_)[0]
+        # Make sure the numpy arrays are converted to lists so that
+        # we can compare individuals using ==
         return Individual(
             id_,
-            location=self.individuals_location[id_],
+            location=list(self.individuals_location[id_]),
             metadata=self.individuals_metadata[id_],
             time=self.individuals_time[id_],
+            samples=list(samples),
         )
 
     def individuals(self):
+        individual_samples = [[] for _ in range(self.num_individuals)]
+        for sample_id, individual_id in enumerate(self.samples_individual[:]):
+            individual_samples[individual_id].append(sample_id)
         # TODO document
         iterator = zip(
             self.individuals_location[:],
@@ -1729,7 +1828,13 @@ class SampleData(DataContainer):
             self.individuals_time[:],
         )
         for j, (location, metadata, time) in enumerate(iterator):
-            yield Individual(j, location=location, metadata=metadata, time=time)
+            yield Individual(
+                j,
+                location=list(location),
+                metadata=metadata,
+                time=time,
+                samples=individual_samples[j],
+            )
 
     def population(self, id_):
         # TODO document
