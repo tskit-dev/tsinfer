@@ -29,6 +29,7 @@ import threading
 import json
 import heapq
 
+import attr
 import numpy as np
 import humanize
 import tskit
@@ -97,6 +98,13 @@ def allele_counts(genotypes):
     return AlleleCounts(
         known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
     )
+
+
+def exclude_id(attribute, value):
+    """
+    Used to filter out the id field from attrs objects such as Ancestor
+    """
+    return attribute.name != "id"
 
 
 class DummyProgress(object):
@@ -488,6 +496,136 @@ def match_samples(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering
     )
     return ts
+
+
+def match_ancestors_including_noncontemporanous_samples(
+    sample_data, ancestor_data, *, create_sample_nodes=None, **kwargs,
+):
+    """
+    Like match_ancestors, but also include as ancestral nodes those samples in the
+    sample_data file from individuals whose time is > 0. These "non-contemporaneous"
+    samples are added into the list of ancestors before running match_ancestors. This
+    is only possible if the times of mutations used for inference (the site times in the
+    ancestor_data file) have been explicitly set by the user, e.g. by using the
+    ``time`` parameter of ``SampleData.add_sites()``, or by setting ``use_times=True`` if
+    creating a sample data file via ``tsinfer.SampleData.from_tree_sequence()``.
+
+    If ``create_sample_nodes`` is True, the inserted ancestors will be flagged with
+    tsinfer.NODE_IS_TRUE_SAMPLE_ANCESTOR, and the individuals associated with the
+    non-contemporaneous samples will be present in the resulting ancestors tree sequence.
+    This will create internal sample nodes in the final tree sequence produced by
+    match_samples. If create_sample_nodes is False, the inserted ancestors are treated as
+    *proxies* for the true samples (i.e. close, unrecombined relatives of the
+    true samples) and the nodes will not be contained within an individual in the final
+    tree sequence.
+
+    Returns an ancestors tree sequence suitable for input into match_samples. If
+    ``create_sample_nodes`` is True, you probably want to exclude any noncontemporaneous
+    samples during the match_samples phase, otherwise they risk being duplicated in the
+    final tree sequence.
+    """
+
+    # First find the sites from the samples file used in the built ancestors
+    sites_used = np.isin(sample_data.sites_position[:], ancestor_data.sites_position[:])
+    sites_used_time = sample_data.sites_time[:][sites_used]
+    if np.any(sites_used_time == constants.TIME_UNSPECIFIED):
+        raise ValueError(
+            "Noncontemporaneous samples can only be ancestors if site times are present"
+        )
+    individuals_population = sample_data.individuals_population[:]
+
+    # Find the non-contemporaneous (nc) samples and group them by individuals_time
+    samples_individual = sample_data.samples_individual[:]
+    nc_individuals = sample_data.individuals_time[:] > 0
+    nc_samples = np.where(np.isin(samples_individual, np.where(nc_individuals)[0]))[0]
+    samples_by_timepoint = collections.defaultdict(list)
+    for s in nc_samples:
+        timepoint = sample_data.individuals_time[samples_individual[s]]
+        samples_by_timepoint[timepoint].append(s)
+
+    logger.info("Creating new ancestors file with added ancestors")
+    ancestor_to_sample_map = {}
+    inferred_ancestors = ancestor_data.ancestors()
+    current_anc = next(inferred_ancestors)
+    with formats.AncestorData(sample_data=sample_data) as new_data:
+        for insert_time, sample_ids in sorted(samples_by_timepoint.items()):
+            while current_anc is not None and current_anc.time > insert_time:
+                new_data.add_ancestor(**attr.asdict(current_anc, filter=exclude_id))
+                current_anc = next(inferred_ancestors, None)
+            for s in sample_ids:
+                logger.debug(f"Adding sample {s} as an ancestor")
+                haplotype = sample_data.sites_genotypes[:, s][sites_used]
+                if np.any(sites_used_time[haplotype > 0] < insert_time):
+                    bad = sites_used_time[haplotype > 0] < insert_time
+                    bad_pos = sample_data.sites_position[:][bad]
+                    raise ValueError(
+                        "Non-contemporanous ancestor is older than its derived mutations"
+                        + f" at sites {bad_pos}"
+                    )
+                anc_id = new_data.add_ancestor(
+                    start=0,
+                    end=ancestor_data.num_sites,
+                    time=insert_time,
+                    focal_sites=[],
+                    haplotype=haplotype,
+                )
+                ancestor_to_sample_map[anc_id] = s
+
+    logger.info("Matching ancestors including noncontemporaneous samples")
+    ancestor_tables = match_ancestors(
+        sample_data, ancestor_data, **kwargs
+    ).dump_tables()
+    nodes_flags = ancestor_tables.nodes.flags
+
+    if create_sample_nodes is True:
+        logger.info("Adding associated individuals and populations")
+
+        ancestor_individuals = ancestor_tables.individuals
+        ancestor_populations = ancestor_tables.populations
+        assert ancestor_individuals.num_rows == 0
+        assert ancestor_populations.num_rows == 0
+
+        # Insert individuals into ancestors tree sequence
+        old_to_new_indiv = {}
+        for i in np.unique(samples_individual[nc_samples]):
+            old_to_new_indiv[i] = ancestor_individuals.add_row(
+                flags=0,
+                location=sample_data.individual(i).location,
+                metadata=json.dumps(sample_data.individual(i).metadata).encode(),
+            )
+        # Insert populations into ancestors tree sequence
+        old_to_new_pop = {}
+        for p in np.unique(individuals_population[nc_individuals]):
+            old_to_new_pop[p] = ancestor_populations.add_row(
+                metadata=json.dumps(sample_data.population(p).metadata).encode()
+            )
+
+        logger.info("Setting node information for true sample ancestors")
+        nodes = ancestor_tables.nodes
+        nodes_individual = nodes.individual
+        nodes_population = nodes.population
+        for anc_id, samp_id in ancestor_to_sample_map.items():
+            i = samples_individual[samp_id]
+            # The ids of the ancestors in the a_ts should correspond to the ones in the
+            # ancestors file, as all the pc ancestors are at the end but we check anyway
+            assert anc_id == json.loads(nodes[anc_id].metadata)["ancestor_data_id"]
+            nodes_individual[anc_id] = old_to_new_indiv[i]
+            nodes_population[anc_id] = old_to_new_pop[individuals_population[i]]
+            nodes_flags[anc_id] = np.bitwise_or(
+                nodes_flags[anc_id], constants.NODE_IS_TRUE_SAMPLE_ANCESTOR,
+            )
+        ancestor_tables.nodes.individual = nodes_individual
+        ancestor_tables.nodes.population = nodes_population
+
+    else:
+        logger.info("Setting node information for proxy sample ancestors")
+        for anc_id, _ in ancestor_to_sample_map.items():
+            nodes_flags[anc_id] = np.bitwise_or(
+                nodes_flags[anc_id], constants.NODE_IS_PROXY_SAMPLE_ANCESTOR,
+            )
+
+    ancestor_tables.nodes.flags = nodes_flags
+    return ancestor_tables.tree_sequence()
 
 
 class AncestorsGenerator(object):
