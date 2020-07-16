@@ -1375,8 +1375,8 @@ class SampleMatcher(Matcher):
 
     def get_samples_tree_sequence(self):
         """
-        Returns the current state of the build tree sequence. All samples and
-        ancestors will have the sample node flag set. For correct sample reconstruction,
+        Returns the current state of the build tree sequence. All samples will have the
+        sample node flag set. For correct sample reconstruction,
         the non-inference sites also need to be placed into the resulting tree sequence.
         """
         tsb = self.tree_sequence_builder
@@ -1397,9 +1397,16 @@ class SampleMatcher(Matcher):
         flags, times = tsb.dump_nodes()
         num_pc_ancestors = count_pc_ancestors(flags)
 
-        # All true ancestors are samples in the ancestors tree sequence. We unset
-        # the SAMPLE flag but keep other flags intact.
-        new_flags = np.bitwise_and(tables.nodes.flags, ~tskit.NODE_IS_SAMPLE)
+        # All true ancestors are samples in the ancestors tree sequence: to convert
+        # to a normal tree sequence we unset the SAMPLE flag (unless
+        # NODE_IS_TRUE_SAMPLE_ANCESTOR is set) but keep other flags intact.
+        new_flags = tables.nodes.flags
+        nonsample_ancestors = 0 == np.bitwise_and(
+            new_flags, constants.NODE_IS_TRUE_SAMPLE_ANCESTOR
+        )
+        new_flags[nonsample_ancestors] = np.bitwise_and(
+            new_flags[nonsample_ancestors], ~tskit.NODE_IS_SAMPLE
+        )
         tables.nodes.flags = new_flags.astype(np.uint32)
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
