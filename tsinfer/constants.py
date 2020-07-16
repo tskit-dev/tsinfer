@@ -33,9 +33,14 @@ NODE_IS_PC_ANCESTOR = 1 << 16
 # Bit 17 is set in node flags when they have been created by shared recombination
 # breakpoint
 NODE_IS_SRB_ANCESTOR = 1 << 17
-# Bit 18 is set in node flags when they are samples inserted to augment existing
-# ancestors.
-NODE_IS_SAMPLE_ANCESTOR = 1 << 18
+# Bits 18 and 19 should be mutually exclusive. Bit 18 is set in node flags when a node
+# corresponds to an ancestor that is very like a sample genome but is allowed to differ,
+# for example, at sites not used in full inference. Bit 19 is set when a node
+# corresponds to an ancestor that actually *is* a sampled genome (and which might, for
+# example, be associated with an individual in the individuals table). If bit 19 is set
+# it will lead to the tskit.NODE_IS_SAMPLE flag being set on this node by match_samples.
+NODE_IS_PROXY_SAMPLE_ANCESTOR = 1 << 18
+NODE_IS_TRUE_SAMPLE_ANCESTOR = 1 << 19
 
 # Marker constants for node & site time values
 TIME_UNSPECIFIED = -np.inf

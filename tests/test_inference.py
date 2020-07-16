@@ -2682,12 +2682,12 @@ class TestAugmentedAncestors(unittest.TestCase):
         k = len(subset)
         m = len(t1.nodes)
         self.assertTrue(
-            np.all(t2.nodes.flags[m : m + k] == tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            np.all(t2.nodes.flags[m : m + k] == tsinfer.NODE_IS_PROXY_SAMPLE_ANCESTOR)
         )
         self.assertTrue(np.all(t2.nodes.time[m : m + k] == 1))
         for j, node_id in enumerate(subset):
             node = t2.nodes[m + j]
-            self.assertEqual(node.flags, tsinfer.NODE_IS_SAMPLE_ANCESTOR)
+            self.assertEqual(node.flags, tsinfer.NODE_IS_PROXY_SAMPLE_ANCESTOR)
             self.assertEqual(node.time, 1)
             metadata = json.loads(node.metadata.decode())
             self.assertEqual(node_id, metadata["sample_data_id"])
@@ -2736,7 +2736,7 @@ class TestAugmentedAncestors(unittest.TestCase):
             parent = edges[0].parent
             original_node = len(t1.nodes) + j
             self.assertEqual(
-                tables.nodes.flags[original_node], tsinfer.NODE_IS_SAMPLE_ANCESTOR
+                tables.nodes.flags[original_node], tsinfer.NODE_IS_PROXY_SAMPLE_ANCESTOR
             )
             # Most of the time the parent is the original node. However, in
             # simple cases it can be somewhere up the tree above it.
@@ -2841,7 +2841,7 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             # Make sure metadata has been preserved in the final ts.
             num_sample_ancestors = 0
             for node in final_ts.nodes():
-                if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
+                if node.flags == tsinfer.NODE_IS_PROXY_SAMPLE_ANCESTOR:
                     metadata = json.loads(node.metadata.decode())
                     self.assertIn(metadata["sample_data_id"], subset)
                     num_sample_ancestors += 1

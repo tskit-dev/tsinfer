@@ -1469,7 +1469,8 @@ class SampleMatcher(Matcher):
 
     def get_augmented_ancestors_tree_sequence(self, sample_indexes):
         """
-        Return the ancestors tree sequence augmented with samples as extra ancestors.
+        Return the ancestors tree sequence augmented with samples as extra ancestors
+        at the most recent time point.
         """
         logger.debug("Building augmented ancestors tree sequence")
         tsb = self.tree_sequence_builder
@@ -1482,7 +1483,7 @@ class SampleMatcher(Matcher):
             if times[j] == 0.0:
                 # This is an augmented ancestor node.
                 tables.nodes.add_row(
-                    flags=constants.NODE_IS_SAMPLE_ANCESTOR,
+                    flags=constants.NODE_IS_PROXY_SAMPLE_ANCESTOR,
                     time=times[j],
                     metadata=self.encode_metadata(
                         {"sample_data_id": int(sample_indexes[s])}
