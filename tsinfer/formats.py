@@ -1801,6 +1801,8 @@ class AncestorData(DataContainer):
         # Cache the num_sites value here as it's expensive to compute.
         self._num_sites = self.sample_data.num_inference_sites
         self._num_alleles = self.sample_data.num_alleles(inference_sites=True)
+        self._last_time = 0
+
         assert self._num_alleles.shape[0] == self._num_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
         if self.sample_data.sequence_length == 0:
@@ -1979,10 +1981,10 @@ class AncestorData(DataContainer):
 
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
-        Adds an ancestor with the specified haplotype, with ancestral material
-        over the interval [start:end], that is associated with the specified timepoint
-        and has new mutations at the specified list of focal sites. The id of the added
-        ancestor is returned
+        Adds an ancestor with the specified haplotype, with ancestral material over the
+        interval [start:end], that is associated with the specified timepoint and has new
+        mutations at the specified list of focal sites. Ancestors should be added in time
+        order, with the oldest first. The id of the added ancestor is returned.
         """
         self._check_build_mode()
         haplotype = tskit.util.safe_np_int_cast(haplotype, dtype=np.int8, copy=True)
@@ -1999,10 +2001,13 @@ class AncestorData(DataContainer):
             raise ValueError("haplotypes incorrect shape.")
         if np.any(haplotype >= self._num_alleles[start:end]):
             raise ValueError("haplotype values must be < num_alleles.")
-        if time <= 0:
-            raise ValueError("time must be > 0")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
+        if time <= 0:
+            raise ValueError("time must be > 0")
+        if self._last_time != 0 and time > self._last_time:
+            raise ValueError("older ancestors must be added before younger ones")
+        self._last_time = time
         return self.item_writer.add(
             start=start,
             end=end,

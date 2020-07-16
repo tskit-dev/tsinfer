@@ -1503,7 +1503,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
 
         num_sites = sample_data.num_inference_sites
         ancestors = []
-        for j in range(num_ancestors):
+        for j in reversed(range(num_ancestors)):
             haplotype = np.full(num_sites, tskit.MISSING_DATA, dtype=np.int8)
             start = j
             end = max(num_sites - j, start + 1)
@@ -1757,6 +1757,16 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             time=1,
             focal_sites=[num_sites - 1],
             haplotype=np.ones(num_sites, dtype=np.int8),
+        )
+        # Older ancestors must be added first
+        self.assertRaises(
+            ValueError,
+            ancestor_data.add_ancestor,
+            start=0,
+            end=num_sites,
+            time=2,
+            focal_sites=[],
+            haplotype=haplotype,
         )
 
     @unittest.skipIf(
