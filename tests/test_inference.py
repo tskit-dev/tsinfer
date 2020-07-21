@@ -409,15 +409,10 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 site_alleles = None if alleles is None else alleles[j]
                 sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
 
-        # Everything is an inference site
-        with sample_data.copy() as sample_data:
-            sample_data.sites_inference[:] = True
-
-        num_alleles = sample_data.num_alleles(inference_sites=True)
-        num_sites = sample_data.num_inference_sites
+        num_alleles = sample_data.num_alleles()
         with tsinfer.AncestorData(sample_data) as ancestor_data:
             t = np.sum(num_alleles) + 1
-            for j in range(num_sites):
+            for j in range(sample_data.num_sites):
                 for allele in range(num_alleles[j] - 1):
                     ancestor_data.add_ancestor(j, j + 1, t, [j], [allele])
                     t -= 1
@@ -476,15 +471,23 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
     of inference and non inference sites.
     """
 
-    def verify_round_trip(self, genotypes, inference):
-        self.assertEqual(genotypes.shape[0], inference.shape[0])
+    def verify_round_trip(self, genotypes, exclude_sites):
+        self.assertEqual(genotypes.shape[0], exclude_sites.shape[0])
         with tsinfer.SampleData() as sample_data:
             for j in range(genotypes.shape[0]):
-                sample_data.add_site(j, genotypes[j], inference=inference[j])
+                sample_data.add_site(j, genotypes[j])
+        exclude_positions = sample_data.sites_position[:][exclude_sites]
         for simplify in [False, True]:
-            output_ts = tsinfer.infer(sample_data, simplify=simplify)
+            output_ts = tsinfer.infer(
+                sample_data, simplify=simplify, exclude_positions=exclude_positions
+            )
             for tree in output_ts.trees():
                 for site in tree.sites():
+                    inf_type = json.loads(site.metadata)["inference_type"]
+                    if exclude_sites[site.id]:
+                        self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
+                    else:
+                        self.assertEqual(inf_type, tsinfer.INFERENCE_FULL)
                     f = np.sum(genotypes[site.id])
                     if f == 0:
                         self.assertEqual(len(site.mutations), 0)
@@ -499,7 +502,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 2)
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
     def test_half_sites_single_tree(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=20)
@@ -507,7 +510,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
         inference[::2] = False
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
     def test_simple_many_trees(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=10)
@@ -515,7 +518,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         self.assertGreater(ts.num_sites, 2)
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
     def test_half_sites_many_trees(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=11)
@@ -524,7 +527,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
         inference[::2] = False
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
     def test_zero_inference_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -532,13 +535,13 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
         genotypes = ts.genotype_matrix()
         inference = np.sum(genotypes, axis=1) > 1
         inference[:] = False
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
     def test_random_data(self):
         genotypes, _ = get_random_data_example(20, 50, seed=12345)
         inference = np.sum(genotypes, axis=1) > 1
         inference[::2] = False
-        self.verify_round_trip(genotypes, inference)
+        self.verify_round_trip(genotypes, ~inference)
 
 
 class TestZeroNonInferenceSites(unittest.TestCase):
@@ -597,13 +600,19 @@ class TestZeroInferenceSites(unittest.TestCase):
         m = genotypes.shape[0]
         with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
             for j in range(m):
-                sample_data.add_site(j, genotypes[j], inference=False)
-        self.assertEqual(sample_data.num_non_inference_sites, m)
-        self.assertEqual(sample_data.num_inference_sites, 0)
+                sample_data.add_site(j, genotypes[j])
+        exclude_positions = sample_data.sites_position
         for path_compression in [False, True]:
-            output_ts = tsinfer.infer(sample_data, path_compression=path_compression)
+            output_ts = tsinfer.infer(
+                sample_data,
+                path_compression=path_compression,
+                exclude_positions=exclude_positions,
+            )
             for tree in output_ts.trees():
                 self.assertEqual(tree.num_roots, 1)
+            for site in output_ts.sites():
+                inf_type = json.loads(site.metadata)["inference_type"]
+                self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -711,10 +720,12 @@ class TestMetadataRoundTrip(unittest.TestCase):
             self.assertEqual(all_metadata[variant.site.id], variant.site.metadata)
 
         output_ts = tsinfer.infer(sample_data)
-        output_metadata = [
-            json.loads(site.metadata.decode()) for site in output_ts.sites()
-        ]
-        self.assertEqual(all_metadata, output_metadata)
+        for site in output_ts.sites():
+            decoded_metadata = json.loads(site.metadata)
+            self.assertIn("inference_type", decoded_metadata)
+            value = decoded_metadata.pop("inference_type")
+            self.assertIn(value, ("full", "fitch_parsimony"))
+            self.assertEqual(decoded_metadata, all_metadata[site.id])
 
     def test_population_metadata(self):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
@@ -1075,6 +1086,17 @@ class TestBuildAncestors(unittest.TestCase):
     Tests for the generate_ancestors function.
     """
 
+    def test_bad_exclude_sites(self):
+        # Only things that can be interpreted as a 1D double array
+        # should be accepted.
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [1, 1])
+        with self.assertRaises(ValueError):
+            tsinfer.generate_ancestors(sample_data, exclude_positions=[[None]])
+
+        with self.assertRaises(ValueError):
+            tsinfer.generate_ancestors(sample_data, exclude_positions=["not", 1.1])
+
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
@@ -1082,20 +1104,18 @@ class TestBuildAncestors(unittest.TestCase):
 
     def verify_ancestors(self, sample_data, ancestor_data):
         ancestors = ancestor_data.ancestors_haplotype[:]
-        inference_sites = sample_data.sites_inference[:]
-        position = sample_data.sites_position[:][inference_sites]
+        position = sample_data.sites_position[:]
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         times = ancestor_data.ancestors_time[:]
         focal_sites = ancestor_data.ancestors_focal_sites[:]
 
         self.assertEqual(ancestor_data.num_ancestors, ancestors.shape[0])
-        self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
         self.assertEqual(ancestor_data.num_ancestors, times.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, start.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, end.shape[0])
         self.assertEqual(ancestor_data.num_ancestors, focal_sites.shape[0])
-        self.assertTrue(np.array_equal(ancestor_data.sites_position[:], position))
+        self.assertTrue(set(ancestor_data.sites_position[:]) <= set(position))
         # The first ancestor must be all zeros.
         self.assertEqual(start[0], 0)
         self.assertEqual(end[0], ancestor_data.num_sites)
@@ -1587,13 +1607,13 @@ class TestAlgorithmDebugOutput(unittest.TestCase):
         n_sites = 50
         sample_data = self.sample_example(n_samples, n_sites)
         ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
-        for j, variant in enumerate(sample_data.variants(inference_sites=True)):
-            ancestor_builder.add_site(j, variant.site.time, variant.genotypes)
-        with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
+        for j, variant in enumerate(sample_data.variants()):
+            ancestor_builder.add_site(variant.site.time, variant.genotypes)
+        with mock.patch("sys.stdout", new=io.StringIO()) as mock_output:
             ancestor_builder.print_state()
             # Simply check some text is output
-            self.assertTrue(isinstance(mockOutput.getvalue(), str))
-            self.assertGreater(len(mockOutput.getvalue()), 0)
+            self.assertTrue(isinstance(mock_output.getvalue(), str))
+            self.assertGreater(len(mock_output.getvalue()), 0)
 
     def test_ancestor_matcher_print_state(self):
         sample_data = self.sample_example(20, 50)
@@ -1964,6 +1984,20 @@ class TestSimplify(unittest.TestCase):
         self.verify(ts)
 
 
+def get_default_inference_sites(sample_data):
+    """
+    Returns the site positions that would be used for inference by
+    default.
+    """
+    inference_sites = []
+    for var in sample_data.variants():
+        counts = tsinfer.allele_counts(var.genotypes)
+        assert len(var.site.alleles) == 2
+        if counts.derived > 1 and counts.derived < counts.known:
+            inference_sites.append(var.site.position)
+    return inference_sites
+
+
 class TestMatchSiteSubsets(unittest.TestCase):
     """
     Tests that we can successfully run the algorithm on data in which we have
@@ -2015,19 +2049,19 @@ class TestMatchSiteSubsets(unittest.TestCase):
     def test_simple_case(self):
         ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=3)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
+        position = get_default_inference_sites(sample_data)
         self.verify(sample_data, position[:][::2])
 
     def test_one_sites(self):
         ts = msprime.simulate(15, mutation_rate=2, recombination_rate=2, random_seed=3)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
+        position = get_default_inference_sites(sample_data)
         self.verify(sample_data, position[:1])
 
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=4)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
+        position = get_default_inference_sites(sample_data)
         self.verify(sample_data, position[:][1::2])
 
     def test_random_data(self):
@@ -2038,7 +2072,7 @@ class TestMatchSiteSubsets(unittest.TestCase):
         for genotypes, position in zip(G, positions):
             sample_data.add_site(position, genotypes)
         sample_data.finalise()
-        position = sample_data.sites_position[:][sample_data.sites_inference[:]]
+        position = get_default_inference_sites(sample_data)
         self.verify(sample_data, position[:][::2])
 
 
@@ -2454,11 +2488,9 @@ class TestExtractAncestors(unittest.TestCase):
         self.assertEqual(len(t2.provenances), len(t1.provenances) + 2)
         t1.provenances.clear()
         t2.provenances.clear()
-
         # Population data isn't carried through in ancestors tree sequences
         # for now.
         t2.populations.clear()
-
         self.assertEqual(t1, t2)
 
         for node in ts.nodes():
@@ -2876,3 +2908,33 @@ class TestMissingDataImputed(unittest.TestCase):
             ts = tsinfer.infer(sample_data, engine=e)
             self.assertEquals(ts.num_trees, 1)
             self.assertTrue(np.all(expected == ts.genotype_matrix()))
+
+
+class TestAutoInferenceSites(unittest.TestCase):
+    def test_missing_data(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array(
+            [
+                [u, u, u, 1, 1, 0, 1, 1, 1],
+                [u, u, u, 1, 1, 0, 1, 1, 0],
+                [u, u, u, 1, 0, 1, 1, 0, 1],
+                [u, 0, 0, 1, 1, 1, 1, u, u],
+                [u, 0, 1, 1, 1, 0, 1, u, u],
+                [u, 1, 1, 0, 0, 0, 0, u, u],
+            ],
+            dtype=np.int8,
+        )
+        with tsinfer.SampleData() as data:
+            for col in range(sites_by_samples.shape[1]):
+                data.add_site(col, sites_by_samples[:, col])
+        self.assertEqual(data.sequence_length, 9.0)
+        self.assertEqual(data.num_sites, 9)
+        ts = tsinfer.infer(data)
+        # First site is a entirely missing, second is singleton with missing data =>
+        # neither should be marked for inference
+        # inference_sites = data.sites_inference[:]
+        inf_type = [json.loads(site.metadata)["inference_type"] for site in ts.sites()]
+        self.assertEqual(inf_type[0], tsinfer.INFERENCE_FITCH_PARSIMONY)
+        self.assertEqual(inf_type[1], tsinfer.INFERENCE_FITCH_PARSIMONY)
+        for t in inf_type[2:]:
+            self.assertEqual(t, tsinfer.INFERENCE_FULL)

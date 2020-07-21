@@ -122,20 +122,22 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
 
 int
 ancestor_builder_alloc(
-    ancestor_builder_t *self, size_t num_samples, size_t num_sites, int flags)
+    ancestor_builder_t *self, size_t num_samples, size_t max_sites, int flags)
 {
     int ret = 0;
-    // TODO error checking
-    assert(num_samples > 1);
-    /* TODO need to be able to handle zero sites */
-    /* assert(num_sites > 0); */
 
     memset(self, 0, sizeof(ancestor_builder_t));
+    if (num_samples <= 1) {
+        ret = TSI_ERR_BAD_NUM_SAMPLES;
+        goto out;
+    }
+
     self->num_samples = num_samples;
-    self->num_sites = num_sites;
+    self->max_sites = max_sites;
+    self->num_sites = 0;
     self->flags = flags;
-    self->sites = calloc(num_sites, sizeof(site_t));
-    self->descriptors = calloc(num_sites, sizeof(ancestor_descriptor_t));
+    self->sites = calloc(max_sites, sizeof(site_t));
+    self->descriptors = calloc(max_sites, sizeof(ancestor_descriptor_t));
     if (self->sites == NULL || self->descriptors == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -395,8 +397,7 @@ out:
 }
 
 int WARN_UNUSED
-ancestor_builder_add_site(
-    ancestor_builder_t *self, tsk_id_t l, double time, allele_t *genotypes)
+ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes)
 {
     int ret = 0;
     site_t *site;
@@ -404,16 +405,20 @@ ancestor_builder_add_site(
     site_list_t *list_node;
     pattern_map_t search, *map_elem;
     avl_tree_t *pattern_map;
+    tsk_id_t site_id = (tsk_id_t) self->num_sites;
     time_map_t *time_map = ancestor_builder_get_time_map(self, time);
 
     if (time_map == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
+    if (self->num_sites == self->max_sites) {
+        ret = TSI_ERR_TOO_MANY_SITES;
+        goto out;
+    }
+    self->num_sites++;
     pattern_map = &time_map->pattern_map;
-
-    assert(l < (tsk_id_t) self->num_sites);
-    site = &self->sites[l];
+    site = &self->sites[site_id];
     site->time = time;
 
     search.genotypes = genotypes;
@@ -451,7 +456,7 @@ ancestor_builder_add_site(
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    list_node->site = l;
+    list_node->site = site_id;
     list_node->next = map_elem->sites;
     map_elem->sites = list_node;
 out:

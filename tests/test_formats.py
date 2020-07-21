@@ -233,9 +233,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 for n in individual.nodes:
                     self.assertTrue(ts.node(n).time == sample_time[individual.id])
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
-    )
+    @unittest.skipIf(IS_WINDOWS, "windows simultaneous file permissions issue")
     def test_defaults_with_path(self):
         ts = get_example_ts(10, 10)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -318,6 +316,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(samples.num_samples, n_samples)
             self.assertGreater(samples.file_size, n_samples * n_sites)
             samples.close()
+
+    def test_inference_not_supported(self):
+        sample_data = formats.SampleData(sequence_length=1)
+        with self.assertRaises(ValueError):
+            sample_data.add_site(0.1, [1, 1], inference=False)
 
     def test_defaults_no_path(self):
         ts = get_example_ts(10, 10)
@@ -427,16 +430,9 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(len(ts.site(ts.num_sites - 1).mutations), 0)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
-        self.assertFalse(sd1.sites_inference[0])
-        self.assertFalse(sd1.sites_inference[sd1.num_sites - 1])
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
             self.assertEqual(len(var.alleles), num_alleles[var.site.id])
-        for inference_sites in [None, True, False]:
-            for var, num_alleles in itertools.zip_longest(
-                sd1.variants(inference_sites), sd1.num_alleles(inference_sites)
-            ):
-                self.assertEqual(len(var.alleles), num_alleles)
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
 
@@ -478,7 +474,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertTrue(np.all(sd2.samples_individual[:] == sd1.samples_individual[:]))
         self.assertTrue(np.all(sd2.samples_population[:] == sd1.samples_population[:]))
         self.assertTrue(np.all(sd2.sites_position[:] == sd1.sites_position[:]))
-        self.assertTrue(np.all(sd2.sites_inference[:] == sd1.sites_inference[:]))
         self.assertTrue(np.all(sd2.sites_genotypes[:] == sd1.sites_genotypes[:]))
         self.assertTrue(np.all(sd2.sites_time[:] == sd1.sites_time[:]))
         self.assertTrue(np.all(sd2.populations_metadata[:] == {}))
@@ -634,14 +629,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 genotypes=bad_genotypes,
             )
         self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            inference=True,
-            alleles=["0", "1", "2"],
-            genotypes=[0, 1],
-        )
-        self.assertRaises(
             ValueError, input_file.add_site, position=1, alleles=["0"], genotypes=[0, 1]
         )
         self.assertRaises(
@@ -657,66 +644,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             position=1,
             alleles=["0", "0"],
             genotypes=[0, 2],
-        )
-
-    def test_invalid_inference_sites(self):
-        # Trying to add singletons or fixed sites as inference sites
-        # raise and error
-        input_file = formats.SampleData()
-        # Make sure this is OK
-        input_file.add_site(0, [0, 1, 1, tskit.MISSING_DATA], inference=True)
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[0, 0, 0, 0],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[1, 0, 0, 0],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[1, 1, 1, 1],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[tskit.MISSING_DATA, 0, 0, 0],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[tskit.MISSING_DATA, 1, 1, 1],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[tskit.MISSING_DATA, 0, 1, 0],
-            inference=True,
-        )
-        self.assertRaises(
-            ValueError,
-            input_file.add_site,
-            position=1,
-            genotypes=[tskit.MISSING_DATA] * 4,
-            inference=True,
-        )
-        # Check we can still add at pos 1
-        input_file.add_site(
-            position=1, genotypes=[1, 0, 1, tskit.MISSING_DATA], inference=True
         )
 
     def test_duplicate_sites(self):
@@ -956,36 +883,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sid = sample_data.add_site(1, [0, 1])
         self.assertEqual(sid, 1)
 
-    def test_genotypes(self):
-        ts = get_example_ts(13, 12)
-        self.assertGreater(ts.num_sites, 1)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
-        for v in ts.variants():
-            input_file.add_site(v.site.position, v.genotypes, v.alleles)
-        input_file.finalise()
-
-        self.assertLess(np.sum(input_file.sites_inference[:]), ts.num_sites)
-        all_genotypes = input_file.genotypes()
-        for v in ts.variants():
-            site_id, g = next(all_genotypes)
-            self.assertEqual(site_id, v.site.id)
-            self.assertTrue(np.array_equal(g, v.genotypes))
-        self.assertIsNone(next(all_genotypes, None), None)
-
-        inference_genotypes = input_file.genotypes(inference_sites=True)
-        non_inference_genotypes = input_file.genotypes(inference_sites=False)
-        for v in ts.variants():
-            freq = np.sum(v.genotypes)
-            if 1 < freq < ts.num_samples:
-                site_id, g = next(inference_genotypes)
-                self.assertEqual(site_id, v.site.id)
-                self.assertTrue(np.array_equal(g, v.genotypes))
-            else:
-                site_id, g = next(non_inference_genotypes)
-                self.assertEqual(site_id, v.site.id)
-                self.assertTrue(np.array_equal(g, v.genotypes))
-        self.assertIsNone(next(inference_genotypes, None), None)
-
     def test_sites(self):
         ts = get_example_ts(11, 15)
         self.assertGreater(ts.num_sites, 1)
@@ -1000,20 +897,23 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(variant.alleles, s2.alleles)
         self.assertIsNone(next(all_sites, None), None)
 
-        inference_sites = input_file.sites(inference_sites=True)
-        non_inference_sites = input_file.sites(inference_sites=False)
-        inference = input_file.sites_inference[:]
-        for j, s1 in enumerate(ts.sites()):
-            if inference[j]:
-                s2 = next(inference_sites)
-            else:
-                s2 = next(non_inference_sites)
-            self.assertEqual(s1.id, s2.id)
-            self.assertEqual(s1.position, s2.position)
-            self.assertEqual(s1.ancestral_state, s2.ancestral_state)
-            self.assertEqual(inference[j], s2.inference)
-        self.assertIsNone(next(inference_sites, None), None)
-        self.assertIsNone(next(non_inference_sites, None), None)
+    def test_sites_subset(self):
+        ts = get_example_ts(11, 15)
+        self.assertGreater(ts.num_sites, 1)
+        input_file = formats.SampleData.from_tree_sequence(ts)
+        self.assertEqual(list(input_file.sites([])), [])
+        index = np.arange(input_file.num_sites)
+        site_list = list(input_file.sites())
+        self.assertEqual(list(input_file.sites(index)), site_list)
+        self.assertEqual(list(input_file.sites(index[::-1])), site_list[::-1])
+        index = np.arange(input_file.num_sites // 2)
+        result = list(input_file.sites(index))
+        self.assertEqual(len(result), len(index))
+        for site, j in zip(result, index):
+            self.assertEqual(site, site_list[j])
+
+        with self.assertRaises(IndexError):
+            list(input_file.sites([10000]))
 
     def test_variants(self):
         ts = get_example_ts(11, 15)
@@ -1029,25 +929,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertEqual(v1.alleles, v2.alleles)
             self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
         self.assertIsNone(next(all_variants, None), None)
-
-        inference_variants = input_file.variants(inference_sites=True)
-        non_inference_variants = input_file.variants(inference_sites=False)
-        for v1 in ts.variants():
-            freq = np.sum(v1.genotypes)
-            if 1 < freq < ts.num_samples:
-                v2 = next(inference_variants)
-                inference = 1
-            else:
-                v2 = next(non_inference_variants)
-                inference = 0
-            self.assertEqual(v1.site.id, v2.site.id)
-            self.assertEqual(v1.site.position, v2.site.position)
-            self.assertEqual(v1.site.ancestral_state, v2.site.ancestral_state)
-            self.assertEqual(inference, v2.site.inference)
-            self.assertEqual(v1.alleles, v2.alleles)
-            self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
-        self.assertIsNone(next(inference_variants, None), None)
-        self.assertIsNone(next(non_inference_variants, None), None)
 
     def test_all_haplotypes(self):
         ts = get_example_ts(13, 12)
@@ -1065,22 +946,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         j = 0
         for index, h in input_file.haplotypes(np.arange(ts.num_samples)):
             self.assertTrue(np.array_equal(h, G[:, j]))
-            self.assertEqual(index, j)
-            j += 1
-        self.assertEqual(j, ts.num_samples)
-
-        selection = input_file.sites_inference[:]
-        j = 0
-        for index, h in input_file.haplotypes(inference_sites=True):
-            self.assertTrue(np.array_equal(h, G[selection, j]))
-            self.assertEqual(index, j)
-            j += 1
-        self.assertEqual(j, ts.num_samples)
-
-        selection = input_file.sites_inference[:] == 0
-        j = 0
-        for index, h in input_file.haplotypes(inference_sites=False):
-            self.assertTrue(np.array_equal(h, G[selection, j]))
             self.assertEqual(index, j)
             j += 1
         self.assertEqual(j, ts.num_samples)
@@ -1133,18 +998,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 self.assertEqual(index, subset[j])
                 j += 1
             self.assertEqual(j, len(subset))
-
-    def test_invariant_sites(self):
-        n = 10
-        m = 10
-        for value in [0, 1]:
-            G = np.zeros((m, n), dtype=np.int8) + value
-            input_file = formats.SampleData(sequence_length=m)
-            for j in range(m):
-                input_file.add_site(j, G[j])
-            input_file.finalise()
-            self.assertEqual(input_file.num_sites, m)
-            self.assertTrue(np.all(~input_file.sites_inference[:]))
 
     def test_ts_with_invariant_sites(self):
         ts = get_example_ts(5, 3)
@@ -1232,16 +1085,11 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         editable_sample_data = input_file.copy()
         # Try editing: use setter in the normal way
-        editable_sample_data.sites_inference = [True]
         editable_sample_data.sites_time = [0.0]
         # Try editing: use setter via setattr
-        setattr(editable_sample_data, "sites_inference", [False])
         setattr(editable_sample_data, "sites_time", [1.0])
         editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
         editable_sample_data.finalise()
-        self.assertRaises(
-            ValueError, setattr, editable_sample_data, "sites_inference", [True]
-        )
         self.assertRaises(
             ValueError, setattr, editable_sample_data, "sites_time", [0.0]
         )
@@ -1260,29 +1108,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         copy.finalise()
         self.assertNotEqual(copy.uuid, data.uuid)
         self.assertTrue(copy.data_equal(data))
-
-    def test_copy_update_sites_inference(self):
-        with formats.SampleData() as data:
-            for j in range(4):
-                data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        self.assertEqual(list(data.sites_inference), [True, True, True, True])
-
-        with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
-            filename = os.path.join(tempdir, "samples.tmp")
-            for copy_path in [None, filename]:
-                copy = data.copy(path=copy_path)
-                copy.finalise()
-                self.assertTrue(copy.data_equal(data))
-                if copy_path is not None:
-                    copy.close()
-                with data.copy(path=copy_path) as copy:
-                    inference = [False, True, False, True]
-                    copy.sites_inference = inference
-                self.assertFalse(copy.data_equal(data))
-                self.assertEqual(list(copy.sites_inference), inference)
-                self.assertEqual(list(data.sites_inference), [True, True, True, True])
-                if copy_path is not None:
-                    copy.close()
 
     def test_copy_update_sites_time(self):
         with formats.SampleData() as data:
@@ -1309,30 +1134,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 if copy_path is not None:
                     copy.close()
 
-    def test_update_sites_inference_bad_data(self):
-        def set_value(data, value):
-            data.sites_inference = value
-
-        data = formats.SampleData()
-        for j in range(4):
-            data.add_site(position=j, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        data.finalise()
-        self.assertEqual(list(data.sites_inference), [True, True, True, True])
-        copy = data.copy()
-        for bad_shape in [[], np.arange(100), np.zeros((2, 2))]:
-            self.assertRaises((ValueError, TypeError), set_value, copy, bad_shape)
-        bad_data = [
-            ["a", "b", "c", "d"],
-            [2 ** 10 for _ in range(4)],
-            [0, 1, 0, 2],
-            [0, 0, 0, -1],
-            [0, 0.5, 0.2],
-        ]
-        for a in bad_data:
-            self.assertRaises(
-                (ValueError, TypeError, OverflowError), set_value, copy, a
-            )
-
     def test_update_sites_time_bad_data(self):
         def set_value(data, value):
             data.sites_time = value
@@ -1350,16 +1151,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         for bad_data in [["a", "b", "c", "d"]]:
             self.assertRaises(ValueError, set_value, copy, bad_data)
 
-    def test_update_sites_inference_non_copy_mode(self):
-        def set_value(data, value):
-            data.sites_inference = value
-
-        data = formats.SampleData()
-        data.add_site(position=0, alleles=["0", "1"], genotypes=[0, 1, 1, 0])
-        self.assertRaises(ValueError, set_value, data, [True])
-        data.finalise()
-        self.assertRaises(ValueError, set_value, data, [True])
-
     def test_update_sites_time_non_copy_mode(self):
         def set_value(data, value):
             data.sites_time = value
@@ -1370,9 +1161,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         data.finalise()
         self.assertRaises(ValueError, set_value, data, [1.0])
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
-    )
+    @unittest.skipIf(IS_WINDOWS, "windows simultaneous file permissions issue")
     def test_overwrite_partial(self):
         # Check that we can correctly overwrite partially written and
         # unfinalised files. See
@@ -1403,33 +1192,6 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                     sample_data.add_site(
                         0, [0, 0], alleles=[str(x) for x in range(num_alleles)]
                     )
-
-    def test_missing_data(self):
-        u = tskit.MISSING_DATA
-        sites_by_samples = np.array(
-            [
-                [u, u, u, 1, 1, 0, 1, 1, 1],
-                [u, u, u, 1, 1, 0, 1, 1, 0],
-                [u, u, u, 1, 0, 1, 1, 0, 1],
-                [u, 0, 0, 1, 1, 1, 1, u, u],
-                [u, 0, 1, 1, 1, 0, 1, u, u],
-                [u, 1, 1, 0, 0, 0, 0, u, u],
-            ],
-            dtype=np.int8,
-        )
-        with tsinfer.SampleData() as data:
-            for col in range(sites_by_samples.shape[1]):
-                data.add_site(col, sites_by_samples[:, col])
-
-        self.assertEqual(data.sequence_length, 9.0)
-        self.assertEqual(data.num_sites, 9)
-        # First site is a entirely missing, second is singleton with missing data =>
-        # neither should be marked for inference
-        inference_sites = data.sites_inference[:]
-        self.assertEqual(inference_sites[0], 0)  # Entirely missing data
-        self.assertEqual(inference_sites[1], 0)  # Singleton with missing data
-        for i in inference_sites[2:]:
-            self.assertEqual(i, 1)
 
     def test_append_sites(self):
         ts = get_example_individuals_ts_with_metadata(4, 2, 10)
@@ -1639,7 +1401,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         )
         sample_data = formats.SampleData.from_tree_sequence(ts)
 
-        num_sites = sample_data.num_inference_sites
+        num_sites = sample_data.num_sites
         ancestors = []
         for j in reversed(range(num_ancestors)):
             haplotype = np.full(num_sites, tskit.MISSING_DATA, dtype=np.int8)
@@ -1675,14 +1437,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(
             ancestor_data.format_version, formats.AncestorData.FORMAT_VERSION
         )
-        self.assertEqual(ancestor_data.num_sites, sample_data.num_inference_sites)
         self.assertEqual(ancestor_data.num_ancestors, len(ancestors))
-        inference_position = sample_data.sites_position[:][
-            sample_data.sites_inference[:]
-        ]
-        self.assertTrue(
-            np.array_equal(inference_position, ancestor_data.sites_position[:])
-        )
 
         ancestors_list = [anc.haplotype for anc in ancestor_data.ancestors()]
         stored_start = ancestor_data.ancestors_start[:]
@@ -1771,7 +1526,6 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
         N = 20
         for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
             sample_data, ancestors = self.get_example_data(6, 1, N)
-            self.assertGreater(sample_data.num_inference_sites, 2 * N)
             ancestor_data = tsinfer.AncestorData(sample_data, chunk_size=chunk_size)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
             self.assertEqual(ancestor_data.ancestors_haplotype.chunks, (chunk_size,))
@@ -1905,9 +1659,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             haplotype=haplotype,
         )
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
-    )
+    @unittest.skipIf(IS_WINDOWS, "windows simultaneous file permissions issue")
     def test_zero_sequence_length(self):
         # Mangle a sample data file to force a zero sequence length.
         ts = msprime.simulate(10, mutation_rate=2, random_seed=5)

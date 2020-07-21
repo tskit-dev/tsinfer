@@ -102,6 +102,7 @@ typedef struct {
 
 typedef struct {
     size_t num_sites;
+    size_t max_sites;
     size_t num_samples;
     size_t num_ancestors;
     int flags;
@@ -198,7 +199,7 @@ int ancestor_builder_alloc(
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_add_site(
-    ancestor_builder_t *self, tsk_id_t site, double time, allele_t *genotypes);
+    ancestor_builder_t *self, double time, allele_t *genotypes);
 int ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     tsk_id_t *focal_sites, tsk_id_t *start, tsk_id_t *end, allele_t *haplotype);
 int ancestor_builder_finalise(ancestor_builder_t *self);

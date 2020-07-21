@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -25,6 +25,9 @@ import numpy as np
 C_ENGINE = "C"
 PY_ENGINE = "P"
 
+
+# TODO Change these to use the enum.IntFlag class
+
 # Bit 16 is set in node flags when they have been created by path compression.
 NODE_IS_PC_ANCESTOR = 1 << 16
 # Bit 17 is set in node flags when they have been created by shared recombination
@@ -36,3 +39,7 @@ NODE_IS_SAMPLE_ANCESTOR = 1 << 18
 
 # Marker constants for node & site time values
 TIME_UNSPECIFIED = -np.inf
+
+# What type of inference have we done at a site?
+INFERENCE_FULL = "full"
+INFERENCE_FITCH_PARSIMONY = "fitch_parsimony"

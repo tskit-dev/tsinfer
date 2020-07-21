@@ -8,6 +8,9 @@
   0/1 values as before.
 - Times for undated sites now use frequencies (0..1), not as counts (1..num_samples),
   and are now stored as -inf, then calculated on the fly in the variants() iterator.
+- The SampleData file no longer accepts the ``inference`` argument to add_site.
+  This functionality has been replaced by the ``exclude_positions`` argument
+  to the ``infer`` and ``generate_ancestors`` functions.
 
 ********************
 [0.1.5] - 2019-09-25

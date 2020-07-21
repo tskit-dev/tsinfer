@@ -93,7 +93,7 @@ def tsinfer_dev(
             # var.genotypes[var.site.id % source_ts.num_samples] = tskit.MISSING_DATA
             samples.add_site(var.site.position, var.genotypes, var.alleles)
 
-    # print(samples)
+    print(samples)
     # for variant in samples.variants():
     #     print(variant)
 
@@ -112,6 +112,7 @@ def tsinfer_dev(
     ancestor_data = tsinfer.generate_ancestors(
         samples, engine=engine, num_threads=num_threads
     )
+    print(ancestor_data)
 
     ancestors_ts = tsinfer.match_ancestors(
         samples,
@@ -152,15 +153,16 @@ def tsinfer_dev(
         precision=precision,
         simplify=False,
     )
+    # print(ts.tables)
 
-    for var1, var2, var3 in zip(
-        source_ts.variants(), ts.variants(), samples.variants()
-    ):
-        if np.any(var1.genotypes != var2.genotypes):
-            print("mismatch at ", var1.site.id)
-            print(var1.genotypes)
-            print(var2.genotypes)
-            print(var3.genotypes)
+    #     for var1, var2, var3 in zip(
+    #         source_ts.variants(), ts.variants(), samples.variants()
+    #     ):
+    #         if np.any(var1.genotypes != var2.genotypes):
+    #             print("mismatch at ", var1.site.id)
+    #             print(var1.genotypes)
+    #             print(var2.genotypes)
+    #             print(var3.genotypes)
 
     print("num_edges = ", ts.num_edges)
 
@@ -192,7 +194,7 @@ def tsinfer_dev(
     # for tree in ts.trees():
     #     print(tree.draw(format="unicode"))
 
-    # tsinfer.verify(samples, ts)
+    tsinfer.verify(samples, ts)
 
 
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
@@ -322,15 +324,17 @@ if __name__ == "__main__":
     # build_profile_inputs(10**4, 100)
     # build_profile_inputs(10**5, 100)
 
-    # for j in range(1, 100):
-    #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
+    # for j in range(1, 1000):
+    # for j in [96]:
+    #     print("seed = ", j)
+    #     tsinfer_dev(5, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
     tsinfer_dev(
         8,
         0.05,
         seed=4,
         num_threads=0,
-        engine="P",
+        engine="C",
         recombination_rate=1e-8,
         precision=0,
     )

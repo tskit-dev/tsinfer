@@ -373,7 +373,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
             genotypes[k] = samples[k][j];
             time += genotypes[k];
         }
-        ret = ancestor_builder_add_site(&ancestor_builder, j, time, genotypes);
+        ret = ancestor_builder_add_site(&ancestor_builder, time, genotypes);
         CU_ASSERT_EQUAL_FATAL(ret, 0);
     }
     ret = ancestor_builder_finalise(&ancestor_builder);
@@ -437,6 +437,30 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
 }
 
 static void
+test_ancestor_builder_errors(void)
+{
+    int ret = 0;
+    ancestor_builder_t ancestor_builder;
+    allele_t genotypes[4] = { 1, 1, 1, 1 };
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 0, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_SAMPLES);
+    ancestor_builder_free(&ancestor_builder);
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_SAMPLES);
+    ancestor_builder_free(&ancestor_builder);
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 2, 0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL_FATAL(ancestor_builder.num_sites, 0);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_TOO_MANY_SITES);
+
+    ancestor_builder_free(&ancestor_builder);
+}
+
+static void
 test_ancestor_builder_one_site(void)
 {
     int ret = 0;
@@ -447,7 +471,7 @@ test_ancestor_builder_one_site(void)
 
     ret = ancestor_builder_alloc(&ancestor_builder, 4, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = ancestor_builder_add_site(&ancestor_builder, 0, 4, genotypes);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_builder_finalise(&ancestor_builder);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -813,6 +837,7 @@ main(int argc, char **argv)
     CU_pTest test;
     CU_pSuite suite;
     CU_TestInfo tests[] = {
+        { "test_ancestor_builder_errors", test_ancestor_builder_errors },
         { "test_ancestor_builder_one_site", test_ancestor_builder_one_site },
         /* TODO more ancestor builder tests */
         { "test_matching_one_site", test_matching_one_site },

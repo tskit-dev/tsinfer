@@ -20,7 +20,6 @@
 Manage tsinfer's various file formats.
 """
 import collections.abc as abc
-import collections
 import datetime
 import itertools
 import logging
@@ -69,20 +68,6 @@ def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
     if os.path.exists(lockfile):
         os.unlink(lockfile)
-
-
-AlleleCounts = collections.namedtuple("AlleleCounts", "known ancestral derived")
-
-
-def allele_counts(genotypes):
-    """
-    Return summary counts of the number of different allele types for a genotypes array
-    """
-    n_known = np.sum(genotypes != tskit.MISSING_DATA)
-    n_ancestral = np.sum(genotypes == 0)
-    return AlleleCounts(
-        known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
-    )
 
 
 class BufferedItemWriter(object):
@@ -640,7 +625,6 @@ class Site(object):
     id = attr.ib()
     position = attr.ib()
     ancestral_state = attr.ib()
-    inference = attr.ib()
     metadata = attr.ib()
     time = attr.ib()
     alleles = attr.ib()
@@ -787,7 +771,7 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (3, 0)
+    FORMAT_VERSION = (4, 0)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
@@ -891,13 +875,6 @@ class SampleData(DataContainer):
             dtype=np.int8,
         )
         sites_group.create_dataset(
-            "inference",
-            shape=(0,),
-            chunks=chunks,
-            compressor=self._compressor,
-            dtype=bool,
-        )
-        sites_group.create_dataset(
             "alleles",
             shape=(0,),
             chunks=chunks,
@@ -927,20 +904,6 @@ class SampleData(DataContainer):
     @property
     def sequence_length(self):
         return self.data.attrs["sequence_length"]
-
-    @property
-    def num_inference_sites(self):
-        if self._mode == self.READ_MODE:
-            # Cache the value as it's expensive to compute
-            if not hasattr(self, "__num_inference_sites"):
-                self.__num_inference_sites = int(np.sum(self.sites_inference[:]))
-            return self.__num_inference_sites
-        else:
-            return int(np.sum(self.sites_inference[:]))
-
-    @property
-    def num_non_inference_sites(self):
-        return self.num_sites - self.num_inference_sites
 
     @property
     def num_populations(self):
@@ -1011,23 +974,6 @@ class SampleData(DataContainer):
     def sites_metadata(self):
         return self.data["sites/metadata"]
 
-    @property
-    def sites_inference(self):
-        return self.data["sites/inference"]
-
-    @sites_inference.setter
-    def sites_inference(self, value):
-        self._check_edit_mode()
-        if type(value) == np.ndarray and value.dtype == "bool":
-            # Shortcut, can input directly
-            self.data["sites/inference"][:] = value
-        else:
-            # Check bounds, first cast to a tiny int, then check
-            new_value = tskit.util.safe_np_int_cast(value, np.uint8)
-            if np.any(new_value > 1) or np.any(new_value < 0):
-                raise ValueError("Input values must be boolean 0/1")
-            self.data["sites/inference"][:] = new_value.astype(bool)
-
     def __str__(self):
         values = [
             ("sequence_length", self.sequence_length),
@@ -1035,7 +981,6 @@ class SampleData(DataContainer):
             ("num_individuals", self.num_individuals),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
-            ("num_inference_sites", self.num_inference_sites),
             ("populations/metadata", zarr_summary(self.populations_metadata)),
             ("individuals/metadata", zarr_summary(self.individuals_metadata)),
             ("individuals/location", zarr_summary(self.individuals_location)),
@@ -1046,7 +991,6 @@ class SampleData(DataContainer):
             ("sites/position", zarr_summary(self.sites_position)),
             ("sites/time", zarr_summary(self.sites_time)),
             ("sites/alleles", zarr_summary(self.sites_alleles)),
-            ("sites/inference", zarr_summary(self.sites_inference)),
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
             ("sites/metadata", zarr_summary(self.sites_metadata)),
         ]
@@ -1106,9 +1050,7 @@ class SampleData(DataContainer):
     def sites_equal(self, other):
         return (
             self.num_sites == other.num_sites
-            and self.num_inference_sites == other.num_inference_sites
             and np.all(self.sites_position[:] == other.sites_position[:])
-            and np.all(self.sites_inference[:] == other.sites_inference[:])
             and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
             and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
             and all(
@@ -1234,15 +1176,6 @@ class SampleData(DataContainer):
                         genotypes=variant.genotypes[sample_selection],
                         alleles=variant.alleles,
                         metadata=variant.site.metadata,
-                        inference=None,
-                        # We would prefer to inherit the inference status from
-                        # the original file, but it's too tedious with the error
-                        # checking that we have. Since we're going to push the
-                        # inference_sites guessing to inference time rather than
-                        # data set build time before the next release, there's
-                        # no point in fiddling with this, as it will likely
-                        # do what you want most of the time.
-                        # inference=variant.site.inference,
                         time=variant.site.time,
                     )
             for timestamp, record in self.provenances():
@@ -1375,7 +1308,6 @@ class SampleData(DataContainer):
             "genotypes": self.sites_genotypes,
             "alleles": self.sites_alleles,
             "metadata": self.sites_metadata,
-            "inference": self.sites_inference,
             "time": self.sites_time,
         }
         self._sites_writer = BufferedItemWriter(
@@ -1534,13 +1466,6 @@ class SampleData(DataContainer):
             specified or None, defaults to ["0", "1"].
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this site.
-        :param bool inference: If True, use this site during the inference
-            process. If False, do not use this sites for inference; in this
-            case, :func:`match_samples` will place mutations on the existing
-            tree in a way that encodes the supplied sample genotypes. If
-            ``inference=None`` (the default), use any biallelic site in which the
-            number of samples carrying the derived state is greater than
-            1 and less than the number of samples.
         :param float time: The time of occurence (pastwards) of the mutation to the
             derived state at this site. If not specified or None, the frequency of the
             derived alleles (i.e., the proportion of non-zero values in the genotypes,
@@ -1578,6 +1503,9 @@ class SampleData(DataContainer):
         non_missing = genotypes != tskit.MISSING_DATA
         if len(set(alleles)) != n_alleles:
             raise ValueError("Alleles must be distinct")
+        if n_alleles > 64:
+            # This is mandated by tskit's map_mutations function.
+            raise ValueError("Cannot have more than 64 alleles")
         if np.any(genotypes == tskit.MISSING_DATA) and alleles[-1] is not None:
             # Don't modify the input parameter
             alleles = list(alleles) + [None]
@@ -1597,31 +1525,17 @@ class SampleData(DataContainer):
             raise ValueError(
                 "Site positions must be unique and added in increasing order"
             )
-
-        counts = allele_counts(genotypes)
-        if n_alleles > 2:
-            if inference is None:
-                inference = False
-            if inference:
-                raise ValueError("Only biallelic sites supported for inference")
-            if n_alleles > 64:
-                # This is mandated by tskit's map_mutations function.
-                raise ValueError("Cannot have more than 64 alleles")
-        if counts.derived > 1 and counts.derived < counts.known:
-            if inference is None:
-                inference = True
-        else:
-            if inference is None:
-                inference = False
-            if inference:
-                raise ValueError("Cannot use singletons or fixed sites for inference")
+        if inference is not None:
+            raise ValueError(
+                "Inference sites no longer be stored in the sample data file. "
+                "Please use the exclude_sites option to generate_ancestors."
+            )
         if time is None:
             time = constants.TIME_UNSPECIFIED
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
             metadata=self._check_metadata(metadata),
-            inference=inference,
             alleles=alleles,
             time=time,
         )
@@ -1685,82 +1599,57 @@ class SampleData(DataContainer):
     # Read mode
     ####################################
 
-    def sites(self, inference_sites=None):
+    def sites(self, ids=None):
         """
-        Returns an iterator over the Site objects.
+        Returns an iterator over the Site objects. A subset of the
+        sites can be returned using the ``ids`` parameter. This must
+        be a list of integer site IDs.
         """
         position = self.sites_position[:]
         alleles = self.sites_alleles[:]
-        inference = self.sites_inference[:]
         metadata = self.sites_metadata[:]
         time = self.sites_time[:]
-        for j in range(self.num_sites):
-            if inference_sites is None or inference[j] == inference_sites:
-                site = Site(
-                    id=j,
-                    position=position[j],
-                    ancestral_state=alleles[j][0],
-                    alleles=tuple(alleles[j]),
-                    inference=inference[j],
-                    metadata=metadata[j],
-                    time=time[j],
-                )
-                yield site
+        if ids is None:
+            ids = np.arange(0, self.num_sites, dtype=int)
+        for j in ids:
+            site = Site(
+                id=j,
+                position=position[j],
+                ancestral_state=alleles[j][0],
+                alleles=tuple(alleles[j]),
+                metadata=metadata[j],
+                time=time[j],
+            )
+            yield site
 
-    def genotypes(self, inference_sites=None):
-        """
-        Returns an iterator over the (site_id, genotypes) pairs.
-
-        :param bool inference_sites: Control the sites for which genotypes are returned.
-            If ``None``, return genotypes for all sites; if ``True``, return only
-            genotypes at sites that have been marked for inference; if ``False``, return
-            only genotypes at sites that are not marked for inference.
-        """
-        inference = self.sites_inference[:]
-        for j, a in enumerate(chunk_iterator(self.sites_genotypes)):
-            if inference_sites is None or inference[j] == inference_sites:
-                yield j, a
-
-    def num_alleles(self, inference_sites=None):
+    def num_alleles(self, sites=None):
         """
         Returns a numpy array of the number of alleles at each site.
 
-        :param bool inference_sites: Control the sites for which the number of alleles
-            is returned. If ``None``, return for all sites; if ``True``, return only
-            sites that have been marked for inference; if ``False``, return
-            only sites that are not marked for inference.
         :return: A numpy array of the number of alleles at each site.
         :rtype: numpy.ndarray(dtype=uint32)
         """
+        if sites is None:
+            sites = np.arange(self.num_sites)
         alleles = self.sites_alleles[:]
-        inference = self.sites_inference[:]
         num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
         for j, alleles in enumerate(alleles):
             num_alleles[j] = len(alleles)
-        if inference_sites is None:
-            return num_alleles
-        value = 1 if inference_sites else 0
-        return num_alleles[inference == value]
+        return num_alleles[sites]
 
-    def variants(self, inference_sites=None):
+    def variants(self):
         """
         Returns an iterator over the Variant objects. This is equivalent to
         the TreeSequence.variants iterator.
-
-        :param bool inference_sites: Control the sites for which variants are returned.
-            If ``None``, return genotypes for all sites; if ``True``, return only
-            genotypes at sites that have been marked for inference; if ``False``, return
-            only genotypes at sites that are not marked for inference.
         """
-        for (j, genotypes), site in zip(
-            self.genotypes(inference_sites), self.sites(inference_sites)
-        ):
-            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes,)
+        all_genotypes = chunk_iterator(self.sites_genotypes)
+        for genotypes, site in zip(all_genotypes, self.sites()):
+            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
             yield variant
 
-    def __all_haplotypes(self, inference_sites=None):
-        if inference_sites is not None:
-            selection = self.sites_inference[:] == inference_sites
+    def __all_haplotypes(self, sites=None):
+        if sites is None:
+            sites = np.arange(self.num_sites, dtype=int)
         # We iterate over chunks vertically here, and it's not worth complicating
         # the chunk iterator to handle this.
         chunk_size = self.sites_genotypes.chunks[1]
@@ -1768,25 +1657,15 @@ class SampleData(DataContainer):
             if j % chunk_size == 0:
                 chunk = self.sites_genotypes[:, j : j + chunk_size].T
             a = chunk[j % chunk_size]
-            if inference_sites is None:
-                yield j, a
-            else:
-                yield j, a[selection]
+            yield j, a[sites]
 
-    def haplotypes(self, samples=None, inference_sites=None):
+    def haplotypes(self, samples=None, sites=None):
         """
         Returns an iterator over the (sample_id, haplotype) pairs.
 
         :param list samples: The sample IDs for which haplotypes are returned. If
             ``None``, return haplotypes for all sample nodes, otherwise this may be a
             numpy array (or array-like) object (converted to dtype=np.int32).
-        :param bool inference_sites: Control the sites included in each haplotype. If
-            ``inference_sites`` is ``None``, each returned haplotype includes all sampled
-            sites and is thus of length ``num_sites``. Otherwise, if ``inference_sites``
-            is ``True`` each haplotype includes only sites that have been marked for
-            inference, if ``False``, only sites that are not marked for inference: in
-            both cases the haplotype arrays may thus be less than ``num_sites`` long.
-
         """
         if samples is None:
             samples = np.arange(self.num_samples)
@@ -1797,7 +1676,7 @@ class SampleData(DataContainer):
             if samples.shape[0] > 0 and samples[-1] >= self.num_samples:
                 raise ValueError("Sample index too large.")
         j = 0
-        for index, a in self.__all_haplotypes(inference_sites):
+        for index, a in self.__all_haplotypes(sites):
             if j == len(samples):
                 break
             if index == samples[j]:
@@ -1903,29 +1782,24 @@ class AncestorData(DataContainer):
         super().__init__(**kwargs)
         sample_data._check_finalised()
         self.sample_data = sample_data
-        # Cache the num_sites value here as it's expensive to compute.
-        self._num_sites = self.sample_data.num_inference_sites
-        self._num_alleles = self.sample_data.num_alleles(inference_sites=True)
-        self._last_time = 0
-
-        assert self._num_alleles.shape[0] == self._num_sites
         self.data.attrs["sample_data_uuid"] = sample_data.uuid
         if self.sample_data.sequence_length == 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero")
         self.data.attrs["sequence_length"] = self.sample_data.sequence_length
+        self._last_time = 0
 
         chunks = self._chunk_size
-        # Add in the positions for the sites.
-        sites_inference = self.sample_data.sites_inference[:]
-        position = self.sample_data.sites_position[:][sites_inference]
+
+        # By default all sites in the sample data file are used.
+        self._num_alleles = self.sample_data.num_alleles()
+        position = self.sample_data.sites_position[:]
         self.data.create_dataset(
             "sites/position",
             data=position,
-            chunks=chunks,
+            shape=position.shape,
             compressor=self._compressor,
             dtype=np.float64,
         )
-
         self.data.create_dataset(
             "ancestors/start",
             shape=(0,),
@@ -2084,6 +1958,20 @@ class AncestorData(DataContainer):
     # Write mode
     ####################################
 
+    def set_inference_sites(self, site_ids):
+        """
+        Sets the sites used for inference (i.e., the sites at which ancestor haplotypes
+        are defined) to the specified list of site IDs. This must be a subset of the
+        sites in the sample data file, and the IDs must be in increasing order.
+
+        This must be called before the first call to ``add_ancestor``.
+        """
+        position = self.sample_data.sites_position[:][site_ids]
+        array = self.data["sites/position"]
+        array.resize(position.shape)
+        array[:] = position
+        self._num_alleles = self.sample_data.num_alleles(site_ids)
+
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material over the
@@ -2098,8 +1986,8 @@ class AncestorData(DataContainer):
         )
         if start < 0:
             raise ValueError("Start must be >= 0")
-        if end > self._num_sites:
-            raise ValueError("end must be <= num_variant_sites")
+        if end > self.num_sites:
+            raise ValueError("end must be <= num_sites")
         if start >= end:
             raise ValueError("start must be < end")
         if haplotype.shape != (end - start,):

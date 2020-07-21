@@ -65,10 +65,9 @@ class AncestorBuilder(object):
     This implementation partially allows for multiple focal sites per ancestor
     """
 
-    def __init__(self, num_samples, num_sites):
+    def __init__(self, num_samples, max_sites):
         self.num_samples = num_samples
-        self.num_sites = num_sites
-        self.sites = [None for _ in range(self.num_sites)]
+        self.sites = []
         # Create a mapping from time to sites. Different sites can exist at the same
         # timepoint. If we expect them to be part of the same ancestor node we can give
         # them the same ancestor_uid: the time_map contains values keyed by time, with
@@ -77,11 +76,16 @@ class AncestorBuilder(object):
         # defaultdict of defaultdicts
         self.time_map = collections.defaultdict(lambda: collections.defaultdict(list))
 
-    def add_site(self, site_id, time, genotypes):
+    @property
+    def num_sites(self):
+        return len(self.sites)
+
+    def add_site(self, time, genotypes):
         """
         Adds a new site at the specified ID to the builder.
         """
-        self.sites[site_id] = Site(site_id, time, genotypes)
+        site_id = len(self.sites)
+        self.sites.append(Site(site_id, time, genotypes))
         sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) and at the same time, are put into the same ancestor
