@@ -1235,7 +1235,7 @@ class SampleMatcher(Matcher):
                     index = np.where(times == t)[0]
                     k = index.shape[0]
                     times[index] += np.arange(k)[::-1] / k
-                tables.nodes.set_columns(flags=tables.nodes.flags, time=times)
+                tables.nodes.time = times
                 tables.sort()
                 ts = tables.tree_sequence()
             ts = ts.simplify(
@@ -1390,14 +1390,7 @@ class SampleMatcher(Matcher):
         # All true ancestors are samples in the ancestors tree sequence. We unset
         # the SAMPLE flag but keep other flags intact.
         new_flags = np.bitwise_and(tables.nodes.flags, ~tskit.NODE_IS_SAMPLE)
-        tables.nodes.set_columns(
-            flags=new_flags.astype(np.uint32),
-            time=tables.nodes.time,
-            population=tables.nodes.population,
-            individual=tables.nodes.individual,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset,
-        )
+        tables.nodes.flags = new_flags.astype(np.uint32)
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
         samples_metadata = self.sample_data.samples_metadata[:]
@@ -1489,14 +1482,7 @@ class SampleMatcher(Matcher):
 
         # Increment the time for all nodes so the augmented samples are no longer
         # at timepoint 0.
-        tables.nodes.set_columns(
-            flags=tables.nodes.flags,
-            time=tables.nodes.time + 1,
-            population=tables.nodes.population,
-            individual=tables.nodes.individual,
-            metadata=tables.nodes.metadata,
-            metadata_offset=tables.nodes.metadata_offset,
-        )
+        tables.nodes.time = tables.nodes.time + 1
         num_pc_ancestors = count_pc_ancestors(tables.nodes.flags) - num_pc_ancestors
 
         # TODO - check this works for augmented ancestors with missing data
