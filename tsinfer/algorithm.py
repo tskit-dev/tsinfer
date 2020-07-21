@@ -260,7 +260,8 @@ class TreeSequenceBuilder(object):
         for t, flag in zip(time, flags):
             self.add_node(t, flag)
 
-    def add_node(self, time, flags=1):
+    def add_node(self, time, flags=tskit.NODE_IS_SAMPLE):
+        # Add a node, marking by default as a sample (as required in an ancestors_ts)
         self.num_nodes += 1
         self.time.append(time)
         self.flags.append(flags)
