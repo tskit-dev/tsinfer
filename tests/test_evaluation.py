@@ -393,9 +393,15 @@ class TestInsertPerfectMutations(unittest.TestCase):
         self.verify_perfect_mutations(ts)
 
     def test_multiple_recombinations(self):
-        recomb_map = msprime.RecombinationMap.uniform_map(
-            length=10, rate=10, num_loci=10
-        )
+        try:
+            recomb_map = msprime.RecombinationMap.uniform_map(
+                length=10, rate=10, discrete=True
+            )
+        except TypeError:
+            # Fallback for older versions of msprime, which use num_loci
+            recomb_map = msprime.RecombinationMap.uniform_map(
+                length=10, rate=10, num_loci=10
+            )
         ts = msprime.simulate(10, recombination_map=recomb_map, random_seed=1)
         found = False
         for _, e_out, _ in ts.edge_diffs():
