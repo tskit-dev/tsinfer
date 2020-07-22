@@ -1278,6 +1278,19 @@ class TestAncestorsTreeSequence(unittest.TestCase):
                 )
                 self.assertEqual(ancestor_data.provenances_timestamp[j], p.timestamp)
 
+            # Ancestors indicated in node metadata should have the same age as their node
+            ancestors_time = ancestor_data.ancestors_time[:]
+            num_ancestor_nodes = 0
+            for n in ancestors_ts.nodes():
+                md = json.loads(n.metadata) if n.metadata else {}
+                if tsinfer.is_pc_ancestor(n.flags):
+                    self.assertFalse("ancestor_data_id" in md)
+                else:
+                    self.assertTrue("ancestor_data_id" in md)
+                    self.assertEqual(ancestors_time[md["ancestor_data_id"]], n.time)
+                    num_ancestor_nodes += 1
+            self.assertEqual(num_ancestor_nodes, ancestor_data.num_ancestors)
+
     def test_no_recombination(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
@@ -2677,7 +2690,7 @@ class TestAugmentedAncestors(unittest.TestCase):
             self.assertEqual(node.flags, tsinfer.NODE_IS_SAMPLE_ANCESTOR)
             self.assertEqual(node.time, 1)
             metadata = json.loads(node.metadata.decode())
-            self.assertEqual(node_id, metadata["sample"])
+            self.assertEqual(node_id, metadata["sample_data_id"])
 
         t2.nodes.truncate(len(t1.nodes))
         # Adding and subtracting 1 can lead to small diffs, so we compare
@@ -2830,7 +2843,7 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             for node in final_ts.nodes():
                 if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
                     metadata = json.loads(node.metadata.decode())
-                    self.assertIn(metadata["sample"], subset)
+                    self.assertIn(metadata["sample_data_id"], subset)
                     num_sample_ancestors += 1
             self.assertEqual(expected_sample_ancestors, num_sample_ancestors)
             tsinfer.verify(samples, final_ts.simplify())
