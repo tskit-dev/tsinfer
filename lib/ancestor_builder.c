@@ -223,6 +223,10 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
 
     ancestor_builder_get_consistent_samples(
         self, focal_site, sample_set, &sample_set_size);
+    if (sample_set_size == 0) {
+        ret = TSI_ERR_BAD_FOCAL_SITE;
+        goto out;
+    }
     memset(disagree, 0, self->num_samples * sizeof(*disagree));
     min_sample_set_size = sample_set_size / 2;
 
@@ -253,11 +257,13 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                         break;
                 }
             }
-            consensus = 0;
-            if (ones + zeros > 0) {
-                /* We have valid (non-missing) data in the tracked samples at site l */
+            if (ones + zeros == 0) {
+                ancestor[l] = TSK_MISSING_DATA;
+            } else {
                 if (ones >= zeros) {
                     consensus = 1;
+                } else {
+                    consensus = 0;
                 }
                 /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
                 /* fflush(stdout); */
@@ -291,11 +297,12 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     disagree[u] = ((genotypes[u] != consensus)
                                    && (genotypes[u] != TSK_MISSING_DATA));
                 }
+                ancestor[l] = consensus;
             }
-            ancestor[l] = consensus;
         }
     }
     *last_site_ret = last_site;
+out:
     return ret;
 }
 
@@ -314,6 +321,10 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
     assert(num_focal_sites > 0);
     ancestor_builder_get_consistent_samples(
         self, focal_sites[0], sample_set, &sample_set_size);
+    if (sample_set_size == 0) {
+        ret = TSI_ERR_BAD_FOCAL_SITE;
+        goto out;
+    }
     focal_site_time = self->sites[focal_sites[0]].time;
 
     ancestor[focal_sites[0]] = 1;
@@ -339,15 +350,15 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
                             break;
                     }
                 }
-                if (ones + zeros > 0) {
-                    /* We have valid (non-missing) data at this site */
-                    if (ones >= zeros) {
-                        ancestor[l] = 1;
-                    }
+                if (ones + zeros == 0) {
+                    ancestor[l] = TSK_MISSING_DATA;
+                } else if (ones >= zeros) {
+                    ancestor[l] = 1;
                 }
             }
         }
     }
+out:
     return ret;
 }
 
@@ -379,7 +390,6 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     if (ret != 0) {
         goto out;
     }
-    assert(ancestor[last_site] != -1);
     *ret_end = last_site + 1;
 
     focal_site = focal_sites[0];
@@ -388,7 +398,6 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
     if (ret != 0) {
         goto out;
     }
-    assert(ancestor[last_site] != -1);
     *ret_start = last_site;
 out:
     tsi_safe_free(sample_set);
