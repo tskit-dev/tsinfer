@@ -471,8 +471,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sd2 = formats.SampleData.from_tree_sequence(ts, use_metadata=False)
         # Copy tests from SampleData.data_equal, except the metadata
         self.assertTrue(np.all(sd2.individuals_time[:] == sd1.individuals_time[:]))
+        self.assertTrue(
+            np.all(sd2.individuals_population[:] == sd1.individuals_population[:])
+        )
         self.assertTrue(np.all(sd2.samples_individual[:] == sd1.samples_individual[:]))
-        self.assertTrue(np.all(sd2.samples_population[:] == sd1.samples_population[:]))
         self.assertTrue(np.all(sd2.sites_position[:] == sd1.sites_position[:]))
         self.assertTrue(np.all(sd2.sites_genotypes[:] == sd1.sites_genotypes[:]))
         self.assertTrue(np.all(sd2.sites_time[:] == sd1.sites_time[:]))
@@ -784,8 +786,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
         self.assertEqual(sample_data.populations_metadata[0], {"a": 1})
         self.assertEqual(sample_data.populations_metadata[1], {"b": 2})
-        self.assertEqual(sample_data.samples_population[0], 0)
-        self.assertEqual(sample_data.samples_population[1], 1)
+        self.assertEqual(sample_data.individuals_population[0], 0)
+        self.assertEqual(sample_data.individuals_population[1], 1)
 
     def test_individual_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)

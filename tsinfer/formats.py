@@ -735,6 +735,7 @@ class Individual(object):
     location = attr.ib()
     time = attr.ib()
     metadata = attr.ib()
+    population = attr.ib()
     samples = attr.ib()
 
 
@@ -914,19 +915,24 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=np.float64,
         )
-        self._individuals_writer = BufferedItemWriter(
-            {"metadata": metadata, "location": location, "time": time},
-            num_threads=self._num_flush_threads,
-        )
-
-        samples_group = self.data.create_group("samples")
-        population = samples_group.create_dataset(
+        population = individuals_group.create_dataset(
             "population",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.int32,
         )
+        self._individuals_writer = BufferedItemWriter(
+            {
+                "metadata": metadata,
+                "location": location,
+                "time": time,
+                "population": population,
+            },
+            num_threads=self._num_flush_threads,
+        )
+
+        samples_group = self.data.create_group("samples")
         individual = samples_group.create_dataset(
             "individual",
             shape=(0,),
@@ -1033,8 +1039,8 @@ class SampleData(DataContainer):
         return self.data["individual/time"]
 
     @property
-    def samples_population(self):
-        return self.data["samples/population"]
+    def individuals_population(self):
+        return self.data["individual/population"]
 
     @property
     def samples_individual(self):
@@ -1080,8 +1086,8 @@ class SampleData(DataContainer):
             ("individuals/metadata", zarr_summary(self.individuals_metadata)),
             ("individuals/location", zarr_summary(self.individuals_location)),
             ("individuals/time", zarr_summary(self.individuals_time)),
+            ("individuals/population", zarr_summary(self.individuals_population)),
             ("samples/individual", zarr_summary(self.samples_individual)),
-            ("samples/population", zarr_summary(self.samples_population)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
             ("sites/position", zarr_summary(self.sites_position)),
             ("sites/time", zarr_summary(self.sites_time)),
@@ -1133,7 +1139,6 @@ class SampleData(DataContainer):
         return (
             self.num_samples == other.num_samples
             and np.all(self.samples_individual[:] == other.samples_individual[:])
-            and np.all(self.samples_population[:] == other.samples_population[:])
             and all(
                 itertools.starmap(
                     np.array_equal,
@@ -1239,7 +1244,6 @@ class SampleData(DataContainer):
         if len(sites) != num_sites:
             raise ValueError("Duplicate site IDS")
         all_samples_metadata = self.samples_metadata[:]
-        all_samples_population = self.samples_population[:]
         with SampleData(sequence_length=self.sequence_length, **kwargs) as subset:
             # NOTE We don't bother filtering the populations, but we could.
             for population in self.populations():
@@ -1256,8 +1260,7 @@ class SampleData(DataContainer):
                         location=individual.location,
                         metadata=individual.metadata,
                         time=individual.time,
-                        # We're assuming this is the same for all samples
-                        population=all_samples_population[individual.samples[0]],
+                        population=individual.population,
                         samples_metadata=samples_metadata,
                         ploidy=len(samples_metadata),
                     )
@@ -1656,17 +1659,15 @@ class SampleData(DataContainer):
                 )
             last_pos = other.sites_position[-1]
             if not self.sequence_length == other.sequence_length:
-                raise ValueError(
-                    f"sample data files must have the same sequence length"
-                )
+                raise ValueError("sample data files must have the same sequence length")
             if not self.formats_equal(other):
-                raise ValueError(f"sample data files must be of the same format")
+                raise ValueError("sample data files must be of the same format")
             if not self.samples_equal(other):
-                raise ValueError(f"sample data files must have identical samples")
+                raise ValueError("sample data files must have identical samples")
             if not self.individuals_equal(other):
-                raise ValueError(f"sample data files must have identical individuals")
+                raise ValueError("sample data files must have identical individuals")
             if not self.populations_equal(other):
-                raise ValueError(f"sample data files must have identical populations")
+                raise ValueError("sample data files must have identical populations")
         for other in additional_samples:
             for name, arr in self.arrays():
                 if name.startswith("sites/"):
@@ -1700,7 +1701,7 @@ class SampleData(DataContainer):
             pop_id_map = {j: j for j in range(other.num_populations)}
             pop_id_map[tskit.NULL] = tskit.NULL
         other_samples_metadata = other.samples_metadata[:]
-        other_samples_population = other.samples_population[:]
+        other_individuals_population = other.individuals_population[:]
         for individual in other.individuals():
             samples_metadata = [
                 other_samples_metadata[sample_id] for sample_id in individual.samples
@@ -1710,7 +1711,9 @@ class SampleData(DataContainer):
                 metadata=individual.metadata,
                 time=individual.time,
                 # We're assuming this is the same for all samples
-                population=pop_id_map[other_samples_population[individual.samples[0]]],
+                population=pop_id_map[
+                    other_individuals_population[individual.samples[0]]
+                ],
                 samples_metadata=samples_metadata,
                 ploidy=len(samples_metadata),
             )
@@ -1878,6 +1881,7 @@ class SampleData(DataContainer):
             location=list(self.individuals_location[id_]),
             metadata=self.individuals_metadata[id_],
             time=self.individuals_time[id_],
+            population=self.individuals_population[id_],
             samples=list(samples),
         )
 
@@ -1890,13 +1894,15 @@ class SampleData(DataContainer):
             self.individuals_location[:],
             self.individuals_metadata[:],
             self.individuals_time[:],
+            self.individuals_population[:],
         )
-        for j, (location, metadata, time) in enumerate(iterator):
+        for j, (location, metadata, time, population) in enumerate(iterator):
             yield Individual(
                 j,
                 location=list(location),
                 metadata=metadata,
                 time=time,
+                population=population,
                 samples=individual_samples[j],
             )
 
@@ -1905,7 +1911,7 @@ class SampleData(DataContainer):
         iterator = zip(
             self.samples_metadata[:],
             self.samples_individual[:],
-            self.samples_population[:],
+            self.individuals_population[:],
         )
         for j, (metadata, individual, population) in enumerate(iterator):
             yield Sample(
