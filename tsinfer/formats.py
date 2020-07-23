@@ -238,6 +238,88 @@ def chunk_iterator(array):
         yield chunk[j % chunk_size]
 
 
+def merge_variants(sd1, sd2):
+    """
+    Returns an iterator over the merged variants in the specified
+    SampleData files. Sites are merged by site position, and
+    genotypes are set to missing data for sites are as not present
+    in one of the data files.
+    """
+    var1_iter = iter(sd1.variants())
+    var2_iter = iter(sd2.variants())
+    var1 = next(var1_iter, None)
+    var2 = next(var2_iter, None)
+    n1 = sd1.num_samples
+    n2 = sd2.num_samples
+    genotypes = np.empty(n1 + n2, dtype=np.int8)
+    while var1 is not None and var2 is not None:
+        if var1.site.position == var2.site.position:
+            # Checking metadata as well is probably overly strict, but
+            # we can fix this later if needs be.
+            if (
+                var1.site.ancestral_state != var2.site.ancestral_state
+                or var1.site.time != var2.site.time
+                or var1.site.metadata != var2.site.metadata
+            ):
+                raise ValueError(
+                    "Merged sites must have the same ancestral_state, "
+                    "time and metadata"
+                )
+            # If there is missing data the last allele is always None
+            missing_data = False
+            alleles = list(var1.site.alleles)
+            if alleles[-1] is None:
+                alleles = alleles[:-1]
+                missing_data = True
+            var2_genotypes = var2.genotypes.copy()
+            for old_index, allele in enumerate(var2.site.alleles):
+                if allele is None:
+                    missing_data = True
+                    break
+                if allele not in alleles:
+                    alleles.append(allele)
+                new_index = alleles.index(allele)
+                if old_index != new_index:
+                    var2_genotypes[var2.genotypes == old_index] = new_index
+            if missing_data:
+                alleles.append(None)
+            genotypes[:n1] = var1.genotypes
+            genotypes[n1:] = var2_genotypes
+            site = var1.site
+            site.alleles = alleles
+            # TODO not sure why we have alleles on both the Site and Variant
+            var = Variant(site=site, genotypes=genotypes, alleles=alleles)
+            yield var
+            var1 = next(var1_iter, None)
+            var2 = next(var2_iter, None)
+        elif var1.site.position < var2.site.position:
+            genotypes[:n1] = var1.genotypes
+            genotypes[n1:] = tskit.MISSING_DATA
+            var1.genotypes = genotypes
+            yield var1
+            var1 = next(var1_iter, None)
+        else:
+            genotypes[:n1] = tskit.MISSING_DATA
+            genotypes[n1:] = var2.genotypes
+            var2.genotypes = genotypes
+            yield var2
+            var2 = next(var2_iter, None)
+
+    genotypes[n1:] = tskit.MISSING_DATA
+    while var1 is not None:
+        genotypes[:n1] = var1.genotypes
+        var1.genotypes = genotypes
+        yield var1
+        var1 = next(var1_iter, None)
+
+    genotypes[:n1] = tskit.MISSING_DATA
+    while var2 is not None:
+        genotypes[n1:] = var2.genotypes
+        var2.genotypes = genotypes
+        yield var2
+        var2 = next(var2_iter, None)
+
+
 class DataContainer(object):
     """
     Superclass of objects used to represent a collection of related
@@ -654,6 +736,19 @@ class Individual(object):
     time = attr.ib()
     metadata = attr.ib()
     samples = attr.ib()
+
+
+@attr.s
+class Sample(object):
+    """
+    A Sample object.
+    """
+
+    # TODO document properly.
+    id = attr.ib()
+    population = attr.ib()
+    individual = attr.ib()
+    metadata = attr.ib()
 
 
 @attr.s
@@ -1595,9 +1690,99 @@ class SampleData(DataContainer):
 
         super(SampleData, self).finalise()
 
+    def __insert_individuals(self, other, pop_id_map=None):
+        """
+        Helper function to insert all the individuals in this SampleData file
+        into the other. If pop_id_map is specified, use it to map
+        population IDs in this dataset to IDs in other.
+        """
+        if pop_id_map is None:
+            pop_id_map = {j: j for j in range(other.num_populations)}
+            pop_id_map[tskit.NULL] = tskit.NULL
+        other_samples_metadata = other.samples_metadata[:]
+        other_samples_population = other.samples_population[:]
+        for individual in other.individuals():
+            samples_metadata = [
+                other_samples_metadata[sample_id] for sample_id in individual.samples
+            ]
+            self.add_individual(
+                location=individual.location,
+                metadata=individual.metadata,
+                time=individual.time,
+                # We're assuming this is the same for all samples
+                population=pop_id_map[other_samples_population[individual.samples[0]]],
+                samples_metadata=samples_metadata,
+                ploidy=len(samples_metadata),
+            )
+
     ####################################
     # Read mode
     ####################################
+
+    def merge(self, other, **kwargs):
+        """
+        Returns a copy of this SampleData file merged with the specified
+        other SampleData file. Subsequent keyword arguments are passed
+        to the SampleData constructor for the returned merged dataset.
+
+        The datasets are merged by following process:
+
+        1. We add the populations from this dataset to the result, followed
+           by the populations from other. Population references from the two
+           datasets are updated accordingly.
+        2. We add individual data from this dataset to the result, followed
+           by the individuals from the other dataset.
+        3. We merge the variant data from the two datasets by comparing sites
+           by their position. If two sites in the datasets have the same
+           position we combine the genotype data. The alleles from this dataset
+           are updated to include any new alleles in other, and we then combine
+           and update the genotypes accordingly. It is an error if sites with
+           the same position have different ancestral state, time, or metadata
+           values. For sites that exist in one dataset and not the other,
+           we insert the site with MISSING_DATA present in the genotypes for
+           the dataset that does not contain the site.
+        4. We add the provenances for this dataset, followed by the provenances
+           for the other dataset.
+
+        :param SampleData other: The other :class:`SampleData` instance to
+            to merge.
+        :return: A new SampleData instance which contains the merged data
+            from the two datasets.
+        :rtype: .SampleData
+        """
+        if self.sequence_length != other.sequence_length:
+            raise ValueError("Sample data files must have the same sequence length")
+        with SampleData(sequence_length=self.sequence_length, **kwargs) as result:
+            # Keep the same population IDs from self.
+            for population in self.populations():
+                result.add_population(population.metadata)
+            # TODO we could avoid duplicate populations here by keying on the
+            # metadata. It's slightly complicated by the case where the
+            # metadata is all empty, but we could fall through to just
+            # adding in all the populations as is, then.
+            other_pop_map = {-1: -1}
+            for population in other.populations():
+                pid = result.add_population(population.metadata)
+                other_pop_map[population.id] = pid
+
+            result.__insert_individuals(self)
+            result.__insert_individuals(other, other_pop_map)
+
+            for variant in merge_variants(self, other):
+                result.add_site(
+                    position=variant.site.position,
+                    genotypes=variant.genotypes,
+                    alleles=variant.alleles,
+                    metadata=variant.site.metadata,
+                    time=variant.site.time,
+                )
+
+            for timestamp, record in list(self.provenances()) + list(
+                other.provenances()
+            ):
+                result.add_provenance(timestamp, record)
+            result.record_provenance(command="merge", **kwargs)
+        return result
 
     def sites(self, ids=None):
         """
@@ -1713,6 +1898,18 @@ class SampleData(DataContainer):
                 metadata=metadata,
                 time=time,
                 samples=individual_samples[j],
+            )
+
+    def samples(self):
+        # TODO document
+        iterator = zip(
+            self.samples_metadata[:],
+            self.samples_individual[:],
+            self.samples_population[:],
+        )
+        for j, (metadata, individual, population) in enumerate(iterator):
+            yield Sample(
+                j, metadata=metadata, individual=individual, population=population,
             )
 
     def population(self, id_):

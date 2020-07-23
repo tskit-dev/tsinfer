@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2020 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -69,13 +69,13 @@ class DataContainerMixin(object):
             )
 
 
-def get_example_ts(sample_size, sequence_length, mutation_rate=10):
+def get_example_ts(sample_size, sequence_length, mutation_rate=10, random_seed=100):
     return msprime.simulate(
         sample_size,
         recombination_rate=1,
         mutation_rate=mutation_rate,
         length=sequence_length,
-        random_seed=100,
+        random_seed=random_seed,
     )
 
 
@@ -1355,6 +1355,7 @@ class TestSampleDataSubset(unittest.TestCase):
         with self.assertRaises(ValueError):
             sd1.subset(individuals=[])
         # Individual IDs out of bounds
+
         with self.assertRaises(ValueError):
             sd1.subset(individuals=[-1, 0, 1])
         with self.assertRaises(ValueError):
@@ -1382,6 +1383,238 @@ class TestSampleDataSubset(unittest.TestCase):
             self.assertTrue(os.path.exists(path))
             sd2 = formats.SampleData.load(path)
             self.assertTrue(sd1.data_equal(sd2))
+
+
+class TestSampleDataMerge(unittest.TestCase):
+    """
+    Tests for the sample data merge operation.
+    """
+
+    def test_different_sequence_lengths(self):
+        ts1 = get_example_ts(2, 2, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts1)
+        ts2 = get_example_ts(2, 3, 1)
+        sd2 = formats.SampleData.from_tree_sequence(ts2)
+        with self.assertRaises(ValueError):
+            sd1.merge(sd2)
+
+    def test_mismatch_ancestral_state(self):
+        # Difference ancestral states
+        ts = get_example_ts(2, 2, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        tables = ts.dump_tables()
+        tables.sites.ancestral_state += 2
+        sd2 = formats.SampleData.from_tree_sequence(tables.tree_sequence())
+        with self.assertRaises(ValueError):
+            sd1.merge(sd2)
+
+    def verify(self, sd1, sd2):
+        sd3 = sd1.merge(sd2)
+        n1 = sd1.num_samples
+        n2 = sd2.num_samples
+        self.assertEqual(sd3.num_samples, n1 + n2)
+        self.assertEqual(sd3.num_individuals, sd1.num_individuals + sd2.num_individuals)
+        self.assertEqual(sd1.sequence_length, sd3.sequence_length)
+        self.assertEqual(sd2.sequence_length, sd3.sequence_length)
+
+        for new_ind, old_ind in zip(sd3.individuals(), sd1.individuals()):
+            self.assertEqual(new_ind, old_ind)
+        new_inds = list(sd3.individuals())[sd1.num_individuals :]
+        old_inds = list(sd2.individuals())
+        self.assertEqual(len(new_inds), len(old_inds))
+        for new_ind, old_ind in zip(new_inds, old_inds):
+            self.assertEqual(new_ind.id, old_ind.id + sd1.num_individuals)
+            old_samples = [sid + sd1.num_samples for sid in old_ind.samples]
+            self.assertEqual(new_ind.samples, old_samples)
+            self.assertEqual(new_ind.location, old_ind.location)
+            self.assertEqual(new_ind.time, old_ind.time)
+            self.assertEqual(new_ind.metadata, old_ind.metadata)
+
+        for new_sample, old_sample in zip(sd3.samples(), sd1.samples()):
+            self.assertEqual(new_sample, old_sample)
+        new_samples = list(sd3.samples())[sd1.num_samples :]
+        old_samples = list(sd2.samples())
+        self.assertEqual(len(new_samples), len(old_samples))
+        for new_sample, old_sample in zip(new_samples, old_samples):
+            self.assertEqual(new_sample.id, old_sample.id + sd1.num_samples)
+            self.assertEqual(
+                new_sample.population, old_sample.population + sd1.num_populations
+            )
+            self.assertEqual(
+                new_sample.individual, old_sample.individual + sd1.num_individuals
+            )
+            self.assertEqual(new_sample.metadata, old_sample.metadata)
+
+        for new_pop, old_pop in zip(sd3.populations(), sd1.populations()):
+            self.assertEqual(new_pop, old_pop)
+        new_pops = list(sd3.populations())[sd1.num_populations :]
+        old_pops = list(sd2.populations())
+        self.assertEqual(len(new_pops), len(old_pops))
+        for new_pop, old_pop in zip(new_pops, old_pops):
+            self.assertEqual(new_pop.id, old_pop.id + sd1.num_populations)
+            self.assertEqual(new_pop.metadata, old_pop.metadata)
+
+        sd1_sites = set(sd1.sites_position)
+        sd2_sites = set(sd2.sites_position)
+        self.assertEqual(set(sd3.sites_position), sd1_sites | sd2_sites)
+        sd1_variants = {var.site.position: var for var in sd1.variants()}
+        sd2_variants = {var.site.position: var for var in sd2.variants()}
+        for var in sd3.variants():
+            pos = var.site.position
+            sd1_var = sd1_variants.get(pos, None)
+            sd2_var = sd2_variants.get(pos, None)
+            if sd1_var is not None and sd2_var is not None:
+                self.assertEqual(var.site.ancestral_state, sd1_var.site.ancestral_state)
+                self.assertEqual(var.site.time, sd1_var.site.time)
+                self.assertEqual(var.site.time, sd2_var.site.time)
+                self.assertEqual(var.site.metadata, sd1_var.site.metadata)
+                self.assertEqual(var.site.metadata, sd2_var.site.metadata)
+                alleles = {}
+                missing_data = False
+                for allele in sd1_var.site.alleles + sd2_var.site.alleles:
+                    if allele is not None:
+                        alleles[allele] = len(alleles)
+                    else:
+                        missing_data = True
+                if missing_data:
+                    alleles[None] = len(alleles)
+                self.assertEqual(var.site.alleles, tuple(alleles.keys()))
+                for j in range(n1):
+                    self.assertEqual(var.genotypes[j], sd1_var.genotypes[j])
+                for j in range(n2):
+                    old_allele = sd2_var.site.alleles[sd2_var.genotypes[j]]
+                    if old_allele is None:
+                        self.assertEqual(var.genotypes[n1 + j], tskit.MISSING_DATA)
+                    else:
+                        new_allele = var.site.alleles[var.genotypes[n1 + j]]
+                        self.assertEqual(new_allele, old_allele)
+
+    def test_merge_identical(self):
+        n = 10
+        ts = get_example_ts(n, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = sd1.merge(sd1)
+        self.assertEqual(sd2.num_sites, sd1.num_sites)
+        self.assertEqual(sd2.num_samples, 2 * sd1.num_samples)
+        for var1, var2 in zip(sd1.variants(), sd2.variants()):
+            self.assertEqual(var1.site, var2.site)
+            self.assertTrue(np.array_equal(var1.genotypes, var2.genotypes[:n]))
+            self.assertTrue(np.array_equal(var1.genotypes, var2.genotypes[n:]))
+        self.verify(sd1, sd1)
+        self.verify(sd2, sd1)
+
+    def test_merge_distinct(self):
+        n = 10
+        ts = get_example_ts(n, 10, 1, random_seed=1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        ts = get_example_ts(n, 10, 1, random_seed=2)
+        sd2 = formats.SampleData.from_tree_sequence(ts)
+        self.assertEqual(len(set(sd1.sites_position) & set(sd2.sites_position)), 0)
+
+        sd3 = sd1.merge(sd2)
+        self.assertEqual(sd3.num_sites, sd1.num_sites + sd2.num_sites)
+        self.assertEqual(sd3.num_samples, sd1.num_samples + sd2.num_samples)
+        pos_map = {var.site.position: var for var in sd3.variants()}
+        for var in sd1.variants():
+            merged_var = pos_map[var.site.position]
+            self.assertEqual(merged_var.site.position, var.site.position)
+            self.assertEqual(merged_var.site.alleles[:-1], var.site.alleles)
+            self.assertEqual(merged_var.site.ancestral_state, var.site.ancestral_state)
+            self.assertEqual(merged_var.site.metadata, var.site.metadata)
+            self.assertIsNone(merged_var.site.alleles[-1])
+            self.assertTrue(np.array_equal(var.genotypes, merged_var.genotypes[:n]))
+            self.assertTrue(np.all(merged_var.genotypes[n:] == tskit.MISSING_DATA))
+        for var in sd2.variants():
+            merged_var = pos_map[var.site.position]
+            self.assertEqual(merged_var.site.position, var.site.position)
+            self.assertEqual(merged_var.site.alleles[:-1], var.site.alleles)
+            self.assertEqual(merged_var.site.ancestral_state, var.site.ancestral_state)
+            self.assertEqual(merged_var.site.metadata, var.site.metadata)
+            self.assertIsNone(merged_var.site.alleles[-1])
+            self.assertTrue(np.array_equal(var.genotypes, merged_var.genotypes[n:]))
+            self.assertTrue(np.all(merged_var.genotypes[:n] == tskit.MISSING_DATA))
+        self.verify(sd1, sd2)
+        self.verify(sd2, sd1)
+
+    def test_merge_overlapping_sites(self):
+        ts = get_example_ts(4, 10, 1, random_seed=1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        tables = ts.dump_tables()
+        # Change the position of the first and last sites to we have
+        # overhangs at either side.
+        position = tables.sites.position
+        position[0] += 1e-8
+        position[-1] -= 1e-8
+        tables.sites.position = position
+        ts = tables.tree_sequence()
+        sd2 = formats.SampleData.from_tree_sequence(ts)
+        self.assertEqual(
+            len(set(sd1.sites_position) & set(sd2.sites_position)), sd1.num_sites - 2
+        )
+        self.verify(sd1, sd2)
+        self.verify(sd2, sd1)
+
+    def test_individuals_metadata_identical(self):
+        ts = get_example_individuals_ts_with_metadata(5, 2, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        self.verify(sd1, sd1)
+
+    def test_individuals_metadata_distinct(self):
+        ts = get_example_individuals_ts_with_metadata(5, 2, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        ts = get_example_individuals_ts_with_metadata(3, 3, 10, 1)
+        sd2 = formats.SampleData.from_tree_sequence(ts)
+        self.assertEqual(len(set(sd1.sites_position) & set(sd2.sites_position)), 0)
+        self.verify(sd1, sd2)
+        self.verify(sd2, sd1)
+
+    def test_different_alleles_same_sites(self):
+        ts = get_example_individuals_ts_with_metadata(5, 2, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        tables = ts.dump_tables()
+        tables.mutations.derived_state += 1
+        sd2 = formats.SampleData.from_tree_sequence(tables.tree_sequence())
+        self.verify(sd1, sd2)
+        self.verify(sd2, sd1)
+        sd3 = sd1.merge(sd2)
+        for var in sd3.variants():
+            self.assertEqual(var.site.alleles, ("0", "1", "2"))
+
+    def test_missing_data(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array(
+            [
+                [u, u, u, 1, 1, 0, 1, 1, 1],
+                [u, u, u, 1, 1, 0, 1, 1, 0],
+                [u, u, u, 1, 0, 1, 1, 0, 1],
+                [u, 0, 0, 1, 1, 1, 1, u, u],
+                [u, 0, 1, 1, 1, 0, 1, u, u],
+                [u, 1, 1, 0, 0, 0, 0, u, u],
+            ],
+            dtype=np.int8,
+        )
+        with tsinfer.SampleData() as sd1:
+            for col in range(sites_by_samples.shape[1]):
+                sd1.add_site(col, sites_by_samples[:, col])
+        self.verify(sd1, sd1)
+        with tsinfer.SampleData(sd1.sequence_length) as sd2:
+            for col in range(4):
+                sd2.add_site(col, sites_by_samples[:, col])
+        self.verify(sd1, sd2)
+        self.verify(sd2, sd1)
+
+    @unittest.skipIf(IS_WINDOWS, "windows simultaneous file permissions issue")
+    def test_file_kwargs(self):
+        # Make sure we pass kwards on to the SampleData constructor as
+        # required.
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sample-data")
+            sd2 = sd1.merge(sd1, path=path)
+            self.assertTrue(os.path.exists(path))
+            sd3 = formats.SampleData.load(path)
+            self.assertTrue(sd2.data_equal(sd3))
 
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
