@@ -717,7 +717,7 @@ def run_imputation_accuracy(args):
             work.append((sim_args, missing_proportion))
             # imputation_accuracy_worker((sim_args, missing_proportion))
 
-    random.shuffle(work)
+    rng.shuffle(work)
     progress = tqdm.tqdm(total=len(work), disable=not args.progress)
     results = []
     try:
