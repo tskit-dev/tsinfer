@@ -1394,14 +1394,16 @@ class SampleMatcher(Matcher):
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
         samples_metadata = self.sample_data.samples_metadata[:]
-        samples_population = self.sample_data.samples_population[:]
+        individuals_population = self.sample_data.individuals_population[:]
         samples_individual = self.sample_data.samples_individual[:]
         for index, sample_id in self.sample_id_map.items():
+            individual = samples_individual[index]
+            population = individuals_population[individual]
             tables.nodes.add_row(
                 flags=flags[sample_id],
                 time=times[sample_id],
-                population=samples_population[index],
-                individual=num_ancestral_individuals + samples_individual[index],
+                population=population,
+                individual=num_ancestral_individuals + individual,
                 metadata=self.encode_metadata(samples_metadata[index]),
             )
         # Add in the remaining non-sample nodes.
