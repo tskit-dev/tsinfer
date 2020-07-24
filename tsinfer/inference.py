@@ -73,7 +73,7 @@ def count_pc_ancestors(flags):
     NODE_IS_PC_ANCESTOR set.
     """
     flags = np.array(flags, dtype=np.uint32, copy=False)
-    return np.sum(np.bitwise_and(flags, constants.NODE_IS_PC_ANCESTOR) != 0)
+    return np.sum(is_pc_ancestor(flags))
 
 
 def count_srb_ancestors(flags):
@@ -1009,7 +1009,8 @@ class AncestorMatcher(Matcher):
     def get_ancestors_tree_sequence(self):
         """
         Return the ancestors tree sequence. Only inference sites are included in this
-        tree sequence. All nodes have the sample flag bit set.
+        tree sequence. All nodes have the sample flag bit set, and if a node
+        corresponds to an ancestor in the ancestors file, it is indicated via metadata.
         """
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
@@ -1019,10 +1020,19 @@ class AncestorMatcher(Matcher):
         )
 
         flags, times = tsb.dump_nodes()
-        num_pc_ancestors = count_pc_ancestors(flags)
-        # TODO Write out the metadata here etc also
+        pc_ancestors = is_pc_ancestor(flags)
         tables.nodes.set_columns(flags=flags, time=times)
 
+        # Add metadata for any non-PC node, pointing to the original ancestor
+        metadata = []
+        ancestor = 0
+        for is_pc in pc_ancestors:
+            if is_pc:
+                metadata.append(b"")
+            else:
+                metadata.append(self.encode_metadata({"ancestor_data_id": ancestor}))
+                ancestor += 1
+        tables.nodes.packset_metadata(metadata)
         left, right, parent, child = tsb.dump_edges()
         tables.edges.set_columns(
             left=self.position_map[left],
@@ -1050,7 +1060,7 @@ class AncestorMatcher(Matcher):
             "Built ancestors tree sequence: {} nodes ({} pc ancestors); {} edges; "
             "{} sites; {} mutations".format(
                 len(tables.nodes),
-                num_pc_ancestors,
+                np.sum(pc_ancestors),
                 len(tables.edges),
                 len(tables.mutations),
                 len(tables.sites),
@@ -1464,28 +1474,32 @@ class SampleMatcher(Matcher):
         logger.debug("Building augmented ancestors tree sequence")
         tsb = self.tree_sequence_builder
         tables = self.ancestors_ts_tables.copy()
-        num_pc_ancestors = count_pc_ancestors(tables.nodes.flags)
 
         flags, times = tsb.dump_nodes()
         s = 0
+        num_pc_ancestors = 0
         for j in range(len(tables.nodes), len(flags)):
             if times[j] == 0.0:
                 # This is an augmented ancestor node.
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata=self.encode_metadata({"sample": int(sample_indexes[s])}),
+                    metadata=self.encode_metadata(
+                        {"sample_data_id": int(sample_indexes[s])}
+                    ),
                 )
                 s += 1
             else:
+                # This is a path compressed node
                 tables.nodes.add_row(flags=flags[j], time=times[j])
+                assert is_pc_ancestor(flags[j])
+                num_pc_ancestors += 1
         assert s == len(sample_indexes)
         assert len(tables.nodes) == len(flags)
 
         # Increment the time for all nodes so the augmented samples are no longer
         # at timepoint 0.
         tables.nodes.time = tables.nodes.time + 1
-        num_pc_ancestors = count_pc_ancestors(tables.nodes.flags) - num_pc_ancestors
 
         # TODO - check this works for augmented ancestors with missing data
         left, right, parent, child = tsb.dump_edges()
