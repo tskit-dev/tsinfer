@@ -164,6 +164,7 @@ class AncestorBuilder(object):
         min_sample_set_size = len(S) // 2
         remove_buffer = []
         last_site = focal_site
+        # print("Focal site", focal_site, "time", focal_time)
         for l in sites:
             a[l] = 0
             last_site = l
@@ -171,12 +172,11 @@ class AncestorBuilder(object):
                 g_l = self.sites[l].genotypes
                 ones = sum(g_l[u] == 1 for u in S)
                 zeros = sum(g_l[u] == 0 for u in S)
-                # print("\tsite", l, ones, zeros, sep="\t")
-                consensus = 0
-                if ones + zeros > 0:
-                    # We have some non-missing data
-                    if ones >= zeros:
-                        consensus = 1
+                # print("pos", l, ". Ones:", ones, ". Zeros:", zeros)
+                if ones + zeros == 0:
+                    a[l] = tskit.MISSING_DATA
+                else:
+                    consensus = 1 if ones >= zeros else 0
                     # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
                     for u in remove_buffer:
                         if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
@@ -190,7 +190,7 @@ class AncestorBuilder(object):
                     for u in S:
                         if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                             remove_buffer.append(u)
-                a[l] = consensus
+                    a[l] = consensus
         assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
@@ -207,6 +207,8 @@ class AncestorBuilder(object):
         for focal_site in focal_sites:
             a[focal_site] = 1
         S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
+        if len(S) == 0:
+            raise ValueError("Cannot compute ancestor for a site at freq 0")
         # Interpolate ancestral haplotype within focal region (i.e. region
         #  spanning from leftmost to rightmost focal site)
         for j in range(len(focal_sites) - 1):
@@ -218,10 +220,10 @@ class AncestorBuilder(object):
                     ones = sum(g_l[u] == 1 for u in S)
                     zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", l, ones, zeros, sep="\t")
-                    if ones + zeros > 0:
-                        # We have some non-missing data
-                        if ones >= zeros:
-                            a[l] = 1
+                    if ones + zeros == 0:
+                        a[l] = tskit.MISSING_DATA
+                    elif ones >= zeros:
+                        a[l] = 1
         # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(

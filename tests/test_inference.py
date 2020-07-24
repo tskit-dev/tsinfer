@@ -33,6 +33,7 @@ import numpy as np
 import msprime
 import tskit
 
+import _tsinfer
 import tsinfer
 import tsinfer.eval_util as eval_util
 
@@ -1029,17 +1030,16 @@ class TestAncestorGeneratorsEquivalant(unittest.TestCase):
                 [1, 1, 1, 1, 0, 0],
             ]
         )
-        # For the haplotype focussed on sites 0 & 2, the relevant values at sites
-        # 1 and 3 in this example are all missing and should default to 0 in both cases
-        expected_hap_focal_site_0 = [1, 0, 1, 0, 1]
-        adp, adc = self.verify_ancestor_generator(G)
-        site_0_anc = [i for i, fs in enumerate(adc.ancestors_focal_sites[:]) if 0 in fs]
+        adp, _ = self.verify_ancestor_generator(G)
+        site_0_anc = [i for i, fs in enumerate(adp.ancestors_focal_sites[:]) if 0 in fs]
         self.assertTrue(len(site_0_anc) == 1)
         site_0_anc = site_0_anc[0]
         # Sites 0 and 2 should share the same ancestor
-        self.assertTrue(np.all(adc.ancestors_focal_sites[:][site_0_anc] == [0, 2]))
-        focal_site_0_haplotype = adc.ancestors_haplotype[:][site_0_anc]
-        # Sites with all missing data should default to 0
+        self.assertTrue(np.all(adp.ancestors_focal_sites[:][site_0_anc] == [0, 2]))
+        focal_site_0_haplotype = adp.ancestors_haplotype[:][site_0_anc]
+        # High freq sites with all missing data (e.g. for sites 1 & 3 in the ancestral
+        # haplotype focussed on sites 0 & 2) should default to tskit.MISSING_DATA
+        expected_hap_focal_site_0 = [1, u, 1, u, 1]
         self.assertTrue(np.all(focal_site_0_haplotype == expected_hap_focal_site_0))
 
     def test_with_recombination_long_threads(self):
@@ -1145,6 +1145,24 @@ class TestBuildAncestors(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             tsinfer.generate_ancestors(sample_data, exclude_positions=["not", 1.1])
+
+    def test_bad_focal_sites(self):
+        # Can't generate an ancestor for a site with no mutations
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [0, 0])
+        for engine, error in [
+            (tsinfer.C_ENGINE, _tsinfer.LibraryError),
+            (tsinfer.PY_ENGINE, ValueError),
+        ]:
+            with tsinfer.formats.AncestorData(sample_data) as ancestor_data:
+                g = np.zeros(2, dtype=np.int8)
+                h = np.zeros(1, dtype=np.int8)
+            generator = tsinfer.AncestorsGenerator(
+                sample_data, ancestor_data, engine=engine,
+            )
+            generator.ancestor_builder.add_site(1, g)
+            with self.assertRaises(error):
+                generator.ancestor_builder.make_ancestor([0], h)
 
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)

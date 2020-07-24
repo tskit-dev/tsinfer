@@ -164,6 +164,7 @@ static PyObject *
 AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
+    PyObject *ret = NULL;
     static char *kwlist[] = {"focal_sites", "ancestor", NULL};
     PyObject *ancestor = NULL;
     PyArrayObject *ancestor_array = NULL;
@@ -175,41 +176,41 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     npy_intp *shape;
 
     if (AncestorBuilder_check_state(self) != 0) {
-        goto fail;
+        goto out;
     }
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO!", kwlist,
             &focal_sites, &PyArray_Type, &ancestor)) {
-        goto fail;
+        goto out;
     }
     num_sites = self->builder->num_sites;
     focal_sites_array = (PyArrayObject *) PyArray_FROM_OTF(focal_sites, NPY_INT32,
             NPY_ARRAY_IN_ARRAY);
     if (focal_sites_array == NULL) {
-        goto fail;
+        goto out;
     }
     if (PyArray_NDIM(focal_sites_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
+        goto out;
     }
     shape = PyArray_DIMS(focal_sites_array);
     num_focal_sites = shape[0];
     if (num_focal_sites == 0 || num_focal_sites > num_sites) {
         PyErr_SetString(PyExc_ValueError, "num_focal_sites must > 0 and <= num_sites");
-        goto fail;
+        goto out;
     }
     ancestor_array = (PyArrayObject *) PyArray_FROM_OTF(ancestor, NPY_INT8,
             NPY_ARRAY_INOUT_ARRAY);
     if (ancestor_array == NULL) {
-        goto fail;
+        goto out;
     }
     if (PyArray_NDIM(ancestor_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto fail;
+        goto out;
     }
     shape = PyArray_DIMS(ancestor_array);
     if (shape[0] != num_sites) {
         PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
-        goto fail;
+        goto out;
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_make_ancestor(self->builder, num_focal_sites,
@@ -218,15 +219,13 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
-        goto fail;
+        goto out;
     }
-    Py_DECREF(focal_sites_array);
-    Py_DECREF(ancestor_array);
-    return Py_BuildValue("ii", start, end);
-fail:
+    ret = Py_BuildValue("ii", start, end);
+out:
     Py_XDECREF(focal_sites_array);
-    PyArray_XDECREF_ERR(ancestor_array);
-    return NULL;
+    Py_XDECREF(ancestor_array);
+    return ret;
 }
 
 static PyObject *

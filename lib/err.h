@@ -22,6 +22,7 @@
 #define TSI_ERR_BAD_MUTATION_DUPLICATE_NODE                         -18
 #define TSI_ERR_BAD_NUM_SAMPLES                                     -19
 #define TSI_ERR_TOO_MANY_SITES                                      -20
+#define TSI_ERR_BAD_FOCAL_SITE                                      -21
 // clang-format on
 
 #ifdef __GNUC__

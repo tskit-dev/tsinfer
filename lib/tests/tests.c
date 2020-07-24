@@ -397,12 +397,14 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
         /* Build the ancestral haplotype */
         ret = ancestor_builder_make_ancestor(&ancestor_builder, ad.num_focal_sites,
             ad.focal_sites, &start, &end, haplotype);
-        CU_ASSERT_EQUAL_FATAL(ret, 0);
-
-        add_haplotype(&tsb, &ancestor_matcher, child, start, end, haplotype);
-        /* printf("\n"); */
-        /* tree_sequence_builder_print_state(&tsb, stdout); */
-        /* printf("\n-----------------\n"); */
+        /* With random data we could ask for an ancestor for a focal site at freq 0 */
+        if (ret != TSI_ERR_BAD_FOCAL_SITE) {
+            CU_ASSERT_EQUAL_FATAL(ret, 0);
+            add_haplotype(&tsb, &ancestor_matcher, child, start, end, haplotype);
+            /* printf("\n"); */
+            /* tree_sequence_builder_print_state(&tsb, stdout); */
+            /* printf("\n-----------------\n"); */
+        }
     }
 
     /* Add the samples */
@@ -441,7 +443,10 @@ test_ancestor_builder_errors(void)
 {
     int ret = 0;
     ancestor_builder_t ancestor_builder;
-    allele_t genotypes[4] = { 1, 1, 1, 1 };
+    allele_t genotypes_ones[4] = { 1, 1, 1, 1 };
+    allele_t genotypes_zeros[4] = { 0, 0, 0, 0 };
+    tsk_id_t start, end;
+    allele_t haplotype[4];
 
     ret = ancestor_builder_alloc(&ancestor_builder, 0, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_SAMPLES);
@@ -454,8 +459,23 @@ test_ancestor_builder_errors(void)
     ret = ancestor_builder_alloc(&ancestor_builder, 2, 0, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     CU_ASSERT_EQUAL_FATAL(ancestor_builder.num_sites, 0);
-    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_ones);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_TOO_MANY_SITES);
+    ancestor_builder_free(&ancestor_builder);
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 4, 2, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_zeros);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_ones);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL_FATAL(ancestor_builder.num_sites, 2);
+    ret = ancestor_builder_finalise(&ancestor_builder);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_make_ancestor(&ancestor_builder,
+        ancestor_builder.descriptors[0].num_focal_sites,
+        ancestor_builder.descriptors[0].focal_sites, &start, &end, haplotype);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_FOCAL_SITE);
 
     ancestor_builder_free(&ancestor_builder);
 }
