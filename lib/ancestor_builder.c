@@ -223,10 +223,9 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
 
     ancestor_builder_get_consistent_samples(
         self, focal_site, sample_set, &sample_set_size);
-    if (sample_set_size == 0) {
-        ret = TSI_ERR_BAD_FOCAL_SITE;
-        goto out;
-    }
+    /* This can't happen because we've already tested for it in
+     * ancestor_builder_compute_between_focal_sites */
+    assert(sample_set_size > 0);
     memset(disagree, 0, self->num_samples * sizeof(*disagree));
     min_sample_set_size = sample_set_size / 2;
 
@@ -302,7 +301,6 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
         }
     }
     *last_site_ret = last_site;
-out:
     return ret;
 }
 

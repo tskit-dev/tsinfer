@@ -33,6 +33,7 @@ import numpy as np
 import msprime
 import tskit
 
+import _tsinfer
 import tsinfer
 import tsinfer.eval_util as eval_util
 
@@ -1149,20 +1150,19 @@ class TestBuildAncestors(unittest.TestCase):
         # Can't generate an ancestor for a site with no mutations
         with tsinfer.SampleData(1.0) as sample_data:
             sample_data.add_site(0.5, [0, 0])
-        for engine in [tsinfer.PY_ENGINE]:  # TODO - include C_ENGINE
+        for engine, error in [
+            (tsinfer.C_ENGINE, _tsinfer.LibraryError),
+            (tsinfer.PY_ENGINE, ValueError),
+        ]:
             with tsinfer.formats.AncestorData(sample_data) as ancestor_data:
                 g = np.zeros(2, dtype=np.int8)
                 h = np.zeros(1, dtype=np.int8)
                 generator = tsinfer.AncestorsGenerator(
-                    sample_data,
-                    ancestor_data,
-                    engine=engine,
-                    progress_monitor=tsinfer.cli.ProgressMonitor(),
+                    sample_data, ancestor_data, engine=engine,
                 )
                 generator.ancestor_builder.add_site(1, g)
-                self.assertRaises(
-                    ValueError, generator.ancestor_builder.make_ancestor, [0], h
-                )
+                with self.assertRaises(error):
+                    generator.ancestor_builder.make_ancestor([0], h)
 
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
