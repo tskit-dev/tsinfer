@@ -1157,12 +1157,12 @@ class TestBuildAncestors(unittest.TestCase):
             with tsinfer.formats.AncestorData(sample_data) as ancestor_data:
                 g = np.zeros(2, dtype=np.int8)
                 h = np.zeros(1, dtype=np.int8)
-                generator = tsinfer.AncestorsGenerator(
-                    sample_data, ancestor_data, engine=engine,
-                )
-                generator.ancestor_builder.add_site(1, g)
-                with self.assertRaises(error):
-                    generator.ancestor_builder.make_ancestor([0], h)
+            generator = tsinfer.AncestorsGenerator(
+                sample_data, ancestor_data, engine=engine,
+            )
+            generator.ancestor_builder.add_site(1, g)
+            with self.assertRaises(error):
+                generator.ancestor_builder.make_ancestor([0], h)
 
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
