@@ -747,7 +747,6 @@ class Sample(object):
 
     # TODO document properly.
     id = attr.ib()
-    population = attr.ib()
     individual = attr.ib()
     metadata = attr.ib()
 
@@ -879,7 +878,7 @@ class SampleData(DataContainer):
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
         chunks = (self._chunk_size,)
-        populations_group = self.data.create_group("population")
+        populations_group = self.data.create_group("populations")
         metadata = populations_group.create_dataset(
             "metadata",
             shape=(0,),
@@ -892,7 +891,7 @@ class SampleData(DataContainer):
             {"metadata": metadata}, num_threads=self._num_flush_threads
         )
 
-        individuals_group = self.data.create_group("individual")
+        individuals_group = self.data.create_group("individuals")
         metadata = individuals_group.create_dataset(
             "metadata",
             shape=(0,),
@@ -949,7 +948,7 @@ class SampleData(DataContainer):
             object_codec=self._metadata_codec,
         )
         self._samples_writer = BufferedItemWriter(
-            {"individual": individual, "population": population, "metadata": metadata},
+            {"individual": individual, "metadata": metadata},
             num_threads=self._num_flush_threads,
         )
 
@@ -1024,23 +1023,23 @@ class SampleData(DataContainer):
 
     @property
     def populations_metadata(self):
-        return self.data["population/metadata"]
+        return self.data["populations/metadata"]
 
     @property
     def individuals_metadata(self):
-        return self.data["individual/metadata"]
+        return self.data["individuals/metadata"]
 
     @property
     def individuals_location(self):
-        return self.data["individual/location"]
+        return self.data["individuals/location"]
 
     @property
     def individuals_time(self):
-        return self.data["individual/time"]
+        return self.data["individuals/time"]
 
     @property
     def individuals_population(self):
-        return self.data["individual/population"]
+        return self.data["individuals/population"]
 
     @property
     def samples_individual(self):
@@ -1500,13 +1499,16 @@ class SampleData(DataContainer):
             location = []
         location = np.array(location, dtype=np.float64)
         individual_id = self._individuals_writer.add(
-            metadata=self._check_metadata(metadata), location=location, time=time
+            metadata=self._check_metadata(metadata),
+            location=location,
+            time=time,
+            population=population,
         )
         sample_ids = []
         for sample_meta in samples_metadata:
             sample_meta = self._check_metadata(sample_meta)
             sid = self._samples_writer.add(
-                population=population, individual=individual_id, metadata=sample_meta
+                individual=individual_id, metadata=sample_meta
             )
             sample_ids.append(sid)
         return individual_id, sample_ids
@@ -1701,7 +1703,6 @@ class SampleData(DataContainer):
             pop_id_map = {j: j for j in range(other.num_populations)}
             pop_id_map[tskit.NULL] = tskit.NULL
         other_samples_metadata = other.samples_metadata[:]
-        other_individuals_population = other.individuals_population[:]
         for individual in other.individuals():
             samples_metadata = [
                 other_samples_metadata[sample_id] for sample_id in individual.samples
@@ -1711,9 +1712,7 @@ class SampleData(DataContainer):
                 metadata=individual.metadata,
                 time=individual.time,
                 # We're assuming this is the same for all samples
-                population=pop_id_map[
-                    other_individuals_population[individual.samples[0]]
-                ],
+                population=pop_id_map[individual.population],
                 samples_metadata=samples_metadata,
                 ploidy=len(samples_metadata),
             )
@@ -1906,16 +1905,20 @@ class SampleData(DataContainer):
                 samples=individual_samples[j],
             )
 
+    def sample(self, id_):
+        # TODO document
+        return Sample(
+            id_,
+            individual=self.samples_individual[id_],
+            metadata=self.samples_metadata[id_],
+        )
+
     def samples(self):
         # TODO document
-        iterator = zip(
-            self.samples_metadata[:],
-            self.samples_individual[:],
-            self.individuals_population[:],
-        )
-        for j, (metadata, individual, population) in enumerate(iterator):
+        iterator = zip(self.samples_metadata[:], self.samples_individual[:])
+        for j, (metadata, individual) in enumerate(iterator):
             yield Sample(
-                j, metadata=metadata, individual=individual, population=population,
+                j, individual=individual, metadata=metadata,
             )
 
     def population(self, id_):
