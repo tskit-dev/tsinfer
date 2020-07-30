@@ -932,6 +932,29 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
         self.assertIsNone(next(all_variants, None), None)
 
+    def test_variants_subset_sites(self):
+        ts = get_example_ts(4, 2)
+        self.assertGreater(ts.num_sites, 50)
+        for chunk_size in [1, 2, 3, ts.num_sites - 1, ts.num_sites, ts.num_sites + 1]:
+            input_file = formats.SampleData(
+                sequence_length=ts.sequence_length, chunk_size=chunk_size
+            )
+            self.verify_data_round_trip(ts, input_file)
+            # Bad lowest value
+            v = input_file.variants(sites=[-1, 0, 2])
+            self.assertRaises(ValueError, next, v)
+            # Bad order
+            v = input_file.variants(sites=[20, 0, 40])
+            self.assertRaises(ValueError, next, v)
+            # Bad highest value
+            v = input_file.variants(sites=[0, 20, ts.num_sites])
+            self.assertRaises(ValueError, next, v)
+            sites = [0, 20, 40]
+            v = input_file.variants(sites=sites)
+            for every_variant in input_file.variants():
+                if every_variant.site in sites:
+                    self.assertEqual(every_variant, next(v))
+
     def test_all_haplotypes(self):
         ts = get_example_ts(13, 12)
         self.assertGreater(ts.num_sites, 1)
