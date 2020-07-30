@@ -1389,6 +1389,8 @@ class SampleMatcher(Matcher):
         for metadata in self.sample_data.populations_metadata[:]:
             tables.populations.add_row(self.encode_metadata(metadata))
         for ind in self.sample_data.individuals():
+            if ind.time != 0:
+                ind.metadata["sample_data_time"] = ind.time
             tables.individuals.add_row(
                 location=ind.location, metadata=self.encode_metadata(ind.metadata)
             )
@@ -1406,8 +1408,13 @@ class SampleMatcher(Matcher):
         samples_metadata = self.sample_data.samples_metadata[:]
         individuals_population = self.sample_data.individuals_population[:]
         samples_individual = self.sample_data.samples_individual[:]
+        individuals_time = self.sample_data.individuals_time[:]
         for index, sample_id in self.sample_id_map.items():
             individual = samples_individual[index]
+            if individuals_time[individual] != 0:
+                flags[sample_id] = np.bitwise_or(
+                    flags[sample_id], constants.NODE_IS_HISTORIC_SAMPLE
+                )
             population = individuals_population[individual]
             tables.nodes.add_row(
                 flags=flags[sample_id],
