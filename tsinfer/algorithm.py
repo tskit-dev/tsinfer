@@ -182,6 +182,7 @@ class AncestorBuilder(object):
                         if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                             # print("\t\tremoving", u)
                             S.remove(u)
+                    a[l] = consensus
                     # print("\t", len(S), remove_buffer, consensus, sep="\t")
                     if len(S) <= min_sample_set_size:
                         # print("BREAKING", len(S), min_sample_set_size)
@@ -190,7 +191,6 @@ class AncestorBuilder(object):
                     for u in S:
                         if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                             remove_buffer.append(u)
-                    a[l] = consensus
         assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
