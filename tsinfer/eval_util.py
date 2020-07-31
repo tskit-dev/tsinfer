@@ -446,8 +446,9 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     specified source tree sequence using the samples in the specified sample
     data. If remove_leaves is True, remove any nodes that are at time zero.
 
-    We generally assume that this is a standard tree sequence output by
-    msprime.simulate here.
+    We generally assume that this is a standard tree sequence, as output by
+    msprime.simulate. We remove populations, as normally ancestors tree sequences
+    do not have populations defined.
     """
     # Get the non-singleton sites
     position = []
@@ -460,12 +461,12 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     tables = minimised.dump_tables()
     # Rewrite the nodes so that 0 is one older than all the other nodes.
     nodes = tables.nodes.copy()
+    tables.populations.clear()
     tables.nodes.clear()
     tables.nodes.add_row(flags=1, time=np.max(nodes.time) + 2)
     tables.nodes.append_columns(
         flags=np.ones_like(nodes.flags),  # Everything is a sample
         time=nodes.time + 1,  # Make sure that all times are > 0
-        population=nodes.population,
         individual=nodes.individual,
         metadata=nodes.metadata,
         metadata_offset=nodes.metadata_offset,
@@ -541,7 +542,7 @@ def get_tsinfer_inference_sites(ts):
     positions = []
     for site in ts.sites():
         md = json.loads(site.metadata)
-        if md["inference_type"] == "full":
+        if md["inference_type"] == constants.INFERENCE_FULL:
             positions.append(site.position)
     return np.array(positions)
 
@@ -688,6 +689,7 @@ def run_perfect_inference(
 
     if use_ts:
         # Use the actual tree sequence that was provided as the basis for copying.
+        logger.info("Using provided tree sequence")
         ancestors_ts = make_ancestors_ts(sample_data, ts, remove_leaves=True)
     else:
         ancestor_data = formats.AncestorData(sample_data)

@@ -530,7 +530,10 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
                 for site in tree.sites():
                     inf_type = json.loads(site.metadata)["inference_type"]
                     if exclude_sites[site.id]:
-                        self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
+                        self.assertIn(
+                            inf_type,
+                            (tsinfer.INFERENCE_FITCH_PARSIMONY, tsinfer.INFERENCE_NONE),
+                        )
                     else:
                         self.assertEqual(inf_type, tsinfer.INFERENCE_FULL)
                     f = np.sum(genotypes[site.id])
@@ -598,7 +601,7 @@ class TestZeroNonInferenceSites(unittest.TestCase):
         with self.assertLogs("tsinfer.inference", level="INFO") as logs:
             ts = tsinfer.infer(sample_data)
         messages = [record.msg for record in logs.records]
-        self.assertIn("Inserting detailed site information", messages)
+        self.assertIn("Skipping additional site mapping", messages)
         tsinfer.verify(sample_data, ts)
         return ts
 
@@ -657,7 +660,10 @@ class TestZeroInferenceSites(unittest.TestCase):
                 self.assertEqual(tree.num_roots, 1)
             for site in output_ts.sites():
                 inf_type = json.loads(site.metadata)["inference_type"]
-                self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
+                if len(site.mutations) == 0:
+                    self.assertEqual(inf_type, tsinfer.INFERENCE_NONE)
+                else:
+                    self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -772,9 +778,9 @@ class TestMetadataRoundTrip(unittest.TestCase):
             value = decoded_metadata.pop("inference_type")
             # Only singletons should be fitch_parsimony sites in this simple case
             if len(site.mutations) == 1 and site.mutations[0].node in samples:
-                self.assertEqual(value, "fitch_parsimony")
+                self.assertEqual(value, tsinfer.INFERENCE_FITCH_PARSIMONY)
             else:
-                self.assertEqual(value, "full")
+                self.assertEqual(value, tsinfer.INFERENCE_FULL)
             self.assertEqual(decoded_metadata, all_metadata[site.id])
 
     def test_population_metadata(self):
@@ -3048,7 +3054,126 @@ class TestAutoInferenceSites(unittest.TestCase):
         # neither should be marked for inference
         # inference_sites = data.sites_inference[:]
         inf_type = [json.loads(site.metadata)["inference_type"] for site in ts.sites()]
-        self.assertEqual(inf_type[0], tsinfer.INFERENCE_FITCH_PARSIMONY)
+        self.assertEqual(inf_type[0], tsinfer.INFERENCE_NONE)
         self.assertEqual(inf_type[1], tsinfer.INFERENCE_FITCH_PARSIMONY)
         for t in inf_type[2:]:
             self.assertEqual(t, tsinfer.INFERENCE_FULL)
+
+
+class TestInsertMissingSites(unittest.TestCase):
+    def test_bad_length(self):
+        # Reduce the length by a tiny bit but keep the sites identical
+        L = 2
+        ts = msprime.simulate(
+            8, length=L, recombination_rate=1, mutation_rate=2, random_seed=123
+        )
+        epsilon = L / 1e6
+        last_site = ts.site(ts.num_sites - 1)
+        sample_data = tsinfer.SampleData.from_tree_sequence(
+            ts.keep_intervals([[0, last_site.position + epsilon]]).trim()
+        )
+        self.assertRaisesRegexp(
+            ValueError, "sequence length", tsinfer.insert_missing_sites, sample_data, ts
+        )
+
+    def test_bad_samples(self):
+        ts = msprime.simulate(
+            8, length=2, recombination_rate=1, mutation_rate=2, random_seed=123
+        )
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        small_ts = ts.simplify(ts.samples()[1 : ts.num_samples])
+        self.assertRaisesRegexp(
+            ValueError,
+            "number of samples",
+            tsinfer.insert_missing_sites,
+            sample_data,
+            small_ts,
+        )
+
+    def test_simple_insert(self):
+        ts = msprime.simulate(8, length=2, recombination_rate=1, random_seed=12)
+        mutated_ts = msprime.mutate(ts, rate=1, random_seed=12)
+        self.assertGreater(mutated_ts.num_sites, 0)
+        sample_data = tsinfer.SampleData.from_tree_sequence(mutated_ts)
+        mapped_ts = tsinfer.insert_missing_sites(sample_data, ts)
+        tsinfer.verify(sample_data, mutated_ts)
+        for s in mapped_ts.sites():
+            metadata = json.loads(s.metadata)
+            self.assertIn("inference_type", metadata)
+            self.assertEquals(
+                metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
+            )
+
+    def test_insert_with_map(self):
+        ts = msprime.simulate(8, length=1, recombination_rate=1, random_seed=123)
+        mutated_ts = msprime.mutate(ts, rate=1, random_seed=123)
+        self.assertGreater(mutated_ts.num_sites, 0)
+        sample_data = tsinfer.SampleData.from_tree_sequence(mutated_ts)
+        reordered_sd = sample_data.subset(individuals=np.arange(ts.num_samples)[::-1])
+        self.assertFalse(sample_data.data_equal(reordered_sd))
+        bad_mapped_ts = tsinfer.insert_missing_sites(reordered_sd, ts)
+        well_mapped_ts = tsinfer.insert_missing_sites(
+            reordered_sd, ts, sample_id_map=np.arange(ts.num_samples)[::-1]
+        )
+        self.assertNotEqual(mutated_ts.tables.mutations, bad_mapped_ts.tables.mutations)
+        self.assertEqual(mutated_ts.tables.mutations, well_mapped_ts.tables.mutations)
+
+    def test_mapping_with_inference(self):
+        ts = msprime.simulate(
+            8, length=2, mutation_rate=1, recombination_rate=1, random_seed=123
+        )
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        # only use the first half of the ts for inference
+        keep = sample_data.sites_position[:] < 1
+        self.assertGreater(np.sum(keep), 0)
+        self.assertGreater(np.sum(np.logical_not(keep)), 0)
+        truncated_sd = sample_data.subset(sites=np.where(keep)[0])
+        half_ts = tsinfer.infer(truncated_sd)
+        self.assertLess(half_ts.num_sites, sample_data.num_sites)
+        full_ts = tsinfer.insert_missing_sites(sample_data, half_ts)
+        self.assertEqual(full_ts.num_sites, sample_data.num_sites)
+        for v1, v2 in zip(sample_data.variants(), full_ts.variants()):
+            self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
+            if v2.site.position >= 1:
+                metadata = json.loads(v2.site.metadata)
+                self.assertIn("inference_type", metadata)
+                self.assertEquals(
+                    metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
+                )
+
+    def test_no_inference(self):
+        ts = msprime.simulate(8, length=2, recombination_rate=1, random_seed=123)
+        mutated_ts = msprime.mutate(ts, rate=1, random_seed=123)
+        self.assertGreater(mutated_ts.num_sites, 2)
+        sd1 = tsinfer.SampleData.from_tree_sequence(mutated_ts)
+        # New sample data file with first 3 sites zapped in different ways
+        with tsinfer.SampleData(sequence_length=sd1.sequence_length) as sd2:
+            for v in sd1.variants():
+                genotypes = v.genotypes
+                if v.site.id == 0:
+                    # All ancestral
+                    genotypes[:] = 0
+                elif v.site.id == 1:
+                    # Some ancestral, some missing
+                    genotypes[:] = 0
+                    genotypes[0:4] = -1
+                elif v.site.id == 2:
+                    # All missing
+                    genotypes[:] = -1
+                sd2.add_site(v.site.position, genotypes, v.alleles)
+        full_ts = tsinfer.insert_missing_sites(sd2, ts)
+        for v1, v2 in zip(mutated_ts.variants(), full_ts.variants()):
+            self.assertEquals(len(v1.site.mutations), 1)
+            metadata = json.loads(v2.site.metadata)
+            self.assertIn("inference_type", metadata)
+            if v2.site.id < 3:
+                # First 3 sites have been changed so they shouldn't match
+                self.assertFalse(np.array_equal(v1.genotypes, v2.genotypes))
+                self.assertEquals(len(v2.site.mutations), 0)
+                self.assertEquals(metadata["inference_type"], tsinfer.INFERENCE_NONE)
+            else:
+                self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
+                self.assertEquals(len(v2.site.mutations), 1)
+                self.assertEquals(
+                    metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
+                )
