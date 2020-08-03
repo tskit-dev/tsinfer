@@ -1431,6 +1431,9 @@ class TestSampleDataMerge(unittest.TestCase):
             self.assertEqual(new_ind.location, old_ind.location)
             self.assertEqual(new_ind.time, old_ind.time)
             self.assertEqual(new_ind.metadata, old_ind.metadata)
+            self.assertEqual(
+                new_ind.population, old_ind.population + sd1.num_populations
+            )
 
         for new_sample, old_sample in zip(sd3.samples(), sd1.samples()):
             self.assertEqual(new_sample, old_sample)
@@ -1439,9 +1442,6 @@ class TestSampleDataMerge(unittest.TestCase):
         self.assertEqual(len(new_samples), len(old_samples))
         for new_sample, old_sample in zip(new_samples, old_samples):
             self.assertEqual(new_sample.id, old_sample.id + sd1.num_samples)
-            self.assertEqual(
-                new_sample.population, old_sample.population + sd1.num_populations
-            )
             self.assertEqual(
                 new_sample.individual, old_sample.individual + sd1.num_individuals
             )
