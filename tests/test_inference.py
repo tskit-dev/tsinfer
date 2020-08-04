@@ -904,7 +904,6 @@ class TestMetadataRoundTrip(unittest.TestCase):
 
     def test_historic_individuals(self):
         samples = [msprime.Sample(population=0, time=0) for i in range(10)]
-        random.seed(16)
         rng = random.Random(32)
         ages = [rng.random(), rng.random()]
         historic_samples = [
@@ -912,34 +911,31 @@ class TestMetadataRoundTrip(unittest.TestCase):
         ]
         samples = samples + historic_samples
         ts = msprime.simulate(samples=samples, mutation_rate=5, random_seed=16)
-        sample_data = tsinfer.SampleData(sequence_length=1)
-        all_times = []
-        for j in range(ts.num_samples // 2):
-            time = samples[j].time
-            sample_data.add_individual(time=time, ploidy=2)
-            all_times.append(time)
-        for variant in ts.variants():
-            sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles
-            )
-        sample_data.finalise()
-
+        with tsinfer.SampleData(sequence_length=1) as sample_data:
+            all_times = []
+            for j in range(ts.num_samples // 2):
+                time = samples[2 * j].time
+                sample_data.add_individual(time=time, ploidy=2)
+                all_times.append(time)
+            for variant in ts.variants():
+                sample_data.add_site(
+                    variant.site.position, variant.genotypes, variant.alleles
+                )
         for j, time in enumerate(sample_data.individuals_time[:]):
             self.assertTrue(np.array_equal(all_times[j], time))
         output_ts = tsinfer.infer(sample_data)
         self.assertEqual(output_ts.num_individuals, len(all_times))
         flags = output_ts.tables.nodes.flags
+        flags_for_historic_sample = (
+            tsinfer.NODE_IS_HISTORIC_SAMPLE | tskit.NODE_IS_SAMPLE
+        )
         for time, individual in zip(all_times, output_ts.individuals()):
             for node in individual.nodes:
                 if time != 0:
-                    self.assertTrue(
-                        self.assertEqual(flags[node], tsinfer.NODE_IS_HISTORIC_SAMPLE)
-                    )
+                    self.assertEqual(flags[node], flags_for_historic_sample)
             if time != 0:
-                individual_age = (
-                    json.loads(individual).metadata["sample_data_time"].decode()
-                )
-                self.assertTrue(np.array_equal(time, individual_age))
+                md = json.loads(individual.metadata.decode())
+                self.assertTrue(np.array_equal(time, md["sample_data_time"]))
 
 
 class TestThreads(TsinferTestCase):
