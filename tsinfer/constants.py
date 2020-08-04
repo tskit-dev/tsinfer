@@ -36,6 +36,9 @@ NODE_IS_SRB_ANCESTOR = 1 << 17
 # Bit 18 is set in node flags when they are samples inserted to augment existing
 # ancestors.
 NODE_IS_SAMPLE_ANCESTOR = 1 << 18
+# Bit 20 is set in node flags when they are samples not at time zero in the sampledata
+# file
+NODE_IS_HISTORIC_SAMPLE = 1 << 20
 
 # Marker constants for node & site time values
 TIME_UNSPECIFIED = -np.inf
