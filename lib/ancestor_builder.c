@@ -276,6 +276,7 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                         sample_set[j] = -1;
                     }
                 }
+                ancestor[l] = consensus;
                 /* Repack the sample set */
                 tmp_size = 0;
                 for (j = 0; j < sample_set_size; j++) {
@@ -296,7 +297,6 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     disagree[u] = ((genotypes[u] != consensus)
                                    && (genotypes[u] != TSK_MISSING_DATA));
                 }
-                ancestor[l] = consensus;
             }
         }
     }
