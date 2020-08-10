@@ -1120,6 +1120,9 @@ class SampleData(DataContainer):
             and np.allclose(
                 self.individuals_time[:], other.individuals_time[:], equal_nan=True
             )
+            and np.array_equal(
+                self.individuals_population[:], other.individuals_population[:],
+            )
             and all(
                 itertools.starmap(
                     np.array_equal,
