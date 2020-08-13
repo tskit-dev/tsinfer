@@ -1282,14 +1282,14 @@ class TestSampleDataSubset(unittest.TestCase):
         self.assertEqual(subset.num_populations, source.num_populations)
         samples = []
         subset_inds = iter(subset.individuals())
-        for ind in source.individuals():
-            if ind.id in individuals:
-                samples.extend(ind.samples)
-                subset_ind = next(subset_inds)
-                self.assertEqual(subset_ind.time, ind.time)
-                self.assertEqual(subset_ind.location, ind.location)
-                self.assertEqual(subset_ind.metadata, ind.metadata)
-                self.assertEqual(len(subset_ind.samples), len(ind.samples))
+        for ind_id in individuals:
+            ind = source.individual(ind_id)
+            samples.extend(ind.samples)
+            subset_ind = next(subset_inds)
+            self.assertEqual(subset_ind.time, ind.time)
+            self.assertEqual(subset_ind.location, ind.location)
+            self.assertEqual(subset_ind.metadata, ind.metadata)
+            self.assertEqual(len(subset_ind.samples), len(ind.samples))
         self.assertEqual(len(samples), subset.num_samples)
 
         subset_variants = iter(subset.variants())
@@ -1322,6 +1322,16 @@ class TestSampleDataSubset(unittest.TestCase):
         G2 = np.array([v.genotypes for v in subset.variants()])
         self.assertTrue(np.array_equal(G1[rows][:, cols], G2))
         self.verify_subset_data(sd1, cols, rows)
+
+    def test_reordering_individuals(self):
+        ts = get_example_ts(10, 10, 1)
+        sd = formats.SampleData.from_tree_sequence(ts)
+        ind = np.arange(sd.num_individuals)[::-1]
+        subset = sd.subset(individuals=ind)
+        self.assertFalse(sd.data_equal(subset))
+        self.assertTrue(
+            np.array_equal(sd.sites_genotypes[:][:, ind], subset.sites_genotypes[:])
+        )
 
     def test_mixed_diploid_metadata(self):
         ts = get_example_individuals_ts_with_metadata(10, 2, 10)
