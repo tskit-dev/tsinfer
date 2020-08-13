@@ -1248,21 +1248,20 @@ class SampleData(DataContainer):
             for population in self.populations():
                 subset.add_population(population.metadata)
             sample_selection = []
-            for individual in self.individuals():
-                if individual.id in individuals:
-                    sample_selection.extend(individual.samples)
-                    samples_metadata = [
-                        all_samples_metadata[sample_id]
-                        for sample_id in individual.samples
-                    ]
-                    subset.add_individual(
-                        location=individual.location,
-                        metadata=individual.metadata,
-                        time=individual.time,
-                        population=individual.population,
-                        samples_metadata=samples_metadata,
-                        ploidy=len(samples_metadata),
-                    )
+            for individual_id in individuals:
+                individual = self.individual(individual_id)
+                sample_selection.extend(individual.samples)
+                samples_metadata = [
+                    all_samples_metadata[sample_id] for sample_id in individual.samples
+                ]
+                subset.add_individual(
+                    location=individual.location,
+                    metadata=individual.metadata,
+                    time=individual.time,
+                    population=individual.population,
+                    samples_metadata=samples_metadata,
+                    ploidy=len(samples_metadata),
+                )
             sample_selection = np.array(sample_selection, dtype=int)
             if len(sample_selection) < 2:
                 raise ValueError("Must have at least two samples")
