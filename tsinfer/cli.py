@@ -83,7 +83,8 @@ class ProgressMonitor(object):
             "ma_match": "ma-match",
             "ms_match": "ms-match",
             "ms_paths": "ms-paths",
-            "ms_sites": "ms-sites",
+            "ms_full_mutations": "ms-muts",
+            "ms_extra_sites": "ms-xsites",
             "verify": "verify",
         }
 

@@ -43,14 +43,6 @@ import tsinfer.constants as constants
 logger = logging.getLogger(__name__)
 
 
-def update_site_metadata(current_metadata, inference_type):
-    assert inference_type in {
-        constants.INFERENCE_FULL,
-        constants.INFERENCE_FITCH_PARSIMONY,
-    }
-    return {"inference_type": inference_type, **current_metadata}
-
-
 def is_pc_ancestor(flags):
     """
     Returns True if the path compression ancestor flag is set on the specified
@@ -129,7 +121,20 @@ def _get_progress_monitor(progress_monitor):
     return progress_monitor
 
 
-def verify(samples, tree_sequence, progress_monitor=None):
+def _encode_metadata(obj):
+    return json.dumps(obj).encode()
+
+
+def _update_site_metadata(current_metadata, inference_type):
+    assert inference_type in {
+        constants.INFERENCE_NONE,
+        constants.INFERENCE_FULL,
+        constants.INFERENCE_FITCH_PARSIMONY,
+    }
+    return {"inference_type": inference_type, **current_metadata}
+
+
+def verify(sample_data, tree_sequence, progress_monitor=None):
     """
     verify(samples, tree_sequence)
 
@@ -142,14 +147,14 @@ def verify(samples, tree_sequence, progress_monitor=None):
         instance an encoding of the specified samples that we wish to verify.
     """
     progress_monitor = _get_progress_monitor(progress_monitor)
-    if samples.num_sites != tree_sequence.num_sites:
+    if sample_data.num_sites != tree_sequence.num_sites:
         raise ValueError("numbers of sites not equal")
-    if samples.num_samples != tree_sequence.num_samples:
+    if sample_data.num_samples != tree_sequence.num_samples:
         raise ValueError("numbers of samples not equal")
-    if samples.sequence_length != tree_sequence.sequence_length:
+    if sample_data.sequence_length != tree_sequence.sequence_length:
         raise ValueError("Sequence lengths not equal")
     progress = progress_monitor.get("verify", tree_sequence.num_sites)
-    for var1, var2 in zip(samples.variants(), tree_sequence.variants()):
+    for var1, var2 in zip(sample_data.variants(), tree_sequence.variants()):
         if var1.site.position != var2.site.position:
             raise ValueError(
                 "site positions not equal: {} != {}".format(
@@ -211,8 +216,9 @@ def infer(
         paths (essentially taking advantage of shared recombination breakpoints).
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
         on a path between the root and any of the samples. To do so, the final tree
-        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
-        with ``keep_unary`` set to True (default = ``True``).
+        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
+        method with ``filter_sites`` set to False and ``keep_unary`` set to True
+        (default = ``True``).
     :param: array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
         ancestors, and not used during the copying process. Any such sites that
@@ -459,8 +465,9 @@ def match_samples(
         paths (essentially taking advantage of shared recombination breakpoints).
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
         on a path between the root and any of the samples. To do so, the final tree
-        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify` method
-        with ``keep_unary`` set to True (default = ``True``).
+        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
+        method with ``filter_sites`` set to False and ``keep_unary`` set to True
+        (default = ``True``).
     :param array indexes: The sample indexes to insert into the ancestors
         tree sequence.
     :param array_like indexes: An array of indexes into the sample_data file of
@@ -488,6 +495,131 @@ def match_samples(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering
     )
     return ts
+
+
+def insert_missing_sites(
+    sample_data, tree_sequence, *, sample_id_map=None, progress_monitor=None,
+):
+    """
+    Return a new tree sequence containing extra sites that are present in a
+    :class:`SampleData` instance but are missing from a corresponding tree sequence.
+    At each newly inserted site, mutations are overlaid parsimoneously, using
+    :meth:`tskit.Tree.map_mutations`,
+    such that the realised variation at that site corresponds to the allelic
+    distribution seen in the sample_data file. Sites that have mutations overlaid
+    in this way can be identified in the output tree sequence as their
+    :ref:`metadata<tskit.sec_metadata_definition>` will contain a key named
+    ``inference`` set to ``tsinfer.INFERENCE_FITCH_PARSIMONY``. Newly inserted sites
+    that do not require mutations will have this set to `tsinfer.INFERENCE_NONE`
+    instead. Sites in ``sample_data`` that already exist in the tree sequence are
+    left untouched.
+
+    By default, sample 0 in ``sample_data`` is assumed to correspond to the first
+    sample node in the input tree sequence (i.e. ``tree_sequence.samples()[0]``),
+    sample 1 to the second sample node, and so on. If this is not the case, a map
+    can be provided, which specifies the sample ids in ``sample_data`` that
+    correspond to the sample nodes in the tree sequence. This also allows the use
+    of :class:`SampleData` instances that contain samples in addition to those
+    in the original tree sequence.
+
+    .. note::
+        Sample states observed as missing in the input ``sample_data`` need
+        not correspond to samples whose nodes are actually "missing" (i.e.
+        :ref:`isolated<tskit.sec_data_model_missing_data>`) in the input tree
+        sequence. In this case, the allelic state of the sample in the returned
+        tree sequence will be imputed to the most parsimonious state.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        containing some sites that are not in the input tree sequence.
+    :param tskit.TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
+        whose sample nodes correspond to a set of samples in the sample_data.
+    :param sample_id_map array: An array of length `tree_sequence.num_samples`
+        specifying the indexes of samples in the sample_data file that correspond
+        to sample nodes ``0..(num_samples-1)`` in the tree sequence. If None,
+        assume that all the samples in sample_data correspond to the sample nodes
+        in the tree sequence, and are in the same order.
+    :return: The input tree sequence with additional sites and mutations.
+    :rtype: tskit.TreeSequence
+
+    """
+    if sample_data.sequence_length != tree_sequence.sequence_length:
+        raise ValueError(
+            "sample_data and tree_sequence must have the same sequence length"
+        )
+    if sample_id_map is None:
+        sample_id_map = np.arange(sample_data.num_samples)
+    if len(sample_id_map) != tree_sequence.num_samples:
+        raise ValueError(
+            "You must specify the same number of samples in sample_data "
+            "as in the tree_sequence"
+        )
+    progress_monitor = _get_progress_monitor(progress_monitor)
+    tables = tree_sequence.dump_tables()
+    trees = tree_sequence.trees()
+    tree = next(trees)
+    positions = sample_data.sites_position[:]
+    new_sd_sites = np.where(np.isin(positions, tables.sites.position) == 0)[0]
+    # Create new sites and add the mutations
+
+    progress = progress_monitor.get("ms_extra_sites", len(new_sd_sites))
+    for variant in sample_data.variants(sites=new_sd_sites):
+        site = variant.site
+        pos = site.position
+        anc_state = site.ancestral_state
+        anc_value = 0  # sample_data files always have 0 as the ancestral allele idx
+        G = variant.genotypes[sample_id_map]
+        # We can't perform parsimony inference if all sites are missing, and there's no
+        # point if all non-missing sites are the ancestral state, so skip these cases
+        if np.all(np.logical_or(G == tskit.MISSING_DATA, G == anc_value)):
+            tables.sites.add_row(
+                position=pos,
+                ancestral_state=anc_state,
+                metadata=_encode_metadata(
+                    _update_site_metadata(
+                        site.metadata, inference_type=constants.INFERENCE_NONE
+                    )
+                ),
+            )
+        else:
+            while tree.interval[1] <= pos:
+                tree = next(trees)
+            inferred_anc_state, mapped_mutations = tree.map_mutations(
+                G, variant.alleles
+            )
+            if anc_state is None:
+                anc_state = inferred_anc_state
+            new_site_id = tables.sites.add_row(
+                position=pos,
+                ancestral_state=anc_state,
+                metadata=_encode_metadata(
+                    _update_site_metadata(
+                        site.metadata,
+                        inference_type=constants.INFERENCE_FITCH_PARSIMONY,
+                    )
+                ),
+            )
+            mut_map = {tskit.NULL: tskit.NULL}
+            if anc_state != inferred_anc_state:
+                # Need to add an extra mutation above the root to switch ancestral state
+                for root in tree.roots:
+                    mut_map[tskit.NULL] = tables.mutations.add_row(
+                        site=new_site_id,
+                        node=root,
+                        derived_state=inferred_anc_state,
+                        parent=tskit.NULL,
+                    )
+            for i, mutation in enumerate(mapped_mutations):
+                mut_map[i] = tables.mutations.add_row(
+                    site=new_site_id,
+                    node=mutation.node,
+                    derived_state=mutation.derived_state,
+                    parent=mut_map[mutation.parent],
+                )
+        progress.update()
+    progress.close()
+
+    tables.sort()
+    return tables.tree_sequence()
 
 
 class AncestorsGenerator(object):
@@ -545,12 +677,13 @@ class AncestorsGenerator(object):
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
             counts = allele_counts(variant.genotypes)
             use_site = False
-            if variant.site.position not in exclude_positions:
+            site = variant.site
+            if site.position not in exclude_positions:
                 if num_alleles == 2:
                     if counts.derived > 1 and counts.derived < counts.known:
                         use_site = True
             if use_site:
-                time = variant.site.time
+                time = site.time
                 if time == constants.TIME_UNSPECIFIED:
                     # Non-variable sites have no obvious freq-as-time values
                     assert counts.known != counts.derived
@@ -560,7 +693,7 @@ class AncestorsGenerator(object):
                     # may not be sensible: https://github.com/tskit-dev/tsinfer/issues/228
                     time = counts.derived / counts.known
                 self.ancestor_builder.add_site(time, variant.genotypes)
-                inference_site_id.append(variant.site.id)
+                inference_site_id.append(site.id)
                 self.num_sites += 1
             progress.update()
         progress.close()
@@ -797,9 +930,6 @@ class Matcher(object):
             for _ in range(num_threads)
         ]
 
-    def encode_metadata(self, value):
-        return json.dumps(value).encode()
-
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """
         Finds the path of the specified haplotype and upates the results
@@ -834,17 +964,17 @@ class Matcher(object):
         format.
         """
         mut_site, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
-        site_id = 0
         mutation_id = 0
         num_mutations = len(mut_site)
+        progress = self.progress_monitor.get(
+            "ms_full_mutations", len(self.inference_site_id)
+        )
         for site in self.sample_data.sites(self.inference_site_id):
-            metadata = update_site_metadata(
-                site.metadata, inference_type=constants.INFERENCE_FULL
-            )
-            tables.sites.add_row(
+            metadata = _update_site_metadata(site.metadata, constants.INFERENCE_FULL)
+            site_id = tables.sites.add_row(
                 site.position,
                 ancestral_state=site.alleles[0],
-                metadata=self.encode_metadata(metadata),
+                metadata=_encode_metadata(metadata),
             )
             while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
                 tables.mutations.add_row(
@@ -853,7 +983,8 @@ class Matcher(object):
                     derived_state=site.alleles[derived_state[mutation_id]],
                 )
                 mutation_id += 1
-            site_id += 1
+            progress.update()
+        progress.close()
 
 
 class AncestorMatcher(Matcher):
@@ -1030,7 +1161,7 @@ class AncestorMatcher(Matcher):
             if is_pc:
                 metadata.append(b"")
             else:
-                metadata.append(self.encode_metadata({"ancestor_data_id": ancestor}))
+                metadata.append(_encode_metadata({"ancestor_data_id": ancestor}))
                 ancestor += 1
         tables.nodes.packset_metadata(metadata)
         left, right, parent, child = tsb.dump_edges()
@@ -1085,7 +1216,7 @@ class SampleMatcher(Matcher):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
         super().__init__(sample_data, self.ancestors_ts_tables.sites.position, **kwargs)
         self.restore_tree_sequence_builder()
-        # Map from input sample indexes (IDs in the SampleData file) and the
+        # Map from input sample indexes (IDs in the SampleData file) to the
         # node ID in the tree sequence.
         self.sample_id_map = {}
 
@@ -1230,9 +1361,8 @@ class SampleMatcher(Matcher):
         ts = self.get_samples_tree_sequence()
         if simplify:
             logger.info(
-                "Running simplify(keep_unary=True) on {} nodes and {} edges".format(
-                    ts.num_nodes, ts.num_edges
-                )
+                "Running simplify(filter_sites=False, keep_unary=True) on"
+                f" {ts.num_nodes} nodes and {ts.num_edges} edges"
             )
             if stabilise_node_ordering:
                 # Ensure all the node times are distinct so that they will have
@@ -1260,120 +1390,7 @@ class SampleMatcher(Matcher):
             )
         return ts
 
-    def insert_sites(self, tables):
-        """
-        Insert the sites in the sample data that were not marked for inference,
-        updating the specified site and mutation tables. This is done by
-        iterating over the trees
-        """
-        # NOTE: This is all quite confusing and can hopefully be cleaned up.
-        num_sites = self.sample_data.num_sites
-        num_non_inference_sites = num_sites - self.num_sites
-        progress_monitor = self.progress_monitor.get("ms_sites", num_sites)
-
-        site_id, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
-        ts = tables.tree_sequence()
-        sample_indexes = np.array(list(self.sample_id_map.keys()), dtype=int)
-        inference = np.full(num_sites, False, dtype=bool)
-        inference[self.inference_site_id] = True
-        if num_non_inference_sites > 0:
-            assert ts.num_edges > 0
-            logger.info(
-                "Starting mutation positioning for {} non inference sites".format(
-                    num_non_inference_sites
-                )
-            )
-            inferred_mutation = 0
-            inferred_site = 0
-            trees = ts.trees()
-            tree = next(trees)
-            for variant in self.sample_data.variants():
-                site = variant.site
-                predefined_anc_state = site.ancestral_state
-                while tree.interval[1] <= site.position:
-                    tree = next(trees)
-                assert tree.interval[0] <= site.position < tree.interval[1]
-
-                inference_type = (
-                    constants.INFERENCE_FULL
-                    if inference[site.id]
-                    else constants.INFERENCE_FITCH_PARSIMONY
-                )
-                metadata = update_site_metadata(
-                    site.metadata, inference_type=inference_type
-                )
-                tables.sites.add_row(
-                    position=site.position,
-                    ancestral_state=predefined_anc_state,
-                    metadata=self.encode_metadata(metadata),
-                )
-                if inference[site.id]:
-                    while (
-                        inferred_mutation < len(site_id)
-                        and site_id[inferred_mutation] == inferred_site
-                    ):
-                        tables.mutations.add_row(
-                            site=site.id,
-                            node=node[inferred_mutation],
-                            derived_state=variant.alleles[
-                                derived_state[inferred_mutation]
-                            ],
-                        )
-                        inferred_mutation += 1
-                    inferred_site += 1
-                else:
-                    if np.all(variant.genotypes == tskit.MISSING_DATA):
-                        # Map_mutations has to have at least 1 non-missing value to work
-                        inferred_anc_state = predefined_anc_state
-                        mapped_mutations = []
-                    else:
-                        inferred_anc_state, mapped_mutations = tree.map_mutations(
-                            variant.genotypes[sample_indexes], variant.alleles
-                        )
-                    if inferred_anc_state != predefined_anc_state:
-                        # The user specified a specific ancestral state. However, the
-                        # map_mutations method has reconstructed a different state at the
-                        # root, so insert an extra mutation over each root to allow the
-                        # ancestral state to be as the user specified
-                        for root_node in tree.roots:
-                            tables.mutations.add_row(
-                                site=site.id,
-                                node=root_node,
-                                derived_state=inferred_anc_state,
-                            )
-                    for mutation in mapped_mutations:
-                        tables.mutations.add_row(
-                            site=site.id,
-                            node=mutation.node,
-                            derived_state=mutation.derived_state,
-                        )
-                progress_monitor.update()
-        else:
-            # Simple case where all sites are inference sites. We save a lot of time here
-            # by not decoding the genotypes.
-            logger.info("Inserting detailed site information")
-            position = self.sample_data.sites_position[:]
-            alleles = self.sample_data.sites_alleles[:]
-            metadata = self.sample_data.sites_metadata[:]
-            k = 0
-            for j in range(self.num_sites):
-                site_metadata = update_site_metadata(
-                    metadata[j], inference_type=constants.INFERENCE_FULL
-                )
-                tables.sites.add_row(
-                    position=position[j],
-                    ancestral_state=alleles[j][0],
-                    metadata=self.encode_metadata(site_metadata),
-                )
-                while k < len(site_id) and site_id[k] == j:
-                    tables.mutations.add_row(
-                        site=j, node=node[k], derived_state=alleles[j][derived_state[k]]
-                    )
-                    k += 1
-                progress_monitor.update()
-        progress_monitor.close()
-
-    def get_samples_tree_sequence(self):
+    def get_samples_tree_sequence(self, map_additional_sites=True):
         """
         Returns the current state of the build tree sequence. All samples and
         ancestors will have the sample node flag set. For correct sample reconstruction,
@@ -1387,12 +1404,12 @@ class SampleMatcher(Matcher):
         # Currently there's no information about populations etc stored in the
         # ancestors ts.
         for metadata in self.sample_data.populations_metadata[:]:
-            tables.populations.add_row(self.encode_metadata(metadata))
+            tables.populations.add_row(_encode_metadata(metadata))
         for ind in self.sample_data.individuals():
             if ind.time != 0:
                 ind.metadata["sample_data_time"] = ind.time
             tables.individuals.add_row(
-                location=ind.location, metadata=self.encode_metadata(ind.metadata)
+                location=ind.location, metadata=_encode_metadata(ind.metadata)
             )
 
         logger.debug("Adding tree sequence nodes")
@@ -1421,7 +1438,7 @@ class SampleMatcher(Matcher):
                 time=times[sample_id],
                 population=population,
                 individual=num_ancestral_individuals + individual,
-                metadata=self.encode_metadata(samples_metadata[index]),
+                metadata=_encode_metadata(samples_metadata[index]),
             )
         # Add in the remaining non-sample nodes.
         for u in range(sample_ids[-1] + 1, tsb.num_nodes):
@@ -1450,7 +1467,7 @@ class SampleMatcher(Matcher):
         tables.sites.clear()
         tables.mutations.clear()
         tables.sort()
-        self.insert_sites(tables)
+        self.convert_inference_mutations(tables)
 
         # FIXME this is a shortcut. We should be computing the mutation parent above
         # during insertion (probably)
@@ -1472,7 +1489,21 @@ class SampleMatcher(Matcher):
                 len(tables.mutations),
             )
         )
-        return tables.tree_sequence()
+        ts = tables.tree_sequence()
+        num_additional_sites = self.sample_data.num_sites - self.num_sites
+        if map_additional_sites and num_additional_sites > 0:
+            logger.info("Mapping additional sites")
+            assert np.array_equal(ts.samples(), list(self.sample_id_map.values()))
+            ts = insert_missing_sites(
+                self.sample_data,
+                ts,
+                sample_id_map=np.array(list(self.sample_id_map.keys())),
+                progress_monitor=self.progress_monitor,
+            )
+        else:
+            logger.info("Skipping additional site mapping")
+
+        return ts
 
     def get_augmented_ancestors_tree_sequence(self, sample_indexes):
         """
@@ -1491,7 +1522,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata=self.encode_metadata(
+                    metadata=_encode_metadata(
                         {"sample_data_id": int(sample_indexes[s])}
                     ),
                 )

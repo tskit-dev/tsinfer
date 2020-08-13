@@ -226,15 +226,28 @@ def zarr_summary(array):
     return ret
 
 
-def chunk_iterator(array):
+def chunk_iterator(array, indexes=None):
     """
-    Utility to iterate over the rows in the specified array efficiently
-    by accessing one chunk at a time.
+    Utility to iterate over closely spaced rows in the specified array efficiently
+    by accessing one chunk at a time (normally used as an iterator over each row)
     """
+    if indexes is None:
+        indexes = range(array.shape[0])
+    else:
+        if len(indexes) > 0 and (
+            np.any(np.diff(indexes) <= 0)
+            or indexes[0] < 0
+            or indexes[-1] >= array.shape[0]
+        ):
+            raise ValueError("ids must be positive and in ascending order")
+
     chunk_size = array.chunks[0]
-    for j in range(array.shape[0]):
-        if j % chunk_size == 0:
-            chunk = array[j : j + chunk_size][:]
+    prev_chunk_id = -1
+    for j in indexes:
+        chunk_id = j // chunk_size
+        if chunk_id != prev_chunk_id:
+            chunk = array[chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
+            prev_chunk_id = chunk_id
         yield chunk[j % chunk_size]
 
 
@@ -1826,15 +1839,14 @@ class SampleData(DataContainer):
             num_alleles[j] = len(alleles)
         return num_alleles[sites]
 
-    def variants(self):
+    def variants(self, sites=None):
         """
         Returns an iterator over the Variant objects. This is equivalent to
         the TreeSequence.variants iterator.
         """
-        all_genotypes = chunk_iterator(self.sites_genotypes)
-        for genotypes, site in zip(all_genotypes, self.sites()):
-            variant = Variant(site=site, alleles=site.alleles, genotypes=genotypes)
-            yield variant
+        all_genotypes = chunk_iterator(self.sites_genotypes, indexes=sites)
+        for genotypes, site in zip(all_genotypes, self.sites(ids=sites)):
+            yield Variant(site=site, alleles=site.alleles, genotypes=genotypes)
 
     def __all_haplotypes(self, sites=None):
         if sites is None:
