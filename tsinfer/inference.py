@@ -424,8 +424,11 @@ def augment_ancestors(
         progress_monitor=progress_monitor,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
-    manager.match_samples(sample_indexes)
-    ts = manager.get_augmented_ancestors_tree_sequence(indexes)
+    sample_times = np.zeros(
+        len(sample_indexes), dtype=sample_data.individuals_time.dtype
+    )
+    manager.match_samples(sample_indexes, sample_times)
+    ts = manager.get_augmented_ancestors_tree_sequence(sample_indexes)
     return ts
 
 
@@ -444,10 +447,11 @@ def match_samples(
     engine=constants.C_ENGINE,
     progress_monitor=None,
     indexes=None,
+    force_sample_times=False,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, num_threads=0, path_compression=True,\
-        simplify=True, indexes=None)
+        simplify=True, indexes=None, force_sample_times=False)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
@@ -468,10 +472,13 @@ def match_samples(
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
         method with ``filter_sites`` set to False and ``keep_unary`` set to True
         (default = ``True``).
-    :param array indexes: The sample indexes to insert into the ancestors
-        tree sequence.
     :param array_like indexes: An array of indexes into the sample_data file of
         the samples to match, or None for all samples.
+    :param bool force_sample_times: After matching, should an attempt be made to
+        adjust the time of "historical samples" (those associated with an individual
+        having a non-zero time) such that the sample nodes in the tree sequence
+        appear at the time of the individual with which they are associated.
+
     :return: The tree sequence representing the inferred history
         of the sample.
     :rtype: tskit.TreeSequence
@@ -490,7 +497,21 @@ def match_samples(
         progress_monitor=progress_monitor,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
-    manager.match_samples(sample_indexes)
+    sample_times = np.zeros(
+        len(sample_indexes), dtype=sample_data.individuals_time.dtype
+    )
+    if force_sample_times:
+        individuals = sample_data.samples_individual[:][sample_indexes]
+        # By construction all samples in an sd file have an individual: but check anyway
+        assert np.all(individuals >= 0)
+        sample_times = sample_data.individuals_time[:][individuals]
+
+        # Here we might want to re-order sample_indexes and sample_times
+        # so that any historical ones come first, any we bomb out early if they conflict
+        # but that would mean re-ordering the sample nodes in the final ts, and
+        # we sometimes assume they are in the same order as in the file
+
+    manager.match_samples(sample_indexes, sample_times)
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering
     )
@@ -1327,10 +1348,11 @@ class SampleMatcher(Matcher):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-    def match_samples(self, sample_indexes):
+    def match_samples(self, sample_indexes, sample_times):
         num_samples = len(sample_indexes)
-        for j in sample_indexes:
-            self.sample_id_map[j] = self.tree_sequence_builder.add_node(0)
+        for j, t in zip(sample_indexes, sample_times):
+            self.sample_id_map[j] = self.tree_sequence_builder.add_node(t)
+        flags, times = self.tree_sequence_builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
@@ -1346,13 +1368,19 @@ class SampleMatcher(Matcher):
             )
             progress_monitor = self.progress_monitor.get("ms_paths", num_samples)
             for j in sample_indexes:
-                sample_id = int(self.sample_id_map[j])
-                left, right, parent = self.results.get_path(sample_id)
+                node_id = int(self.sample_id_map[j])
+                left, right, parent = self.results.get_path(node_id)
+                if np.any(times[node_id] > times[parent]):
+                    p = parent[np.argmin(times[parent])]
+                    raise ValueError(
+                        f"Failed to put sample {j} (node {node_id}) at time "
+                        f"{times[node_id]} as it has a younger parent (node {p})."
+                    )
                 self.tree_sequence_builder.add_path(
-                    sample_id, left, right, parent, compress=self.path_compression
+                    node_id, left, right, parent, compress=self.path_compression
                 )
-                site, derived_state = self.results.get_mutations(sample_id)
-                self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
+                site, derived_state = self.results.get_mutations(node_id)
+                self.tree_sequence_builder.add_mutations(node_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
 

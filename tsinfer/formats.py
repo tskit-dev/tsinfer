@@ -64,6 +64,13 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 DEFAULT_MAX_FILE_SIZE = 2 ** 30 if sys.platform == "win32" else 2 ** 40
 
 
+def exclude_id(attribute, value):
+    """
+    Used to filter out the id field from attrs objects such as Ancestor
+    """
+    return attribute.name != "id"
+
+
 def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
     if os.path.exists(lockfile):
@@ -187,7 +194,7 @@ class BufferedItemWriter(object):
         """
         Add an item to each of the arrays. The keyword arguments for this
         function correspond to the keys in the dictionary of arrays provided
-        to the contructor.
+        to the constructor.
         """
         if self.num_buffered_items[self.write_buffer] == self.chunk_size:
             self._queue_flush_buffer()
@@ -613,6 +620,18 @@ class DataContainer(object):
         timestamp = datetime.datetime.now().isoformat()
         record = provenance.get_provenance_dict(command=command, **kwargs)
         self.add_provenance(timestamp, record)
+
+    def clear_provenances(self):
+        """
+        Clear all provenances in this instance
+        """
+        if self._mode not in (self.BUILD_MODE, self.EDIT_MODE):
+            raise ValueError(
+                "Invalid operation: cannot clear provenances unless in BUILD "
+                "or EDIT mode"
+            )
+        self.provenances_timestamp.resize(0)
+        self.provenances_record.resize(0)
 
     @property
     def format_name(self):
@@ -1850,8 +1869,6 @@ class SampleData(DataContainer):
             yield Variant(site=site, alleles=site.alleles, genotypes=genotypes)
 
     def __all_haplotypes(self, sites=None):
-        if sites is None:
-            sites = np.arange(self.num_sites, dtype=int)
         # We iterate over chunks vertically here, and it's not worth complicating
         # the chunk iterator to handle this.
         chunk_size = self.sites_genotypes.chunks[1]
@@ -1859,7 +1876,7 @@ class SampleData(DataContainer):
             if j % chunk_size == 0:
                 chunk = self.sites_genotypes[:, j : j + chunk_size].T
             a = chunk[j % chunk_size]
-            yield j, a[sites]
+            yield j, a if sites is None else a[sites]
 
     def haplotypes(self, samples=None, sites=None):
         """
@@ -1868,6 +1885,7 @@ class SampleData(DataContainer):
         :param list samples: The sample IDs for which haplotypes are returned. If
             ``None``, return haplotypes for all sample nodes, otherwise this may be a
             numpy array (or array-like) object (converted to dtype=np.int32).
+        :param array sites: A numpy array of sites to use.
         """
         if samples is None:
             samples = np.arange(self.num_samples)
@@ -2057,7 +2075,14 @@ class AncestorData(DataContainer):
             compressor=self._compressor,
         )
 
-        self.item_writer = BufferedItemWriter(
+        self._alloc_ancestor_writer()
+
+        # Add in the provenance trail from the sample_data file.
+        for timestamp, record in sample_data.provenances():
+            self.add_provenance(timestamp, record)
+
+    def _alloc_ancestor_writer(self):
+        self.ancestor_writer = BufferedItemWriter(
             {
                 "start": self.ancestors_start,
                 "end": self.ancestors_end,
@@ -2067,10 +2092,6 @@ class AncestorData(DataContainer):
             },
             num_threads=self._num_flush_threads,
         )
-
-        # Add in the provenance trail from the sample_data file.
-        for timestamp, record in sample_data.provenances():
-            self.add_provenance(timestamp, record)
 
     def summary(self):
         return "AncestorData(num_ancestors={}, num_sites={})".format(
@@ -2175,8 +2196,193 @@ class AncestorData(DataContainer):
         end = self.ancestors_end[:]
         return pos[end] - pos[start]
 
+    def insert_proxy_samples(
+        self,
+        sample_data,
+        *,
+        sample_ids=None,
+        epsilon=None,
+        allow_mutation=False,
+        require_same_sample_data=True,
+        **kwargs,
+    ):
+        """
+        Take a set of samples from a sample_data instance and create additional
+        "proxy sample ancestors" from them, returning a new :class:`.AncestorData`
+        instance including both the current ancestors and the additional ancestors
+        at the appropriate time points.
+
+        A *proxy sample ancestor* is an ancestor based upon a known sample. At
+        sites used in the full inference process, the haplotype of this ancestor
+        is identical to that of the sample on which it is based. The time of the
+        ancestor is taken to be a fraction ``epsilon`` older than the sample on
+        which it is based.
+
+        A common use of this function is to provide ancestral nodes for anchoring
+        historical samples at the correct time when matching them into a tree
+        sequence during the :func:`tsinfer.match_samples` stage of inference.
+        For this reason, by default, the samples chosen from ``sample_data``
+        are those associated with historical (i.e. non-contemporary)
+        :ref:`individuals <sec_inference_data_model_individual>`. This can be
+        altered by using the ``sample_ids`` parameter.
+
+        .. note::
+
+            The proxy sample ancestors insterted here will correspond to extra nodes
+            in the inferred tree sequence. At sites which are not used in the full
+            inference process (e.g. sites unique to a single historical sample),
+            these proxy sample ancestor nodes may have a different genotype from
+            their corresponding sample.
+
+        :param SampleData sample_data: The :class:`.SampleData` instance
+            from which to select the samples used to create extra ancestors.
+        :param list(int) sample_ids: A list of sample ids in the ``sample_data``
+            instance that will be selected to create the extra ancestors. If
+            ``None`` (default) select all the historical samples, i.e. those
+            associated with an :ref:`sec_inference_data_model_individual` whose
+            time is greater than zero. The order of ids is ignored, as are
+            duplicate ids.
+        :param list(float) epsilon: An list of small time increments
+            determining how much older each proxy sample ancestor is than the
+            corresponding sample listed in ``sample_ids``. A single value is also
+            allowed, in which case it is used as the time increment for all selected
+            proxy sample ancestors. If None (default) find :math:`{\\delta}t`, the
+            smallest time difference between between the sample times and the next
+            oldest ancestor in the current :class:`.AncestorData` instance, setting
+            ``epsilon`` = :math:`{\\delta}t / 100` (or, if all selected samples
+            are at least as old as the oldest ancestor, take :math:`{\\delta}t`
+            to be the smallest non-zero time difference between existing ancestors).
+        :param bool allow_mutation: If ``False`` (the default), any site in a proxy
+            sample ancestor that has a derived allele must have a pre-existing
+            mutation in an older (non-proxy) ancestor, otherwise an error is raised.
+            Alternatively, if ``allow_mutation`` is ``True``, proxy ancestors can
+            contain a de-novo mutation at a site that also has a mutation elsewhere
+            (i.e. breaking the infinite sites assumption), allowing them to possess
+            derived alleles at sites where there are no pre-existing mutations in
+            older ancestors.
+        :param bool require_same_sample_data: If ``True`` (default) then the
+            the ``sample_data`` parameter must point to the same :class:`.SampleData`
+            instance as that used to generate the current ancestors. If ``False``,
+            this requirement is not enforced, and it is the user's responsibility to
+            ensure that the encoding of alleles in the provided ``sample_data``
+            instance matches that :meth:`defined <SampleData.add_site>` in the
+            :class:`.SampleData` instance on which the current ancestors are based.
+        :param \\**kwargs: Further arguments passed to the constructor when creating
+            the new :class:`AncestorData` instance which will be returned.
+
+        :return: A new :class:`.AncestorData` object.
+        :rtype: AncestorData
+        """
+        self._check_finalised()
+        sample_data._check_finalised()
+        if require_same_sample_data:
+            if sample_data.uuid != self.sample_data_uuid:
+                raise ValueError(
+                    "sample_data differs from that used to build the initial ancestors"
+                )
+        if self.sequence_length != sample_data.sequence_length:
+            raise ValueError("sample_data does not have the correct sequence length")
+        used_sites = np.isin(sample_data.sites_position[:], self.sites_position[:])
+        if np.sum(used_sites) != self.num_sites:
+            raise ValueError("Genome positions in ancestors missing from sample_data")
+
+        if sample_ids is None:
+            sample_ids = []
+            for i in sample_data.individuals():
+                if i.time > 0:
+                    sample_ids += i.samples
+        # sort by ID and make unique for quick haplotype access
+        sample_ids, unique_indices = np.unique(np.array(sample_ids), return_index=True)
+
+        sample_times = np.zeros(len(sample_ids), dtype=self.ancestors_time.dtype)
+        for i, s in enumerate(sample_ids):
+            sample = sample_data.sample(s)
+            if sample.individual != tskit.NULL:
+                sample_times[i] = sample_data.individual(sample.individual).time
+
+        if epsilon is not None:
+            epsilons = np.atleast_1d(epsilon)
+            if len(epsilons) == 1:
+                # all get the same epsilon
+                epsilons = np.repeat(epsilons, len(sample_ids))
+            else:
+                if len(epsilons) != len(unique_indices):
+                    raise ValueError(
+                        "The number of epsilon values must equal the number of "
+                        f"sample_ids ({len(sample_ids)})"
+                    )
+                epsilons = epsilons[unique_indices]
+
+        else:
+            anc_times = self.ancestors_time[:][::-1]  # find ascending time order
+            older_index = np.searchsorted(anc_times, sample_times, side="right")
+            # Don't include times older than the oldest ancestor
+            allowed = older_index < self.num_ancestors
+            if np.sum(allowed) > 0:
+                delta_t = anc_times[older_index[allowed]] - sample_times[allowed]
+            else:
+                # All samples have times equal to or older than the oldest curr ancestor
+                time_diffs = np.diff(anc_times)
+                delta_t = np.min(time_diffs[time_diffs > 0])
+            epsilons = np.repeat(np.min(delta_t) / 100.0, len(sample_ids))
+
+        proxy_times = sample_times + epsilons
+        reverse_time_sorted_indexes = np.argsort(proxy_times)[::-1]
+        # In cases where we have more than a handful of samples to use as proxies, it is
+        # inefficient to access the haplotypes out of order, so we iterate and cache
+        # (caution: the haplotypes list may be quite large in this case)
+        haplotypes = [
+            h[1] for h in sample_data.haplotypes(samples=sample_ids, sites=used_sites)
+        ]
+
+        with AncestorData(sample_data, **kwargs) as other:
+            other.set_inference_sites(used_sites)
+            mutated_sites = set()  # To check if mutations have ocurred yet
+            ancestors_iter = self.ancestors()
+            ancestor = next(ancestors_iter, None)
+            for i in reverse_time_sorted_indexes:
+                proxy_time = proxy_times[i]
+                sample_id = sample_ids[i]
+                haplotype = haplotypes[i]
+                while ancestor is not None and ancestor.time > proxy_time:
+                    other.add_ancestor(**attr.asdict(ancestor, filter=exclude_id))
+                    mutated_sites.update(ancestor.focal_sites)
+                    ancestor = next(ancestors_iter, None)
+                if not allow_mutation:
+                    derived_sites = set(np.where(haplotype > 0)[0])
+                    if not derived_sites.issubset(mutated_sites):
+                        raise ValueError(
+                            f"Sample {sample_id} contains a new derived allele, which "
+                            "requires a novel mutation, but `allow_mutation` is False."
+                        )
+                logger.debug(
+                    f"Inserting proxy ancestor: sample {sample_id} at time {proxy_time}"
+                )
+                other.add_ancestor(
+                    start=0,
+                    end=self.num_sites,
+                    time=proxy_time,
+                    focal_sites=[],
+                    haplotype=haplotype,
+                )
+            # Add any ancestors remaining in the current instance
+            while ancestor is not None:
+                other.add_ancestor(**attr.asdict(ancestor, filter=exclude_id))
+                ancestor = next(ancestors_iter, None)
+
+            # TODO - set metadata on these ancestors, once ancestors have metadata
+            other.clear_provenances()
+            for timestamp, record in self.provenances():
+                other.add_provenance(timestamp, record)
+            if sample_data.uuid != self.sample_data_uuid:
+                pass  # TODO: if sample files don't match, we need extra provenance info
+            other.record_provenance(command="insert_proxy_samples", **kwargs)
+
+        assert other.num_ancestors == self.num_ancestors + len(sample_ids)
+        return other
+
     ####################################
-    # Write mode
+    # Write mode (building and editing)
     ####################################
 
     def set_inference_sites(self, site_ids):
@@ -2185,8 +2391,9 @@ class AncestorData(DataContainer):
         are defined) to the specified list of site IDs. This must be a subset of the
         sites in the sample data file, and the IDs must be in increasing order.
 
-        This must be called before the first call to ``add_ancestor``.
+        This must be called before the first call to :meth:`.add_ancestor`.
         """
+        self._check_build_mode()
         position = self.sample_data.sites_position[:][site_ids]
         array = self.data["sites/position"]
         array.resize(position.shape)
@@ -2222,7 +2429,7 @@ class AncestorData(DataContainer):
         if self._last_time != 0 and time > self._last_time:
             raise ValueError("older ancestors must be added before younger ones")
         self._last_time = time
-        return self.item_writer.add(
+        return self.ancestor_writer.add(
             start=start,
             end=end,
             time=time,
@@ -2232,9 +2439,13 @@ class AncestorData(DataContainer):
 
     def finalise(self):
         if self._mode == self.BUILD_MODE:
-            self.item_writer.flush()
-            self.item_writer = None
+            self.ancestor_writer.flush()
+            self.ancestor_writer = None
         super(AncestorData, self).finalise()
+
+    ####################################
+    # Read mode
+    ####################################
 
     def ancestors(self):
         """

@@ -3177,3 +3177,54 @@ class TestInsertMissingSites(unittest.TestCase):
                 self.assertEquals(
                     metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
                 )
+
+
+class TestHistoricalSamples(unittest.TestCase):
+    def test_standard_pipeline(self):
+        for sample_times in [
+            (0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 1, 1.5),
+            (1.0, 1.5, 0.0, 0.0),
+            # (0.0, 0.0, 1.0, 1.5, 15), # see #328#issuecomment-674407970 - point 1
+        ]:
+            samples = [msprime.Sample(population=0, time=t) for t in sample_times]
+            ts = msprime.simulate(
+                samples=samples,
+                recombination_rate=1,
+                mutation_rate=10,
+                random_seed=123,
+            )
+            self.assertGreater(ts.num_sites, 0)
+            sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+            generated_ancestors = tsinfer.generate_ancestors(sd)
+            all_ancestors = generated_ancestors.insert_proxy_samples(sd)
+            ancestors_ts = tsinfer.match_ancestors(sd, all_ancestors)
+            inf_ts = tsinfer.match_samples(sd, ancestors_ts, force_sample_times=True)
+            for t, u in zip(sample_times, inf_ts.samples()):
+                sample = inf_ts.node(u)
+                self.assertAlmostEqual(sample.time, t)
+
+    def test_sample_too_old(self):
+        # If we use force_sample_times=True but can't force the sample old enough
+        samples = [msprime.Sample(population=0, time=t) for t in (0.0, 0.0, 0.1, 1.5)]
+        ts = msprime.simulate(
+            samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321,
+        )
+        self.assertGreater(ts.num_sites, 0)
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+        generated_ancestors = tsinfer.generate_ancestors(sd)
+        all_ancestors = generated_ancestors.insert_proxy_samples(sd)
+        ancestors_ts = tsinfer.match_ancestors(sd, all_ancestors)
+        sd_copy = sd.copy()
+        time = sd_copy.individuals_time[:]
+        time[-1] = 100
+        sd_copy.individuals_time[:] = time
+        sd_copy.finalise()
+        self.assertRaises(
+            ValueError,
+            tsinfer.match_samples,
+            sd_copy,
+            ancestors_ts,
+            force_sample_times=True,
+        )
