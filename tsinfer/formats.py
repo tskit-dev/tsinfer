@@ -349,6 +349,7 @@ class DataContainer(object):
 
     def __init__(
         self,
+        *,
         path=None,
         num_flush_threads=0,
         compressor=DEFAULT_COMPRESSOR,
@@ -777,7 +778,7 @@ class Population(object):
 
 class SampleData(DataContainer):
     """
-    SampleData(sequence_length=0, path=None, num_flush_threads=0, \
+    SampleData(sequence_length=0, *, path=None, num_flush_threads=0, \
     compressor=DEFAULT_COMPRESSOR, chunk_size=1024, max_file_size=None)
 
     Class representing input sample data used for inference.
@@ -1963,7 +1964,7 @@ class Ancestor(object):
 
 class AncestorData(DataContainer):
     """
-    AncestorData(sample_data, path=None, num_flush_threads=0, compressor=None, \
+    AncestorData(sample_data, *, path=None, num_flush_threads=0, compressor=None, \
     chunk_size=1024, max_file_size=None)
 
     Class representing the stored ancestor data produced by
