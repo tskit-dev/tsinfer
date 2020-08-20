@@ -610,6 +610,18 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertEqual(a[0][0], timestamp)
         self.assertEqual(a[0][1], record)
 
+    def test_clear_provenance(self):
+        ts = get_example_ts(4, 3)
+        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        self.verify_data_round_trip(ts, input_file)
+        self.assertEqual(input_file.num_provenances, 1)
+        self.assertRaises(ValueError, input_file.clear_provenances)
+        input_file = input_file.copy()
+        input_file.clear_provenances()
+        self.assertEqual(input_file.num_provenances, 0)
+        input_file.finalise()
+        self.assertEqual(input_file.num_provenances, 0)
+
     def test_variant_errors(self):
         input_file = formats.SampleData(sequence_length=10)
         genotypes = [0, 0]
@@ -970,6 +982,13 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
 
         j = 0
         for index, h in input_file.haplotypes(np.arange(ts.num_samples)):
+            self.assertTrue(np.array_equal(h, G[:, j]))
+            self.assertEqual(index, j)
+            j += 1
+        self.assertEqual(j, ts.num_samples)
+
+        j = 0
+        for index, h in input_file.haplotypes(sites=np.arange(ts.num_sites)):
             self.assertTrue(np.array_equal(h, G[:, j]))
             self.assertEqual(index, j)
             j += 1
@@ -1654,7 +1673,7 @@ class TestSampleDataMerge(unittest.TestCase):
 
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
-    Test cases for the sample data file format.
+    Test cases for the ancestor data file format.
     """
 
     tested_class = formats.AncestorData
@@ -1686,6 +1705,12 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             haplotype[focal_sites] = 1
             ancestors.append((start, end, 2 * j + 1, focal_sites, haplotype))
         return sample_data, ancestors
+
+    def assert_ancestor_full_span(self, ancestor_data, indexes):
+        self.assertTrue(np.all(ancestor_data.ancestors_start[:][indexes] == 0))
+        self.assertTrue(
+            np.all(ancestor_data.ancestors_end[:][indexes] == ancestor_data.num_sites)
+        )
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for i, (start, end, t, focal_sites, haplotype) in enumerate(ancestors):
@@ -1943,6 +1968,218 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
             sample_data = tsinfer.load(filename)
             self.assertEqual(sample_data.sequence_length, 0)
             self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
+
+    def test_bad_insert_proxy_samples(self):
+        sample_data, ancestor_haps = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.AncestorData(sample_data)
+        self.assertRaisesRegexp(
+            ValueError, "not finalised", ancestors.insert_proxy_samples, sample_data
+        )
+        self.verify_data_round_trip(sample_data, ancestors, ancestor_haps)
+        sample_data = sample_data.copy()
+        self.assertRaisesRegexp(
+            ValueError,
+            "not finalised",
+            ancestors.insert_proxy_samples,
+            sample_data,
+            require_same_sample_data=False,
+        )
+        # Check it does work when finalised
+        sample_data.finalise()
+        ancestors.insert_proxy_samples(sample_data, require_same_sample_data=False)
+
+    def test_insert_proxy_bad_sample_data(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        # by default, sample_data must be the same
+        sd_copy, _ = self.get_example_data(10, 10, num_ancestors=40)
+        self.assertRaises(ValueError, ancestors.insert_proxy_samples, sd_copy)
+        # But works if we don't require same data
+        ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+        # Unless seq lengths differ
+        sd_copy, _ = self.get_example_data(10, sequence_length=11, num_ancestors=40)
+        self.assertRaisesRegexp(
+            ValueError,
+            "sequence length",
+            ancestors.insert_proxy_samples,
+            sd_copy,
+            require_same_sample_data=False,
+        )
+
+    def test_insert_proxy_site_changes(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        nonsingletons = np.where(np.sum(sample_data.sites_genotypes, axis=1) > 1)[0]
+        sd_copy = sample_data.subset(sites=nonsingletons)
+        # Should be able to use a sd subset if only non-inference sites are missing
+        ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+        # But if we remove a *full inference* site, we should always fail
+        sd_copy = sample_data.subset(sites=nonsingletons[1:])
+        self.assertRaisesRegexp(
+            ValueError,
+            "positions.*missing",
+            ancestors.insert_proxy_samples,
+            sd_copy,
+            require_same_sample_data=False,
+        )
+
+    def test_insert_proxy_bad_samples(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        for bad_id in [-1, "a", 10, np.nan, np.inf, -np.inf]:
+            self.assertRaises(
+                IndexError,
+                ancestors.insert_proxy_samples,
+                sample_data,
+                sample_ids=[bad_id],
+            )
+
+    def test_insert_proxy_no_samples(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=[])
+        self.assertNotEqual(ancestors, ancestors_extra)  # UUIDs should differ ...
+        self.assertTrue(ancestors.data_equal(ancestors_extra))  # but data be identical
+
+    def test_insert_proxy_1_sample(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        used_sites = np.isin(sample_data.sites_position[:], ancestors.sites_position[:])
+        for i in (0, 6, 9):
+            ancestors_extra = ancestors.insert_proxy_samples(
+                sample_data, sample_ids=[i]
+            )
+            self.assertEqual(ancestors.num_ancestors + 1, ancestors_extra.num_ancestors)
+            inserted = -1
+            self.assert_ancestor_full_span(ancestors_extra, [inserted])
+            self.assertTrue(
+                np.array_equal(
+                    ancestors_extra.ancestors_haplotype[inserted],
+                    sample_data.sites_genotypes[:, i][used_sites],
+                )
+            )
+
+    def test_insert_proxy_sample_provenance(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=[6])
+        for anc_prov, sd_prov in itertools.zip_longest(
+            ancestors_extra.provenances(), ancestors.provenances()
+        ):
+            if sd_prov is None:
+                params = anc_prov[1]["parameters"]
+                self.assertEquals(params["command"], "insert_proxy_samples")
+            else:
+                self.assertEquals(anc_prov, sd_prov)
+
+    def test_insert_proxy_time_historical_samples(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        site_times = sample_data.sites_time[:]  # From a simulation => sites have times
+        self.assertTrue(np.any(site_times != tsinfer.TIME_UNSPECIFIED))
+        min_time = np.min(site_times[site_times > 0])
+        sample_data = sample_data.copy()
+        time = sample_data.individuals_time[:]
+        self.assertEqual(len(time), 10)
+        self.assertTrue(np.all(time == 0))
+        historical_sample_time = min_time / 2  # Smaller than the smallest freq value
+        time[9] = historical_sample_time
+        sample_data.individuals_time[:] = time
+        sample_data.finalise()
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        self.assertGreater(np.min(ancestors.ancestors_time[:]), historical_sample_time)
+        used_sites = np.isin(sample_data.sites_position[:], ancestors.sites_position[:])
+        epsilon = (ancestors.ancestors_time[-1] - historical_sample_time) / 100
+        G = sample_data.sites_genotypes
+
+        # By default, insert_proxy_samples should insert the single historical proxy
+        ancestors_extra = ancestors.insert_proxy_samples(sample_data)
+        self.assertEqual(ancestors.num_ancestors + 1, ancestors_extra.num_ancestors)
+        self.assert_ancestor_full_span(ancestors_extra, [-1])
+        self.assertTrue(
+            np.array_equal(ancestors_extra.ancestors_haplotype[-1], G[:, 9][used_sites])
+        )
+        self.assertTrue(
+            np.array_equal(
+                ancestors_extra.ancestors_time[-1], historical_sample_time + epsilon
+            )
+        )
+
+        # Test 2 proxies, one historical, specified in different ways / orders
+        s_ids = np.array([9, 0])
+        self.assertFalse(np.array_equal(G[:, 9][used_sites], G[:, 0][used_sites]))
+        for i in (s_ids, s_ids[::-1], s_ids[[1, 1, 0]]):  # All equivalent
+            ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=i)
+            self.assertEqual(
+                ancestors.num_ancestors + len(s_ids), ancestors_extra.num_ancestors
+            )
+            inserted = [-1, -2]
+            self.assert_ancestor_full_span(ancestors_extra, inserted)
+            # Older sample
+            self.assertTrue(
+                np.array_equal(
+                    ancestors_extra.ancestors_haplotype[-2], G[:, 9][used_sites]
+                )
+            )
+            self.assertTrue(
+                np.array_equal(
+                    ancestors_extra.ancestors_time[-2], historical_sample_time + epsilon
+                )
+            )
+            # Younger sample
+            self.assertTrue(
+                np.array_equal(
+                    ancestors_extra.ancestors_haplotype[-1], G[:, 0][used_sites]
+                )
+            )
+            self.assertTrue(np.array_equal(ancestors_extra.ancestors_time[-1], epsilon))
+
+    def test_insert_proxy_sample_epsilon(self):
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        min_time = ancestors.ancestors_time[-1]
+        s_ids = np.array([1, 2, 3])
+        self.assertRaises(
+            ValueError,
+            ancestors.insert_proxy_samples,
+            sample_data,
+            sample_ids=s_ids,
+            epsilon=[min_time * 0.1, min_time * 0.2],
+        )
+
+        for e in (min_time * 0.05, [min_time * 0.1, min_time * 0.2, min_time * 0.3]):
+            ancestors_extra = ancestors.insert_proxy_samples(
+                sample_data, sample_ids=s_ids, epsilon=e
+            )
+            inserted = [-1, -2, -3]
+            self.assertTrue(np.allclose(ancestors_extra.ancestors_time[:][inserted], e))
+
+    def test_insert_proxy_sample_oldest(self):
+        # Test all historical samples are older than the oldest site
+        sample_data, _ = self.get_example_data(10, 10, 40)
+        max_time = np.max(sample_data.sites_time[:])
+        sample_data = sample_data.copy()
+        time = sample_data.individuals_time[:]
+        historical_sample_time = max_time * 2  # Smaller than the smallest freq value
+        s_ids = np.array([4, 5])
+        time[s_ids] = historical_sample_time
+        sample_data.individuals_time[:] = time
+        sample_data.finalise()
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        self.assertRaisesRegexp(
+            ValueError, "allow_mutation", ancestors.insert_proxy_samples, sample_data
+        )
+        ancestors_extra = ancestors.insert_proxy_samples(
+            sample_data, allow_mutation=True
+        )
+        self.assertEqual(ancestors.num_ancestors + 2, ancestors_extra.num_ancestors)
+        inserted = [0, 1]  # Should be the oldest ancestors
+        e = np.diff(ancestors.ancestors_time[:][::-1])
+        e = np.min(e[e > 0]) / 100
+        self.assertTrue(
+            np.allclose(
+                ancestors_extra.ancestors_time[:][inserted], historical_sample_time + e
+            )
+        )
 
 
 class BufferedItemWriterMixin(object):

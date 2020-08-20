@@ -21,6 +21,8 @@ File formats
     3. Provide example of updating inference_sites
 
 .. autoclass:: tsinfer.AncestorData
+    :members:
+    :inherited-members:
 
 .. todo::
 
