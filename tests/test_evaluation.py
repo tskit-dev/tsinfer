@@ -27,6 +27,7 @@ import msprime
 import numpy as np
 import pytest
 import tskit
+import tsutil
 
 import tsinfer
 
@@ -396,16 +397,9 @@ class TestInsertPerfectMutations:
         self.verify_perfect_mutations(ts)
 
     def test_multiple_recombinations(self):
-        try:
-            recomb_map = msprime.RecombinationMap.uniform_map(
-                length=10, rate=10, discrete=True
-            )
-        except TypeError:
-            # Fallback for older versions of msprime, which use num_loci
-            recomb_map = msprime.RecombinationMap.uniform_map(
-                length=10, rate=10, num_loci=10
-            )
-        ts = msprime.simulate(10, recombination_map=recomb_map, random_seed=1)
+        ts = msprime.sim_ancestry(
+            5, sequence_length=10, recombination_rate=10, random_seed=1
+        )
         found = False
         for _, e_out, _ in ts.edge_diffs():
             if len(e_out) > 4:
@@ -657,7 +651,7 @@ class TestErrors:
         assert ts.num_sites > 1
         assert ts.num_trees > 1
         tsp = tsinfer.insert_errors(ts, 0)
-        t1 = ts.tables
+        t1 = tsutil.mark_mutation_times_unknown(ts).tables
         t2 = tsp.tables
         assert t1.nodes == t2.nodes
         assert t1.edges == t2.edges

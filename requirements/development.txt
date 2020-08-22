@@ -6,7 +6,7 @@ six
 tqdm
 humanize
 daiquiri
-msprime
+msprime >= 1.0.0
 zarr
 lmdb
 attrs

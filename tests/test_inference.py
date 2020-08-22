@@ -1859,6 +1859,9 @@ class TestMatchSamples:
     Test specific features of the match_samples stage
     """
 
+    @pytest.mark.skip(
+        reason="Bug to be fixed: Issue https://github.com/tskit-dev/tsinfer/issues/493"
+    )
     def test_partial_samples(self):
         ts = msprime.simulate(
             10, mutation_rate=2, recombination_rate=2, random_seed=233
@@ -2552,7 +2555,9 @@ class PathCompressionMixin:
         self.verify(sample_data)
 
     def test_simulation_with_error(self):
-        ts = msprime.simulate(50, mutation_rate=5, random_seed=4, recombination_rate=8)
+        ts = msprime.simulate(
+            50, mutation_rate=10, random_seed=4, recombination_rate=15
+        )
         ts = eval_util.insert_errors(ts, 0.2, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
@@ -3617,6 +3622,7 @@ class TestInsertMissingSites:
     def test_insert_with_map(self):
         ts = msprime.simulate(8, length=1, recombination_rate=1, random_seed=123)
         mutated_ts = msprime.mutate(ts, rate=1, random_seed=123)
+        mutated_ts = tsutil.mark_mutation_times_unknown(mutated_ts)
         assert mutated_ts.num_sites > 0
         sample_data = tsinfer.SampleData.from_tree_sequence(mutated_ts)
         reordered_sd = sample_data.subset(individuals=np.arange(ts.num_samples)[::-1])

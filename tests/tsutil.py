@@ -28,6 +28,15 @@ import tskit
 import tsinfer
 
 
+def mark_mutation_times_unknown(ts):
+    """
+    Msprime now provides times for mutations, which cannot be estimated by tsinfer
+    """
+    tables = ts.dump_tables()
+    tables.mutations.time = np.full_like(tables.mutations.time, tskit.UNKNOWN_TIME)
+    return tables.tree_sequence()
+
+
 def json_metadata_is_subset(metadata1, metadata2):
     return metadata1.items() <= metadata2.items()
 
