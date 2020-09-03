@@ -1315,6 +1315,35 @@ class SampleData(DataContainer):
             subset.record_provenance(command="subset", **kwargs)
         return subset
 
+    def min_site_times(self, individuals_only=False):
+        """
+        Returns a numpy array of the lower bound of the time of sites in the SampleData
+        file. Each individual with a nonzero time (from the individuals_time array)
+        gives a lower bound on the age of sites where the individual carries a
+        derived allele.
+
+        :return: A numpy array of the lower bound for each sites time.
+        :rtype: numpy.ndarray(dtype=float64)
+        """
+        samples_individual = self.samples_individual[:]
+        assert np.all(samples_individual >= 0)
+        samples_time = self.individuals_time[:][samples_individual]
+        if np.any(samples_time < 0):
+            raise ValueError("Individuals cannot have negative times")
+        historic_samples = samples_time != 0
+        historic_samples_time = samples_time[historic_samples]
+        sites_bound = np.zeros(self.num_sites)
+        for var in self.variants():
+            historic_genos = var.genotypes[historic_samples]
+            derived = historic_genos > 0
+            if np.any(derived):
+                historic_bound = np.max(historic_samples_time[derived])
+                if historic_bound > sites_bound[var.site.id]:
+                    sites_bound[var.site.id] = historic_bound
+        if not individuals_only:
+            sites_bound = np.maximum(self.sites_time[:], sites_bound)
+        return sites_bound
+
     ####################################
     # Write mode
     ####################################

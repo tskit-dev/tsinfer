@@ -1671,6 +1671,59 @@ class TestSampleDataMerge(unittest.TestCase):
             self.assertTrue(sd2.data_equal(sd3))
 
 
+class TestMinSiteTimes(unittest.TestCase):
+    """
+    Test cases for sample data's min_site_times function
+    """
+
+    def test_no_historic(self):
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        # No arguments and individuals_only=True should give array of zeros
+        bounds_individuals_only = sd1.min_site_times(individuals_only=True)
+        self.assertTrue(
+            np.array_equal(bounds_individuals_only, np.zeros(sd1.num_sites))
+        )
+        bounds = sd1.min_site_times()
+        self.assertTrue(np.array_equal(bounds, sd1.sites_time[:]))
+
+    def test_simple_case(self):
+        sample_times = [0, 0, 0.5, 1]
+        ts = get_example_historical_sampled_ts(sample_times, 1e1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        time_bound_individuals_only = sd1.min_site_times(individuals_only=True)
+        # Because this is a haploid tree sequence we can use the
+        # individual and sample IDs interchangably.
+        self.assertTrue(
+            np.all(
+                np.in1d(
+                    time_bound_individuals_only, np.concatenate([[0], sample_times])
+                )
+            )
+        )
+        G1 = ts.genotype_matrix()
+        older_derived = G1[:, 3] == 1
+        self.assertTrue(np.all(time_bound_individuals_only[older_derived] == 1))
+        only_younger_derived = np.logical_and(G1[:, 2] == 1, G1[:, 3] == 0)
+        self.assertTrue(
+            np.all(time_bound_individuals_only[only_younger_derived] == 0.5)
+        )
+        no_historic_derived = np.all(G1[:2:4] != 1)
+        self.assertTrue(np.all(time_bound_individuals_only[no_historic_derived] == 0))
+        time_bound = sd1.min_site_times()
+        self.assertTrue(np.array_equal(time_bound, sd1.sites_time[:]))
+
+    def test_errors(self):
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        individuals_time = sd1.individuals_time[:]
+        neg_times_sd1 = sd1.copy()
+        neg_times_sd1.individuals_time[:] = individuals_time - 1
+        neg_times_sd1.finalise()
+        with self.assertRaises(ValueError):
+            neg_times_sd1.min_site_times()
+
+
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the ancestor data file format.
