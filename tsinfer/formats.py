@@ -1349,7 +1349,14 @@ class SampleData(DataContainer):
     ####################################
 
     @classmethod
-    def from_tree_sequence(cls, ts, use_times=True, use_metadata=True, **kwargs):
+    def from_tree_sequence(
+        cls,
+        ts,
+        use_sites_time=True,
+        use_individuals_time=True,
+        use_metadata=True,
+        **kwargs,
+    ):
         """
         Create a SampleData instance from the sample nodes in an existing tree sequence.
         Each sample node in the tree sequence results in a sample created in the returned
@@ -1364,15 +1371,17 @@ class SampleData(DataContainer):
 
         :param TreeSequence ts: The :class:`tskit.TreeSequence` from which to generate
             samples.
-        :param bool use_times: If True (default), the times of nodes in the tree sequence
-            are used to set a time for each site (which affects the relative temporal
-            order of ancestors during inference), and also to set a time for individuals
-            that contain non-contemporaneous sample nodes. Times for a site are only
-            used if there is a single mutation at that site, in which case the
-            node immediately below the mutation is taken as the origination time for the
+        :param bool use_sites_time: If True (default), the times of nodes in the tree
+            sequence are used to set a time for each site (which affects the relative
+            temporal order of ancestors during inference). Times for a site are only
+            used if there is a single mutation at that site, in which case the node
+            immediately below the mutation is taken as the origination time for the
             variant. If False, the frequency of the variant is used as a proxy for the
             relative variant time (see :meth:`.add_site`), and all samples are set at
             time 0.
+        :param bool use_individuals_time: If True (default), set a time for individuals
+            that contain non-contemporaneous sample nodes. If False, all individuals are
+            set at time 0.
         :param bool use_metadata: If True (default), metadata associated with sample
             nodes, individuals, sites, and populations is stored in the SampleData file.
             Metadata in a SampleData instance must be JSON encodable, but this is not
@@ -1420,7 +1429,7 @@ class SampleData(DataContainer):
                     location=individual.location,
                     metadata=individual_metadata,
                     population=first_node.population,
-                    time=first_node.time if use_times else 0,
+                    time=first_node.time if use_individuals_time else 0,
                     ploidy=len(nodes),
                     samples_metadata=samples_metadata,
                 )
@@ -1433,13 +1442,13 @@ class SampleData(DataContainer):
                     sample_metadata = json.loads(ts.node(u).metadata)
                 self.add_individual(
                     population=node.population,
-                    time=node.time if use_times else 0,
+                    time=node.time if use_individuals_time else 0,
                     ploidy=1,
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
             variant_time = constants.TIME_UNSPECIFIED
-            if use_times:
+            if use_sites_time:
                 variant_time = np.nan
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
