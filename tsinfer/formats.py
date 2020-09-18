@@ -1317,10 +1317,10 @@ class SampleData(DataContainer):
 
     def min_site_times(self, individuals_only=False):
         """
-        Returns a numpy array of the lower bound of the time of sites in the SampleData
-        file. Each individual with a nonzero time (from the individuals_time array)
-        gives a lower bound on the age of sites where the individual carries a
-        derived allele.
+        Returns a numpy array of the lower bound of the time of sites in the
+        :class:`SampleData` file. Each individual with a nonzero time (from the
+        individuals_time array) gives a lower bound on the age of sites where the
+        individual carries a derived allele.
 
         :return: A numpy array of the lower bound for each sites time.
         :rtype: numpy.ndarray(dtype=float64)
@@ -1343,6 +1343,37 @@ class SampleData(DataContainer):
         if not individuals_only:
             sites_bound = np.maximum(self.sites_time[:], sites_bound)
         return sites_bound
+
+    def modify_site_times(self, bespoke_times=None, individuals_only=False, **kwargs):
+        """
+        Modify the :attr:`SampleData.sites_time` array of the :class:`SampleData` file,
+        optionally using an external source. The default is to modify the array
+        with the output of :meth:`.min_site_times` called on this file. If bespoke times
+        from an external source are provided, the maximum of the bespoke times and the
+        results of :meth:`.min_site_times` is used. This function is particularly useful
+        when iteratively reinferring a tree sequence with tsdate and/or ancient samples.
+
+        :param numpy.ndarray(dtype=float64) bespoke_times: numpy array with bespoke site
+            times from an external source. The maximum of bespoke times and the lower
+            bound from :meth:`.min_site_times` (as specified using the individuals_only
+            parameter) is used as the :attr:`sites_time` of the SampleData file.
+        :param bool individuals_only: Passed to :meth:`.min_site_times`
+        :params \\**kwargs: Further arguments passed to the :meth:`.copy`
+        :return: A :class:`.SampleData` object.
+        :rtype: SampleData
+        """
+        copy = self.copy(**kwargs)
+        lower_bound = self.min_site_times(individuals_only=individuals_only)
+        if bespoke_times is None:
+            copy.sites_time[:] = lower_bound
+        else:
+            if len(bespoke_times) != self.num_sites:
+                raise ValueError("Bespoke site_times array is incorrect shape")
+            if np.any(bespoke_times < 0):
+                raise ValueError("Cannot have negative values in site_times array")
+            copy.sites_time[:] = np.maximum(bespoke_times, lower_bound)
+        copy.finalise()
+        return copy
 
     ####################################
     # Write mode

@@ -1735,6 +1735,73 @@ class TestMinSiteTimes(unittest.TestCase):
             neg_times_sd1.min_site_times()
 
 
+class TestModifySiteTimes(unittest.TestCase):
+    """
+    Test cases for sample data's modify_site_times function
+    """
+
+    def test_no_historic(self):
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = sd1.modify_site_times()
+        self.assertTrue(sd1.data_equal(sd2))
+        sd3 = sd1.modify_site_times(individuals_only=True)
+        self.assertTrue(np.array_equal(sd3.sites_time[:], np.zeros(ts.num_sites)))
+        np.random.seed(123)
+        random_site_times = np.random.rand(ts.num_sites)
+        sd4 = sd1.modify_site_times(
+            bespoke_times=random_site_times, individuals_only=True
+        )
+        self.assertTrue(np.array_equal(sd4.sites_time[:], random_site_times))
+        sd5 = formats.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        sd6 = sd5.modify_site_times(bespoke_times=random_site_times)
+        self.assertTrue(np.array_equal(sd6.sites_time[:], random_site_times))
+
+    def test_simple_case(self):
+        sample_times = [0, 0, 0.5, 1]
+        ts = get_example_historical_sampled_ts(sample_times, 1e1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = sd1.modify_site_times(individuals_only=True)
+        # If not using sites_time from the SampleData file, all sites times should
+        # be a sample time
+        self.assertTrue(
+            np.all(np.in1d(sd2.sites_time[:], np.concatenate([[0], sample_times])))
+        )
+        sd3 = sd1.modify_site_times()
+        self.assertTrue(np.array_equal(sd1.sites_time[:], sd3.sites_time[:]))
+        np.random.seed(123)
+        random_site_times = np.random.rand(ts.num_sites)
+        sd4 = sd1.modify_site_times(
+            bespoke_times=random_site_times, individuals_only=False
+        )
+        self.assertTrue(
+            np.array_equal(
+                np.maximum(random_site_times, sd1.min_site_times()), sd4.sites_time[:]
+            )
+        )
+
+    def test_file_kwargs(self):
+        # Make sure we pass kwards on to the copy()
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sample-data")
+            sd1.modify_site_times(path=path)
+            self.assertTrue(os.path.exists(path))
+            sd2 = formats.SampleData.load(path)
+            self.assertTrue(sd1.data_equal(sd2))
+
+    def test_errors(self):
+        ts = get_example_ts(10, 10, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        wrong_size_times = np.full(ts.num_sites - 1, -1)
+        with self.assertRaises(ValueError):
+            sd1.modify_site_times(bespoke_times=wrong_size_times)
+        neg_times = np.full(ts.num_sites, -1)
+        with self.assertRaises(ValueError):
+            sd1.modify_site_times(bespoke_times=neg_times)
+
+
 class TestAncestorData(unittest.TestCase, DataContainerMixin):
     """
     Test cases for the ancestor data file format.
