@@ -1523,7 +1523,7 @@ class TestMatchSamples(unittest.TestCase):
             10, mutation_rate=2, recombination_rate=2, random_seed=233
         )
         for tree_seq in [ts, eval_util.strip_singletons(ts)]:
-            sd = tsinfer.SampleData.from_tree_sequence(tree_seq, use_times=False)
+            sd = tsinfer.SampleData.from_tree_sequence(tree_seq, use_sites_time=False)
             ts1 = tsinfer.infer(sd)
             ancestors = tsinfer.generate_ancestors(sd)
             anc_ts = tsinfer.match_ancestors(sd, ancestors)
@@ -1541,7 +1541,7 @@ class TestMatchSamples(unittest.TestCase):
             msprime.simulate(
                 10, mutation_rate=2, recombination_rate=2, random_seed=233
             ),
-            use_times=False,
+            use_sites_time=False,
         )
         ancestors = tsinfer.generate_ancestors(sd)
         a_ts = tsinfer.match_ancestors(sd, ancestors)
@@ -2238,7 +2238,7 @@ class PathCompressionMixin(object):
     def test_simulation_with_error(self):
         ts = msprime.simulate(50, mutation_rate=5, random_seed=4, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.2, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_small_random_data(self):
@@ -2627,7 +2627,7 @@ class TestExtractAncestors(unittest.TestCase):
             ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15
         )
         self.assertGreater(ts.num_mutations, 0)
-        self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_times=False))
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False))
 
     def test_random_data_small_examples(self):
         np.random.seed(4)
@@ -2823,7 +2823,7 @@ class TestAugmentedAncestors(unittest.TestCase):
 
     def test_index_errors(self):
         ts = msprime.simulate(5, mutation_rate=5, random_seed=8, recombination_rate=1)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for bad_subset in [[], [-1], [0, 6]]:
@@ -2832,25 +2832,25 @@ class TestAugmentedAncestors(unittest.TestCase):
 
     def test_simple_case(self):
         ts = msprime.simulate(55, mutation_rate=5, random_seed=8, recombination_rate=8)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_simulation_with_error(self):
         ts = msprime.simulate(50, mutation_rate=5, random_seed=5, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_intermediate_simulation_with_error(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=78, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_small_simulation_with_error(self):
         ts = msprime.simulate(5, mutation_rate=5, random_seed=5, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_small_random_data(self):
@@ -3195,7 +3195,9 @@ class TestHistoricalSamples(unittest.TestCase):
                 random_seed=123,
             )
             self.assertGreater(ts.num_sites, 0)
-            sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+            sd = tsinfer.SampleData.from_tree_sequence(
+                ts, use_sites_time=True, use_individuals_time=True
+            )
             generated_ancestors = tsinfer.generate_ancestors(sd)
             all_ancestors = generated_ancestors.insert_proxy_samples(sd)
             ancestors_ts = tsinfer.match_ancestors(sd, all_ancestors)
@@ -3211,8 +3213,12 @@ class TestHistoricalSamples(unittest.TestCase):
             samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321,
         )
         self.assertGreater(ts.num_sites, 0)
-        sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
-        sd = tsinfer.SampleData.from_tree_sequence(ts, use_times=True)
+        sd = tsinfer.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
+        sd = tsinfer.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
         generated_ancestors = tsinfer.generate_ancestors(sd)
         all_ancestors = generated_ancestors.insert_proxy_samples(sd)
         ancestors_ts = tsinfer.match_ancestors(sd, all_ancestors)

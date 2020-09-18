@@ -491,6 +491,17 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sd2 = formats.SampleData.from_tree_sequence(ts)
         self.assertTrue(sd1.data_equal(sd2))
 
+    def test_from_tree_sequence_use_time(self):
+        sample_times = np.arange(10)
+        ts = get_example_historical_sampled_ts(sample_times, 10)
+        sd1 = formats.SampleData.from_tree_sequence(ts, use_individuals_time=False)
+        self.assertTrue(np.all(sd1.individuals_time[:] == 0))
+        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        self.assertTrue(
+            np.array_equal(sd2.sites_time[:], np.full(ts.num_sites, -np.inf))
+        )
+        self.assertTrue(np.array_equal(sd2.individuals_time[:], sample_times))
+
     def test_chunk_size(self):
         ts = get_example_ts(4, 2)
         self.assertGreater(ts.num_sites, 50)
