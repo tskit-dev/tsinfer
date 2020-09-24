@@ -381,7 +381,7 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
         return vcf.seqlens[0]
 
     # URL for the VCF
-    url = "https://github.com/tskit-dev/tsinfer/raw/master/docs/_static/P_dom_chr24_phased.vcf.gz"
+    url = "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
 
     vcf = cyvcf2.VCF(url)
     with tsinfer.SampleData(path="P_dom_chr24_phased.samples",
