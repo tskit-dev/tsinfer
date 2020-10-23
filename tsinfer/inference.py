@@ -219,14 +219,14 @@ def infer(
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
         method with ``filter_sites`` set to False and ``keep_unary`` set to True
         (default = ``True``).
-    :param: array_like exclude_positions: A list of site positions to exclude
+    :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
         ancestors, and not used during the copying process. Any such sites that
         exist in the sample data file will be included in the trees after the
         main inference process using parsimony. The list does not need to be
         in to be in any particular order, and can include site positions that
         are not present in the sample data file.
-    :returns: The :class:`tskit.TreeSequence` object inferred from the
+    :return: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
     :rtype: tskit.TreeSequence
     """
@@ -296,12 +296,12 @@ def generate_ancestors(
         simpler synchronous algorithm.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
-    :param: array_like exclude_positions: A list of site positions to exclude
+    :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
         ancestors, and not used during the copying process. The list does not
         need be in any particular order.
+    :return: The inferred ancestors stored in an :class:`AncestorData` instance.
     :rtype: AncestorData
-    :returns: The inferred ancestors stored in an :class:`AncestorData` instance.
     """
     sample_data._check_finalised()
     progress_monitor = _get_progress_monitor(progress_monitor)
