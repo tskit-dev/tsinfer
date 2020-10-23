@@ -572,7 +572,11 @@ def extract_ancestors(samples, ts):
     )
     # Now simplify down the tables to get rid of all sample edges.
     node_id_map = tables.simplify(
-        samples, filter_sites=False, filter_individuals=True, filter_populations=False
+        samples,
+        filter_sites=False,
+        filter_individuals=True,
+        filter_populations=False,
+        record_provenance=False,
     )
 
     # We cannot have flags that are both samples and have other flags set,
