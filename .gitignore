@@ -93,3 +93,5 @@ ENV/
 *.svg
 tsinfer/_version.py
 
+# Mac OS
+.DS_Store
