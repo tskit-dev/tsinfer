@@ -217,7 +217,8 @@ def infer(
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
         on a path between the root and any of the samples. To do so, the final tree
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
-        method with ``filter_sites`` set to False and ``keep_unary`` set to True
+        method with ``filter_sites``, ``filter_populations`` and
+        ``filter_individuals`` set to False, and ``keep_unary`` set to True
         (default = ``True``).
     :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
@@ -470,7 +471,8 @@ def match_samples(
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
         on a path between the root and any of the samples. To do so, the final tree
         sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
-        method with ``filter_sites`` set to False and ``keep_unary`` set to True
+        method with ``filter_sites``, ``filter_populations`` and
+        ``filter_individuals`` set to False and ``keep_unary`` set to True
         (default = ``True``).
     :param array_like indexes: An array of indexes into the sample_data file of
         the samples to match, or None for all samples.
@@ -1389,8 +1391,9 @@ class SampleMatcher(Matcher):
         ts = self.get_samples_tree_sequence()
         if simplify:
             logger.info(
-                "Running simplify(filter_sites=False, keep_unary=True) on"
-                f" {ts.num_nodes} nodes and {ts.num_edges} edges"
+                "Running simplify(filter_sites=False, filter_populations=False, "
+                "filter_individuals=False, keep_unary=True) on "
+                f"{ts.num_nodes} nodes and {ts.num_edges} edges"
             )
             if stabilise_node_ordering:
                 # Ensure all the node times are distinct so that they will have
@@ -1409,6 +1412,8 @@ class SampleMatcher(Matcher):
             ts = ts.simplify(
                 samples=list(self.sample_id_map.values()),
                 filter_sites=False,
+                filter_populations=False,
+                filter_individuals=False,
                 keep_unary=True,
             )
             logger.info(
@@ -1643,4 +1648,9 @@ def minimise(ts):
     sites in a tree sequence for ancestor matching. It is a thin-wrapper
     over the simplify method.
     """
-    return ts.simplify(reduce_to_site_topology=True, filter_sites=False)
+    return ts.simplify(
+        reduce_to_site_topology=True,
+        filter_sites=False,
+        filter_individuals=False,
+        filter_populations=False,
+    )

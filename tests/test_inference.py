@@ -361,6 +361,58 @@ class TestRoundTrip(unittest.TestCase):
             S, positions = get_random_data_example(5, 10)
             self.verify_data_round_trip(S, positions)
 
+    def test_unreferenced_individuals(self):
+        n = 4
+        ts = msprime.simulate(n, mutation_rate=10, random_seed=16)
+        sd = tsinfer.SampleData.from_tree_sequence(ts).copy()
+        # We've made it pretty hard to remove samples without removing their individuals
+        # Reverse individual ids & remove the last sample => individual 0 unreferenced
+        sd.data["samples/individual"][:] = sd.data["samples/individual"][:][::-1]
+        sd.data["samples/individual"].resize(n - 1)
+        sd.data["samples/metadata"].resize(n - 1)
+        sd.data["sites/genotypes"].resize(sd.num_sites, n - 1)
+        sd.finalise()
+        self.assertNotEqual(sd.num_samples, sd.num_individuals)
+        ts_inferred = tsinfer.infer(sd)
+        self.assertEqual(ts_inferred.num_individuals, n)
+        for sd_sample, ts_sample_id in zip(sd.samples(), ts_inferred.samples()):
+            self.assertGreater(sd_sample.individual, 0)
+            self.assertEqual(
+                sd_sample.individual, ts_inferred.node(ts_sample_id).individual
+            )
+
+    def test_unreferenced_populations(self):
+        """
+        Check that the population IDs stay the same, even when unused populations exist
+        """
+        population_configurations = [
+            msprime.PopulationConfiguration(sample_size=1),
+            msprime.PopulationConfiguration(sample_size=1),
+            msprime.PopulationConfiguration(sample_size=1),
+        ]
+        migration_matrix = [
+            [0, 1, 1],
+            [1, 0, 1],
+            [1, 1, 0],
+        ]
+        ts = msprime.simulate(
+            population_configurations=population_configurations,
+            migration_matrix=migration_matrix,
+            mutation_rate=5,
+            random_seed=16,
+        )
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        sd = sd.subset(individuals=[1, 2])  # Remove the first individual + pop
+        self.assertNotEqual(sd.num_populations, sd.num_samples)
+        ts_inferred = tsinfer.infer(sd)
+        self.assertEqual(ts.num_populations, ts_inferred.num_populations)
+        for sd_sample, ts_sample_id in zip(sd.samples(), ts_inferred.samples()):
+            sd_individual = sd.individual(sd_sample.individual)
+            self.assertGreater(sd_individual.population, 0)
+            self.assertEqual(
+                sd_individual.population, ts_inferred.node(ts_sample_id).population
+            )
+
 
 class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
     """
