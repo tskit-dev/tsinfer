@@ -1377,8 +1377,7 @@ class SampleData(DataContainer):
             used if there is a single mutation at that site, in which case the node
             immediately below the mutation is taken as the origination time for the
             variant. If False, the frequency of the variant is used as a proxy for the
-            relative variant time (see :meth:`.add_site`), and all samples are set at
-            time 0.
+            relative variant time (see :meth:`.add_site`).
         :param bool use_individuals_time: If True (default), set a time for individuals
             that contain non-contemporaneous sample nodes. If False, all individuals are
             set at time 0.
