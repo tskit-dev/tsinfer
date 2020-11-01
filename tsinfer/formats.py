@@ -2245,7 +2245,7 @@ class AncestorData(DataContainer):
         **kwargs,
     ):
         """
-        Take a set of samples from a sample_data instance and create additional
+        Take a set of samples from a ``sample_data`` instance and create additional
         "proxy sample ancestors" from them, returning a new :class:`.AncestorData`
         instance including both the current ancestors and the additional ancestors
         at the appropriate time points.
@@ -2266,7 +2266,7 @@ class AncestorData(DataContainer):
 
         .. note::
 
-            The proxy sample ancestors insterted here will correspond to extra nodes
+            The proxy sample ancestors inserted here will correspond to extra nodes
             in the inferred tree sequence. At sites which are not used in the full
             inference process (e.g. sites unique to a single historical sample),
             these proxy sample ancestor nodes may have a different genotype from
@@ -2301,10 +2301,11 @@ class AncestorData(DataContainer):
         :param bool require_same_sample_data: If ``True`` (default) then the
             the ``sample_data`` parameter must point to the same :class:`.SampleData`
             instance as that used to generate the current ancestors. If ``False``,
-            this requirement is not enforced, and it is the user's responsibility to
-            ensure that the encoding of alleles in the provided ``sample_data``
-            instance matches that :meth:`defined <SampleData.add_site>` in the
-            :class:`.SampleData` instance on which the current ancestors are based.
+            this requirement is not enforced, and it is the user's responsibility
+            to ensure that the encoding of alleles in ``sample_data`` matches the
+            encoding in the current :class:`AncestorData` instance (i.e. that in the
+            original :class:`.SampleData` instance on which the current ancestors
+            are based).
         :param \\**kwargs: Further arguments passed to the constructor when creating
             the new :class:`AncestorData` instance which will be returned.
 
