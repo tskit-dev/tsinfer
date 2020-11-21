@@ -522,7 +522,7 @@ def check_ancestors_ts(ts):
     if np.any(tables.nodes.time <= 0):
         raise ValueError("All nodes must have time > 0")
 
-    for tree in ts.trees(sample_counts=False):
+    for tree in ts.trees():
         # 0 must always be a root and have at least one child.
         if tree.parent(0) != tskit.NULL:
             raise ValueError("0 is not a root: non null parent")
@@ -746,7 +746,7 @@ def node_span(ts):
     """
     S = np.zeros(ts.num_nodes)
     start = np.zeros(ts.num_nodes) - 1
-    iterator = zip(ts.edge_diffs(), ts.trees(sample_counts=True))
+    iterator = zip(ts.edge_diffs(), ts.trees())
     for ((left, _), edges_out, edges_in), tree in iterator:
         for edge in edges_out:
             u = edge.parent
