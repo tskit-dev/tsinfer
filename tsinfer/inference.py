@@ -131,7 +131,7 @@ def _update_site_metadata(current_metadata, inference_type):
         constants.INFERENCE_FULL,
         constants.INFERENCE_FITCH_PARSIMONY,
     }
-    return {"inference_type": inference_type, **current_metadata}
+    return {"inference_type": inference_type, **(current_metadata or {})}
 
 
 def verify(sample_data, tree_sequence, progress_monitor=None):
@@ -1435,7 +1435,10 @@ class SampleMatcher(Matcher):
             tables.populations.add_row(_encode_metadata(metadata))
         for ind in self.sample_data.individuals():
             if ind.time != 0:
-                ind.metadata["sample_data_time"] = ind.time
+                if ind.metadata is None:
+                    ind.metadata = {"sample_data_time": ind.time}
+                else:
+                    ind.metadata["sample_data_time"] = ind.time
             tables.individuals.add_row(
                 location=ind.location, metadata=_encode_metadata(ind.metadata)
             )

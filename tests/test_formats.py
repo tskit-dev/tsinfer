@@ -154,7 +154,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
     def verify_data_round_trip(self, ts, input_file):
         self.assertGreater(ts.num_sites, 1)
         for pop in ts.populations():
-            input_file.add_population(metadata=json.loads(pop.metadata or "{}"))
+            input_file.add_population(metadata=json.loads(pop.metadata or "null"))
         # For testing, depend on the sample nodes being sorted by individual
         for i, group in itertools.groupby(
             ts.samples(), lambda n: ts.node(n).individual
@@ -166,16 +166,16 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                         ploidy=1,
                         population=node.population,
                         time=node.time,
-                        samples_metadata=[json.loads(node.metadata or "{}")],
+                        samples_metadata=[json.loads(node.metadata or "null")],
                     )
             else:
                 input_file.add_individual(
                     ploidy=len(nodes),
                     population=nodes[0].population,
-                    metadata=json.loads(ts.individual(i).metadata or "{}"),
+                    metadata=json.loads(ts.individual(i).metadata or "null"),
                     location=ts.individual(i).location,
                     time=nodes[0].time,
-                    samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
+                    samples_metadata=[json.loads(n.metadata or "null") for n in nodes],
                 )
         for v in ts.variants():
             t = np.nan  # default is that a site has no meaningful time
@@ -185,7 +185,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
                 v.site.position,
                 v.genotypes,
                 v.alleles,
-                metadata=json.loads(v.site.metadata or "{}"),
+                metadata=json.loads(v.site.metadata or "null"),
                 time=t,
             )
         input_file.record_provenance("verify_data_round_trip")
@@ -404,7 +404,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts)
-        self.assertTrue(sd1.data_equal(sd2))
+        sd1.assert_data_equal(sd2)
 
     def test_from_tree_sequence_variable_allele_number(self):
         ts = get_example_ts(10, 10)
@@ -478,10 +478,10 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         self.assertTrue(np.all(sd2.sites_position[:] == sd1.sites_position[:]))
         self.assertTrue(np.all(sd2.sites_genotypes[:] == sd1.sites_genotypes[:]))
         self.assertTrue(np.all(sd2.sites_time[:] == sd1.sites_time[:]))
-        self.assertTrue(np.all(sd2.populations_metadata[:] == {}))
-        self.assertTrue(np.all(sd2.individuals_metadata[:] == {}))
-        self.assertTrue(np.all(sd2.samples_metadata[:] == {}))
-        self.assertTrue(np.all(sd2.sites_metadata[:] == {}))
+        self.assertTrue(np.all(np.equal(sd2.populations_metadata[:], None)))
+        self.assertTrue(np.all(np.equal(sd2.individuals_metadata[:], None)))
+        self.assertTrue(np.all(np.equal(sd2.samples_metadata[:], None)))
+        self.assertTrue(np.all(np.equal(sd2.sites_metadata[:], None)))
 
     def test_from_historical_tree_sequence(self):
         sample_times = np.arange(10)
@@ -859,12 +859,12 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
             sample_data.add_site(0, [0, 0])
         individuals_metadata = sample_data.individuals_metadata[:]
         self.assertEqual(len(individuals_metadata), 1)
-        self.assertEqual(individuals_metadata[0], {})
+        self.assertEqual(individuals_metadata[0], None)
 
         samples_metadata = sample_data.samples_metadata[:]
         self.assertEqual(len(samples_metadata), 2)
-        self.assertEqual(samples_metadata[0], {})
-        self.assertEqual(samples_metadata[1], {})
+        self.assertEqual(samples_metadata[0], None)
+        self.assertEqual(samples_metadata[1], None)
 
     def test_get_single_individual(self):
         with formats.SampleData(sequence_length=10) as sample_data:

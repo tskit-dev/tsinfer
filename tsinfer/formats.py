@@ -590,7 +590,7 @@ class DataContainer(object):
     def _check_metadata(self, metadata):
         ret = metadata
         if metadata is None:
-            ret = {}
+            ret = None
         elif not isinstance(metadata, abc.Mapping):
             raise TypeError("Metadata must be a JSON-like dictionary")
         return ret
@@ -1537,9 +1537,10 @@ class SampleData(DataContainer):
         :param float time: The historical time into the past when the samples
             associated with this individual were taken. By default we assume that
             all samples come from the present time (i.e. the default time is 0).
-        :param list samples_metadata: A list of JSON encodable dict-like objects,
-            of length ``ploidy``, giving metadata to be associated with each
-            sample, or None to give all samples an empty metadata field.
+        :param list samples_metadata: A list of length ``ploidy`` each item of which
+            is a JSON encodable dict-like object or ``None``, specifying metadata to
+            be associated with each sample. If None (default), metadata for all
+            samples is set to ``None``.
         :return: The ID of the newly added individual and a list of the sample
             IDs also added.
         :rtype: tuple(int, list(int))

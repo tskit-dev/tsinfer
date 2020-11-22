@@ -6,11 +6,21 @@
 
 - The ancestors tree sequence now contains the real alleles and not
   0/1 values as before.
+
 - Times for undated sites now use frequencies (0..1), not as counts (1..num_samples),
   and are now stored as -inf, then calculated on the fly in the variants() iterator.
+
 - The SampleData file no longer accepts the ``inference`` argument to add_site.
   This functionality has been replaced by the ``exclude_positions`` argument
   to the ``infer`` and ``generate_ancestors`` functions.
+
+**New features**:
+
+- The default metadata value if no metadata is specified for sites, samples, populations,
+  and individuals is now "null" (which translates to Python ``None``) rather than the
+  empty dict ``{}``. This matches the standard JSON schema in tskit. Old files should
+  continue to be valid.
+
 
 ********************
 [0.1.5] - 2019-09-25
