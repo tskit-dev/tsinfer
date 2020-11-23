@@ -45,6 +45,32 @@ import tsutil
 IS_WINDOWS = sys.platform == "win32"
 
 
+class ConvenienceFunctions(unittest.TestCase):
+    """
+    Tests for a couple of convenience functions at the top level of formats.py
+    """
+
+    def test_np_obj_equal_bad(self):
+        obj_array = np.array([None])
+        self.assertRaises(AttributeError, formats.np_obj_equal, obj_array, None)
+
+    def test_np_obj_equal(self):
+        obj_array = np.array([{1, 3}, None])
+        self.assertEqual(obj_array.dtype, np.dtype("object"))
+        self.assertTrue(formats.np_obj_equal(obj_array, np.array([{1, 3}, None])))
+        for not_equal in [
+            np.array([{1, 4}, None]),
+            np.array([{1, 3}, {1, 3}]),
+            np.array([None, None]),
+            np.array([{}, {}]),
+            # Different shapes
+            np.array([[{1, 3}, None]]),
+            np.array([{1, 3}, None, None]),
+            np.array([{1, 3}]),
+        ]:
+            self.assertFalse(formats.np_obj_equal(obj_array, not_equal))
+
+
 class DataContainerMixin(object):
     """
     Common tests for the the data container classes."
