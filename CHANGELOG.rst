@@ -2,6 +2,8 @@
 [0.2.0] - XXXX-XX-XX
 ********************
 
+**New features**:
+
 **Breaking changes**:
 
 - The ancestors tree sequence now contains the real alleles and not
@@ -11,6 +13,13 @@
 - The SampleData file no longer accepts the ``inference`` argument to add_site.
   This functionality has been replaced by the ``exclude_positions`` argument
   to the ``infer`` and ``generate_ancestors`` functions.
+
+**Bugfixes**:
+
+- Individuals and populations in the sampledata file are kept in the returned tree
+  sequence, even if they are not referenced by any sample. The individual and population
+  ids are therefore guaranteed to stay the same between the sample data file and the
+  inferred tree sequence. (:pr:`348`)
 
 ********************
 [0.1.5] - 2019-09-25

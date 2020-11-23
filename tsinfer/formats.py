@@ -1528,7 +1528,7 @@ class SampleData(DataContainer):
             (haploid).
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this individual.
-        :param int population: The ID of the population to assoicate with this
+        :param int population: The ID of the population to associate with this
             individual (or more precisely, with the samples for this individual).
             If not specified or None, defaults to the null population (-1).
         :param arraylike location: An array-like object defining n-dimensional
