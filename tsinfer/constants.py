@@ -40,4 +40,4 @@ NODE_IS_HISTORIC_SAMPLE = 1 << 20
 # What type of inference have we done at a site?
 INFERENCE_NONE = "none"
 INFERENCE_FULL = "full"
-INFERENCE_FITCH_PARSIMONY = "fitch_parsimony"
+INFERENCE_PARSIMONY = "parsimony"

@@ -585,7 +585,7 @@ class TestNonInferenceSitesRoundTrip(unittest.TestCase):
                     if exclude_sites[site.id]:
                         self.assertIn(
                             inf_type,
-                            (tsinfer.INFERENCE_FITCH_PARSIMONY, tsinfer.INFERENCE_NONE),
+                            (tsinfer.INFERENCE_PARSIMONY, tsinfer.INFERENCE_NONE),
                         )
                     else:
                         self.assertEqual(inf_type, tsinfer.INFERENCE_FULL)
@@ -716,7 +716,7 @@ class TestZeroInferenceSites(unittest.TestCase):
                 if len(site.mutations) == 0:
                     self.assertEqual(inf_type, tsinfer.INFERENCE_NONE)
                 else:
-                    self.assertEqual(inf_type, tsinfer.INFERENCE_FITCH_PARSIMONY)
+                    self.assertEqual(inf_type, tsinfer.INFERENCE_PARSIMONY)
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -829,9 +829,9 @@ class TestMetadataRoundTrip(unittest.TestCase):
             decoded_metadata = json.loads(site.metadata)
             self.assertIn("inference_type", decoded_metadata)
             value = decoded_metadata.pop("inference_type")
-            # Only singletons should be fitch_parsimony sites in this simple case
+            # Only singletons should be parsimony sites in this simple case
             if len(site.mutations) == 1 and site.mutations[0].node in samples:
-                self.assertEqual(value, tsinfer.INFERENCE_FITCH_PARSIMONY)
+                self.assertEqual(value, tsinfer.INFERENCE_PARSIMONY)
             else:
                 self.assertEqual(value, tsinfer.INFERENCE_FULL)
             self.assertEqual(decoded_metadata, all_metadata[site.id])
@@ -3181,7 +3181,7 @@ class TestAutoInferenceSites(unittest.TestCase):
         # inference_sites = data.sites_inference[:]
         inf_type = [json.loads(site.metadata)["inference_type"] for site in ts.sites()]
         self.assertEqual(inf_type[0], tsinfer.INFERENCE_NONE)
-        self.assertEqual(inf_type[1], tsinfer.INFERENCE_FITCH_PARSIMONY)
+        self.assertEqual(inf_type[1], tsinfer.INFERENCE_PARSIMONY)
         for t in inf_type[2:]:
             self.assertEqual(t, tsinfer.INFERENCE_FULL)
 
@@ -3226,9 +3226,7 @@ class TestInsertMissingSites(unittest.TestCase):
         for s in mapped_ts.sites():
             metadata = json.loads(s.metadata)
             self.assertIn("inference_type", metadata)
-            self.assertEquals(
-                metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
-            )
+            self.assertEquals(metadata["inference_type"], tsinfer.INFERENCE_PARSIMONY)
 
     def test_insert_with_map(self):
         ts = msprime.simulate(8, length=1, recombination_rate=1, random_seed=123)
@@ -3264,7 +3262,7 @@ class TestInsertMissingSites(unittest.TestCase):
                 metadata = json.loads(v2.site.metadata)
                 self.assertIn("inference_type", metadata)
                 self.assertEquals(
-                    metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
+                    metadata["inference_type"], tsinfer.INFERENCE_PARSIMONY
                 )
 
     def test_no_inference(self):
@@ -3301,7 +3299,7 @@ class TestInsertMissingSites(unittest.TestCase):
                 self.assertTrue(np.array_equal(v1.genotypes, v2.genotypes))
                 self.assertEquals(len(v2.site.mutations), 1)
                 self.assertEquals(
-                    metadata["inference_type"], tsinfer.INFERENCE_FITCH_PARSIMONY
+                    metadata["inference_type"], tsinfer.INFERENCE_PARSIMONY
                 )
 
 
