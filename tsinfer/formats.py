@@ -42,7 +42,6 @@ import attr
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
-import tsinfer.constants as constants
 
 
 logger = logging.getLogger(__name__)
@@ -278,7 +277,7 @@ def merge_variants(sd1, sd2):
             # we can fix this later if needs be.
             if (
                 var1.site.ancestral_state != var2.site.ancestral_state
-                or var1.site.time != var2.site.time
+                or not np.array_equal(var1.site.time, var2.site.time, equal_nan=True)
                 or var1.site.metadata != var2.site.metadata
             ):
                 raise ValueError(
@@ -1446,7 +1445,7 @@ class SampleData(DataContainer):
                     samples_metadata=[sample_metadata],
                 )
         for v in ts.variants():
-            variant_time = constants.TIME_UNSPECIFIED
+            variant_time = tskit.UNKNOWN_TIME
             if use_sites_time:
                 variant_time = np.nan
                 if len(v.site.mutations) == 1:
@@ -1703,7 +1702,7 @@ class SampleData(DataContainer):
                 "Please use the exclude_sites option to generate_ancestors."
             )
         if time is None:
-            time = constants.TIME_UNSPECIFIED
+            time = tskit.UNKNOWN_TIME
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,

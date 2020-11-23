@@ -497,9 +497,7 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         sd1 = formats.SampleData.from_tree_sequence(ts, use_individuals_time=False)
         self.assertTrue(np.all(sd1.individuals_time[:] == 0))
         sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=False)
-        self.assertTrue(
-            np.array_equal(sd2.sites_time[:], np.full(ts.num_sites, -np.inf))
-        )
+        self.assertTrue(np.all(tskit.is_unknown_time(sd2.sites_time[:])))
         self.assertTrue(np.array_equal(sd2.individuals_time[:], sample_times))
 
     def test_chunk_size(self):
@@ -1530,8 +1528,12 @@ class TestSampleDataMerge(unittest.TestCase):
             sd2_var = sd2_variants.get(pos, None)
             if sd1_var is not None and sd2_var is not None:
                 self.assertEqual(var.site.ancestral_state, sd1_var.site.ancestral_state)
-                self.assertEqual(var.site.time, sd1_var.site.time)
-                self.assertEqual(var.site.time, sd2_var.site.time)
+                self.assertTrue(
+                    np.array_equal(var.site.time, sd1_var.site.time, equal_nan=True)
+                )
+                self.assertTrue(
+                    np.array_equal(var.site.time, sd2_var.site.time, equal_nan=True)
+                )
                 self.assertEqual(var.site.metadata, sd1_var.site.metadata)
                 self.assertEqual(var.site.metadata, sd2_var.site.metadata)
                 alleles = {}
@@ -1661,6 +1663,7 @@ class TestSampleDataMerge(unittest.TestCase):
         with tsinfer.SampleData() as sd1:
             for col in range(sites_by_samples.shape[1]):
                 sd1.add_site(col, sites_by_samples[:, col])
+        print([s for s in sd1.sites()])
         self.verify(sd1, sd1)
         with tsinfer.SampleData(sd1.sequence_length) as sd2:
             for col in range(4):
@@ -2139,7 +2142,7 @@ class TestAncestorData(unittest.TestCase, DataContainerMixin):
     def test_insert_proxy_time_historical_samples(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
         site_times = sample_data.sites_time[:]  # From a simulation => sites have times
-        self.assertTrue(np.any(site_times != tsinfer.TIME_UNSPECIFIED))
+        self.assertFalse(np.all(tskit.is_unknown_time(site_times)))
         min_time = np.min(site_times[site_times > 0])
         sample_data = sample_data.copy()
         time = sample_data.individuals_time[:]
