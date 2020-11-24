@@ -707,7 +707,7 @@ class AncestorsGenerator(object):
                         use_site = True
             if use_site:
                 time = site.time
-                if time == constants.TIME_UNSPECIFIED:
+                if tskit.is_unknown_time(time):
                     # Non-variable sites have no obvious freq-as-time values
                     assert counts.known != counts.derived
                     assert counts.known != counts.ancestral

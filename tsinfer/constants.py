@@ -19,9 +19,6 @@
 """
 Collection of constants used in tsinfer. We also make use of constants defined in tskit.
 """
-import numpy as np
-
-
 C_ENGINE = "C"
 PY_ENGINE = "P"
 
@@ -39,9 +36,6 @@ NODE_IS_SAMPLE_ANCESTOR = 1 << 18
 # Bit 20 is set in node flags when they are samples not at time zero in the sampledata
 # file
 NODE_IS_HISTORIC_SAMPLE = 1 << 20
-
-# Marker constants for node & site time values
-TIME_UNSPECIFIED = -np.inf
 
 # What type of inference have we done at a site?
 INFERENCE_NONE = "none"
