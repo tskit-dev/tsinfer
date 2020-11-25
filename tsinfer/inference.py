@@ -129,7 +129,7 @@ def _update_site_metadata(current_metadata, inference_type):
     assert inference_type in {
         constants.INFERENCE_NONE,
         constants.INFERENCE_FULL,
-        constants.INFERENCE_FITCH_PARSIMONY,
+        constants.INFERENCE_PARSIMONY,
     }
     return {"inference_type": inference_type, **current_metadata}
 
@@ -532,7 +532,7 @@ def insert_missing_sites(
     distribution seen in the sample_data file. Sites that have mutations overlaid
     in this way can be identified in the output tree sequence as their
     :ref:`metadata<tskit.sec_metadata_definition>` will contain a key named
-    ``inference`` set to ``tsinfer.INFERENCE_FITCH_PARSIMONY``. Newly inserted sites
+    ``inference`` set to ``tsinfer.INFERENCE_PARSIMONY``. Newly inserted sites
     that do not require mutations will have this set to `tsinfer.INFERENCE_NONE`
     instead. Sites in ``sample_data`` that already exist in the tree sequence are
     left untouched.
@@ -616,8 +616,7 @@ def insert_missing_sites(
                 ancestral_state=anc_state,
                 metadata=_encode_metadata(
                     _update_site_metadata(
-                        site.metadata,
-                        inference_type=constants.INFERENCE_FITCH_PARSIMONY,
+                        site.metadata, inference_type=constants.INFERENCE_PARSIMONY,
                     )
                 ),
             )
