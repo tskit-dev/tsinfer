@@ -759,22 +759,37 @@ class Variant(object):
 @attr.s
 class Individual(object):
     """
-    An Individual object.
+    An Individual object, representing a single individual which may contain multiple
+    *samples* (i.e. phased genomes). For instance, a diploid individual will have
+    two sample genomes. This is deliberately similar to a :class:`tskit.Individual`.
+
+    Individuals are created with :meth:`SampleData.add_individual`. If a tree sequence
+    is inferred from a sample data file containing individuals, these individuals (and
+    the data associated with them) will carry through to the inferred tree sequence.
     """
 
     # TODO document properly.
     id = attr.ib()
+    flags = attr.ib()
     location = attr.ib()
-    time = attr.ib()
     metadata = attr.ib()
-    population = attr.ib()
+    # the samples attribute is filled in programmatically, not stored per individual
     samples = attr.ib()
+    # Not in equivalent tskit object
+    population = attr.ib()  # NB: differs from tskit, which stores this per node
+    time = attr.ib()  # NB: differs from tskit, which stores this per node
 
 
 @attr.s
 class Sample(object):
     """
-    A Sample object.
+    A Sample object, representing a single haploid genome or chromosome. Several
+    Samples can be associated with the same :class:`Individual`: for example a
+    diploid individual will have one maternal and one paternal sample.
+
+    If a tree sequence is inferred from a set of samples, each sample will be
+    associated with a tskit "node", which will be flagged up with
+    :data:`tskit.NODE_IS_SAMPLE`.
     """
 
     # TODO document properly.
@@ -786,7 +801,7 @@ class Sample(object):
 @attr.s
 class Population(object):
     """
-    An Population object. Mirrors the definition in tskit.
+    A Population object. Mirrors :class:`tskit.Population`.
     """
 
     # TODO document properly.
@@ -953,12 +968,20 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=np.int32,
         )
+        flags = individuals_group.create_dataset(
+            "flags",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.uint32,
+        )
         self._individuals_writer = BufferedItemWriter(
             {
                 "metadata": metadata,
                 "location": location,
                 "time": time,
                 "population": population,
+                "flags": flags,
             },
             num_threads=self._num_flush_threads,
         )
@@ -1074,6 +1097,10 @@ class SampleData(DataContainer):
         return self.data["individuals/population"]
 
     @property
+    def individuals_flags(self):
+        return self.data["individuals/flags"]
+
+    @property
     def samples_individual(self):
         return self.data["samples/individual"]
 
@@ -1118,6 +1145,7 @@ class SampleData(DataContainer):
             ("individuals/location", zarr_summary(self.individuals_location)),
             ("individuals/time", zarr_summary(self.individuals_time)),
             ("individuals/population", zarr_summary(self.individuals_population)),
+            ("individuals/flags", zarr_summary(self.individuals_flags)),
             ("samples/individual", zarr_summary(self.samples_individual)),
             ("samples/metadata", zarr_summary(self.samples_metadata)),
             ("sites/position", zarr_summary(self.sites_position)),
@@ -1152,6 +1180,7 @@ class SampleData(DataContainer):
             and np.allclose(
                 self.individuals_time[:], other.individuals_time[:], equal_nan=True
             )
+            and np.array_equal(self.individuals_flags[:], other.individuals_flags[:])
             and np.array_equal(
                 self.individuals_population[:], other.individuals_population[:],
             )
@@ -1427,6 +1456,7 @@ class SampleData(DataContainer):
                     location=individual.location,
                     metadata=individual_metadata,
                     population=first_node.population,
+                    flags=individual.flags,
                     time=first_node.time if use_individuals_time else 0,
                     ploidy=len(nodes),
                     samples_metadata=samples_metadata,
@@ -1508,6 +1538,7 @@ class SampleData(DataContainer):
         location=None,
         time=0,
         samples_metadata=None,
+        flags=None,
     ):
         """
         Adds a new :ref:`sec_inference_data_model_individual` to this
@@ -1539,6 +1570,7 @@ class SampleData(DataContainer):
         :param list samples_metadata: A list of JSON encodable dict-like objects,
             of length ``ploidy``, giving metadata to be associated with each
             sample, or None to give all samples an empty metadata field.
+        :param int flags: The bitwise flags for this individual.
         :return: The ID of the newly added individual and a list of the sample
             IDs also added.
         :rtype: tuple(int, list(int))
@@ -1569,11 +1601,14 @@ class SampleData(DataContainer):
         if location is None:
             location = []
         location = np.array(location, dtype=np.float64)
+        if flags is None:
+            flags = 0
         individual_id = self._individuals_writer.add(
             metadata=self._check_metadata(metadata),
             location=location,
             time=time,
             population=population,
+            flags=flags,
         )
         sample_ids = []
         for sample_meta in samples_metadata:
@@ -1782,6 +1817,7 @@ class SampleData(DataContainer):
                 location=individual.location,
                 metadata=individual.metadata,
                 time=individual.time,
+                flags=individual.flags,
                 # We're assuming this is the same for all samples
                 population=pop_id_map[individual.population],
                 samples_metadata=samples_metadata,
@@ -1951,6 +1987,7 @@ class SampleData(DataContainer):
             time=self.individuals_time[id_],
             population=self.individuals_population[id_],
             samples=list(samples),
+            flags=self.individuals_flags[id_],
         )
 
     def individuals(self):
@@ -1963,8 +2000,9 @@ class SampleData(DataContainer):
             self.individuals_metadata[:],
             self.individuals_time[:],
             self.individuals_population[:],
+            self.individuals_flags[:],
         )
-        for j, (location, metadata, time, population) in enumerate(iterator):
+        for j, (location, metadata, time, population, flags) in enumerate(iterator):
             yield Individual(
                 j,
                 location=list(location),
@@ -1972,6 +2010,7 @@ class SampleData(DataContainer):
                 time=time,
                 population=population,
                 samples=individual_samples[j],
+                flags=flags,
             )
 
     def sample(self, id_):

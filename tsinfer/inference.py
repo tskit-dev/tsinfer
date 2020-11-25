@@ -1442,7 +1442,9 @@ class SampleMatcher(Matcher):
             if ind.time != 0:
                 ind.metadata["sample_data_time"] = ind.time
             tables.individuals.add_row(
-                location=ind.location, metadata=_encode_metadata(ind.metadata)
+                location=ind.location,
+                metadata=_encode_metadata(ind.metadata),
+                flags=ind.flags,
             )
 
         logger.debug("Adding tree sequence nodes")

@@ -35,6 +35,7 @@ import tskit
 
 import _tsinfer
 import tsinfer
+import tsutil
 import tsinfer.eval_util as eval_util
 
 
@@ -994,6 +995,79 @@ class TestMetadataRoundTrip(unittest.TestCase):
             if time != 0:
                 md = json.loads(individual.metadata.decode())
                 self.assertTrue(np.array_equal(time, md["sample_data_time"]))
+
+    def test_from_standard_tree_sequence(self):
+        """
+        Test that we can roundtrip most user-specified data (e.g. metadata, etc) from
+        a tree seq, through a sample data file, back to an inferred tree sequence, as
+        long as individuals are defined in the original tree seq.
+        """
+        n_indiv = 5
+        ploidy = 2  # Diploids
+        seq_len = 10
+        ts = tsutil.get_example_individuals_ts_with_metadata(
+            n_indiv, ploidy, seq_len, 1, strict_json_metadata=True, skip_last=False
+        )
+        ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
+        # TODO - also test tree-sequence level metadata
+        assert ts.sequence_length == ts_inferred.sequence_length
+        assert ts.tables.populations == ts_inferred.tables.populations
+        assert ts.tables.individuals == ts_inferred.tables.individuals
+        # Unless inference is perfect, internal nodes may differ, but sample nodes
+        # should be identical
+        for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
+            assert ts.node(n1) == ts_inferred.node(n2)
+        # Sites can have metadata added by the inference process, but inferred site
+        # metadata should always include all the metadata in the original ts
+        for s1, s2 in zip(ts.sites(), ts_inferred.sites()):
+            assert s1.position == s2.position
+            assert s1.ancestral_state == s2.ancestral_state
+            assert tsutil.json_metadata_is_subset(s1.metadata, s2.metadata)
+
+    def test_from_historical_tree_sequence(self):
+        """
+        Test that we can roundtrip most user-specified data (e.g. metadata, etc) from
+        a tree sequence with non-contemporaneous samples. These are a special case, as
+        we don't have a sensible time scale to set the node times, so the original node
+        times get placed in metadata, and a flag set
+        """
+        n_indiv = 5
+        ploidy = 2  # Diploids
+        seq_len = 10
+        individual_times = np.arange(n_indiv)
+        ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, seq_len)
+        ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
+        # TODO - also test tree-sequence level metadata
+        assert ts.sequence_length == ts_inferred.sequence_length
+        assert ts.tables.populations == ts_inferred.tables.populations
+        # Historical individuals have metadata added by the inference process
+        # specifying the original time of the samples with which they are associated
+        for i1, i2 in zip(ts.individuals(), ts_inferred.individuals()):
+            assert i1.flags == i2.flags
+            assert np.array_equal(i1.location, i2.location)
+            assert np.array_equal(i1.nodes, i2.nodes)
+            assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
+        # Sample nodes can have tsinfer.NODE_IS_HISTORIC_SAMPLE in flags, and need not
+        # have the same node time
+        for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
+            node1 = ts.node(n1)
+            node2 = ts_inferred.node(n2)
+            assert node1.population == node2.population
+            assert node1.individual == node2.individual
+            if node2.flags & tsinfer.NODE_IS_HISTORIC_SAMPLE == 0:
+                assert node1.time == node2.time
+                assert node1.flags == node2.flags
+                assert node1.metadata == node2.metadata
+            else:
+                node2_other_flags = node2.flags ^ tsinfer.NODE_IS_HISTORIC_SAMPLE
+                assert node1.flags == node2_other_flags
+                assert tsutil.json_metadata_is_subset(node1.metadata, node2.metadata)
+        # Sites can have metadata added by the inference process, but inferred site
+        # metadata should always include all the metadata in the original ts
+        for s1, s2 in zip(ts.sites(), ts_inferred.sites()):
+            assert s1.position == s2.position
+            assert s1.ancestral_state == s2.ancestral_state
+            assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
 
 
 class TestThreads(TsinferTestCase):
