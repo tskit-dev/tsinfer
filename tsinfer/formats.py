@@ -63,6 +63,16 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 DEFAULT_MAX_FILE_SIZE = 2 ** 30 if sys.platform == "win32" else 2 ** 40
 
 
+def np_obj_equal(np_obj_array1, np_obj_array2):
+    """
+    A replacement for np.array_equal to test equality of numpy arrays that
+    contain objects, as used e.g. for metadata, location, alleles, etc.
+    """
+    if np_obj_array1.shape != np_obj_array2.shape:
+        return False
+    return all(itertools.starmap(np.array_equal, zip(np_obj_array1, np_obj_array2)))
+
+
 def exclude_id(attribute, value):
     """
     Used to filter out the id field from attrs objects such as Ancestor
@@ -1166,11 +1176,8 @@ class SampleData(DataContainer):
         return (
             self.num_populations == other.num_populations
             # Need to take a different approach with np object arrays.
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.populations_metadata[:], other.populations_metadata[:]),
-                )
+            and np_obj_equal(
+                self.populations_metadata[:], other.populations_metadata[:],
             )
         )
 
@@ -1182,19 +1189,13 @@ class SampleData(DataContainer):
             )
             and np.array_equal(self.individuals_flags[:], other.individuals_flags[:])
             and np.array_equal(
-                self.individuals_population[:], other.individuals_population[:],
+                self.individuals_population[:], other.individuals_population[:]
             )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.individuals_metadata[:], other.individuals_metadata[:]),
-                )
+            and np_obj_equal(
+                self.individuals_metadata[:], other.individuals_metadata[:]
             )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.individuals_location[:], other.individuals_location[:]),
-                )
+            and np_obj_equal(
+                self.individuals_location[:], other.individuals_location[:]
             )
         )
 
@@ -1202,12 +1203,7 @@ class SampleData(DataContainer):
         return (
             self.num_samples == other.num_samples
             and np.all(self.samples_individual[:] == other.samples_individual[:])
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.samples_metadata[:], other.samples_metadata[:]),
-                )
-            )
+            and np_obj_equal(self.samples_metadata[:], other.samples_metadata[:])
         )
 
     def sites_equal(self, other):
@@ -1216,16 +1212,8 @@ class SampleData(DataContainer):
             and np.all(self.sites_position[:] == other.sites_position[:])
             and np.all(self.sites_genotypes[:] == other.sites_genotypes[:])
             and np.allclose(self.sites_time[:], other.sites_time[:], equal_nan=True)
-            and all(
-                itertools.starmap(
-                    np.array_equal, zip(self.sites_metadata[:], other.sites_metadata[:])
-                )
-            )
-            and all(
-                itertools.starmap(
-                    np.array_equal, zip(self.sites_alleles[:], other.sites_alleles[:])
-                )
-            )
+            and np_obj_equal(self.sites_metadata[:], other.sites_metadata[:])
+            and np_obj_equal(self.sites_alleles[:], other.sites_alleles[:])
         )
 
     def data_equal(self, other):
@@ -2205,18 +2193,10 @@ class AncestorData(DataContainer):
             and np.array_equal(self.ancestors_start[:], other.ancestors_start[:])
             and np.array_equal(self.ancestors_end[:], other.ancestors_end[:])
             # Need to take a different approach with np object arrays.
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]),
-                )
+            and np_obj_equal(
+                self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]
             )
-            and all(
-                itertools.starmap(
-                    np.array_equal,
-                    zip(self.ancestors_haplotype[:], other.ancestors_haplotype[:]),
-                )
-            )
+            and np_obj_equal(self.ancestors_haplotype[:], other.ancestors_haplotype[:])
         )
 
     @property
