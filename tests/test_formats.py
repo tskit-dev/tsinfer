@@ -1616,7 +1616,7 @@ class TestMinSiteTimes(unittest.TestCase):
     Test cases for sample data's min_site_times function
     """
 
-    def test_no_historic(self):
+    def test_no_historical(self):
         ts = tsutil.get_example_ts(10, 10, 1)
         sd1 = formats.SampleData.from_tree_sequence(ts)
         # No arguments and individuals_only=True should give array of zeros
@@ -1648,8 +1648,8 @@ class TestMinSiteTimes(unittest.TestCase):
         self.assertTrue(
             np.all(time_bound_individuals_only[only_younger_derived] == 0.5)
         )
-        no_historic_derived = np.all(G1[:2:4] != 1)
-        self.assertTrue(np.all(time_bound_individuals_only[no_historic_derived] == 0))
+        no_historical_derived = np.all(G1[:2:4] != 1)
+        self.assertTrue(np.all(time_bound_individuals_only[no_historical_derived] == 0))
         time_bound = sd1.min_site_times()
         self.assertTrue(np.array_equal(time_bound, sd1.sites_time[:]))
 

@@ -1358,16 +1358,16 @@ class SampleData(DataContainer):
         samples_time = self.individuals_time[:][samples_individual]
         if np.any(samples_time < 0):
             raise ValueError("Individuals cannot have negative times")
-        historic_samples = samples_time != 0
-        historic_samples_time = samples_time[historic_samples]
+        historical_samples = samples_time != 0
+        historical_samples_time = samples_time[historical_samples]
         sites_bound = np.zeros(self.num_sites)
         for var in self.variants():
-            historic_genos = var.genotypes[historic_samples]
-            derived = historic_genos > 0
+            historical_genos = var.genotypes[historical_samples]
+            derived = historical_genos > 0
             if np.any(derived):
-                historic_bound = np.max(historic_samples_time[derived])
-                if historic_bound > sites_bound[var.site.id]:
-                    sites_bound[var.site.id] = historic_bound
+                historical_bound = np.max(historical_samples_time[derived])
+                if historical_bound > sites_bound[var.site.id]:
+                    sites_bound[var.site.id] = historical_bound
         if not individuals_only:
             sites_bound = np.maximum(self.sites_time[:], sites_bound)
         return sites_bound

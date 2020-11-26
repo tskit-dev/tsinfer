@@ -35,7 +35,7 @@ NODE_IS_SRB_ANCESTOR = 1 << 17
 NODE_IS_SAMPLE_ANCESTOR = 1 << 18
 # Bit 20 is set in node flags when they are samples not at time zero in the sampledata
 # file
-NODE_IS_HISTORIC_SAMPLE = 1 << 20
+NODE_IS_HISTORICAL_SAMPLE = 1 << 20
 
 # What type of inference have we done at a site?
 INFERENCE_NONE = "none"

@@ -961,14 +961,14 @@ class TestMetadataRoundTrip(unittest.TestCase):
         for location, individual in zip(all_locations, output_ts.individuals()):
             self.assertTrue(np.array_equal(location, individual.location))
 
-    def test_historic_individuals(self):
+    def test_historical_individuals(self):
         samples = [msprime.Sample(population=0, time=0) for i in range(10)]
         rng = random.Random(32)
         ages = [rng.random(), rng.random()]
-        historic_samples = [
+        historical_samples = [
             msprime.Sample(population=0, time=ages[i // 2]) for i in range(4)
         ]
-        samples = samples + historic_samples
+        samples = samples + historical_samples
         ts = msprime.simulate(samples=samples, mutation_rate=5, random_seed=16)
         with tsinfer.SampleData(sequence_length=1) as sample_data:
             all_times = []
@@ -985,13 +985,13 @@ class TestMetadataRoundTrip(unittest.TestCase):
         output_ts = tsinfer.infer(sample_data)
         self.assertEqual(output_ts.num_individuals, len(all_times))
         flags = output_ts.tables.nodes.flags
-        flags_for_historic_sample = (
-            tsinfer.NODE_IS_HISTORIC_SAMPLE | tskit.NODE_IS_SAMPLE
+        flags_for_historical_sample = (
+            tsinfer.NODE_IS_HISTORICAL_SAMPLE | tskit.NODE_IS_SAMPLE
         )
         for time, individual in zip(all_times, output_ts.individuals()):
             for node in individual.nodes:
                 if time != 0:
-                    self.assertEqual(flags[node], flags_for_historic_sample)
+                    self.assertEqual(flags[node], flags_for_historical_sample)
             if time != 0:
                 md = json.loads(individual.metadata.decode())
                 self.assertTrue(np.array_equal(time, md["sample_data_time"]))
@@ -1047,19 +1047,19 @@ class TestMetadataRoundTrip(unittest.TestCase):
             assert np.array_equal(i1.location, i2.location)
             assert np.array_equal(i1.nodes, i2.nodes)
             assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
-        # Sample nodes can have tsinfer.NODE_IS_HISTORIC_SAMPLE in flags, and need not
+        # Sample nodes can have tsinfer.NODE_IS_HISTORICAL_SAMPLE in flags, and need not
         # have the same node time
         for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
             node1 = ts.node(n1)
             node2 = ts_inferred.node(n2)
             assert node1.population == node2.population
             assert node1.individual == node2.individual
-            if node2.flags & tsinfer.NODE_IS_HISTORIC_SAMPLE == 0:
+            if node2.flags & tsinfer.NODE_IS_HISTORICAL_SAMPLE == 0:
                 assert node1.time == node2.time
                 assert node1.flags == node2.flags
                 assert node1.metadata == node2.metadata
             else:
-                node2_other_flags = node2.flags ^ tsinfer.NODE_IS_HISTORIC_SAMPLE
+                node2_other_flags = node2.flags ^ tsinfer.NODE_IS_HISTORICAL_SAMPLE
                 assert node1.flags == node2_other_flags
                 assert tsutil.json_metadata_is_subset(node1.metadata, node2.metadata)
         # Sites can have metadata added by the inference process, but inferred site

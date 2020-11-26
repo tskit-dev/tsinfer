@@ -1464,7 +1464,7 @@ class SampleMatcher(Matcher):
             individual = samples_individual[index]
             if individuals_time[individual] != 0:
                 flags[sample_id] = np.bitwise_or(
-                    flags[sample_id], constants.NODE_IS_HISTORIC_SAMPLE
+                    flags[sample_id], constants.NODE_IS_HISTORICAL_SAMPLE
                 )
             population = individuals_population[individual]
             tables.nodes.add_row(
