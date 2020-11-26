@@ -1347,6 +1347,16 @@ class TestBuildAncestors(unittest.TestCase):
             sample_data.add_site(0.8, [0, 1, 1])
         self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
 
+    def test_nan_sites(self):
+        # Sites whose time is marked as NaN but are not tskit.UNKNOWN_TIME have
+        # a meaningless concept of time and should not be marked for full inference
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.2, [1, 1, 0])
+            sample_data.add_site(0.4, [1, 1, 0], time=np.nan)
+            sample_data.add_site(0.6, [1, 1, 0])
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        self.assertEqual(ancestors.num_sites, 2)
+
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
@@ -3172,7 +3182,11 @@ class TestMissingDataImputed(unittest.TestCase):
             self.assertTrue(np.all(expected == ts.genotype_matrix()))
 
 
-class TestAutoInferenceSites(unittest.TestCase):
+class TestInferenceSites(unittest.TestCase):
+    """
+    Tests where we expect some sites to be marked for inference and some not
+    """
+
     def test_missing_data(self):
         u = tskit.MISSING_DATA
         sites_by_samples = np.array(
@@ -3200,6 +3214,20 @@ class TestAutoInferenceSites(unittest.TestCase):
         self.assertEqual(inf_type[1], tsinfer.INFERENCE_PARSIMONY)
         for t in inf_type[2:]:
             self.assertEqual(t, tsinfer.INFERENCE_FULL)
+
+    def test_nan_sites(self):
+        # Sites whose time is marked as NaN but are not tskit.UNKNOWN_TIME have
+        # a meaningless concept of time and should not be marked for full inference
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.2, [1, 1, 0])
+            sample_data.add_site(0.4, [1, 1, 0], time=np.nan)
+            sample_data.add_site(0.6, [1, 1, 0])
+        ts = tsinfer.infer(sample_data)
+        self.assertEqual(ts.num_trees, 1)
+        inf_type = [json.loads(site.metadata)["inference_type"] for site in ts.sites()]
+        self.assertEqual(inf_type[0], tsinfer.INFERENCE_FULL)
+        self.assertEqual(inf_type[1], tsinfer.INFERENCE_PARSIMONY)
+        self.assertEqual(inf_type[2], tsinfer.INFERENCE_FULL)
 
 
 class TestInsertMissingSites(unittest.TestCase):

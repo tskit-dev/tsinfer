@@ -1667,7 +1667,8 @@ class SampleData(DataContainer):
             biallelic sites this frequency should provide a reasonable estimate
             of the relative time, as used to order ancestral haplotypes during the
             inference process. For sites not used in inference, such as singletons or
-            sites with more than two alleles, the value is unused. Defaults to None.
+            sites with more than two alleles or when the time is specified as
+            ``np.nan``, then the value is unused. Defaults to None.
         :return: The ID of the newly added site.
         :rtype: int
         """

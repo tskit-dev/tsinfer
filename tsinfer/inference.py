@@ -690,6 +690,17 @@ class AncestorsGenerator(object):
         Add all sites that are suitable for inference into the
         ancestor builder (and subsequent inference), unless they
         are held in the specified list of excluded site positions.
+        Suitable sites have only 2 listed alleles, with at least two
+        samples carrying the derived allele and at least one sample
+        carrying the ancestral allele.
+
+        Suitable sites will be added at the time given by site.time, unless
+        site.time is  ``np.nan`` or ``tskit.UNKNOWN_TIME``. In the first case,
+        the site will simply excluded as if it were in the list of
+        ``excluded_positions``. In the second case, then the time associated with
+        the site will be the frequency of the derived allele (i.e. the number
+        of samples with the derived allele divided by the total number of samples
+        with non-missing alleles).
         """
         if exclude_positions is None:
             exclude_positions = set()
@@ -708,20 +719,21 @@ class AncestorsGenerator(object):
             counts = allele_counts(variant.genotypes)
             use_site = False
             site = variant.site
-            if site.position not in exclude_positions:
-                if num_alleles == 2:
-                    if counts.derived > 1 and counts.derived < counts.known:
-                        use_site = True
-            if use_site:
+            if (
+                site.position not in exclude_positions
+                and num_alleles == 2
+                and 1 < counts.derived < counts.known
+            ):
+                use_site = True
                 time = site.time
                 if tskit.is_unknown_time(time):
                     # Non-variable sites have no obvious freq-as-time values
                     assert counts.known != counts.derived
                     assert counts.known != counts.ancestral
-                    assert counts.known > 0
-                    # Time = freq of *all* derived alleles. Note that if n_alleles > 2 this
-                    # may not be sensible: https://github.com/tskit-dev/tsinfer/issues/228
                     time = counts.derived / counts.known
+                if np.isnan(time):
+                    use_site = False  # Site with meaningless time value: skip inference
+            if use_site:
                 self.ancestor_builder.add_site(time, variant.genotypes)
                 inference_site_id.append(site.id)
                 self.num_sites += 1
