@@ -923,7 +923,7 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (4, 0)
+    FORMAT_VERSION = (5, 0)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0

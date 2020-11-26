@@ -6,10 +6,13 @@
 
 **Breaking changes**:
 
+- Bumped SampleData file format version to 4.0 then to 5.0, as a result of adding flags
+  on individuals and setting tskit.UNKNOWN_TIME for sites where freq is used as time.
 - The ancestors tree sequence now contains the real alleles and not
   0/1 values as before.
 - Times for undated sites now use frequencies (0..1), not as counts (1..num_samples),
-  and are now stored as -inf, then calculated on the fly in the variants() iterator.
+  and are now stored as tskit.UNKNOWN_TIME, then calculated on the fly when ancestors
+  are generated.
 - The SampleData file no longer accepts the ``inference`` argument to add_site.
   This functionality has been replaced by the ``exclude_positions`` argument
   to the ``infer`` and ``generate_ancestors`` functions.
