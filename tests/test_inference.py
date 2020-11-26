@@ -1331,6 +1331,22 @@ class TestBuildAncestors(unittest.TestCase):
             with self.assertRaises(error):
                 generator.ancestor_builder.make_ancestor([0], h)
 
+    def test_mixed_freq_and_user_times(self):
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.4, [0, 1, 1])
+            sample_data.add_site(0.8, [0, 1, 1], time=np.nan)
+        tsinfer.generate_ancestors(sample_data)  # Should work
+
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.4, [0, 1, 1], time=0.5)
+            sample_data.add_site(0.8, [0, 1, 1], time=np.nan)
+        tsinfer.generate_ancestors(sample_data)  # Should work
+
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.4, [0, 1, 1], time=0.5)
+            sample_data.add_site(0.8, [0, 1, 1])
+        self.assertRaises(ValueError, tsinfer.generate_ancestors, sample_data)
+
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)

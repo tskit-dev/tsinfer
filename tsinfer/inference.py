@@ -305,6 +305,14 @@ def generate_ancestors(
     :rtype: AncestorData
     """
     sample_data._check_finalised()
+    if np.any(np.isfinite(sample_data.sites_time[:])) and np.any(
+        tskit.is_unknown_time(sample_data.sites_time[:])
+    ):
+        raise ValueError(
+            "Cannot generate ancestors from a sample_data instance that mixes user-"
+            "specified times with times-as-frequencies. To explicitly set an undefined"
+            "time for a site, permanently excluding it from inference, set it to np.nan."
+        )
     progress_monitor = _get_progress_monitor(progress_monitor)
     with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
         generator = AncestorsGenerator(
