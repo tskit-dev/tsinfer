@@ -26,33 +26,6 @@
 #include <stdbool.h>
 #include <math.h>
 
-/* TODO Remove this when a tskit C api with this included is released. */
-
-/* Rounds the specified double to the closest multiple of 10**-num_digits. If
- * num_digits > 22, return value without changes. This is intended for use with
- * small positive numbers; behaviour with large inputs has not been considered.
- *
- * Based on double_round from the Python standard library
- * https://github.com/python/cpython/blob/master/Objects/floatobject.c#L985
- */
-static double
-tsk_round(double x, unsigned int ndigits)
-{
-    double pow1, y, z;
-
-    z = x;
-    if (ndigits < 22) {
-        pow1 = pow(10.0, (double) ndigits);
-        y = x * pow1;
-        z = round(y);
-        if (fabs(y - z) == 0.5) {
-            /* halfway between two integers; use round-half-even */
-            z = 2.0 * round(y / 2.0);
-        }
-        z = z / pow1;
-    }
-    return z;
-}
 
 static inline bool
 is_nonzero_root(const tsk_id_t u, const tsk_id_t *restrict parent,
