@@ -39,6 +39,7 @@ import time
 import numpy as np
 
 import tsinfer
+import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)
@@ -203,7 +204,18 @@ def run_infer(args):
         match_ancestors=True,
         match_samples=True,
     )
-    sample_data = tsinfer.SampleData.load(args.samples)
+    try:
+        sample_data = tsinfer.SampleData.load(args.samples)
+    except exceptions.FileFormatError as e:
+        # Check if the user has tried to infer a tree sequence, a common basic mistake
+        try:
+            tskit.load(args.samples)
+        except tskit.FileFormatError:
+            raise e  # Re-raise the original error
+        raise exceptions.FileFormatError(
+            "Expecting a sample data file, not a tree sequence (you can create one "
+            "via the Python function `tsinfer.SampleData.from_tree_sequence()`)."
+        )
     ts = tsinfer.infer(
         sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads
     )

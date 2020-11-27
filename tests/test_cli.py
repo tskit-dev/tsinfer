@@ -166,6 +166,27 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.verify_output(output_trees)
 
+    def test_infer_from_ts(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+        self.assertRaisesRegex(
+            exceptions.FileFormatError,
+            "from_tree_sequence",
+            self.run_command,
+            ["infer", output_trees],
+        )
+
+    def test_infer_bad_file(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        with open(output_trees, "w") as bad_file:
+            bad_file.write("xxx")
+        self.assertRaisesRegex(
+            exceptions.FileFormatError,
+            "Unknown file format",
+            self.run_command,
+            ["infer", output_trees],
+        )
+
     @unittest.skipIf(
         sys.platform == "win32", "windows simultaneous file permissions issue"
     )
