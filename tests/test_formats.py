@@ -325,6 +325,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         min_time = min([n.time for n in ts.nodes() if not n.is_sample()])
         nodes_time[ts.samples()] = np.linspace(0, min_time, n_individuals * ploidy)
         tables.nodes.time = nodes_time
+        # Zap out the mutation times to avoid conflicts.
+        tables.mutations.time = np.full(ts.num_mutations, tskit.UNKNOWN_TIME)
         bad_ts = tables.tree_sequence()
         self.assertRaises(ValueError, formats.SampleData.from_tree_sequence, bad_ts)
 
@@ -360,6 +362,8 @@ class TestSampleData(unittest.TestCase, DataContainerMixin):
         ts = tsutil.get_example_ts(10, 10)
         # Create > 2 alleles by scattering mutations on the tree nodes at the first site
         tables = ts.dump_tables()
+        # We can't have mixed know and unknown times.
+        tables.mutations.time = np.full(ts.num_mutations, tskit.UNKNOWN_TIME)
         focal_site = ts.site(0)
         tree = ts.at(focal_site.position)
         # Reset the initial mutation to lie above the root, for correct mutation order
