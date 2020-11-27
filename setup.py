@@ -78,7 +78,7 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        "tskit>=0.3",
+        "tskit>=0.3.3",
         "numcodecs>=0.6",
         "zarr>=2.2",
         "lmdb",
