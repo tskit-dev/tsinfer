@@ -1615,7 +1615,6 @@ class TestSampleDataMerge(unittest.TestCase):
         with tsinfer.SampleData() as sd1:
             for col in range(sites_by_samples.shape[1]):
                 sd1.add_site(col, sites_by_samples[:, col])
-        print([s for s in sd1.sites()])
         self.verify(sd1, sd1)
         with tsinfer.SampleData(sd1.sequence_length) as sd2:
             for col in range(4):
