@@ -36,6 +36,7 @@ import tsinfer
 import tsinfer.cli as cli
 import tsinfer.__main__ as main
 import tsinfer.exceptions as exceptions
+import pytest
 
 
 def capture_output(func, *args, **kwargs):
@@ -63,7 +64,7 @@ def capture_output(func, *args, **kwargs):
     return stdout_output, stderr_output
 
 
-class TestMain(unittest.TestCase):
+class TestMain:
     """
     Simple tests for the main function.
     """
@@ -79,7 +80,7 @@ class TestMain(unittest.TestCase):
             mocked_parse.assert_called_once_with(None)
 
 
-class TestDefaultPaths(unittest.TestCase):
+class TestDefaultPaths:
     """
     Tests for the default path creation routines.
     """
@@ -87,19 +88,19 @@ class TestDefaultPaths(unittest.TestCase):
     def test_get_default_path(self):
         # The second argument is ignored if the input path is specified.
         for path in ["a", "a/b/c", "a.stuff"]:
-            self.assertEqual(cli.get_default_path(path, "a", "b"), path)
-        self.assertEqual(cli.get_default_path(None, "a", ".x"), "a.x")
-        self.assertEqual(cli.get_default_path(None, "a.y", ".z"), "a.z")
-        self.assertEqual(cli.get_default_path(None, "a/b/c/a.y", ".z"), "a/b/c/a.z")
+            assert cli.get_default_path(path, "a", "b") == path
+        assert cli.get_default_path(None, "a", ".x") == "a.x"
+        assert cli.get_default_path(None, "a.y", ".z") == "a.z"
+        assert cli.get_default_path(None, "a/b/c/a.y", ".z") == "a/b/c/a.z"
 
     def test_get_ancestors_path(self):
-        self.assertEqual(cli.get_ancestors_path(None, "a"), "a.ancestors")
+        assert cli.get_ancestors_path(None, "a") == "a.ancestors"
 
     def test_get_ancestors_trees_path(self):
-        self.assertEqual(cli.get_ancestors_trees_path(None, "a"), "a.ancestors.trees")
+        assert cli.get_ancestors_trees_path(None, "a") == "a.ancestors.trees"
 
     def test_get_output_trees_path(self):
-        self.assertEqual(cli.get_output_trees_path(None, "a"), "a.trees")
+        assert cli.get_output_trees_path(None, "a") == "a.trees"
 
 
 class TestCli(unittest.TestCase):
@@ -139,9 +140,9 @@ class TestCli(unittest.TestCase):
     @mock.patch("tsinfer.cli.setup_logging")
     def run_command(self, command, mock_setup_logging):
         stdout, stderr = capture_output(cli.tsinfer_main, command)
-        self.assertEqual(stderr, "")
-        self.assertEqual(stdout, "")
-        self.assertTrue(mock_setup_logging.called)
+        assert stderr == ""
+        assert stdout == ""
+        assert mock_setup_logging.called
 
 
 class TestCommandsDefaults(TestCli):
@@ -151,14 +152,12 @@ class TestCommandsDefaults(TestCli):
 
     def verify_output(self, output_path):
         output_trees = tskit.load(output_path)
-        self.assertEqual(output_trees.num_samples, self.input_ts.num_samples)
-        self.assertEqual(output_trees.sequence_length, self.input_ts.sequence_length)
-        self.assertEqual(output_trees.num_sites, self.input_ts.num_sites)
-        self.assertGreater(output_trees.num_sites, 1)
-        self.assertTrue(
-            np.array_equal(
-                output_trees.genotype_matrix(), self.input_ts.genotype_matrix()
-            )
+        assert output_trees.num_samples == self.input_ts.num_samples
+        assert output_trees.sequence_length == self.input_ts.sequence_length
+        assert output_trees.num_sites == self.input_ts.num_sites
+        assert output_trees.num_sites > 1
+        assert np.array_equal(
+            output_trees.genotype_matrix(), self.input_ts.genotype_matrix()
         )
 
     def test_infer(self):
@@ -187,8 +186,8 @@ class TestCommandsDefaults(TestCli):
             ["infer", output_trees],
         )
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
@@ -202,8 +201,9 @@ class TestCommandsDefaults(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file access permissions issue"
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="windows simultaneous file access permissions issue",
     )
     def test_augment_ancestors(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
@@ -236,16 +236,16 @@ class TestProgress(TestCli):
     @mock.patch("tsinfer.cli.setup_logging")
     def run_command(self, command, mock_setup_logging):
         stdout, stderr = capture_output(cli.tsinfer_main, command + ["--progress"])
-        self.assertGreater(len(stderr), 0)
-        self.assertEqual(stdout, "")
-        self.assertTrue(mock_setup_logging.called)
+        assert len(stderr) > 0
+        assert stdout == ""
+        assert mock_setup_logging.called
 
     def test_infer(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
     def test_nominal_chain(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
@@ -258,8 +258,8 @@ class TestProgress(TestCli):
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.run_command(["verify", self.sample_file, output_trees])
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
     def test_augment_ancestors(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
@@ -286,8 +286,8 @@ class TestMatchSamples(TestCli):
     Tests for the match samples options.
     """
 
-    @unittest.skipIf(
-        sys.platform == "win32", "windows simultaneous file permissions issue"
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
     def test_no_simplify(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
@@ -308,7 +308,7 @@ class TestMatchSamples(TestCli):
         )
         t1 = tskit.load(output_trees).tables
         t2 = tskit.load(output_trees_no_simplify).tables
-        self.assertNotEqual(t1.nodes, t2.nodes)
+        assert t1.nodes != t2.nodes
 
 
 class TestList(TestCli):
@@ -321,56 +321,57 @@ class TestList(TestCli):
     @mock.patch("tsinfer.cli.setup_logging")
     def run_command(self, command, mock_setup_logging):
         stdout, stderr = capture_output(cli.tsinfer_main, command)
-        self.assertEqual(stderr, "")
-        self.assertTrue(mock_setup_logging.called)
+        assert stderr == ""
+        assert mock_setup_logging.called
         return stdout
 
     def test_list_samples(self):
         output1 = self.run_command(["list", self.sample_file])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["ls", self.sample_file])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_samples_storage(self):
         output1 = self.run_command(["list", "-s", self.sample_file])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["list", "--storage", self.sample_file])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_ancestors(self):
         output1 = self.run_command(["list", self.ancestor_file])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["ls", self.ancestor_file])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_ancestors_storage(self):
         output1 = self.run_command(["list", "-s", self.ancestor_file])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["list", "--storage", self.ancestor_file])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_trees(self):
         output1 = self.run_command(["list", self.output_trees])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["ls", self.output_trees])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_ancestor_trees(self):
         output1 = self.run_command(["list", self.ancestor_trees])
-        self.assertGreater(len(output1), 0)
+        assert len(output1) > 0
         output2 = self.run_command(["ls", self.ancestor_trees])
-        self.assertEqual(output1, output2)
+        assert output1 == output2
 
     def test_list_unknown_files(self):
         zero_file = os.path.join(self.tempdir.name, "zeros")
         with open(zero_file, "wb") as f:
             f.write(bytearray(100))
         for bad_file in [zero_file]:
-            self.assertRaises(
-                exceptions.FileFormatError, self.run_command, ["list", bad_file]
-            )
+            with pytest.raises(exceptions.FileFormatError):
+                self.run_command(["list", bad_file])
         if sys.platform == "win32":
             # Windows raises a PermissionError not IsADirectoryError when opening a dir
-            self.assertRaises(PermissionError, self.run_command, ["list", "/"])
+            with pytest.raises(PermissionError):
+                self.run_command(["list", "/"])
         else:
-            self.assertRaises(IsADirectoryError, self.run_command, ["list", "/"])
+            with pytest.raises(IsADirectoryError):
+                self.run_command(["list", "/"])

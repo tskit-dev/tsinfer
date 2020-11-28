@@ -1,4 +1,3 @@
-nose
 numpy
 six
 tqdm
@@ -15,3 +14,5 @@ pandas
 matplotlib
 seaborn
 colorama
+pytest
+pytest-xdist

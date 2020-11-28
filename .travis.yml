@@ -36,4 +36,4 @@ install:
   - pip install .
 
 script:
-  - nosetests -vs
+  - python -m pytest -n2
