@@ -142,7 +142,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(genotypes_array);
-    if (shape[0] != self->builder->num_samples) {
+    if (shape[0] != (npy_intp) self->builder->num_samples) {
         PyErr_SetString(PyExc_ValueError, "genotypes array wrong size.");
         goto out;
     }
@@ -208,7 +208,7 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         goto out;
     }
     shape = PyArray_DIMS(ancestor_array);
-    if (shape[0] != num_sites) {
+    if (shape[0] != (npy_intp) num_sites) {
         PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
         goto out;
     }
@@ -547,7 +547,7 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
         goto out;
     }
     shape = PyArray_DIMS(right_array);
-    if (shape[0] != num_edges) {
+    if (shape[0] != (npy_intp) num_edges) {
         PyErr_SetString(PyExc_ValueError, "right wrong size");
         goto out;
     }
@@ -562,7 +562,7 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
         goto out;
     }
     shape = PyArray_DIMS(parent_array);
-    if (shape[0] != num_edges) {
+    if (shape[0] != (npy_intp) num_edges) {
         PyErr_SetString(PyExc_ValueError, "parent wrong size");
         goto out;
     }
@@ -637,7 +637,7 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
     shape = PyArray_DIMS(derived_state_array);
-    if (shape[0] != num_mutations) {
+    if (shape[0] != (npy_intp) num_mutations) {
         PyErr_SetString(PyExc_ValueError, "derived_state wrong size");
         goto out;
     }
@@ -706,7 +706,7 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
     shape = PyArray_DIMS(flags_array);
-    if (shape[0] != num_nodes) {
+    if (shape[0] != (npy_intp) num_nodes) {
         PyErr_SetString(PyExc_ValueError, "flags array incorrect size");
         goto out;
     }
@@ -774,7 +774,7 @@ TreeSequenceBuilder_restore_edges(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
     shape = PyArray_DIMS(right_array);
-    if (shape[0] != num_edges) {
+    if (shape[0] != (npy_intp) num_edges) {
         PyErr_SetString(PyExc_ValueError, "right wrong size");
         goto out;
     }
@@ -789,7 +789,7 @@ TreeSequenceBuilder_restore_edges(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
     shape = PyArray_DIMS(parent_array);
-    if (shape[0] != num_edges) {
+    if (shape[0] != (npy_intp) num_edges) {
         PyErr_SetString(PyExc_ValueError, "parent wrong size");
         goto out;
     }
@@ -804,7 +804,7 @@ TreeSequenceBuilder_restore_edges(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
     shape = PyArray_DIMS(child_array);
-    if (shape[0] != num_edges) {
+    if (shape[0] != (npy_intp) num_edges) {
         PyErr_SetString(PyExc_ValueError, "child wrong size");
         goto out;
     }
@@ -877,7 +877,7 @@ TreeSequenceBuilder_restore_mutations(TreeSequenceBuilder *self, PyObject *args,
         goto out;
     }
     shape = PyArray_DIMS(node_array);
-    if (shape[0] != num_mutations) {
+    if (shape[0] != (npy_intp) num_mutations) {
         PyErr_SetString(PyExc_ValueError, "node wrong size");
         goto out;
     }
@@ -893,7 +893,7 @@ TreeSequenceBuilder_restore_mutations(TreeSequenceBuilder *self, PyObject *args,
         goto out;
     }
     shape = PyArray_DIMS(derived_state_array);
-    if (shape[0] != num_mutations) {
+    if (shape[0] != (npy_intp) num_mutations) {
         PyErr_SetString(PyExc_ValueError, "derived_state wrong size");
         goto out;
     }
@@ -908,7 +908,7 @@ TreeSequenceBuilder_restore_mutations(TreeSequenceBuilder *self, PyObject *args,
         goto out;
     }
     shape = PyArray_DIMS(parent_array);
-    if (shape[0] != num_mutations) {
+    if (shape[0] != (npy_intp) num_mutations) {
         PyErr_SetString(PyExc_ValueError, "parent wrong size");
         goto out;
     }
@@ -1294,7 +1294,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(recombination_rate_array);
-    if (shape[0] != tree_sequence_builder->tree_sequence_builder->num_sites) {
+    if (shape[0] != (npy_intp) tree_sequence_builder->tree_sequence_builder->num_sites) {
         PyErr_SetString(PyExc_ValueError,
                 "Size of recombination_rate array must be num_sites");
         goto out;
@@ -1306,7 +1306,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(mismatch_rate_array);
-    if (shape[0] != tree_sequence_builder->tree_sequence_builder->num_sites) {
+    if (shape[0] != (npy_intp) tree_sequence_builder->tree_sequence_builder->num_sites) {
         PyErr_SetString(PyExc_ValueError, "Size of mismatch_rate array must be num_sites");
         goto out;
     }
@@ -1372,7 +1372,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(haplotype_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
+    if (shape[0] != (npy_intp) self->ancestor_matcher->num_sites) {
         PyErr_SetString(PyExc_ValueError, "Incorrect size for input haplotype.");
         goto out;
     }
@@ -1387,7 +1387,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     shape = PyArray_DIMS(match_array);
-    if (shape[0] != self->ancestor_matcher->num_sites) {
+    if (shape[0] != (npy_intp) self->ancestor_matcher->num_sites) {
         PyErr_SetString(PyExc_ValueError, "input match wrong size");
         goto out;
     }

@@ -165,24 +165,24 @@ class AncestorBuilder(object):
         remove_buffer = []
         last_site = focal_site
         # print("Focal site", focal_site, "time", focal_time)
-        for l in sites:
-            a[l] = 0
-            last_site = l
-            if self.sites[l].time > focal_time:
-                g_l = self.sites[l].genotypes
+        for site_index in sites:
+            a[site_index] = 0
+            last_site = site_index
+            if self.sites[site_index].time > focal_time:
+                g_l = self.sites[site_index].genotypes
                 ones = sum(g_l[u] == 1 for u in S)
                 zeros = sum(g_l[u] == 0 for u in S)
-                # print("pos", l, ". Ones:", ones, ". Zeros:", zeros)
+                # print("pos", site_index, ". Ones:", ones, ". Zeros:", zeros)
                 if ones + zeros == 0:
-                    a[l] = tskit.MISSING_DATA
+                    a[site_index] = tskit.MISSING_DATA
                 else:
                     consensus = 1 if ones >= zeros else 0
-                    # print("\tP", l, "\t", len(S), ":ones=", ones, consensus)
+                    # print("\tP", site_index, "\t", len(S), ":ones=", ones, consensus)
                     for u in remove_buffer:
                         if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
                             # print("\t\tremoving", u)
                             S.remove(u)
-                    a[l] = consensus
+                    a[site_index] = consensus
                     # print("\t", len(S), remove_buffer, consensus, sep="\t")
                     if len(S) <= min_sample_set_size:
                         # print("BREAKING", len(S), min_sample_set_size)
@@ -213,17 +213,17 @@ class AncestorBuilder(object):
         #  spanning from leftmost to rightmost focal site)
         for j in range(len(focal_sites) - 1):
             # Interpolate region between focal site j and focal site j+1
-            for l in range(focal_sites[j] + 1, focal_sites[j + 1]):
-                a[l] = 0
-                if self.sites[l].time > focal_time:
-                    g_l = self.sites[l].genotypes
+            for site_index in range(focal_sites[j] + 1, focal_sites[j + 1]):
+                a[site_index] = 0
+                if self.sites[site_index].time > focal_time:
+                    g_l = self.sites[site_index].genotypes
                     ones = sum(g_l[u] == 1 for u in S)
                     zeros = sum(g_l[u] == 0 for u in S)
-                    # print("\t", l, ones, zeros, sep="\t")
+                    # print("\t", site_index, ones, zeros, sep="\t")
                     if ones + zeros == 0:
-                        a[l] = tskit.MISSING_DATA
+                        a[site_index] = tskit.MISSING_DATA
                     elif ones >= zeros:
-                        a[l] = 1
+                        a[site_index] = 1
         # Extend ancestral haplotype rightwards from rightmost focal site
         focal_site = focal_sites[-1]
         last_site = self.compute_ancestral_states(
@@ -348,7 +348,7 @@ class TreeSequenceBuilder(object):
         return head
 
     def restore_edges(self, left, right, parent, child):
-        edges = [Edge(l, r, p, c) for l, r, p, c in zip(left, right, parent, child)]
+        edges = [Edge(*t) for t in zip(left, right, parent, child)]
         # Sort the edges by child and left so we can add them in order.
         edges.sort(key=lambda e: (e.child, e.left))
         prev = Edge(child=-1)
@@ -368,8 +368,8 @@ class TreeSequenceBuilder(object):
         assert self.path[child] is None
         prev = None
         head = None
-        for l, r, p in reversed(list(zip(left, right, parent))):
-            edge = Edge(l, r, p, child)
+        for t in reversed(list(zip(left, right, parent))):
+            edge = Edge(*t, child)
             if prev is None:
                 head = edge
             else:
@@ -604,9 +604,9 @@ class TreeSequenceBuilder(object):
         # remove it from the API if we don't figure out how to do it properly.
         parent[:] = tskit.NULL
         j = 0
-        for l in range(self.num_sites):
-            for u, d in self.mutations[l]:
-                site[j] = l
+        for site_index in range(self.num_sites):
+            for u, d in self.mutations[site_index]:
+                site[j] = site_index
                 node[j] = u
                 derived_state[j] = d
                 j += 1
@@ -648,8 +648,13 @@ class AncestorMatcher(object):
         # TODO - don't crash when self.max_likelihood_node or self.traceback == None
         print("Ancestor matcher state")
         print("max_L_node\ttraceback")
-        for l in range(self.num_sites):
-            print(l, self.max_likelihood_node[l], self.traceback[l], sep="\t")
+        for site_index in range(self.num_sites):
+            print(
+                site_index,
+                self.max_likelihood_node[site_index],
+                self.traceback[site_index],
+                sep="\t",
+            )
 
     def is_root(self, u):
         return self.parent[u] == tskit.NULL
@@ -878,8 +883,8 @@ class AncestorMatcher(object):
         while left < end:
             # print("START OF TREE LOOP", left, right)
             assert left < right
-            for l in range(remove_start, k):
-                edge = Ir.peekitem(l)[1]
+            for site_index in range(remove_start, k):
+                edge = Ir.peekitem(site_index)[1]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
                         self.likelihood[u] = NONZERO_ROOT
@@ -927,8 +932,8 @@ class AncestorMatcher(object):
                     self.likelihood[edge.child] = L_child
                     self.likelihood_nodes.append(edge.child)
             # Clear the L cache
-            for l in range(remove_start, k):
-                edge = Ir.peekitem(l)[1]
+            for site_index in range(remove_start, k):
+                edge = Ir.peekitem(site_index)[1]
                 u = edge.parent
                 while L_cache[u] != -1:
                     L_cache[u] = -1
@@ -999,16 +1004,16 @@ class AncestorMatcher(object):
             pos = left
 
             assert left < right
-            for l in range(min(right, end) - 1, max(left, start) - 1, -1):
+            for site_index in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
-                self.set_allelic_state(l)
+                self.set_allelic_state(site_index)
                 v = u
                 while self.allelic_state[v] == -1:
                     v = self.parent[v]
-                match[l] = self.allelic_state[v]
-                self.unset_allelic_state(l)
+                match[site_index] = self.allelic_state[v]
+                self.unset_allelic_state(site_index)
 
-                for u, recombine in self.traceback[l].items():
+                for u, recombine in self.traceback[site_index].items():
                     # Mark the traceback nodes on the tree.
                     recombination_required[u] = recombine
                 # Now traverse up the tree from the current node. The first marked node
@@ -1016,13 +1021,13 @@ class AncestorMatcher(object):
                 u = output_edge.parent
                 while u != 0 and recombination_required[u] == -1:
                     u = self.parent[u]
-                if recombination_required[u] and l > start:
-                    output_edge.left = l
-                    u = self.max_likelihood_node[l - 1]
-                    output_edge = Edge(right=l, parent=u)
+                if recombination_required[u] and site_index > start:
+                    output_edge.left = site_index
+                    u = self.max_likelihood_node[site_index - 1]
+                    output_edge = Edge(right=site_index, parent=u)
                     output_edges.append(output_edge)
                 # Reset the nodes in the recombination tree.
-                for u in self.traceback[l].keys():
+                for u in self.traceback[site_index].keys():
                     recombination_required[u] = -1
         output_edge.left = start
 

@@ -63,7 +63,7 @@ dump_tree_sequence_builder(
     const char *states[] = { "0", "1", "2", "3", "4", "5", "6", "7" };
 
     if (options & TSK_NO_INIT) {
-        tsk_table_collection_clear(tables);
+        tsk_table_collection_clear(tables, 0);
     } else {
         ret = tsk_table_collection_init(tables, 0);
         CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -82,7 +82,7 @@ dump_tree_sequence_builder(
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     for (j = 0; j < tree_sequence_builder_get_num_edges(tsb); j++) {
         ret = tsk_edge_table_add_row(
-            &tables->edges, left[j], right[j], parent[j], child[j]);
+            &tables->edges, left[j], right[j], parent[j], child[j], NULL, 0);
         CU_ASSERT_EQUAL_FATAL(ret, j);
     }
 
@@ -98,7 +98,7 @@ dump_tree_sequence_builder(
     for (j = 0; j < tree_sequence_builder_get_num_mutations(tsb); j++) {
         assert(derived_state[j] < max_alleles);
         ret = tsk_mutation_table_add_row(&tables->mutations, site[j], node[j],
-            mut_parent[j], states[derived_state[j]], 1, NULL, 0);
+            mut_parent[j], TSK_UNKNOWN_TIME, states[derived_state[j]], 1, NULL, 0);
         CU_ASSERT_EQUAL_FATAL(ret, j);
     }
 
@@ -168,7 +168,7 @@ verify_restore_tsb(tree_sequence_builder_t *tsb, tsk_table_collection_t *tables)
 
     dump_tree_sequence_builder(&other_tsb, &other_tables, 0);
 
-    CU_ASSERT_TRUE_FATAL(tsk_table_collection_equals(tables, &other_tables));
+    CU_ASSERT_TRUE_FATAL(tsk_table_collection_equals(tables, &other_tables, 0));
 
     tree_sequence_builder_free(&other_tsb);
     tsk_table_collection_free(&other_tables);
@@ -205,7 +205,7 @@ verify_round_trip(tsk_table_collection_t *tables, size_t num_samples, size_t num
 
     CU_ASSERT_EQUAL_FATAL(num_samples, tsk_treeseq_get_num_samples(&ts));
     CU_ASSERT_EQUAL_FATAL(num_sites, tsk_treeseq_get_num_sites(&ts));
-    ret = tsk_vargen_init(&vargen, &ts, NULL, 0, 0);
+    ret = tsk_vargen_init(&vargen, &ts, NULL, 0, 0, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -215,7 +215,7 @@ verify_round_trip(tsk_table_collection_t *tables, size_t num_samples, size_t num
         CU_ASSERT_EQUAL(var->site->id, j);
         CU_ASSERT_EQUAL(var->site->position, (double) j);
         for (k = 0; k < num_samples; k++) {
-            CU_ASSERT_EQUAL(var->genotypes.u8[k], samples[k][j]);
+            CU_ASSERT_EQUAL(var->genotypes.i8[k], samples[k][j]);
         }
     }
 

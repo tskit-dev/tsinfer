@@ -12,13 +12,6 @@ import logging
 
 import numpy as np
 import pandas as pd
-import matplotlib as mp
-
-# Force matplotlib to not use any Xwindows backend.
-mp.use("Agg")  # NOQA
-import matplotlib.pyplot as plt
-from matplotlib import collections as mc
-import seaborn as sns
 import tqdm
 import daiquiri
 import colorama
@@ -27,6 +20,17 @@ import tskit
 
 import tsinfer
 import tsinfer.cli as cli
+
+# We break the normal conventions for ordering imports here
+# because we have to make this ugly hack to make matplotlib
+# work from a shell session and keep flake8 happy.
+import matplotlib as mp
+
+# Force matplotlib to not use any Xwindows backend.
+mp.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib import collections as mc  # noqa: E402
+import seaborn as sns  # noqa: E402
 
 
 # Set by the CLI.
