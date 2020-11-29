@@ -39,6 +39,7 @@ import tsinfer.algorithm as algorithm
 import tsinfer.threads as threads
 import tsinfer.provenance as provenance
 import tsinfer.constants as constants
+import tsinfer.progress as progress
 
 logger = logging.getLogger(__name__)
 
@@ -91,34 +92,15 @@ def allele_counts(genotypes):
     )
 
 
-class DummyProgress(object):
+def _get_progress_monitor(progress_monitor, **kwargs):
     """
-    Class that mimics the subset of the tqdm API that we use in this module.
+    Check if this really is a ProgressMonitor, if not, return something usable as one
     """
-
-    def update(self):
-        pass
-
-    def close(self):
-        pass
-
-
-class DummyProgressMonitor(object):
-    """
-    Simple class to mimic the interface of the real progress monitor.
-    """
-
-    def get(self, key, total):
-        return DummyProgress()
-
-    def set_detail(self, info):
-        pass
-
-
-def _get_progress_monitor(progress_monitor):
-    if progress_monitor is None:
-        progress_monitor = DummyProgressMonitor()
-    return progress_monitor
+    if isinstance(progress_monitor, progress.ProgressMonitor):
+        return progress_monitor
+    if progress_monitor:
+        return progress.ProgressMonitor(**kwargs)
+    return progress.DummyProgressMonitor()
 
 
 def _encode_metadata(obj):
@@ -146,7 +128,7 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
     :param TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
         instance an encoding of the specified samples that we wish to verify.
     """
-    progress_monitor = _get_progress_monitor(progress_monitor)
+    progress_monitor = _get_progress_monitor(progress_monitor, verify=True)
     if sample_data.num_sites != tree_sequence.num_sites:
         raise ValueError("numbers of sites not equal")
     if sample_data.num_samples != tree_sequence.num_samples:
@@ -231,6 +213,12 @@ def infer(
         input sample data.
     :rtype: tskit.TreeSequence
     """
+    progress_monitor = _get_progress_monitor(
+        progress_monitor,
+        generate_ancestors=True,
+        match_ancestors=True,
+        match_samples=True,
+    )
     ancestor_data = generate_ancestors(
         sample_data,
         num_threads=num_threads,
@@ -313,7 +301,6 @@ def generate_ancestors(
             "specified times with times-as-frequencies. To explicitly set an undefined"
             "time for a site, permanently excluding it from inference, set it to np.nan."
         )
-    progress_monitor = _get_progress_monitor(progress_monitor)
     with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
         generator = AncestorsGenerator(
             sample_data,
@@ -362,6 +349,7 @@ def match_ancestors(
         of the set of ancestors.
     :rtype: tskit.TreeSequence
     """
+    progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
     sample_data._check_finalised()
     ancestor_data._check_finalised()
     matcher = AncestorMatcher(
@@ -420,6 +408,7 @@ def augment_ancestors(
     :rtype: tskit.TreeSequence
     """
     sample_data._check_finalised()
+    progress_monitor = _get_progress_monitor(progress_monitor, augment_ancestors=True)
     manager = SampleMatcher(
         sample_data,
         ancestors_ts,
@@ -494,6 +483,7 @@ def match_samples(
     :rtype: tskit.TreeSequence
     """
     sample_data._check_finalised()
+    progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
     manager = SampleMatcher(
         sample_data,
         ancestors_ts,
@@ -667,7 +657,9 @@ class AncestorsGenerator(object):
     ):
         self.sample_data = sample_data
         self.ancestor_data = ancestor_data
-        self.progress_monitor = progress_monitor
+        self.progress_monitor = _get_progress_monitor(
+            progress_monitor, generate_ancestors=True
+        )
         self.max_sites = sample_data.num_sites
         self.num_sites = 0
         self.num_samples = sample_data.num_samples

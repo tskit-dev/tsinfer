@@ -33,7 +33,6 @@ except ImportError:
 
 import daiquiri
 import tskit
-import tqdm
 import humanize
 import time
 import numpy as np
@@ -43,75 +42,6 @@ import tsinfer.exceptions as exceptions
 
 
 logger = logging.getLogger(__name__)
-
-
-class ProgressMonitor(object):
-    """
-    Class responsible for managing in the tqdm progress monitors.
-    """
-
-    def __init__(
-        self,
-        enabled=True,
-        generate_ancestors=False,
-        match_ancestors=False,
-        augment_ancestors=False,
-        match_samples=False,
-        verify=False,
-    ):
-        self.enabled = enabled
-        self.num_bars = 0
-        if generate_ancestors:
-            self.num_bars += 2
-        if match_ancestors:
-            self.num_bars += 1
-        if match_samples:
-            self.num_bars += 3
-        if verify:
-            assert self.num_bars == 0
-            self.num_bars += 1
-        if augment_ancestors:
-            assert self.num_bars == 0
-            self.num_bars += 2
-        self.current_count = 0
-        self.current_instance = None
-        if not verify:
-            # Only show extra detail if we are runing match-ancestors by itself.
-            self.show_detail = self.num_bars == 1
-        self.descriptions = {
-            "ga_add_sites": "ga-add",
-            "ga_generate": "ga-gen",
-            "ma_match": "ma-match",
-            "ms_match": "ms-match",
-            "ms_paths": "ms-paths",
-            "ms_full_mutations": "ms-muts",
-            "ms_extra_sites": "ms-xsites",
-            "verify": "verify",
-        }
-
-    def set_detail(self, info):
-        if self.show_detail:
-            self.current_instance.set_postfix(info)
-
-    def get(self, key, total):
-        self.current_count += 1
-        desc = "{:<8} ({}/{})".format(
-            self.descriptions[key], self.current_count, self.num_bars
-        )
-        bar_format = (
-            "{desc}{percentage:3.0f}%|{bar}"
-            "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]"
-        )
-        self.current_instance = tqdm.tqdm(
-            desc=desc,
-            total=total,
-            disable=not self.enabled,
-            bar_format=bar_format,
-            dynamic_ncols=True,
-            smoothing=0.01,
-            unit_scale=True,
-        )
-        return self.current_instance
 
 
 __before = time.time()
@@ -198,12 +128,6 @@ def run_list(args):
 
 def run_infer(args):
     setup_logging(args)
-    progress_monitor = ProgressMonitor(
-        enabled=args.progress,
-        generate_ancestors=True,
-        match_ancestors=True,
-        match_samples=True,
-    )
     try:
         sample_data = tsinfer.SampleData.load(args.samples)
     except exceptions.FileFormatError as e:
@@ -216,8 +140,9 @@ def run_infer(args):
             "Expecting a sample data file, not a tree sequence (you can create one "
             "via the Python function `tsinfer.SampleData.from_tree_sequence()`)."
         )
+    sample_data = tsinfer.SampleData.load(args.samples)
     ts = tsinfer.infer(
-        sample_data, progress_monitor=progress_monitor, num_threads=args.num_threads
+        sample_data, progress_monitor=args.progress, num_threads=args.num_threads
     )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Writing output tree sequence to {}".format(output_trees))
@@ -228,11 +153,10 @@ def run_infer(args):
 def run_generate_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.samples)
-    progress_monitor = ProgressMonitor(enabled=args.progress, generate_ancestors=True)
     sample_data = tsinfer.SampleData.load(args.samples)
     tsinfer.generate_ancestors(
         sample_data,
-        progress_monitor=progress_monitor,
+        progress_monitor=args.progress,
         path=ancestors_path,
         num_flush_threads=args.num_flush_threads,
         num_threads=args.num_threads,
@@ -247,12 +171,11 @@ def run_match_ancestors(args):
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     sample_data = tsinfer.SampleData.load(args.samples)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
-    progress_monitor = ProgressMonitor(enabled=args.progress, match_ancestors=True)
     ts = tsinfer.match_ancestors(
         sample_data,
         ancestor_data,
         num_threads=args.num_threads,
-        progress_monitor=progress_monitor,
+        progress_monitor=args.progress,
         path_compression=not args.no_path_compression,
     )
     logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
@@ -268,7 +191,6 @@ def run_augment_ancestors(args):
     output_path = args.augmented_ancestors
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
     ancestors_trees = tskit.load(ancestors_trees)
-    progress_monitor = ProgressMonitor(enabled=args.progress, augment_ancestors=True)
     # TODO Need some error checking on these values
     n = args.num_samples
     N = sample_data.num_samples
@@ -282,7 +204,7 @@ def run_augment_ancestors(args):
         sample_indexes,
         num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
-        progress_monitor=progress_monitor,
+        progress_monitor=args.progress,
     )
     logger.info("Writing output tree sequence to {}".format(output_path))
     ts.dump(output_path)
@@ -297,14 +219,13 @@ def run_match_samples(args):
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
     ancestors_trees = tskit.load(ancestors_trees)
-    progress_monitor = ProgressMonitor(enabled=args.progress, match_samples=True)
     ts = tsinfer.match_samples(
         sample_data,
         ancestors_trees,
         num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
         simplify=not args.no_simplify,
-        progress_monitor=progress_monitor,
+        progress_monitor=args.progress,
     )
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
@@ -315,8 +236,7 @@ def run_verify(args):
     setup_logging(args)
     samples = tsinfer.SampleData.load(args.samples)
     ts = tskit.load(args.tree_sequence)
-    progress_monitor = ProgressMonitor(enabled=args.progress, verify=True)
-    tsinfer.verify(samples, ts, progress_monitor=progress_monitor)
+    tsinfer.verify(samples, ts, progress_monitor=args.progress)
     summarise_usage()
 
 
