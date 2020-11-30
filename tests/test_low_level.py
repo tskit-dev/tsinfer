@@ -21,8 +21,9 @@ Integrity tests for the low-level module.
 """
 import sys
 
-import _tsinfer
 import pytest
+
+import _tsinfer
 
 
 class TestOutOfMemory:

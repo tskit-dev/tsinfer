@@ -21,8 +21,8 @@ Extra utility functions used in several test files
 """
 import json
 
-import numpy as np
 import msprime
+import numpy as np
 import tskit
 
 

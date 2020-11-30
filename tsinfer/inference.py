@@ -22,24 +22,24 @@ of the core tasks like ancestor generation and matching are delegated
 to other modules.
 """
 import collections
-import queue
-import time
-import logging
-import threading
-import json
 import heapq
+import json
+import logging
+import queue
+import threading
+import time
 
-import numpy as np
 import humanize
+import numpy as np
 import tskit
 
 import _tsinfer
-import tsinfer.formats as formats
 import tsinfer.algorithm as algorithm
-import tsinfer.threads as threads
-import tsinfer.provenance as provenance
 import tsinfer.constants as constants
+import tsinfer.formats as formats
 import tsinfer.progress as progress
+import tsinfer.provenance as provenance
+import tsinfer.threads as threads
 
 logger = logging.getLogger(__name__)
 

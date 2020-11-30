@@ -27,10 +27,10 @@ first.
 """
 import collections
 
+import attr
 import numpy as np
 import sortedcontainers
 import tskit
-import attr
 
 import tsinfer.constants as constants
 

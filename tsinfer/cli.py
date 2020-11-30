@@ -19,12 +19,11 @@
 """
 Command line interfaces to tsinfer.
 """
-import sys
 import argparse
-import os
-import os.path
 import logging
 import math
+import os.path
+import sys
 
 try:
     import resource

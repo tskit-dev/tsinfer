@@ -20,13 +20,12 @@
 Common provenance methods used to determine the state and versions
 of various dependencies and the OS.
 """
-
 import platform
 
-import zarr
-import numcodecs
 import lmdb
+import numcodecs
 import tskit
+import zarr
 
 
 __version__ = "undefined"
