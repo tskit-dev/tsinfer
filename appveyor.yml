@@ -23,7 +23,7 @@ install:
 build_script:
   - cmd: python setup.py build_ext --inplace
   - cmd: pip install daiquiri # daiquiri isn't available on conda-forge
-  - cmd: python -m nose
+  - cmd: python -m pytest -n2
 
 after_test:
   - cmd: python setup.py bdist_wheel

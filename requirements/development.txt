@@ -1,7 +1,6 @@
 codecov
 coverage
 flake8
-nose
 numpy
 six
 tqdm
@@ -11,6 +10,9 @@ msprime
 zarr
 lmdb
 attrs
+pytest
+pytest-xdist
+pytest-coverage
 # Only needed for the Python implementation.
 sortedcontainers
 # Optional extras for debugging threads - these modules mainly work on linux

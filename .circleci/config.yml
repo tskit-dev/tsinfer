@@ -47,9 +47,7 @@ jobs:
       - run:
           name: Run Python tests and upload coverage
           command: |
-              nosetests -v --with-coverage --cover-package tsinfer \
-                  --cover-branches --cover-erase --cover-xml \
-                  --cover-inclusive tests
+              python3 -m pytest --cov=tsinfer  --cov-report=xml --cov-branch -n4 tests
               python3 -m codecov -X gcov -F python
               rm .coverage
 

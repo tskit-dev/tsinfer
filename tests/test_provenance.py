@@ -19,7 +19,6 @@
 """
 Tests for the provenance stored in the output tree sequences.
 """
-import unittest
 import json
 
 import msprime
@@ -27,9 +26,10 @@ import tskit
 
 import tsinfer
 import tsinfer.provenance as provenance
+import pytest
 
 
-class TestProvenanceValid(unittest.TestCase):
+class TestProvenanceValid:
     """
     Checks that the provenance information on the tree sequences is
     valid.
@@ -46,14 +46,14 @@ class TestProvenanceValid(unittest.TestCase):
 
     def test_infer(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         inferred_ts = tsinfer.infer(samples)
         self.validate_ts(inferred_ts)
 
     def test_ancestors_ts(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestor_data)
@@ -61,7 +61,7 @@ class TestProvenanceValid(unittest.TestCase):
 
     def test_sample_data(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         with tsinfer.SampleData() as sample_data:
             for var in ts.variants():
                 sample_data.add_site(var.site.position, genotypes=var.genotypes)
@@ -70,33 +70,33 @@ class TestProvenanceValid(unittest.TestCase):
 
     def test_from_tree_sequence(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.validate_file(sample_data)
 
     def test_ancestors_file(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         self.validate_file(ancestor_data)
 
 
-class TestGetProvenance(unittest.TestCase):
+class TestGetProvenance:
     """
     Check the get_provenance_dict function.
     """
 
     def test_no_command(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             provenance.get_provenance_dict()
 
     def validate_encoding(self, params):
         pdict = provenance.get_provenance_dict("test", **params)
         encoded = pdict["parameters"]
-        self.assertEqual(encoded["command"], "test")
+        assert encoded["command"] == "test"
         del encoded["command"]
-        self.assertEqual(encoded, params)
+        assert encoded == params
 
     def test_empty_params(self):
         self.validate_encoding({})

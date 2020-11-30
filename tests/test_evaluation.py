@@ -19,7 +19,6 @@
 """
 Test cases for the evaluation code.
 """
-import unittest
 import subprocess
 import sys
 import tempfile
@@ -29,6 +28,7 @@ import tskit
 import numpy as np
 
 import tsinfer
+import pytest
 
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
@@ -45,7 +45,7 @@ def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):
     )
 
 
-class TestTreeSequenceCompare(unittest.TestCase):
+class TestTreeSequenceCompare:
     """
     Tests of the engine to compare to tree sequences.
     """
@@ -54,11 +54,11 @@ class TestTreeSequenceCompare(unittest.TestCase):
         n = 15
         for seed in range(1, 10):
             ts = msprime.simulate(n, recombination_rate=10, random_seed=seed)
-            self.assertGreater(ts.num_trees, 1)
+            assert ts.num_trees > 1
             bp, distance = tsinfer.compare(ts, ts)
-            self.assertEqual(list(bp), list(ts.breakpoints()))
-            self.assertEqual(distance.shape, (bp.shape[0] - 1,))
-            self.assertTrue(np.all(distance == 0))
+            assert list(bp) == list(ts.breakpoints())
+            assert distance.shape == (bp.shape[0] - 1,)
+            assert np.all(distance == 0)
 
     def test_single_tree(self):
         n = 15
@@ -66,35 +66,35 @@ class TestTreeSequenceCompare(unittest.TestCase):
             ts1 = msprime.simulate(n, random_seed=seed)
             ts2 = msprime.simulate(n, random_seed=seed + 1)
             bp, distance = tsinfer.compare(ts1, ts2)
-            self.assertEqual(list(bp), [0, 1])
-            self.assertEqual(distance.shape, (1,))
+            assert list(bp) == [0, 1]
+            assert distance.shape == (1,)
 
     def test_single_tree_many_trees(self):
         n = 5
         for seed in range(1, 10):
             ts1 = msprime.simulate(n, recombination_rate=5, random_seed=seed)
             ts2 = msprime.simulate(n, random_seed=seed + 1)
-            self.assertGreater(ts1.num_trees, 1)
+            assert ts1.num_trees > 1
             bp, distance = tsinfer.compare(ts1, ts2)
-            self.assertEqual(list(bp), list(ts1.breakpoints()))
-            self.assertEqual(distance.shape, (ts1.num_trees,))
+            assert list(bp) == list(ts1.breakpoints())
+            assert distance.shape == (ts1.num_trees,)
 
     def test_single_many_trees(self):
         n = 5
         for seed in range(1, 10):
             ts1 = msprime.simulate(n, recombination_rate=5, random_seed=seed)
             ts2 = msprime.simulate(n, recombination_rate=5, random_seed=seed + 1)
-            self.assertGreater(ts1.num_trees, 1)
-            self.assertGreater(ts2.num_trees, 1)
+            assert ts1.num_trees > 1
+            assert ts2.num_trees > 1
             bp, distance = tsinfer.compare(ts1, ts2)
             breakpoints = set(ts1.breakpoints()) | set(ts2.breakpoints())
-            self.assertEqual(list(bp), sorted(breakpoints))
-            self.assertEqual(distance.shape, (len(breakpoints) - 1,))
+            assert list(bp) == sorted(breakpoints)
+            assert distance.shape == (len(breakpoints) - 1,)
 
     # TODO add some examples testing for specific instances.
 
 
-class TestTreePairs(unittest.TestCase):
+class TestTreePairs:
     """
     Tests of the engine to compare to tree sequences.
     """
@@ -102,93 +102,95 @@ class TestTreePairs(unittest.TestCase):
     def test_same_ts(self):
         n = 15
         ts = msprime.simulate(n, recombination_rate=10, random_seed=10)
-        self.assertGreater(ts.num_trees, 1)
+        assert ts.num_trees > 1
         count = 0
         for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, ts):
-            self.assertEqual((left, right), tree1.interval)
-            self.assertEqual(tree1.interval, tree2.interval)
-            self.assertEqual(tree1.parent_dict, tree2.parent_dict)
+            assert (left, right) == tree1.interval
+            assert tree1.interval == tree2.interval
+            assert tree1.parent_dict == tree2.parent_dict
             count += 1
-        self.assertEqual(count, ts.num_trees)
+        assert count == ts.num_trees
 
     def test_single_tree(self):
         n = 10
         ts1 = msprime.simulate(n, random_seed=10)
         ts2 = msprime.simulate(n, random_seed=10)
-        self.assertEqual(ts1.num_trees, 1)
-        self.assertEqual(ts2.num_trees, 1)
+        assert ts1.num_trees == 1
+        assert ts2.num_trees == 1
         count = 0
         for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
-            self.assertEqual((0, 1), tree1.interval)
-            self.assertEqual((0, 1), tree2.interval)
-            self.assertIs(tree1.tree_sequence, ts1)
-            self.assertIs(tree2.tree_sequence, ts2)
+            assert (0, 1) == tree1.interval
+            assert (0, 1) == tree2.interval
+            assert tree1.tree_sequence is ts1
+            assert tree2.tree_sequence is ts2
             count += 1
-        self.assertEqual(count, 1)
+        assert count == 1
 
     def test_single_tree_many_trees(self):
         n = 10
         ts1 = msprime.simulate(n, random_seed=10)
         ts2 = msprime.simulate(n, recombination_rate=10, random_seed=10)
-        self.assertEqual(ts1.num_trees, 1)
-        self.assertGreater(ts2.num_trees, 1)
+        assert ts1.num_trees == 1
+        assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
         for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
-            self.assertEqual((0, 1), tree1.interval)
-            self.assertIs(tree1.tree_sequence, ts1)
-            self.assertIs(tree2.tree_sequence, ts2)
+            assert (0, 1) == tree1.interval
+            assert tree1.tree_sequence is ts1
+            assert tree2.tree_sequence is ts2
             tree2p = next(trees2, None)
             if tree2p is not None:
-                self.assertEqual(tree2.interval, tree2p.interval)
-                self.assertEqual(tree2.parent_dict, tree2p.parent_dict)
+                assert tree2.interval == tree2p.interval
+                assert tree2.parent_dict == tree2p.parent_dict
             count += 1
-        self.assertEqual(count, ts2.num_trees)
+        assert count == ts2.num_trees
 
     def test_many_trees_single_tree(self):
         n = 10
         ts1 = msprime.simulate(n, random_seed=10)
         ts2 = msprime.simulate(n, recombination_rate=10, random_seed=10)
-        self.assertEqual(ts1.num_trees, 1)
-        self.assertGreater(ts2.num_trees, 1)
+        assert ts1.num_trees == 1
+        assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
         for (left, right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
-            self.assertEqual((0, 1), tree1.interval)
-            self.assertIs(tree1.tree_sequence, ts1)
-            self.assertIs(tree2.tree_sequence, ts2)
+            assert (0, 1) == tree1.interval
+            assert tree1.tree_sequence is ts1
+            assert tree2.tree_sequence is ts2
             tree2p = next(trees2, None)
             if tree2p is not None:
-                self.assertEqual(tree2.interval, tree2p.interval)
-                self.assertEqual(tree2.parent_dict, tree2p.parent_dict)
+                assert tree2.interval == tree2p.interval
+                assert tree2.parent_dict == tree2p.parent_dict
             count += 1
-        self.assertEqual(count, ts2.num_trees)
+        assert count == ts2.num_trees
 
     def test_different_lengths_error(self):
         ts1 = msprime.simulate(2, length=10, random_seed=1)
         ts2 = msprime.simulate(2, length=11, random_seed=1)
-        self.assertRaises(ValueError, list, tsinfer.tree_pairs(ts1, ts2))
-        self.assertRaises(ValueError, list, tsinfer.tree_pairs(ts2, ts1))
+        with pytest.raises(ValueError):
+            list(tsinfer.tree_pairs(ts1, ts2))
+        with pytest.raises(ValueError):
+            list(tsinfer.tree_pairs(ts2, ts1))
 
     def test_many_trees(self):
         ts1 = msprime.simulate(20, recombination_rate=20, random_seed=10)
         ts2 = msprime.simulate(30, recombination_rate=10, random_seed=10)
-        self.assertGreater(ts1.num_trees, 1)
-        self.assertGreater(ts2.num_trees, 1)
+        assert ts1.num_trees > 1
+        assert ts2.num_trees > 1
         breakpoints = [0]
         for (left, right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
             breakpoints.append(right)
-            self.assertGreaterEqual(left, tree1.interval[0])
-            self.assertGreaterEqual(left, tree2.interval[0])
-            self.assertLessEqual(right, tree1.interval[1])
-            self.assertLessEqual(right, tree2.interval[1])
-            self.assertIs(tree1.tree_sequence, ts1)
-            self.assertIs(tree2.tree_sequence, ts2)
+            assert left >= tree1.interval[0]
+            assert left >= tree2.interval[0]
+            assert right <= tree1.interval[1]
+            assert right <= tree2.interval[1]
+            assert tree1.tree_sequence is ts1
+            assert tree2.tree_sequence is ts2
         all_breakpoints = set(ts1.breakpoints()) | set(ts2.breakpoints())
-        self.assertEqual(breakpoints, sorted(all_breakpoints))
+        assert breakpoints == sorted(all_breakpoints)
 
 
-class TestGetAncestralHaplotypes(unittest.TestCase):
+class TestGetAncestralHaplotypes:
     """
     Tests for the engine to the actual ancestors from a simulation.
     """
@@ -213,36 +215,36 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         # Samples should be nodes rows 0 to n - 1, and should be equal to
         # the genotypes.
         G = ts.genotype_matrix()
-        self.assertTrue(np.array_equal(G.T, A[: ts.num_samples]))
+        assert np.array_equal(G.T, A[: ts.num_samples])
 
     def verify_single_tree(self, ts, A):
-        self.assertTrue(np.all(A[-1] == 0))
-        self.assertEqual(ts.num_trees, 1)
-        self.assertGreater(ts.num_sites, 1)
+        assert np.all(A[-1] == 0)
+        assert ts.num_trees == 1
+        assert ts.num_sites > 1
         self.verify_haplotypes(ts, A)
 
     def verify_haplotypes(self, ts, A):
         self.verify_samples(ts, A)
         for tree in ts.trees():
             for site in tree.sites():
-                self.assertEqual(len(site.mutations), 1)
+                assert len(site.mutations) == 1
                 mutation = site.mutations[0]
                 below = np.array(list(tree.nodes(mutation.node)), dtype=int)
-                self.assertTrue(np.all(A[below, site.id] == 1))
+                assert np.all(A[below, site.id] == 1)
                 above = np.array(
                     list(set(tree.nodes()) - set(tree.nodes(mutation.node))), dtype=int
                 )
-                self.assertTrue(np.all(A[above, site.id] == 0))
+                assert np.all(A[above, site.id] == 0)
                 outside = np.array(
                     list(set(range(ts.num_nodes)) - set(tree.nodes())), dtype=int
                 )
-                self.assertTrue(np.all(A[outside, site.id] == tskit.MISSING_DATA))
+                assert np.all(A[outside, site.id] == tskit.MISSING_DATA)
 
     def test_single_tree(self):
         ts = msprime.simulate(5, mutation_rate=10, random_seed=234)
         A = tsinfer.get_ancestral_haplotypes(ts)
         B = self.get_matrix(ts)
-        self.assertTrue(np.array_equal(A, B))
+        assert np.array_equal(A, B)
         self.verify_single_tree(ts, A)
 
     def test_single_tree_perfect_mutations(self):
@@ -250,31 +252,31 @@ class TestGetAncestralHaplotypes(unittest.TestCase):
         ts = tsinfer.insert_perfect_mutations(ts)
         A = tsinfer.get_ancestral_haplotypes(ts)
         B = self.get_matrix(ts)
-        self.assertTrue(np.array_equal(A, B))
+        assert np.array_equal(A, B)
         self.verify_single_tree(ts, A)
 
     def test_many_trees(self):
         ts = msprime.simulate(
             8, recombination_rate=10, mutation_rate=10, random_seed=234
         )
-        self.assertGreater(ts.num_trees, 1)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_trees > 1
+        assert ts.num_sites > 1
         A = tsinfer.get_ancestral_haplotypes(ts)
         B = self.get_matrix(ts)
-        self.assertTrue(np.array_equal(A, B))
+        assert np.array_equal(A, B)
         self.verify_haplotypes(ts, A)
 
     def test_many_trees_perfect_mutations(self):
         ts = get_smc_simulation(10, 100, 0.1, 1234)
-        self.assertGreater(ts.num_trees, 1)
+        assert ts.num_trees > 1
         ts = tsinfer.insert_perfect_mutations(ts)
         A = tsinfer.get_ancestral_haplotypes(ts)
         B = self.get_matrix(ts)
-        self.assertTrue(np.array_equal(A, B))
+        assert np.array_equal(A, B)
         self.verify_haplotypes(ts, A)
 
 
-class TestAssertSmc(unittest.TestCase):
+class TestAssertSmc:
     """
     Check that our assertion for SMC simulations works correctly.
     """
@@ -285,16 +287,17 @@ class TestAssertSmc(unittest.TestCase):
 
     def test_non_smc(self):
         ts = msprime.simulate(3, recombination_rate=10, random_seed=14)
-        self.assertRaises(ValueError, tsinfer.assert_smc, ts)
+        with pytest.raises(ValueError):
+            tsinfer.assert_smc(ts)
 
     def test_smc(self):
         for seed in range(1, 10):
             ts = get_smc_simulation(10, 100, 0.1, seed)
             tsinfer.assert_smc(ts)
-            self.assertGreater(ts.num_trees, 1)
+            assert ts.num_trees > 1
 
 
-class TestGetAncestorDescriptors(unittest.TestCase):
+class TestGetAncestorDescriptors:
     """
     Tests that we correctly recover the ancestor descriptors from a
     given set of ancestral haplotypes.
@@ -305,13 +308,13 @@ class TestGetAncestorDescriptors(unittest.TestCase):
         A = A[ts.num_samples :][::-1]
         n, m = A.shape
         ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
-        self.assertTrue(np.array_equal(A, ancestors[-n:]))
-        self.assertEqual(start, [0 for _ in range(ancestors.shape[0])])
-        self.assertTrue(end, [m for _ in range(ancestors.shape[0])])
+        assert np.array_equal(A, ancestors[-n:])
+        assert start == [0 for _ in range(ancestors.shape[0])]
+        assert end, [m for _ in range(ancestors.shape[0])]
         for j in range(1, ancestors.shape[0]):
-            self.assertGreaterEqual(len(focal_sites[j]), 0)
+            assert len(focal_sites[j]) >= 0
             for site in focal_sites[j]:
-                self.assertEqual(ancestors[j, site], 1)
+                assert ancestors[j, site] == 1
 
     def verify_many_trees_dense_mutations(self, ts):
         A = tsinfer.get_ancestral_haplotypes(ts)
@@ -320,15 +323,15 @@ class TestGetAncestorDescriptors(unittest.TestCase):
 
         ancestors, start, end, focal_sites = tsinfer.get_ancestor_descriptors(A)
         n, m = ancestors.shape
-        self.assertEqual(m, ts.num_sites)
-        self.assertTrue(np.all(ancestors[0, :] == 0))
+        assert m == ts.num_sites
+        assert np.all(ancestors[0, :] == 0)
         for a, s, e, focal in zip(ancestors[1:], start[1:], end[1:], focal_sites[1:]):
-            self.assertTrue(0 <= s < e <= m)
-            self.assertTrue(np.all(a[:s] == tskit.MISSING_DATA))
-            self.assertTrue(np.all(a[e:] == tskit.MISSING_DATA))
-            self.assertTrue(np.all(a[s:e] != tskit.MISSING_DATA))
+            assert 0 <= s < e <= m
+            assert np.all(a[:s] == tskit.MISSING_DATA)
+            assert np.all(a[e:] == tskit.MISSING_DATA)
+            assert np.all(a[s:e] != tskit.MISSING_DATA)
             for site in focal:
-                self.assertEqual(a[site], 1)
+                assert a[site] == 1
 
     def test_single_tree_perfect_mutations(self):
         ts = msprime.simulate(5, random_seed=234)
@@ -337,25 +340,25 @@ class TestGetAncestorDescriptors(unittest.TestCase):
 
     def test_single_tree_random_mutations(self):
         ts = msprime.simulate(5, mutation_rate=5, random_seed=234)
-        self.assertGreater(ts.num_sites, 1)
+        assert ts.num_sites > 1
         self.verify_single_tree_dense_mutations(ts)
 
     def test_small_smc_perfect_mutations(self):
         for seed in range(1, 10):
             ts = get_smc_simulation(5, 100, 0.02, seed)
             ts = tsinfer.insert_perfect_mutations(ts)
-            self.assertGreater(ts.num_trees, 1)
+            assert ts.num_trees > 1
             self.verify_many_trees_dense_mutations(ts)
 
     def test_large_smc_perfect_mutations(self):
         for seed in range(1, 10):
             ts = get_smc_simulation(10, 100, 0.1, seed)
             ts = tsinfer.insert_perfect_mutations(ts)
-            self.assertGreater(ts.num_trees, 1)
+            assert ts.num_trees > 1
             self.verify_many_trees_dense_mutations(ts)
 
 
-class TestInsertPerfectMutations(unittest.TestCase):
+class TestInsertPerfectMutations:
     """
     Test cases for the inserting perfect mutations to allow a tree
     sequence to be exactly recovered.
@@ -366,13 +369,13 @@ class TestInsertPerfectMutations(unittest.TestCase):
         Check that we have exactly two mutations on each edge.
         """
         for tree, ((left, right), e_out, e_in) in zip(ts.trees(), ts.edge_diffs()):
-            self.assertEqual(tree.interval, (left, right))
+            assert tree.interval == (left, right)
             positions = [site.position for site in tree.sites()]
             # TODO make better tests when we've figured out the exact algorithm.
-            self.assertGreater(len(positions), 0)
-            self.assertEqual(positions[0], left)
+            assert len(positions) > 0
+            assert positions[0] == left
             for site in tree.sites():
-                self.assertEqual(len(site.mutations), 1)
+                assert len(site.mutations) == 1
 
     def test_single_tree(self):
         ts = msprime.simulate(5, random_seed=234)
@@ -383,13 +386,13 @@ class TestInsertPerfectMutations(unittest.TestCase):
         for seed in range(1, 10):
             ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=seed)
             ts = tsinfer.insert_perfect_mutations(ts)
-            self.assertGreater(ts.num_trees, 1)
+            assert ts.num_trees > 1
             self.verify_perfect_mutations(ts)
 
     def test_large_smc(self):
         ts = get_smc_simulation(50, L=1, recombination_rate=100, seed=1)
         ts = tsinfer.insert_perfect_mutations(ts)
-        self.assertGreater(ts.num_trees, 100)
+        assert ts.num_trees > 100
         self.verify_perfect_mutations(ts)
 
     def test_multiple_recombinations(self):
@@ -408,48 +411,40 @@ class TestInsertPerfectMutations(unittest.TestCase):
             if len(e_out) > 4:
                 found = True
                 break
-        self.assertTrue(found)
-        self.assertRaises(ValueError, tsinfer.insert_perfect_mutations, ts)
+        assert found
+        with pytest.raises(ValueError):
+            tsinfer.insert_perfect_mutations(ts)
 
 
-class TestPerfectInference(unittest.TestCase):
+class TestPerfectInference:
     """
     Test cases for the engine to run perfect inference on an input tree sequence.
     """
 
     def verify_perfect_inference(self, ts, inferred_ts):
-        self.assertEqual(ts.sequence_length, inferred_ts.sequence_length)
+        assert ts.sequence_length == inferred_ts.sequence_length
         inferred = inferred_ts.dump_tables()
         source = ts.dump_tables()
-        self.assertEqual(source.edges, inferred.edges)
+        assert source.edges == inferred.edges
         # The metadata column will be different in the tables so we have to check
         # column by column for therest.
-        self.assertTrue(np.array_equal(source.nodes.flags, inferred.nodes.flags))
-        self.assertTrue(np.array_equal(source.sites.position, inferred.sites.position))
-        self.assertTrue(
-            np.array_equal(source.sites.ancestral_state, inferred.sites.ancestral_state)
+        assert np.array_equal(source.nodes.flags, inferred.nodes.flags)
+        assert np.array_equal(source.sites.position, inferred.sites.position)
+        assert np.array_equal(
+            source.sites.ancestral_state, inferred.sites.ancestral_state
         )
-        self.assertTrue(
-            np.array_equal(
-                source.sites.ancestral_state_offset,
-                inferred.sites.ancestral_state_offset,
-            )
+        assert np.array_equal(
+            source.sites.ancestral_state_offset, inferred.sites.ancestral_state_offset,
         )
-        self.assertTrue(np.array_equal(source.mutations.site, inferred.mutations.site))
-        self.assertTrue(np.array_equal(source.mutations.node, inferred.mutations.node))
-        self.assertTrue(
-            np.array_equal(source.mutations.parent, inferred.mutations.parent)
+        assert np.array_equal(source.mutations.site, inferred.mutations.site)
+        assert np.array_equal(source.mutations.node, inferred.mutations.node)
+        assert np.array_equal(source.mutations.parent, inferred.mutations.parent)
+        assert np.array_equal(
+            source.mutations.derived_state, inferred.mutations.derived_state
         )
-        self.assertTrue(
-            np.array_equal(
-                source.mutations.derived_state, inferred.mutations.derived_state
-            )
-        )
-        self.assertTrue(
-            np.array_equal(
-                source.mutations.derived_state_offset,
-                inferred.mutations.derived_state_offset,
-            )
+        assert np.array_equal(
+            source.mutations.derived_state_offset,
+            inferred.mutations.derived_state_offset,
         )
 
     def test_single_tree_defaults(self):
@@ -460,14 +455,14 @@ class TestPerfectInference(unittest.TestCase):
 
     def test_small_smc(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, engine=engine)
             self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_use_ts(self):
         base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, use_ts=True, engine=engine
@@ -476,7 +471,7 @@ class TestPerfectInference(unittest.TestCase):
 
     def test_small_smc_path_compression(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=111)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, path_compression=True
@@ -484,11 +479,11 @@ class TestPerfectInference(unittest.TestCase):
             # We can't just compare tables when doing path compression because
             # we'll find different ways of expressing the same trees.
             breakpoints, distances = tsinfer.compare(ts, inferred_ts)
-            self.assertTrue(np.all(distances == 0))
+            assert np.all(distances == 0)
 
     def test_small_use_ts_path_compression(self):
         base_ts = msprime.simulate(5, recombination_rate=10, random_seed=112)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, use_ts=True, path_compression=True, engine=engine
@@ -496,35 +491,36 @@ class TestPerfectInference(unittest.TestCase):
             # We can't just compare tables when doing path compression because
             # we'll find different ways of expressing the same trees.
             breakpoints, distances = tsinfer.compare(ts, inferred_ts)
-            self.assertTrue(np.all(distances == 0))
+            assert np.all(distances == 0)
 
     def test_sample_20_smc_path_compression(self):
         base_ts = get_smc_simulation(20, L=5, recombination_rate=10, seed=111)
-        self.assertGreater(base_ts.num_trees, 5)
+        assert base_ts.num_trees > 5
         ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, path_compression=True)
         # We can't just compare tables when doing path compression because
         # we'll find different ways of expressing the same trees.
         breakpoints, distances = tsinfer.compare(ts, inferred_ts)
-        self.assertTrue(np.all(distances == 0))
+        assert np.all(distances == 0)
 
     def test_sample_20_use_ts(self):
         base_ts = msprime.simulate(20, length=5, recombination_rate=10, random_seed=111)
-        self.assertGreater(base_ts.num_trees, 5)
+        assert base_ts.num_trees > 5
         ts, inferred_ts = tsinfer.run_perfect_inference(base_ts, use_ts=True)
         self.verify_perfect_inference(ts, inferred_ts)
 
     def test_small_smc_threads(self):
         base_ts = get_smc_simulation(5, L=1, recombination_rate=10, seed=112)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, num_threads=4
             )
             self.verify_perfect_inference(ts, inferred_ts)
 
+    @pytest.mark.slow
     def test_small_smc_no_time_chunking(self):
         base_ts = get_smc_simulation(10, L=1, recombination_rate=10, seed=113)
-        self.assertGreater(base_ts.num_trees, 1)
+        assert base_ts.num_trees > 1
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ts, inferred_ts = tsinfer.run_perfect_inference(
                 base_ts, engine=engine, time_chunking=False
@@ -532,7 +528,7 @@ class TestPerfectInference(unittest.TestCase):
             self.verify_perfect_inference(ts, inferred_ts)
 
 
-class TestMakeAncestorsTs(unittest.TestCase):
+class TestMakeAncestorsTs:
     """
     Tests for the process of generating an ancestors tree sequence.
     """
@@ -573,7 +569,7 @@ class TestMakeAncestorsTs(unittest.TestCase):
         self.verify_from_inferred(False)
 
 
-class TestCheckAncestorsTs(unittest.TestCase):
+class TestCheckAncestorsTs:
     """
     Tests that we verify the right conditions from an ancestors TS.
     """
@@ -585,13 +581,13 @@ class TestCheckAncestorsTs(unittest.TestCase):
     def test_zero_time(self):
         tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=0, flags=0)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_edges(self):
         tables = tskit.TableCollection(1)
         tables.nodes.add_row(time=1, flags=0)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_one_edge(self):
@@ -606,7 +602,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
         tables.nodes.add_row(time=1, flags=0)
         tables.nodes.add_row(time=2, flags=0)
         tables.edges.add_row(0, 1, 1, 0)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_zero_has_no_children(self):
@@ -615,7 +611,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
         tables.nodes.add_row(time=2, flags=0)
         tables.nodes.add_row(time=3, flags=0)
         tables.edges.add_row(0, 1, 2, 1)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_disconnected_subtrees(self):
@@ -626,7 +622,7 @@ class TestCheckAncestorsTs(unittest.TestCase):
         tables.nodes.add_row(time=1, flags=1)
         tables.edges.add_row(0, 1, 2, 3)
         tables.edges.add_row(0, 1, 0, 1)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_many_mutations(self):
@@ -641,18 +637,18 @@ class TestCheckAncestorsTs(unittest.TestCase):
 
     def test_msprime_output(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(ts)
 
     def test_tsinfer_output(self):
         ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ts = tsinfer.infer(samples)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(ts)
 
 
-class TestErrors(unittest.TestCase):
+class TestErrors:
     """
     Tests for the error generation code.
     """
@@ -661,15 +657,15 @@ class TestErrors(unittest.TestCase):
         ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=1
         )
-        self.assertTrue(ts.num_sites > 1)
-        self.assertTrue(ts.num_trees > 1)
+        assert ts.num_sites > 1
+        assert ts.num_trees > 1
         tsp = tsinfer.insert_errors(ts, 0)
         t1 = ts.tables
         t2 = tsp.tables
-        self.assertEqual(t1.nodes, t2.nodes)
-        self.assertEqual(t1.edges, t2.edges)
-        self.assertEqual(t1.sites, t2.sites)
-        self.assertEqual(t1.mutations, t2.mutations)
+        assert t1.nodes == t2.nodes
+        assert t1.edges == t2.edges
+        assert t1.sites == t2.sites
+        assert t1.mutations == t2.mutations
 
     def verify(self, ts, tsp):
         """
@@ -678,36 +674,36 @@ class TestErrors(unittest.TestCase):
         """
         t1 = ts.tables
         t2 = tsp.tables
-        self.assertEqual(t1.nodes, t2.nodes)
-        self.assertEqual(t1.edges, t2.edges)
-        self.assertEqual(t1.sites, t2.sites)
+        assert t1.nodes == t2.nodes
+        assert t1.edges == t2.edges
+        assert t1.sites == t2.sites
         for site1, site2 in zip(ts.sites(), tsp.sites()):
             mut1 = site1.mutations[0]
             mut2 = site2.mutations[0]
-            self.assertEqual(mut1.site, mut2.site)
-            self.assertEqual(mut1.node, mut2.node)
-            self.assertEqual(mut1.derived_state, mut2.derived_state)
+            assert mut1.site == mut2.site
+            assert mut1.node == mut2.node
+            assert mut1.derived_state == mut2.derived_state
             node = ts.node(mut1.node)
             for mut in site2.mutations[1:]:
                 node = ts.node(mut.node)
-                self.assertTrue(node.is_sample())
+                assert node.is_sample()
         for v1, v2 in zip(ts.variants(), tsp.variants()):
             diffs = np.sum(v1.genotypes != v2.genotypes)
-            self.assertEqual(diffs, len(v2.site.mutations) - 1)
+            assert diffs == len(v2.site.mutations) - 1
 
     def test_simple_error(self):
         ts = msprime.simulate(
             10, mutation_rate=10, recombination_rate=10, random_seed=2
         )
-        self.assertTrue(ts.num_sites > 1)
-        self.assertTrue(ts.num_trees > 1)
+        assert ts.num_sites > 1
+        assert ts.num_trees > 1
         tsp = tsinfer.insert_errors(ts, 0.1)
         # We should have some extra mutations
-        self.assertGreater(tsp.num_mutations, ts.num_mutations)
+        assert tsp.num_mutations > ts.num_mutations
         self.verify(ts, tsp)
 
 
-class TestCli(unittest.TestCase):
+class TestCli:
     """
     Simple tests for the evaluation CLI to make sure the various tests
     at least run.
@@ -730,6 +726,7 @@ class TestCli(unittest.TestCase):
             ["edges-performance", "-n", "5", "-l", "0.1", "-R", "2", "-s", "1"]
         )
 
+    @pytest.mark.slow
     def test_hotspot_analysis(self):
         self.run_command(
             ["hotspot-analysis", "-n", "5", "-l", "0.1", "-R", "1", "-s", "5"]
@@ -740,20 +737,24 @@ class TestCli(unittest.TestCase):
             ["ancestor-properties", "-n", "5", "-l", "0.1", "-R", "1", "-s", "5"]
         )
 
+    @pytest.mark.slow
     def test_ancestor_comparison(self):
         self.run_command(["ancestor-properties", "-n", "5", "-l", "0.5"])
 
+    @pytest.mark.slow
     def test_node_degree(self):
         self.run_command(["node-degree", "-n", "5", "-l", "0.1"])
 
+    @pytest.mark.slow
     def test_ancestor_quality(self):
         self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1"])
 
+    @pytest.mark.slow
     def test_imputation_accuracy(self):
         self.run_command(["imputation-accuracy", "-n", "5", "-l", "0.1"])
 
 
-class TestCountSampleChildEdges(unittest.TestCase):
+class TestCountSampleChildEdges:
     """
     Tests the count_sample_child_edges function.
     """
@@ -765,7 +766,7 @@ class TestCountSampleChildEdges(unittest.TestCase):
             for edge in ts.edges():
                 if edge.child == node:
                     x[j] += 1
-        self.assertTrue(np.array_equal(x, sample_edges))
+        assert np.array_equal(x, sample_edges)
 
     def test_simulated(self):
         ts = msprime.simulate(20, recombination_rate=2, random_seed=2)
@@ -784,7 +785,7 @@ class TestCountSampleChildEdges(unittest.TestCase):
         self.verify(ts)
 
 
-class TestNodeSpan(unittest.TestCase):
+class TestNodeSpan:
     def simple_node_span(self, ts):
         """
         Straightforward implementation of node span calculation by iterating over
@@ -801,35 +802,35 @@ class TestNodeSpan(unittest.TestCase):
     def verify(self, ts):
         S1 = self.simple_node_span(ts)
         S2 = tsinfer.node_span(ts)
-        self.assertEqual(S1.shape, S2.shape)
-        self.assertTrue(np.allclose(S1, S2))
-        self.assertTrue(np.all(S1 > 0))
-        self.assertTrue(np.all(S1 <= ts.sequence_length))
+        assert S1.shape == S2.shape
+        assert np.allclose(S1, S2)
+        assert np.all(S1 > 0)
+        assert np.all(S1 <= ts.sequence_length)
         return S1
 
     def test_single_locus(self):
         ts = msprime.simulate(10, random_seed=1)
         S = self.verify(ts)
-        self.assertTrue(np.all(S == 1))
+        assert np.all(S == 1)
 
     def test_single_locus_sequence_length(self):
         ts = msprime.simulate(10, length=100, random_seed=1)
         S = self.verify(ts)
-        self.assertTrue(np.all(S == 100))
+        assert np.all(S == 100)
 
     def test_simple_recombination(self):
         ts = msprime.simulate(20, recombination_rate=5, random_seed=2)
-        self.assertGreater(ts.num_trees, 2)
+        assert ts.num_trees > 2
         S = self.verify(ts)
-        self.assertFalse(np.all(S == 1))
+        assert not np.all(S == 1)
 
     def test_simple_recombination_sequence_length(self):
         ts = msprime.simulate(20, recombination_rate=5, length=10, random_seed=3)
-        self.assertGreater(ts.num_trees, 2)
+        assert ts.num_trees > 2
         S = self.verify(ts)
-        self.assertFalse(np.all(S == 10))
+        assert not np.all(S == 10)
 
-    @unittest.skip("Broken coincidentally with LS engine update")
+    @pytest.mark.skip("Broken coincidentally with LS engine update")
     def test_inferred_no_simplify(self):
         ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
         samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
@@ -854,7 +855,7 @@ class TestNodeSpan(unittest.TestCase):
         self.verify(ts)
 
 
-class TestMeanSampleAncestry(unittest.TestCase):
+class TestMeanSampleAncestry:
     """
     Tests the mean_sample_ancestry function.
     """
@@ -892,16 +893,16 @@ class TestMeanSampleAncestry(unittest.TestCase):
     def verify(self, ts, sample_sets):
         A1 = self.simple_mean_sample_ancestry(ts, sample_sets)
         A2 = tsinfer.mean_sample_ancestry(ts, sample_sets)
-        self.assertEqual(A1.shape, A2.shape)
+        assert A1.shape == A2.shape
         # for tree in ts.trees():
         #     print(tree.interval)
         #     print(tree.draw(format="unicode"))
         # print()
         # for node in ts.nodes():
         #     print(node.id, np.sum(A2[:, node.id]), A2[:, node.id], sep="\t")
-        self.assertTrue(np.allclose(A1, A2))
+        assert np.allclose(A1, A2)
         S = np.sum(A1, axis=0)
-        self.assertTrue(np.allclose(S[S != 0], 1))
+        assert np.allclose(S[S != 0], 1)
         return A1
 
     def two_populations_high_migration_example(self, mutation_rate=10):
@@ -915,7 +916,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
             mutation_rate=mutation_rate,
             random_seed=5,
         )
-        self.assertGreater(ts.num_trees, 1)
+        assert ts.num_trees > 1
         return ts
 
     def get_random_data_example(self, num_sites, num_samples, seed=100):
@@ -930,7 +931,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
         ts = self.two_populations_high_migration_example()
         A = self.verify(ts, [ts.samples(0), ts.samples(1)])
         total = np.sum(A, axis=0)
-        self.assertTrue(np.allclose(total[total != 0], 1))
+        assert np.allclose(total[total != 0], 1)
 
     def test_two_populations_high_migration_no_centromere(self):
         ts = self.two_populations_high_migration_example(mutation_rate=0)
@@ -939,7 +940,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
         ts = ts.simplify()
         A = self.verify(ts, [ts.samples(0), ts.samples(1)])
         total = np.sum(A, axis=0)
-        self.assertTrue(np.allclose(total[total != 0], 1))
+        assert np.allclose(total[total != 0], 1)
 
     def test_span_zero_nodes(self):
         ts = msprime.simulate(10, random_seed=1)
@@ -952,43 +953,43 @@ class TestMeanSampleAncestry(unittest.TestCase):
         A1 = self.simple_mean_sample_ancestry(ts, sample_sets)
         A2 = tsinfer.mean_sample_ancestry(ts, sample_sets)
         S = np.sum(A1, axis=0)
-        self.assertTrue(np.allclose(A1, A2))
-        self.assertTrue(np.allclose(S[:u1], 1))
-        self.assertTrue(np.all(A1[:, u1] == 0))
-        self.assertTrue(np.all(A1[:, u2] == 0))
+        assert np.allclose(A1, A2)
+        assert np.allclose(S[:u1], 1)
+        assert np.all(A1[:, u1] == 0)
+        assert np.all(A1[:, u2] == 0)
 
     def test_two_populations_incomplete_samples(self):
         ts = self.two_populations_high_migration_example()
         samples = ts.samples()
         A = self.verify(ts, [samples[:2], samples[-2:]])
         total = np.sum(A, axis=0)
-        self.assertTrue(np.allclose(total[total != 0], 1))
+        assert np.allclose(total[total != 0], 1)
 
     def test_single_tree_incomplete_samples(self):
         ts = msprime.simulate(10, random_seed=1)
         A = self.verify(ts, [[0, 1], [2, 3]])
         total = np.sum(A, axis=0)
-        self.assertTrue(np.allclose(total[total != 0], 1))
+        assert np.allclose(total[total != 0], 1)
 
     def test_two_populations_overlapping_samples(self):
         ts = self.two_populations_high_migration_example()
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.mean_sample_ancestry(ts, [[1], [1]])
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             tsinfer.mean_sample_ancestry(ts, [[1, 1], [2]])
 
     def test_two_populations_high_migration_inferred(self):
         ts = self.two_populations_high_migration_example()
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         inferred_ts = tsinfer.infer(samples)
-        self.assertEqual(inferred_ts.num_populations, ts.num_populations)
+        assert inferred_ts.num_populations == ts.num_populations
         self.verify(inferred_ts, [inferred_ts.samples(0), inferred_ts.samples(1)])
 
     def test_two_populations_high_migration_inferred_no_simplify(self):
         ts = self.two_populations_high_migration_example()
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         inferred_ts = tsinfer.infer(samples, simplify=False)
-        self.assertEqual(inferred_ts.num_populations, ts.num_populations)
+        assert inferred_ts.num_populations == ts.num_populations
         self.verify(inferred_ts, [inferred_ts.samples(0), inferred_ts.samples(1)])
 
     def test_random_data_inferred(self):
@@ -1017,7 +1018,7 @@ class TestMeanSampleAncestry(unittest.TestCase):
             group_size *= 2
 
 
-class TestSnipCentromere(unittest.TestCase):
+class TestSnipCentromere:
     """
     Tests that we remove the centromere successfully from tree sequences.
     """
@@ -1047,25 +1048,25 @@ class TestSnipCentromere(unittest.TestCase):
         t2 = ts2.dump_tables()
         t1.provenances.clear()
         t2.provenances.clear()
-        self.assertEqual(t1, t2)
+        assert t1 == t2
         tree_found = False
         for tree in ts1.trees():
             if tree.interval == (left, right):
                 tree_found = True
                 for node in ts1.nodes():
-                    self.assertEqual(tree.parent(node.id), tskit.NULL)
+                    assert tree.parent(node.id) == tskit.NULL
                 break
-        self.assertTrue(tree_found)
+        assert tree_found
         return ts1
 
     def test_single_tree(self):
         ts1 = msprime.simulate(10, random_seed=1)
         ts2 = self.verify(ts1, 0.5, 0.6)
-        self.assertEqual(ts2.num_trees, 3)
+        assert ts2.num_trees == 3
 
     def test_many_trees(self):
         ts1 = msprime.simulate(10, length=10, recombination_rate=1, random_seed=1)
-        self.assertGreater(ts1.num_trees, 2)
+        assert ts1.num_trees > 2
         self.verify(ts1, 5, 6)
 
     def get_random_data_example(self, position, num_samples, seed=100):
@@ -1082,9 +1083,7 @@ class TestSnipCentromere(unittest.TestCase):
         )
         inferred_ts = tsinfer.infer(samples, simplify=False)
         ts = self.verify(inferred_ts, 55, 57)
-        self.assertTrue(
-            np.array_equal(ts.genotype_matrix(), inferred_ts.genotype_matrix())
-        )
+        assert np.array_equal(ts.genotype_matrix(), inferred_ts.genotype_matrix())
 
     def test_random_data_inferred_simplify(self):
         samples = self.get_random_data_example(
@@ -1092,41 +1091,44 @@ class TestSnipCentromere(unittest.TestCase):
         )
         inferred_ts = tsinfer.infer(samples, simplify=True)
         ts = self.verify(inferred_ts, 12, 15)
-        self.assertTrue(
-            np.array_equal(ts.genotype_matrix(), inferred_ts.genotype_matrix())
-        )
+        assert np.array_equal(ts.genotype_matrix(), inferred_ts.genotype_matrix())
 
     def test_coordinate_errors(self):
         ts = msprime.simulate(2, length=10, recombination_rate=1, random_seed=1)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, -1, 5)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 0, 5)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 1, 10)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 1, 11)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 6, 5)
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, 5, 5)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, -1, 5)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, 0, 5)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, 1, 10)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, 1, 11)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, 6, 5)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, 5, 5)
 
     def test_position_errors(self):
         ts = msprime.simulate(
             2, length=10, recombination_rate=1, random_seed=1, mutation_rate=2
         )
         X = ts.tables.sites.position
-        self.assertGreater(X.shape[0], 3)
+        assert X.shape[0] > 3
         # Left cannot be on a site position.
-        self.assertRaises(ValueError, tsinfer.snip_centromere, ts, X[0], X[0] + 0.001)
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, X[0], X[0] + 0.001)
         # Cannot go either side of a position
-        self.assertRaises(
-            ValueError, tsinfer.snip_centromere, ts, X[0] - 0.001, X[0] + 0.001
-        )
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, X[0] - 0.001, X[0] + 0.001)
         # Cannot cover multiple positions
-        self.assertRaises(
-            ValueError, tsinfer.snip_centromere, ts, X[0] - 0.001, X[2] + 0.001
-        )
+        with pytest.raises(ValueError):
+            tsinfer.snip_centromere(ts, X[0] - 0.001, X[2] + 0.001)
 
     def test_right_on_position(self):
         ts1 = msprime.simulate(
             2, length=10, recombination_rate=1, random_seed=1, mutation_rate=2
         )
         X = ts1.tables.sites.position
-        self.assertGreater(X.shape[0], 1)
+        assert X.shape[0] > 1
         ts2 = self.verify(ts1, X[0] - 0.001, X[0])
-        self.assertTrue(np.array_equal(ts1.genotype_matrix(), ts2.genotype_matrix()))
+        assert np.array_equal(ts1.genotype_matrix(), ts2.genotype_matrix())
