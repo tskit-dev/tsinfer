@@ -19,25 +19,25 @@
 """
 Tests for the inference code.
 """
-import random
-import os.path
-import string
 import io
 import itertools
 import json
+import os.path
+import random
+import string
+import tempfile
 import unittest
 import unittest.mock as mock
-import tempfile
 
-import numpy as np
 import msprime
+import numpy as np
+import pytest
 import tskit
+import tsutil
 
 import _tsinfer
 import tsinfer
-import tsutil
 import tsinfer.eval_util as eval_util
-import pytest
 
 
 def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):

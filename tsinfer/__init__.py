@@ -21,7 +21,6 @@ Tree sequence inference.
 
 Python 3 only.
 """
-
 import sys
 
 if sys.version_info[0] < 3:

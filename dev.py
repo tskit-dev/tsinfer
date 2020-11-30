@@ -1,16 +1,16 @@
-import random
+import json
 import os
+import pprint
+import random
 import sys
 
-import tqdm
-import pprint
-import numpy as np
-import json
 import msprime
-
-# import tskit
+import numpy as np
+import tqdm
 
 import tsinfer
+
+# import tskit
 
 
 def make_errors(v, p):

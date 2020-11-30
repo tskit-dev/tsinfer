@@ -24,11 +24,11 @@ import sys
 import tempfile
 
 import msprime
-import tskit
 import numpy as np
+import pytest
+import tskit
 
 import tsinfer
-import pytest
 
 
 def get_smc_simulation(n, L=1, recombination_rate=0, seed=1):

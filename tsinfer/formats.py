@@ -22,26 +22,25 @@ Manage tsinfer's various file formats.
 import collections.abc as abc
 import datetime
 import itertools
+import json
 import logging
-import sys
-import os
 import os.path
 import queue
+import sys
 import threading
 import uuid
-import json
 
-import numpy as np
-import zarr
-import lmdb
-import humanize
-import numcodecs
-import tskit
 import attr
+import humanize
+import lmdb
+import numcodecs
+import numpy as np
+import tskit
+import zarr
 
-import tsinfer.threads as threads
-import tsinfer.provenance as provenance
 import tsinfer.exceptions as exceptions
+import tsinfer.provenance as provenance
+import tsinfer.threads as threads
 
 
 logger = logging.getLogger(__name__)

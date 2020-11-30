@@ -19,28 +19,27 @@
 """
 Tests for the data files.
 """
-
+import datetime
+import itertools
+import json
+import os.path
 import sys
 import tempfile
-import os.path
-import datetime
 import warnings
-import json
-import itertools
 
-import numpy as np
+import lmdb
 import msprime
 import numcodecs
 import numcodecs.blosc as blosc
-import zarr
-import lmdb
+import numpy as np
+import pytest
 import tskit
+import tsutil
+import zarr
 
 import tsinfer
-import tsinfer.formats as formats
 import tsinfer.exceptions as exceptions
-import tsutil
-import pytest
+import tsinfer.formats as formats
 
 IS_WINDOWS = sys.platform == "win32"
 

@@ -2,20 +2,21 @@
 Script for statistically evaluating various aspects of tsinfer performance.
 """
 import argparse
-import random
 import concurrent.futures
-import time
-import warnings
-import os.path
 import json
 import logging
+import os.path
+import random
+import time
+import warnings
 
+import colorama
+import daiquiri
+import matplotlib as mp
+import msprime
 import numpy as np
 import pandas as pd
 import tqdm
-import daiquiri
-import colorama
-import msprime
 import tskit
 
 import tsinfer
@@ -24,7 +25,6 @@ import tsinfer.cli as cli
 # We break the normal conventions for ordering imports here
 # because we have to make this ugly hack to make matplotlib
 # work from a shell session and keep flake8 happy.
-import matplotlib as mp
 
 # Force matplotlib to not use any Xwindows backend.
 mp.use("Agg")

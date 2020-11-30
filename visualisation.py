@@ -4,15 +4,15 @@ Visualisation of the copying process and ancestor generation using PIL
 import os
 import sys
 
+import msprime
 import numpy as np
 import PIL.Image as Image
-import PIL.ImageDraw as ImageDraw
 import PIL.ImageColor as ImageColor
+import PIL.ImageDraw as ImageDraw
 import PIL.ImageFont as ImageFont
 import svgwrite
 
 import tsinfer
-import msprime
 
 
 class AncestorBuilderViz(object):

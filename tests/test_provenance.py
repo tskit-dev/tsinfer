@@ -22,11 +22,11 @@ Tests for the provenance stored in the output tree sequences.
 import json
 
 import msprime
+import pytest
 import tskit
 
 import tsinfer
 import tsinfer.provenance as provenance
-import pytest
 
 
 class TestProvenanceValid:

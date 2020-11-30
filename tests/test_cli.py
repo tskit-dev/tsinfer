@@ -19,7 +19,6 @@
 """
 Tests for the tsinfer CLI.
 """
-
 import io
 import os.path
 import pathlib
@@ -28,15 +27,15 @@ import tempfile
 import unittest
 import unittest.mock as mock
 
-import numpy as np
-import tskit
 import msprime
+import numpy as np
+import pytest
+import tskit
 
 import tsinfer
-import tsinfer.cli as cli
 import tsinfer.__main__ as main
+import tsinfer.cli as cli
 import tsinfer.exceptions as exceptions
-import pytest
 
 
 def capture_output(func, *args, **kwargs):

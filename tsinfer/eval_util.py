@@ -18,19 +18,19 @@
 """
 Tools for evaluating the algorithm.
 """
-import collections
 import bisect
-import random
+import collections
 import json
 import logging
+import random
 
 import numpy as np
-import tskit
 import tqdm
+import tskit
 
-import tsinfer.inference as inference
-import tsinfer.formats as formats
 import tsinfer.constants as constants
+import tsinfer.formats as formats
+import tsinfer.inference as inference
 import tsinfer.provenance as provenance
 
 logger = logging.getLogger(__name__)

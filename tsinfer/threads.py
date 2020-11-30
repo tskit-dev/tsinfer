@@ -19,10 +19,10 @@
 """
 Utilities for handling threads.
 """
+import _thread
 import logging
 import threading
 import traceback
-import _thread
 
 
 # prctl is an optional extra; it allows us assign meaninful names to threads

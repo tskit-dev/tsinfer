@@ -13,6 +13,11 @@ repos:
     - id: clang-format
       exclude: avl
       verbose: true
+  - repo: https://github.com/asottile/reorder_python_imports
+    rev: v2.3.5
+    hooks:
+      - id: reorder-python-imports
+        args: [ --unclassifiable-application-module=_tsinfer ]
   - repo: https://github.com/psf/black
     rev: 20.8b1
     hooks:
