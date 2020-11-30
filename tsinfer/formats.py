@@ -95,7 +95,7 @@ class BufferedItemWriter(object):
 
     def __init__(self, array_map, num_threads=0):
         self.chunk_size = -1
-        for key, array in array_map.items():
+        for array in array_map.values():
             if self.chunk_size == -1:
                 self.chunk_size = array.chunks[0]
             else:
@@ -161,7 +161,7 @@ class BufferedItemWriter(object):
         with self.resize_lock:
             if self.current_size < end:
                 self.current_size = end
-                for key, array in self.arrays.items():
+                for array in self.arrays.values():
                     shape = list(array.shape)
                     shape[0] = self.current_size
                     array.resize(*shape)
@@ -223,7 +223,7 @@ class BufferedItemWriter(object):
         """
         self._queue_flush_buffer()
         # Stop the the worker threads.
-        for j in range(self.num_threads):
+        for _ in range(self.num_threads):
             self.flush_queue.put(None)
         for j in range(self.num_threads):
             self.flush_threads[j].join()
@@ -1177,7 +1177,7 @@ class SampleData(DataContainer):
             self.num_populations == other.num_populations
             # Need to take a different approach with np object arrays.
             and np_obj_equal(
-                self.populations_metadata[:], other.populations_metadata[:],
+                self.populations_metadata[:], other.populations_metadata[:]
             )
         )
 
@@ -1428,9 +1428,8 @@ class SampleData(DataContainer):
                         )
                     if ts.node(u).population != first_node.population:
                         raise ValueError(
-                            "All nodes for individual {} must be in the same population".format(
-                                individual.id
-                            )
+                            "All nodes for individual {} must be in the same "
+                            "population".format(individual.id)
                         )
                 individual_metadata = None
                 samples_metadata = [None for u in nodes]
@@ -2014,13 +2013,11 @@ class SampleData(DataContainer):
         # TODO document
         iterator = zip(self.samples_metadata[:], self.samples_individual[:])
         for j, (metadata, individual) in enumerate(iterator):
-            yield Sample(
-                j, individual=individual, metadata=metadata,
-            )
+            yield Sample(j, individual=individual, metadata=metadata)
 
     def population(self, id_):
         # TODO document
-        return Population(id_, metadata=self.populations_metadata[id_],)
+        return Population(id_, metadata=self.populations_metadata[id_])
 
     def populations(self):
         # TODO document

@@ -118,7 +118,7 @@ class TestTreePairs:
         assert ts1.num_trees == 1
         assert ts2.num_trees == 1
         count = 0
-        for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
+        for (_left, _right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
             assert (0, 1) == tree1.interval
             assert (0, 1) == tree2.interval
             assert tree1.tree_sequence is ts1
@@ -134,7 +134,7 @@ class TestTreePairs:
         assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
-        for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
+        for (_left, _right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
             assert (0, 1) == tree1.interval
             assert tree1.tree_sequence is ts1
             assert tree2.tree_sequence is ts2
@@ -153,7 +153,7 @@ class TestTreePairs:
         assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
-        for (left, right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
+        for (_left, _right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
             assert (0, 1) == tree1.interval
             assert tree1.tree_sequence is ts1
             assert tree2.tree_sequence is ts2
@@ -368,7 +368,7 @@ class TestInsertPerfectMutations:
         """
         Check that we have exactly two mutations on each edge.
         """
-        for tree, ((left, right), e_out, e_in) in zip(ts.trees(), ts.edge_diffs()):
+        for tree, ((left, right), _e_out, _e_in) in zip(ts.trees(), ts.edge_diffs()):
             assert tree.interval == (left, right)
             positions = [site.position for site in tree.sites()]
             # TODO make better tests when we've figured out the exact algorithm.
@@ -434,7 +434,7 @@ class TestPerfectInference:
             source.sites.ancestral_state, inferred.sites.ancestral_state
         )
         assert np.array_equal(
-            source.sites.ancestral_state_offset, inferred.sites.ancestral_state_offset,
+            source.sites.ancestral_state_offset, inferred.sites.ancestral_state_offset
         )
         assert np.array_equal(source.mutations.site, inferred.mutations.site)
         assert np.array_equal(source.mutations.node, inferred.mutations.node)

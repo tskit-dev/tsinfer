@@ -343,4 +343,5 @@ if __name__ == "__main__":
 
 #     for seed in range(1, 10000):
 #         print(seed)
-#         # tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3, engine="C")
+#         tsinfer_dev(40, 2.5, seed=seed, num_threads=1, genotype_quality=1e-3,
+#         engine="C")

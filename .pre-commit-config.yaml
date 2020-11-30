@@ -1,18 +1,26 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v2.5.0
+    rev: v3.2.0
     hooks:
       - id: check-merge-conflict
       - id: debug-statements
       - id: mixed-line-ending
       - id: check-case-conflict
       - id: check-yaml
+  - repo: https://github.com/benjeffery/pre-commit-clang-format
+    rev: master
+    hooks:
+    - id: clang-format
+      exclude: avl
+      verbose: true
   - repo: https://github.com/psf/black
-    rev: 19.10b0
+    rev: 20.8b1
     hooks:
       - id: black
         language_version: python3
   - repo: https://gitlab.com/pycqa/flake8
-    rev: 3.7.9
+    rev: 3.8.3
     hooks:
       - id: flake8
+        args: [--config=.flake8]
+        additional_dependencies: ["flake8-bugbear==20.1.4", "flake8-builtins==1.5.2"]

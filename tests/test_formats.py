@@ -207,9 +207,7 @@ class TestSampleData(DataContainerMixin):
             filename = os.path.join(tempdir, "samples.tmp")
             for bad_size in ["a", "", -1]:
                 with pytest.raises(ValueError):
-                    formats.SampleData(
-                        path=filename, max_file_size=bad_size,
-                    )
+                    formats.SampleData(path=filename, max_file_size=bad_size)
             for bad_size in [[1, 3], np.array([1, 2])]:
                 with pytest.raises(TypeError):
                     formats.SampleData(path=filename, max_file_size=bad_size)
@@ -219,9 +217,7 @@ class TestSampleData(DataContainerMixin):
             # Fail immediately if the max_size is so small we can't even create a file
             filename = os.path.join(tempdir, "samples.tmp")
             with pytest.raises(lmdb.MapFullError):
-                formats.SampleData(
-                    path=filename, sequence_length=1, max_file_size=1,
-                )
+                formats.SampleData(path=filename, sequence_length=1, max_file_size=1)
 
     def test_too_small_max_file_size_add(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -589,23 +585,19 @@ class TestSampleData(DataContainerMixin):
         for bad_position in [-1, 10, 100]:
             with pytest.raises(ValueError):
                 input_file.add_site(
-                    position=bad_position, alleles=["0", "1"], genotypes=genotypes,
+                    position=bad_position, alleles=["0", "1"], genotypes=genotypes
                 )
         for bad_genotypes in [[0, 2], [-2, 0], [], [0], [0, 0, 0]]:
             with pytest.raises(ValueError):
                 input_file.add_site(
-                    position=1, alleles=["0", "1"], genotypes=bad_genotypes,
+                    position=1, alleles=["0", "1"], genotypes=bad_genotypes
                 )
         with pytest.raises(ValueError):
             input_file.add_site(position=1, alleles=["0"], genotypes=[0, 1])
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1, alleles=["0", "1"], genotypes=[0, 2],
-            )
+            input_file.add_site(position=1, alleles=["0", "1"], genotypes=[0, 2])
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1, alleles=["0", "0"], genotypes=[0, 2],
-            )
+            input_file.add_site(position=1, alleles=["0", "0"], genotypes=[0, 2])
 
     def test_duplicate_sites(self):
         # Duplicate sites are not accepted.
@@ -614,22 +606,14 @@ class TestSampleData(DataContainerMixin):
         genotypes = [0, 1, 1]
         input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=0, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=0, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
 
     def test_unordered_sites(self):
         # Sites must be specified in sorted order.
@@ -639,40 +623,26 @@ class TestSampleData(DataContainerMixin):
         input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=0.5, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=0.5, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=0.9999, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=0.9999, alleles=alleles, genotypes=genotypes)
         input_file.add_site(position=2, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=0.5, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=0.5, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1.88, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=1.88, alleles=alleles, genotypes=genotypes)
 
     def test_insufficient_samples(self):
         sample_data = formats.SampleData(sequence_length=10)
         with pytest.raises(ValueError):
-            sample_data.add_site(
-                position=0, alleles=["0", "1"], genotypes=[],
-            )
+            sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[])
         sample_data = formats.SampleData(sequence_length=10)
         with pytest.raises(ValueError):
-            sample_data.add_site(
-                position=0, alleles=["0", "1"], genotypes=[0],
-            )
+            sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[0])
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.add_individual(ploidy=3)
         with pytest.raises(ValueError):
-            sample_data.add_site(
-                position=0, alleles=["0", "1"], genotypes=[0],
-            )
+            sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[0])
         sample_data = formats.SampleData(sequence_length=10)
         with pytest.raises(ValueError):
             sample_data.add_individual(ploidy=3, samples_metadata=[None])
@@ -1036,13 +1006,9 @@ class TestSampleData(DataContainerMixin):
             genotypes = [0, 1, 1]
             input_file.add_site(position=0, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_site(
-                position=1, alleles=alleles, genotypes=genotypes,
-            )
+            input_file.add_site(position=1, alleles=alleles, genotypes=genotypes)
         with pytest.raises(ValueError):
-            input_file.add_provenance(
-                datetime.datetime.now().isoformat(), {},
-            )
+            input_file.add_provenance(datetime.datetime.now().isoformat(), {})
         with pytest.raises(ValueError):
             input_file._check_build_mode()
 
@@ -1067,14 +1033,15 @@ class TestSampleData(DataContainerMixin):
         # Try editing: use setter in the normal way
         editable_sample_data.sites_time = [0.0]
         # Try editing: use setter via setattr
-        setattr(editable_sample_data, "sites_time", [1.0])
+        setattr(editable_sample_data, "sites_time", [1.0])  # noqa: B010
         editable_sample_data.add_provenance(datetime.datetime.now().isoformat(), {})
         editable_sample_data.finalise()
         with pytest.raises(ValueError):
-            setattr(editable_sample_data, "sites_time", [0.0])
+            setattr(editable_sample_data, "sites_time", [0.0])  # noqa: B010
         with pytest.raises(ValueError):
             editable_sample_data.add_provenance(
-                datetime.datetime.now().isoformat(), {},
+                datetime.datetime.now().isoformat(),
+                {},
             )
 
     def test_copy_new_uuid(self):
@@ -1770,12 +1737,12 @@ class TestAncestorData(DataContainerMixin):
             for bad_size in ["a", "", -1]:
                 with pytest.raises(ValueError):
                     formats.AncestorData(
-                        sample_data, path=filename, max_file_size=bad_size,
+                        sample_data, path=filename, max_file_size=bad_size
                     )
             for bad_size in [[1, 3], np.array([1, 2])]:
                 with pytest.raises(TypeError):
                     formats.AncestorData(
-                        sample_data, path=filename, max_file_size=bad_size,
+                        sample_data, path=filename, max_file_size=bad_size
                     )
 
     def test_provenance(self):
@@ -1864,7 +1831,7 @@ class TestAncestorData(DataContainerMixin):
         for bad_end in [-1, 0, num_sites + 1, 10 * num_sites]:
             with pytest.raises(ValueError):
                 ancestor_data.add_ancestor(
-                    start=0, end=bad_end, time=1, focal_sites=[], haplotype=haplotype,
+                    start=0, end=bad_end, time=1, focal_sites=[], haplotype=haplotype
                 )
         for bad_time in [-1, 0]:
             with pytest.raises(ValueError):
@@ -1912,7 +1879,7 @@ class TestAncestorData(DataContainerMixin):
         # Older ancestors must be added first
         with pytest.raises(ValueError):
             ancestor_data.add_ancestor(
-                start=0, end=num_sites, time=2, focal_sites=[], haplotype=haplotype,
+                start=0, end=num_sites, time=2, focal_sites=[], haplotype=haplotype
             )
 
     @pytest.mark.skipif(
@@ -1943,9 +1910,7 @@ class TestAncestorData(DataContainerMixin):
         self.verify_data_round_trip(sample_data, ancestors, ancestor_haps)
         sample_data = sample_data.copy()
         with pytest.raises(ValueError, match="not finalised"):
-            ancestors.insert_proxy_samples(
-                sample_data, require_same_sample_data=False,
-            )
+            ancestors.insert_proxy_samples(sample_data, require_same_sample_data=False)
         # Check it does work when finalised
         sample_data.finalise()
         ancestors.insert_proxy_samples(sample_data, require_same_sample_data=False)
@@ -1962,9 +1927,7 @@ class TestAncestorData(DataContainerMixin):
         # Unless seq lengths differ
         sd_copy, _ = self.get_example_data(10, sequence_length=11, num_ancestors=40)
         with pytest.raises(ValueError, match="sequence length"):
-            ancestors.insert_proxy_samples(
-                sd_copy, require_same_sample_data=False,
-            )
+            ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
 
     def test_insert_proxy_site_changes(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
@@ -1976,18 +1939,14 @@ class TestAncestorData(DataContainerMixin):
         # But if we remove a *full inference* site, we should always fail
         sd_copy = sample_data.subset(sites=nonsingletons[1:])
         with pytest.raises(ValueError, match="positions.*missing"):
-            ancestors.insert_proxy_samples(
-                sd_copy, require_same_sample_data=False,
-            )
+            ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
 
     def test_insert_proxy_bad_samples(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
         ancestors = tsinfer.generate_ancestors(sample_data)
         for bad_id in [-1, "a", 10, np.nan, np.inf, -np.inf]:
             with pytest.raises(IndexError):
-                ancestors.insert_proxy_samples(
-                    sample_data, sample_ids=[bad_id],
-                )
+                ancestors.insert_proxy_samples(sample_data, sample_ids=[bad_id])
 
     def test_insert_proxy_no_samples(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
@@ -2083,7 +2042,7 @@ class TestAncestorData(DataContainerMixin):
         s_ids = np.array([1, 2, 3])
         with pytest.raises(ValueError):
             ancestors.insert_proxy_samples(
-                sample_data, sample_ids=s_ids, epsilon=[min_time * 0.1, min_time * 0.2],
+                sample_data, sample_ids=s_ids, epsilon=[min_time * 0.1, min_time * 0.2]
             )
 
         for e in (min_time * 0.05, [min_time * 0.1, min_time * 0.2, min_time * 0.3]):
