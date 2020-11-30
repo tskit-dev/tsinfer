@@ -120,7 +120,7 @@ def compare(ts1, ts2):
         raise ValueError("Tree sequences must have the same samples")
     breakpoints = [0]
     metrics = []
-    for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
+    for (_left, right), tree1, tree2 in tree_pairs(ts1, ts2):
         breakpoints.append(right)
         metrics.append(tree1.kc_distance(tree2))
     return np.array(breakpoints), np.array(metrics)
@@ -791,7 +791,7 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     last_update = np.zeros(ts.num_nodes)
     total_length = np.zeros(ts.num_nodes)
 
-    def update_counts(edge, sign):
+    def update_counts(left, edge, sign):
         # Update the counts and statistics for a given node. Before we change the
         # node counts in the given direction, check to see if we need to update
         # statistics for that node. When a node count changes, we add the
@@ -818,13 +818,13 @@ def mean_sample_ancestry(ts, sample_sets, show_progress=False):
     progress_iter = tqdm.tqdm(
         ts.edge_diffs(), total=ts.num_trees, disable=not show_progress
     )
-    for (left, right), edges_out, edges_in in progress_iter:
+    for (left, _right), edges_out, edges_in in progress_iter:
         for edge in edges_out:
             parent[edge.child] = -1
-            update_counts(edge, -1)
+            update_counts(left, edge, -1)
         for edge in edges_in:
             parent[edge.child] = edge.parent
-            update_counts(edge, +1)
+            update_counts(left, edge, +1)
 
     # Finally, add the stats for the last tree and normalise by the total
     # length that each node was an ancestor to > 0 samples.

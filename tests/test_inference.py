@@ -140,7 +140,7 @@ class TestUnfinalisedErrors:
         sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
         with pytest.raises(ValueError):
             tsinfer.augment_ancestors(
-                sample_data, ancestor_data, np.arange(sample_data.num_samples),
+                sample_data, ancestor_data, np.arange(sample_data.num_samples)
             )
 
 
@@ -172,7 +172,7 @@ class TestRoundTrip:
                 a1 = np.array(a)
                 a2 = np.array(v.alleles)
                 assert np.array_equal(
-                    a1[genotypes[site_id, non_missing]], a2[v.genotypes[non_missing]],
+                    a1[genotypes[site_id, non_missing]], a2[v.genotypes[non_missing]]
                 )
             assert np.all(v.genotypes[missing] >= 0)
 
@@ -319,9 +319,7 @@ class TestRoundTrip:
         G[0] = np.arange(65)
         alleles = [[str(x) for x in np.unique(a)] for a in G]
         with pytest.raises(ValueError):
-            self.verify_data_round_trip(
-                G, np.arange(G.shape[0]), alleles=alleles,
-            )
+            self.verify_data_round_trip(G, np.arange(G.shape[0]), alleles=alleles)
 
     def test_not_all_alleles_in_genotypes(self):
         G = np.zeros((10, 10), dtype=int)
@@ -882,7 +880,7 @@ class TestMetadataRoundTrip:
         sample_data = tsinfer.SampleData(sequence_length=1)
         rng = random.Random(132)
         all_metadata = []
-        for j in range(ts.num_samples):
+        for _ in range(ts.num_samples):
             sample_data.add_population()
         for j in range(ts.num_samples):
             metadata = {str(j): random_string(rng) for j in range(rng.randint(1, 6))}
@@ -1308,7 +1306,7 @@ class TestBuildAncestors:
                 g = np.zeros(2, dtype=np.int8)
                 h = np.zeros(1, dtype=np.int8)
             generator = tsinfer.AncestorsGenerator(
-                sample_data, ancestor_data, engine=engine,
+                sample_data, ancestor_data, engine=engine
             )
             generator.ancestor_builder.add_site(1, g)
             with pytest.raises(error):
@@ -1453,7 +1451,7 @@ class TestAncestorsTreeSequence:
             H = ancestors_ts.genotype_matrix().T
             for ancestor in ancestor_data.ancestors():
                 assert np.array_equal(
-                    H[ancestor.id, ancestor.start : ancestor.end], ancestor.haplotype,
+                    H[ancestor.id, ancestor.start : ancestor.end], ancestor.haplotype
                 )
 
             # The provenance should be same as in the ancestors data file, plus an
@@ -1843,7 +1841,7 @@ class TestAlgorithmDebugOutput:
         n_sites = 50
         sample_data = self.sample_example(n_samples, n_sites)
         ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
-        for j, variant in enumerate(sample_data.variants()):
+        for variant in sample_data.variants():
             ancestor_builder.add_site(variant.site.time, variant.genotypes)
         with mock.patch("sys.stdout", new=io.StringIO()) as mock_output:
             ancestor_builder.print_state()
@@ -2094,7 +2092,9 @@ class TestBadEngine:
         for bad_engine in self.bad_engines:
             with pytest.raises(ValueError):
                 tsinfer.match_ancestors(
-                    sample_data, ancestor_data, engine=bad_engine,
+                    sample_data,
+                    ancestor_data,
+                    engine=bad_engine,
                 )
 
     def test_match_samples(self):
@@ -2103,9 +2103,7 @@ class TestBadEngine:
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         for bad_engine in self.bad_engines:
             with pytest.raises(ValueError):
-                tsinfer.match_samples(
-                    sample_data, ancestors_ts, engine=bad_engine,
-                )
+                tsinfer.match_samples(sample_data, ancestors_ts, engine=bad_engine)
 
 
 class TestWrongAncestorsTreeSequence:
@@ -3188,9 +3186,7 @@ class TestInsertMissingSites:
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         small_ts = ts.simplify(ts.samples()[1 : ts.num_samples])
         with pytest.raises(ValueError, match="number of samples"):
-            tsinfer.insert_missing_sites(
-                sample_data, small_ts,
-            )
+            tsinfer.insert_missing_sites(sample_data, small_ts)
 
     def test_simple_insert(self):
         ts = msprime.simulate(8, length=2, recombination_rate=1, random_seed=12)
@@ -3285,10 +3281,7 @@ class TestHistoricalSamples:
         ]:
             samples = [msprime.Sample(population=0, time=t) for t in sample_times]
             ts = msprime.simulate(
-                samples=samples,
-                recombination_rate=1,
-                mutation_rate=10,
-                random_seed=123,
+                samples=samples, recombination_rate=1, mutation_rate=10, random_seed=123
             )
             assert ts.num_sites > 0
             sd = tsinfer.SampleData.from_tree_sequence(
@@ -3306,7 +3299,7 @@ class TestHistoricalSamples:
         # If we use force_sample_times=True but can't force the sample old enough
         samples = [msprime.Sample(population=0, time=t) for t in (0.0, 0.0, 0.1, 1.5)]
         ts = msprime.simulate(
-            samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321,
+            samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321
         )
         assert ts.num_sites > 0
         sd = tsinfer.SampleData.from_tree_sequence(
@@ -3324,6 +3317,4 @@ class TestHistoricalSamples:
         sd_copy.individuals_time[:] = time
         sd_copy.finalise()
         with pytest.raises(ValueError):
-            tsinfer.match_samples(
-                sd_copy, ancestors_ts, force_sample_times=True,
-            )
+            tsinfer.match_samples(sd_copy, ancestors_ts, force_sample_times=True)

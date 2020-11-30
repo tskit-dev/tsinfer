@@ -519,7 +519,7 @@ def match_samples(
 
 
 def insert_missing_sites(
-    sample_data, tree_sequence, *, sample_id_map=None, progress_monitor=None,
+    sample_data, tree_sequence, *, sample_id_map=None, progress_monitor=None
 ):
     """
     Return a new tree sequence containing extra sites that are present in a
@@ -614,7 +614,7 @@ def insert_missing_sites(
                 ancestral_state=anc_state,
                 metadata=_encode_metadata(
                     _update_site_metadata(
-                        site.metadata, inference_type=constants.INFERENCE_PARSIMONY,
+                        site.metadata, inference_type=constants.INFERENCE_PARSIMONY
                     )
                 ),
             )
@@ -817,7 +817,7 @@ class AncestorsGenerator(object):
             build_queue.put((index, t, focal_sites))
 
         # Stop the the worker threads.
-        for j in range(self.num_threads):
+        for _ in range(self.num_threads):
             build_queue.put(None)
         for j in range(self.num_threads):
             build_threads[j].join()
@@ -1154,7 +1154,7 @@ class AncestorMatcher(Matcher):
             self.__complete_epoch(j)
 
         # Stop the the worker threads.
-        for j in range(self.num_threads):
+        for _ in range(self.num_threads):
             match_queue.put(None)
         for j in range(self.num_threads):
             match_threads[j].join()
@@ -1258,8 +1258,8 @@ class SampleMatcher(Matcher):
         tables = self.ancestors_ts_tables
         if self.sample_data.sequence_length != tables.sequence_length:
             raise ValueError(
-                "Ancestors tree sequence not compatible: sequence length is different to "
-                "sample data file."
+                "Ancestors tree sequence not compatible: sequence length is different to"
+                " sample data file."
             )
         if np.any(tables.nodes.time <= 0):
             raise ValueError("All nodes must have time > 0")
@@ -1356,7 +1356,7 @@ class SampleMatcher(Matcher):
             match_queue.put((self.sample_id_map[j], a))
 
         # Stop the the worker threads.
-        for j in range(self.num_threads):
+        for _ in range(self.num_threads):
             match_queue.put(None)
         for j in range(self.num_threads):
             match_threads[j].join()

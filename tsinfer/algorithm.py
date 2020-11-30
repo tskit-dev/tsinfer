@@ -502,8 +502,8 @@ class TreeSequenceBuilder(object):
                 # print("MATCH:", child_id)
                 if self.flags[child_id] == constants.NODE_IS_PC_ANCESTOR:
                     # print("EXISTING SYNTHETIC")
-                    for edge, match in match_list:
-                        # print("\t", edge, match)
+                    for edge, _match in match_list:
+                        # print("\t", edge, _match)
                         edge.parent = child_id
                 else:
                     # print("NEW SYNTHETIC")

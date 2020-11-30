@@ -1479,7 +1479,7 @@ def run_ancestor_quality(args):
         x_col = "rel_missing_l"
         ax_params = {"xlabel": "Fraction of true ancestor missing from inferred"}
     else:
-        assert False, "Set x_axis_length_metric to 'absolute' or 'fraction'"
+        raise AssertionError("Set x_axis_length_metric to 'absolute' or 'fraction'")
     ax = data.plot.scatter(
         x=x_col,
         y="Inaccuracy",

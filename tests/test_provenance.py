@@ -41,7 +41,7 @@ class TestProvenanceValid:
             tskit.validate_provenance(p_doc)
 
     def validate_file(self, data):
-        for timestamp, record in data.provenances():
+        for _timestamp, record in data.provenances():
             tskit.validate_provenance(record)
 
     def test_infer(self):

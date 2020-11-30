@@ -69,9 +69,7 @@ class TestAncestorMatcher:
             _tsinfer.AncestorMatcher(tsb, [1])
         for bad_type in [None, {}]:
             with pytest.raises(TypeError):
-                _tsinfer.AncestorMatcher(
-                    tsb, [1], [1], extended_checks=bad_type,
-                )
+                _tsinfer.AncestorMatcher(tsb, [1], [1], extended_checks=bad_type)
             with pytest.raises(TypeError):
                 _tsinfer.AncestorMatcher(tsb, [1], [1], precision=bad_type)
         for bad_array in [[], [[], []], None, "sdf", [1, 2, 3]]:
@@ -129,9 +127,9 @@ class TestAncestorBuilder:
     def test_add_too_many_sites(self):
         for max_sites in range(10):
             ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=max_sites)
-            for j in range(max_sites):
+            for _ in range(max_sites):
                 ab.add_site(time=1, genotypes=[0, 1])
-            for j in range(2 * max_sites):
+            for _ in range(2 * max_sites):
                 with pytest.raises(_tsinfer.LibraryError):
                     ab.add_site(time=1, genotypes=[0, 1])
 
