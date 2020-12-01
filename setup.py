@@ -11,7 +11,7 @@ IS_WINDOWS = platform.system() == "Windows"
 # Obscure magic required to allow numpy be used as an 'setup_requires'.
 class build_ext(_build_ext):
     def finalize_options(self):
-        super(build_ext, self).finalize_options()
+        super().finalize_options()
         # Prevent numpy from thinking it is still in its setup process:
         __builtins__.__NUMPY_SETUP__ = False
         import numpy

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # tsinfer documentation build configuration file, created by
 # sphinx-quickstart on Fri May 11 10:54:43 2018.

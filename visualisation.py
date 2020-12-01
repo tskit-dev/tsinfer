@@ -15,7 +15,7 @@ import svgwrite
 import tsinfer
 
 
-class AncestorBuilderViz(object):
+class AncestorBuilderViz:
     """
     Visualisation for the process of building ancestors.
     """
@@ -174,7 +174,7 @@ def draw_ancestors(ts, width=800, height=600):
                 stroke_width=1,
             )
         )
-        dwg.add(dwg.text("{}".format(x), (x_trans(x), y_pad), writing_mode="tb"))
+        dwg.add(dwg.text(f"{x}", (x_trans(x), y_pad), writing_mode="tb"))
 
     for e in ts.edgesets():
         a = x_trans(e.left), y_trans(e.parent)
@@ -195,7 +195,7 @@ def draw_ancestors(ts, width=800, height=600):
     return dwg.tostring()
 
 
-class Visualiser(object):
+class Visualiser:
     def __init__(
         self, original_ts, sample_data, ancestor_data, inferred_ts, box_size=8
     ):
@@ -383,7 +383,7 @@ class Visualiser(object):
         # Draw the positions of the sites.
         font = ImageFont.load_default()
         for site in self.original_ts.sites():
-            label = "{} {:.6f}".format(site.id, site.position)
+            label = f"{site.id} {site.position:.6f}"
             img_txt = Image.new("L", font.getsize(label), color="white")
             draw_txt = ImageDraw.Draw(img_txt)
             draw_txt.text((0, 0), label, font=font)

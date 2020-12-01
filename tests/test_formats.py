@@ -71,7 +71,7 @@ class ConvenienceFunctions:
             assert not formats.np_obj_equal(obj_array, not_equal)
 
 
-class DataContainerMixin(object):
+class DataContainerMixin:
     """
     Common tests for the the data container classes."
     """
@@ -484,7 +484,7 @@ class TestSampleData(DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             files = []
             for chunk_size in [5, 7]:
-                filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
+                filename = os.path.join(tempdir, f"samples_{chunk_size}.tmp")
                 files.append(filename)
                 with formats.SampleData(
                     sequence_length=ts.sequence_length,
@@ -509,7 +509,7 @@ class TestSampleData(DataContainerMixin):
         ]
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             for i, compressor in enumerate(compressors):
-                filename = os.path.join(tempdir, "samples_{}.tmp".format(i))
+                filename = os.path.join(tempdir, f"samples_{i}.tmp")
                 for path in [None, filename]:
                     with formats.SampleData(
                         sequence_length=ts.sequence_length,
@@ -950,7 +950,7 @@ class TestSampleData(DataContainerMixin):
     def test_ts_with_invariant_sites(self):
         ts = tsutil.get_example_ts(5, 3)
         t = ts.dump_tables()
-        positions = set(site.position for site in ts.sites())
+        positions = {site.position for site in ts.sites()}
         for j in range(10):
             pos = 1 / (j + 1)
             if pos not in positions:
@@ -967,7 +967,7 @@ class TestSampleData(DataContainerMixin):
     def test_ts_with_root_mutations(self):
         ts = tsutil.get_example_ts(5, 3)
         t = ts.dump_tables()
-        positions = set(site.position for site in ts.sites())
+        positions = {site.position for site in ts.sites()}
         for tree in ts.trees():
             pos = tree.interval[0]
             if pos not in positions:
@@ -1798,7 +1798,7 @@ class TestAncestorData(DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             files = []
             for chunk_size in [5, 7]:
-                filename = os.path.join(tempdir, "samples_{}.tmp".format(chunk_size))
+                filename = os.path.join(tempdir, f"samples_{chunk_size}.tmp")
                 files.append(filename)
                 with tsinfer.AncestorData(
                     sample_data, path=filename, chunk_size=chunk_size
@@ -2077,7 +2077,7 @@ class TestAncestorData(DataContainerMixin):
         )
 
 
-class BufferedItemWriterMixin(object):
+class BufferedItemWriterMixin:
     """
     Tests to ensure that the buffered item writer works as expected.
     """

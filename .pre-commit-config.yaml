@@ -18,10 +18,22 @@ repos:
     hooks:
       - id: reorder-python-imports
         args: [ --unclassifiable-application-module=_tsinfer ]
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v2.7.2
+    hooks:
+      - id: pyupgrade
+        args: [ --py3-plus, --py36-plus ]
   - repo: https://github.com/psf/black
     rev: 20.8b1
     hooks:
       - id: black
+        language_version: python3
+  - repo: https://github.com/asottile/blacken-docs
+    rev: v1.8.0
+    hooks:
+      - id: blacken-docs
+        args: [--skip-errors]
+        additional_dependencies: [black==20.8b1]
         language_version: python3
   - repo: https://gitlab.com/pycqa/flake8
     rev: 3.8.3
