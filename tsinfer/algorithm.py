@@ -36,7 +36,7 @@ import tsinfer.constants as constants
 
 
 @attr.s
-class Edge(object):
+class Edge:
     """
     A singley linked list of edges.
     """
@@ -49,7 +49,7 @@ class Edge(object):
 
 
 @attr.s
-class Site(object):
+class Site:
     """
     A single site for the ancestor builder.
     """
@@ -59,7 +59,7 @@ class Site(object):
     genotypes = attr.ib()
 
 
-class AncestorBuilder(object):
+class AncestorBuilder:
     """
     Builds inferred ancestors.
     This implementation partially allows for multiple focal sites per ancestor
@@ -240,7 +240,7 @@ class AncestorBuilder(object):
         return start, end
 
 
-class TreeSequenceBuilder(object):
+class TreeSequenceBuilder:
     def __init__(self, num_alleles, max_nodes, max_edges):
         self.num_alleles = num_alleles
         self.num_sites = len(num_alleles)
@@ -619,7 +619,7 @@ COMPRESSED = -1
 NONZERO_ROOT = -2
 
 
-class AncestorMatcher(object):
+class AncestorMatcher:
     def __init__(
         self,
         tree_sequence_builder,

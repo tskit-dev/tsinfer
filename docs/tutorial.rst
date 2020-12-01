@@ -127,15 +127,20 @@ coalescent with recombination using `msprime
     import tsinfer
 
     ts = msprime.simulate(
-        sample_size=10000, Ne=10**4, recombination_rate=1e-8,
-        mutation_rate=1e-8, length=10*10**6, random_seed=42)
+        sample_size=10000,
+        Ne=10 ** 4,
+        recombination_rate=1e-8,
+        mutation_rate=1e-8,
+        length=10 * 10 ** 6,
+        random_seed=42,
+    )
     ts.dump("simulation-source.trees")
-    print("simulation done:", ts.num_trees, "trees and", ts.num_sites,  "sites")
+    print("simulation done:", ts.num_trees, "trees and", ts.num_sites, "sites")
 
     progress = tqdm.tqdm(total=ts.num_sites)
     with tsinfer.SampleData(
-            path="simulation.samples", sequence_length=ts.sequence_length,
-            num_flush_threads=2) as sample_data:
+        path="simulation.samples", sequence_length=ts.sequence_length, num_flush_threads=2
+    ) as sample_data:
         for var in ts.variants():
             sample_data.add_site(var.site.position, var.genotypes, var.alleles)
             progress.update()
@@ -362,6 +367,7 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
     import cyvcf2
     import tsinfer
 
+
     def add_diploid_sites(vcf, samples):
         """
         Read the sites in the vcf and add them to the samples object, reordering the
@@ -376,37 +382,51 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
             if any([not phased for _, _, phased in variant.genotypes]):
                 raise ValueError("Unphased genotypes for variant at position", pos)
             alleles = [variant.REF] + variant.ALT
-            ancestral = variant.INFO.get('AA', variant.REF)
+            ancestral = variant.INFO.get("AA", variant.REF)
             # Ancestral state must be first in the allele list.
             ordered_alleles = [ancestral] + list(set(alleles) - {ancestral})
-            allele_index = {old_index: ordered_alleles.index(allele)
-                for old_index, allele in enumerate(alleles)}
+            allele_index = {
+                old_index: ordered_alleles.index(allele)
+                for old_index, allele in enumerate(alleles)
+            }
             # Map original allele indexes to their indexes in the new alleles list.
-            genotypes = [allele_index[old_index]
-                for row in variant.genotypes for old_index in row[0:2]]
+            genotypes = [
+                allele_index[old_index]
+                for row in variant.genotypes
+                for old_index in row[0:2]
+            ]
             samples.add_site(pos, genotypes=genotypes, alleles=alleles)
+
 
     def chromosome_length(vcf):
         assert len(vcf.seqlens) == 1
         return vcf.seqlens[0]
 
+
     # URL for the VCF
     url = "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
 
     vcf = cyvcf2.VCF(url)
-    with tsinfer.SampleData(path="P_dom_chr24_phased.samples",
-                            sequence_length=chromosome_length(vcf)) as samples:
+    with tsinfer.SampleData(
+        path="P_dom_chr24_phased.samples", sequence_length=chromosome_length(vcf)
+    ) as samples:
         add_diploid_sites(vcf, samples)
 
-    print("Sample file created for {} samples ".format(samples.num_samples) +
-      "({} individuals) ".format(samples.num_individuals) +
-      "with {} variable sites.".format(samples.num_sites), flush=True)
+    print(
+        "Sample file created for {} samples ".format(samples.num_samples)
+        + "({} individuals) ".format(samples.num_individuals)
+        + "with {} variable sites.".format(samples.num_sites),
+        flush=True,
+    )
 
     # Do the inference
     ts = tsinfer.infer(samples)
-    print("Inferred tree sequence: {} trees over {} Mb ({} edges)".format(
-        ts.num_trees, ts.sequence_length/1e6, ts.num_edges))
-    
+    print(
+        "Inferred tree sequence: {} trees over {} Mb ({} edges)".format(
+            ts.num_trees, ts.sequence_length / 1e6, ts.num_edges
+        )
+    )
+
 On a modern computer, this should only take a few seconds to run, producing this output::
 
     Sample file created for 20 samples (20 individuals) with 13192 variable sites.
@@ -443,6 +463,7 @@ been sampled.
 
     import json
 
+
     def add_populations(vcf, samples):
         """
         Add tsinfer Population objects and returns a list of IDs corresponding to the VCF samples.
@@ -450,38 +471,51 @@ been sampled.
         # In this VCF, the first letter of the sample name refers to the population
         samples_first_letter = [sample_name[0] for sample_name in vcf.samples]
         pop_lookup = {}
-        pop_lookup['8'] = samples.add_population(metadata={'country': 'Norway'})
-        pop_lookup['F'] = samples.add_population(metadata={'country': 'France'})
+        pop_lookup["8"] = samples.add_population(metadata={"country": "Norway"})
+        pop_lookup["F"] = samples.add_population(metadata={"country": "France"})
         return [pop_lookup[first_letter] for first_letter in samples_first_letter]
+
 
     def add_diploid_individuals(vcf, samples, populations):
         for name, population in zip(vcf.samples, populations):
             samples.add_individual(ploidy=2, metadata={"name": name}, population=population)
 
+
     # Repeat as previously but add both populations and individuals
     vcf = cyvcf2.VCF(url)
-    with tsinfer.SampleData(path="P_dom_chr24_phased.samples",
-                            sequence_length=chromosome_length(vcf)) as samples:
+    with tsinfer.SampleData(
+        path="P_dom_chr24_phased.samples", sequence_length=chromosome_length(vcf)
+    ) as samples:
         populations = add_populations(vcf, samples)
         add_diploid_individuals(vcf, samples, populations)
         add_diploid_sites(vcf, samples)
 
-    print("Sample file created for {} samples ".format(samples.num_samples) +
-      "({} individuals) ".format(samples.num_individuals) +
-      "with {} variable sites.".format(samples.num_sites), flush=True)
+    print(
+        "Sample file created for {} samples ".format(samples.num_samples)
+        + "({} individuals) ".format(samples.num_individuals)
+        + "with {} variable sites.".format(samples.num_sites),
+        flush=True,
+    )
 
     # Do the inference
     sparrow_ts = tsinfer.infer(samples)
-    print("Inferred tree sequence `{}`: {} trees over {} Mb".format(
-        "sparrow_ts", sparrow_ts.num_trees, sparrow_ts.sequence_length/1e6))
+    print(
+        "Inferred tree sequence `{}`: {} trees over {} Mb".format(
+            "sparrow_ts", sparrow_ts.num_trees, sparrow_ts.sequence_length / 1e6
+        )
+    )
     # Check the metadata
     for sample_node_id in sparrow_ts.samples():
         individual_id = sparrow_ts.node(sample_node_id).individual
         population_id = sparrow_ts.node(sample_node_id).population
         print(
-            "Node", sample_node_id, "labels one chromosome 24 sampled from individual",
+            "Node",
+            sample_node_id,
+            "labels one chromosome 24 sampled from individual",
             json.loads(sparrow_ts.individual(individual_id).metadata),
-            "in", json.loads(sparrow_ts.population(population_id).metadata)['country'])
+            "in",
+            json.loads(sparrow_ts.population(population_id).metadata)["country"],
+        )
 
 Which results in the correct output::
 
@@ -513,16 +547,21 @@ population:
     colours_for_node = {}
     for n in sparrow_ts.samples():
         population_data = sparrow_ts.population(sparrow_ts.node(n).population)
-        colours_for_node[n] = colours[json.loads(population_data.metadata)['country']]
-    
+        colours_for_node[n] = colours[json.loads(population_data.metadata)["country"]]
+
     individual_for_node = {}
     for n in sparrow_ts.samples():
         individual_data = sparrow_ts.individual(sparrow_ts.node(n).individual)
-        individual_for_node[n] = json.loads(individual_data.metadata)['name']
-    
+        individual_for_node[n] = json.loads(individual_data.metadata)["name"]
+
     tree = sparrow_ts.at(1e6)
-    tree.draw(path="tree_at_1Mb.svg", height=700, width=1200,
-              node_labels=individual_for_node, node_colours=colours_for_node)
+    tree.draw(
+        path="tree_at_1Mb.svg",
+        height=700,
+        width=1200,
+        node_labels=individual_for_node,
+        node_colours=colours_for_node,
+    )
 
 .. image:: _static/tree_at_1Mb.svg
    :width: 100%
@@ -548,9 +587,11 @@ and French (sub)populations:
 
 .. code-block:: python
 
-    samples_listed_by_population = [sparrow_ts.samples(population=pop_id)
-        for pop_id in range(sparrow_ts.num_populations)]
-    
+    samples_listed_by_population = [
+        sparrow_ts.samples(population=pop_id)
+        for pop_id in range(sparrow_ts.num_populations)
+    ]
+
     Fst = sparrow_ts.Fst(samples_listed_by_population)
     print(Fst)
 
@@ -561,21 +602,31 @@ a tidy manner
 .. code-block:: python
 
     import pandas as pd
-    
+
     gnn = sparrow_ts.genealogical_nearest_neighbours(
-        sparrow_ts.samples(), samples_listed_by_population)
+        sparrow_ts.samples(), samples_listed_by_population
+    )
 
     # Tabulate GNN nicely using a Pandas dataframe with named rows and columns
     sample_nodes = [sparrow_ts.node(n) for n in sparrow_ts.samples()]
     sample_ids = [n.id for n in sample_nodes]
-    sample_names = [json.loads(sparrow_ts.individual(n.individual).metadata)['name'] for n in sample_nodes]
-    sample_pops = [json.loads(sparrow_ts.population(n.population).metadata)['country'] for n in sample_nodes]
+    sample_names = [
+        json.loads(sparrow_ts.individual(n.individual).metadata)["name"]
+        for n in sample_nodes
+    ]
+    sample_pops = [
+        json.loads(sparrow_ts.population(n.population).metadata)["country"]
+        for n in sample_nodes
+    ]
     gnn_table = pd.DataFrame(
         data=gnn,
-        index=[pd.Index(sample_ids, name="Sample node"),
-               pd.Index(sample_names, name="Bird"),
-               pd.Index(sample_pops, name="Country")],
-        columns=[json.loads(p.metadata)['country'] for p in sparrow_ts.populations()])
+        index=[
+            pd.Index(sample_ids, name="Sample node"),
+            pd.Index(sample_names, name="Bird"),
+            pd.Index(sample_pops, name="Country"),
+        ],
+        columns=[json.loads(p.metadata)["country"] for p in sparrow_ts.populations()],
+    )
 
     print(gnn_table)
     # Summarize GNN for all birds from the same country

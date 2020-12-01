@@ -85,7 +85,7 @@ def remove_lmdb_lockfile(lmdb_file):
         os.unlink(lockfile)
 
 
-class BufferedItemWriter(object):
+class BufferedItemWriter:
     """
     Class that writes items sequentially into a set of zarr arrays,
     buffering writes and flushing them to the destination arrays
@@ -146,17 +146,17 @@ class BufferedItemWriter(object):
                 threads.queue_consumer_thread(
                     self._flush_worker,
                     self.flush_queue,
-                    name="flush-worker-{}".format(j),
+                    name=f"flush-worker-{j}",
                 )
                 for j in range(self.num_threads)
             ]
-            logger.info("Started {} flush worker threads".format(self.num_threads))
+            logger.info(f"Started {self.num_threads} flush worker threads")
 
     def _commit_write_buffer(self, write_buffer):
         start = self.start_offset[write_buffer]
         n = self.num_buffered_items[write_buffer]
         end = start + n
-        logger.debug("Flushing buffer {}: start={} n={}".format(write_buffer, start, n))
+        logger.debug(f"Flushing buffer {write_buffer}: start={start} n={n}")
         with self.resize_lock:
             if self.current_size < end:
                 self.current_size = end
@@ -167,7 +167,7 @@ class BufferedItemWriter(object):
         for key, array in self.arrays.items():
             buffered = self.buffers[key][write_buffer][:n]
             array[start:end] = buffered
-        logger.debug("Buffer {} flush done".format(write_buffer))
+        logger.debug(f"Buffer {write_buffer} flush done")
 
     def _flush_worker(self, thread_index):
         """
@@ -189,7 +189,7 @@ class BufferedItemWriter(object):
         Flushes the buffered ancestors to the data file.
         """
         if self.num_threads > 0:
-            logger.debug("Pushing buffer {} to flush queue".format(self.write_buffer))
+            logger.debug(f"Pushing buffer {self.write_buffer} to flush queue")
             self.flush_queue.put(self.write_buffer)
             self.write_buffer = self.write_queue.get()
         else:
@@ -234,7 +234,7 @@ def zarr_summary(array):
     Returns a string with a brief summary of the specified zarr array.
     """
     dtype = str(array.dtype)
-    ret = "shape={}; dtype={};".format(array.shape, dtype)
+    ret = f"shape={array.shape}; dtype={dtype};"
     if dtype != "object":
         # nbytes doesn't work correctly for object arrays.
         ret += "uncompressed size={}".format(humanize.naturalsize(array.nbytes))
@@ -348,7 +348,7 @@ def merge_variants(sd1, sd2):
         var2 = next(var2_iter, None)
 
 
-class DataContainer(object):
+class DataContainer:
     """
     Superclass of objects used to represent a collection of related
     data. Each datacontainer in a wrapper around a zarr group.
@@ -461,13 +461,13 @@ class DataContainer(object):
     def load(cls, path):
         # Try to read the file. This should raise the correct error if we have a
         # directory, missing file, permissions, etc.
-        with open(path, "r"):
+        with open(path):
             pass
         self = cls.__new__(cls)
         self.mode = self.READ_MODE
         self.path = path
         self._open_readonly()
-        logger.info("Loaded {}".format(self.summary()))
+        logger.info(f"Loaded {self.summary()}")
         return self
 
     def close(self):
@@ -579,9 +579,9 @@ class DataContainer(object):
 
     def _check_finalised(self):
         if not self.finalised:
-            error_msg = "The {} file".format(self.format_name)
+            error_msg = f"The {self.format_name} file"
             if self.path is not None:
-                error_msg = " at `{}`".format(self.path)
+                error_msg = f" at `{self.path}`"
             raise ValueError(error_msg + " is not finalised")
 
     @property
@@ -739,7 +739,7 @@ class DataContainer(object):
 
 
 @attr.s
-class Site(object):
+class Site:
     """
     A single site. Mirrors the definition in tskit with some additional fields.
     """
@@ -754,7 +754,7 @@ class Site(object):
 
 
 @attr.s
-class Variant(object):
+class Variant:
     """
     A single variant. Mirrors the definition in tskit.
     """
@@ -766,7 +766,7 @@ class Variant(object):
 
 
 @attr.s
-class Individual(object):
+class Individual:
     """
     An Individual object, representing a single individual which may contain multiple
     *samples* (i.e. phased genomes). For instance, a diploid individual will have
@@ -790,7 +790,7 @@ class Individual(object):
 
 
 @attr.s
-class Sample(object):
+class Sample:
     """
     A Sample object, representing a single haploid genome or chromosome. Several
     Samples can be associated with the same :class:`Individual`: for example a
@@ -808,7 +808,7 @@ class Sample(object):
 
 
 @attr.s
-class Population(object):
+class Population:
     """
     A Population object. Mirrors :class:`tskit.Population`.
     """
@@ -834,10 +834,8 @@ class SampleData(DataContainer):
     .. code-block:: python
 
         sample_data = tsinfer.SampleData(path="mydata.samples")
-        sample_data.add_site(
-            position=1234, genotypes=[0, 0, 1, 0], alleles=["G", "C"])
-        sample_data.add_site(
-            position=5678, genotypes=[1, 1, 1, 0], alleles=["A", "T"])
+        sample_data.add_site(position=1234, genotypes=[0, 0, 1, 0], alleles=["G", "C"])
+        sample_data.add_site(position=5678, genotypes=[1, 1, 1, 0], alleles=["A", "T"])
         sample_data.finalise()
 
     This creates a sample data file for four haploid samples and two sites, and
@@ -863,14 +861,10 @@ class SampleData(DataContainer):
             sample_data.add_population(metadata={"name": "CEU"})
             sample_data.add_population(metadata={"name": "YRI"})
             # Define individuals
-            sample_data.add_individual(
-                ploidy=2, population=0, metadata={"name": "NA12878"})
-            sample_data.add_individual(
-                ploidy=2, population=0, metadata={"name": "NA12891"})
-            sample_data.add_individual(
-                ploidy=2, population=0, metadata={"name": "NA12892"})
-            sample_data.add_individual(
-                ploidy=2, population=1, metadata={"name": "NA18484"})
+            sample_data.add_individual(ploidy=2, population=0, metadata={"name": "NA12"})
+            sample_data.add_individual(ploidy=2, population=0, metadata={"name": "NA13"})
+            sample_data.add_individual(ploidy=2, population=0, metadata={"name": "NA14"})
+            sample_data.add_individual(ploidy=2, population=1, metadata={"name": "NA15"})
             # Define sites and genotypes
             sample_data.add_site(1234, [0, 1, 1, 1, 0, 0, 0, 0], ["G", "C"])
             sample_data.add_site(5678, [0, 0, 0, 0, 0, 0, 1, 1], ["A", "T"])
@@ -1163,7 +1157,7 @@ class SampleData(DataContainer):
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
             ("sites/metadata", zarr_summary(self.sites_metadata)),
         ]
-        return super(SampleData, self).__str__() + self._format_str(values)
+        return super().__str__() + self._format_str(values)
 
     def formats_equal(self, other):
         return (
@@ -1705,9 +1699,7 @@ class SampleData(DataContainer):
         if np.any(np.logical_and(genotypes < 0, genotypes != tskit.MISSING_DATA)):
             raise ValueError("Non-missing values for genotypes cannot be negative")
         if genotypes.shape != (self.num_samples,):
-            raise ValueError(
-                "Must have {} (num_samples) genotypes.".format(self.num_samples)
-            )
+            raise ValueError(f"Must have {self.num_samples} (num_samples) genotypes.")
         if np.any(genotypes[non_missing] >= n_alleles):
             raise ValueError("Non-missing values for genotypes must be < num alleles")
         if position < 0:
@@ -1784,7 +1776,7 @@ class SampleData(DataContainer):
                 # Need to be careful that sequence_length is JSON serialisable here.
                 self.data.attrs["sequence_length"] = float(self._last_position) + 1
 
-        super(SampleData, self).finalise()
+        super().finalise()
 
     def __insert_individuals(self, other, pop_id_map=None):
         """
@@ -2026,7 +2018,7 @@ class SampleData(DataContainer):
 
 
 @attr.s
-class Ancestor(object):
+class Ancestor:
     """
     An ancestor object.
     """
@@ -2171,7 +2163,7 @@ class AncestorData(DataContainer):
             ("ancestors/focal_sites", zarr_summary(self.ancestors_focal_sites)),
             ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype)),
         ]
-        return super(AncestorData, self).__str__() + self._format_str(values)
+        return super().__str__() + self._format_str(values)
 
     def data_equal(self, other):
         """
@@ -2494,7 +2486,7 @@ class AncestorData(DataContainer):
         if self._mode == self.BUILD_MODE:
             self.ancestor_writer.flush()
             self.ancestor_writer = None
-        super(AncestorData, self).finalise()
+        super().finalise()
 
     ####################################
     # Read mode
@@ -2542,13 +2534,13 @@ def load(path):
         tsinfer_file = SampleData.load(path)
         logger.debug("Loaded SampleData file")
     except exceptions.FileFormatError as e:
-        logger.debug("SampleData load failed: {}".format(e))
+        logger.debug(f"SampleData load failed: {e}")
     try:
         logger.debug("Trying AncestorData file")
         tsinfer_file = AncestorData.load(path)
         logger.debug("Loaded AncestorData file")
     except exceptions.FileFormatError as e:
-        logger.debug("AncestorData load failed: {}".format(e))
+        logger.debug(f"AncestorData load failed: {e}")
     if tsinfer_file is None:
         raise exceptions.FileFormatError(
             "Unrecognised file format. Try running with -vv and check the log "

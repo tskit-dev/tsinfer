@@ -50,16 +50,14 @@ logger = logging.getLogger(__name__)
 def _queue_thread(worker, work_queue, name="tsinfer-worker", index=0, consumer=True):
     def thread_target():
         try:
-            logger.debug("thread '{}' starting".format(name))
+            logger.debug(f"thread '{name}' starting")
             if _prctl_available:
                 prctl.set_name(name)
             if _numa_available and numa.available():
                 numa.set_localalloc()
-                logger.debug(
-                    "Set NUMA local allocation policy on thread {}".format(name)
-                )
+                logger.debug(f"Set NUMA local allocation policy on thread {name}")
             worker(index)
-            logger.debug("thread '{}' finishing".format(name))
+            logger.debug(f"thread '{name}' finishing")
         except Exception:
             logger.critical("Exception occured in thread; exiting")
             logger.critical(traceback.format_exc())

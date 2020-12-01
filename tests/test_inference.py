@@ -1675,7 +1675,7 @@ class TestMatchSamples:
                 tsinfer.match_samples(sd, a_ts, indexes=bad_samples)
 
 
-class AlgorithmsExactlyEqualMixin(object):
+class AlgorithmsExactlyEqualMixin:
     """
     For small example tree sequences, check that the Python and C implementations
     return precisely the same tree sequence when fed with perfect mutations.
@@ -2304,7 +2304,7 @@ class TestMatchSiteSubsets:
         self.verify(sample_data, position[:][::2])
 
 
-class PathCompressionMixin(object):
+class PathCompressionMixin:
     """
     Common utilities for testing a tree sequence with path compression.
     """
@@ -3009,8 +3009,8 @@ class TestAlgorithmResults:
             recombination_rate=np.pad(np.diff(sample_data.sites_position[:]), (1, 0)),
         )
         assert ts.num_trees == 2
-        breakpoint_pos = set(ts.breakpoints()) - set([0.0, ts.sequence_length])
-        assert breakpoint_pos == set([positions[breakpoint_index + 1]])
+        breakpoint_pos = set(ts.breakpoints()) - {0.0, ts.sequence_length}
+        assert breakpoint_pos == {positions[breakpoint_index + 1]}
 
     def test_recombination_with_dist_high_freq_intermediate(self):
         G = np.array(

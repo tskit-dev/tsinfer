@@ -144,11 +144,9 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
                 )
             )
         if var1.alleles != var2.alleles:
-            raise ValueError(
-                "alleles not equal: {} != {}".format(var1.alleles, var2.alleles)
-            )
+            raise ValueError(f"alleles not equal: {var1.alleles} != {var2.alleles}")
         if not np.array_equal(var1.genotypes, var2.genotypes):
-            raise ValueError("Genotypes not equal at site {}".format(var1.site.id))
+            raise ValueError(f"Genotypes not equal at site {var1.site.id}")
         progress.update()
     progress.close()
 
@@ -642,7 +640,7 @@ def insert_missing_sites(
     return tables.tree_sequence()
 
 
-class AncestorsGenerator(object):
+class AncestorsGenerator:
     """
     Manages the process of building ancestors.
     """
@@ -675,7 +673,7 @@ class AncestorsGenerator(object):
                 self.num_samples, self.max_sites
             )
         else:
-            raise ValueError("Unknown engine:{}".format(engine))
+            raise ValueError(f"Unknown engine:{engine}")
 
     def add_sites(self, exclude_positions=None):
         """
@@ -702,7 +700,7 @@ class AncestorsGenerator(object):
                 raise ValueError("exclude_positions must be a 1D array of numbers")
         exclude_positions = set(exclude_positions)
 
-        logger.info("Starting addition of {} sites".format(self.max_sites))
+        logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
         for variant in self.sample_data.variants():
@@ -786,7 +784,7 @@ class AncestorsGenerator(object):
                 progress.update()
                 next_add_index += 1
                 num_drained += 1
-            logger.debug("Drained {} ancestors from add queue".format(num_drained))
+            logger.debug(f"Drained {num_drained} ancestors from add queue")
 
         def build_worker(thread_index):
             a = np.zeros(self.num_sites, dtype=np.int8)
@@ -807,11 +805,11 @@ class AncestorsGenerator(object):
 
         build_threads = [
             threads.queue_consumer_thread(
-                build_worker, build_queue, name="build-worker-{}".format(j), index=j
+                build_worker, build_queue, name=f"build-worker-{j}", index=j
             )
             for j in range(self.num_threads)
         ]
-        logger.debug("Started {} build worker threads".format(self.num_threads))
+        logger.debug(f"Started {self.num_threads} build worker threads")
 
         for index, (t, focal_sites) in enumerate(self.descriptors):
             build_queue.put((index, t, focal_sites))
@@ -832,7 +830,7 @@ class AncestorsGenerator(object):
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         if self.num_ancestors > 0:
-            logger.info("Starting build for {} ancestors".format(self.num_ancestors))
+            logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
             a = np.zeros(self.num_sites, dtype=np.int8)
             root_time = max(self.timepoint_to_epoch.keys()) + 1
@@ -864,7 +862,7 @@ class AncestorsGenerator(object):
             logger.info("Finished building ancestors")
 
 
-class Matcher(object):
+class Matcher:
     def __init__(
         self,
         sample_data,
@@ -920,7 +918,7 @@ class Matcher(object):
             self.tree_sequence_builder_class = algorithm.TreeSequenceBuilder
             self.ancestor_matcher_class = algorithm.AncestorMatcher
         else:
-            raise ValueError("Unknown engine:{}".format(engine))
+            raise ValueError(f"Unknown engine:{engine}")
         self.tree_sequence_builder = None
 
         all_sites = self.sample_data.sites_position[:]
@@ -940,9 +938,7 @@ class Matcher(object):
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
         )
-        logger.debug(
-            "Allocated tree sequence builder with max_nodes={}".format(max_nodes)
-        )
+        logger.debug(f"Allocated tree sequence builder with max_nodes={max_nodes}")
 
         # Allocate the matchers and statistics arrays.
         num_threads = max(1, self.num_threads)
@@ -1136,11 +1132,11 @@ class AncestorMatcher(Matcher):
 
         match_threads = [
             threads.queue_consumer_thread(
-                match_worker, match_queue, name="match-worker-{}".format(j), index=j
+                match_worker, match_queue, name=f"match-worker-{j}", index=j
             )
             for j in range(self.num_threads)
         ]
-        logger.debug("Started {} match worker threads".format(self.num_threads))
+        logger.debug(f"Started {self.num_threads} match worker threads")
 
         for j in range(self.start_epoch, self.num_epochs):
             self.__start_epoch(j)
@@ -1160,7 +1156,7 @@ class AncestorMatcher(Matcher):
             match_threads[j].join()
 
     def match_ancestors(self):
-        logger.info("Starting ancestor matching for {} epochs".format(self.num_epochs))
+        logger.info(f"Starting ancestor matching for {self.num_epochs} epochs")
         self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
         if self.num_threads <= 0:
             self.__match_ancestors_single_threaded()
@@ -1343,11 +1339,11 @@ class SampleMatcher(Matcher):
 
         match_threads = [
             threads.queue_consumer_thread(
-                match_worker, match_queue, name="match-worker-{}".format(j), index=j
+                match_worker, match_queue, name=f"match-worker-{j}", index=j
             )
             for j in range(self.num_threads)
         ]
-        logger.debug("Started {} match worker threads".format(self.num_threads))
+        logger.debug(f"Started {self.num_threads} match worker threads")
 
         sample_haplotypes = self.sample_data.haplotypes(
             indexes, sites=self.inference_site_id
@@ -1616,7 +1612,7 @@ class SampleMatcher(Matcher):
         return tables.tree_sequence()
 
 
-class ResultBuffer(object):
+class ResultBuffer:
     """
     A wrapper for numpy arrays representing the results of a copying operations.
     """

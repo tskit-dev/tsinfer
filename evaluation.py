@@ -501,7 +501,7 @@ def run_hotspot_analysis(args):
                 args.hotspot_width,
             ),
         )
-        save_figure(name_format.format("breakpoints_density={}".format(density)))
+        save_figure(name_format.format(f"breakpoints_density={density}"))
         plt.clf()
 
     print("Generating edge plots")
@@ -953,7 +953,7 @@ def run_ancestor_comparison(args):
         cbar.set_label(colorscale, rotation=270)
         plt.xlabel("True ancestor length per variant (kb)")
         plt.ylabel("Inferred ancestor length per variant (kb)")
-        save_figure(name_format.format("length-scatter_{}".format(colorscale.lower())))
+        save_figure(name_format.format(f"length-scatter_{colorscale.lower()}"))
 
     # plot exact ancestors ordered by time, and estimated ancestors in frequency bands
     # one point per variable site, so these should be directly comparable
@@ -1021,8 +1021,8 @@ def run_ancestor_comparison(args):
             )
             lines_y = [pad_mean, pad_median]
             names = [
-                "Running mean over {} ancestors".format(args.running_average_span),
-                "Running median over {} ancestors".format(args.running_average_span),
+                f"Running mean over {args.running_average_span} ancestors",
+                f"Running median over {args.running_average_span} ancestors",
             ]
             linestyles = ["-", ":"]
             colours = ["limegreen", "forestgreen"]
@@ -1312,9 +1312,7 @@ def run_ancestor_quality(args):
                         ]
                     )
                 )
-                print(
-                    "INFERRED ANCESTOR for focal site #{} (pos {})".format(i, focal_pos)
-                )
+                print(f"INFERRED ANCESTOR for focal site #{i} (pos {focal_pos})")
                 print(
                     "Haplotype (start @idx {}, pos {})".format(
                         offset2, estim_positions[offset2]
@@ -1909,7 +1907,7 @@ if __name__ == "__main__":
         "-V",
         "--version",
         action="version",
-        version="%(prog)s {}".format(tsinfer.__version__),
+        version=f"%(prog)s {tsinfer.__version__}",
     )
     top_parser.add_argument(
         "-o", "--output-format", default="png", help="The output format for plots"

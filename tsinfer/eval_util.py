@@ -669,7 +669,7 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
             num_extra += 1
     progress.close()
 
-    logger.info("Generated {} extra ancestors".format(num_extra))
+    logger.info(f"Generated {num_extra} extra ancestors")
     tables.sort()
     ancestors_ts = tables.tree_sequence()
     return ancestors_ts

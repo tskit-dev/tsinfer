@@ -235,7 +235,7 @@ def build_profile_inputs(n, num_megabases):
             ts.num_trees,
         )
         ts.dump(input_file)
-    filename = "tmp__NOBACKUP__/profile-n={}-m={}.samples".format(n, num_megabases)
+    filename = f"tmp__NOBACKUP__/profile-n={n}-m={num_megabases}.samples"
     if os.path.exists(filename):
         os.unlink(filename)
     # daiquiri.setup(level="DEBUG")

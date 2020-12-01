@@ -61,8 +61,8 @@ def summarise_usage():
         maxmem_str = "; max memory={}".format(
             humanize.naturalsize(max_mem, binary=True)
         )
-    logger.info("wall time = {}".format(wall_time))
-    logger.info("rusage: user={}; sys={:.2f}s".format(user_time, sys_time) + maxmem_str)
+    logger.info(f"wall time = {wall_time}")
+    logger.info(f"rusage: user={user_time}; sys={sys_time:.2f}s" + maxmem_str)
 
 
 def get_default_path(path, input_path, extension):
@@ -144,7 +144,7 @@ def run_infer(args):
         sample_data, progress_monitor=args.progress, num_threads=args.num_threads
     )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
-    logger.info("Writing output tree sequence to {}".format(output_trees))
+    logger.info(f"Writing output tree sequence to {output_trees}")
     ts.dump(output_trees)
     summarise_usage()
 
@@ -166,7 +166,7 @@ def run_generate_ancestors(args):
 def run_match_ancestors(args):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.samples)
-    logger.info("Loading ancestral haplotypes from {}".format(ancestors_path))
+    logger.info(f"Loading ancestral haplotypes from {ancestors_path}")
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     sample_data = tsinfer.SampleData.load(args.samples)
     ancestor_data = tsinfer.AncestorData.load(ancestors_path)
@@ -177,7 +177,7 @@ def run_match_ancestors(args):
         progress_monitor=args.progress,
         path_compression=not args.no_path_compression,
     )
-    logger.info("Writing ancestors tree sequence to {}".format(ancestors_trees))
+    logger.info(f"Writing ancestors tree sequence to {ancestors_trees}")
     ts.dump(ancestors_trees)
     summarise_usage()
 
@@ -188,7 +188,7 @@ def run_augment_ancestors(args):
     sample_data = tsinfer.SampleData.load(args.samples)
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     output_path = args.augmented_ancestors
-    logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
+    logger.info(f"Loading ancestral genealogies from {ancestors_trees}")
     ancestors_trees = tskit.load(ancestors_trees)
     # TODO Need some error checking on these values
     n = args.num_samples
@@ -205,7 +205,7 @@ def run_augment_ancestors(args):
         path_compression=not args.no_path_compression,
         progress_monitor=args.progress,
     )
-    logger.info("Writing output tree sequence to {}".format(output_path))
+    logger.info(f"Writing output tree sequence to {output_path}")
     ts.dump(output_path)
     summarise_usage()
 
@@ -216,7 +216,7 @@ def run_match_samples(args):
     sample_data = tsinfer.SampleData.load(args.samples)
     ancestors_trees = get_ancestors_trees_path(args.ancestors_trees, args.samples)
     output_trees = get_output_trees_path(args.output_trees, args.samples)
-    logger.info("Loading ancestral genealogies from {}".format(ancestors_trees))
+    logger.info(f"Loading ancestral genealogies from {ancestors_trees}")
     ancestors_trees = tskit.load(ancestors_trees)
     ts = tsinfer.match_samples(
         sample_data,
@@ -226,7 +226,7 @@ def run_match_samples(args):
         simplify=not args.no_simplify,
         progress_monitor=args.progress,
     )
-    logger.info("Writing output tree sequence to {}".format(output_trees))
+    logger.info(f"Writing output tree sequence to {output_trees}")
     ts.dump(output_trees)
     summarise_usage()
 
@@ -363,7 +363,7 @@ def get_cli_parser():
         "-V",
         "--version",
         action="version",
-        version="%(prog)s {}".format(tsinfer.__version__),
+        version=f"%(prog)s {tsinfer.__version__}",
     )
 
     subparsers = top_parser.add_subparsers(dest="subcommand")
