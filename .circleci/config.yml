@@ -78,6 +78,7 @@ jobs:
             gcov -pb ./libtsinfer.a.p/ancestor_matcher.c.gcno ../lib/ancestor_matcher.c
             gcov -pb ./libtsinfer.a.p/tree_sequence_builder.c.gcno ../lib/tree_sequence_builder.c
             gcov -pb ./libtsinfer.a.p/object_heap.c.gcno ../lib/object_heap.c
+            gcov -pb ./libtsinfer.a.p/err.c.gcno ../lib/err.c
             cd ..
             codecov -X gcov -F C
 

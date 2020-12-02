@@ -655,7 +655,7 @@ tree_sequence_builder_make_pc_node(
     }
     min_parent_time -= PC_ANCESTOR_INCREMENT;
     if (min_parent_time <= mapped_child_time) {
-        ret = TSI_ERR_ASSERTION_FAILURE;
+        ret = TSI_ERR_PC_ANCESTOR_TIME;
         goto out;
     }
 

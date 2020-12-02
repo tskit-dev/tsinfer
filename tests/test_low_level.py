@@ -131,7 +131,9 @@ class TestAncestorBuilder:
             for _ in range(max_sites):
                 ab.add_site(time=1, genotypes=[0, 1])
             for _ in range(2 * max_sites):
-                with pytest.raises(_tsinfer.LibraryError):
+                with pytest.raises(_tsinfer.LibraryError) as record:
                     ab.add_site(time=1, genotypes=[0, 1])
+                msg = "Cannot add more sites than the specified maximum."
+                assert str(record.value) == msg
 
     # TODO need tester methods for the remaining methonds in the class.
