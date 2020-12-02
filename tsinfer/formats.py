@@ -62,6 +62,18 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 DEFAULT_MAX_FILE_SIZE = 2 ** 30 if sys.platform == "win32" else 2 ** 40
 
 
+def permissive_json_schema():
+    # A version of this should be in tskit, but we keep it here for now
+    # for convenience
+    return {
+        "codec": "json",
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": True,
+    }
+
+
 def np_obj_equal(np_obj_array1, np_obj_array2):
     """
     A replacement for np.array_equal to test equality of numpy arrays that
@@ -804,7 +816,6 @@ class Sample:
     # TODO document properly.
     id = attr.ib()
     individual = attr.ib()
-    metadata = attr.ib()
 
 
 @attr.s
@@ -927,6 +938,8 @@ class SampleData(DataContainer):
 
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
+        self.data.attrs["metadata"] = {}
+        self.data.attrs["metadata_schema"] = permissive_json_schema()
         chunks = (self._chunk_size,)
         populations_group = self.data.create_group("populations")
         metadata = populations_group.create_dataset(
@@ -937,11 +950,13 @@ class SampleData(DataContainer):
             dtype=object,
             object_codec=self._metadata_codec,
         )
+        populations_group.attrs["metadata_schema"] = None
         self._populations_writer = BufferedItemWriter(
             {"metadata": metadata}, num_threads=self._num_flush_threads
         )
 
         individuals_group = self.data.create_group("individuals")
+        individuals_group.attrs["metadata_schema"] = None
         metadata = individuals_group.create_dataset(
             "metadata",
             shape=(0,),
@@ -997,20 +1012,13 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=np.int32,
         )
-        metadata = samples_group.create_dataset(
-            "metadata",
-            shape=(0,),
-            chunks=chunks,
-            compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
-        )
         self._samples_writer = BufferedItemWriter(
-            {"individual": individual, "metadata": metadata},
+            {"individual": individual},
             num_threads=self._num_flush_threads,
         )
 
         sites_group = self.data.create_group("sites")
+        sites_group.attrs["metadata_schema"] = None
         sites_group.create_dataset(
             "position",
             shape=(0,),
@@ -1051,7 +1059,7 @@ class SampleData(DataContainer):
 
         self._last_position = 0
         self._sites_writer = None
-        # We are initially in the ADDING_POPULATIONS.
+        # We are initially in the ADDING_POPULATIONS state.
         self._build_state = self.ADDING_POPULATIONS
 
     def summary(self):
@@ -1059,9 +1067,66 @@ class SampleData(DataContainer):
             self.num_samples, self.num_sites
         )
 
+    # Note: abstracting the process of getting and setting the metadata schemas
+    # out here so we can do better validation of the inputs/optionally accept
+    # a tskit MetadataSchema object rather than a dict.
+    def __metadata_schema_getter(self, zarr_group):
+        return zarr_group.attrs["metadata_schema"]
+
+    def __metadata_schema_setter(self, zarr_group, schema):
+        # Make sure we can parse it.
+        if schema is not None:
+            parsed_schema = tskit.MetadataSchema(schema)
+            # We only support the JSON codec for now for simplicity.
+            if parsed_schema.schema["codec"] != "json":
+                raise ValueError("Only the JSON codec is currently supported")
+        zarr_group.attrs["metadata_schema"] = schema
+
     @property
     def sequence_length(self):
         return self.data.attrs["sequence_length"]
+
+    @property
+    def metadata_schema(self):
+        return self.data.attrs["metadata_schema"]
+
+    @metadata_schema.setter
+    def metadata_schema(self, schema):
+        if schema is None:
+            raise ValueError("Must have a schema for top-level metadata")
+        self.__metadata_schema_setter(self.data, schema)
+
+    @property
+    def metadata(self):
+        return self.data.attrs["metadata"]
+
+    @metadata.setter
+    def metadata(self, metadata):
+        self.data.attrs["metadata"] = metadata
+
+    @property
+    def populations_metadata_schema(self):
+        return self.__metadata_schema_getter(self.data["populations"])
+
+    @populations_metadata_schema.setter
+    def populations_metadata_schema(self, schema):
+        self.__metadata_schema_setter(self.data["populations"], schema)
+
+    @property
+    def individuals_metadata_schema(self):
+        return self.__metadata_schema_getter(self.data["individuals"])
+
+    @individuals_metadata_schema.setter
+    def individuals_metadata_schema(self, schema):
+        self.__metadata_schema_setter(self.data["individuals"], schema)
+
+    @property
+    def sites_metadata_schema(self):
+        return self.__metadata_schema_getter(self.data["sites"])
+
+    @sites_metadata_schema.setter
+    def sites_metadata_schema(self, schema):
+        self.__metadata_schema_setter(self.data["sites"], schema)
 
     @property
     def num_populations(self):
@@ -1069,7 +1134,7 @@ class SampleData(DataContainer):
 
     @property
     def num_samples(self):
-        return self.samples_metadata.shape[0]
+        return self.samples_individual.shape[0]
 
     @property
     def num_individuals(self):
@@ -1108,10 +1173,6 @@ class SampleData(DataContainer):
         return self.data["samples/individual"]
 
     @property
-    def samples_metadata(self):
-        return self.data["samples/metadata"]
-
-    @property
     def sites_genotypes(self):
         return self.data["sites/genotypes"]
 
@@ -1139,22 +1200,26 @@ class SampleData(DataContainer):
     def __str__(self):
         values = [
             ("sequence_length", self.sequence_length),
+            ("metadata_schema", self.metadata_schema),
+            ("metadata", self.metadata),
             ("num_populations", self.num_populations),
             ("num_individuals", self.num_individuals),
             ("num_samples", self.num_samples),
             ("num_sites", self.num_sites),
+            ("populations/metadata_schema", self.populations_metadata_schema),
             ("populations/metadata", zarr_summary(self.populations_metadata)),
+            ("individuals/metadata_schema", self.individuals_metadata_schema),
             ("individuals/metadata", zarr_summary(self.individuals_metadata)),
             ("individuals/location", zarr_summary(self.individuals_location)),
             ("individuals/time", zarr_summary(self.individuals_time)),
             ("individuals/population", zarr_summary(self.individuals_population)),
             ("individuals/flags", zarr_summary(self.individuals_flags)),
             ("samples/individual", zarr_summary(self.samples_individual)),
-            ("samples/metadata", zarr_summary(self.samples_metadata)),
             ("sites/position", zarr_summary(self.sites_position)),
             ("sites/time", zarr_summary(self.sites_time)),
             ("sites/alleles", zarr_summary(self.sites_alleles)),
             ("sites/genotypes", zarr_summary(self.sites_genotypes)),
+            ("sites/metadata_schema", self.sites_metadata_schema),
             ("sites/metadata", zarr_summary(self.sites_metadata)),
         ]
         return super().__str__() + self._format_str(values)
@@ -1193,10 +1258,8 @@ class SampleData(DataContainer):
         )
 
     def samples_equal(self, other):
-        return (
-            self.num_samples == other.num_samples
-            and np.all(self.samples_individual[:] == other.samples_individual[:])
-            and np_obj_equal(self.samples_metadata[:], other.samples_metadata[:])
+        return self.num_samples == other.num_samples and np.all(
+            self.samples_individual[:] == other.samples_individual[:]
         )
 
     def sites_equal(self, other):
@@ -1287,7 +1350,6 @@ class SampleData(DataContainer):
         sites = set(sites)
         if len(sites) != num_sites:
             raise ValueError("Duplicate site IDS")
-        all_samples_metadata = self.samples_metadata[:]
         with SampleData(sequence_length=self.sequence_length, **kwargs) as subset:
             # NOTE We don't bother filtering the populations, but we could.
             for population in self.populations():
@@ -1296,16 +1358,12 @@ class SampleData(DataContainer):
             for individual_id in individuals:
                 individual = self.individual(individual_id)
                 sample_selection.extend(individual.samples)
-                samples_metadata = [
-                    all_samples_metadata[sample_id] for sample_id in individual.samples
-                ]
                 subset.add_individual(
                     location=individual.location,
                     metadata=individual.metadata,
                     time=individual.time,
                     population=individual.population,
-                    samples_metadata=samples_metadata,
-                    ploidy=len(samples_metadata),
+                    ploidy=len(individual.samples),
                 )
             sample_selection = np.array(sample_selection, dtype=int)
             if len(sample_selection) < 2:
@@ -1363,7 +1421,6 @@ class SampleData(DataContainer):
         ts,
         use_sites_time=True,
         use_individuals_time=True,
-        use_metadata=True,
         **kwargs,
     ):
         """
@@ -1378,6 +1435,13 @@ class SampleData(DataContainer):
         with ``u`` sample nodes but no individuals will be translated into a SampleData
         file with ``u`` haploid individuals and ``u`` samples.
 
+        Metadata associated with individuals, populations, sites, and at the top level
+        of the tree sequence, is also stored in the appropriate places in the returned
+        SampleData instance. Any such metadata must either have a schema defined
+        or be JSON encodable text. See the `tskit documentation
+        <https://tskit.readthedocs.io/en/stable/metadata.html>`_ for more details
+        on metadata schemas.
+
         :param TreeSequence ts: The :class:`tskit.TreeSequence` from which to generate
             samples.
         :param bool use_sites_time: If True (default), the times of nodes in the tree
@@ -1388,26 +1452,39 @@ class SampleData(DataContainer):
             variant. If False, the frequency of the variant is used as a proxy for the
             relative variant time (see :meth:`.add_site`).
         :param bool use_individuals_time: If True (default), set a time for individuals
-            that contain non-contemporaneous sample nodes. If False, all individuals are
+            that contain historical sample nodes. If False, all individuals are
             set at time 0.
-        :param bool use_metadata: If True (default), metadata associated with sample
-            nodes, individuals, sites, and populations is stored in the SampleData file.
-            Metadata in a SampleData instance must be JSON encodable, but this is not
-            required for tree sequences in general. Hence if metadata exists in the input
-            tree sequence but is not in JSON format, you will need to omit copying any
-            metadata by setting this parameter to False.
         :param \\**kwargs: Further arguments passed to the :class:`SampleData`
             constructor.
         :return: A :class:`.SampleData` object.
         :rtype: SampleData
         """
-        self = cls.__new__(cls)
-        self.__init__(sequence_length=ts.sequence_length, **kwargs)
+
+        def encode_metadata(metadata, schema):
+            if schema is None:
+                if len(metadata) > 0:
+                    metadata = json.loads(metadata)
+                else:
+                    metadata = None
+            return metadata
+
+        tables = ts.tables
+        self = cls(sequence_length=ts.sequence_length, **kwargs)
+
+        schema = tables.metadata_schema.schema
+        if schema is not None:
+            self.metadata_schema = schema
+            self.metadata = tables.metadata
+        else:
+            assert len(tables.metadata) == 0
+
+        schema = tables.populations.metadata_schema.schema
+        self.populations_metadata_schema = schema
         for population in ts.populations():
-            population_metadata = None
-            if use_metadata and population.metadata:
-                population_metadata = json.loads(population.metadata)
-            self.add_population(metadata=population_metadata)
+            self.add_population(metadata=encode_metadata(population.metadata, schema))
+
+        schema = tables.individuals.metadata_schema.schema
+        self.individuals_metadata_schema = schema
         for individual in ts.individuals():
             nodes = individual.nodes
             if len(nodes) > 0:
@@ -1424,50 +1501,38 @@ class SampleData(DataContainer):
                             "All nodes for individual {} must be in the same "
                             "population".format(individual.id)
                         )
-                individual_metadata = None
-                samples_metadata = [None for u in nodes]
-                if use_metadata:
-                    if individual.metadata:
-                        individual_metadata = json.loads(individual.metadata)
-                    for i, u in enumerate(nodes):
-                        if ts.node(u).metadata:
-                            samples_metadata[i] = json.loads(ts.node(u).metadata)
+                metadata = encode_metadata(individual.metadata, schema)
                 self.add_individual(
                     location=individual.location,
-                    metadata=individual_metadata,
+                    metadata=metadata,
                     population=first_node.population,
                     flags=individual.flags,
                     time=first_node.time if use_individuals_time else 0,
                     ploidy=len(nodes),
-                    samples_metadata=samples_metadata,
                 )
         for u in ts.samples():
             node = ts.node(u)
             if node.individual == tskit.NULL:
                 # The sample node has no individual: create a haploid individual for it
-                sample_metadata = None
-                if use_metadata and ts.node(u).metadata:
-                    sample_metadata = json.loads(ts.node(u).metadata)
                 self.add_individual(
                     population=node.population,
                     time=node.time if use_individuals_time else 0,
                     ploidy=1,
-                    samples_metadata=[sample_metadata],
                 )
+
+        schema = tables.sites.metadata_schema.schema
+        self.sites_metadata_schema = schema
         for v in ts.variants():
             variant_time = tskit.UNKNOWN_TIME
             if use_sites_time:
                 variant_time = np.nan
                 if len(v.site.mutations) == 1:
                     variant_time = ts.node(v.site.mutations[0].node).time
-            site_metadata = None
-            if use_metadata and v.site.metadata:
-                site_metadata = json.loads(v.site.metadata)
             self.add_site(
                 v.site.position,
                 v.genotypes,
                 v.alleles,
-                metadata=site_metadata,
+                metadata=encode_metadata(v.site.metadata, schema),
                 time=variant_time,
             )
         # Insert all the provenance from the original tree sequence.
@@ -1517,7 +1582,6 @@ class SampleData(DataContainer):
         population=None,
         location=None,
         time=0,
-        samples_metadata=None,
         flags=None,
     ):
         """
@@ -1547,9 +1611,6 @@ class SampleData(DataContainer):
         :param float time: The historical time into the past when the samples
             associated with this individual were taken. By default we assume that
             all samples come from the present time (i.e. the default time is 0).
-        :param list samples_metadata: A list of JSON encodable dict-like objects,
-            of length ``ploidy``, giving metadata to be associated with each
-            sample, or None to give all samples an empty metadata field.
         :param int flags: The bitwise flags for this individual.
         :return: The ID of the newly added individual and a list of the sample
             IDs also added.
@@ -1572,12 +1633,6 @@ class SampleData(DataContainer):
             raise ValueError("population ID out of bounds")
         if ploidy <= 0:
             raise ValueError("Ploidy must be at least 1")
-        if samples_metadata is not None and len(samples_metadata) != ploidy:
-            raise ValueError(
-                "If you specify samples_metadata, it must be a list of length `ploidy`"
-            )
-        if samples_metadata is None:
-            samples_metadata = [None] * ploidy
         if location is None:
             location = []
         location = np.array(location, dtype=np.float64)
@@ -1591,10 +1646,9 @@ class SampleData(DataContainer):
             flags=flags,
         )
         sample_ids = []
-        for sample_meta in samples_metadata:
-            sample_meta = self._check_metadata(sample_meta)
+        for _ in range(ploidy):
             sid = self._samples_writer.add(
-                individual=individual_id, metadata=sample_meta
+                individual=individual_id,
             )
             sample_ids.append(sid)
         return individual_id, sample_ids
@@ -1787,11 +1841,7 @@ class SampleData(DataContainer):
         if pop_id_map is None:
             pop_id_map = {j: j for j in range(other.num_populations)}
             pop_id_map[tskit.NULL] = tskit.NULL
-        other_samples_metadata = other.samples_metadata[:]
         for individual in other.individuals():
-            samples_metadata = [
-                other_samples_metadata[sample_id] for sample_id in individual.samples
-            ]
             self.add_individual(
                 location=individual.location,
                 metadata=individual.metadata,
@@ -1799,8 +1849,7 @@ class SampleData(DataContainer):
                 flags=individual.flags,
                 # We're assuming this is the same for all samples
                 population=pop_id_map[individual.population],
-                samples_metadata=samples_metadata,
-                ploidy=len(samples_metadata),
+                ploidy=len(individual.samples),
             )
 
     ####################################
@@ -2003,14 +2052,13 @@ class SampleData(DataContainer):
         return Sample(
             id_,
             individual=self.samples_individual[id_],
-            metadata=self.samples_metadata[id_],
         )
 
     def samples(self):
         # TODO document
-        iterator = zip(self.samples_metadata[:], self.samples_individual[:])
-        for j, (metadata, individual) in enumerate(iterator):
-            yield Sample(j, individual=individual, metadata=metadata)
+        iterator = self.samples_individual[:]
+        for j, individual in enumerate(iterator):
+            yield Sample(j, individual=individual)
 
     def population(self, id_):
         # TODO document
