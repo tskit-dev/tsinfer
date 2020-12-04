@@ -460,7 +460,7 @@ class TreeSequenceBuilder:
             # print("\tConsidering ", edge.left, edge.right, edge.parent)
             key = (edge.left, edge.right, edge.parent, -1)
             index = self.path_index.bisect(key)
-            if index < len(self.path_index) and self.path_index.iloc[index][:3] == (
+            if index < len(self.path_index) and self.path_index.keys()[index][:3] == (
                 edge.left,
                 edge.right,
                 edge.parent,
