@@ -30,6 +30,7 @@ tsi_source_files = [
     "ancestor_builder.c",
     "object_heap.c",
     "tree_sequence_builder.c",
+    "err.c",
     "avl.c",
 ]
 # We're not actually using very much of tskit at the moment, so

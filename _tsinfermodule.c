@@ -41,7 +41,7 @@ handle_library_error(int err)
     if (err == TSI_ERR_NO_MEMORY) {
         PyErr_NoMemory();
     } else {
-        PyErr_Format(TsinfLibraryError, "Error occured: %d", err);
+        PyErr_Format(TsinfLibraryError, "%s", tsi_strerror(err));
     }
 }
 

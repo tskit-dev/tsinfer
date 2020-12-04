@@ -804,6 +804,23 @@ test_random_data_n100_m100(void)
     run_random_data(100, 100, 42, 1e-20, 1e-3);
 }
 
+static void
+test_strerror(void)
+{
+    int j;
+    const char *msg;
+    int max_error_code = 8192; /* totally arbitrary */
+
+    for (j = 0; j < max_error_code; j++) {
+        msg = tsi_strerror(-j);
+        printf("msg: %s\n", msg);
+        CU_ASSERT_FATAL(msg != NULL);
+        CU_ASSERT(strlen(msg) > 0);
+    }
+    CU_ASSERT_STRING_EQUAL(
+        tsk_strerror(0), "Normal exit condition. This is not an error!");
+}
+
 static int
 tsinfer_suite_init(void)
 {
@@ -871,6 +888,8 @@ main(int argc, char **argv)
         { "test_random_data_n10_m100", test_random_data_n10_m100 },
         { "test_random_data_n100_m10", test_random_data_n100_m10 },
         { "test_random_data_n100_m100", test_random_data_n100_m100 },
+
+        { "test_strerror", test_strerror },
 
         CU_TEST_INFO_NULL,
     };

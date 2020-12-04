@@ -6,7 +6,7 @@
 #define TSI_ERR_NO_MEMORY                                           -2
 #define TSI_ERR_NONCONTIGUOUS_EDGES                                 -3
 #define TSI_ERR_UNSORTED_EDGES                                      -4
-#define TSI_ERR_ASSERTION_FAILURE                                   -5
+#define TSI_ERR_PC_ANCESTOR_TIME                                    -5
 #define TSI_ERR_BAD_PATH_CHILD                                      -6
 #define TSI_ERR_BAD_PATH_PARENT                                     -7
 #define TSI_ERR_BAD_PATH_TIME                                       -8
@@ -36,5 +36,7 @@
 #define unlikely(expr) (expr)
 #define likely(expr) (expr)
 #endif
+
+const char *tsi_strerror(int err);
 
 #endif /*__ERR_H__*/
