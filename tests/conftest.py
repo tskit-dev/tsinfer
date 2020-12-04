@@ -85,9 +85,18 @@ def small_ts_fixture():
 @fixture(scope="session")
 def small_sd_fixture(small_ts_fixture):
     """
-    A sample data file from the small 1-tree sequence
+    A sample data instance from the small 1-tree sequence
     """
     return tsinfer.SampleData.from_tree_sequence(small_ts_fixture, use_sites_time=False)
+
+
+@fixture(scope="session")
+def small_sd_anc_fixture(small_ts_fixture):
+    """
+    A sample data and an ancestors instance from the small 1-tree sequence
+    """
+    sd = tsinfer.SampleData.from_tree_sequence(small_ts_fixture, use_sites_time=False)
+    return sd, tsinfer.generate_ancestors(sd)
 
 
 @fixture(scope="session")
@@ -105,7 +114,7 @@ def medium_ts_fixture():
 @fixture(scope="session")
 def medium_sd_fixture(medium_ts_fixture):
     """
-    A sample data file from the medium-sized tree sequence
+    A sample data instance from the medium-sized tree sequence
     """
     return tsinfer.SampleData.from_tree_sequence(
         medium_ts_fixture, use_sites_time=False

@@ -98,7 +98,7 @@ def tsinfer_dev(
     #     print(variant)
 
     rho = recombination_rate
-    mu = 1e-3  # 1e-15
+    mmr = 100  # 1e-2
 
     #     num_alleles = samples.num_alleles(inference_sites=True)
     #     num_sites = samples.num_inference_sites
@@ -122,7 +122,7 @@ def tsinfer_dev(
         extended_checks=False,
         precision=precision,
         recombination_rate=rho,
-        mismatch_rate=mu,
+        mismatch_ratio=mmr,
     )
     # print(ancestors_ts.tables)
 
@@ -147,7 +147,7 @@ def tsinfer_dev(
         samples,
         ancestors_ts,
         recombination_rate=rho,
-        mismatch_rate=mu,
+        mismatch_ratio=mmr,
         path_compression=False,
         engine=engine,
         precision=precision,

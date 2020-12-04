@@ -156,21 +156,55 @@ file conventionally ends with ``.ancestors``.
 .. todo:: Describe the ancestor generation algorithm.
 
 
-.. _sec_inference_match_ancestors:
+.. _sec_inference_match_ancestors_and_samples:
 
-***************
-Match ancestors
-***************
+****************************
+Matching ancestors & samples
+****************************
 
 After we have generated a set of potential ancestors and stored them in
-and :ref:`ancestors file <sec_file_formats_ancestors>`, we then
-run a matching process on these ancestors. Each ancestor occurs at a
-given time, and an ancestor can copy from any older ancestor. For each
-ancestor, we find a path through older ancestors that minimises the
-number of recombination events.
+an :ref:`ancestors file <sec_file_formats_ancestors>`, we then
+run two matching steps. First we match the ancestors against each
+other to generate an "ancestors tree sequence", then we match the samples
+against this ancestors tree sequence to generate the final result.
 
-As well as minimising recombination events by finding the best path, we can also
-minimise events by looking for *shared recombination breakpoints*. A shared
+In both matching stages, we can set parameters that adjust the
+behaviour of the matching algorithm, in particular the ``path_compression``
+setting, and the ``recombination_rate`` and ``mismatch_ratio`` parameters.
+The latter two only need to be specified if you wish to allow multiple
+mutations to occur at a single site (i.e. breaking the infinite sites model
+of mutation). Note, however, that multiple mutations are useful not only to
+show true recurrent or back mutations in the evolutionary history of a
+site, but also to represent errors in sequencing etc. which cause the
+distribution of variation to fit poorly to the marginal tree at that site.
+Hence, if there is error in your dataset, you may wish to experiment with
+these settings to obtain optimal results.
+
+The ``recombination_rate`` parameter can be a RateMap object, or a floating
+point value giving a single rate (:math:`\rho`) across the entire sequence.
+Integrating this rate between adjacent inference sites results in a list of
+probabilities of recombination (:math:`r`) between sites, used when assessing
+the relative likelihood that a mismatch (and hence an extra mutation) may be
+responsible for some aspects of variation at a site.
+
+The ``mismatch_ratio`` parameter is only relevant if a recombination rate has
+been provided. It is used to adjust the balance of recombination to multiple
+mutations at a site. More specifically, a single probability of mismatch is
+used for all sites, set to the median recombination probability between inference
+sites (:math:`\tilde{r}`) multiplied by the ``mismatch_ratio``. Setting a high
+``mismatch_ratio`` therefore results in tree sequences with more recurrent
+mutations and fewer recombinations (and edges). Setting a low value results
+in tree sequences with more recombination events and edges, and fewer mutations.
+In the limit, as the mismatch_ratio tends to zero, only one mutation will be
+inferred per variable site. This is the default behaviour if no
+``recombination_rate`` is given or if there is only one inference site.
+Alternatively, if ``recombination_rate`` is set, ``mismatch_ratio`` defaults to
+1, which has been shown to give reasonable results in simulated inference of
+human-like data with error.  As a rough guide, such simulations recommend
+mismatch ratios between 1e-3 and 1e3.
+
+The ``path_compression`` setting is used to further minimise recombination events
+by looking for *shared recombination breakpoints*. A shared
 breakpoint exists if a set of children share a breakpoint in the same position,
 and they also have identical parents to the left of the breakpoint and identical
 parents to the right of the breakpoint. Rather than supposing that these
@@ -181,6 +215,17 @@ in time, from whom all the children are descended at this genomic position. We
 call the algorithm used to implement this addition to the ancestral copying
 paths, "path compression".
 
+.. _sec_inference_match_ancestors:
+
++++++++++++++++
+Match ancestors
++++++++++++++++
+
+Matching ancestors is dependent on the time allocated to each ancestor; an
+ancestor can only copy from any older ancestor. For each ancestor,
+we find the most likely path through older ancestors: that is the path that
+maximises the product of the probabilities of recombination and mismatch
+over all sites.
 
 .. todo:: Schematic of the ancestors copying process.
 
@@ -193,9 +238,9 @@ which is conventionally stored in a file ending with ``.ancestors.trees``.
 
 .. _sec_inference_match_samples:
 
-*************
++++++++++++++
 Match samples
-*************
++++++++++++++
 
 The final phase of a ``tsinfer`` inference consists of a number steps:
 
