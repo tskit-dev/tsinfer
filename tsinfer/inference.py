@@ -952,8 +952,8 @@ class Matcher:
         self.matcher = [
             self.ancestor_matcher_class(
                 self.tree_sequence_builder,
-                recombination_rate=self.recombination_rate,
-                mismatch_rate=self.mismatch_rate,
+                recombination=self.recombination_rate,
+                mismatch=self.mismatch_rate,
                 precision=precision,
                 extended_checks=self.extended_checks,
             )
