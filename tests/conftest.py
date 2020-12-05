@@ -26,15 +26,21 @@ it clear in test code.
 
 For example to use the `ts` fixture (a tree sequence with data in all fields) in a test:
 
-def test_something(ts):
-    assert ts.some_method() == expected
+class TestClass:
+    def test_something(self, ts_fixture):
+        assert ts_fixture.some_method() == expected
 
 Fixtures can be parameterised etc. see https://docs.pytest.org/en/stable/fixture.html
 
-Note that fixtures have a "scope" for example `ts` below is only created once per
-test session and re-used for subsequent tests.
+Note that fixtures have a "scope" for example `ts_fixture` below is only created once
+per test session and re-used for subsequent tests.
 """
+import msprime
+import numpy as np
 import pytest
+from pytest import fixture
+
+import tsinfer
 
 
 def pytest_addoption(parser):
@@ -59,3 +65,48 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
+
+
+def num_nonsample_muts(ts):
+    return np.sum(np.logical_not(np.isin(ts.tables.mutations.node, ts.samples())))
+
+
+@fixture(scope="session")
+def small_ts_fixture():
+    """
+    A simple 1-tree sequence with at least 2 inference sites
+    (i.e. mutations above a non-sample node)
+    """
+    ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
+    assert num_nonsample_muts(ts) > 1
+    return ts
+
+
+@fixture(scope="session")
+def small_sd_fixture(small_ts_fixture):
+    """
+    A sample data file from the small 1-tree sequence
+    """
+    return tsinfer.SampleData.from_tree_sequence(small_ts_fixture, use_sites_time=False)
+
+
+@fixture(scope="session")
+def medium_ts_fixture():
+    """
+    A medium sized tree sequence with a good number of trees and inference mutations
+    (i.e. mutations above a non-sample node)
+    """
+    ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
+    assert ts.num_trees > 10
+    assert num_nonsample_muts(ts) > 50
+    return ts
+
+
+@fixture(scope="session")
+def medium_sd_fixture(medium_ts_fixture):
+    """
+    A sample data file from the medium-sized tree sequence
+    """
+    return tsinfer.SampleData.from_tree_sequence(
+        medium_ts_fixture, use_sites_time=False
+    )

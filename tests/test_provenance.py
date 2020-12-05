@@ -21,7 +21,6 @@ Tests for the provenance stored in the output tree sequences.
 """
 import json
 
-import msprime
 import pytest
 import tskit
 
@@ -44,41 +43,28 @@ class TestProvenanceValid:
         for _timestamp, record in data.provenances():
             tskit.validate_provenance(record)
 
-    def test_infer(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        assert ts.num_sites > 1
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        inferred_ts = tsinfer.infer(samples)
+    def test_infer(self, small_sd_fixture):
+        inferred_ts = tsinfer.infer(small_sd_fixture)
         self.validate_ts(inferred_ts)
 
-    def test_ancestors_ts(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        assert ts.num_sites > 1
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        ancestor_data = tsinfer.generate_ancestors(samples)
-        ancestors_ts = tsinfer.match_ancestors(samples, ancestor_data)
+    def test_ancestors_ts(self, small_sd_fixture):
+        ancestor_data = tsinfer.generate_ancestors(small_sd_fixture)
+        ancestors_ts = tsinfer.match_ancestors(small_sd_fixture, ancestor_data)
         self.validate_ts(ancestors_ts)
 
-    def test_sample_data(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        assert ts.num_sites > 1
+    def test_sample_data(self, small_ts_fixture):
         with tsinfer.SampleData() as sample_data:
-            for var in ts.variants():
+            for var in small_ts_fixture.variants():
                 sample_data.add_site(var.site.position, genotypes=var.genotypes)
             sample_data.record_provenance("test", arg1=1, arg2=2)
         self.validate_file(sample_data)
 
-    def test_from_tree_sequence(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        assert ts.num_sites > 1
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    def test_from_tree_sequence(self, small_ts_fixture):
+        sample_data = tsinfer.SampleData.from_tree_sequence(small_ts_fixture)
         self.validate_file(sample_data)
 
-    def test_ancestors_file(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        assert ts.num_sites > 1
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
+    def test_ancestors_file(self, small_sd_fixture):
+        ancestor_data = tsinfer.generate_ancestors(small_sd_fixture)
         self.validate_file(ancestor_data)
 
 

@@ -635,15 +635,12 @@ class TestCheckAncestorsTs:
         tables.mutations.add_row(site=0, node=1, derived_state="0")
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
-    def test_msprime_output(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
+    def test_msprime_output(self, small_ts_fixture):
         with pytest.raises(ValueError):
-            tsinfer.check_ancestors_ts(ts)
+            tsinfer.check_ancestors_ts(small_ts_fixture)
 
-    def test_tsinfer_output(self):
-        ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        ts = tsinfer.infer(samples)
+    def test_tsinfer_output(self, small_sd_fixture):
+        ts = tsinfer.infer(small_sd_fixture)
         with pytest.raises(ValueError):
             tsinfer.check_ancestors_ts(ts)
 
@@ -772,16 +769,12 @@ class TestCountSampleChildEdges:
         ts = msprime.simulate(20, recombination_rate=2, random_seed=2)
         self.verify(ts)
 
-    def test_inferred_no_simplify(self):
-        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=2)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        ts = tsinfer.infer(samples, simplify=False)
+    def test_inferred_no_simplify(self, medium_sd_fixture):
+        ts = tsinfer.infer(medium_sd_fixture, simplify=False)
         self.verify(ts)
 
-    def test_inferred_simplify(self):
-        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        ts = tsinfer.infer(samples)
+    def test_inferred_simplify(self, medium_sd_fixture):
+        ts = tsinfer.infer(medium_sd_fixture)
         self.verify(ts)
 
 
@@ -831,16 +824,12 @@ class TestNodeSpan:
         assert not np.all(S == 10)
 
     @pytest.mark.skip("Broken coincidentally with LS engine update")
-    def test_inferred_no_simplify(self):
-        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts, use_times=False)
-        ts = tsinfer.infer(samples, simplify=False)
+    def test_inferred_no_simplify(self, medium_sd_fixture):
+        ts = tsinfer.infer(medium_sd_fixture, simplify=False)
         self.verify(ts)
 
-    def test_inferred(self):
-        ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
-        ts = tsinfer.infer(samples)
+    def test_inferred(self, medium_sd_fixture):
+        ts = tsinfer.infer(medium_sd_fixture)
         self.verify(ts)
 
     def test_inferred_random_data(self):
