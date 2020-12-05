@@ -46,21 +46,6 @@ def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
     return G, np.arange(num_sites)
 
 
-class TsinferTestCase:
-    """
-    Superclass containing assert utilities for tsinfer test cases.
-    """
-
-    def assertTreeSequencesEqual(self, ts1, ts2):
-        assert ts1.sequence_length == ts2.sequence_length
-        t1 = ts1.tables
-        t2 = ts2.tables
-        assert t1.nodes == t2.nodes
-        assert t1.edges == t2.edges
-        assert t1.sites == t2.sites
-        assert t1.mutations == t2.mutations
-
-
 class TestUnfinalisedErrors:
     def make_ancestor_data_unfinalised(self, path=None):
         with tsinfer.SampleData(path=path, sequence_length=2) as sample_data:
@@ -1052,14 +1037,14 @@ class TestMetadataRoundTrip:
             assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
 
 
-class TestThreads(TsinferTestCase):
+class TestThreads:
     def test_equivalance(self):
         rho = 2
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=rho, random_seed=2)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ts1 = tsinfer.infer(sample_data, num_threads=1)
         ts2 = tsinfer.infer(sample_data, num_threads=5)
-        self.assertTreeSequencesEqual(ts1, ts2)
+        assert ts1.equals(ts2, ignore_provenance=True)
 
 
 class TestAncestorGeneratorsEquivalant:
