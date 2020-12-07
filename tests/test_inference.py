@@ -287,11 +287,10 @@ class TestRoundTrip:
         G[22, :] = 0
         self.verify_data_round_trip(G, positions)
 
-    def test_triallelic(self):
-        ts = msprime.simulate(10, mutation_rate=1, recombination_rate=0, random_seed=2)
-        mutation_0_node = next(ts.mutations()).node
-        parent_to_mutation_0 = ts.first().parent(mutation_0_node)
-        tables = ts.dump_tables()
+    def test_triallelic(self, small_ts_fixture):
+        mutation_0_node = next(small_ts_fixture.mutations()).node
+        parent_to_mutation_0 = small_ts_fixture.first().parent(mutation_0_node)
+        tables = small_ts_fixture.dump_tables()
         # Add another mutation at site 0
         tables.mutations.add_row(0, node=mutation_0_node, derived_state="2")
         mutation_nodes = tables.mutations.node
@@ -349,10 +348,10 @@ class TestRoundTrip:
             S, positions = get_random_data_example(5, 10)
             self.verify_data_round_trip(S, positions)
 
-    def test_unreferenced_individuals(self):
-        n = 4
-        ts = msprime.simulate(n, mutation_rate=10, random_seed=16)
-        sd = tsinfer.SampleData.from_tree_sequence(ts).copy()
+    def test_unreferenced_individuals(self, small_sd_fixture):
+        sd = small_sd_fixture.copy()
+        n = sd.num_samples
+        assert n % 2 == 0
         # We've made it pretty hard to remove samples without removing their individuals
         # Reverse individual ids & remove the last sample => individual 0 unreferenced
         sd.data["samples/individual"][:] = sd.data["samples/individual"][:][::-1]
@@ -361,11 +360,11 @@ class TestRoundTrip:
         sd.data["sites/genotypes"].resize(sd.num_sites, n - 1)
         sd.finalise()
         assert sd.num_samples != sd.num_individuals
-        ts_inferred = tsinfer.infer(sd)
-        assert ts_inferred.num_individuals == n
-        for sd_sample, ts_sample_id in zip(sd.samples(), ts_inferred.samples()):
+        ts = tsinfer.infer(sd)
+        assert ts.num_individuals == n
+        for sd_sample, ts_sample_id in zip(sd.samples(), ts.samples()):
             assert sd_sample.individual > 0
-            assert sd_sample.individual == ts_inferred.node(ts_sample_id).individual
+            assert sd_sample.individual == ts.node(ts_sample_id).individual
 
     def test_unreferenced_populations(self):
         """
