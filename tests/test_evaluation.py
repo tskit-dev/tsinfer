@@ -1033,11 +1033,7 @@ class TestSnipCentromere:
     def verify(self, ts, left, right):
         ts1 = self.snip_centromere(ts, left, right)
         ts2 = tsinfer.snip_centromere(ts, left, right)
-        t1 = ts1.dump_tables()
-        t2 = ts2.dump_tables()
-        t1.provenances.clear()
-        t2.provenances.clear()
-        assert t1 == t2
+        assert ts1.equals(ts2, ignore_provenance=True)
         tree_found = False
         for tree in ts1.trees():
             if tree.interval == (left, right):
