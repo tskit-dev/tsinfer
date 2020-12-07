@@ -791,13 +791,13 @@ class TestMetadataRoundTrip:
             assert all_metadata[variant.site.id] == variant.site.metadata
 
         output_ts = tsinfer.infer(sample_data)
-        samples = set(output_ts.samples())
-        for site in output_ts.sites():
+        for variant in output_ts.variants():
+            site = variant.site
             decoded_metadata = json.loads(site.metadata)
             assert "inference_type" in decoded_metadata
             value = decoded_metadata.pop("inference_type")
             # Only singletons should be parsimony sites in this simple case
-            if len(site.mutations) == 1 and site.mutations[0].node in samples:
+            if np.sum(variant.genotypes > 0) == 1:
                 assert value == tsinfer.INFERENCE_PARSIMONY
             else:
                 assert value == tsinfer.INFERENCE_FULL
