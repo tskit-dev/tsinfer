@@ -1626,6 +1626,128 @@ class TestAncestorsTreeSequenceIndividuals:
         self.verify(samples, ancestors_ts)
 
 
+class TestMatcher:
+    """
+    Test features of the base Matcher class from which AncestorMatcher and SampleMatcher
+    are derived
+    """
+
+    def test_recombination_rate_to_dist(self):
+        d = tsinfer.inference.Matcher.recombination_rate_to_dist(10, [1, 1, 2])
+        assert np.allclose(d, [0, 10])
+
+    def test_recombination_rate_to_dist_no_dists(self):
+        # No distances if 1 site
+        d = tsinfer.inference.Matcher.recombination_rate_to_dist(1, [1])
+        assert len(d) == 0
+        # No distances if 0 sites
+        d = tsinfer.inference.Matcher.recombination_rate_to_dist(1, [])
+        assert len(d) == 0
+
+    def test_recombination_dist_to_prob(self):
+        p_min = 0
+        p_max = 0.5
+        d = np.array([0, 1e-10, 1e10])
+        p = tsinfer.inference.Matcher.recombination_dist_to_prob(d)
+        assert p[0] == p_min
+        assert np.allclose(p, [p_min, p_min, p_max])
+
+    def test_mismatch_ratio_to_prob_low_dist(self):
+        """
+        For small distances & low ratios, mismatch prob should be ~ ratio * recomb prob
+        """
+        dist_cM = np.array([0, 1e-5, 0.01])  # approximation excellent up to 0.01 cM
+        d = dist_cM / 100
+        for ratio in [0, 1e-2, 1]:
+            for num_alleles in [2, 4, 6]:
+                r_prob = tsinfer.inference.Matcher.recombination_dist_to_prob(d)
+                m_prob = tsinfer.inference.Matcher.mismatch_ratio_to_prob(
+                    ratio, d, num_alleles
+                )
+                assert np.allclose(r_prob * ratio, m_prob, rtol=1e-4)
+
+    def test_mismatch_ratio_to_prob_ratio_1(self):
+        """
+        mismatch probs == recomb_probs when mismatch_ratio=1 & num_alleles=2
+        """
+        dist_cM = np.array([0, 1e-5, 1, 100, 10000])
+        d = dist_cM / 100
+        r_prob = tsinfer.inference.Matcher.recombination_dist_to_prob(d)
+        m_prob = tsinfer.inference.Matcher.mismatch_ratio_to_prob(1, d)
+        assert np.all(r_prob == m_prob)
+
+    def test_mismatch_ratio_to_prob_max(self):
+        """
+        Large distances or high ratios max out at 1/num_alleles
+        """
+        for dist_cM, ratio in [(100, 1), (0.1, 100)]:
+            d = dist_cM / 100
+            for num_alleles in [2, 4, 8]:
+                m_prob = tsinfer.inference.Matcher.mismatch_ratio_to_prob(
+                    ratio, d, num_alleles
+                )
+                np.isclose(m_prob, 1 / num_alleles, rtol=1e-2)
+
+    def test_recombination_dist_to_prob_known(self):
+        dist_vs_prob = np.array(
+            [
+                # Some values calculated separately in R (formatted to line up nicely)
+                # dist expected_Pr
+                [0.00, 0.00],
+                [1e-5, 1e-5],
+                [5e-5, 4.99975e-5],
+                [1e-4, 9.999e-5],
+                [5e-4, 4.9975e-4],
+                [1e-3, 9.99e-4],
+                [5e-3, 4.97508e-3],
+                [1e-2, 9.90067e-3],
+                [5e-2, 4.75813e-2],
+                [0.10, 0.0906346],
+                [0.50, 0.316060],
+                [1.00, 0.432332],
+                [5.00, 0.499977],
+            ]
+        )
+        distance = dist_vs_prob[:, 0]
+        expected_prob = dist_vs_prob[:, 1]
+        assert np.allclose(
+            tsinfer.inference.Matcher.recombination_dist_to_prob(distance),
+            expected_prob,
+        )
+
+    def test_mismatch_ratio_to_prob_known(self):
+        dist_vs_prob = np.array(
+            [
+                # Some values calculated separately in R (formatted to line up nicely)
+                #
+                # dist p:ratio=0.01 p:ratio=1.00 p:ratio=100
+                [0.00, 0.000000000, 0.000000000, 0.0000000000],
+                [1e-5, 1.000000e-7, 0.999990e-5, 0.9990007e-3],
+                [5e-5, 5.000000e-7, 4.999750e-5, 4.9750831e-3],
+                [1e-4, 1.000000e-6, 0.999900e-4, 0.9900663e-2],
+                [5e-4, 4.999975e-6, 4.997501e-4, 4.7581291e-2],
+                [1e-3, 0.999990e-5, 0.999001e-3, 0.9063462e-1],
+                [5e-3, 4.999750e-5, 4.975083e-3, 0.3160603],
+                [1e-2, 0.999900e-4, 0.990066e-2, 0.4323324],
+                [5e-2, 4.997501e-4, 4.758129e-2, 0.4999773],
+                [0.10, 0.999001e-3, 0.090634623, 0.5],
+                [0.50, 4.975083e-3, 0.316060279, 0.5],
+                [1.00, 0.990066e-2, 0.432332358, 0.5],
+                [5.00, 4.758129e-2, 0.499977300, 0.5],
+            ]
+        )
+        expected_prob = {}
+        distance = dist_vs_prob[:, 0]
+        expected_prob[0.01] = dist_vs_prob[:, 1]
+        expected_prob[1.00] = dist_vs_prob[:, 2]
+        expected_prob[100] = dist_vs_prob[:, 3]
+        for k in expected_prob.keys():
+            assert np.allclose(
+                tsinfer.inference.Matcher.mismatch_ratio_to_prob(k, distance),
+                expected_prob[k],
+            )
+
+
 class TestMatchSamples:
     """
     Test specific features of the match_samples stage
@@ -2993,6 +3115,48 @@ class TestMismatchAndRecombination:
         assert anc.num_sites == 1
         tsinfer.infer(sd, recombination_rate=0.1)
 
+    def test_maximal_mismatch_ancestors(self, small_sd_anc_fixture):
+        """
+        Shouldn't be able to find a path on early part of match_ancestors if
+        a mismatch is required (mismatch=1)
+        """
+        sd, anc = small_sd_anc_fixture
+        num_loci = anc.num_sites
+        r = np.full(num_loci - 1, 0.01)
+        m = np.full(num_loci, 1)
+        with pytest.raises(ValueError, match="Match impossible"):
+            tsinfer.match_ancestors(
+                sd, anc, recombination=r, mismatch=m, engine=tsinfer.PY_ENGINE
+            )
+        with pytest.raises(_tsinfer.LibraryError, match="Match impossible"):
+            tsinfer.match_ancestors(
+                sd, anc, recombination=r, mismatch=m, engine=tsinfer.C_ENGINE
+            )
+
+    def test_maximal_mismatch_samples(self, small_sd_anc_fixture):
+        """
+        Although mismatch of 1 (required mismatch) not possible in match_ancestors,
+        it should be in match_samples
+        """
+        sd, anc = small_sd_anc_fixture
+        num_loci = anc.num_sites
+        r = np.full(num_loci - 1, 0.01)
+        m = np.full(num_loci, 1)
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            anc_ts = tsinfer.match_ancestors(sd, anc, engine=e)
+            tsinfer.match_samples(sd, anc_ts, recombination=r, mismatch=m, engine=e)
+
+    def test_extreme_parameters(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            tsinfer.match_ancestors(sd, anc, recombination_rate=1e20, engine=e)
+            tsinfer.match_ancestors(
+                sd, anc, recombination_rate=1, mismatch_ratio=1e20, engine=e
+            )
+            tsinfer.match_ancestors(
+                sd, anc, recombination_rate=1e20, mismatch_ratio=1e20, engine=e
+            )
+
     def test_recombination_mismatch_combos(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
         x = np.full(anc.num_sites, 0.1)
@@ -3020,9 +3184,14 @@ class TestMismatchAndRecombination:
         x = np.full(anc.num_sites, 0.1)
         # Check it normally works: requires array of size 1 less than num_sites
         _ = tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=x[1:])
-        for bad_array in [x, x[2:], []]:
+        for bad in [x, x[2:], []]:
             with pytest.raises(ValueError, match="Bad length"):
-                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad_array)
+                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad)
+        bad = x.copy()[1:]
+        for bad_val in [1.1, -0.1, np.nan]:
+            bad[-1] = bad_val
+            with pytest.raises(ValueError, match="recombination.*between 0 & 1"):
+                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad)
 
     def test_mismatch_no_recombination(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
@@ -3030,6 +3199,13 @@ class TestMismatchAndRecombination:
             tsinfer.match_ancestors(sd, anc, mismatch_ratio=1)
 
     def test_bad_mismatch_ratio(self, small_sd_fixture):
+        """Negative or otherwise bad ratios give nonsensical probabilities"""
+        sd = small_sd_fixture
+        for bad_ratio in [-1e-10, np.nan]:
+            with pytest.raises(ValueError, match="mismatch.*between 0 & 1"):
+                tsinfer.infer(sd, recombination_rate=0.1, mismatch_ratio=bad_ratio)
+
+    def test_bad_mismatch_ratio_type(self, small_sd_fixture):
         sd = small_sd_fixture
         for bad_ratio in [np.array([0.1, 0.2])]:
             with pytest.raises(ValueError):
@@ -3046,6 +3222,11 @@ class TestMismatchAndRecombination:
         for bad in [x, x[2:], []]:
             with pytest.raises(ValueError, match="Bad length"):
                 tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
+        bad = x.copy()[1:]
+        for bad_val in [1.1, -0.1, np.nan]:
+            bad[-1] = bad_val
+            with pytest.raises(ValueError, match="mismatch.*between 0 & 1"):
+                tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
 
 
 class TestAlgorithmResults:
@@ -3059,10 +3240,10 @@ class TestAlgorithmResults:
                 sample_data.add_site(pos, genotypes)
         anc = tsinfer.generate_ancestors(sample_data)
         anc_ts = tsinfer.match_ancestors(
-            sample_data, anc, recombination_rate=1, mismatch_ratio=0.1
+            sample_data, anc, recombination_rate=1, mismatch_ratio=1e-10
         )
         ts = tsinfer.match_samples(
-            sample_data, anc_ts, recombination_rate=1, mismatch_ratio=0.1
+            sample_data, anc_ts, recombination_rate=1, mismatch_ratio=1e-10
         )
         assert ts.num_trees == 2
         breakpoint_pos = set(ts.breakpoints()) - {0.0, ts.sequence_length}

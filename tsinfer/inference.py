@@ -343,8 +343,8 @@ def match_ancestors(
     path_compression=True,
     num_threads=0,
     # Deliberately undocumented parameters below
-    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
-    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
     precision=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
@@ -415,8 +415,8 @@ def augment_ancestors(
     path_compression=True,
     num_threads=0,
     # Deliberately undocumented parameters below
-    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
-    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
     precision=None,
     extended_checks=False,
     engine=constants.C_ENGINE,
@@ -498,8 +498,8 @@ def match_samples(
     force_sample_times=False,
     num_threads=0,
     # Deliberately undocumented parameters below
-    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
-    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
     precision=None,
     stabilise_node_ordering=False,
     extended_checks=False,
@@ -939,15 +939,31 @@ class AncestorsGenerator:
             logger.info("Finished building ancestors")
 
 
-def recombination_rate_to_probs(rho, positions):
-    # TODO: should max out at 0.5 or 1:  https://github.com/tskit-dev/tsinfer/issues/398
-    try:
-        return np.diff(rho.get_cumulative_mass(positions))
-    except AttributeError:
-        return np.diff(positions) * rho
-
-
 class Matcher:
+    """
+    A matching instance, used in both ``tsinfer.match_ancestors`` and
+    ``tsinfer.match_samples``. For details of the ``path_compression``,
+    `recombination_rate`` and ``mismatch_ratio`` parameters, see
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`.
+
+    Note that the ``recombination`` and ``mismatch`` parameters can be used in
+    ``match_ancestors`` and ``match_samples`` and are passed directly to this
+    function, but are deliberately not publicly documented in those methods.
+    They are expected to be numpy arrays of length ``num_inference_sites - 1`` and
+    ``num_inference_sites`` respectively, containing values between 0 and 1, and
+    allow recombination and mismatch probabilities to be set directly. The
+    ``recombination`` probabilities measure the probability of a recombination event
+    between adjacent inference sites, used to calculate the HMM transition probabilities
+    in the L&S-like matching algorithm. The ``mismatch`` probabilities are used
+    to calculate the emission probabilities in the HMM. Note that values > 0.5 in
+    the recombination and (particularly) the mutation arrays are likely to lead to
+    pathological behaviour  - for example, a mismatch probability of 1 means that a
+    mismatch is *required* at every site. For this reason, the probabilities
+    created for recombination and mismatch when using the the public-facing
+    ``recombination_rate`` and ``mismatch_ratio`` parameters are never > 0.5.
+    TODO: include deliberately non-public details of precision here.
+    """
+
     def __init__(
         self,
         sample_data,
@@ -956,8 +972,8 @@ class Matcher:
         path_compression=True,
         recombination_rate=None,
         mismatch_ratio=None,
-        recombination=None,  # Used for setting the recombination probabilities directly
-        mismatch=None,  # Used for setting the mismatch probabilities directly
+        recombination=None,
+        mismatch=None,
         precision=None,
         extended_checks=False,
         engine=constants.C_ENGINE,
@@ -972,6 +988,17 @@ class Matcher:
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
+
+        all_sites = self.sample_data.sites_position[:]
+        index = np.searchsorted(all_sites, inference_site_position)
+        num_alleles = sample_data.num_alleles()[index]
+        if not np.all(all_sites[index] == inference_site_position):
+            raise ValueError(
+                "Site positions for inference must be a subset of those in "
+                "the sample data file."
+            )
+        self.inference_site_id = index
+
         # Map of site index to tree sequence position. Bracketing
         # values of 0 and L are used for simplicity.
         self.position_map = np.hstack(
@@ -1005,19 +1032,27 @@ class Matcher:
                 recombination = np.full(num_intervals, default_recombination_prob)
                 mismatch = np.full(self.num_sites, default_mismatch_prob)
             else:
-                recombination = recombination_rate_to_probs(
+                genetic_dists = self.recombination_rate_to_dist(
                     recombination_rate, inference_site_position
                 )
+                recombination = self.recombination_dist_to_prob(genetic_dists)
                 if mismatch_ratio is None:
                     mismatch_ratio = 1.0
                 mismatch = np.full(
-                    self.num_sites, mismatch_ratio * np.median(recombination)
+                    self.num_sites,
+                    self.mismatch_ratio_to_prob(
+                        mismatch_ratio, np.median(genetic_dists), num_alleles
+                    ),
                 )
 
         if len(recombination) != num_intervals:
             raise ValueError("Bad length for recombination array")
         if len(mismatch) != self.num_sites:
             raise ValueError("Bad length for mismatch array")
+        if not (np.all(recombination >= 0) and np.all(recombination <= 1)):
+            raise ValueError("Underlying recombination probabilities not between 0 & 1")
+        if not (np.all(mismatch >= 0) and np.all(mismatch <= 1)):
+            raise ValueError("Underlying mismatch probabilities not between 0 & 1")
 
         if precision is None:
             precision = 13
@@ -1036,16 +1071,6 @@ class Matcher:
         else:
             raise ValueError(f"Unknown engine:{engine}")
         self.tree_sequence_builder = None
-
-        all_sites = self.sample_data.sites_position[:]
-        index = np.searchsorted(all_sites, inference_site_position)
-        if not np.all(all_sites[index] == inference_site_position):
-            raise ValueError(
-                "Site positions for inference must be a subset of those in "
-                "the sample data file."
-            )
-        num_alleles = sample_data.num_alleles()[index]
-        self.inference_site_id = index
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
@@ -1075,6 +1100,42 @@ class Matcher:
             )
             for _ in range(num_threads)
         ]
+
+    @staticmethod
+    def recombination_rate_to_dist(rho, positions):
+        """
+        Return the mean number of recombinations between adjacent positions (i.e.
+        the genetic distance in Morgans) given either a fixed rate or a RateMap
+        """
+        try:
+            return np.diff(rho.get_cumulative_mass(positions))
+        except AttributeError:
+            return np.diff(positions) * rho
+
+    @staticmethod
+    def recombination_dist_to_prob(genetic_distances):
+        """
+        Convert genetic distances (in Morgans) to a probability of recombination,
+        (i.e. an odd number of events) assuming a Poisson distribution. This maxes
+        out at 0.5 as genetic_distance -> infinity
+        """
+        return (1 - np.exp(-genetic_distances * 2)) / 2
+
+    @staticmethod
+    def mismatch_ratio_to_prob(ratio, genetic_distances, num_alleles=2):
+        """
+        Convert a mismatch ratio, relative to a genetic distance, to a probability
+        of mismatch. A mismatch probability of 1 means that the emitted allele has a
+        100% probability of being different from the allele implied by the hidden
+        state. For all allele types to be emitted with equal probability, regardless
+        of the copying haplotype, the mismatch probability should be set to
+        1/num_alleles.
+
+        For a small genetic_distance d, setting a ratio of X should give a
+        probability of approximately X * r, where r is the recombination probability
+        given by recombination_dist_to_prob(d)
+        """
+        return (1 - np.exp(-genetic_distances * ratio * num_alleles)) / num_alleles
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """

@@ -741,10 +741,15 @@ class AncestorMatcher:
                 max_L_node = u
 
         if max_L == 0:
-            assert self.mismatch[site] == 0
-            raise ValueError(
-                "Trying to match non-existent allele with zero mutation rate"
-            )
+            assert self.mismatch[site] in (0, 1)
+            if self.mismatch[site] == 0:
+                raise ValueError(
+                    "Trying to match non-existent allele with zero mismatch rate"
+                )
+            if self.mismatch[site] == 1:
+                raise ValueError(
+                    "Match impossible: mismatch prob=1 & no haplotype with other allele"
+                )
 
         for u in self.likelihood_nodes:
             x = self.likelihood[u] / max_L
