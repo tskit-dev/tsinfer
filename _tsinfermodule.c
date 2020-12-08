@@ -1262,13 +1262,13 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
-    static char *kwlist[] = {"tree_sequence_builder", "recombination_rate",
-        "mismatch_rate", "precision", "extended_checks", NULL};
+    static char *kwlist[] = {"tree_sequence_builder", "recombination",
+        "mismatch", "precision", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
-    PyObject *recombination_rate = NULL;
-    PyObject *mismatch_rate = NULL;
-    PyArrayObject *recombination_rate_array = NULL;
-    PyArrayObject *mismatch_rate_array = NULL;
+    PyObject *recombination = NULL;
+    PyObject *mismatch = NULL;
+    PyArrayObject *recombination_array = NULL;
+    PyArrayObject *mismatch_array = NULL;
     npy_intp *shape;
     unsigned int precision = 22;
     int flags = 0;
@@ -1277,7 +1277,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     self->tree_sequence_builder = NULL;
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &recombination_rate, &mismatch_rate, &precision,
+                &recombination, &mismatch, &precision,
                 &extended_checks)) {
         goto out;
     }
@@ -1287,27 +1287,27 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    recombination_rate_array = (PyArrayObject *) PyArray_FromAny(recombination_rate,
+    recombination_array = (PyArrayObject *) PyArray_FromAny(recombination,
             PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
             NPY_ARRAY_IN_ARRAY, NULL);
-    if (recombination_rate_array == NULL) {
+    if (recombination_array == NULL) {
         goto out;
     }
-    shape = PyArray_DIMS(recombination_rate_array);
+    shape = PyArray_DIMS(recombination_array);
     if (shape[0] != (npy_intp) tree_sequence_builder->tree_sequence_builder->num_sites) {
         PyErr_SetString(PyExc_ValueError,
-                "Size of recombination_rate array must be num_sites");
+                "Size of recombination array must be num_sites");
         goto out;
     }
-    mismatch_rate_array = (PyArrayObject *) PyArray_FromAny(mismatch_rate,
+    mismatch_array = (PyArrayObject *) PyArray_FromAny(mismatch,
             PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
             NPY_ARRAY_IN_ARRAY, NULL);
-    if (mismatch_rate_array == NULL) {
+    if (mismatch_array == NULL) {
         goto out;
     }
-    shape = PyArray_DIMS(mismatch_rate_array);
+    shape = PyArray_DIMS(mismatch_array);
     if (shape[0] != (npy_intp) tree_sequence_builder->tree_sequence_builder->num_sites) {
-        PyErr_SetString(PyExc_ValueError, "Size of mismatch_rate array must be num_sites");
+        PyErr_SetString(PyExc_ValueError, "Size of mismatch array must be num_sites");
         goto out;
     }
 
@@ -1321,8 +1321,8 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
             self->tree_sequence_builder->tree_sequence_builder,
-            PyArray_DATA(recombination_rate_array),
-            PyArray_DATA(mismatch_rate_array),
+            PyArray_DATA(recombination_array),
+            PyArray_DATA(mismatch_array),
             precision, flags);
     if (err != 0) {
         handle_library_error(err);
@@ -1330,8 +1330,8 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     }
     ret = 0;
 out:
-    Py_XDECREF(recombination_rate_array);
-    Py_XDECREF(mismatch_rate_array);
+    Py_XDECREF(recombination_array);
+    Py_XDECREF(mismatch_array);
     return ret;
 }
 

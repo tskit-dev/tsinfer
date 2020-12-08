@@ -623,14 +623,14 @@ class AncestorMatcher:
     def __init__(
         self,
         tree_sequence_builder,
-        recombination_rate=None,
-        mismatch_rate=None,
+        recombination=None,
+        mismatch=None,
         precision=None,
         extended_checks=False,
     ):
         self.tree_sequence_builder = tree_sequence_builder
-        self.mismatch_rate = mismatch_rate
-        self.recombination_rate = recombination_rate
+        self.mismatch = mismatch
+        self.recombination = recombination
         self.precision = precision
         self.extended_checks = extended_checks
         self.num_sites = tree_sequence_builder.num_sites
@@ -695,8 +695,8 @@ class AncestorMatcher:
 
     def update_site(self, site, haplotype_state):
         n = self.tree_sequence_builder.num_nodes
-        rho = self.recombination_rate[site]
-        mu = self.mismatch_rate[site]
+        rho = self.recombination[site]
+        mu = self.mismatch[site]
         num_alleles = self.tree_sequence_builder.num_alleles[site]
         assert haplotype_state < num_alleles
 
@@ -741,7 +741,7 @@ class AncestorMatcher:
                 max_L_node = u
 
         if max_L == 0:
-            assert self.mismatch_rate[site] == 0
+            assert self.mismatch[site] == 0
             raise ValueError(
                 "Trying to match non-existent allele with zero mutation rate"
             )

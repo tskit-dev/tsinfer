@@ -169,29 +169,46 @@ def check_sample_indexes(sample_data, indexes):
 def infer(
     sample_data,
     *,
-    num_threads=0,
+    recombination_rate=None,
+    mismatch_ratio=None,
     path_compression=True,
     simplify=True,
-    recombination_rate=None,
-    mismatch_rate=None,
-    precision=None,
     exclude_positions=None,
+    num_threads=0,
+    # Deliberately undocumented parameters below
+    precision=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
 ):
     """
-    infer(sample_data, *, num_threads=0, path_compression=True, simplify=True,\
-            exclude_positions=None)
+    infer(sample_data, *, recombination_rate=None, mismatch_ratio=None,\
+            path_compression=True, simplify=True, exclude_positions=None, num_threads=0)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
-    :class:`tskit.TreeSequence`.
+    :class:`tskit.TreeSequence`.   See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
+
+    .. note::
+        For finer grained control over inference, for example to set different mismatch
+        ratios when matching ancestors versus samples, run
+        :func:`tsinfer.generate_ancestors`, :func:`tsinfer.match_ancestors` and
+        :func:`tsinfer.match_samples` separately.
 
     :param SampleData sample_data: The input :class:`SampleData` instance
         representing the observed data that we wish to make inferences from.
-    :param int num_threads: The number of worker threads to use in parallelised
-        sections of the algorithm. If <= 0, do not spawn any threads and
-        use simpler sequential algorithms (default).
+    :param recombination_rate: Either a RateMap object, or a floating
+        point value giving a single rate, :math:`\\rho`, across the entire sequence,
+        used to calculate the probability of recombination between adjacent sites.
+        If ``None``, all matching conflicts are resolved by recombination and
+        all inference sites will have a single mutation (equivalent to mismatch_ratio
+        near zero)
+    :type recombination_rate: Union[float, RateMap]
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
@@ -207,6 +224,9 @@ def infer(
         main inference process using parsimony. The list does not need to be
         in to be in any particular order, and can include site positions that
         are not present in the sample data file.
+    :param int num_threads: The number of worker threads to use in parallelised
+        sections of the algorithm. If <= 0, do not spawn any threads and
+        use simpler sequential algorithms (default).
     :return: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
     :rtype: tskit.TreeSequence
@@ -230,7 +250,7 @@ def infer(
         engine=engine,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mismatch_rate=mismatch_rate,
+        mismatch_ratio=mismatch_ratio,
         precision=precision,
         path_compression=path_compression,
         progress_monitor=progress_monitor,
@@ -241,7 +261,7 @@ def infer(
         engine=engine,
         num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mismatch_rate=mismatch_rate,
+        mismatch_ratio=mismatch_ratio,
         precision=precision,
         path_compression=path_compression,
         simplify=simplify,
@@ -253,16 +273,17 @@ def infer(
 def generate_ancestors(
     sample_data,
     *,
-    num_threads=0,
     path=None,
     exclude_positions=None,
+    num_threads=0,
+    # Deliberately undocumented parameters below
     engine=constants.C_ENGINE,
     progress_monitor=None,
     **kwargs,
 ):
     """
-    generate_ancestors(sample_data, *, num_threads=0, path=None, \
-            exclude_positions=None, **kwargs)
+    generate_ancestors(sample_data, *, path=None, exclude_positions=None,\
+        num_threads=0, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
     on the specified :class:`SampleData` instance and returns the resulting
@@ -279,14 +300,14 @@ def generate_ancestors(
 
     :param SampleData sample_data: The :class:`SampleData` instance that we are
         genering putative ancestors from.
-    :param int num_threads: The number of worker threads to use. If < 1, use a
-        simpler synchronous algorithm.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
     :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
         ancestors, and not used during the copying process. The list does not
         need be in any particular order.
+    :param int num_threads: The number of worker threads to use. If < 1, use a
+        simpler synchronous algorithm.
     :return: The inferred ancestors stored in an :class:`AncestorData` instance.
     :rtype: AncestorData
     """
@@ -317,47 +338,66 @@ def match_ancestors(
     sample_data,
     ancestor_data,
     *,
-    num_threads=0,
-    path_compression=True,
     recombination_rate=None,
-    mismatch_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    num_threads=0,
+    # Deliberately undocumented parameters below
+    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
+    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
     precision=None,
-    extended_checks=False,
     engine=constants.C_ENGINE,
     progress_monitor=None,
+    extended_checks=False,
 ):
     """
-    match_ancestors(sample_data, ancestor_data, *, num_threads=0, path_compression=True)
+    match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
+        mismatch_ratio=None, path_compression=True, num_threads=0)
 
-    Runs the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
+    Run the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
     on the specified :class:`SampleData` and :class:`AncestorData` instances,
     returning the resulting :class:`tskit.TreeSequence` representing the
-    complete ancestry of the putative ancestors.
+    complete ancestry of the putative ancestors. See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
     :param AncestorData ancestor_data: The :class:`AncestorData` instance
-        representing the set of ancestral haplotypes that we are finding
-        a history for.
-    :param int num_threads: The number of match worker threads to use. If
-        this is <= 0 then a simpler sequential algorithm is used (default).
+        representing the set of ancestral haplotypes for which we are finding
+        a history.
+    :param recombination_rate: Either a RateMap object, or a floating
+        point value giving a single rate, :math:`\\rho`, across the entire sequence,
+        used to calculate the probability of recombination between adjacent sites.
+        If ``None``, all matching conflicts are resolved by recombination and
+        all inference sites will have a single mutation (equivalent to mismatch_ratio
+        near zero)
+    :type recombination_rate: Union[float, RateMap]
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
     :return: The ancestors tree sequence representing the inferred history
         of the set of ancestors.
     :rtype: tskit.TreeSequence
-    """
+     """
     progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
     sample_data._check_finalised()
     ancestor_data._check_finalised()
     matcher = AncestorMatcher(
         sample_data,
         ancestor_data,
-        num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mismatch_rate=mismatch_rate,
-        precision=precision,
+        recombination=recombination,
+        mismatch_ratio=mismatch_ratio,
+        mismatch=mismatch,
         path_compression=path_compression,
+        num_threads=num_threads,
+        precision=precision,
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
@@ -370,25 +410,31 @@ def augment_ancestors(
     ancestors_ts,
     indexes,
     *,
-    num_threads=0,
-    path_compression=True,
     recombination_rate=None,
-    mismatch_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    num_threads=0,
+    # Deliberately undocumented parameters below
+    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
+    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
     precision=None,
     extended_checks=False,
     engine=constants.C_ENGINE,
     progress_monitor=None,
 ):
     """
-    augment_ancestors(sample_data, ancestors_ts, indexes, *, num_threads=0,\
-        path_compression=True)
+    augment_ancestors(sample_data, ancestors_ts, indexes, *, recombination_rate=None,\
+        mismatch_ratio=None, path_compression=True, num_threads=0)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
     for the specified subset of sample indexes, returning the
     :class:`tskit.TreeSequence` instance including these samples. This
     tree sequence can then be used as an ancestors tree sequence for subsequent
-    matching against all samples.
+    matching against all samples.  See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
@@ -397,10 +443,20 @@ def augment_ancestors(
         history among ancestral ancestral haplotypes.
     :param array indexes: The sample indexes to insert into the ancestors
         tree sequence.
-    :param int num_threads: The number of match worker threads to use. If
-        this is <= 0 then a simpler sequential algorithm is used (default).
+    :param recombination_rate: Either a RateMap object, or a floating
+        point value giving a single rate, :math:`\\rho`, across the entire sequence,
+        used to calculate the probability of recombination between adjacent sites.
+        If ``None``, all matching conflicts are resolved by recombination and
+        all inference sites will have a single mutation (equivalent to mismatch_ratio
+        near zero)
+    :type recombination_rate: Union[float, RateMap]
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
     :return: The specified ancestors tree sequence augmented with copying
         paths for the specified sample.
     :rtype: tskit.TreeSequence
@@ -410,11 +466,13 @@ def augment_ancestors(
     manager = SampleMatcher(
         sample_data,
         ancestors_ts,
-        num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mismatch_rate=mismatch_rate,
-        precision=precision,
+        mismatch_ratio=mismatch_ratio,
+        recombination=recombination,
+        mismatch=mismatch,
         path_compression=path_compression,
+        num_threads=num_threads,
+        precision=precision,
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
@@ -432,35 +490,50 @@ def match_samples(
     sample_data,
     ancestors_ts,
     *,
-    num_threads=0,
+    recombination_rate=None,
+    mismatch_ratio=None,
     path_compression=True,
     simplify=True,
-    recombination_rate=None,
-    mismatch_rate=None,
-    precision=None,
-    extended_checks=False,
-    stabilise_node_ordering=False,
-    engine=constants.C_ENGINE,
-    progress_monitor=None,
     indexes=None,
     force_sample_times=False,
+    num_threads=0,
+    # Deliberately undocumented parameters below
+    recombination=None,  # Allows direct setting of prob array of length (num_sites-1)
+    mismatch=None,  # Allows direct setting of prob array of length (num_sites)
+    precision=None,
+    stabilise_node_ordering=False,
+    extended_checks=False,
+    engine=constants.C_ENGINE,
+    progress_monitor=None,
 ):
     """
-    match_samples(sample_data, ancestors_ts, *, num_threads=0, path_compression=True,\
-        simplify=True, indexes=None, force_sample_times=False)
+    match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
+        mismatch_ratio=None, path_compression=True, simplify=True, indexes=None,\
+        force_sample_times=False, num_threads=0)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
     returning the final :class:`tskit.TreeSequence` instance containing
-    the full inferred history for all samples and sites.
+    the full inferred history for all samples and sites. See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
 
     :param SampleData sample_data: The :class:`SampleData` instance
         representing the input data.
     :param tskit.TreeSequence ancestors_ts: The
         :class:`tskit.TreeSequence` instance representing the inferred
         history among ancestral ancestral haplotypes.
-    :param int num_threads: The number of match worker threads to use. If
-        this is <= 0 then a simpler sequential algorithm is used (default).
+    :param recombination_rate: Either a RateMap object, or a floating
+        point value giving a single rate, :math:`\\rho`, across the entire sequence,
+        used to calculate the probability of recombination between adjacent sites.
+        If ``None``, all matching conflicts are resolved by recombination and
+        all inference sites will have a single mutation (equivalent to mismatch_ratio
+        near zero)
+    :type recombination_rate: Union[float, RateMap]
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param bool simplify: Whether to remove extra tree nodes and edges that are not
@@ -475,6 +548,8 @@ def match_samples(
         adjust the time of "historical samples" (those associated with an individual
         having a non-zero time) such that the sample nodes in the tree sequence
         appear at the time of the individual with which they are associated.
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
 
     :return: The tree sequence representing the inferred history
         of the sample.
@@ -485,11 +560,13 @@ def match_samples(
     manager = SampleMatcher(
         sample_data,
         ancestors_ts,
-        num_threads=num_threads,
         recombination_rate=recombination_rate,
-        mismatch_rate=mismatch_rate,
-        precision=precision,
+        mismatch_ratio=mismatch_ratio,
+        recombination=recombination,
+        mismatch=mismatch,
         path_compression=path_compression,
+        num_threads=num_threads,
+        precision=precision,
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
@@ -862,6 +939,14 @@ class AncestorsGenerator:
             logger.info("Finished building ancestors")
 
 
+def recombination_rate_to_probs(rho, positions):
+    # TODO: should max out at 0.5 or 1:  https://github.com/tskit-dev/tsinfer/issues/398
+    try:
+        return np.diff(rho.get_cumulative_mass(positions))
+    except AttributeError:
+        return np.diff(positions) * rho
+
+
 class Matcher:
     def __init__(
         self,
@@ -870,7 +955,9 @@ class Matcher:
         num_threads=1,
         path_compression=True,
         recombination_rate=None,
-        mismatch_rate=None,
+        mismatch_ratio=None,
+        recombination=None,  # Used for setting the recombination probabilities directly
+        mismatch=None,  # Used for setting the mismatch probabilities directly
         precision=None,
         extended_checks=False,
         engine=constants.C_ENGINE,
@@ -881,6 +968,7 @@ class Matcher:
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = len(inference_site_position)
+        num_intervals = max(self.num_sites - 1, 0)
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
@@ -890,23 +978,51 @@ class Matcher:
             [inference_site_position, [sample_data.sequence_length]]
         )
         self.position_map[0] = 0
+        self.recombination = np.zeros(self.num_sites)  # TODO: reduce len by 1
+        self.mismatch = np.zeros(self.num_sites)
+
+        if recombination is not None or mismatch is not None:
+            if recombination is None or mismatch is None:
+                raise ValueError(
+                    "Directly setting probabilities requires specifying "
+                    "both 'recombination' and 'mismatch'"
+                )
+            if recombination_rate is not None or mismatch_ratio is not None:
+                raise ValueError(
+                    "Cannot simultaneously specify recombination & recombination_rate, "
+                    "or mismatch and mismatch_ratio"
+                )
+        else:
+            # Must set recombination and mismatch arrays
+            if recombination_rate is None and mismatch_ratio is not None:
+                raise ValueError("Cannot use mismatch without setting recombination")
+            if (
+                recombination_rate is None and mismatch_ratio is None
+            ) or num_intervals == 0:
+                # Special case: revert to tsinfer 0.1 behaviour with no mismatch allowed
+                default_recombination_prob = 1e-2
+                default_mismatch_prob = 1e-20  # Substantially < the value above
+                recombination = np.full(num_intervals, default_recombination_prob)
+                mismatch = np.full(self.num_sites, default_mismatch_prob)
+            else:
+                recombination = recombination_rate_to_probs(
+                    recombination_rate, inference_site_position
+                )
+                if mismatch_ratio is None:
+                    mismatch_ratio = 1.0
+                mismatch = np.full(
+                    self.num_sites, mismatch_ratio * np.median(recombination)
+                )
+
+        if len(recombination) != num_intervals:
+            raise ValueError("Bad length for recombination array")
+        if len(mismatch) != self.num_sites:
+            raise ValueError("Bad length for mismatch array")
 
         if precision is None:
-            # TODO Is this a good default? Need to investigate the effects.
-            precision = 2
-
-        if recombination_rate is None:
-            # TODO is this a good value? Will need to tune
-            recombination_rate = 1e-8
-
-        self.recombination_rate = np.zeros(self.num_sites)
-        # FIXME not quite right: we should check the rho[0] = 0
-        self.recombination_rate[:] = recombination_rate
-        if mismatch_rate is None:
-            # Setting a very small value for now.
-            mismatch_rate = 1e-20
-        self.mismatch_rate = np.zeros(self.num_sites)
-        self.mismatch_rate[:] = mismatch_rate
+            precision = 13
+        self.recombination[1:] = recombination
+        self.mismatch[:] = mismatch
         self.precision = precision
 
         if engine == constants.C_ENGINE:
@@ -952,8 +1068,8 @@ class Matcher:
         self.matcher = [
             self.ancestor_matcher_class(
                 self.tree_sequence_builder,
-                recombination_rate=self.recombination_rate,
-                mismatch_rate=self.mismatch_rate,
+                recombination=self.recombination,
+                mismatch=self.mismatch,
                 precision=precision,
                 extended_checks=self.extended_checks,
             )

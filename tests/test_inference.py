@@ -436,12 +436,15 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         rho = [1e-9, 1e-3, 0.1]
         mis = [1e-9, 1e-3, 0.1]
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
-        for recomb_rate, mis_rate, engine in itertools.product(rho, mis, engines):
+        for rec, mis, engine in itertools.product(rho, mis, engines):
+            # Set the arrays directly
+            recombination = np.full(max(ancestors_ts.num_sites - 1, 0), rec)
+            mismatch = np.full(ancestors_ts.num_sites, mis)
             ts = tsinfer.match_samples(
                 sample_data,
                 ancestors_ts,
-                recombination_rate=recomb_rate,
-                mismatch_rate=mis_rate,
+                recombination=recombination,
+                mismatch=mismatch,
                 engine=engine,
             )
             self.assert_lossless(
@@ -484,7 +487,6 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 sample_data,
                 ancestors_ts,
                 recombination_rate=1e-3,
-                mismatch_rate=1e-3,
                 engine=engine,
             )
             self.assert_lossless(
@@ -521,7 +523,6 @@ class TestMissingDataRoundTrip(TestRoundTrip):
             ts = tsinfer.infer(
                 sample_data,
                 recombination_rate=1e-3,
-                mismatch_rate=1e-6,
                 precision=10,
                 engine=engine,
             )
@@ -902,8 +903,7 @@ class TestMetadataRoundTrip:
                 sample_data, ancestors_ts, indexes=subset
             ).dump_tables()
             t2.simplify()
-            t2.provenances.clear()
-            assert t1 == t2
+            assert t1.equals(t2, ignore_provenance=True)
 
     def test_individual_location(self):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
@@ -1409,14 +1409,14 @@ class TestAncestorsTreeSequence:
     Tests for the output of the match_ancestors function.
     """
 
-    def verify(self, sample_data, mismatch_rate=None, recombination_rate=None):
+    def verify(self, sample_data, mismatch_ratio=None, recombination_rate=None):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         for path_compression in [True, False]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data,
                 ancestor_data,
                 path_compression=path_compression,
-                mismatch_rate=mismatch_rate,
+                mismatch_ratio=mismatch_ratio,
                 recombination_rate=recombination_rate,
             )
             tsinfer.check_ancestors_ts(ancestors_ts)
@@ -1463,8 +1463,9 @@ class TestAncestorsTreeSequence:
         ts = msprime.simulate(10, mutation_rate=2, random_seed=234)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
     def test_recombination(self):
         ts = msprime.simulate(
@@ -1472,8 +1473,9 @@ class TestAncestorsTreeSequence:
         )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
     def test_random_data(self):
         n = 25
@@ -1484,8 +1486,9 @@ class TestAncestorsTreeSequence:
             sample_data.add_site(position, genotypes)
         sample_data.finalise()
         self.verify(sample_data)
-        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
     def test_acgt_mutations(self):
         ts = msprime.simulate(10, recombination_rate=2, random_seed=233)
@@ -1497,14 +1500,15 @@ class TestAncestorsTreeSequence:
         )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
-        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
     def test_multi_char_alleles(self):
         sample_data = get_multichar_alleles_example(10)
         self.verify(sample_data)
-        self.verify(sample_data, mismatch_rate=1e-3, recombination_rate=1e-9)
-        self.verify(sample_data, mismatch_rate=1e-9, recombination_rate=1e-3)
+        self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
+        self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
 
 class TestAncestorsTreeSequenceFlags:
@@ -1638,12 +1642,8 @@ class TestMatchSamples:
             anc_ts = tsinfer.match_ancestors(sd, ancestors)
             # test indices missing from start, end, and in the middle
             for samples in (np.arange(8), np.arange(2, 10), np.arange(5) * 2):
-                t1 = ts1.simplify(samples).dump_tables()
-                t1.provenances.clear()
-                t2 = tsinfer.match_samples(sd, anc_ts, indexes=samples).dump_tables()
-                t2.simplify()
-                t2.provenances.clear()
-                assert t1 == t2
+                ts2 = tsinfer.match_samples(sd, anc_ts, indexes=samples).simplify()
+                assert ts1.simplify(samples).equals(ts2, ignore_provenance=True)
 
     def test_partial_bad_indexes(self):
         sd = tsinfer.SampleData.from_tree_sequence(
@@ -2182,11 +2182,7 @@ class TestSimplify:
 
         # Check that we're calling simplify with the correct arguments.
         ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
-        t1 = ts1.dump_tables()
-        t2 = ts2.dump_tables()
-        t1.provenances.clear()
-        t2.provenances.clear()
-        assert t1 == t2
+        assert ts1.equals(ts2, ignore_provenance=True)
 
     def test_single_tree(self):
         ts = msprime.simulate(5, random_seed=1, mutation_rate=2)
@@ -2978,6 +2974,80 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             ancestors_ts = augmented_ancestors
 
 
+class TestMismatchAndRecombination:
+    """
+    Various combinations of recombination & recombination_rate, mismatch & mismatch_rate
+    are allowed in match_samples/match_ancestors. Others are meaningless. Test these.
+    """
+
+    def test_recombination_rate_with_one_site(self, small_sd_anc_fixture):
+        """
+        Where there is just one site, there is no recombination probability to use,
+        so we default to an arbitrary mismatch rate
+        """
+        sd, anc = small_sd_anc_fixture
+        # Delete all but the first inference site
+        del_sites = np.isin(sd.sites_position[:], anc.sites_position[1:])
+        sd = sd.subset(sites=np.where(np.logical_not(del_sites))[0])
+        anc = tsinfer.generate_ancestors(sd)
+        assert anc.num_sites == 1
+        tsinfer.infer(sd, recombination_rate=0.1)
+
+    def test_recombination_mismatch_combos(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        x = np.full(anc.num_sites, 0.1)
+        with pytest.raises(ValueError, match="requires specifying both"):
+            tsinfer.match_ancestors(sd, anc, recombination=x[1:])
+        with pytest.raises(ValueError, match="requires specifying both"):
+            tsinfer.match_ancestors(sd, anc, mismatch=x)
+        with pytest.raises(ValueError, match="simultaneously"):
+            tsinfer.match_ancestors(
+                sd, anc, recombination=x[1:], recombination_rate=0.1, mismatch=x
+            )
+        with pytest.raises(ValueError, match="simultaneously"):
+            tsinfer.match_ancestors(
+                sd, anc, recombination=x[1:], mismatch_ratio=1, mismatch=x
+            )
+
+    def test_bad_recombination_rate(self, small_sd_fixture):
+        sd = small_sd_fixture
+        for bad_rate in [np.array([0.1, 0.2]), (0.1, 0.2), []]:
+            with pytest.raises(ValueError):
+                tsinfer.infer(sd, recombination_rate=bad_rate)
+
+    def test_bad_recombination(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        x = np.full(anc.num_sites, 0.1)
+        # Check it normally works: requires array of size 1 less than num_sites
+        _ = tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=x[1:])
+        for bad_array in [x, x[2:], []]:
+            with pytest.raises(ValueError, match="Bad length"):
+                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad_array)
+
+    def test_mismatch_no_recombination(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        with pytest.raises(ValueError, match="Cannot use mismatch"):
+            tsinfer.match_ancestors(sd, anc, mismatch_ratio=1)
+
+    def test_bad_mismatch_ratio(self, small_sd_fixture):
+        sd = small_sd_fixture
+        for bad_ratio in [np.array([0.1, 0.2])]:
+            with pytest.raises(ValueError):
+                tsinfer.infer(sd, recombination_rate=0.1, mismatch_ratio=bad_ratio)
+        for bad_ratio in [(0.1, 0.2), []]:
+            with pytest.raises(TypeError):
+                tsinfer.infer(sd, recombination_rate=0.1, mismatch_ratio=bad_ratio)
+
+    def test_bad_mismatch(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        x = np.full(anc.num_sites + 1, 0.1)
+        # Check it normally works
+        _ = tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=x[1:])
+        for bad in [x, x[2:], []]:
+            with pytest.raises(ValueError, match="Bad length"):
+                tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
+
+
 class TestAlgorithmResults:
     """
     Some features of the algorithm have expected outcomes in simple cases. Test these.
@@ -2987,10 +3057,12 @@ class TestAlgorithmResults:
         with tsinfer.SampleData() as sample_data:
             for pos, genotypes in zip(positions, G):
                 sample_data.add_site(pos, genotypes)
-        ts = tsinfer.infer(
-            sample_data,
-            # Temporarily set rho manually until issues/236 is addressed
-            recombination_rate=np.pad(np.diff(sample_data.sites_position[:]), (1, 0)),
+        anc = tsinfer.generate_ancestors(sample_data)
+        anc_ts = tsinfer.match_ancestors(
+            sample_data, anc, recombination_rate=1, mismatch_ratio=0.1
+        )
+        ts = tsinfer.match_samples(
+            sample_data, anc_ts, recombination_rate=1, mismatch_ratio=0.1
         )
         assert ts.num_trees == 2
         breakpoint_pos = set(ts.breakpoints()) - {0.0, ts.sequence_length}
