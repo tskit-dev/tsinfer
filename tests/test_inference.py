@@ -3020,9 +3020,14 @@ class TestMismatchAndRecombination:
         x = np.full(anc.num_sites, 0.1)
         # Check it normally works: requires array of size 1 less than num_sites
         _ = tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=x[1:])
-        for bad_array in [x, x[2:], []]:
+        for bad in [x, x[2:], []]:
             with pytest.raises(ValueError, match="Bad length"):
-                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad_array)
+                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad)
+        bad = x.copy()[1:]
+        for bad_val in [1.1, -0.1, np.nan]:
+            bad[-1] = bad_val
+            with pytest.raises(ValueError, match="Recombination.*between 0 and 1"):
+                tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=bad)
 
     def test_mismatch_no_recombination(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
@@ -3045,6 +3050,11 @@ class TestMismatchAndRecombination:
         _ = tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=x[1:])
         for bad in [x, x[2:], []]:
             with pytest.raises(ValueError, match="Bad length"):
+                tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
+        bad = x.copy()[1:]
+        for bad_val in [1.1, -0.1, np.nan]:
+            bad[-1] = bad_val
+            with pytest.raises(ValueError, match="Mismatch.*between 0 and 1"):
                 tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
 
 

@@ -1018,6 +1018,10 @@ class Matcher:
             raise ValueError("Bad length for recombination array")
         if len(mismatch) != self.num_sites:
             raise ValueError("Bad length for mismatch array")
+        if not (np.all(recombination >= 0) and np.all(recombination <= 1)):
+            raise ValueError("Recombination probabilities must be between 0 and 1")
+        if not (np.all(mismatch >= 0) and np.all(mismatch <= 1)):
+            raise ValueError("Mismatch probabilities must be between 0 and 1")
 
         if precision is None:
             precision = 13
