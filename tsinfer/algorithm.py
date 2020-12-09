@@ -722,6 +722,7 @@ class AncestorMatcher:
                 assert v != -1
 
             p_last = self.likelihood[u]
+            # Stephens & Donnelly Eq 4.1
             p_no_recomb = p_last * (1 - rho + rho / n)
             p_recomb = rho / n
             recombination_required = False
@@ -731,9 +732,10 @@ class AncestorMatcher:
                 p_t = p_recomb
                 recombination_required = True
             self.traceback[site][u] = recombination_required
-            p_e = mu
+            # Stephens & Donnelly Eq 4.2, with adjustment for >2 alleles
+            p_e = mu / (num_alleles * (n + mu))
             if haplotype_state in (tskit.MISSING_DATA, self.allelic_state[v]):
-                p_e = 1 - (num_alleles - 1) * mu
+                p_e += n / (n + mu)
             self.likelihood[u] = p_t * p_e
 
             if self.likelihood[u] > max_L:
