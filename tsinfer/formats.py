@@ -1897,7 +1897,11 @@ class SampleData(DataContainer):
 
     def num_alleles(self, sites=None):
         """
-        Returns a numpy array of the number of alleles at each site.
+        Returns a numpy array of the number of alleles at each site. Missing data is
+        not counted as an allele.
+
+        :param array sites: A numpy array of sites for which to return data. If None
+            (default) return all sites.
 
         :return: A numpy array of the number of alleles at each site.
         :rtype: numpy.ndarray(dtype=uint32)
@@ -1908,6 +1912,8 @@ class SampleData(DataContainer):
         num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
         for j, alleles in enumerate(alleles):
             num_alleles[j] = len(alleles)
+            if alleles[-1] is None:
+                num_alleles[j] -= 1
         return num_alleles[sites]
 
     def variants(self, sites=None):

@@ -1142,6 +1142,28 @@ class TestSampleData(DataContainerMixin):
                         0, [0, 0], alleles=[str(x) for x in range(num_alleles)]
                     )
 
+    def test_num_alleles_with_missing(self):
+        u = tskit.MISSING_DATA
+        sites_by_samples = np.array(
+            [
+                [u, u, u, 1],
+                [u, u, u, 1],
+                [u, u, u, 1],
+                [u, 0, 0, 1],
+                [u, 0, 1, 1],
+                [u, 0, 1, 0],
+            ],
+            dtype=np.int8,
+        )
+        with tsinfer.SampleData() as sd:
+            for col in range(sites_by_samples.shape[1]):
+                genos = sites_by_samples[:, col]
+                alleles = [None if x == u else str(x) for x in np.unique(genos)]
+                if alleles[0] is None:
+                    alleles = alleles[1:] + [None]  # Put None at the end
+                sd.add_site(col, genos, alleles=alleles)
+        assert np.all(sd.num_alleles() == np.array([0, 1, 2, 2]))
+
     def test_append_sites(self):
         ts = tsutil.get_example_individuals_ts_with_metadata(4, 2, 10)
         sd1 = tsinfer.SampleData.from_tree_sequence(ts.keep_intervals([[0, 2]]))
