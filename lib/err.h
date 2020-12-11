@@ -23,6 +23,8 @@
 #define TSI_ERR_BAD_NUM_SAMPLES                                     -19
 #define TSI_ERR_TOO_MANY_SITES                                      -20
 #define TSI_ERR_BAD_FOCAL_SITE                                      -21
+#define TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA             -22
+#define TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION              -23
 // clang-format on
 
 #ifdef __GNUC__

@@ -32,6 +32,7 @@ import numpy as np
 import sortedcontainers
 import tskit
 
+import _tsinfer
 import tsinfer.constants as constants
 
 
@@ -741,15 +742,20 @@ class AncestorMatcher:
                 max_L_node = u
 
         if max_L == 0:
-            assert self.mismatch[site] in (0, 1)
-            if self.mismatch[site] == 0:
-                raise ValueError(
+            if mu == 0:
+                raise _tsinfer.MatchImpossible(
                     "Trying to match non-existent allele with zero mismatch rate"
                 )
-            if self.mismatch[site] == 1:
-                raise ValueError(
+            elif mu == 1:
+                raise _tsinfer.MatchImpossible(
                     "Match impossible: mismatch prob=1 & no haplotype with other allele"
                 )
+            elif rho == 0:
+                raise _tsinfer.MatchImpossible(
+                    "Matching failed with recombination=0, potentially due to "
+                    "rounding issues. Try increasing the precision value"
+                )
+            raise AssertionError("Unexpected matching failure")
 
         for u in self.likelihood_nodes:
             x = self.likelihood[u] / max_L
@@ -887,6 +893,7 @@ class AncestorMatcher:
         remove_start = k
         while left < end:
             # print("START OF TREE LOOP", left, right)
+            # print("L:", {u: self.likelihood[u] for u in self.likelihood_nodes})
             assert left < right
             for site_index in range(remove_start, k):
                 edge = Ir.peekitem(site_index)[1]
