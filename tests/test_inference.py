@@ -3124,14 +3124,30 @@ class TestMismatchAndRecombination:
         num_loci = anc.num_sites
         r = np.full(num_loci - 1, 0.01)
         m = np.full(num_loci, 1)
-        with pytest.raises(ValueError, match="Match impossible"):
-            tsinfer.match_ancestors(
-                sd, anc, recombination=r, mismatch=m, engine=tsinfer.PY_ENGINE
-            )
-        with pytest.raises(_tsinfer.LibraryError, match="Match impossible"):
-            tsinfer.match_ancestors(
-                sd, anc, recombination=r, mismatch=m, engine=tsinfer.C_ENGINE
-            )
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            with pytest.raises(_tsinfer.MatchImpossible):
+                tsinfer.match_ancestors(
+                    sd,
+                    anc,
+                    recombination=r,
+                    mismatch=m,
+                    engine=engine,
+                )
+
+    def test_zero_recomb_mutation(self, small_sd_anc_fixture):
+        sd, anc = small_sd_anc_fixture
+        num_loci = anc.num_sites
+        r = np.full(num_loci - 1, 0)
+        m = np.full(num_loci, 0)
+        for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            with pytest.raises(_tsinfer.MatchImpossible):
+                tsinfer.match_ancestors(
+                    sd,
+                    anc,
+                    recombination=r,
+                    mismatch=m,
+                    engine=engine,
+                )
 
     def test_maximal_mismatch_samples(self, small_sd_anc_fixture):
         """
@@ -3243,11 +3259,20 @@ class TestMismatchAndRecombination:
         )
         sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         anc = tsinfer.generate_ancestors(sd)
-        m = np.full(anc.num_sites, 1e-4)
+        # Need to be sure that mu is large here or the value associated with the
+        # root haplotype can become less than precision, and we therefore
+        # fail to find a match.
+        m = np.full(anc.num_sites, 1e-2)
         r = np.full(anc.num_sites - 1, 0)  # Ban recombination
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             anc_ts = tsinfer.match_ancestors(
-                sd, anc, recombination=r, mismatch=m, engine=e, path_compression=False
+                sd,
+                anc,
+                recombination=r,
+                mismatch=m,
+                engine=e,
+                path_compression=False,
+                extended_checks=True,
             )
             ts = tsinfer.match_samples(
                 sd,
@@ -3256,7 +3281,25 @@ class TestMismatchAndRecombination:
                 mismatch=m,
                 engine=e,
                 path_compression=False,
+                extended_checks=True,
             )
+            assert sd.num_sites == ts.num_sites
+            for v1, v2 in zip(sd.variants(), ts.variants()):
+                assert v1.site.position == v2.site.position
+                assert np.all(v1.genotypes == v2.genotypes)
+
+            # If we try this with a small precision value we fail.
+            with pytest.raises(_tsinfer.MatchImpossible):
+                tsinfer.match_samples(
+                    sd,
+                    anc_ts,
+                    precision=3,
+                    recombination=r,
+                    mismatch=m,
+                    engine=e,
+                    path_compression=False,
+                    extended_checks=True,
+                )
 
 
 class TestAlgorithmResults:

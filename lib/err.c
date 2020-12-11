@@ -63,7 +63,17 @@ tsi_strerror(int err)
             ret = "Bad path information: right > num_sites";
             break;
         case TSI_ERR_MATCH_IMPOSSIBLE:
-            ret = "Match impossible under input parameters.";
+            ret = "Unexpected failure to find matching haplotype; please open "
+                  "an issue on GitHub";
+            break;
+        case TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA:
+            ret = "Cannot find match: the specified mismatch probability is "
+                  "0 or 1 and no matches are possible with these parameters";
+            break;
+        case TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION:
+            ret = "Cannot find match: the specified recombination probability is"
+                  "zero and no matches could be found. Increasing the 'precision' "
+                  "may help, but recombination values of 0 are not recommended.";
             break;
         case TSI_ERR_BAD_HAPLOTYPE_ALLELE:
             ret = "Input haplotype contains bad allele information.";

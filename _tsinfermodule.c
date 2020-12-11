@@ -18,6 +18,7 @@
 "Low-level tsinfer interface."
 
 static PyObject *TsinfLibraryError;
+static PyObject *TsinfMatchImpossible;
 
 typedef struct {
     PyObject_HEAD
@@ -40,6 +41,9 @@ handle_library_error(int err)
 {
     if (err == TSI_ERR_NO_MEMORY) {
         PyErr_NoMemory();
+    } else if (err == TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA
+            || err == TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION) {
+        PyErr_Format(TsinfMatchImpossible, "%s", tsi_strerror(err));
     } else {
         PyErr_Format(TsinfLibraryError, "%s", tsi_strerror(err));
     }
@@ -1641,6 +1645,10 @@ init_tsinfer(void)
     TsinfLibraryError = PyErr_NewException("_tsinfer.LibraryError", NULL, NULL);
     Py_INCREF(TsinfLibraryError);
     PyModule_AddObject(module, "LibraryError", TsinfLibraryError);
+
+    TsinfMatchImpossible= PyErr_NewException("_tsinfer.MatchImpossible", NULL, NULL);
+    Py_INCREF(TsinfMatchImpossible);
+    PyModule_AddObject(module, "MatchImpossible", TsinfMatchImpossible);
 
 #if PY_MAJOR_VERSION >= 3
     return module;

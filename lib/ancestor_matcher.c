@@ -348,6 +348,14 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     }
     /* ancestor_matcher_print_state(self, stdout); */
     if (max_L <= 0) {
+        if (mu <= 0 || mu >= 1) {
+            ret = TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA;
+            goto out;
+        }
+        if (rho == 0) {
+            ret = TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION;
+            goto out;
+        }
         ret = TSI_ERR_MATCH_IMPOSSIBLE;
         goto out;
     }

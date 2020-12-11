@@ -662,6 +662,47 @@ test_matching_one_site_many_alleles(void)
 }
 
 static void
+test_matching_errors(void)
+{
+    int ret;
+    ancestor_matcher_t ancestor_matcher;
+    tree_sequence_builder_t tsb;
+    allele_t haplotype[2] = { 1, 1 };
+    allele_t match[2];
+    double recombination_rate[] = { 0, 0 };
+    double mismatch_rate[] = { 0, 0 };
+    size_t num_edges;
+    tsk_id_t *left, *right, *parent;
+
+    ret = tree_sequence_builder_alloc(&tsb, 2, NULL, 1, 1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_add_node(&tsb, 2.0, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tree_sequence_builder_freeze_indexes(&tsb);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_matcher_alloc(
+        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 12, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_find_path(
+        &ancestor_matcher, 0, 2, haplotype, match, &num_edges, &left, &right, &parent);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA);
+    ancestor_matcher_free(&ancestor_matcher);
+
+    haplotype[0] = 0;
+    mismatch_rate[0] = 1;
+    ret = ancestor_matcher_alloc(
+        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 12, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_find_path(
+        &ancestor_matcher, 0, 2, haplotype, match, &num_edges, &left, &right, &parent);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA);
+    ancestor_matcher_free(&ancestor_matcher);
+
+    tree_sequence_builder_free(&tsb);
+}
+
+static void
 test_tsb_errors(void)
 {
     int ret;
@@ -813,7 +854,6 @@ test_strerror(void)
 
     for (j = 0; j < max_error_code; j++) {
         msg = tsi_strerror(-j);
-        printf("msg: %s\n", msg);
         CU_ASSERT_FATAL(msg != NULL);
         CU_ASSERT(strlen(msg) > 0);
     }
@@ -879,6 +919,7 @@ main(int argc, char **argv)
         /* TODO more ancestor builder tests */
         { "test_matching_one_site", test_matching_one_site },
         { "test_matching_one_site_many_alleles", test_matching_one_site_many_alleles },
+        { "test_matching_errors", test_matching_errors },
 
         { "test_tsb_errors", test_tsb_errors },
 
