@@ -182,21 +182,26 @@ these settings to obtain optimal results.
 
 The ``recombination_rate`` parameter can be a RateMap object, or a floating
 point value giving a single rate (:math:`\rho`) across the entire sequence.
-Integrating this rate between adjacent inference sites results in a list of
-probabilities of recombination (:math:`r`) between sites, used when assessing
-the relative likelihood that a mismatch (and hence an extra mutation) may be
-responsible for some aspects of variation at a site.
+This can be used to calculate the genetic distance between sites, which in turn
+can be used to derive an array of probabilities of recombination between
+adjacent sites, (:math:`r`) used when assessing the relative likelihood that a
+mismatch (and hence an extra mutation) may be responsible for some patterns of
+variation at a site.
 
 The ``mismatch_ratio`` parameter is only relevant if a recombination rate has
 been provided. It is used to adjust the balance of recombination to multiple
 mutations at a site. More specifically, a single probability of mismatch is
-used for all sites, set to the median recombination probability between inference
-sites (:math:`\tilde{r}`) multiplied by the ``mismatch_ratio``. Setting a high
-``mismatch_ratio`` therefore results in tree sequences with more recurrent
-mutations and fewer recombinations (and edges). Setting a low value results
-in tree sequences with more recombination events and edges, and fewer mutations.
-In the limit, as the mismatch_ratio tends to zero, only one mutation will be
-inferred per variable site. This is the default behaviour if no
+used for all sites, which is calculated from the median genetic distance between
+inference sites, such that for conventional (small) distances, the probability of
+a mismatch is approximately equal to the probability of recombination multiplied
+by the ``mismatch_ratio``. In other words, a mismatch ratio of 2 makes a recurrent
+mutation two times more likely than a recombination event to explain why an
+otherwise closely matching ancestral haplotype does not match at a particular site.
+Setting a high ``mismatch_ratio`` therefore results in tree sequences with more
+recurrent mutations and fewer recombinations (and edges). Setting a low value
+results in tree sequences with more recombination events and edges, and fewer
+mutations. In the limit, as the mismatch_ratio tends to zero, only one mutation
+will be inferred per variable site. This is the default behaviour if no
 ``recombination_rate`` is given or if there is only one inference site.
 Alternatively, if ``recombination_rate`` is set, ``mismatch_ratio`` defaults to
 1, which has been shown to give reasonable results in simulated inference of
