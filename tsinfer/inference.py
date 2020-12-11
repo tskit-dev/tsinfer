@@ -1235,7 +1235,14 @@ class AncestorMatcher(Matcher):
         end = ancestor.end
         assert ancestor.haplotype.shape[0] == (end - start)
         haplotype[start:end] = ancestor.haplotype
-        self._find_path(ancestor.id, haplotype, start, end, thread_index)
+        try:
+            self._find_path(ancestor.id, haplotype, start, end, thread_index)
+        except _tsinfer.LibraryError as e:
+            if "Match impossible" in str(e):
+                raise RuntimeError(
+                    f"Could not find valid copying path for ancestor {ancestor.id}"
+                ) from e
+            raise
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -1484,8 +1491,15 @@ class SampleMatcher(Matcher):
             )
         )
 
-    def __process_sample(self, sample_id, haplotype, thread_index=0):
-        self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
+    def __process_sample(self, orig_sample_id, sample_id, haplotype, thread_index=0):
+        try:
+            self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
+        except _tsinfer.LibraryError as e:
+            if "Match impossible" in str(e):
+                raise RuntimeError(
+                    "Could not find valid copying path "
+                    f"for sample {orig_sample_id} (internal id {sample_id})"
+                ) from e
 
     def __match_samples_single_threaded(self, indexes):
         sample_haplotypes = self.sample_data.haplotypes(
@@ -1493,7 +1507,7 @@ class SampleMatcher(Matcher):
         )
         for j, a in sample_haplotypes:
             assert len(a) == self.num_sites
-            self.__process_sample(self.sample_id_map[j], a)
+            self.__process_sample(j, self.sample_id_map[j], a)
 
     def __match_samples_multi_threaded(self, indexes):
         # Note that this function is not almost identical to the match_ancestors
@@ -1509,8 +1523,8 @@ class SampleMatcher(Matcher):
                 work = match_queue.get()
                 if work is None:
                     break
-                sample_id, a = work
-                self.__process_sample(sample_id, a, thread_index)
+                orig_id, sample_id, a = work
+                self.__process_sample(orig_id, sample_id, a, thread_index)
                 match_queue.task_done()
             match_queue.task_done()
 
@@ -1526,7 +1540,7 @@ class SampleMatcher(Matcher):
             indexes, sites=self.inference_site_id
         )
         for j, a in sample_haplotypes:
-            match_queue.put((self.sample_id_map[j], a))
+            match_queue.put((j, self.sample_id_map[j], a))
 
         # Stop the the worker threads.
         for _ in range(self.num_threads):

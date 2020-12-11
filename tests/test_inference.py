@@ -1510,6 +1510,10 @@ class TestAncestorsTreeSequence:
         self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
         self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
+    def test_zero_rates_failure(self, small_sd_anc_fixture):
+        with pytest.raises(RuntimeError, match="valid copying path.*ancestor 2"):
+            tsinfer.match_ancestors(*small_sd_anc_fixture, recombination_rate=0)
+
 
 class TestAncestorsTreeSequenceFlags:
     """
@@ -1779,6 +1783,18 @@ class TestMatchSamples:
         for bad_samples in [[], [-1, 0], [0, 10]]:
             with pytest.raises(ValueError):
                 tsinfer.match_samples(sd, a_ts, indexes=bad_samples)
+
+    def test_zero_rates_failure(self):
+        # Need a large enough test that the first sample won't be able to match to
+        # any single ancestor along the entire genome
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=10, random_seed=1)
+        assert ts.num_trees > 50
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        anc = tsinfer.generate_ancestors(sd)
+        assert anc.num_sites > 10
+        anc_ts = tsinfer.match_ancestors(sd, anc)
+        with pytest.raises(RuntimeError, match="valid copying path.*sample 0 "):
+            tsinfer.match_samples(sd, anc_ts, recombination_rate=0)
 
 
 class AlgorithmsExactlyEqualMixin:
