@@ -3228,6 +3228,36 @@ class TestMismatchAndRecombination:
             with pytest.raises(ValueError, match="mismatch.*between 0 & 1"):
                 tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=bad)
 
+    def test_zero_recombination(self):
+        """
+        With zero recombination but a positive mismatch value, matching the oldest (root)
+        ancestor should always be possible: issue #420
+        """
+        ts = msprime.simulate(
+            10,
+            length=1e4,
+            Ne=10000,
+            mutation_rate=1e-8,
+            recombination_rate=1e-8,
+            random_seed=50,
+        )
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        anc = tsinfer.generate_ancestors(sd)
+        m = np.full(anc.num_sites, 1e-4)
+        r = np.full(anc.num_sites - 1, 0)  # Ban recombination
+        for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
+            anc_ts = tsinfer.match_ancestors(
+                sd, anc, recombination=r, mismatch=m, engine=e, path_compression=False
+            )
+            ts = tsinfer.match_samples(
+                sd,
+                anc_ts,
+                recombination=r,
+                mismatch=m,
+                engine=e,
+                path_compression=False,
+            )
+
 
 class TestAlgorithmResults:
     """
