@@ -649,12 +649,12 @@ TreeSequenceBuilder_add_mutations(TreeSequenceBuilder *self, PyObject *args, PyO
     /* WARNING!! This isn't fully safe as we're using pointers to data that can
      * be modified in Python. Must make sure that these arrays are not modified
      * by other threads. */
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_add_mutations(self->tree_sequence_builder,
             node, num_mutations,
             (tsk_id_t *) PyArray_DATA(site_array),
             (allele_t *) PyArray_DATA(derived_state_array));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
 
     if (err < 0) {
         handle_library_error(err);
