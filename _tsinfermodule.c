@@ -106,9 +106,9 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = ancestor_builder_alloc(self->builder, num_samples, max_sites, flags);
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -150,10 +150,10 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, "genotypes array wrong size.");
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = ancestor_builder_add_site(self->builder, time,
             (allele_t *) PyArray_DATA(genotypes_array));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -216,11 +216,11 @@ AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *k
         PyErr_SetString(PyExc_ValueError, "input ancestor wrong size");
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = ancestor_builder_make_ancestor(self->builder, num_focal_sites,
         (int32_t *) PyArray_DATA(focal_sites_array),
         &start, &end, (int8_t *) PyArray_DATA(ancestor_array));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -574,14 +574,14 @@ TreeSequenceBuilder_add_path(TreeSequenceBuilder *self, PyObject *args, PyObject
     /* WARNING!! This isn't fully safe as we're using pointers to data that can
      * be modified in Python. Must make sure that these arrays are not modified
      * by other threads. */
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_add_path(self->tree_sequence_builder,
             child, num_edges,
             (tsk_id_t *) PyArray_DATA(left_array),
             (tsk_id_t *) PyArray_DATA(right_array),
             (tsk_id_t *) PyArray_DATA(parent_array),
             flags);
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
 
     if (err < 0) {
         handle_library_error(err);
@@ -714,12 +714,12 @@ TreeSequenceBuilder_restore_nodes(TreeSequenceBuilder *self, PyObject *args, PyO
         PyErr_SetString(PyExc_ValueError, "flags array incorrect size");
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_restore_nodes(self->tree_sequence_builder,
             num_nodes,
             (uint32_t *) PyArray_DATA(flags_array),
             (double *) PyArray_DATA(time_array));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -813,14 +813,14 @@ TreeSequenceBuilder_restore_edges(TreeSequenceBuilder *self, PyObject *args, PyO
         goto out;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_restore_edges(self->tree_sequence_builder,
             num_edges,
             (tsk_id_t *) PyArray_DATA(left_array),
             (tsk_id_t *) PyArray_DATA(right_array),
             (tsk_id_t *) PyArray_DATA(parent_array),
             (tsk_id_t *) PyArray_DATA(child_array));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -917,14 +917,14 @@ TreeSequenceBuilder_restore_mutations(TreeSequenceBuilder *self, PyObject *args,
         goto out;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_restore_mutations(self->tree_sequence_builder,
             num_mutations,
             (tsk_id_t *) PyArray_DATA(site_array),
             (tsk_id_t *) PyArray_DATA(node_array),
             (allele_t *) PyArray_DATA(derived_state_array));
     /* NOTE: we are ignoring parent here! */
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -956,11 +956,11 @@ TreeSequenceBuilder_dump_nodes(TreeSequenceBuilder *self)
     if (time == NULL || flags == NULL) {
        goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_dump_nodes(self->tree_sequence_builder,
         (uint32_t *) PyArray_DATA(flags),
         (double *) PyArray_DATA(time));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -999,13 +999,13 @@ TreeSequenceBuilder_dump_edges(TreeSequenceBuilder *self)
     if (left == NULL || right == NULL || parent == NULL || child == NULL) {
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_dump_edges(self->tree_sequence_builder,
         (tsk_id_t *) PyArray_DATA(left),
         (tsk_id_t *) PyArray_DATA(right),
         (tsk_id_t *) PyArray_DATA(parent),
         (tsk_id_t *) PyArray_DATA(child));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1048,13 +1048,13 @@ TreeSequenceBuilder_dump_mutations(TreeSequenceBuilder *self)
     if (site == NULL || node == NULL || derived_state == NULL || parent == NULL) {
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = tree_sequence_builder_dump_mutations(self->tree_sequence_builder,
         (tsk_id_t *) PyArray_DATA(site),
         (tsk_id_t *) PyArray_DATA(node),
         (allele_t *) PyArray_DATA(derived_state),
         (tsk_id_t *) PyArray_DATA(parent));
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1396,12 +1396,12 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    /* Py_BEGIN_ALLOW_THREADS */
     err = ancestor_matcher_find_path(self->ancestor_matcher,
             (tsk_id_t) start, (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
             (allele_t *) PyArray_DATA(match_array),
             &num_edges, &ret_left, &ret_right, &ret_parent);
-    Py_END_ALLOW_THREADS
+    /* Py_END_ALLOW_THREADS */
     if (err != 0) {
         handle_library_error(err);
         goto out;
