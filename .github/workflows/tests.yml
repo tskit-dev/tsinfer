@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python: [ 3.6, 3.8 ]
+        python: [ 3.6, 3.9 ]
         os:  [ macos-latest, ubuntu-latest, windows-latest ]
     defaults:
       run:
@@ -84,6 +84,13 @@ jobs:
         run: |
           cp ~/.bash_profile ~/.profile
 
+      # Work around weird issues on OSX possibly caused by mixed compilers
+      # https://github.com/tskit-dev/tsinfer/issues/376
+      - name: Install compiler from conda
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash -l {0} #We need a login shell to get conda
+        run: conda install --yes c-compiler
+
       - name: Install conda deps
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash -l {0} #We need a login shell to get conda
@@ -116,6 +123,3 @@ jobs:
           source ~/.profile
           conda activate anaconda-client-env
           python -m pytest -xv -n2
-
-
-
