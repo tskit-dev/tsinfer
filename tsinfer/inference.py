@@ -22,6 +22,7 @@ of the core tasks like ancestor generation and matching are delegated
 to other modules.
 """
 import collections
+import copy
 import heapq
 import json
 import logging
@@ -42,6 +43,44 @@ import tsinfer.provenance as provenance
 import tsinfer.threads as threads
 
 logger = logging.getLogger(__name__)
+
+
+sample_data_time_metadata_definition = {
+    "description": "Time of an individual from the SampleData file.",
+    "type": "number",
+    # Defaults aren't currently used, see
+    # https://github.com/tskit-dev/tskit/issues/1073
+    "default": 0,
+}
+
+inference_type_metadata_definition = {
+    "description": (
+        "The type of inference used at this site. This can be one of the following: "
+        f"'{constants.INFERENCE_FULL}' for sites which used the standard tsinfer "
+        f"algorithm; '{constants.INFERENCE_NONE}' for sites containing only missing "
+        f"data or the ancestral state; '{constants.INFERENCE_PARSIMONY}' for sites "
+        "that used a parsimony algorithm to place mutations based on trees inferred "
+        "from the remaining data."
+    ),
+    "type": "string",
+    "enum": [
+        constants.INFERENCE_NONE,
+        constants.INFERENCE_FULL,
+        constants.INFERENCE_PARSIMONY,
+    ],
+}
+
+
+def add_to_schema(schema, name, definition=None, required=False):
+    schema = copy.deepcopy(schema)
+    if name in schema["properties"]:
+        raise ValueError(f"The metadata {name} is reserved for use by tsinfer")
+    if definition is None:
+        definition = {}
+    schema["properties"][name] = definition
+    if required:
+        schema["required"].append(name)
+    return schema
 
 
 def is_pc_ancestor(flags):
@@ -103,16 +142,11 @@ def _get_progress_monitor(progress_monitor, **kwargs):
     return progress.DummyProgressMonitor()
 
 
-def _encode_metadata(obj):
+def _encode_raw_metadata(obj):
     return json.dumps(obj).encode()
 
 
 def _update_site_metadata(current_metadata, inference_type):
-    assert inference_type in {
-        constants.INFERENCE_NONE,
-        constants.INFERENCE_FULL,
-        constants.INFERENCE_PARSIMONY,
-    }
     return {"inference_type": inference_type, **current_metadata}
 
 
@@ -655,8 +689,9 @@ def insert_missing_sites(
     tree = next(trees)
     positions = sample_data.sites_position[:]
     new_sd_sites = np.where(np.isin(positions, tables.sites.position) == 0)[0]
-    # Create new sites and add the mutations
+    schema = tables.sites.metadata_schema.schema
 
+    # Create new sites and add the mutations
     progress = progress_monitor.get("ms_extra_sites", len(new_sd_sites))
     for variant in sample_data.variants(sites=new_sd_sites):
         site = variant.site
@@ -667,14 +702,15 @@ def insert_missing_sites(
         # We can't perform parsimony inference if all sites are missing, and there's no
         # point if all non-missing sites are the ancestral state, so skip these cases
         if np.all(np.logical_or(G == tskit.MISSING_DATA, G == anc_value)):
+            metadata = _update_site_metadata(
+                site.metadata, inference_type=constants.INFERENCE_NONE
+            )
+            if schema is None:
+                metadata = _encode_raw_metadata(metadata)
             tables.sites.add_row(
                 position=pos,
                 ancestral_state=anc_state,
-                metadata=_encode_metadata(
-                    _update_site_metadata(
-                        site.metadata, inference_type=constants.INFERENCE_NONE
-                    )
-                ),
+                metadata=metadata,
             )
         else:
             while tree.interval[1] <= pos:
@@ -684,14 +720,15 @@ def insert_missing_sites(
             )
             if anc_state is None:
                 anc_state = inferred_anc_state
+            metadata = _update_site_metadata(
+                site.metadata, inference_type=constants.INFERENCE_PARSIMONY
+            )
+            if schema is None:
+                metadata = _encode_raw_metadata(metadata)
             new_site_id = tables.sites.add_row(
                 position=pos,
                 ancestral_state=anc_state,
-                metadata=_encode_metadata(
-                    _update_site_metadata(
-                        site.metadata, inference_type=constants.INFERENCE_PARSIMONY
-                    )
-                ),
+                metadata=metadata,
             )
             mut_map = {tskit.NULL: tskit.NULL}
             if anc_state != inferred_anc_state:
@@ -1176,12 +1213,15 @@ class Matcher:
         progress = self.progress_monitor.get(
             "ms_full_mutations", len(self.inference_site_id)
         )
+        schema = tables.sites.metadata_schema.schema
         for site in self.sample_data.sites(self.inference_site_id):
             metadata = _update_site_metadata(site.metadata, constants.INFERENCE_FULL)
+            if schema is None:
+                metadata = _encode_raw_metadata(metadata)
             site_id = tables.sites.add_row(
                 site.position,
                 ancestral_state=site.alleles[0],
-                metadata=_encode_metadata(metadata),
+                metadata=metadata,
             )
             while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
                 tables.mutations.add_row(
@@ -1361,6 +1401,13 @@ class AncestorMatcher(Matcher):
         pc_ancestors = is_pc_ancestor(flags)
         tables.nodes.set_columns(flags=flags, time=times)
 
+        # # FIXME we should do this as a struct codec?
+        # dict_schema = permissive_json_schema()
+        # dict_schema = add_to_schema(dict_schema, "ancestor_data_id",
+        #         {"type": "integer"})
+        # schema = tskit.MetadataSchema(dict_schema)
+        # tables.nodes.schema = schema
+
         # Add metadata for any non-PC node, pointing to the original ancestor
         metadata = []
         ancestor = 0
@@ -1368,7 +1415,7 @@ class AncestorMatcher(Matcher):
             if is_pc:
                 metadata.append(b"")
             else:
-                metadata.append(_encode_metadata({"ancestor_data_id": ancestor}))
+                metadata.append(_encode_raw_metadata({"ancestor_data_id": ancestor}))
                 ancestor += 1
         tables.nodes.packset_metadata(metadata)
         left, right, parent, child = tsb.dump_edges()
@@ -1614,20 +1661,41 @@ class SampleMatcher(Matcher):
         the non-inference sites also need to be placed into the resulting tree sequence.
         """
         tsb = self.tree_sequence_builder
-
         tables = self.ancestors_ts_tables.copy()
-        num_ancestral_individuals = len(tables.individuals)
 
-        # Currently there's no information about populations etc stored in the
-        # ancestors ts.
+        schema = self.sample_data.metadata_schema
+        tables.metadata_schema = tskit.MetadataSchema(schema)
+        tables.metadata = self.sample_data.metadata
+
+        schema = self.sample_data.populations_metadata_schema
+        if schema is not None:
+            tables.populations.metadata_schema = tskit.MetadataSchema(schema)
         for metadata in self.sample_data.populations_metadata[:]:
-            tables.populations.add_row(_encode_metadata(metadata))
+            if schema is None:
+                # Use the default json encoding to avoid breaking old code.
+                tables.populations.add_row(_encode_raw_metadata(metadata))
+            else:
+                tables.populations.add_row(metadata)
+
+        schema = self.sample_data.individuals_metadata_schema
+        if schema is not None:
+            schema = add_to_schema(
+                schema,
+                "sample_data_time",
+                definition=sample_data_time_metadata_definition,
+            )
+            tables.individuals.metadata_schema = tskit.MetadataSchema(schema)
+
+        num_ancestral_individuals = len(tables.individuals)
         for ind in self.sample_data.individuals():
+            metadata = ind.metadata
             if ind.time != 0:
-                ind.metadata["sample_data_time"] = ind.time
+                metadata["sample_data_time"] = ind.time
+            if schema is None:
+                metadata = _encode_raw_metadata(ind.metadata)
             tables.individuals.add_row(
                 location=ind.location,
-                metadata=_encode_metadata(ind.metadata),
+                metadata=metadata,
                 flags=ind.flags,
             )
 
@@ -1641,7 +1709,6 @@ class SampleMatcher(Matcher):
         tables.nodes.flags = new_flags.astype(np.uint32)
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
-        samples_metadata = self.sample_data.samples_metadata[:]
         individuals_population = self.sample_data.individuals_population[:]
         samples_individual = self.sample_data.samples_individual[:]
         individuals_time = self.sample_data.individuals_time[:]
@@ -1657,7 +1724,6 @@ class SampleMatcher(Matcher):
                 time=times[sample_id],
                 population=population,
                 individual=num_ancestral_individuals + individual,
-                metadata=_encode_metadata(samples_metadata[index]),
             )
         # Add in the remaining non-sample nodes.
         for u in range(sample_ids[-1] + 1, tsb.num_nodes):
@@ -1686,6 +1752,15 @@ class SampleMatcher(Matcher):
         tables.sites.clear()
         tables.mutations.clear()
         tables.sort()
+
+        schema = self.sample_data.sites_metadata_schema
+        if schema is not None:
+            schema = add_to_schema(
+                schema,
+                "inference_type",
+                definition=inference_type_metadata_definition,
+            )
+            tables.sites.metadata_schema = tskit.MetadataSchema(schema)
         self.convert_inference_mutations(tables)
 
         # FIXME this is a shortcut. We should be computing the mutation parent above
@@ -1741,7 +1816,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata=_encode_metadata(
+                    metadata=_encode_raw_metadata(
                         {"sample_data_id": int(sample_indexes[s])}
                     ),
                 )

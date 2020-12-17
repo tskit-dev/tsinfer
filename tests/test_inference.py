@@ -341,7 +341,6 @@ class TestRoundTrip:
         # Reverse individual ids & remove the last sample => individual 0 unreferenced
         sd.data["samples/individual"][:] = sd.data["samples/individual"][:][::-1]
         sd.data["samples/individual"].resize(n - 1)
-        sd.data["samples/metadata"].resize(n - 1)
         sd.data["sites/genotypes"].resize(sd.num_sites, n - 1)
         sd.finalise()
         assert sd.num_samples != sd.num_individuals
@@ -768,10 +767,28 @@ class TestMetadataRoundTrip:
         inferred_alleles = [variant.alleles for variant in output_ts.variants()]
         assert inferred_alleles == all_alleles
 
-    def test_site_metadata(self):
+    def test_ts_metadata(self):
+        metadata = {f"x_{j}": j for j in range(10)}
+        schema = tsinfer.permissive_json_schema()
+        for j in range(10):
+            name = f"x_{j}"
+            metadata[name] = j
+            schema = tsinfer.add_to_schema(schema, name, {"type": "number"})
+        with tsinfer.SampleData(sequence_length=1) as sample_data:
+            sample_data.metadata = metadata
+            sample_data.metadata_schema = schema
+            sample_data.add_site(0.5, [0, 1])
+        output_ts = tsinfer.infer(sample_data)
+        assert output_ts.metadata == metadata
+        assert output_ts.metadata_schema.schema == schema
+
+    @pytest.mark.parametrize("use_schema", [True, False])
+    def test_site_metadata(self, use_schema):
         ts = msprime.simulate(11, mutation_rate=5, recombination_rate=2, random_seed=15)
         assert ts.num_sites > 2
         sample_data = tsinfer.SampleData(sequence_length=1)
+        if use_schema:
+            sample_data.sites_metadata_schema = tsinfer.permissive_json_schema()
         rng = random.Random(32)
         all_metadata = []
         for variant in ts.variants():
@@ -794,7 +811,9 @@ class TestMetadataRoundTrip:
         output_ts = tsinfer.infer(sample_data)
         for variant in output_ts.variants():
             site = variant.site
-            decoded_metadata = json.loads(site.metadata)
+            decoded_metadata = (
+                site.metadata if use_schema else json.loads(site.metadata)
+            )
             assert "inference_type" in decoded_metadata
             value = decoded_metadata.pop("inference_type")
             # Only singletons should be parsimony sites in this simple case
@@ -804,10 +823,13 @@ class TestMetadataRoundTrip:
                 assert value == tsinfer.INFERENCE_FULL
             assert decoded_metadata == all_metadata[site.id]
 
-    def test_population_metadata(self):
+    @pytest.mark.parametrize("use_schema", [True, False])
+    def test_population_metadata(self, use_schema):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
         assert ts.num_sites > 2
         sample_data = tsinfer.SampleData(sequence_length=1)
+        if use_schema:
+            sample_data.populations_metadata_schema = tsinfer.permissive_json_schema()
         rng = random.Random(32)
         all_metadata = []
         for j in range(ts.num_samples):
@@ -826,7 +848,7 @@ class TestMetadataRoundTrip:
             assert all_metadata[j] == metadata
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
-            json.loads(population.metadata.decode())
+            population.metadata if use_schema else json.loads(population.metadata)
             for population in output_ts.populations()
         ]
         assert all_metadata == output_metadata
@@ -834,10 +856,13 @@ class TestMetadataRoundTrip:
             node = output_ts.node(sample)
             assert node.population == j
 
-    def test_individual_metadata(self):
+    @pytest.mark.parametrize("use_schema", [True, False])
+    def test_individual_metadata(self, use_schema):
         ts = msprime.simulate(11, mutation_rate=5, random_seed=16)
         assert ts.num_sites > 2
         sample_data = tsinfer.SampleData(sequence_length=1)
+        if use_schema:
+            sample_data.individuals_metadata_schema = tsinfer.permissive_json_schema()
         rng = random.Random(32)
         all_metadata = []
         for j in range(ts.num_samples):
@@ -854,15 +879,18 @@ class TestMetadataRoundTrip:
             assert all_metadata[j] == metadata
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
-            json.loads(individual.metadata.decode())
+            individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
         assert all_metadata == output_metadata
 
-    def test_individual_metadata_subset(self):
+    @pytest.mark.parametrize("use_schema", [True, False])
+    def test_individual_metadata_subset(self, use_schema):
         ts = msprime.simulate(15, mutation_rate=4, random_seed=16)
         assert ts.num_sites > 2
         sample_data = tsinfer.SampleData(sequence_length=1)
+        if use_schema:
+            sample_data.individuals_metadata_schema = tsinfer.permissive_json_schema()
         rng = random.Random(132)
         all_metadata = []
         for _ in range(ts.num_samples):
@@ -882,7 +910,7 @@ class TestMetadataRoundTrip:
 
         output_ts = tsinfer.infer(sample_data)
         output_metadata = [
-            json.loads(individual.metadata.decode())
+            individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
         assert all_metadata == output_metadata
@@ -895,7 +923,6 @@ class TestMetadataRoundTrip:
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
         for subset in [[0], [0, 1], [1], [2, 3, 4, 5]]:
             t1 = output_ts.simplify(subset).dump_tables()
-            assert len(t1.nodes.metadata) > 0
             assert len(t1.individuals.metadata) > 0
             assert len(t1.individuals.location) > 0
             t1.provenances.clear()
@@ -928,7 +955,8 @@ class TestMetadataRoundTrip:
         for location, individual in zip(all_locations, output_ts.individuals()):
             assert np.array_equal(location, individual.location)
 
-    def test_historical_individuals(self):
+    @pytest.mark.parametrize("use_schema", [True, False])
+    def test_historical_individuals(self, use_schema):
         samples = [msprime.Sample(population=0, time=0) for i in range(10)]
         rng = random.Random(32)
         ages = [rng.random(), rng.random()]
@@ -938,6 +966,10 @@ class TestMetadataRoundTrip:
         samples = samples + historical_samples
         ts = msprime.simulate(samples=samples, mutation_rate=5, random_seed=16)
         with tsinfer.SampleData(sequence_length=1) as sample_data:
+            if use_schema:
+                sample_data.individuals_metadata_schema = (
+                    tsinfer.permissive_json_schema()
+                )
             all_times = []
             for j in range(ts.num_samples // 2):
                 time = samples[2 * j].time
@@ -960,7 +992,11 @@ class TestMetadataRoundTrip:
                 if time != 0:
                     assert flags[node] == flags_for_historical_sample
             if time != 0:
-                md = json.loads(individual.metadata.decode())
+                md = (
+                    individual.metadata
+                    if use_schema
+                    else json.loads(individual.metadata)
+                )
                 assert np.array_equal(time, md["sample_data_time"])
 
     def test_from_standard_tree_sequence(self):
@@ -973,13 +1009,18 @@ class TestMetadataRoundTrip:
         ploidy = 2  # Diploids
         seq_len = 10
         ts = tsutil.get_example_individuals_ts_with_metadata(
-            n_indiv, ploidy, seq_len, 1, strict_json_metadata=True, skip_last=False
+            n_indiv, ploidy, seq_len, 1, skip_last=False
         )
         ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
-        # TODO - also test tree-sequence level metadata
         assert ts.sequence_length == ts_inferred.sequence_length
+        assert ts.metadata_schema.schema == ts_inferred.metadata_schema.schema
+        assert ts.metadata == ts_inferred.metadata
         assert ts.tables.populations == ts_inferred.tables.populations
-        assert ts.tables.individuals == ts_inferred.tables.individuals
+        assert ts.num_individuals == ts_inferred.num_individuals
+        for i1, i2 in zip(ts.individuals(), ts_inferred.individuals()):
+            assert list(i1.location) == list(i2.location)
+            assert i1.flags == i2.flags
+            assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
         # Unless inference is perfect, internal nodes may differ, but sample nodes
         # should be identical
         for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
@@ -1004,8 +1045,9 @@ class TestMetadataRoundTrip:
         individual_times = np.arange(n_indiv)
         ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, seq_len)
         ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
-        # TODO - also test tree-sequence level metadata
         assert ts.sequence_length == ts_inferred.sequence_length
+        assert ts.metadata_schema == ts_inferred.metadata_schema
+        assert ts.metadata == ts_inferred.metadata
         assert ts.tables.populations == ts_inferred.tables.populations
         # Historical individuals have metadata added by the inference process
         # specifying the original time of the samples with which they are associated
@@ -1024,11 +1066,9 @@ class TestMetadataRoundTrip:
             if node2.flags & tsinfer.NODE_IS_HISTORICAL_SAMPLE == 0:
                 assert node1.time == node2.time
                 assert node1.flags == node2.flags
-                assert node1.metadata == node2.metadata
             else:
                 node2_other_flags = node2.flags ^ tsinfer.NODE_IS_HISTORICAL_SAMPLE
                 assert node1.flags == node2_other_flags
-                assert tsutil.json_metadata_is_subset(node1.metadata, node2.metadata)
         # Sites can have metadata added by the inference process, but inferred site
         # metadata should always include all the metadata in the original ts
         for s1, s2 in zip(ts.sites(), ts_inferred.sites()):
@@ -2798,12 +2838,10 @@ class TestExtractAncestors:
 
         t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
         assert len(t2.provenances) == len(t1.provenances) + 2
-        t1.provenances.clear()
-        t2.provenances.clear()
         # Population data isn't carried through in ancestors tree sequences
         # for now.
         t2.populations.clear()
-        assert t1 == t2
+        assert t1.equals(t2, ignore_provenance=True, ignore_ts_metadata=True)
 
         for node in ts.nodes():
             if node_id_map[node.id] != -1:
@@ -3628,3 +3666,54 @@ class TestHistoricalSamples:
         sd_copy.finalise()
         with pytest.raises(ValueError):
             tsinfer.match_samples(sd_copy, ancestors_ts, force_sample_times=True)
+
+
+class TestAddToSchema:
+    def test_is_copy(self):
+        schema = tsinfer.permissive_json_schema()
+        other = tsinfer.add_to_schema(schema, "name")
+        assert schema is not other
+
+    def test_name_collision(self):
+        schema = tsinfer.permissive_json_schema()
+        schema = tsinfer.add_to_schema(schema, "name")
+        with pytest.raises(ValueError):
+            tsinfer.add_to_schema(schema, "name")
+
+    def test_defaults(self):
+        schema = tsinfer.permissive_json_schema()
+        schema = tsinfer.add_to_schema(schema, "name")
+        assert schema["properties"]["name"] == {}
+        assert schema["required"] == []
+
+    def test_definition(self):
+        schema = tsinfer.permissive_json_schema()
+        definition = {"type": "number", "description": "sdf"}
+        schema = tsinfer.add_to_schema(schema, "name", definition=definition)
+        assert schema["properties"]["name"] == definition
+
+    def test_many_keys(self):
+        schema = tsinfer.permissive_json_schema()
+        name_map = {}
+        for j in range(20):
+            name = f"x_{j}"
+            definition = {"type": "number", "description": f"sdf{j}"}
+            name_map[name] = definition
+            schema = tsinfer.add_to_schema(schema, name=name, definition=definition)
+        assert schema["properties"] == name_map
+        assert schema["required"] == []
+
+    def test_many_keys_required(self):
+        schema = tsinfer.permissive_json_schema()
+        name_map = {}
+        names = []
+        for j in range(10):
+            name = f"x_{j}"
+            definition = {"type": "number", "description": f"sdf{j}"}
+            name_map[name] = definition
+            names.append(name)
+            schema = tsinfer.add_to_schema(
+                schema, name=name, definition=definition, required=True
+            )
+        assert schema["properties"] == name_map
+        assert schema["required"] == names

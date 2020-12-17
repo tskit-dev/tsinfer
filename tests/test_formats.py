@@ -103,10 +103,27 @@ class TestSampleData(DataContainerMixin):
     class_to_test = formats.SampleData
 
     def verify_data_round_trip(self, ts, input_file):
+        def encode_metadata(metadata, schema):
+            if schema is None:
+                if len(metadata) > 0:
+                    metadata = json.loads(metadata)
+                else:
+                    metadata = None
+            return metadata
+
+        schema = ts.metadata_schema.schema
+        input_file.metadata_schema = schema
+        input_file.metadata = encode_metadata(ts.metadata, schema)
+
         assert ts.num_sites > 1
+        schema = ts.tables.populations.metadata_schema.schema
+        input_file.populations_metadata_schema = schema
         for pop in ts.populations():
-            input_file.add_population(metadata=json.loads(pop.metadata or "{}"))
+            input_file.add_population(metadata=encode_metadata(pop.metadata, schema))
+
         # For testing, depend on the sample nodes being sorted by individual
+        schema = ts.tables.individuals.metadata_schema.schema
+        input_file.individuals_metadata_schema = schema
         for i, group in itertools.groupby(
             ts.samples(), lambda n: ts.node(n).individual
         ):
@@ -117,18 +134,19 @@ class TestSampleData(DataContainerMixin):
                         ploidy=1,
                         population=node.population,
                         time=node.time,
-                        samples_metadata=[json.loads(node.metadata or "{}")],
                     )
             else:
                 input_file.add_individual(
                     ploidy=len(nodes),
                     population=nodes[0].population,
-                    metadata=json.loads(ts.individual(i).metadata or "{}"),
+                    metadata=encode_metadata(ts.individual(i).metadata, schema),
                     location=ts.individual(i).location,
                     flags=ts.individual(i).flags,
                     time=nodes[0].time,
-                    samples_metadata=[json.loads(n.metadata or "{}") for n in nodes],
                 )
+
+        schema = ts.tables.sites.metadata_schema.schema
+        input_file.sites_metadata_schema = schema
         for v in ts.variants():
             t = np.nan  # default is that a site has no meaningful time
             if len(v.site.mutations) == 1:
@@ -137,7 +155,7 @@ class TestSampleData(DataContainerMixin):
                 v.site.position,
                 v.genotypes,
                 v.alleles,
-                metadata=json.loads(v.site.metadata or "{}"),
+                metadata=encode_metadata(v.site.metadata, schema),
                 time=t,
             )
         input_file.record_provenance("verify_data_round_trip")
@@ -146,6 +164,8 @@ class TestSampleData(DataContainerMixin):
         assert input_file.format_name == formats.SampleData.FORMAT_NAME
         assert input_file.num_samples == ts.num_samples
         assert input_file.sequence_length == ts.sequence_length
+        assert input_file.metadata_schema == ts.metadata_schema.schema
+        assert input_file.metadata == ts.metadata
         assert input_file.num_sites == ts.num_sites
         assert input_file.sites_genotypes.dtype == np.int8
         assert input_file.sites_position.dtype == np.float64
@@ -167,20 +187,18 @@ class TestSampleData(DataContainerMixin):
                 the_time = ts.node(variant.site.mutations[0].node).time
                 assert the_time == site_times[j]
             if variant.site.metadata:
-                assert site_metadata[j] == json.loads(variant.site.metadata)
+                assert site_metadata[j] == variant.site.metadata
         assert input_file.num_populations == ts.num_populations
         for pop in ts.populations():
             if pop.metadata:
-                assert pop_metadata[pop.id] == json.loads(pop.metadata)
+                assert pop_metadata[pop.id] == pop.metadata
         if ts.num_individuals == 0:
             assert input_file.num_individuals == ts.num_samples
         else:
             for individual in ts.individuals():
                 assert np.all(individual.location == location[individual.id])
                 if individual.metadata:
-                    assert individual_metadata[individual.id] == json.loads(
-                        individual.metadata
-                    )
+                    assert individual_metadata[individual.id] == individual.metadata
                 for n in individual.nodes:
                     assert ts.node(n).time == sample_time[individual.id]
 
@@ -328,12 +346,12 @@ class TestSampleData(DataContainerMixin):
         tables = ts.dump_tables()
         # Associate each sample node with a new population
         for _ in range(n_individuals * 2):
-            tables.populations.add_row()
+            tables.populations.add_row(metadata={})
         nodes_population = tables.nodes.population
         nodes_population[ts.samples()] = np.arange(n_individuals * 2)
         tables.nodes.population = nodes_population
         for _ in range(n_individuals):
-            tables.individuals.add_row()
+            tables.individuals.add_row(metadata={})
         # Associate nodes with individuals
         nodes_individual = tables.nodes.individual
         nodes_individual[ts.samples()] = np.repeat(
@@ -368,7 +386,7 @@ class TestSampleData(DataContainerMixin):
                 tables.mutations.add_row(site=0, node=node, derived_state=str(i + 2))
         # Create < 2 alleles by adding a non-variable site at the end
         extra_last_pos = (ts.site(ts.num_sites - 1).position + ts.sequence_length) / 2
-        tables.sites.add_row(position=extra_last_pos, ancestral_state="0")
+        tables.sites.add_row(position=extra_last_pos, ancestral_state="0", metadata={})
         tables.sort()
         tables.build_index()
         tables.compute_mutation_parents()
@@ -403,29 +421,6 @@ class TestSampleData(DataContainerMixin):
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts)
         sd1.assert_data_equal(sd2)
-
-    def test_from_tree_sequence_omitting_metadata(self):
-        ts = tsutil.get_example_ts(10, 10, 1)
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
-        self.verify_data_round_trip(ts, sd1)
-        # Add non JSON metadata
-        tables = ts.dump_tables()
-        tables.sites.packset_metadata([b"Not JSON!" for _ in range(ts.num_sites)])
-        ts = tables.tree_sequence()
-        with pytest.raises(json.decoder.JSONDecodeError):
-            formats.SampleData.from_tree_sequence(ts)
-        sd2 = formats.SampleData.from_tree_sequence(ts, use_metadata=False)
-        # Copy tests from SampleData.data_equal, except the metadata
-        assert np.all(sd2.individuals_time[:] == sd1.individuals_time[:])
-        assert np.all(sd2.individuals_population[:] == sd1.individuals_population[:])
-        assert np.all(sd2.samples_individual[:] == sd1.samples_individual[:])
-        assert np.all(sd2.sites_position[:] == sd1.sites_position[:])
-        assert np.all(sd2.sites_genotypes[:] == sd1.sites_genotypes[:])
-        assert np.all(sd2.sites_time[:] == sd1.sites_time[:])
-        assert np.all(sd2.populations_metadata[:] == {})
-        assert np.all(sd2.individuals_metadata[:] == {})
-        assert np.all(sd2.samples_metadata[:] == {})
-        assert np.all(sd2.sites_metadata[:] == {})
 
     def test_from_historical_tree_sequence(self):
         ploidy = 2
@@ -526,7 +521,9 @@ class TestSampleData(DataContainerMixin):
         t.sites.clear()
         t.mutations.clear()
         for site in ts.sites():
-            t.sites.add_row(site.position, ancestral_state="A" * (site.id + 1))
+            t.sites.add_row(
+                site.position, ancestral_state="A" * (site.id + 1), metadata={}
+            )
             for mutation in site.mutations:
                 t.mutations.add_row(
                     site=site.id, node=mutation.node, derived_state="T" * site.id
@@ -643,8 +640,6 @@ class TestSampleData(DataContainerMixin):
         with pytest.raises(ValueError):
             sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[0])
         sample_data = formats.SampleData(sequence_length=10)
-        with pytest.raises(ValueError):
-            sample_data.add_individual(ploidy=3, samples_metadata=[None])
 
     def test_add_population_errors(self):
         sample_data = formats.SampleData(sequence_length=10)
@@ -672,6 +667,17 @@ class TestSampleData(DataContainerMixin):
         assert pid == 1
         pid = sample_data.add_population()
         assert pid == 2
+
+    def test_top_level_metadata(self):
+        sample_data = formats.SampleData(sequence_length=10)
+        sample_data.metadata = {"a": "b"}
+        schema = tsinfer.permissive_json_schema()
+        schema["properties"]["xyz"] = {"type": "string"}
+        sample_data.metadata_schema = schema
+        sample_data.add_site(0, [0, 0])
+        sample_data.finalise()
+        assert sample_data.metadata == {"a": "b"}
+        assert sample_data.metadata_schema == schema
 
     def test_population_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)
@@ -727,19 +733,6 @@ class TestSampleData(DataContainerMixin):
         with formats.SampleData(sequence_length=pos[1]) as sample_data:
             sample_data.add_site(pos[0], [0, 0])
         assert sample_data.sequence_length == 100
-
-    def test_samples_metadata(self):
-        with formats.SampleData(sequence_length=10) as sample_data:
-            sample_data.add_individual(ploidy=2)
-            sample_data.add_site(0, [0, 0])
-        individuals_metadata = sample_data.individuals_metadata[:]
-        assert len(individuals_metadata) == 1
-        assert individuals_metadata[0] == {}
-
-        samples_metadata = sample_data.samples_metadata[:]
-        assert len(samples_metadata) == 2
-        assert samples_metadata[0] == {}
-        assert samples_metadata[1] == {}
 
     def test_get_single_individual(self):
         with formats.SampleData(sequence_length=10) as sample_data:
@@ -954,7 +947,7 @@ class TestSampleData(DataContainerMixin):
         for j in range(10):
             pos = 1 / (j + 1)
             if pos not in positions:
-                t.sites.add_row(position=pos, ancestral_state="0")
+                t.sites.add_row(position=pos, ancestral_state="0", metadata={})
                 positions.add(pos)
         assert len(positions) > ts.num_sites
         t.sort()
@@ -971,7 +964,9 @@ class TestSampleData(DataContainerMixin):
         for tree in ts.trees():
             pos = tree.interval[0]
             if pos not in positions:
-                site_id = t.sites.add_row(position=pos, ancestral_state="0")
+                site_id = t.sites.add_row(
+                    position=pos, ancestral_state="0", metadata={}
+                )
                 t.mutations.add_row(site=site_id, node=tree.root, derived_state="1")
                 positions.add(pos)
         assert len(positions) > ts.num_sites
@@ -1214,13 +1209,13 @@ class TestSampleData(DataContainerMixin):
             sd.append_sites(sd2, sd3)
         # Wrong individuals
         tables = mid_ts.dump_tables()
-        tables.individuals.packset_metadata([b""] * mid_ts.num_individuals)
+        tables.individuals.packset_metadata([b"{}"] * mid_ts.num_individuals)
         sd2 = tsinfer.SampleData.from_tree_sequence(tables.tree_sequence())
         with pytest.raises(ValueError, match="individuals"):
             sd.append_sites(sd2, sd3)
         # Wrong populations
         tables = mid_ts.dump_tables()
-        tables.populations.packset_metadata([b""] * mid_ts.num_populations)
+        tables.populations.packset_metadata([b"{}"] * mid_ts.num_populations)
         sd2 = tsinfer.SampleData.from_tree_sequence(tables.tree_sequence())
         with pytest.raises(ValueError, match="populations"):
             sd.append_sites(sd2, sd3)
@@ -1229,6 +1224,99 @@ class TestSampleData(DataContainerMixin):
         sd2 = tsinfer.SampleData.from_tree_sequence(mid_ts)
         with pytest.raises(ValueError, match="format"):
             sd.append_sites(sd2, sd3)
+
+
+class TestSampleDataMetadataSchemas:
+    def test_metadata_schemas_default(self):
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(0, [0, 0])
+        assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+        # Tables default to None for backward compatibility.
+        assert sample_data.populations_metadata_schema is None
+        assert sample_data.individuals_metadata_schema is None
+        assert sample_data.sites_metadata_schema is None
+
+    def test_metadata_schemas_non_json_codec(self):
+        bad_schema = tsinfer.permissive_json_schema()
+        bad_schema["codec"] = "struct"
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(0, [0, 0])
+            with pytest.raises(ValueError):
+                sample_data.metadata_schema = bad_schema
+            with pytest.raises(ValueError):
+                sample_data.populations_metadata_schema = bad_schema
+            with pytest.raises(ValueError):
+                sample_data.individuals_metadata_schema = bad_schema
+            with pytest.raises(ValueError):
+                sample_data.sites_metadata_schema = bad_schema
+
+    def test_set_top_level_metadata_schema(self):
+        example_schema = tsinfer.permissive_json_schema()
+        example_schema["properties"]["xyz"] = {"type": "string"}
+
+        with formats.SampleData() as sample_data:
+            assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+            sample_data.metadata_schema = example_schema
+            assert sample_data.metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+        assert sample_data.metadata_schema == example_schema
+
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(0, [0, 0])
+            with pytest.raises(ValueError):
+                sample_data.metadata_schema = None
+        assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+
+    def test_set_population_metadata_schema(self):
+        example_schema = tsinfer.permissive_json_schema()
+        with formats.SampleData() as sample_data:
+            assert sample_data.populations_metadata_schema is None
+            sample_data.populations_metadata_schema = example_schema
+            assert sample_data.populations_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+        assert sample_data.populations_metadata_schema == example_schema
+
+        with formats.SampleData() as sample_data:
+            assert sample_data.populations_metadata_schema is None
+            sample_data.populations_metadata_schema = example_schema
+            assert sample_data.populations_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+            sample_data.populations_metadata_schema = None
+        assert sample_data.populations_metadata_schema is None
+
+    def test_set_individual_metadata_schema(self):
+        example_schema = tsinfer.permissive_json_schema()
+        with formats.SampleData() as sample_data:
+            assert sample_data.individuals_metadata_schema is None
+            sample_data.individuals_metadata_schema = example_schema
+            assert sample_data.individuals_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+        assert sample_data.individuals_metadata_schema == example_schema
+
+        with formats.SampleData() as sample_data:
+            assert sample_data.individuals_metadata_schema is None
+            sample_data.individuals_metadata_schema = example_schema
+            assert sample_data.individuals_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+            sample_data.individuals_metadata_schema = None
+        assert sample_data.individuals_metadata_schema is None
+
+    def test_set_site_metadata_schema(self):
+        example_schema = tsinfer.permissive_json_schema()
+        with formats.SampleData() as sample_data:
+            assert sample_data.sites_metadata_schema is None
+            sample_data.sites_metadata_schema = example_schema
+            assert sample_data.sites_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+        assert sample_data.sites_metadata_schema == example_schema
+
+        with formats.SampleData() as sample_data:
+            assert sample_data.sites_metadata_schema is None
+            sample_data.sites_metadata_schema = example_schema
+            assert sample_data.sites_metadata_schema == example_schema
+            sample_data.add_site(0, [0, 0])
+            sample_data.sites_metadata_schema = None
+        assert sample_data.sites_metadata_schema is None
 
 
 class TestSampleDataSubset:
@@ -1426,7 +1514,6 @@ class TestSampleDataMerge:
         for new_sample, old_sample in zip(new_samples, old_samples):
             assert new_sample.id == old_sample.id + sd1.num_samples
             assert new_sample.individual == old_sample.individual + sd1.num_individuals
-            assert new_sample.metadata == old_sample.metadata
 
         for new_pop, old_pop in zip(sd3.populations(), sd1.populations()):
             assert new_pop == old_pop
