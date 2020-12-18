@@ -180,7 +180,7 @@ distribution of variation to fit poorly to the marginal tree at that site.
 Hence, if there is error in your dataset, you may wish to experiment with
 these settings to obtain optimal results.
 
-The ``recombination_rate`` parameter can be a RateMap object, or a floating
+The ``recombination_rate`` parameter is a floating
 point value giving a single rate (:math:`\rho`) across the entire sequence.
 This can be used to calculate the genetic distance between sites, which in turn
 can be used to derive an array of probabilities of recombination between
