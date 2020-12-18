@@ -1225,6 +1225,22 @@ class TestSampleData(DataContainerMixin):
         with pytest.raises(ValueError, match="format"):
             sd.append_sites(sd2, sd3)
 
+    def test_bad_format_version(self):
+        with tsinfer.SampleData() as sd:
+            sd.add_site(0, [0, 0])
+        # This is the easiest way to trigger the format check
+        # - it's all a bit convoluted.
+        with pytest.raises(tsinfer.FileFormatError):
+            with sd.copy() as copy:
+                copy.data.attrs[tsinfer.FORMAT_NAME_KEY] = "xyz"
+        with pytest.raises(tsinfer.FileFormatTooOld):
+            with sd.copy() as copy:
+                copy.data.attrs[tsinfer.FORMAT_VERSION_KEY] = 1, 0
+
+        with pytest.raises(tsinfer.FileFormatTooNew):
+            with sd.copy() as copy:
+                copy.data.attrs[tsinfer.FORMAT_VERSION_KEY] = 100, 0
+
 
 class TestSampleDataMetadataSchemas:
     def test_metadata_schemas_default(self):

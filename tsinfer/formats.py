@@ -565,13 +565,13 @@ class DataContainer:
                 )
             )
         if format_version[0] < self.FORMAT_VERSION[0]:
-            raise exceptions.FileFormatError(
+            raise exceptions.FileFormatTooOld(
                 "Format version {} too old. Current version = {}".format(
                     format_version, self.FORMAT_VERSION
                 )
             )
         if format_version[0] > self.FORMAT_VERSION[0]:
-            raise exceptions.FileFormatError(
+            raise exceptions.FileFormatTooNew(
                 "Format version {} too new. Current version = {}".format(
                     format_version, self.FORMAT_VERSION
                 )
@@ -927,7 +927,7 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (4, 0)
+    FORMAT_VERSION = (5, 0)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
