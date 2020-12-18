@@ -16,7 +16,7 @@ make two very important gains:
 2. The data structure itself is an extremely concise and efficient means of
    storing and processing the data that we have.
 
-The output of ``tsinfer`` is an :class:`msprime.TreeSequence` and so the
+The output of ``tsinfer`` is a :class:`tskit.TreeSequence` and so the
 full `tskit API <https://tskit.readthedocs.io>`_ can be used to
 analyse real data, in precisely the same way that it is commonly used
 to analyse simulation data, for example, from `msprime <https://msprime.readthedocs.io/>`_.
