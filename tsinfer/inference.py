@@ -233,13 +233,13 @@ def infer(
 
     :param SampleData sample_data: The input :class:`SampleData` instance
         representing the observed data that we wish to make inferences from.
-    :param recombination_rate: Either a RateMap object, or a floating
+    :param recombination_rate: A floating
         point value giving a single rate, :math:`\\rho`, across the entire sequence,
         used to calculate the probability of recombination between adjacent sites.
         If ``None``, all matching conflicts are resolved by recombination and
         all inference sites will have a single mutation (equivalent to mismatch_ratio
         near zero)
-    :type recombination_rate: Union[float, RateMap]
+    :type recombination_rate: float
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
         recombination rate has been set (default: 1)
@@ -401,13 +401,13 @@ def match_ancestors(
     :param AncestorData ancestor_data: The :class:`AncestorData` instance
         representing the set of ancestral haplotypes for which we are finding
         a history.
-    :param recombination_rate: Either a RateMap object, or a floating
+    :param recombination_rate: A floating
         point value giving a single rate, :math:`\\rho`, across the entire sequence,
         used to calculate the probability of recombination between adjacent sites.
         If ``None``, all matching conflicts are resolved by recombination and
         all inference sites will have a single mutation (equivalent to mismatch_ratio
         near zero)
-    :type recombination_rate: Union[float, RateMap]
+    :type recombination_rate: float
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
         recombination rate has been set (default: 1)
@@ -477,13 +477,13 @@ def augment_ancestors(
         history among ancestral ancestral haplotypes.
     :param array indexes: The sample indexes to insert into the ancestors
         tree sequence.
-    :param recombination_rate: Either a RateMap object, or a floating
+    :param recombination_rate: A floating
         point value giving a single rate, :math:`\\rho`, across the entire sequence,
         used to calculate the probability of recombination between adjacent sites.
         If ``None``, all matching conflicts are resolved by recombination and
         all inference sites will have a single mutation (equivalent to mismatch_ratio
         near zero)
-    :type recombination_rate: Union[float, RateMap]
+    :type recombination_rate: float
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
         recombination rate has been set (default: 1)
@@ -558,13 +558,13 @@ def match_samples(
     :param tskit.TreeSequence ancestors_ts: The
         :class:`tskit.TreeSequence` instance representing the inferred
         history among ancestral ancestral haplotypes.
-    :param recombination_rate: Either a RateMap object, or a floating
+    :param recombination_rate: A floating
         point value giving a single rate, :math:`\\rho`, across the entire sequence,
         used to calculate the probability of recombination between adjacent sites.
         If ``None``, all matching conflicts are resolved by recombination and
         all inference sites will have a single mutation (equivalent to mismatch_ratio
         near zero)
-    :type recombination_rate: Union[float, RateMap]
+    :type recombination_rate: float
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
         recombination rate has been set (default: 1)
