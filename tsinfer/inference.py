@@ -1113,6 +1113,8 @@ class Matcher:
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
+        if np.any(num_alleles > 2):
+            raise ValueError("Cannot currently match with > 2 alleles.")
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
         )

@@ -1,41 +1,53 @@
 ********************
-[0.2.0] - XXXX-XX-XX
+[0.2.0] - 2020-12-18
 ********************
 
+Major feature release, including some incompatible file format and API updates.
+
 **New features**:
+
+- Mismatch and recombination parameters can now be specified via the
+  recombination_rate and mismatch_ratio arguments in the Python API.
+
+- Missing data can be accomodated in SampleData using the tskit.MISSING_DATA
+  value in input genotypes. Missing data will be imputed in the output
+  tree sequence.
+
+- Metadata schemas for population, individual, site and tree sequence metadata
+  can now we be specified in the SampleData format. These will be included
+  in the final tree sequence and allow for automatic decoding of JSON metadata.
+
+- Map non-inference sites onto the tree by using the tskit ``map_mutations``
+  parsimony method. This allows us to support sites with > 2 alleles.
+
+- Historical (non-contemporaneous) samples can now be accommodated in inference,
+  assuming that the true dates of ancestors have been set, by using the concept
+  of "proxy samples". This is done via the new function
+  ``AncestorData.insert_proxy_samples()``, then setting the new
+  parameter ``force_sample_times=True`` when matching samples.
+
+- The default tree sequence returned after inference when ``simplify=True`` retains
+  unary nodes (i.e. simplify is done with ``keep_unary=True``.
+
 
 **Breaking changes**:
 
 - The ancestors tree sequence now contains the real alleles and not
   0/1 values as before.
+
 - Times for undated sites now use frequencies (0..1), not as counts (1..num_samples),
   and are now stored as -inf, then calculated on the fly in the variants() iterator.
+
 - The SampleData file no longer accepts the ``inference`` argument to add_site.
   This functionality has been replaced by the ``exclude_positions`` argument
   to the ``infer`` and ``generate_ancestors`` functions.
+
 - The SampleData format is now at version 5, and older versions cannot be read.
   Users should rerun their data ingest pipelines.
-
-**Bugfixes**:
-
-- Individuals and populations in the SampleData file are kept in the returned tree
-  sequence, even if they are not referenced by any sample. The individual and population
-  ids are therefore guaranteed to stay the same between the sample data file and the
-  inferred tree sequence. (:pr:`348`)
-
-********************
-[0.1.5] - 2019-09-25
-********************
-
-**Breaking changes**:
-
-- Bumped SampleData file format version to 2.0, then to 3.0 as a result of the additions
-  below. Older SampleData files will not be readable and must be regenerated.
 
 - Users can specify variant ages, via ``sample_data.add_sites(... , time=user_time)``.
   If not ``None``, this overrides the default time position of an ancestor, otherwise
   ancestors are ordered in time by using the frequency of the derived variant (#143).
-  This addition bumped the file format to 2.0
 
 - Change "age" to "time" to match tskit/msprime notation, and to avoid confusion
   with the age since birth of an individual (#149). Together with the 2 changes below,
@@ -43,25 +55,19 @@
 
 - Add the ability to record user-specified times for individuals, and therefore
   the samples contained in them (currently ignored during inference). Times are
-  added using ``sample_data.add_individual(... , time=user_time)`` (#190). Together
-  with the changes above and below, this addition bumped the file format to 3.0.
+  added using ``sample_data.add_individual(... , time=user_time)`` (#190).
 
 - Change ``tsinfer.UNKNOWN_ALLELE`` to ``tskit.MISSING_DATA`` for marking unknown regions
   of ancestral haplotypes (#188) . This also involves changing the allele storage to a
   signed int from ``np.uint8`` which matches the tskit v0.2 format for allele storage
-  (see https://github.com/tskit-dev/tskit/issues/144). Together with the 2 changes above,
-  this addition bumped the file format to 3.0.
+  (see https://github.com/tskit-dev/tskit/issues/144).
 
-**New features**:
+**Bugfixes**:
 
-- Map non-inference sites onto the tree by using the built-in tskit
-  ``map_mutatations`` method. With further work, this should allow triallelic sites
-  to be mapped (#185)
-
-- The default tree sequence returned after inference when ``simplify=True`` retains
-  unary nodes (i.e. simplify is done with ``keep_unary=True``. This tends to result
-  in better compression.
-
+- Individuals and populations in the SampleData file are kept in the returned tree
+  sequence, even if they are not referenced by any sample. The individual and population
+  ids are therefore guaranteed to stay the same between the sample data file and the
+  inferred tree sequence. (:pr:`348`)
 
 ********************
 [0.1.4] - 2018-12-12

@@ -492,6 +492,23 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 ts, genotypes, positions, alleles, sample_data.sequence_length
             )
 
+    # Skipping these tests as the HMM is currently not working properly
+    # for > 2 alleles, and we we have a guard on this just to make
+    # sure that no user-data uses the faulty engine. Renable these
+    # when the HMM is fixed.
+
+    @pytest.mark.skip("Not currently working for > 2 alleles; #415")
+    def test_triallelic(self):
+        pass
+
+    @pytest.mark.skip("Not currently working for > 2 alleles; #415")
+    def test_n_allelic(self):
+        pass
+
+    @pytest.mark.skip("Not currently working for > 2 alleles; #415")
+    def test_not_all_alleles_in_genotypes(self):
+        pass
+
 
 class TestMissingDataRoundTrip(TestRoundTrip):
     """
