@@ -37,3 +37,16 @@ class FileFormatError(FileError):
     """
     Exception raised when a malformed file is encountered.
     """
+
+
+class FileFormatTooOld(FileError):
+    """
+    Exception raised when a file with a version too old is detected.
+    """
+
+
+class FileFormatTooNew(FileError):
+    """
+    Exception raised when a file with a version from a newer version
+    of tsinfer is detected.
+    """

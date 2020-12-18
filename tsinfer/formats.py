@@ -565,13 +565,13 @@ class DataContainer:
                 )
             )
         if format_version[0] < self.FORMAT_VERSION[0]:
-            raise exceptions.FileFormatError(
+            raise exceptions.FileFormatTooOld(
                 "Format version {} too old. Current version = {}".format(
                     format_version, self.FORMAT_VERSION
                 )
             )
         if format_version[0] > self.FORMAT_VERSION[0]:
-            raise exceptions.FileFormatError(
+            raise exceptions.FileFormatTooNew(
                 "Format version {} too new. Current version = {}".format(
                     format_version, self.FORMAT_VERSION
                 )

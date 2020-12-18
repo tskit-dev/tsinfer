@@ -13,10 +13,12 @@
 - The SampleData file no longer accepts the ``inference`` argument to add_site.
   This functionality has been replaced by the ``exclude_positions`` argument
   to the ``infer`` and ``generate_ancestors`` functions.
+- The SampleData format is now at version 5, and older versions cannot be read.
+  Users should rerun their data ingest pipelines.
 
 **Bugfixes**:
 
-- Individuals and populations in the sampledata file are kept in the returned tree
+- Individuals and populations in the SampleData file are kept in the returned tree
   sequence, even if they are not referenced by any sample. The individual and population
   ids are therefore guaranteed to stay the same between the sample data file and the
   inferred tree sequence. (:pr:`348`)
