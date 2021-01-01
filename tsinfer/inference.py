@@ -1155,8 +1155,8 @@ class Matcher:
     def recombination_dist_to_prob(genetic_distances):
         """
         Convert genetic distances (in Morgans) to a probability of recombination,
-        (i.e. an odd number of events) assuming a Poisson distribution. This maxes
-        out at 0.5 as genetic_distance -> infinity
+        (i.e. an odd number of events) assuming a Poisson distribution,
+        see Haldane, 1919 J. Genetics 8: 299-309. This maxes out at 0.5 as dist -> inf
         """
         return (1 - np.exp(-genetic_distances * 2)) / 2
 
