@@ -110,7 +110,7 @@ with other individuals.
 
 In ``tsinfer``, metadata can be stored by providing a JSON encodable
 mapping. This information is then stored as JSON, and embedded in the
-final tree sequence object and can be recovered using the ``msprime``
+final tree sequence object and can be recovered using the ``tskit``
 APIs.
 
 .. _sec_inference_import_samples:
