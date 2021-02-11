@@ -451,6 +451,55 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
             )
 
 
+class TestTruncateAncestorsRoundTrip(TestRoundTrip):
+    """
+    Tests that we can correctly round trip data when we truncate ancestral haplotypes
+    """
+
+    def verify_data_round_trip(
+        self,
+        genotypes,
+        positions,
+        alleles=None,
+        sequence_length=None,
+        site_times=None,
+        individual_times=None,
+    ):
+        sample_data = self.create_sample_data(
+            genotypes, positions, alleles, sequence_length, site_times, individual_times
+        )
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        time = np.sort(ancestors.ancestors_time[:])
+        if len(time) > 0:  # Some tests produce an AncestorData file with no ancestors
+            lower_bound = np.min(time)
+            upper_bound = np.max(time)
+            midpoint = np.median(time)
+            params = [
+                (lower_bound, upper_bound, 0.1),
+                (lower_bound, upper_bound, 1),
+                (midpoint, midpoint + (midpoint / 2), 1),
+            ]
+        else:
+            params = [(0.4, 0.6, 1), (0, 1, 10)]
+        for param in params:
+            truncated_ancestors = ancestors.truncate_ancestors(
+                param[0], param[1], param[2]
+            )
+            engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
+            for engine in engines:
+                ancestors_ts = tsinfer.match_ancestors(
+                    sample_data, truncated_ancestors, engine=engine
+                )
+                ts = tsinfer.match_samples(
+                    sample_data,
+                    ancestors_ts,
+                    engine=engine,
+                )
+                self.assert_lossless(
+                    ts, genotypes, positions, alleles, sample_data.sequence_length
+                )
+
+
 class TestSparseAncestorsRoundTrip(TestRoundTrip):
     """
     Tests that we correctly round trip data when we generate the sparsest possible

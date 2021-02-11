@@ -2482,6 +2482,128 @@ class AncestorData(DataContainer):
         assert other.num_ancestors == self.num_ancestors + len(sample_ids)
         return other
 
+    def truncate_ancestors(
+        self,
+        lower_time_bound,
+        upper_time_bound,
+        length_multiplier=2,
+        **kwargs,
+    ):
+        """
+        Truncates the length of ancestors above a given time and returns a new
+        :class:`.AncestorData` instance.
+
+        Given a set of haplotypes H such that ``lower_time_bound`` <= ``h.time`` <
+        ``upper_time_bound``, we let ``max_len = length_multiplier * max(max(h.length)
+        for h in H)``. Then, we truncate all haplotypes containing at least one focal
+        site where ``h.time >= upper``, ensuring these haplotypes extend no further than
+        half of ``max_len`` to the either side of the leftmost and
+        rightmost focal sites of the ancestral haplotype. Note that ancestors above
+        ``upper_time_bound`` may still be longer than ``max_len`` if the ancestor
+        contains greater than 2 focal sites.
+
+        This function should be used when :func:`tsinfer.generate_ancestors` generates
+        old ancestors which are very long, as these can significantly slow down matching
+        time. Older ancestors should generally be shorter than younger ancestors, so
+        truncating the lengths of older ancestors has negligible effect on inference
+        accuracy.
+
+        .. note::
+            Please ensure that the time values provided to ``lower_time_bound`` and
+            ``upper_time_bound`` match the units used in the :class:`.AncestorData`
+            file, i.e. if your ancestors do not have site times specified,
+            ``upper_time_bound`` should be between 0 and 1.
+
+        :param float lower_time_bound: Defines the lower bound (inclusive) of the half
+            open interval where we search for a truncation value.
+        :param float upper_time_bound: Defines the upper bound (exclusive) of the half
+            open interval where we search for a truncation value. The truncation value
+            is the length of the longest haplotype in this interval multiplied by
+            ``length_multiplier``. The length of ancestors as old or older than
+            ``upper_time_bound`` will be truncated using this value.
+        :param float length_multiplier: A multiplier for the length of the longest
+            ancestor in the half-open interval between ``lower_time_bound`` (inclusive)
+            and ``uppper_time_bound`` (exclusive), i.e.
+            if the longest ancestor in the interval is 1 megabase, a
+            ``length_multiplier`` of 2 creates a maximum length of 2 megabases.
+        :param \\**kwargs: Further arguments passed to the :func:`AncestorData.copy`
+            when creating the new :class:`AncestorData` instance which will be returned.
+
+        :return: A new :class:`.AncestorData` object.
+        :rtype: AncestorData
+        """
+        self._check_finalised()
+        if self.num_ancestors == 0:
+            logger.debug("Passed an AncestorData file with 0 ancestors. Nothing to do")
+            return self
+        if upper_time_bound < 0 or lower_time_bound < 0:
+            raise ValueError("Time bounds cannot be negative")
+        if length_multiplier <= 0:
+            raise ValueError("Length multiplier cannot be zero or negative")
+        if upper_time_bound < lower_time_bound:
+            raise ValueError("Upper bound must be >= lower bound")
+
+        position = self.sites_position[:]
+        start = self.ancestors_start[:]
+        end = self.ancestors_end[:]
+        time = self.ancestors_time[:]
+        focal_sites = self.ancestors_focal_sites[:]
+        haplotypes = self.ancestors_haplotype[:]
+        if upper_time_bound > np.max(time) or lower_time_bound > np.max(time):
+            raise ValueError("Time bounds cannot be greater than older ancestor")
+
+        truncated = self.copy(**kwargs)
+        anc_in_bound = np.logical_and(
+            time >= lower_time_bound,
+            time < upper_time_bound,
+        )
+        if np.sum(anc_in_bound) == 0:
+            raise ValueError("No ancestors in time bound")
+        max_length = length_multiplier * np.max(self.ancestors_length[:][anc_in_bound])
+
+        for anc in self.ancestors():
+            if anc.time >= upper_time_bound and len(anc.focal_sites) > 0:
+                if position[anc.end - 1] - position[anc.start] > max_length:
+                    left_focal_pos = position[np.min(anc.focal_sites)]
+                    right_focal_pos = position[np.max(anc.focal_sites)]
+                    insert_pos_start = np.maximum(
+                        anc.start,
+                        np.searchsorted(position, left_focal_pos - max_length / 2),
+                    )
+                    insert_pos_end = np.minimum(
+                        anc.end,
+                        np.searchsorted(position, right_focal_pos + max_length / 2),
+                    )
+                    original_length = position[anc.end - 1] - position[anc.start]
+                    new_length = (
+                        position[insert_pos_end - 1] - position[insert_pos_start]
+                    )
+                    assert new_length <= original_length
+                    logger.debug(
+                        f"Truncating ancestor {anc.id} at time {anc.time}"
+                        "Original length {original_length}. New length {new_length}"
+                    )
+                    start[anc.id] = insert_pos_start
+                    end[anc.id] = insert_pos_end
+                    time[anc.id] = anc.time
+                    focal_sites[anc.id] = anc.focal_sites
+                    haplotypes[anc.id] = anc.haplotype[
+                        insert_pos_start - anc.start : insert_pos_end - anc.start
+                    ]
+                    # TODO - record truncation in ancestors' metadata when supported
+        truncated.ancestors_start[:] = start
+        truncated.ancestors_end[:] = end
+        truncated.ancestors_time[:] = time
+        truncated.ancestors_focal_sites[:] = focal_sites
+        truncated.ancestors_haplotype[:] = haplotypes
+        truncated.record_provenance(command="truncate_ancestors")
+        truncated.finalise()
+
+        assert self.num_ancestors == truncated.num_ancestors
+        assert np.array_equal(time, truncated.ancestors_time)
+        assert np.array_equal(position, truncated.sites_position[:])
+        return truncated
+
     ####################################
     # Write mode (building and editing)
     ####################################
