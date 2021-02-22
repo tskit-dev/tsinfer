@@ -758,7 +758,7 @@ class TestCountSampleChildEdges:
 
     def verify(self, ts):
         sample_edges = tsinfer.count_sample_child_edges(ts)
-        x = np.zeros(ts.num_samples, dtype=np.int)
+        x = np.zeros(ts.num_samples, dtype=sample_edges.dtype)
         for j, node in enumerate(ts.samples()):
             for edge in ts.edges():
                 if edge.child == node:

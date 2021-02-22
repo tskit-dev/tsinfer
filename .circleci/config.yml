@@ -24,7 +24,8 @@ jobs:
               # Using numa results in lots of 'set_mempolicy: Operation not permitted'
               # messages because of conflicts with Docker. So we just remove it.
               pip uninstall numa -y
-              pip install --user meson twine
+              # FIXME pinning meson for now, https://github.com/tskit-dev/tsinfer/issues/471
+              pip install --user twine meson==0.56
 
       - save_cache:
           key: tsinfer-{{ .Branch }}
