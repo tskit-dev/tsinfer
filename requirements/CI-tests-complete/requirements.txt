@@ -9,7 +9,7 @@ pytest==6.1.2
 pytest-xdist==2.2.1
 seaborn==0.11.1
 sortedcontainers==2.3.0
-tqdm==4.56.0
+tqdm==4.58.0
 tskit==0.3.4
 zarr==2.6.1
 msprime==0.7.4
