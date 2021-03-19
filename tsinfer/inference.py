@@ -947,8 +947,12 @@ class AncestorsGenerator:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
             a = np.zeros(self.num_sites, dtype=np.int8)
-            root_time = max(self.timepoint_to_epoch.keys()) + 1
-            ultimate_ancestor_time = root_time + 1
+            root_time = max(self.timepoint_to_epoch.keys())
+            if root_time < 1:
+                root_time = 1  # The normal case, when time==freq
+            else:
+                root_time += 1  # Could happen with user-specified times
+            ultimate_ancestor_time = root_time + 1 / self.num_ancestors
             # Add the ultimate ancestor. This is an awkward hack really; we don't
             # ever insert this ancestor. The only reason to add it here is that
             # it makes sure that the ancestor IDs we have in the ancestor file are
