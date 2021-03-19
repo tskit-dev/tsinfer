@@ -3349,18 +3349,20 @@ class AncestorData(DataContainer):
             full_haplotype=self.ancestors_full_haplotype[:, id_, 0],
         )
 
-    def ancestors(self):
+    def ancestors(self, indexes=None):
         """
-        Returns an iterator over all the ancestors.
+        Returns an iterator over all the ancestors. If indexes is provided, it should
+        be a sorted list of indexes giving a subset of ancestors to return.
+        For efficiency, the indexes should be a numpy integer array.
         """
-        # TODO document properly.
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
         time = self.ancestors_time[:]
         focal_sites = self.ancestors_focal_sites[:]
-        for j, h in enumerate(
-            chunk_iterator(self.ancestors_full_haplotype, dimension=1)
-        ):
+        haplotypes = chunk_iterator(self.ancestors_full_haplotype, indexes, dimension=1)
+        if indexes is None:
+            indexes = range(len(time))
+        for j, h in zip(indexes, haplotypes):
             yield Ancestor(
                 id=j,
                 start=start[j],

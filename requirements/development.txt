@@ -37,3 +37,4 @@ colorama
 sgkit[vcf]
 # Held at zarr<2.11.0,>=2.10.0 for sgkit compat, was zarr!=2.11.0, !=2.11.1, !=2.11.2 for tskit
 zarr<2.11.0,>=2.10.0
+numba

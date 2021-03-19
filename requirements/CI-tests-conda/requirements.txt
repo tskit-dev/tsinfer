@@ -20,3 +20,4 @@ zarr==2.13.3
 numpy  
 pandas
 matplotlib-base
+numba
