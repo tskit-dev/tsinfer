@@ -1,4 +1,23 @@
 ********************
+[0.2.2] - 2021-0X-XX
+********************
+
+**Bugfixes**:
+
+- Mutations at non-inference sites are now guaranteed to be fully parsimonious.
+  Previous versions required a mutation above the root when the input ancestral state
+  disagreed with the ancestral state produced by the parsimony algorithm. Now fixed by
+  using the new map_mutations code from tskit 0.3.7 (:pr:`557`, :user:`hyanwong`)
+
+**New Features**:
+
+**Breaking changes**:
+
+- Oldest nodes in a standard inferred tree sequence are no longer set to frequencies ~2
+  and ~3 (i.e. 2 or 3 times as old as all the other nodes), but are spaced above the
+  others by the mean time between unique ancestor ages (:pr:`485`, :user:`hyanwong`)
+
+********************
 [0.2.1] - 2021-05-26
 ********************
 

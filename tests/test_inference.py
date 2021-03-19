@@ -1515,6 +1515,26 @@ class TestBuildAncestors:
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         self.verify_ancestors(sample_data, ancestor_data)
 
+    def test_oldest_ancestors(self):
+        m = 50
+        G, positions = get_random_data_example(20, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        assert ancestor_data.num_ancestors > 2
+        times = ancestor_data.ancestors_time[:]
+        unique_times = np.unique(times)
+        ultimate_root_time = unique_times[-1]
+        root_time = unique_times[-2]
+        oldest_non_root = unique_times[-3]
+        assert np.sum(times == root_time) == 1  # root ancestor at unique time
+        assert np.sum(times == ultimate_root_time) == 1  # ultimate anc at unique time
+        expected_time_diff = oldest_non_root / len(unique_times[:-2])
+        assert np.isclose(ultimate_root_time - root_time, expected_time_diff)
+        assert np.isclose(root_time - oldest_non_root, expected_time_diff)
+
 
 class TestAncestorsTreeSequence:
     """
