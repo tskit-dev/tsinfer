@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.1] - 2022-1X-XX
+## [0.3.2] - 2022-1X-XX
 
 In development
 
@@ -21,6 +21,14 @@ In development
 - Reduce memory requirements of the `generate_ancestors` function by providing
   the `genotype_encoding` ({pr}`809`) and `mmap_temp_dir` ({pr}`808`) options
   ({user}`jeromekelleher`).
+
+- Increase parallelisation of `match_ancestors` by generating parallel groups from
+  their implied dependency graph. ({pr}`828`, {issue}`147`,  {user}`benjeffery`)
+
+## [0.3.1] - 2023-04-19
+ 
+- Bug fix release for a bad dependency specification.
+
 
 ## [0.3.0] - 2022-10-25
 

@@ -741,7 +741,9 @@ class TestCli:
 
     @pytest.mark.slow
     def test_imputation_accuracy(self):
-        self.run_command(["imputation-accuracy", "-n", "5", "-l", "0.1", "-s", "40"])
+        self.run_command(
+            ["imputation-accuracy", "-n", "5", "-l", "0.1", "-s", "40", "-p", "1"]
+        )
 
 
 class TestCountSampleChildEdges:

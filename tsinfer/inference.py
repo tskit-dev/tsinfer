@@ -25,13 +25,13 @@ import collections
 import copy
 import dataclasses
 import heapq
-import itertools
 import json
 import logging
 import queue
 import tempfile
 import threading
 import time
+import time as time_
 
 import humanize
 import numpy as np
@@ -39,6 +39,7 @@ import tskit
 
 import _tsinfer
 import tsinfer.algorithm as algorithm
+import tsinfer.ancestors as ancestors
 import tsinfer.constants as constants
 import tsinfer.formats as formats
 import tsinfer.progress as progress
@@ -1002,11 +1003,10 @@ class AncestorsGenerator:
             start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor in {:.2f}s at timepoint {} (epoch {}) "
+                "Made ancestor in {:.2f}s at timepoint {} "
                 "from {} to {} (len={}) with {} focal sites ({})".format(
                     duration,
                     t,
-                    self.timepoint_to_epoch[t],
                     start,
                     end,
                     end - start,
@@ -1444,50 +1444,82 @@ class AncestorMatcher(Matcher):
             time_units = tskit.TIME_UNITS_UNCALIBRATED
         self.time_units = time_units
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.ancestors_time[:]
+
+        # Find the dependencies
+        t = time_.time()
+        self.ancestor_grouping = self.group_by_linesweep()
+        logging.info(
+            f"Grouped {self.num_ancestors} ancestors into {len(self.ancestor_grouping)}"
+            f" groups in {time_.time() - t:.2f}s"
+        )
 
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
-        for ancestor_id in range(self.num_ancestors):
-            self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
-        self.ancestors = self.ancestor_data.ancestors()
-        # Consume the "virtual root" ancestor
-        virtual_root_ancestor = next(self.ancestors, None)
-        self.num_epochs = 0
-        if virtual_root_ancestor is not None:
-            # assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
-            # Create a list of all ID ranges in each epoch.
-            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
-            start = np.hstack([[0], breaks + 1])
-            end = np.hstack([breaks + 1, [self.num_ancestors]])
-            self.epoch_slices = np.vstack([start, end]).T
-            self.num_epochs = self.epoch_slices.shape[0]
-        self.start_epoch = 1
+        for t in self.ancestor_data.ancestors_time[:]:
+            self.tree_sequence_builder.add_node(t)
 
-    def __epoch_info_dict(self, epoch_index):
-        start, end = self.epoch_slices[epoch_index]
-        return collections.OrderedDict(
-            [("epoch", str(self.epoch[start])), ("nanc", str(end - start))]
+    def group_by_linesweep(self):
+        start = self.ancestor_data.ancestors_start[:]
+        end = self.ancestor_data.ancestors_end[:]
+        time = self.ancestor_data.ancestors_time[:]
+
+        # We only need to perform the grouping for the small epochs at earlier times.
+        # Skipping the later epochs _really_ helps as later ancestors are dependent on
+        # almost all the earlier ones, so the dependency graph becomes intractable.
+        breaks = np.where(time[1:] != time[:-1])[0]
+        epoch_start = np.hstack([[0], breaks + 1])
+        epoch_end = np.hstack([breaks + 1, [self.num_ancestors]])
+        time_slices = np.vstack([epoch_start, epoch_end]).T
+        epoch_sizes = time_slices[:, 1] - time_slices[:, 0]
+        median_size = np.median(epoch_sizes)
+        cutoff = 500 * median_size
+        # To choose a cutoff point find the first epoch that is 50 times larger than
+        # the median epoch size. For a large set of human genomes the median epoch
+        # size is around 10, so we'll stop grouping by linesweep at 5000.
+        if np.max(epoch_sizes) <= cutoff:
+            large_epoch = len(time_slices)
+            large_epoch_first_ancestor = self.num_ancestors
+        else:
+            large_epoch = np.where(epoch_sizes > cutoff)[0][0]
+            large_epoch_first_ancestor = time_slices[large_epoch, 0]
+        logger.info(f"{len(time_slices)} epochs with {median_size} median size.")
+        logger.info(f"First large (>{cutoff}) epoch is {large_epoch}")
+        logger.info(f"Grouping {large_epoch_first_ancestor} ancestors by linesweep")
+        ancestor_grouping = ancestors.group_ancestors_by_linesweep(
+            start[:large_epoch_first_ancestor],
+            end[:large_epoch_first_ancestor],
+            time[:large_epoch_first_ancestor],
         )
+        # Add on the remaining epochs, grouped by time
+        next_epoch = len(ancestor_grouping) + 1
+        for epoch in range(large_epoch, len(time_slices)):
+            ancestor_grouping[next_epoch] = np.arange(*time_slices[epoch])
+            next_epoch += 1
 
-    def __start_epoch(self, epoch_index):
-        start, end = self.epoch_slices[epoch_index]
+        # Remove the "virtual root" ancestor
+        try:
+            assert 0 in ancestor_grouping[0]
+            ancestor_grouping[0].remove(0)
+        except KeyError:
+            pass
+        logger.info(f"Finished grouping into {len(ancestor_grouping)} groups")
+        return ancestor_grouping
+
+    def __start_group(self, level, ancestor_ids):
         info = collections.OrderedDict(
-            [("epoch", str(self.epoch[start])), ("nanc", str(end - start))]
+            [("level", str(level)), ("nanc", str(len(ancestor_ids)))]
         )
         self.progress_monitor.set_detail(info)
         self.tree_sequence_builder.freeze_indexes()
 
-    def __complete_epoch(self, epoch_index, results):
-        start, end = map(int, self.epoch_slices[epoch_index])
-        num_ancestors_in_epoch = end - start
+    def __complete_group(self, group, ancestor_ids, results):
         nodes_before = self.tree_sequence_builder.num_nodes
         match_nodes_before = self.tree_sequence_builder.num_match_nodes
 
-        for child_id, result in zip(range(start, end), results):
+        for child_id, result in zip(ancestor_ids, results):
             assert result.node == child_id
             self.tree_sequence_builder.add_path(
-                child_id,
+                int(child_id),
                 result.path.left,
                 result.path.right,
                 result.path.parent,
@@ -1495,34 +1527,36 @@ class AncestorMatcher(Matcher):
                 extended_checks=self.extended_checks,
             )
             self.tree_sequence_builder.add_mutations(
-                child_id, result.mutations_site, result.mutations_derived_state
+                int(child_id), result.mutations_site, result.mutations_derived_state
             )
 
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         assert (
             self.tree_sequence_builder.num_match_nodes
-            == match_nodes_before + extra_nodes + num_ancestors_in_epoch
+            == match_nodes_before + extra_nodes + len(ancestor_ids)
         )
         logger.debug(
-            "Finished epoch index={} with {} ancestors; {} extra nodes inserted; "
+            "Finished group {} with {} ancestors; {} extra nodes inserted; "
             "mean_tb_size={:.2f} edges={};".format(
-                epoch_index,
-                num_ancestors_in_epoch,
+                group,
+                len(ancestor_ids),
                 extra_nodes,
-                sum(result.mean_traceback_size for result in results) / len(results),
+                sum(result.mean_traceback_size for result in results) / len(results)
+                if len(results) > 0
+                else float("nan"),
                 self.tree_sequence_builder.num_edges,
             )
         )
 
     def match_ancestors(self):
-        logger.info(f"Starting ancestor matching for {self.num_epochs} epochs")
+        logger.info(
+            f"Starting ancestor matching for {len(self.ancestor_grouping)} groups"
+        )
         self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
 
         local_data = threading.local()
 
-        def worker_function(ancestor_ancestor_id):
-            ancestor, ancestor_id = ancestor_ancestor_id
-            assert ancestor.id == ancestor_id
+        def worker_function(ancestor):
             if not hasattr(local_data, "matcher"):
                 local_data.matcher = self.create_matcher_instance()
             result = self.find_path(
@@ -1534,9 +1568,8 @@ class AncestorMatcher(Matcher):
             )
             return result
 
-        for j in range(self.start_epoch, self.num_epochs):
-            self.__start_epoch(j)
-            start, end = map(int, self.epoch_slices[j])
+        for group, ancestor_ids in self.ancestor_grouping.items():
+            self.__start_group(group, ancestor_ids)
             if self.num_threads > 0:
                 mapper = lambda func, args: threads.threaded_map(  # noqa E731
                     func, args, self.num_threads
@@ -1546,17 +1579,13 @@ class AncestorMatcher(Matcher):
             # We have to consume the iterator here, otherwise we'll match against
             # ancestors in this epoch
             results = []
-            work_iter = (
-                (ancestor, i + start)
-                for i, ancestor in enumerate(
-                    itertools.islice(self.ancestors, end - start)
-                )
-            )
-            for result in mapper(worker_function, work_iter):
+            for result in mapper(
+                worker_function, self.ancestor_data.ancestors(indexes=ancestor_ids)
+            ):
                 results.append(result)
                 self.match_progress.update()
 
-            self.__complete_epoch(j, results)
+            self.__complete_group(group, ancestor_ids, results)
 
         ts = self.store_output()
         self.match_progress.close()

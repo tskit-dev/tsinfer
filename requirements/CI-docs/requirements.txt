@@ -62,6 +62,7 @@ jupyterlab-pygments==0.2.2
 jupyterlab-widgets==1.1.1
 latexcodec==2.0.1
 linkify-it-py==1.0.3
+llvmlite==0.40.1rc1
 lmdb==1.4.0
 locket==1.0.0
 lxml==4.9.2
@@ -82,8 +83,9 @@ nest-asyncio==1.5.6
 newick==1.6.0
 notebook==6.5.2
 notebook_shim==0.2.2
+numba==0.57.0
 numcodecs==0.11.0
-numpy==1.24.1
+numpy==1.24.3
 packaging==23.0
 pandas==1.5.3
 pandocfilters==1.5.0
@@ -159,4 +161,4 @@ webencodings==0.5.1
 websocket-client==1.4.2
 widgetsnbextension==3.6.1
 zarr==2.13.6
-zipp==3.11.0
+zipp==3.15.0
