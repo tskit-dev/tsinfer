@@ -853,11 +853,10 @@ class AncestorsGenerator:
             start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
             duration = time.perf_counter() - before
             logger.debug(
-                "Made ancestor in {:.2f}s at timepoint {} (epoch {}) "
+                "Made ancestor in {:.2f}s at timepoint {} "
                 "from {} to {} (len={}) with {} focal sites ({})".format(
                     duration,
                     t,
-                    self.timepoint_to_epoch[t],
                     start,
                     end,
                     end - start,
@@ -938,16 +937,11 @@ class AncestorsGenerator:
     def run(self):
         self.descriptors = self.ancestor_builder.ancestor_descriptors()
         self.num_ancestors = len(self.descriptors)
-        # Maps epoch numbers to their corresponding ancestor times.
-        self.timepoint_to_epoch = {}
-        for t, _ in reversed(self.descriptors):
-            if t not in self.timepoint_to_epoch:
-                self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
             a = np.zeros(self.num_sites, dtype=np.int8)
-            root_time = max(self.timepoint_to_epoch.keys()) + 1
+            root_time = self.descriptors[0][0] + 1  # first descriptor is the oldest
             ultimate_ancestor_time = root_time + 1
             # Add the ultimate ancestor. This is an awkward hack really; we don't
             # ever insert this ancestor. The only reason to add it here is that
@@ -1241,31 +1235,34 @@ class AncestorMatcher(Matcher):
         super().__init__(sample_data, ancestor_data.sites_position[:], **kwargs)
         self.ancestor_data = ancestor_data
         self.num_ancestors = self.ancestor_data.num_ancestors
-        self.epoch = self.ancestor_data.ancestors_time[:]
+        self.ancestors_dependency_level = {}
+        # Ancestors are chunked into groups of different dependency levels
+        # Level 0 is the ultimate ancestor. Level 1 are all the ancestors which can only
+        # copy from ancestors at Level 0. Level 2 are all the ancestors which can only
+        # copy from ancestors at Levels 0 and 1, etc. All ancestors within the same
+        # level can be processed in parallel
+
+        # Find the dependencies
+        anc_start = ancestor_data.ancestors_start[:]
+        anc_end = ancestor_data.ancestors_end[:]
+        anc_time = ancestor_data.ancestors_time[:]
+        dep_level = np.zeros(self.num_ancestors, dtype=int)
+        for anc_id, (lft, rgt, t) in enumerate(zip(anc_start, anc_end, anc_time)):
+            dependencies = np.where(
+                np.logical_and.reduce((anc_start < rgt, anc_end > lft, anc_time > t))
+            )[0]
+            for dep_id in dependencies:
+                if dep_level[dep_id] >= dep_level[anc_id]:
+                    dep_level[anc_id] = dep_level[dep_id] + 1
+        for i, level in enumerate(np.unique(dep_level)):
+            assert i == level  # we should have all levels from 0..n
+            if level > 0:  # Only run matching for ancestors that have dependencies
+                self.ancestors_dependency_level[level] = np.where(dep_level == level)[0]
 
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
-        for ancestor_id in range(self.num_ancestors):
-            self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
-        self.ancestors = self.ancestor_data.ancestors()
-        # Consume the first ancestor.
-        a = next(self.ancestors, None)
-        self.num_epochs = 0
-        if a is not None:
-            # assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
-            # Create a list of all ID ranges in each epoch.
-            breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
-            start = np.hstack([[0], breaks + 1])
-            end = np.hstack([breaks + 1, [self.num_ancestors]])
-            self.epoch_slices = np.vstack([start, end]).T
-            self.num_epochs = self.epoch_slices.shape[0]
-        self.start_epoch = 1
-
-    def __epoch_info_dict(self, epoch_index):
-        start, end = self.epoch_slices[epoch_index]
-        return collections.OrderedDict(
-            [("epoch", str(self.epoch[start])), ("nanc", str(end - start))]
-        )
+        for ancestor in self.ancestor_data.ancestors():
+            self.tree_sequence_builder.add_node(ancestor.time)
 
     def __ancestor_find_path(self, ancestor, thread_index=0):
         # NOTE we're no longer using the ancestor's focal sites as a way
@@ -1279,21 +1276,18 @@ class AncestorMatcher(Matcher):
         haplotype[start:end] = ancestor.haplotype
         self._find_path(ancestor.id, haplotype, start, end, thread_index)
 
-    def __start_epoch(self, epoch_index):
-        start, end = self.epoch_slices[epoch_index]
+    def __start_level(self, level, ancestor_ids):
         info = collections.OrderedDict(
-            [("epoch", str(self.epoch[start])), ("nanc", str(end - start))]
+            [("level", str(level)), ("nanc", str(len(ancestor_ids)))]
         )
         self.progress_monitor.set_detail(info)
         self.tree_sequence_builder.freeze_indexes()
 
-    def __complete_epoch(self, epoch_index):
-        start, end = map(int, self.epoch_slices[epoch_index])
-        num_ancestors_in_epoch = end - start
-        current_time = self.epoch[start]
+    def __complete_level(self, level, ancestor_ids):
+        num_ancestors_in_level = len(ancestor_ids)
         nodes_before = self.tree_sequence_builder.num_nodes
-
-        for child_id in range(start, end):
+        for child_id in ancestor_ids:
+            child_id = int(child_id)
             left, right, parent = self.results.get_path(child_id)
             self.tree_sequence_builder.add_path(
                 child_id,
@@ -1309,10 +1303,10 @@ class AncestorMatcher(Matcher):
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
-            "Finished epoch {} with {} ancestors; {} extra nodes inserted; "
+            "Finished level {} with {} ancestors; {} extra nodes inserted; "
             "mean_tb_size={:.2f} edges={}; mean_matcher_mem={}".format(
-                current_time,
-                num_ancestors_in_epoch,
+                level,
+                num_ancestors_in_level,
                 extra_nodes,
                 np.sum(self.mean_traceback_size) / np.sum(self.num_matches),
                 self.tree_sequence_builder.num_edges,
@@ -1324,16 +1318,13 @@ class AncestorMatcher(Matcher):
         self.results.clear()
 
     def __match_ancestors_single_threaded(self):
-        for j in range(self.start_epoch, self.num_epochs):
-            self.__start_epoch(j)
-            start, end = map(int, self.epoch_slices[j])
-            for ancestor_id in range(start, end):
-                a = next(self.ancestors)
-                assert ancestor_id == a.id
-                self.__ancestor_find_path(a)
-            self.__complete_epoch(j)
+        for level, ancestor_ids in self.ancestors_dependency_level.items():
+            self.__start_level(level, ancestor_ids)
+            for ancestor in self.ancestor_data.ancestors(indexes=ancestor_ids):
+                self.__ancestor_find_path(ancestor)
+            self.__complete_level(level, ancestor_ids)
 
-    def __match_ancestors_multi_threaded(self, start_epoch=1):
+    def __match_ancestors_multi_threaded(self):
         # See note on match samples multithreaded below. Should combine these
         # into a single function. Possibly when trying to make the thread
         # error handling more robust.
@@ -1357,16 +1348,13 @@ class AncestorMatcher(Matcher):
         ]
         logger.debug(f"Started {self.num_threads} match worker threads")
 
-        for j in range(self.start_epoch, self.num_epochs):
-            self.__start_epoch(j)
-            start, end = map(int, self.epoch_slices[j])
-            for ancestor_id in range(start, end):
-                a = next(self.ancestors)
-                assert a.id == ancestor_id
-                match_queue.put(a)
+        for level, ancestor_ids in self.ancestors_dependency_level.items():
+            self.__start_level(level, ancestor_ids)
+            for ancestor in self.ancestor_data.ancestors(indexes=ancestor_ids):
+                match_queue.put(ancestor)
             # Block until all matches have completed.
             match_queue.join()
-            self.__complete_epoch(j)
+            self.__complete_level(level, ancestor_ids)
 
         # Stop the the worker threads.
         for _ in range(self.num_threads):
@@ -1375,7 +1363,11 @@ class AncestorMatcher(Matcher):
             match_threads[j].join()
 
     def match_ancestors(self):
-        logger.info(f"Starting ancestor matching for {self.num_epochs} epochs")
+        logger.info(
+            "Starting ancestor matching for {} dependency levels".format(
+                len(self.ancestors_dependency_level)
+            )
+        )
         self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
         if self.num_threads <= 0:
             self.__match_ancestors_single_threaded()
