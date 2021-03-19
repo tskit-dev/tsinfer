@@ -105,7 +105,9 @@ def get_example_individuals_ts_with_metadata(
             pop_meta = {"utf": chr(127462) + chr(127462 + i)}
         tables.populations.add_row(metadata=pop_meta)  # One pop for each individual
         if i < n - 1 or not skip_last:
-            tables.individuals.add_row(individual_flags, location, individual_meta)
+            tables.individuals.add_row(
+                flags=individual_flags, location=location, metadata=individual_meta
+            )
 
     node_populations = tables.nodes.population
     for node in ts.nodes():
