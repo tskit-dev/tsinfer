@@ -1481,6 +1481,15 @@ class TestSampleDataMerge:
     Tests for the sample data merge operation.
     """
 
+    def test_finalised(self):
+        ts1 = tsutil.get_example_ts(2, 2, 1)
+        sd1 = formats.SampleData.from_tree_sequence(ts1)
+        sd1_copy = sd1.copy()
+        with pytest.raises(ValueError, match="not finalised"):
+            sd1_copy.merge(sd1)
+        with pytest.raises(ValueError, match="not finalised"):
+            sd1.merge(sd1_copy)
+
     def test_different_sequence_lengths(self):
         ts1 = tsutil.get_example_ts(2, 2, 1)
         sd1 = formats.SampleData.from_tree_sequence(ts1)

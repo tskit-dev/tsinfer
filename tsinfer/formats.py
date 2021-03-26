@@ -1887,6 +1887,8 @@ class SampleData(DataContainer):
             from the two datasets.
         :rtype: .SampleData
         """
+        self._check_finalised()
+        other._check_finalised()
         if self.sequence_length != other.sequence_length:
             raise ValueError("Sample data files must have the same sequence length")
         with SampleData(sequence_length=self.sequence_length, **kwargs) as result:
