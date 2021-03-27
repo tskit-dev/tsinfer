@@ -1768,7 +1768,9 @@ class TestAncestorData(DataContainerMixin):
 
     class_to_test = formats.AncestorData
 
-    def get_example_data(self, sample_size, sequence_length, num_ancestors):
+    def get_example_data(
+        self, sample_size, sequence_length, num_ancestors, use_sites_time=True
+    ):
         ts = msprime.simulate(
             sample_size,
             recombination_rate=1,
@@ -1776,7 +1778,9 @@ class TestAncestorData(DataContainerMixin):
             length=sequence_length,
             random_seed=100,
         )
-        sample_data = formats.SampleData.from_tree_sequence(ts)
+        sample_data = formats.SampleData.from_tree_sequence(
+            ts, use_sites_time=use_sites_time
+        )
 
         num_sites = sample_data.num_sites
         ancestors = []
@@ -2208,6 +2212,116 @@ class TestAncestorData(DataContainerMixin):
         e = np.min(e[e > 0]) / 100
         assert np.allclose(
             ancestors_extra.ancestors_time[:][inserted], historical_sample_time + e
+        )
+
+    def test_bad_input_truncate_ancestors(self):
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=False)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        with pytest.raises(ValueError, match="Time bounds cannot be negative"):
+            ancestors.truncate_ancestors(-1, -2)
+        with pytest.raises(ValueError, match="cannot be zero or negative"):
+            ancestors.truncate_ancestors(0.3, 0.5, -2)
+            ancestors.truncate_ancestors(0.3, 0.5, 0)
+        with pytest.raises(ValueError, match="Upper bound must be >= lower bound"):
+            ancestors.truncate_ancestors(0.3, 0.1)
+        with pytest.raises(ValueError, match="greater than older ancestor"):
+            ancestors.truncate_ancestors(10, 20)
+        with pytest.raises(ValueError, match="No ancestors in time bound"):
+            ancestors.truncate_ancestors(0.555555, 0.555555)
+
+    def test_length_multiplier(self):
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=False)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        trunc_anc = ancestors.truncate_ancestors(0.9, 1, 1)
+        assert np.array_equal(ancestors.ancestors_length, trunc_anc.ancestors_length)
+
+    def test_ancestors_truncated_length(self):
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=False)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        lower_limit = 0.4
+        upper_limit = 0.6
+        trunc_anc = ancestors.truncate_ancestors(lower_limit, upper_limit, 1)
+        original_lengths = ancestors.ancestors_length[:]
+        trunc_lengths = trunc_anc.ancestors_length[:]
+        # Check that ancestors older than upper_limit have been cut down
+        trunc_targets = np.logical_and(
+            trunc_anc.ancestors_time[:] > upper_limit, trunc_anc.ancestors_time[:] < 1
+        )
+        assert np.all(trunc_lengths[trunc_targets] <= original_lengths[trunc_targets])
+        assert np.array_equal(trunc_lengths[-2:], original_lengths[-2:])
+        time = ancestors.ancestors_time[:]
+        # Test younger haplotypes have been left alone
+        assert np.array_equal(
+            trunc_lengths[time < upper_limit], original_lengths[time < upper_limit]
+        )
+        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+            assert orig_anc.time == trunc_anc.time
+            assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
+            if orig_anc.time > upper_limit:
+                assert orig_anc.end >= trunc_anc.end
+                assert np.array_equal(
+                    orig_anc.haplotype[
+                        trunc_anc.start
+                        - orig_anc.start : trunc_anc.end
+                        - orig_anc.start
+                    ],
+                    trunc_anc.haplotype,
+                )
+            else:
+                assert orig_anc.start == trunc_anc.start
+                assert orig_anc.end == trunc_anc.end
+                assert np.array_equal(orig_anc.haplotype, trunc_anc.haplotype)
+
+    def test_truncate_extreme_interval(self):
+        # Test all haplotypes are untouched when specifying interval of min-max time
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=True)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        time = ancestors.ancestors_time[:]
+        trunc_anc = ancestors.truncate_ancestors(np.min(time), np.max(time), 1)
+        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+            assert orig_anc.start == trunc_anc.start
+            assert orig_anc.end == trunc_anc.end
+            assert orig_anc.time == trunc_anc.time
+            assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
+            assert np.array_equal(orig_anc.haplotype, trunc_anc.haplotype)
+        # Test all haplotypes are untouched when specifying interval of 0-1
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=False)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        time = ancestors.ancestors_time[:]
+        trunc_anc = ancestors.truncate_ancestors(0, 1, 1)
+        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+            assert orig_anc.start == trunc_anc.start
+            assert orig_anc.end == trunc_anc.end
+            assert orig_anc.time == trunc_anc.time
+            assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
+            assert np.array_equal(orig_anc.haplotype, trunc_anc.haplotype)
+
+    def test_one_haplotype_truncated(self):
+        # Test truncating one haplotype (the oldest with a focal site) works as expected
+        sample_data, _ = self.get_example_data(10, 10, 40, use_sites_time=True)
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        sites_time = sample_data.sites_time[:]
+        oldest_site = np.max(sites_time)
+        midpoint = np.median(sites_time)
+        trunc_anc = ancestors.truncate_ancestors(midpoint, oldest_site, 1)
+        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+            assert orig_anc.time == trunc_anc.time
+            assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
+
+    def test_multiple_focal_sites(self):
+        # Test that ancestor with 2 focal sites spaced far apart isn't cut down
+        sample_data = tsinfer.SampleData()
+        sample_data.add_site(0, [1, 1, 1, 0])
+        sample_data.add_site(5, [1, 0, 0, 1])
+        sample_data.add_site(10, [1, 1, 1, 0])
+        sample_data.finalise()
+        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data.add_ancestor(0, 3, 0.6666, [0, 2], [1, 1, 0])
+        ancestor_data.add_ancestor(1, 2, 0.333, [1], [1])
+        ancestor_data.finalise()
+        trunc_anc = ancestor_data.truncate_ancestors(0.3, 0.4, 1)
+        assert np.array_equal(
+            trunc_anc.ancestors_haplotype[-1], ancestor_data.ancestors_haplotype[-1]
         )
 
 
