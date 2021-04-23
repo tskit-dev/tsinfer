@@ -71,7 +71,7 @@ setup(
     author="Jerome Kelleher",
     author_email="jerome.kelleher@bdi.ox.ac.uk",
     url="http://pypi.python.org/pypi/tsinfer",
-    python_requires=">=3.6",
+    python_requires=">=3.7",
     entry_points={"console_scripts": ["tsinfer=tsinfer.__main__:main"]},
     setup_requires=["setuptools_scm", "numpy"],
     cmdclass={"build_ext": build_ext},
@@ -93,7 +93,6 @@ setup(
     license="GNU GPLv3+",
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
