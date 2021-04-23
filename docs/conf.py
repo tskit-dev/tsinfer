@@ -194,6 +194,7 @@ texinfo_documents = [
 intersphinx_mapping = {
     "https://docs.python.org/3/": None,
     "https://tskit.dev/tskit/docs/stable": None,
+    "https://tskit.dev/msprime/docs/stable": None,
     "https://numcodecs.readthedocs.io/en/stable/": None,
     "https://zarr.readthedocs.io/en/stable/": None,
 }
