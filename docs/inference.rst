@@ -180,13 +180,14 @@ distribution of variation to fit poorly to the marginal tree at that site.
 Hence, if there is error in your dataset, you may wish to experiment with
 these settings to obtain optimal results.
 
-The ``recombination_rate`` parameter is a floating
-point value giving a single rate (:math:`\rho`) across the entire sequence.
-This can be used to calculate the genetic distance between sites, which in turn
-can be used to derive an array of probabilities of recombination between
-adjacent sites, (:math:`r`) used when assessing the relative likelihood that a
-mismatch (and hence an extra mutation) may be responsible for some patterns of
-variation at a site.
+The ``recombination_rate`` parameter is either a floating point value giving a
+single rate (:math:`\rho`) per unit length of genome, used to calculate the
+genetic distance between adjacent sites, or an :class:`msprime.RateMap` object
+(whose ``.get_cumulative_mass`` method provides the genetic distances instead).
+The genetic distances are then used to derive an array of probabilities of
+recombination between adjacent sites, (:math:`r`) used when assessing the relative
+likelihood that a mismatch (and hence an extra mutation) may be responsible
+for some patterns of variation at a site.
 
 The ``mismatch_ratio`` parameter is only relevant if a recombination rate has
 been provided. It is used to adjust the balance of recombination to multiple
