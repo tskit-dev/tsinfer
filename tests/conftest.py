@@ -39,6 +39,7 @@ import msprime
 import numpy as np
 import pytest
 from pytest import fixture
+from tsutil import mark_mutation_times_unknown
 
 import tsinfer
 
@@ -75,11 +76,11 @@ def num_nonsample_muts(ts):
 def small_ts_fixture():
     """
     A simple 1-tree sequence with at least 2 inference sites
-    (i.e. mutations above a non-sample node)
+    (i.e. mutations above a non-sample node), and no mutation times
     """
     ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
     assert num_nonsample_muts(ts) > 1
-    return ts
+    return mark_mutation_times_unknown(ts)
 
 
 @fixture(scope="session")
@@ -103,12 +104,12 @@ def small_sd_anc_fixture(small_ts_fixture):
 def medium_ts_fixture():
     """
     A medium sized tree sequence with a good number of trees and inference mutations
-    (i.e. mutations above a non-sample node)
+    (i.e. mutations above a non-sample node), and no mutation
     """
     ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
     assert ts.num_trees > 10
     assert num_nonsample_muts(ts) > 50
-    return ts
+    return mark_mutation_times_unknown(ts)
 
 
 @fixture(scope="session")

@@ -6,13 +6,15 @@ six
 tqdm
 humanize
 daiquiri
-msprime
+msprime >= 1.0.0
 zarr
 lmdb
 attrs
 pytest
 pytest-xdist
 pytest-coverage
+# Only for giving nice error messages for incompatible older files
+h5py
 # Only needed for the Python implementation.
 sortedcontainers
 # Optional extras for debugging threads - these modules mainly work on linux

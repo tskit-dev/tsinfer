@@ -2257,7 +2257,7 @@ class TestAncestorData(DataContainerMixin):
         for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
             assert orig_anc.time == trunc_anc.time
             assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
-            if orig_anc.time > upper_limit:
+            if orig_anc.time >= upper_limit:
                 assert orig_anc.end >= trunc_anc.end
                 assert np.array_equal(
                     orig_anc.haplotype[
