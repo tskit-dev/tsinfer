@@ -694,8 +694,7 @@ class AncestorMatcher:
             self.allelic_state[node] = -1
         assert np.all(self.allelic_state == -1)
 
-    def update_site(self, site, haplotype_state):
-        n = self.tree_sequence_builder.num_nodes
+    def update_site(self, site, haplotype_state, n):
         rho = self.recombination[site]
         mu = self.mismatch[site]
         num_alleles = self.tree_sequence_builder.num_alleles[site]
@@ -836,11 +835,15 @@ class AncestorMatcher:
     def is_nonzero_root(self, u):
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
-    def find_path(self, h, start, end, match):
+    def find_path(self, h, start, end, match, num_older_nodes=None):
         Il = self.tree_sequence_builder.left_index
         Ir = self.tree_sequence_builder.right_index
         M = len(Il)
         n = self.tree_sequence_builder.num_nodes
+        if num_older_nodes is None:
+            # This is used to parameterize matching in self.update_site
+            # see https://github.com/tskit-dev/tsinfer/issues/493
+            num_older_nodes = self.tree_sequence_builder.num_nodes
         m = self.tree_sequence_builder.num_sites
         self.parent = np.zeros(n, dtype=int) - 1
         self.left_child = np.zeros(n, dtype=int) - 1
@@ -854,7 +857,6 @@ class AncestorMatcher:
         self.likelihood = np.full(n, NONZERO_ROOT, dtype=float)
         self.likelihood_nodes = []
         L_cache = np.zeros_like(self.likelihood) - 1
-
         # print("MATCH: start=", start, "end = ", end, "h = ", h)
         j = 0
         k = 0
@@ -902,6 +904,7 @@ class AncestorMatcher:
                         self.likelihood[u] = NONZERO_ROOT
                         if u in self.likelihood_nodes:
                             self.likelihood_nodes.remove(u)
+
             root = 0
             if self.left_child[0] != -1:
                 root = self.left_child[0]
@@ -919,7 +922,7 @@ class AncestorMatcher:
             if self.extended_checks:
                 self.check_likelihoods()
             for site in range(max(left, start), min(right, end)):
-                self.update_site(site, h[site])
+                self.update_site(site, h[site], num_older_nodes)
 
             remove_start = k
             while k < M and Ir.peekitem(k)[1].right == right:

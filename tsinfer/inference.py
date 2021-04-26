@@ -1176,7 +1176,9 @@ class Matcher:
         """
         return (1 - np.exp(-genetic_distances * ratio * num_alleles)) / num_alleles
 
-    def _find_path(self, child_id, haplotype, start, end, thread_index=0):
+    def _find_path(
+        self, child_id, haplotype, start, end, thread_index=0, num_older_nodes=None
+    ):
         """
         Finds the path of the specified haplotype and upates the results
         for the specified thread_index.
@@ -1184,8 +1186,13 @@ class Matcher:
         matcher = self.matcher[thread_index]
         match = self.match[thread_index]
         missing = haplotype == tskit.MISSING_DATA
-
-        left, right, parent = matcher.find_path(haplotype, start, end, match)
+        try:
+            left, right, parent = matcher.find_path(
+                haplotype, start, end, match, num_older_nodes
+            )
+        except TypeError:
+            # In case we call the C version which hasn't been patched yet
+            left, right, parent = matcher.find_path(haplotype, start, end, match)
         self.results.set_path(child_id, left, right, parent)
         match[missing] = tskit.MISSING_DATA
         diffs = start + np.where(haplotype[start:end] != match[start:end])[0]
@@ -1277,7 +1284,8 @@ class AncestorMatcher(Matcher):
         end = ancestor.end
         assert ancestor.haplotype.shape[0] == (end - start)
         haplotype[start:end] = ancestor.haplotype
-        self._find_path(ancestor.id, haplotype, start, end, thread_index)
+        num_older = np.sum(self.ancestor_data.ancestors_time[:] > ancestor.time)
+        self._find_path(ancestor.id, haplotype, start, end, thread_index, num_older)
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
@@ -1533,8 +1541,13 @@ class SampleMatcher(Matcher):
             )
         )
 
-    def __process_sample(self, sample_id, haplotype, thread_index=0):
-        self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
+    def __process_sample(self, sample_id, haplotype, thread_index=0, num_older=None):
+        # Samples can be matched with any ancestor, so we ignore sample times and
+        # consider all ancestors as older
+        num_older = self.ancestors_ts_tables.nodes.num_rows
+        self._find_path(
+            sample_id, haplotype, 0, self.num_sites, thread_index, num_older
+        )
 
     def __match_samples_single_threaded(self, indexes):
         sample_haplotypes = self.sample_data.haplotypes(
