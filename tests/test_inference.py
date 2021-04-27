@@ -2863,6 +2863,21 @@ class TestVerify:
         with pytest.raises(ValueError):
             tsinfer.verify(samples, ts)
 
+    def test_bad_ancestral_allele(self):
+        n = 2
+        ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
+        assert ts.num_sites > 1
+        with tsinfer.SampleData(sequence_length=ts.sequence_length) as samples:
+            for var in ts.variants():
+                samples.add_site(
+                    position=var.site.position,
+                    alleles=["1", "0"],
+                    genotypes=var.genotypes,
+                )
+
+        with pytest.raises(ValueError, match="Ancestral"):
+            tsinfer.verify(samples, ts)
+
     def test_bad_alleles(self):
         n = 2
         ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
@@ -2871,11 +2886,11 @@ class TestVerify:
             for var in ts.variants():
                 samples.add_site(
                     position=var.site.position,
-                    alleles=["A", "T"],
+                    alleles=["0", "T"],
                     genotypes=var.genotypes,
                 )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Alleles"):
             tsinfer.verify(samples, ts)
 
     def test_bad_genotypes(self):
@@ -2888,8 +2903,31 @@ class TestVerify:
                     position=var.site.position, alleles=var.alleles, genotypes=[0, 0]
                 )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Genotypes"):
             tsinfer.verify(samples, ts)
+
+    def test_monomorphic_sites(self):
+        ts = msprime.sim_ancestry(3, ploidy=1, sequence_length=10, random_seed=123)
+        # A finite sites mutation model can create monomorphic sites by reversion etc.
+        ts = msprime.sim_mutations(ts, rate=0.5, model="binary", random_seed=1)
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        is_monomorphic = np.all(np.diff(sd.sites_genotypes[:], axis=1) == 0, axis=1)
+        assert len(is_monomorphic) == sd.num_sites
+        assert np.any(is_monomorphic)
+        ts_inf = tsinfer.infer(sd)
+        tsinfer.verify(sd, ts_inf)
+
+    def test_alternative_allele_encodings(self):
+        ts = msprime.sim_ancestry(3, ploidy=1, sequence_length=10, random_seed=123)
+        ts = msprime.sim_mutations(ts, rate=0.2, random_seed=1)
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
+        ts_inf = tsinfer.infer(sd)
+        has_alt_order = False
+        for v1, v2 in zip(sd.variants(), ts_inf.variants()):
+            if set(v1.alleles) == set(v2.alleles) and v1.alleles != v2.alleles:
+                has_alt_order = True
+        assert has_alt_order
+        tsinfer.verify(sd, ts_inf)
 
 
 class TestExtractAncestors:

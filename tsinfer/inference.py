@@ -177,10 +177,20 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
                     var1.site.position, var2.site.position
                 )
             )
+        # First (ancestral) allele should always be the same
+        if var1.alleles[0] != var2.alleles[0]:
+            raise ValueError(f"Ancestral allele not equal at site {var1.site.id}")
         if var1.alleles != var2.alleles:
-            raise ValueError(f"alleles not equal: {var1.alleles} != {var2.alleles}")
-        if not np.array_equal(var1.genotypes, var2.genotypes):
-            raise ValueError(f"Genotypes not equal at site {var1.site.id}")
+            # Alleles may be in a different order, or even present/absent if not in the
+            # genotype matrix so we need to explicitly compare the decoded values (slow)
+            for i, (g1, g2) in enumerate(zip(var1.genotypes, var2.genotypes)):
+                if var1.alleles[g1] != var2.alleles[g2]:
+                    raise ValueError(
+                        f"Alleles for sample {i} not equal at site {var1.site.id}"
+                    )
+        else:
+            if not np.array_equal(var1.genotypes, var2.genotypes):
+                raise ValueError(f"Genotypes not equal at site {var1.site.id}")
         progress.update()
     progress.close()
 
