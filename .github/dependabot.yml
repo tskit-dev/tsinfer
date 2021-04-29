@@ -1,0 +1,91 @@
+version: 2
+updates:
+- package-ecosystem: pip
+  directory: "/requirements/CI-tests-conda"
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 10
+  reviewers:
+  - benjeffery
+  labels:
+  - dependancy-upgrade
+  ignore:
+  - dependency-name: lmdb
+    versions:
+    - "> 0.9.24"
+  - dependency-name: lmdb
+    versions:
+    - ">= 1.a, < 2"
+  - dependency-name: zarr
+    versions:
+    - 2.6.1
+- package-ecosystem: pip
+  directory: "/requirements/CI-tests-pip"
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 10
+  reviewers:
+  - benjeffery
+  labels:
+  - dependancy-upgrade
+  ignore:
+  - dependency-name: numpy
+    versions:
+    - 1.20.1
+  - dependency-name: pandas
+    versions:
+    - 1.2.1
+    - 1.2.2
+  - dependency-name: pytest
+    versions:
+    - 6.2.1
+    - 6.2.2
+  - dependency-name: seaborn
+    versions:
+    - 0.11.1
+  - dependency-name: pytest-xdist
+    versions:
+    - 2.2.0
+  - dependency-name: matplotlib
+    versions:
+    - 3.3.4
+  - dependency-name: tqdm
+    versions:
+    - 4.55.0
+  - dependency-name: humanize
+    versions:
+    - 3.2.0
+- package-ecosystem: pip
+  directory: "/requirements/CI-tests-complete"
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 10
+  reviewers:
+  - benjeffery
+  labels:
+  - dependancy-upgrade
+  ignore:
+  - dependency-name: numpy
+    versions:
+    - 1.20.0
+    - 1.20.1
+  - dependency-name: pandas
+    versions:
+    - 1.2.0
+    - 1.2.1
+  - dependency-name: pytest
+    versions:
+    - 6.2.1
+    - 6.2.2
+  - dependency-name: pytest-xdist
+    versions:
+    - 2.2.0
+  - dependency-name: matplotlib
+    versions:
+    - 3.3.4
+  - dependency-name: tqdm
+    versions:
+    - 4.55.0
+  - dependency-name: humanize
+    versions:
+    - 3.2.0
