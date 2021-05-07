@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2021 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -246,6 +246,9 @@ class TreeSequenceBuilder:
         self.num_alleles = num_alleles
         self.num_sites = len(num_alleles)
         self.num_nodes = 0
+        # The number of nodes that can be matched against. Starts at 1
+        # because we can always match against the ultimate ancestor.
+        self.num_match_nodes = 1
         self.time = []
         self.flags = []
         self.mutations = collections.defaultdict(list)
@@ -358,9 +361,9 @@ class TreeSequenceBuilder:
                 prev.next = edge
             else:
                 self.path[edge.child] = edge
+                self.num_match_nodes += 1
             self.index_edge(edge)
             prev = edge
-
         self.check_state()
 
     def add_path(
@@ -383,6 +386,7 @@ class TreeSequenceBuilder:
         # Insert the chain into the global state.
         self.path[child] = head
         self.index_edges(child)
+        self.num_match_nodes += 1
         # self.print_state()
         if extended_checks:
             self.check_state()
@@ -409,6 +413,7 @@ class TreeSequenceBuilder:
         # If we have more than one edge matching to a given path, then we create
         # a path-compression ancestor for this path.
         # Create a new node for this pc ancestor.
+        self.num_match_nodes += 1
         pc_node = self.add_node(-1, constants.NODE_IS_PC_ANCESTOR)
         pc_head = None
         pc_prev = None
@@ -529,8 +534,10 @@ class TreeSequenceBuilder:
 
     def check_state(self):
         total_edges = 0
-        for child in range(len(self.time)):
+        num_match_nodes = 1
+        for child in range(self.num_nodes):
             edge = self.path[child]
+            num_match_nodes += int(edge is not None)
             while edge is not None:
                 assert edge.child == child
                 if edge.next is not None:
@@ -540,6 +547,7 @@ class TreeSequenceBuilder:
                 assert self.right_index[(edge.right, -self.time[child], child)] == edge
                 edge = edge.next
                 total_edges += 1
+        assert self.num_match_nodes == num_match_nodes
         assert len(self.left_index) == total_edges
         assert len(self.right_index) == total_edges
 
@@ -558,12 +566,12 @@ class TreeSequenceBuilder:
     def print_state(self):
         print("TreeSequenceBuilder state")
         print("num_nodes = ", self.num_nodes)
-        # FIXME
-        # nodes = tskit.NodeTable()
-        # flags, times = self.dump_nodes()
-        # nodes.set_columns(flags=flags, time=times)
-        # print("nodes = ")
-        # print(nodes)
+        print("num_match_nodes = ", self.num_match_nodes)
+        nodes = tskit.NodeTable()
+        flags, times = self.dump_nodes()
+        nodes.set_columns(flags=flags, time=times)
+        print("nodes = ")
+        print(nodes)
         print("Paths")
         for child in range(self.num_nodes):
             print("child = ", child, end="\t")
@@ -571,7 +579,7 @@ class TreeSequenceBuilder:
         print("Mutations")
         for site in range(self.num_sites):
             print(site, "->", self.mutations[site])
-        self.check_state()
+        # self.check_state()
 
     def dump_nodes(self):
         time = np.array(self.time[:])
@@ -695,7 +703,7 @@ class AncestorMatcher:
         assert np.all(self.allelic_state == -1)
 
     def update_site(self, site, haplotype_state):
-        n = self.tree_sequence_builder.num_nodes
+        n = self.tree_sequence_builder.num_match_nodes
         rho = self.recombination[site]
         mu = self.mismatch[site]
         num_alleles = self.tree_sequence_builder.num_alleles[site]

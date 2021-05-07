@@ -129,8 +129,10 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
     tsk_id_t child;
     indexed_edge_t *e;
     size_t total_edges = 0;
+    size_t num_match_nodes = 1;
 
     for (child = 0; child < (tsk_id_t) self->num_nodes; child++) {
+        num_match_nodes += self->path[child] != NULL;
         for (e = self->path[child]; e != NULL; e = e->next) {
             total_edges++;
             assert(e->edge.child == child);
@@ -139,6 +141,7 @@ tree_sequence_builder_check_state(tree_sequence_builder_t *self)
             }
         }
     }
+    assert(num_match_nodes == self->num_match_nodes);
     assert(avl_count(&self->left_index) == total_edges);
     assert(avl_count(&self->right_index) == total_edges);
     assert(avl_count(&self->path_index) == total_edges);
@@ -160,6 +163,7 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_nodes = %d\n", (int) self->num_nodes);
     fprintf(out, "num_edges = %d\n", (int) tree_sequence_builder_get_num_edges(self));
+    fprintf(out, "num_match_nodes  = %d\n", (int) self->num_match_nodes);
     fprintf(out, "num_frozen_edges = %d\n", (int) self->num_edges);
     fprintf(out, "max_nodes = %d\n", (int) self->max_nodes);
     fprintf(out, "nodes_chunk_size = %d\n", (int) self->nodes_chunk_size);
@@ -217,6 +221,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
     self->edges_chunk_size = edges_chunk_size;
     self->flags = flags;
     self->num_nodes = 0;
+    self->num_match_nodes = 1;
     self->max_nodes = nodes_chunk_size;
 
     self->time = malloc(self->max_nodes * sizeof(*self->time));
@@ -664,6 +669,7 @@ tree_sequence_builder_make_pc_node(
         goto out;
     }
     pc_node = ret;
+    self->num_match_nodes++;
 
     for (j = 0; j < num_mapped; j++) {
         edge = tree_sequence_builder_alloc_edge(self, mapped[j].source->edge.left,
@@ -843,6 +849,7 @@ tree_sequence_builder_add_path(tree_sequence_builder_t *self, tsk_id_t child,
         }
         prev = e;
     }
+    self->num_match_nodes++;
     self->path[child] = head;
     if (flags & TSI_COMPRESS_PATH) {
         ret = tree_sequence_builder_compress_path(self, child);
@@ -960,6 +967,7 @@ tree_sequence_builder_restore_edges(tree_sequence_builder_t *self, size_t num_ed
         }
         if (self->path[child[j]] == NULL) {
             self->path[child[j]] = e;
+            self->num_match_nodes++;
         } else {
             if (prev->edge.right > e->edge.left) {
                 ret = TSI_ERR_UNSORTED_EDGES;

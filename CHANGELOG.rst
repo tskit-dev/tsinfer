@@ -1,4 +1,17 @@
 ********************
+[0.2.1] - 2021-06-XX
+********************
+
+Bugfix release
+
+**Bugfixes**:
+
+- Fix a bug in the core LS matching algorithm in which the rate of recombination
+  was being incorrectly computed (:issue:`493`, :pr:`514`, :user:`jeromekelleher`,
+  :user:`hyanwong`).
+
+
+********************
 [0.2.0] - 2020-12-18
 ********************
 

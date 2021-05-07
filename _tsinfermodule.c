@@ -1120,6 +1120,20 @@ out:
 }
 
 static PyObject *
+TreeSequenceBuilder_get_num_match_nodes(TreeSequenceBuilder *self, void *closure)
+{
+    PyObject *ret = NULL;
+
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    ret = Py_BuildValue("k",
+        (unsigned long) self->tree_sequence_builder->num_match_nodes);
+out:
+    return ret;
+}
+
+static PyObject *
 TreeSequenceBuilder_get_num_sites(TreeSequenceBuilder *self, void *closure)
 {
     PyObject *ret = NULL;
@@ -1153,8 +1167,10 @@ static PyMemberDef TreeSequenceBuilder_members[] = {
 static PyGetSetDef TreeSequenceBuilder_getsetters[] = {
     {"num_nodes", (getter) TreeSequenceBuilder_get_num_nodes, NULL,
         "The number of nodes."},
+    {"num_match_nodes", (getter) TreeSequenceBuilder_get_num_match_nodes, NULL,
+        "The number of nodes available to match against."},
     {"num_edges", (getter) TreeSequenceBuilder_get_num_edges, NULL,
-        "The number of edgess."},
+        "The number of edges."},
     {"num_sites", (getter) TreeSequenceBuilder_get_num_sites, NULL,
         "The total number of sites."},
     {"num_mutations", (getter) TreeSequenceBuilder_get_num_mutations, NULL,

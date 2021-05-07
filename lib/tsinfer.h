@@ -139,6 +139,7 @@ typedef struct {
     size_t edges_chunk_size;
     size_t max_nodes;
     size_t num_nodes;
+    size_t num_match_nodes;
     size_t num_mutations;
     tsk_blkalloc_t tsk_blkalloc;
     object_heap_t avl_node_heap;
