@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2021 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -1206,8 +1206,10 @@ class Matcher:
         self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
         self.num_matches[thread_index] += 1
         logger.debug(
-            "matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
+            "Matched node {} against {} available;"
+            "num_edges={} tb_size={:.2f} match_mem={}".format(
                 child_id,
+                self.tree_sequence_builder.num_match_nodes,
                 left.shape[0],
                 matcher.mean_traceback_size,
                 humanize.naturalsize(matcher.total_memory, binary=True),
@@ -1302,6 +1304,7 @@ class AncestorMatcher(Matcher):
         num_ancestors_in_epoch = end - start
         current_time = self.epoch[start]
         nodes_before = self.tree_sequence_builder.num_nodes
+        match_nodes_before = self.tree_sequence_builder.num_match_nodes
 
         for child_id in range(start, end):
             left, right, parent = self.results.get_path(child_id)
@@ -1317,9 +1320,13 @@ class AncestorMatcher(Matcher):
             self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
 
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
+        assert (
+            self.tree_sequence_builder.num_match_nodes
+            == match_nodes_before + extra_nodes + num_ancestors_in_epoch
+        )
         mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
-            "Finished epoch {} with {} ancestors; {} extra nodes inserted; "
+            "Finished epoch t={} with {} ancestors; {} extra nodes inserted; "
             "mean_tb_size={:.2f} edges={}; mean_matcher_mem={}".format(
                 current_time,
                 num_ancestors_in_epoch,
@@ -1516,6 +1523,9 @@ class SampleMatcher(Matcher):
             edges.parent[index],
             edges.child[index],
         )
+        assert self.tree_sequence_builder.num_match_nodes == 1 + len(
+            np.unique(edges.child)
+        )
 
         mutations = tables.mutations
         derived_state = np.zeros(len(mutations), dtype=np.int8)
@@ -1594,10 +1604,11 @@ class SampleMatcher(Matcher):
             match_threads[j].join()
 
     def match_samples(self, sample_indexes, sample_times):
+        builder = self.tree_sequence_builder
         num_samples = len(sample_indexes)
         for j, t in zip(sample_indexes, sample_times):
-            self.sample_id_map[j] = self.tree_sequence_builder.add_node(t)
-        flags, times = self.tree_sequence_builder.dump_nodes()
+            self.sample_id_map[j] = builder.add_node(t)
+        flags, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
@@ -1621,11 +1632,11 @@ class SampleMatcher(Matcher):
                         f"Failed to put sample {j} (node {node_id}) at time "
                         f"{times[node_id]} as it has a younger parent (node {p})."
                     )
-                self.tree_sequence_builder.add_path(
+                builder.add_path(
                     node_id, left, right, parent, compress=self.path_compression
                 )
                 site, derived_state = self.results.get_mutations(node_id)
-                self.tree_sequence_builder.add_mutations(node_id, site, derived_state)
+                builder.add_mutations(node_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
 
