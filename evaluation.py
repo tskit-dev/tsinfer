@@ -844,7 +844,7 @@ def ancestor_data_by_pos(anc1, anc2):
     shared_indices = set.intersection(*[set(a.keys()) for a in anc_by_focal_pos])
 
     return {
-        pos: np.array([anc_by_focal_pos[0][pos], anc_by_focal_pos[1][pos]], np.int)
+        pos: np.array([anc_by_focal_pos[0][pos], anc_by_focal_pos[1][pos]], np.int64)
         for pos in shared_indices
     }
 
@@ -895,7 +895,7 @@ def run_ancestor_comparison(args):
     # categories that are not represented in the data will be missed out. If we want a
     # true frequency, we therefore need to get it directly from the samples
     pos_to_ancestor = {}
-    estimated_anc.ancestors_focal_freq = np.zeros(estimated_anc.num_ancestors, np.int)
+    estimated_anc.ancestors_focal_freq = np.zeros(estimated_anc.num_ancestors, np.int64)
     ancestor_site_position = estimated_anc.sites_position
     for a, focal_sites in enumerate(estimated_anc.ancestors_focal_sites[:]):
         for focal_site in focal_sites:
@@ -1164,7 +1164,7 @@ def run_ancestor_quality(args):
 
     # store the data to plot for each focal_site, keyed by position
     freq = {var.site.position: np.sum(var.genotypes) for var in sample_data.variants()}
-    estim_freq = np.array([freq[p] for p in estim_anc.sites_position], dtype=np.int)
+    estim_freq = np.array([freq[p] for p in estim_anc.sites_position], dtype=np.int64)
     olap_n_sites = {}
     olap_n_should_be_1_higher_freq = {}
     olap_n_should_be_0_higher_freq = {}
