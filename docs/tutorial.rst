@@ -310,9 +310,9 @@ there will be thousands more trees in each sequence. The output we get is::
 There are a number of things to note about these two trees. Firstly, it
 is important to note that the intervals over which these trees apply are
 quite different: the true tree covers the interval up to coordinate
-488, but the inferred tree covers a much longer interval, up to 3080.
+488, but the inferred tree covers a much longer interval, up to 6176.
 Our inference depends on the mutational information that is present.
-If no mutations fall on a particular an edge in the tree sequence, then
+If no mutations fall on a particular edge in the tree sequence, then
 we have no way of inferring that this edge existed. As a result, there
 will be tree transitions that we cannot pick up. In the simulation that we
 performed the mutation rate is equal to the recombination rate, and so
