@@ -1,4 +1,4 @@
-attrs==20.3.0
+attrs==21.2.0
 colorama==0.4.4
 daiquiri==3.0.0
 humanize==3.5.0
