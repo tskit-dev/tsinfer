@@ -33,9 +33,7 @@ pull_request_rules:
     conditions:
       - author~=^dependabot(|-preview)\[bot\]$
       - "-merged"
-      - "#approved-reviews-by>=1"
       - base=main
-      - label=AUTOMERGE-REQUESTED
       - status-success=Lint
       - status-success=Python (3.7, macos-latest)
       - status-success=Python (3.9, macos-latest)
