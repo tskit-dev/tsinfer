@@ -1,4 +1,4 @@
-lmdb==0.9.24
+lmdb==1.2.1
 msprime==1.0.0
 python-lmdb==0.96
 zarr==2.5.0
