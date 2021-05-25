@@ -20,12 +20,7 @@ jobs:
       - run:
           name: Install development dependencies
           command: |
-              pip install -r requirements/development.txt --user
-              # Using numa results in lots of 'set_mempolicy: Operation not permitted'
-              # messages because of conflicts with Docker. So we just remove it.
-              pip uninstall numa -y
-              # FIXME pinning meson for now, https://github.com/tskit-dev/tsinfer/issues/471
-              pip install --user twine meson==0.56
+              pip install -r requirements/CI-tests-complete/requirements.txt --user
 
       - save_cache:
           key: tsinfer-{{ .Branch }}
@@ -43,7 +38,6 @@ jobs:
           name: Compile Python
           command: |
               python setup.py build_ext --inplace
-
 
       - run:
           name: Run Python tests and upload coverage

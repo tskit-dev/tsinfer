@@ -18,7 +18,6 @@ pull_request_rules:
         strict: smart
         strict_method: rebase
         method: merge
-        bot_account: AdminBot-tskit
 
   - name: Remove label after merge
     conditions:
@@ -28,3 +27,25 @@ pull_request_rules:
       label:
         remove:
           - AUTOMERGE-REQUESTED
+
+
+  - name: Automatic dep update
+    conditions:
+      - author~=^dependabot(|-preview)\[bot\]$
+      - "-merged"
+      - "#approved-reviews-by>=1"
+      - base=main
+      - label=AUTOMERGE-REQUESTED
+      - status-success=Lint
+      - status-success=Python (3.7, macos-latest)
+      - status-success=Python (3.9, macos-latest)
+      - status-success=Python (3.7, ubuntu-latest)
+      - status-success=Python (3.9, ubuntu-latest)
+      - status-success=Python (3.7, windows-latest)
+      - status-success=Python (3.9, windows-latest)
+      - "status-success=ci/circleci: build"
+    actions:
+      merge:
+        strict: smart
+        strict_method: rebase
+        method: merge
