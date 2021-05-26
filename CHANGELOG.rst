@@ -1,5 +1,5 @@
 ********************
-[0.2.1] - 2021-06-XX
+[0.2.1] - 2021-05-26
 ********************
 
 Bugfix release
@@ -18,7 +18,8 @@ Bugfix release
 
 **Breaking changes**:
 
-- tsinfer now requires Python 3.7 
+- tsinfer now requires Python 3.7
+
 - ``tsinfer.verify()`` no longer requires that non-ancestral alleles in a SampleData
   and Tree Sequence file are in the same order (:issue:`490`, :pr:`492`,
   :user:`hyanwong`).
