@@ -20,7 +20,9 @@ Suppose that we have observed the following data::
 Here we have phased haplotype data for five samples at six sites. We wish to infer the
 genealogies that gave rise to this data set. To import the data into ``tsinfer`` we must
 know the *ancestral state* for each site we wish to use for inference; there are many
-methods for achieving this, which are outside the scope of this manual. Assuming that we
+methods for achieving this: details are outside the scope of this manual, but we have
+started a `discussion topic <https://github.com/tskit-dev/tsinfer/discussions/523>`_ on
+this issue to provide some recommendations. Assuming that we
 know the ancestral state, we can then import our data into a ``tsinfer``
 :ref:`Sample data<sec_file_formats_samples>` file using the Python
 :ref:`API<sec_api_file_formats>`:
