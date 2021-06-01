@@ -10,6 +10,10 @@ Bugfix release
   was being incorrectly computed (:issue:`493`, :pr:`514`, :user:`jeromekelleher`,
   :user:`hyanwong`).
 
+- ``tsinfer.verify()`` no longer requires that non-ancestral alleles in a SampleData
+  and Tree Sequence file are in the same order (:issue:`490`, :pr:`492`,
+  :user:`hyanwong`).
+
 **New Features**:
 
 - Inferred ancestral haplotypes may be truncated via
@@ -20,9 +24,6 @@ Bugfix release
 
 - tsinfer now requires Python 3.7
 
-- ``tsinfer.verify()`` no longer requires that non-ancestral alleles in a SampleData
-  and Tree Sequence file are in the same order (:issue:`490`, :pr:`492`,
-  :user:`hyanwong`).
 
 ********************
 [0.2.0] - 2020-12-18
