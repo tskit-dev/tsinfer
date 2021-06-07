@@ -15,3 +15,4 @@ ctags:
 clean:
 	rm -f *.so *.o tags
 	rm -fR build
+	rm -fR .eggs
