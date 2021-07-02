@@ -706,7 +706,7 @@ def insert_missing_sites(
     for variant in sample_data.variants(sites=new_sd_sites):
         site = variant.site
         pos = site.position
-        anc_state = site.ancestral_state
+        anc_state = site.ancestral_state  # NB: None means an unknown ancestral state
         anc_value = 0  # sample_data files always have 0 as the ancestral allele idx
         G = variant.genotypes[sample_id_map]
         # We can't perform parsimony inference if all sites are missing, and there's no
@@ -725,11 +725,9 @@ def insert_missing_sites(
         else:
             while tree.interval[1] <= pos:
                 tree = next(trees)
-            inferred_anc_state, mapped_mutations = tree.map_mutations(
-                G, variant.alleles
+            anc_state, mapped_mutations = tree.map_mutations(
+                G, variant.alleles, ancestral_state=anc_state
             )
-            if anc_state is None:
-                anc_state = inferred_anc_state
             metadata = _update_site_metadata(
                 site.metadata, inference_type=constants.INFERENCE_PARSIMONY
             )
@@ -741,15 +739,6 @@ def insert_missing_sites(
                 metadata=metadata,
             )
             mut_map = {tskit.NULL: tskit.NULL}
-            if anc_state != inferred_anc_state:
-                # Need to add an extra mutation above the root to switch ancestral state
-                for root in tree.roots:
-                    mut_map[tskit.NULL] = tables.mutations.add_row(
-                        site=new_site_id,
-                        node=root,
-                        derived_state=inferred_anc_state,
-                        parent=tskit.NULL,
-                    )
             for i, mutation in enumerate(mapped_mutations):
                 mut_map[i] = tables.mutations.add_row(
                     site=new_site_id,
