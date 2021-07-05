@@ -948,7 +948,10 @@ class TestMetadataRoundTrip:
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
-        assert all_metadata == output_metadata
+        # output metadata can have some extra fields, e.g. "sample_data_time"
+        # so check all_metadata is "contained in" output_metadata
+        for all, output in zip(all_metadata, output_metadata):
+            assert all.items() <= output.items()
 
     @pytest.mark.parametrize("use_schema", [True, False])
     def test_individual_metadata_subset(self, use_schema):
@@ -979,9 +982,12 @@ class TestMetadataRoundTrip:
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
-        assert all_metadata == output_metadata
+        # output metadata can have some extra fields, e.g. "sample_data_time"
+        # so check all_metadata is "contained in" output_metadata
+        for all, output in zip(all_metadata, output_metadata):
+            assert all.items() <= output.items()
         for j, metadata in enumerate(sample_data.individuals_metadata[:]):
-            assert all_metadata[j] == metadata
+            assert all_metadata[j].items() <= metadata.items()
 
         # Now do this for various subsets of the data and make sure
         # that metadata comes through correctly.
