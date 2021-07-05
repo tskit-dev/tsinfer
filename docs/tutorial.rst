@@ -397,7 +397,7 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
                 for row in variant.genotypes
                 for old_index in row[0:2]
             ]
-            samples.add_site(pos, genotypes=genotypes, alleles=alleles)
+            samples.add_site(pos, genotypes=genotypes, alleles=ordered_alleles)
 
 
     def chromosome_length(vcf):
