@@ -404,7 +404,7 @@ def generate_ancestors(
         generator.add_sites(exclude_positions)
         generator.run()
         if record_provenance:
-            ancestor_data.record_provenance("generate-ancestors")
+            ancestor_data.record_provenance("generate_ancestors")
     return ancestor_data
 
 
@@ -481,15 +481,15 @@ def match_ancestors(
         progress_monitor=progress_monitor,
     )
     ts = matcher.match_ancestors()
+    tables = ts.dump_tables()
+    for timestamp, record in ancestor_data.provenances():
+        tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
     if record_provenance:
-        tables = ts.dump_tables()
-        for timestamp, record in ancestor_data.provenances():
-            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
         record = provenance.get_provenance_dict(
             command="match_ancestors", source={"uuid": ancestor_data.uuid}
         )
         tables.provenances.add_row(record=json.dumps(record))
-        ts = tables.tree_sequence()
+    ts = tables.tree_sequence()
     return ts
 
 
@@ -706,7 +706,7 @@ def match_samples(
     if record_provenance:
         tables = ts.dump_tables()
         # We don't have a source here because tree sequence files don't have a UUID yet.
-        record = provenance.get_provenance_dict(command="match-samples")
+        record = provenance.get_provenance_dict(command="match_samples")
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
     return ts
