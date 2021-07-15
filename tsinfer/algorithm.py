@@ -230,7 +230,6 @@ class AncestorBuilder:
         last_site = self.compute_ancestral_states(
             a, focal_site, range(focal_site + 1, self.num_sites)
         )
-        assert a[last_site] != tskit.MISSING_DATA
         end = last_site + 1
         # Extend ancestral haplotype leftwards from leftmost focal site
         focal_site = focal_sites[0]
