@@ -2056,6 +2056,39 @@ class TestAncestorData(DataContainerMixin):
                 start=0, end=num_sites, time=2, focal_sites=[], haplotype=haplotype
             )
 
+    def test_iterator(self):
+        sample_data, ancestors = self.get_example_data(6, 10, 10)
+        ancestor_data = tsinfer.AncestorData(sample_data)
+        self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+        assert ancestor_data.num_ancestors > 1
+        assert ancestor_data.num_ancestors == len(ancestors)
+        for ancestor, new_ancestor in zip(ancestors, ancestor_data.ancestors()):
+            assert ancestor[0] == new_ancestor.start
+            assert ancestor[1] == new_ancestor.end
+            assert ancestor[2] == new_ancestor.time
+            assert np.all(ancestor[3] == new_ancestor.focal_sites)
+
+    def test_equals(self):
+        sample_data, ancestors = self.get_example_data(6, 1, 2)
+        with tsinfer.AncestorData(sample_data) as ancestor_data:
+            num_sites = ancestor_data.num_sites
+            haplotype = np.ones(num_sites, dtype=np.int8)
+            ancestor_data.add_ancestor(
+                start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype
+            )
+            ancestor_data.add_ancestor(
+                start=0, end=num_sites, time=1, focal_sites=[], haplotype=haplotype
+            )
+        assert ancestor_data.ancestor(0) == ancestor_data.ancestor(0)
+        assert ancestor_data.ancestor(0) != ancestor_data.ancestor(1)  # IDs differ
+
+    def test_accessor(self):
+        sample_data, ancestors = self.get_example_data(6, 10, 10)
+        ancestor_data = tsinfer.AncestorData(sample_data)
+        self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+        for i, new_ancestor in enumerate(ancestor_data.ancestors()):
+            assert new_ancestor == ancestor_data.ancestor(i)
+
     @pytest.mark.skipif(
         IS_WINDOWS, reason="windows simultaneous file permissions issue"
     )
