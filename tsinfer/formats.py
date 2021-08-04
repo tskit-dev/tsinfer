@@ -2107,7 +2107,7 @@ class SampleData(DataContainer):
             yield Population(j, metadata=metadata)
 
 
-@attr.s
+@attr.s(cmp=False)
 class Ancestor:
     """
     An ancestor object.
@@ -2120,6 +2120,16 @@ class Ancestor:
     time = attr.ib()
     focal_sites = attr.ib()
     haplotype = attr.ib()
+
+    def __eq__(self, other):
+        return (
+            self.id == other.id
+            and self.start == other.start
+            and self.end == other.end
+            and self.time == other.time
+            and np.array_equal(self.focal_sites, other.focal_sites)
+            and np.array_equal(self.haplotype, other.haplotype)
+        )
 
 
 class AncestorData(DataContainer):
@@ -2705,6 +2715,21 @@ class AncestorData(DataContainer):
     ####################################
     # Read mode
     ####################################
+
+    def ancestor(self, id_):
+        """
+        Returns the ancestor with the specified ID.
+
+        :rtype: :class:`Ancestor`
+        """
+        return Ancestor(
+            id=id_,
+            start=self.ancestors_start[id_],
+            end=self.ancestors_end[id_],
+            time=self.ancestors_time[id_],
+            focal_sites=self.ancestors_focal_sites[id_],
+            haplotype=self.ancestors_haplotype[id_],
+        )
 
     def ancestors(self):
         """
