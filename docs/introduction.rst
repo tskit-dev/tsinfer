@@ -20,3 +20,13 @@ The output of ``tsinfer`` is a :class:`tskit.TreeSequence` and so the
 full `tskit API <https://tskit.readthedocs.io>`_ can be used to
 analyse real data, in precisely the same way that it is commonly used
 to analyse simulation data, for example, from `msprime <https://msprime.readthedocs.io/>`_.
+
+.. note::
+
+  ``Tsinfer`` infers the genetic relationships between sampled genomes, but does not
+  attempt to infer the *times* of most recent common ancestors (tMRCAs) in the genealogy.
+  If you are using the output of ``tsinfer`` in downstream analysis that relies on
+  node times, you are advised not to use the inferred tree sequences directly; instead,
+  you should post-process the ``tsinfer`` output using software such as
+  `tsdate <https://tsdate.readthedocs.io>`_ that attempts to assign calendar or
+  generation times to the tree sequence nodes.

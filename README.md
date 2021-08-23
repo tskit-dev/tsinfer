@@ -13,3 +13,7 @@ The algorithm, its rationale, and results from testing on simulated and real dat
 
 Please cite this if you use ``tsinfer`` in your work. Code to reproduce the results in the paper is present in a [separate GitHub repository](https://github.com/mcveanlab/treeseq-inference).
 
+Note that `tsinfer` does not attempt to infer node times (i.e. branch lengths of the
+inferred trees). If you require a tree sequence where the dates of common ancestors
+are expressed in calendar or generation times, you should post-process the ``tsinfer``
+output using software such as [``tsdate``](https://github.com/tskit-dev/tsdate).
