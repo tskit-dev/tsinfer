@@ -2,7 +2,7 @@ attrs==21.2.0
 colorama==0.4.4
 daiquiri==3.0.0
 humanize==3.11.0
-matplotlib==3.4.2
+matplotlib==3.4.3
 numpy==1.21.2
 pandas==1.2.4
 pytest==6.2.4
