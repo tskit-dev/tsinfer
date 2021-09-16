@@ -2,7 +2,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/python:3.7-stretch
+      - image: cimg/python:3.7
     steps:
       - checkout
 
@@ -12,8 +12,9 @@ jobs:
       - run:
           name: Install dependencies and set PATH
           command: |
+              sudo apt-get update
               sudo apt-get install libgsl-dev libcap-dev libnuma-dev libcunit1-dev \
-                  libconfig-dev ninja-build valgrind clang
+                  libconfig-dev ninja-build valgrind clang python3-pip
               # set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
               echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
 
