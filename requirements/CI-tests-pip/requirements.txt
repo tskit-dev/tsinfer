@@ -5,7 +5,7 @@ humanize==3.11.0
 matplotlib==3.4.3
 numpy==1.21.2
 pandas==1.2.5
-pytest==6.2.4
+pytest==6.2.5
 pytest-xdist==2.3.0
 seaborn==0.11.2
 sortedcontainers==2.4.0
