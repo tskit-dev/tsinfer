@@ -118,8 +118,8 @@ toy example. However, for real data we will not prepare our data and infer the t
 in one go; rather, we will usually split the process into at least two distinct steps.
 
 The first step in any inference is to prepare your data and import it into a :ref:`sample data
-<sec_file_formats_samples>` file. For simplicity here we'll simulate some data under the
-coalescent with recombination using `msprime
+<sec_file_formats_samples>` file. For simplicity here we'll use Python to simulate some
+data under the coalescent with recombination, using `msprime
 <https://msprime.readthedocs.io/en/stable/api.html#msprime.simulate>`_:
 
 .. code-block:: python
@@ -180,7 +180,7 @@ import the data for this simulation into ``tsinfer``'s sample data format.
         tsinfer.SampleData.from_tree_sequence(
             ts, path="simulation.samples", num_flush_threads=2, use_times=False)
 
-Examining the files, we then see the following::
+Examining the files on the command line, we then see the following::
 
     $ ls -lh simulation*
     -rw-r--r-- 1 jk jk  22M May 12 11:06 simulation.samples
@@ -224,7 +224,9 @@ actual data) requires about 390MB uncompressed. The ``tsinfer`` sample data form
 achieving a roughly 20X compression in this case. In practise this means we can keep such files
 lying around without taking up too much space.
 
-Once we have our ``.samples`` file created, running the inference is straightforward::
+Once we have our ``.samples`` file created, running the inference is straightforward.
+We can do so within Python (as we did in the toy example above), or use ``tsinfer`` on
+the command-line, which is useful when inference is expected to take a long time::
 
     $ tsinfer infer simulation.samples -p -t 4
     ga-add   (1/6): 100%|███████████████████████| 35.2K/35.2K [00:02, 15.3Kit/s]
@@ -252,7 +254,8 @@ Looking at our output files, we see::
 
 Therefore our output tree sequence file that we have just inferred in less than five minutes is
 *even smaller* than the original ``msprime`` simulated tree sequence! Because the output file is
-also a :class:`tskit.TreeSequence`, we can use the same API to work with both.
+also a :class:`tskit.TreeSequence`, we can use the same API to work with both, for example,
+within Python we can do:
 
 .. code-block:: python
 
@@ -273,7 +276,7 @@ also a :class:`tskit.TreeSequence`, we can use the same API to work with both.
     print("Inferred tree: interval=", tree.interval)
     print(tree.draw(format="unicode"))
 
-Here we first load up our source and inferred tree sequences from their corresponding
+This first loads up our source and inferred tree sequences from their corresponding
 ``.trees`` files. Each of the trees in these tree sequences has 10 thousand samples
 which is much too large to easily visualise. Therefore, to make things simple here
 we subset both tree sequences down to their minimal representations for six
