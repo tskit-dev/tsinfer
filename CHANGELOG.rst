@@ -16,6 +16,10 @@
 - Oldest nodes in a standard inferred tree sequence are no longer set to frequencies ~2
   and ~3 (i.e. 2 or 3 times as old as all the other nodes), but are spaced above the
   others by the mean time between unique ancestor ages (:pr:`485`, :user:`hyanwong`)
+  
+- The ``tsinfer.SampleData.from_tree_sequence()`` function now defaults to setting
+  ``use_sites_time`` and ``use_individuals_time`` to ``False`` rather than ``True``
+  (:pr:`599`, :user:`hyanwong`)
 
 ********************
 [0.2.1] - 2021-05-26

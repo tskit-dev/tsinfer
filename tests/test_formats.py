@@ -366,7 +366,7 @@ class TestSampleData(DataContainerMixin):
         ts = tsutil.get_example_ts(10, 10, 1)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
-        sd2 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         assert sd1.data_equal(sd2)
 
     def test_from_tree_sequence_variable_allele_number(self):
@@ -398,7 +398,7 @@ class TestSampleData(DataContainerMixin):
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
             assert len(var.alleles) == num_alleles[var.site.id]
-        sd2 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         assert sd1.data_equal(sd2)
 
     def test_from_tree_sequence_with_metadata(self):
@@ -412,34 +412,63 @@ class TestSampleData(DataContainerMixin):
         ts_no_individuals = tables.tree_sequence()
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts_no_individuals, sd1)
-        sd2 = formats.SampleData.from_tree_sequence(ts_no_individuals)
+        sd2 = formats.SampleData.from_tree_sequence(
+            ts_no_individuals, use_sites_time=True
+        )
         assert sd1.data_equal(sd2)
 
     def test_from_tree_sequence_with_metadata_and_individuals(self):
         ts = tsutil.get_example_individuals_ts_with_metadata(5, 3, 10)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
-        sd2 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         sd1.assert_data_equal(sd2)
 
-    def test_from_historical_tree_sequence(self):
+    def test_from_historical_tree_sequence_with_times(self):
+        n_indiv = 5
         ploidy = 2
-        individual_times = np.arange(5)
+        individual_times = np.arange(n_indiv)
         ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, 10)
+        # Test on a tree seq containing an individual with no nodes
+        keep_samples = [u for i in ts.individuals() for u in i.nodes if i.id < n_indiv]
+        ts = ts.simplify(samples=keep_samples, filter_individuals=False)
         sd1 = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, sd1)
-        sd2 = formats.SampleData.from_tree_sequence(ts)
+        sd2 = formats.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
         assert sd1.data_equal(sd2)
+        # Fails if use_individuals_time is not set
+        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
+        assert not sd1.data_equal(sd2)
 
-    def test_from_tree_sequence_use_time(self):
+    def test_from_tree_sequence_no_times(self):
+        n_indiv = 5
+        ploidy = 2
+        individual_times = np.arange(n_indiv + 1)
+        ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, 10)
+        # Test on a tree seq containing an individual with no nodes
+        keep_samples = [u for i in ts.individuals() for u in i.nodes if i.id < n_indiv]
+        ts = ts.simplify(samples=keep_samples, filter_individuals=False)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        assert sd1.num_individuals == n_indiv
+        assert np.all(sd1.individuals_time[:] == 0)
+
+    def test_from_tree_sequence_time_incompatibilities(self):
         ploidy = 2
         individual_times = np.arange(5)
         ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, 10)
-        sd1 = formats.SampleData.from_tree_sequence(ts, use_individuals_time=False)
-        assert np.all(sd1.individuals_time[:] == 0)
-        sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=False)
-        assert np.all(tskit.is_unknown_time(sd2.sites_time[:]))
-        assert np.array_equal(sd2.individuals_time[:], individual_times)
+        with pytest.raises(ValueError, match="Incompatible timescales"):
+            _ = formats.SampleData.from_tree_sequence(ts, use_individuals_time=True)
+        # Similar error if no individuals in the TS
+        tables = ts.dump_tables()
+        tables.individuals.clear()
+        tables.nodes.individual = np.full(
+            tables.nodes.num_rows, tskit.NULL, dtype=tables.nodes.individual.dtype
+        )
+        ts = tables.tree_sequence()
+        with pytest.raises(ValueError, match="Incompatible timescales"):
+            _ = formats.SampleData.from_tree_sequence(ts, use_individuals_time=True)
 
     def test_chunk_size(self):
         ts = tsutil.get_example_ts(4, 2)
@@ -802,7 +831,7 @@ class TestSampleData(DataContainerMixin):
     def test_sites_subset(self):
         ts = tsutil.get_example_ts(11, 15)
         assert ts.num_sites > 1
-        input_file = formats.SampleData.from_tree_sequence(ts)
+        input_file = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         assert list(input_file.sites([])) == []
         index = np.arange(input_file.num_sites)
         site_list = list(input_file.sites())
@@ -1587,7 +1616,7 @@ class TestSampleDataMerge:
     def test_merge_identical(self):
         n = 10
         ts = tsutil.get_example_ts(n, 10, 1)
-        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd1 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         sd2 = sd1.merge(sd1)
         assert sd2.num_sites == sd1.num_sites
         assert sd2.num_samples == 2 * sd1.num_samples
@@ -1721,7 +1750,7 @@ class TestMinSiteTimes:
 
     def test_no_historical(self):
         ts = tsutil.get_example_ts(10, 10, 1)
-        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd1 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         # No arguments and individuals_only=True should give array of zeros
         bounds_individuals_only = sd1.min_site_times(individuals_only=True)
         assert np.array_equal(bounds_individuals_only, np.zeros(sd1.num_sites))
@@ -1731,7 +1760,9 @@ class TestMinSiteTimes:
     def test_simple_case(self):
         individual_times = [0, 0, 0.5, 1]
         ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy=1)
-        sd1 = formats.SampleData.from_tree_sequence(ts)
+        sd1 = formats.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
         time_bound_individuals_only = sd1.min_site_times(individuals_only=True)
         # Because this is a haploid tree sequence we can use the
         # individual and sample IDs interchangably.

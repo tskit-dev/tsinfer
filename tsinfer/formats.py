@@ -1419,8 +1419,8 @@ class SampleData(DataContainer):
     def from_tree_sequence(
         cls,
         ts,
-        use_sites_time=True,
-        use_individuals_time=True,
+        use_sites_time=None,
+        use_individuals_time=None,
         **kwargs,
     ):
         """
@@ -1444,16 +1444,18 @@ class SampleData(DataContainer):
 
         :param TreeSequence ts: The :class:`tskit.TreeSequence` from which to generate
             samples.
-        :param bool use_sites_time: If True (default), the times of nodes in the tree
+        :param bool use_sites_time: If ``True``, the times of nodes in the tree
             sequence are used to set a time for each site (which affects the relative
             temporal order of ancestors during inference). Times for a site are only
             used if there is a single mutation at that site, in which case the node
             immediately below the mutation is taken as the origination time for the
-            variant. If False, the frequency of the variant is used as a proxy for the
-            relative variant time (see :meth:`.add_site`).
-        :param bool use_individuals_time: If True (default), set a time for individuals
-            that contain historical sample nodes. If False, all individuals are
-            set at time 0.
+            variant. If ``False``, the frequency of the variant is used as a proxy for
+            the relative variant time (see :meth:`.add_site`). Defaults to ``False``.
+        :param bool use_individuals_time: If ``True``, use the time of the sample nodes
+            in the tree sequence as the time of the individuals associated with
+            those nodes in the sample data file. This is likely only to be meaningful if
+            ``use_sites_time`` is also ``True``. If ``False``, all individuals are set
+            to time 0. Defaults to ``False``.
         :param \\**kwargs: Further arguments passed to the :class:`SampleData`
             constructor.
         :return: A :class:`.SampleData` object.
@@ -1467,6 +1469,11 @@ class SampleData(DataContainer):
                 else:
                     metadata = None
             return metadata
+
+        if use_sites_time is None:
+            use_sites_time = False
+        if use_individuals_time is None:
+            use_individuals_time = False
 
         tables = ts.tables
         self = cls(sequence_length=ts.sequence_length, **kwargs)
@@ -1488,6 +1495,7 @@ class SampleData(DataContainer):
         for individual in ts.individuals():
             nodes = individual.nodes
             if len(nodes) > 0:
+                time = 0
                 first_node = ts.node(nodes[0])
                 for u in nodes[1:]:
                     if ts.node(u).time != first_node.time:
@@ -1502,18 +1510,37 @@ class SampleData(DataContainer):
                             "population".format(individual.id)
                         )
                 metadata = encode_metadata(individual.metadata, schema)
+                if use_individuals_time:
+                    time = first_node.time
+                    if time != 0 and not use_sites_time:
+                        raise ValueError(
+                            "Incompatible timescales: site frequencies used for times "
+                            f"(use_sites_time=False), but node {first_node.id} in "
+                            f"individual {individual.id} has a nonzero time and "
+                            "use_individuals_time=True. Please set site times manually."
+                        )
                 self.add_individual(
                     location=individual.location,
                     metadata=metadata,
                     population=first_node.population,
                     flags=individual.flags,
-                    time=first_node.time if use_individuals_time else 0,
+                    time=time,
                     ploidy=len(nodes),
                 )
         for u in ts.samples():
             node = ts.node(u)
             if node.individual == tskit.NULL:
                 # The sample node has no individual: create a haploid individual for it
+                time = 0
+                if use_individuals_time:
+                    time = node.time
+                    if time != 0 and not use_sites_time:
+                        raise ValueError(
+                            "Incompatible timescales: site frequencies used for times "
+                            f"(use_sites_time=False), but node {node.id} "
+                            "has a nonzero time and use_individuals_time=True. "
+                            "Please set site times manually."
+                        )
                 self.add_individual(
                     population=node.population,
                     time=node.time if use_individuals_time else 0,
