@@ -1116,7 +1116,11 @@ class TestMetadataRoundTrip:
         seq_len = 10
         individual_times = np.arange(n_indiv)
         ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, seq_len)
-        ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
+        ts_inferred = tsinfer.infer(
+            tsinfer.SampleData.from_tree_sequence(
+                ts, use_sites_time=True, use_individuals_time=True
+            )
+        )
         assert ts.sequence_length == ts_inferred.sequence_length
         assert ts.metadata_schema == ts_inferred.metadata_schema
         assert ts.metadata == ts_inferred.metadata
