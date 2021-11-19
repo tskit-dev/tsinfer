@@ -6,9 +6,15 @@ API Documentation
 
 .. _sec_api_file_formats:
 
-++++++++++++
+************
 File formats
-++++++++++++
+************
+
+.. autofunction:: tsinfer.load
+
++++++++++++
+Sample data
++++++++++++
 
 .. autoclass:: tsinfer.SampleData
     :members:
@@ -20,6 +26,10 @@ File formats
     2. Define copy mode.
     3. Provide example of updating inference_sites
 
++++++++++++++
+Ancestor data
++++++++++++++
+
 .. autoclass:: tsinfer.AncestorData
     :members:
     :inherited-members:
@@ -29,13 +39,11 @@ File formats
     1. Add documentation for the data attributes in read-mode.
 
 
-.. autofunction:: tsinfer.load
-
 .. _sec_api_file_inference:
 
-+++++++++++++++++
+*****************
 Running inference
-+++++++++++++++++
+*****************
 
 .. autofunction:: tsinfer.infer
 
@@ -47,9 +55,9 @@ Running inference
 
 .. autofunction:: tsinfer.augment_ancestors
 
-++++++++++
+**********
 Exceptions
-++++++++++
+**********
 
 .. autoexception:: tsinfer.FileFormatError
 
