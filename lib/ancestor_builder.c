@@ -125,6 +125,7 @@ ancestor_builder_alloc(
     ancestor_builder_t *self, size_t num_samples, size_t max_sites, int flags)
 {
     int ret = 0;
+    unsigned long max_size = 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_builder_t));
     if (num_samples <= 1) {
@@ -142,7 +143,13 @@ ancestor_builder_alloc(
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    ret = tsk_blkalloc_init(&self->allocator, 1024 * 1024);
+    /* Pre-calculate the maximum sizes asked for in other methods when calling
+     * tsk_blkalloc_get(&self->allocator, ...)  */
+    max_size = TSK_MAX(self->num_samples * sizeof(allele_t), max_size);
+    /* NB: using self->max_sites below is probably overkill: the real number should be
+     * the maximum number of focal sites in a single ancestor, usually << max_sites */
+    max_size = TSK_MAX(self->max_sites * sizeof(tsk_id_t), max_size);
+    ret = tsk_blkalloc_init(&self->allocator, max_size);
     if (ret != 0) {
         goto out;
     }
