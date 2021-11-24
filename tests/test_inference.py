@@ -1079,9 +1079,8 @@ class TestMetadataRoundTrip:
         """
         n_indiv = 5
         ploidy = 2  # Diploids
-        seq_len = 10
         ts = tsutil.get_example_individuals_ts_with_metadata(
-            n_indiv, ploidy, seq_len, 1, skip_last=False
+            n_indiv, ploidy, skip_last=False
         )
         ts_inferred = tsinfer.infer(tsinfer.SampleData.from_tree_sequence(ts))
         assert ts.sequence_length == ts_inferred.sequence_length
@@ -1113,9 +1112,8 @@ class TestMetadataRoundTrip:
         """
         n_indiv = 5
         ploidy = 2  # Diploids
-        seq_len = 10
         individual_times = np.arange(n_indiv)
-        ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy, seq_len)
+        ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy)
         ts_inferred = tsinfer.infer(
             tsinfer.SampleData.from_tree_sequence(
                 ts, use_sites_time=True, use_individuals_time=True
