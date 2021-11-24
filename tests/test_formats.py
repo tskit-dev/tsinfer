@@ -725,14 +725,12 @@ class TestSampleData(DataContainerMixin):
 
     def test_individual_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)
-        sample_data.add_population({"a": 1})
-        sample_data.add_population({"b": 2})
-        sample_data.add_individual(population=0)
-        sample_data.add_individual(population=1)
+        sample_data.add_individual(metadata={"a": 1})
+        sample_data.add_individual(metadata={"b": 2})
         sample_data.add_site(0, [0, 0])
         sample_data.finalise()
-        assert sample_data.populations_metadata[0] == {"a": 1}
-        assert sample_data.populations_metadata[1] == {"b": 2}
+        assert sample_data.individuals_metadata[0] == {"a": 1}
+        assert sample_data.individuals_metadata[1] == {"b": 2}
 
     def test_add_individual_time(self):
         sample_data = formats.SampleData(sequence_length=10)
