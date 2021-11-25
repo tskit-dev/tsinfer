@@ -7,7 +7,7 @@ Welcome to tsinfer's documentation!
 ===================================
 
 This is the documentation for ``tsinfer``, a method for inferring correlated
-genealogies from genetic variation data.
+genealogies (a.k.a. tree sequence or ARGs) from genetic variation data.
 
 Contents:
 =========
