@@ -406,6 +406,7 @@ class DataContainer:
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
         provenances_group.create_dataset(
             "record",
@@ -414,6 +415,7 @@ class DataContainer:
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
 
     def __enter__(self):
@@ -949,6 +951,7 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
         populations_group.attrs["metadata_schema"] = None
         self._populations_writer = BufferedItemWriter(
@@ -964,6 +967,7 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
         location = individuals_group.create_dataset(
             "location",
@@ -971,6 +975,7 @@ class SampleData(DataContainer):
             chunks=chunks,
             compressor=self._compressor,
             dtype="array:f8",
+            fill_value=None,
         )
         time = individuals_group.create_dataset(
             "time",
@@ -1047,6 +1052,7 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
         sites_group.create_dataset(
             "metadata",
@@ -1055,6 +1061,7 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+            fill_value=None,
         )
 
         self._last_position = 0
@@ -2201,6 +2208,7 @@ class AncestorData(DataContainer):
             chunks=chunks,
             dtype="array:i4",
             compressor=self._compressor,
+            fill_value=None,
         )
         self.data.create_dataset(
             "ancestors/haplotype",
@@ -2208,6 +2216,7 @@ class AncestorData(DataContainer):
             chunks=chunks,
             dtype="array:i1",
             compressor=self._compressor,
+            fill_value=None,
         )
 
         self._alloc_ancestor_writer()
