@@ -1221,7 +1221,7 @@ def run_ancestor_quality(args):
         # make a 1/0 array with only the comparable sites
         exact_comp = exact_olap[exact_sites_mask[olap_start_exact:olap_end_exact]]
 
-        estim_full_hap = estim_anc.ancestors_haplotype[estim_index]
+        estim_full_hap = estim_anc.ancestors_haplotype[int(estim_index)]
         estim_olap = estim_full_hap[
             (olap_start_estim - offset2) : (olap_end_estim - offset2)
         ]

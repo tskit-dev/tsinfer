@@ -1363,7 +1363,7 @@ class SampleData(DataContainer):
                 subset.add_population(population.metadata)
             sample_selection = []
             for individual_id in individuals:
-                individual = self.individual(individual_id)
+                individual = self.individual(int(individual_id))
                 sample_selection.extend(individual.samples)
                 subset.add_individual(
                     location=individual.location,
