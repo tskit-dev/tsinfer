@@ -197,4 +197,5 @@ intersphinx_mapping = {
     "https://tskit.dev/msprime/docs/stable": None,
     "https://numcodecs.readthedocs.io/en/stable/": None,
     "https://zarr.readthedocs.io/en/stable/": None,
+    "https://tskit.dev/tutorials/": None,
 }
