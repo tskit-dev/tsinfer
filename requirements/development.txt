@@ -7,7 +7,7 @@ tqdm
 humanize
 daiquiri
 msprime >= 1.0.0
-zarr
+zarr<2.11.0
 lmdb
 attrs
 pytest
