@@ -92,6 +92,8 @@ jobs:
           cp -r --dereference subprojects/git-submodules/tskit/python/lwt_interface ../lwt_interface
           cd ..
           #Do a little dance to restore the version to a clean tag for setuptools_scm
+          git config --global user.email "CI@CI.com"
+          git config --global user.name "Mr Robot"
           git tag -d ${{ github.ref_name }}
           git add -u
           git commit -m "tag dance"
