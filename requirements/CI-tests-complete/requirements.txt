@@ -17,4 +17,4 @@ seaborn==0.11.1
 sortedcontainers==2.3.0
 tqdm==4.60.0
 tskit==0.3.7
-zarr==2.8.1
+zarr==2.10.3
