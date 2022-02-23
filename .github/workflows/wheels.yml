@@ -91,6 +91,11 @@ jobs:
           cp -r --dereference subprojects/git-submodules/tskit/python/lwt_interface/* subprojects/tskit/.
           cp -r --dereference subprojects/git-submodules/tskit/python/lwt_interface ../lwt_interface
           cd ..
+          #Do a little dance to restore the version to a clean tag for setuptools_scm
+          git tag -d ${{ github.event.ref }}
+          git add -u
+          git commit -m "tag dance"
+          git tag ${{ github.event.ref }}
           ${PYTHON} setup.py build_ext --inplace
       - name: Build Wheel
         env:
