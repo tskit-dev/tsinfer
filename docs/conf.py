@@ -193,6 +193,7 @@ texinfo_documents = [
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     "https://docs.python.org/3/": None,
+    "https://tskit.dev/tutorials": None,
     "https://tskit.dev/tskit/docs/stable": None,
     "https://tskit.dev/msprime/docs/stable": None,
     "https://numcodecs.readthedocs.io/en/stable/": None,
