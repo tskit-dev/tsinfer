@@ -1411,12 +1411,7 @@ class AncestorMatcher(Matcher):
         pc_ancestors = is_pc_ancestor(flags)
         tables.nodes.set_columns(flags=flags, time=times)
 
-        # # FIXME we should do this as a struct codec?
-        # dict_schema = permissive_json_schema()
-        # dict_schema = add_to_schema(dict_schema, "ancestor_data_id",
-        #         {"type": "integer"})
-        # schema = tskit.MetadataSchema(dict_schema)
-        # tables.nodes.schema = schema
+        tables.nodes.metadata_schema = formats.node_metadata_schema()
 
         # Add metadata for any non-PC node, pointing to the original ancestor
         metadata = []
@@ -1425,7 +1420,11 @@ class AncestorMatcher(Matcher):
             if is_pc:
                 metadata.append(b"")
             else:
-                metadata.append(_encode_raw_metadata({"ancestor_data_id": ancestor}))
+                metadata.append(
+                    tables.nodes.metadata_schema.validate_and_encode_row(
+                        {"tsinfer": {"ancestor_data_id": ancestor}}
+                    )
+                )
                 ancestor += 1
         tables.nodes.packset_metadata(metadata)
         left, right, parent, child = tsb.dump_edges()
@@ -1471,6 +1470,7 @@ class AncestorMatcher(Matcher):
             tables = tskit.TableCollection(
                 sequence_length=self.ancestor_data.sequence_length
             )
+            tables.nodes.metadata_schema = formats.node_metadata_schema()
             ts = tables.tree_sequence()
         return ts
 
@@ -1830,9 +1830,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata=_encode_raw_metadata(
-                        {"sample_data_id": int(sample_indexes[s])}
-                    ),
+                    metadata={"tsinfer": {"sample_data_id": int(sample_indexes[s])}},
                 )
                 s += 1
             else:

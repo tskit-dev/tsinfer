@@ -74,6 +74,42 @@ def permissive_json_schema():
     }
 
 
+def node_metadata_schema():
+    # This is fixed by tsinfer: users cannot add to the node metadata
+    return tskit.MetadataSchema(
+        {
+            "codec": "struct",
+            "type": ["object", "null"],
+            "properties": {
+                "tsinfer": {
+                    "description": "Information about node identity "
+                    "from the tsinfer inference process",
+                    "type": "object",
+                    "properties": {
+                        "ancestor_data_id": {
+                            "description": "The corresponding ancestor ID "
+                            "in the ancestors file created by the inference process, "
+                            "or -1 if not applicable",
+                            "type": "number",
+                            "binaryFormat": "i",
+                            "default": -1,
+                        },
+                        "sample_data_id": {
+                            "description": "The corresponding sample ID "
+                            "in the sample data file used for inference, "
+                            "or -1 if not applicable",
+                            "type": "number",
+                            "binaryFormat": "i",
+                            "default": -1,
+                        },
+                    },
+                },
+            },
+            "additionalProperties": False,
+        }
+    )
+
+
 def np_obj_equal(np_obj_array1, np_obj_array2):
     """
     A replacement for np.array_equal to test equality of numpy arrays that

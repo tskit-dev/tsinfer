@@ -1094,9 +1094,14 @@ class TestMetadataRoundTrip:
             assert i1.flags == i2.flags
             assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
         # Unless inference is perfect, internal nodes may differ, but sample nodes
-        # should be identical
+        # should be identical. Node metadata is not transferred, however, and a tsinfer-
+        # specific node metadata schema is used (where empty is None rather than b"")
+        assert (
+            ts_inferred.table_metadata_schemas.node
+            == tsinfer.formats.node_metadata_schema()
+        )
         for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
-            assert ts.node(n1) == ts_inferred.node(n2)
+            assert ts.node(n1).replace(metadata=None) == ts_inferred.node(n2)
         # Sites can have metadata added by the inference process, but inferred site
         # metadata should always include all the metadata in the original ts
         for s1, s2 in zip(ts.sites(), ts_inferred.sites()):
@@ -1586,12 +1591,13 @@ class TestAncestorsTreeSequence:
             ancestors_time = ancestor_data.ancestors_time[:]
             num_ancestor_nodes = 0
             for n in ancestors_ts.nodes():
-                md = json.loads(n.metadata) if n.metadata else {}
+                md = n.metadata if n.metadata else {}
                 if tsinfer.is_pc_ancestor(n.flags):
-                    assert not ("ancestor_data_id" in md)
+                    if "tsinfer" in md:
+                        assert "ancestor_data_id" not in md["tsinfer"]
                 else:
-                    assert "ancestor_data_id" in md
-                    assert ancestors_time[md["ancestor_data_id"]] == n.time
+                    assert "tsinfer" in md and "ancestor_data_id" in md["tsinfer"]
+                    assert ancestors_time[md["tsinfer"]["ancestor_data_id"]] == n.time
                     num_ancestor_nodes += 1
             assert num_ancestor_nodes == ancestor_data.num_ancestors
 
@@ -3114,8 +3120,7 @@ class TestAugmentedAncestors:
             node = t2.nodes[m + j]
             assert node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR
             assert node.time == 1
-            metadata = json.loads(node.metadata.decode())
-            assert node_id == metadata["sample_data_id"]
+            assert node_id == node.metadata["tsinfer"]["sample_data_id"]
 
         t2.nodes.truncate(len(t1.nodes))
         # Adding and subtracting 1 can lead to small diffs, so we compare
@@ -3265,8 +3270,7 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             num_sample_ancestors = 0
             for node in final_ts.nodes():
                 if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
-                    metadata = json.loads(node.metadata.decode())
-                    assert metadata["sample_data_id"] in subset
+                    assert node.metadata["tsinfer"]["sample_data_id"] in subset
                     num_sample_ancestors += 1
             assert expected_sample_ancestors == num_sample_ancestors
             tsinfer.verify(samples, final_ts.simplify())
