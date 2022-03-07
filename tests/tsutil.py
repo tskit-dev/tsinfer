@@ -120,6 +120,7 @@ def get_example_individuals_ts_with_metadata(
     tables.metadata = {f"a_{j}": j for j in range(n)}
     tables.populations.clear()
     tables.individuals.clear()
+    rng = np.random.default_rng(123)
     for i in range(n):
         location = [i, i]
         individual_meta = {}
@@ -127,7 +128,7 @@ def get_example_individuals_ts_with_metadata(
         if i % 2 == 0:
             # Add unicode metadata to every other individual: 8544+i = Roman numerals
             individual_meta = {"unicode id": chr(8544 + i)}
-            individual_flags = np.random.randint(0, np.iinfo(np.uint32).max)
+            individual_flags = rng.integers(0, np.iinfo(np.uint32).max, dtype=np.int64)
             # Also for populations: chr(127462) + chr(127462+i) give emoji flags
             pop_meta = {"utf": chr(127462) + chr(127462 + i)}
         tables.populations.add_row(metadata=pop_meta)  # One pop for each individual
