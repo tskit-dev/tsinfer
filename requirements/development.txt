@@ -9,7 +9,7 @@ humanize
 daiquiri
 msprime >= 1.0.0
 tskit >= 0.4.1
-zarr<2.11.0
+zarr!=2.11.0
 lmdb
 pytest
 pytest-xdist

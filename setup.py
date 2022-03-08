@@ -84,7 +84,7 @@ setup(
         "tskit>=0.3.7",
         "numcodecs>=0.6",
         # issues 965 and 967 at zarr-python prevent usage of 2.11.0
-        "zarr>=2.2,<2.11.0",
+        "zarr>=2.2,!=2.11.0",
         "lmdb",
         "sortedcontainers",
         "attrs>=19.2.0",
