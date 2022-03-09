@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -527,9 +527,8 @@ class TestMakeAncestorsTs:
     Tests for the process of generating an ancestors tree sequence.
     """
 
-    def verify_from_source(self, remove_leaves):
-        ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
-        samples = tsinfer.SampleData.from_tree_sequence(ts)
+    def verify_from_source(self, ts, remove_leaves):
+        samples = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         ancestors_ts = tsinfer.make_ancestors_ts(
             samples, ts, remove_leaves=remove_leaves
         )
@@ -538,11 +537,10 @@ class TestMakeAncestorsTs:
             final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
         tsinfer.verify(samples, final_ts)
 
-    def test_infer_from_source_no_leaves(self):
-        self.verify_from_source(True)
-
-    def test_infer_from_source(self):
-        self.verify_from_source(True)
+    @pytest.mark.parametrize("remove_leaves", [True, False])
+    def test_infer_from_source(self, remove_leaves):
+        ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
+        self.verify_from_source(ts, remove_leaves=remove_leaves)
 
     def verify_from_inferred(self, remove_leaves):
         ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
@@ -556,11 +554,16 @@ class TestMakeAncestorsTs:
             final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
         tsinfer.verify(samples, final_ts)
 
-    def test_infer_from_inferred_no_leaves(self):
-        self.verify_from_inferred(True)
+    @pytest.mark.parametrize("remove_leaves", [True, False])
+    def test_infer_from_inferred(self, remove_leaves):
+        self.verify_from_inferred(remove_leaves)
 
-    def test_infer_from_inferred(self):
-        self.verify_from_inferred(False)
+    @pytest.mark.parametrize("remove_leaves", [True, False])
+    def test_infer_from_source_multiple_mutations(self, remove_leaves):
+        ts = msprime.sim_ancestry(5, sequence_length=100, random_seed=3)
+        mts = msprime.sim_mutations(ts, rate=0.1, random_seed=3)
+        assert mts.num_mutations > mts.num_sites
+        self.verify_from_source(mts, remove_leaves=remove_leaves)
 
 
 class TestCheckAncestorsTs:

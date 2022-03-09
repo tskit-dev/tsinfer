@@ -1,4 +1,4 @@
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -450,12 +450,17 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     msprime.simulate. We remove populations, as normally ancestors tree sequences
     do not have populations defined.
     """
-    # Get the non-singleton sites
-    position = []
-    for var in ts.variants():
-        if np.sum(var.genotypes) > 1:
-            position.append(var.site.position)
-    reduced = subset_sites(ts, position)
+    # Get the non-singleton sites and those with > 1 mutation
+    remove_sites = []
+    for tree in ts.trees():
+        for site in tree.sites():
+            if len(site.mutations) != 1:
+                remove_sites.append(site.id)
+            else:
+                if tree.num_samples(site.mutations[0].node) < 2:
+                    remove_sites.append(site.id)
+
+    reduced = ts.delete_sites(remove_sites)
     minimised = inference.minimise(reduced)
 
     tables = minimised.dump_tables()
@@ -478,15 +483,9 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
         parent=tables.edges.parent + 1,
         child=tables.edges.child + 1,
     )
-    tables.mutations.set_columns(
-        node=tables.mutations.node + 1,
-        site=tables.mutations.site,
-        parent=tables.mutations.parent,
-        derived_state=tables.mutations.derived_state,
-        derived_state_offset=tables.mutations.derived_state_offset,
-        metadata=tables.mutations.metadata,
-        metadata_offset=tables.mutations.metadata_offset,
-    )
+    tables.mutations.node += 1
+    # We could also set the time to UNKNOWN_TIME, this is a bit easier.
+    tables.mutations.time += 1
 
     trees = minimised.trees()
     tree = next(trees)
