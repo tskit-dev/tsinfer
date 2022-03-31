@@ -59,7 +59,7 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 # For the default setting on windows, we therefore hard code a smaller
 # map_size of 1GiB to avoid filling up disk space. On other platforms where
 # sparse files are supported, we default to 1TiB.
-DEFAULT_MAX_FILE_SIZE = 2 ** 30 if sys.platform == "win32" else 2 ** 40
+DEFAULT_MAX_FILE_SIZE = 2**30 if sys.platform == "win32" else 2**40
 
 
 def permissive_json_schema():
@@ -249,7 +249,7 @@ def zarr_summary(array):
     ret = f"shape={array.shape}; dtype={dtype};"
     if dtype != "object":
         # nbytes doesn't work correctly for object arrays.
-        ret += "uncompressed size={}".format(humanize.naturalsize(array.nbytes))
+        ret += f"uncompressed size={humanize.naturalsize(array.nbytes)}"
     return ret
 
 
@@ -441,9 +441,7 @@ class DataContainer:
                 self.path, map_size=map_size, readonly=True, subdir=False, lock=False
             )
         except lmdb.InvalidError as e:
-            raise exceptions.FileFormatError(
-                "Unknown file format:{}".format(str(e))
-            ) from e
+            raise exceptions.FileFormatError(f"Unknown file format:{str(e)}") from e
         except lmdb.Error as e:
             raise exceptions.FileFormatError(str(e)) from e
         return store
@@ -1993,9 +1991,8 @@ class SampleData(DataContainer):
         """
         if sites is None:
             sites = np.arange(self.num_sites)
-        alleles = self.sites_alleles[:]
         num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
-        for j, alleles in enumerate(alleles):
+        for j, alleles in enumerate(self.sites_alleles):
             num_alleles[j] = len(alleles)
             if alleles[-1] is None:
                 num_alleles[j] -= 1

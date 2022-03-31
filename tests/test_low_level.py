@@ -38,7 +38,7 @@ class TestOutOfMemory:
         " (perhaps memory allocation is optimised out at this stage?)",
     )
     def test_tree_sequence_builder_too_many_nodes(self):
-        big = 2 ** 62
+        big = 2**62
         with pytest.raises(MemoryError):
             _tsinfer.TreeSequenceBuilder([2], max_nodes=big)
 
@@ -48,7 +48,7 @@ class TestOutOfMemory:
         " (line 149 of object_heap.c)",
     )
     def test_tree_sequence_builder_too_many_edges(self):
-        big = 2 ** 62
+        big = 2**62
         with pytest.raises(MemoryError):
             _tsinfer.TreeSequenceBuilder([2], max_edges=big)
 

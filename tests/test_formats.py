@@ -238,7 +238,7 @@ class TestSampleData(DataContainerMixin):
 
     def test_too_small_max_file_size_add(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
-            base_size = 2 ** 16  # Big enough to allow the initial file to be created
+            base_size = 2**16  # Big enough to allow the initial file to be created
             # Fail during adding a large amount of data
             with pytest.raises(lmdb.MapFullError):
                 filename = os.path.join(tempdir, "samples.tmp")
@@ -257,8 +257,8 @@ class TestSampleData(DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             # set a reasonably large number of sites and samples, and check we
             # don't bomb out
-            n_samples = 2 ** 10
-            n_sites = 2 ** 12
+            n_samples = 2**10
+            n_sites = 2**12
             np.random.seed(123)
             filename = os.path.join(tempdir, "samples.tmp")
             with formats.SampleData(
@@ -331,7 +331,7 @@ class TestSampleData(DataContainerMixin):
         tables = ts.dump_tables()
         # Associate nodes at different times with a single individual
         nodes_time = tables.nodes.time
-        min_time = min([n.time for n in ts.nodes() if not n.is_sample()])
+        min_time = min(n.time for n in ts.nodes() if not n.is_sample())
         nodes_time[ts.samples()] = np.linspace(0, min_time, n_individuals * ploidy)
         tables.nodes.time = nodes_time
         # Zap out the mutation times to avoid conflicts.
@@ -2324,7 +2324,9 @@ class TestAncestorData(DataContainerMixin):
         assert np.array_equal(
             trunc_lengths[time < upper_limit], original_lengths[time < upper_limit]
         )
-        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+        for orig_anc, trunc_anc in zip(  # noqa: B020
+            ancestors.ancestors(), trunc_anc.ancestors()
+        ):
             assert orig_anc.time == trunc_anc.time
             assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
             if orig_anc.time >= upper_limit:
@@ -2348,7 +2350,9 @@ class TestAncestorData(DataContainerMixin):
         ancestors = tsinfer.generate_ancestors(sample_data)
         time = ancestors.ancestors_time[:]
         trunc_anc = ancestors.truncate_ancestors(np.min(time), np.max(time), 1)
-        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+        for orig_anc, trunc_anc in zip(  # noqa: B020
+            ancestors.ancestors(), trunc_anc.ancestors()
+        ):
             assert orig_anc.start == trunc_anc.start
             assert orig_anc.end == trunc_anc.end
             assert orig_anc.time == trunc_anc.time
@@ -2359,7 +2363,9 @@ class TestAncestorData(DataContainerMixin):
         ancestors = tsinfer.generate_ancestors(sample_data)
         time = ancestors.ancestors_time[:]
         trunc_anc = ancestors.truncate_ancestors(0, 1, 1)
-        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+        for orig_anc, trunc_anc in zip(  # noqa: B020
+            ancestors.ancestors(), trunc_anc.ancestors()
+        ):
             assert orig_anc.start == trunc_anc.start
             assert orig_anc.end == trunc_anc.end
             assert orig_anc.time == trunc_anc.time
@@ -2374,7 +2380,9 @@ class TestAncestorData(DataContainerMixin):
         oldest_site = np.max(sites_time)
         midpoint = np.median(sites_time)
         trunc_anc = ancestors.truncate_ancestors(midpoint, oldest_site, 1)
-        for orig_anc, trunc_anc in zip(ancestors.ancestors(), trunc_anc.ancestors()):
+        for orig_anc, trunc_anc in zip(  # noqa: B020
+            ancestors.ancestors(), trunc_anc.ancestors()
+        ):
             assert orig_anc.time == trunc_anc.time
             assert np.array_equal(orig_anc.focal_sites, trunc_anc.focal_sites)
 

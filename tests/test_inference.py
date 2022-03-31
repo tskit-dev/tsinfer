@@ -435,10 +435,10 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         rho = [1e-9, 1e-3, 0.1]
         mis = [1e-9, 1e-3, 0.1]
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
-        for rec, mis, engine in itertools.product(rho, mis, engines):
+        for rec, mis_, engine in itertools.product(rho, mis, engines):
             # Set the arrays directly
             recombination = np.full(max(ancestors_ts.num_sites - 1, 0), rec)
-            mismatch = np.full(ancestors_ts.num_sites, mis)
+            mismatch = np.full(ancestors_ts.num_sites, mis_)
             ts = tsinfer.match_samples(
                 sample_data,
                 ancestors_ts,
@@ -2131,8 +2131,8 @@ class TestPartialAncestorMatching:
 
         for engine in [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]:
             ts = tsinfer.match_ancestors(sample_data, ancestor_data, engine=engine)
-            assert sorted([edge_to_tuple(e) for e in expected_edges]) == sorted(
-                [edge_to_tuple(e) for e in ts.edges()]
+            assert sorted(edge_to_tuple(e) for e in expected_edges) == sorted(
+                edge_to_tuple(e) for e in ts.edges()
             )
 
     def test_easy_case(self):
@@ -2633,8 +2633,8 @@ class TestPathCompressionAncestorsCEngine(PathCompressionAncestorsMixin):
         # Reproduce a failure that occured under the C engine.
         ts = msprime.simulate(
             20,
-            Ne=10 ** 4,
-            length=0.25 * 10 ** 6,
+            Ne=10**4,
+            length=0.25 * 10**6,
             recombination_rate=1e-8,
             mutation_rate=1e-8,
             random_seed=4,
@@ -2744,7 +2744,7 @@ class TestFlags:
 
     def test_count_srb_ancestors_random(self):
         np.random.seed(42)
-        flags = np.random.randint(0, high=2 ** 32, size=100, dtype=np.uint32)
+        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
         count = sum(map(tsinfer.is_srb_ancestor, flags))
         assert count == tsinfer.count_srb_ancestors(flags)
 
@@ -2789,7 +2789,7 @@ class TestFlags:
 
     def test_count_pc_ancestors_random(self):
         np.random.seed(42)
-        flags = np.random.randint(0, high=2 ** 32, size=100, dtype=np.uint32)
+        flags = np.random.randint(0, high=2**32, size=100, dtype=np.uint32)
         count = sum(map(tsinfer.is_pc_ancestor, flags))
         assert count == tsinfer.count_pc_ancestors(flags)
 

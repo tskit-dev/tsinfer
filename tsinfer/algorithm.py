@@ -405,7 +405,7 @@ class TreeSequenceBuilder:
         assert min_parent_time <= self.time[0]
         # 1 / 2**32 is the value used in the low-level code.
         # We'll want to make this more sophisticated in the future
-        self.time[pc_parent_id] = min_parent_time - (1 / 2 ** 32)
+        self.time[pc_parent_id] = min_parent_time - (1 / 2**32)
         assert self.time[pc_parent_id] > self.time[child_id]
 
     def create_pc_node(self, matches):
