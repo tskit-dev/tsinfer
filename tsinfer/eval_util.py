@@ -392,7 +392,7 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
             if distance != 0:
                 total_mismatch_interval += right - left
                 total_mismatches += 1
-                trailer = "[MISMATCH over {:.2f}]".format(right - left)
+                trailer = f"[MISMATCH over {right - left:.2f}]"
             print("KC distance       =", distance, trailer)
         print()
         d1 = tree1.draw(format="unicode").splitlines()
@@ -645,7 +645,7 @@ def insert_srb_ancestors(samples, ts, show_progress=False):
         last_edge = edge
     progress.close()
 
-    logger.info("Built SRB map with {} items".format(len(srb_index)))
+    logger.info(f"Built SRB map with {len(srb_index)} items")
     tables, node_id_map = extract_ancestors(samples, ts)
     logger.info("Extracted ancestors ts")
     time = tables.nodes.time

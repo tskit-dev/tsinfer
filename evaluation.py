@@ -237,7 +237,7 @@ def edges_performance_worker(args):
 
 def run_edges_performance(args):
     num_lengths = 10
-    MB = 10 ** 6
+    MB = 10**6
 
     work = []
     rng = random.Random()
@@ -251,7 +251,7 @@ def run_edges_performance(args):
                 "mutation_rate": args.mutation_rate,
                 "Ne": args.Ne,
                 "model": "smc_prime",
-                "random_seed": rng.randint(1, 2 ** 30),
+                "random_seed": rng.randint(1, 2**30),
             }
             work.append((sim_args, args.compute_tree_metrics, args.engine))
 
@@ -423,7 +423,7 @@ def unrank(samples, n):
 
 def edge_plot(ts, filename):
     n = ts.num_samples
-    pallete = sns.color_palette("husl", 2 ** n - 1)
+    pallete = sns.color_palette("husl", 2**n - 1)
     lines = []
     colours = []
     for tree in ts.trees():
@@ -445,7 +445,7 @@ def edge_plot(ts, filename):
 
 
 def run_hotspot_analysis(args):
-    MB = 10 ** 6
+    MB = 10**6
     L = args.length * MB
 
     rng = random.Random()
@@ -467,7 +467,7 @@ def run_hotspot_analysis(args):
         "recombination_map": recomb_map,
         "mutation_rate": args.mutation_rate,
         "Ne": args.Ne,
-        "random_seed": rng.randint(1, 2 ** 30),
+        "random_seed": rng.randint(1, 2**30),
     }
     ts = msprime.simulate(**sim_args)
     print("simulated ", ts.num_trees, "trees and", ts.num_sites, "sites")
@@ -562,7 +562,7 @@ def ancestor_properties_worker(args):
 
 def run_ancestor_properties(args):
     num_lengths = 10
-    MB = 10 ** 6
+    MB = 10**6
 
     work = []
     rng = random.Random()
@@ -577,7 +577,7 @@ def run_ancestor_properties(args):
                 "mutation_rate": args.mutation_rate,
                 "Ne": args.Ne,
                 "model": "smc_prime",
-                "random_seed": rng.randint(1, 2 ** 30),
+                "random_seed": rng.randint(1, 2**30),
             }
             work.append((sim_args, not args.skip_exact))
 
@@ -702,7 +702,7 @@ def imputation_accuracy_worker(args):
 
 
 def run_imputation_accuracy(args):
-    MB = 10 ** 6
+    MB = 10**6
 
     work = []
     rng = random.Random()
@@ -716,7 +716,7 @@ def run_imputation_accuracy(args):
                 "recombination_rate": args.recombination_rate,
                 "mutation_rate": args.mutation_rate,
                 "Ne": args.Ne,
-                "random_seed": rng.randint(1, 2 ** 30),
+                "random_seed": rng.randint(1, 2**30),
             }
             work.append((sim_args, missing_proportion))
             # imputation_accuracy_worker((sim_args, missing_proportion))
@@ -802,7 +802,7 @@ def sim_true_and_inferred_ancestors(args):
     Run a simulation under args and return the samples, plus the true and the inferred
     ancestors
     """
-    MB = 10 ** 6
+    MB = 10**6
     rng = random.Random(args.random_seed)
     np.random.seed(args.random_seed)
     sim_args = {
@@ -812,7 +812,7 @@ def sim_true_and_inferred_ancestors(args):
         "mutation_rate": args.mutation_rate,
         "Ne": args.Ne,
         "model": "smc_prime",
-        "random_seed": rng.randint(1, 2 ** 30),
+        "random_seed": rng.randint(1, 2**30),
     }
     ts = msprime.simulate(**sim_args)
 
@@ -1342,7 +1342,7 @@ def run_ancestor_quality(args):
                 print(" " * (olap_start_exact - offset1), end="")
                 print(" " * (olap_start_estim - offset2), end="")
             elif args.print_bad_ancestors == "inferred":
-                print("{:<5}".format(int(freq[focal_pos])), end="")
+                print(f"{int(freq[focal_pos]):<5}", end="")
             k = 0
             mask = estim_sites_mask[olap_start_estim:olap_end_estim]
             for j, (bit, curr_pos) in enumerate(
@@ -1526,7 +1526,7 @@ def run_ancestor_quality(args):
             color="k",
             markeredgewidth=0.5,
             markerfacecolor="w",
-            markersize=1 ** 0.5,
+            markersize=1**0.5,
         ),
         mp.lines.Line2D(
             [],
@@ -1537,7 +1537,7 @@ def run_ancestor_quality(args):
             color="k",
             markeredgewidth=0.5,
             markerfacecolor="w",
-            markersize=10 ** 0.5,
+            markersize=10**0.5,
         ),
         mp.lines.Line2D(
             [],
@@ -1548,7 +1548,7 @@ def run_ancestor_quality(args):
             color="k",
             markeredgewidth=0.5,
             markerfacecolor="w",
-            markersize=100 ** 0.5,
+            markersize=100**0.5,
         ),
     ]
     name = "quality-by-freq-with-bias"
@@ -1704,7 +1704,7 @@ def get_node_degree_by_depth(ts):
 
 
 def run_node_degree(args):
-    MB = 10 ** 6
+    MB = 10**6
     rng = random.Random()
     if args.random_seed is not None:
         rng.seed(args.random_seed)
@@ -1715,7 +1715,7 @@ def run_node_degree(args):
         "mutation_rate": args.mutation_rate,
         "Ne": args.Ne,
         "model": "smc_prime",
-        "random_seed": rng.randint(1, 2 ** 30),
+        "random_seed": rng.randint(1, 2**30),
     }
     smc_ts = msprime.simulate(**sim_args)
 
@@ -1804,11 +1804,11 @@ def run_perfect_inference(args):
     rng = random.Random()
     rng.seed(args.random_seed)
     for _ in range(args.num_replicates):
-        seed = rng.randint(1, 2 ** 30)
+        seed = rng.randint(1, 2**30)
         base_ts = msprime.simulate(
             args.sample_size,
             Ne=args.Ne,
-            length=args.length * 10 ** 6,
+            length=args.length * 10**6,
             recombination_rate=1e-8,
             random_seed=seed,
             model=model,
@@ -1867,7 +1867,7 @@ def add_standard_arguments(
 ):
     parser.add_argument("--destination-dir", "-d", default="")
     parser.add_argument("--sample-size", "-n", type=int, default=sample_size)
-    parser.add_argument("--Ne", "-N", type=int, default=10 ** 4)
+    parser.add_argument("--Ne", "-N", type=int, default=10**4)
     parser.add_argument(
         "--length", "-l", type=float, default=length, help="Sequence length in MB"
     )

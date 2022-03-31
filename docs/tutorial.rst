@@ -130,10 +130,10 @@ data under the coalescent with recombination, using `msprime
 
     ts = msprime.simulate(
         sample_size=10000,
-        Ne=10 ** 4,
+        Ne=10**4,
         recombination_rate=1e-8,
         mutation_rate=1e-8,
-        length=10 * 10 ** 6,
+        length=10 * 10**6,
         random_seed=42,
     )
     ts.dump("simulation-source.trees")

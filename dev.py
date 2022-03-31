@@ -67,13 +67,13 @@ def tsinfer_dev(
 
     np.random.seed(seed)
     random.seed(seed)
-    L_megabases = int(L * 10 ** 6)
+    L_megabases = int(L * 10**6)
 
     # daiquiri.setup(level=log_level)
 
     source_ts = msprime.simulate(
         n,
-        Ne=10 ** 4,
+        Ne=10**4,
         length=L_megabases,
         recombination_rate=recombination_rate,
         mutation_rate=1e-8,
@@ -211,7 +211,7 @@ def dump_provenance(ts):
 
 
 def build_profile_inputs(n, num_megabases):
-    L = num_megabases * 10 ** 6
+    L = num_megabases * 10**6
     input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(
         n, num_megabases
     )
@@ -221,7 +221,7 @@ def build_profile_inputs(n, num_megabases):
         ts = msprime.simulate(
             n,
             length=L,
-            Ne=10 ** 4,
+            Ne=10**4,
             recombination_rate=1e-8,
             mutation_rate=1e-8,
             random_seed=10,
@@ -281,10 +281,10 @@ def tutorial_samples():
 
     ts = msprime.simulate(
         sample_size=10000,
-        Ne=10 ** 4,
+        Ne=10**4,
         recombination_rate=1e-8,
         mutation_rate=1e-8,
-        length=10 * 10 ** 6,
+        length=10 * 10**6,
         random_seed=42,
     )
     ts.dump("tmp__NOBACKUP__/simulation-source.trees")
