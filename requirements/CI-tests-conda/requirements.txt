@@ -1,5 +1,5 @@
 lmdb==0.9.24
 msprime==1.0.2
 python-lmdb==0.96
-zarr==2.11.1
+zarr==2.11.3
 h5py<3.4
