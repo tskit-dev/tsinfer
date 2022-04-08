@@ -1,4 +1,19 @@
 ********************
+[0.2.3] - 2022-04-08
+********************
+
+**Features**
+
+- Added ``ancestor(id)`` to ``AncestorData`` class.
+  (:pr:`570`, :issue:`569`, :user:`hyanwong`)
+
+**Fixes**
+
+- Mark zarr 2.11.0, 2.11.1 and 2.11.2 as incompatible due to ``zarr-python``
+  bugs #965 and #967.
+  (:issue:`643`, :pr:`657`, :user:`benjeffery`)
+
+********************
 [0.2.2] - 2022-02-23
 ********************
 
