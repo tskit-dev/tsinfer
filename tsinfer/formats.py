@@ -1312,7 +1312,7 @@ class SampleData(DataContainer):
         individuals and sites. It is important to note that these are
         *individual* IDs and not *sample* IDs (corresponding to distinct
         haplotypes within an individual). When working with haploid data, the
-        individual and site IDs are guaranteed to be the same, and so can be
+        individual and sample IDs are guaranteed to be the same, and so can be
         used interchangably.
 
         :param arraylike individuals: The individual IDs to retain in the
