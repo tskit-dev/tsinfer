@@ -1372,8 +1372,8 @@ class SampleData(DataContainer):
                     ploidy=len(individual.samples),
                 )
             sample_selection = np.array(sample_selection, dtype=int)
-            if len(sample_selection) < 2:
-                raise ValueError("Must have at least two samples")
+            if len(sample_selection) < 1:
+                raise ValueError("Must have at least one sample")
             for variant in self.variants():
                 if variant.site.id in sites:
                     subset.add_site(
@@ -1576,8 +1576,8 @@ class SampleData(DataContainer):
         return self
 
     def _alloc_site_writer(self):
-        if self.num_samples < 2:
-            raise ValueError("Must have at least 2 samples")
+        if self.num_samples < 1:
+            raise ValueError("Must have at least 1 sample")
         self.sites_genotypes.resize(0, self.num_samples)
         arrays = {
             "position": self.sites_position,
