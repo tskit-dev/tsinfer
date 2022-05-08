@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -569,7 +569,6 @@ class TestSampleData(DataContainerMixin):
 
     def test_eq(self):
         ts = tsutil.get_example_ts(5, random_seed=3)
-        print(ts.num_sites)
         input_file = formats.SampleData(sequence_length=ts.sequence_length)
         self.verify_data_round_trip(ts, input_file)
         assert input_file == input_file
@@ -662,9 +661,6 @@ class TestSampleData(DataContainerMixin):
         sample_data = formats.SampleData(sequence_length=10)
         with pytest.raises(ValueError):
             sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[])
-        sample_data = formats.SampleData(sequence_length=10)
-        with pytest.raises(ValueError):
-            sample_data.add_site(position=0, alleles=["0", "1"], genotypes=[0])
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.add_individual(ploidy=3)
         with pytest.raises(ValueError):
@@ -1419,6 +1415,19 @@ class TestSampleDataSubset:
                 )
                 j += 1
         assert j == len(sites)
+
+    def test_one_sample(self):
+        ts = tsutil.get_example_ts(10)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        G1 = ts.genotype_matrix()
+        # Because this is a haploid tree sequence we can use the
+        # individual and sample IDs interchangably.
+        cols = [3]
+        rows = np.arange(ts.num_sites)
+        subset = sd1.subset(individuals=cols, sites=rows)
+        G2 = np.array([v.genotypes for v in subset.variants()])
+        assert np.array_equal(G1[rows][:, cols], G2)
+        self.verify_subset_data(sd1, cols, rows)
 
     def test_simple_case(self):
         ts = tsutil.get_example_ts(10)
