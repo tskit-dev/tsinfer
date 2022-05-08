@@ -29,6 +29,7 @@ import queue
 import sys
 import threading
 import uuid
+import warnings
 
 import attr
 import humanize
@@ -512,7 +513,14 @@ class DataContainer:
             # try to use copy_store on an in-memory array we end up
             # overwriting the original values.
             other.data = zarr.group()
-            zarr.copy_all(source=self.data, dest=other.data)
+            with warnings.catch_warnings():
+                # Another workaround: if we don't absorb warnings here
+                # we get "FutureWarning: missing object_codec for object array;
+                # this will raise a ValueError in v3." Since this is an internal
+                # Zarr call it seems easiest to just ignore for now and deal with
+                # the ValueError if/when it happens
+                warnings.simplefilter("ignore")
+                zarr.copy_all(source=self.data, dest=other.data)
             for key, value in self.data.attrs.items():
                 other.data.attrs[key] = value
         else:
@@ -2097,7 +2105,7 @@ class SampleData(DataContainer):
             yield Population(j, metadata=metadata)
 
 
-@attr.s(cmp=False)
+@attr.s(order=False, eq=False)
 class Ancestor:
     """
     An ancestor object.
