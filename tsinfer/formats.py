@@ -2097,7 +2097,7 @@ class SampleData(DataContainer):
             yield Population(j, metadata=metadata)
 
 
-@attr.s(cmp=False)
+@attr.s(order=False, eq=False)
 class Ancestor:
     """
     An ancestor object.
