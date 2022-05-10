@@ -37,6 +37,9 @@ NODE_IS_SAMPLE_ANCESTOR = 1 << 18
 # file
 NODE_IS_HISTORICAL_SAMPLE = 1 << 20
 
+# Undocumented.
+NODE_IS_IDENTICAL_SAMPLE_ANCESTOR = 1 << 21
+
 # What type of inference have we done at a site?
 INFERENCE_NONE = "none"
 INFERENCE_FULL = "full"

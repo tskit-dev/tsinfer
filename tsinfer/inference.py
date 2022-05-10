@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2021 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -1096,6 +1096,7 @@ class Matcher:
         extended_checks=False,
         engine=constants.C_ENGINE,
         progress_monitor=None,
+        allow_multiallele=False,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1231,7 +1232,9 @@ class Matcher:
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
-        if np.any(num_alleles > 2):
+        if np.any(num_alleles > 2) and not allow_multiallele:
+            # Currently only used for unsupported extend operation. We can
+            # remove in future versions.
             raise ValueError("Cannot currently match with > 2 alleles.")
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
@@ -1712,12 +1715,10 @@ class SampleMatcher(Matcher):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-    def match_samples(self, sample_indexes, sample_times):
-        builder = self.tree_sequence_builder
+    def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
-        for j, t in zip(sample_indexes, sample_times):
-            self.sample_id_map[j] = builder.add_node(t)
-        flags, times = builder.dump_nodes()
+        builder = self.tree_sequence_builder
+        _, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
@@ -1748,6 +1749,127 @@ class SampleMatcher(Matcher):
                 builder.add_mutations(node_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
+
+    def extend(self, samples, known_haplotypes, node_metadata):
+        """
+        Runs the "extend" operation by matching for an explar sequence
+        from each of the distinct categories.
+        """
+        builder = self.tree_sequence_builder
+        # Allocate nodes in the tree sequence consecutively for the input samples
+        final_node_map = {}
+        for sd_id in samples:
+            self.sample_id_map[sd_id] = builder.add_node(0)
+            final_node_map[sd_id] = self.sample_id_map[sd_id]
+
+        distinct = collections.defaultdict(list)
+        for sd_id, a in self.sample_data.haplotypes(samples):
+            distinct[a.tobytes()].append(sd_id)
+        distinct_parents = {}
+        exemplars = []
+        for key, sd_ids in distinct.items():
+            exemplars.append(sd_ids[0])
+            if len(sd_ids) > 1 and key not in known_haplotypes:
+                # Several sample data IDs correspond to this haplotype. So that we can
+                # keep the output IDs contiguous, we remap the first haplotype to a
+                # *new* node ID, that we turn into an internal node later.
+                new_id = builder.add_node(0)
+                distinct_parents[key] = new_id
+                self.sample_id_map[sd_ids[0]] = new_id
+            else:
+                exemplars.extend(sd_ids[1:])
+
+        # Do the hard work
+        self._match_samples(sorted(exemplars))
+
+        tsb = self.tree_sequence_builder
+        tables = self.ancestors_ts_tables.copy()
+        tables.edges.clear()
+
+        logger.debug("Adding tree sequence nodes")
+        flags, times = tsb.dump_nodes()
+        # FIXME use this to get new PC ancestors
+        # num_pc_ancestors = count_pc_ancestors(flags)
+
+        # First add the sample nodes for *all* the input samples
+        for sd_id in samples:
+            final_node_id = tables.nodes.add_row(
+                flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
+            )
+
+        # Then add in the exemplar nodes that will become parents of the
+        # actual samples
+        for key, sd_ids in distinct.items():
+            if len(sd_ids) > 1 and key not in known_haplotypes:
+                final_node_id = tables.nodes.add_row(
+                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
+                    time=1 / 2,
+                )
+                assert final_node_id == distinct_parents[key]
+                for sd_id in sd_ids:
+                    tables.edges.add_row(
+                        left=0,
+                        right=tables.sequence_length,
+                        parent=final_node_id,
+                        child=final_node_map[sd_id],
+                    )
+        # Add in the remaining non-sample nodes.
+        for u in range(len(tables.nodes), tsb.num_nodes):
+            tables.nodes.add_row(flags=flags[u], time=times[u])
+
+        logger.debug("Adding tree sequence edges")
+        left, right, parent, child = tsb.dump_edges()
+        tables.edges.append_columns(
+            left=self.position_map[left],
+            right=self.position_map[right],
+            parent=parent,
+            child=child,
+        )
+
+        logger.debug("Sorting and building intermediate tree sequence.")
+        tables.sites.clear()
+        old_num_mutations = len(tables.mutations)
+        tables.mutations.clear()
+        tables.sort()
+        tables.build_index()
+
+        mut_site, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
+        mutation_id = 0
+        num_mutations = len(mut_site)
+        for site in self.sample_data.sites(self.inference_site_id):
+            site_id = tables.sites.add_row(
+                site.position,
+                ancestral_state=site.alleles[0],
+            )
+            while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
+                tables.mutations.add_row(
+                    site_id,
+                    node=node[mutation_id],
+                    derived_state=site.alleles[derived_state[mutation_id]],
+                )
+                mutation_id += 1
+
+        tables.compute_mutation_parents()
+
+        new_mutations = num_mutations - old_num_mutations
+        logger.info(
+            f"Extended for {len(samples)} samples ({len(exemplars)} distinct) and "
+            f"{new_mutations} new mutations."
+        )
+        tables.provenances.clear()
+        record = provenance.get_provenance_dict(command="extend")
+        tables.provenances.add_row(record=json.dumps(record))
+
+        return tables.tree_sequence(), set(distinct.keys())
+
+    def match_samples(self, sample_indexes, sample_times=None):
+        if sample_times is None:
+            sample_times = np.zeros(len(sample_indexes))
+        builder = self.tree_sequence_builder
+        for j, t in zip(sample_indexes, sample_times):
+            self.sample_id_map[j] = builder.add_node(t)
+
+        self._match_samples(sample_indexes)
 
     def finalise(self):
         logger.info("Finalising tree sequence")
@@ -2218,3 +2340,44 @@ def minimise(ts):
         filter_individuals=False,
         filter_populations=False,
     )
+
+
+class SequentialExtender:
+    def __init__(self, sample_data):
+        self.sample_data = sample_data
+
+        tables = tskit.TableCollection(sample_data.sequence_length)
+        for site in sample_data.sites():
+            tables.sites.add_row(site.position, site.ancestral_state)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        for t in [2, 1]:
+            tables.nodes.add_row(time=t)
+        tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
+        self.ancestors_ts = tables.tree_sequence()
+        # Seed the known_haplotypes with the all-zeros haplotypes so that
+        # we don't create a spurious node for it in the first generation.
+        root_haplotype = next(sample_data.haplotypes())[1].copy()
+        root_haplotype[:] = 0
+        self.haplotypes = {root_haplotype.tobytes()}
+        assert self.sample_data.num_individuals == self.sample_data.num_samples
+        self.node_metadata = sample_data.individuals_metadata[:]
+
+    def _update_ancestors_ts(self, ts):
+        # Convert the input into an ancestors_ts
+        tables = ts.dump_tables()
+        tables.nodes.time += 1
+        self.ancestors_ts = tables.tree_sequence()
+
+    def extend(self, samples, **kwargs):
+        manager = SampleMatcher(
+            self.sample_data,
+            self.ancestors_ts,
+            allow_multiallele=True,
+            **kwargs,
+        )
+        ts, haplotypes = manager.extend(
+            np.array(samples), self.haplotypes, self.node_metadata
+        )
+        self.haplotypes |= haplotypes
+        self._update_ancestors_ts(ts)
+        return ts
