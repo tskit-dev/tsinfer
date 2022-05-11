@@ -1800,7 +1800,7 @@ class SampleData(DataContainer):
         if inference is not None:
             raise ValueError(
                 "Inference sites no longer be stored in the sample data file. "
-                "Please use the exclude_sites option to generate_ancestors."
+                "Please use the exclude_positions option to generate_ancestors."
             )
         if time is None:
             time = tskit.UNKNOWN_TIME
