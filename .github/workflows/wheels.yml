@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.7, 3.8, 3.9, "3.10"]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -54,7 +54,7 @@ jobs:
 #    runs-on: windows-latest
 #    strategy:
 #      matrix:
-#        python: [3.7, 3.8, 3.9]
+#        python: [3.7, 3.8, 3.9, "3.10"]
 #        wordsize: [64]
 #    steps:
 #      - name: Checkout
@@ -152,7 +152,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.7, 3.8, 3.9, "3.10"]
     steps:
       - name: Download wheels
         uses: actions/download-artifact@v2
@@ -174,7 +174,7 @@ jobs:
 #    runs-on: windows-latest
 #    strategy:
 #      matrix:
-#        python: [3.7, 3.8, 3.9]
+#        python: [3.7, 3.8, 3.9, "3.10"]
 #        wordsize: [64]
 #    steps:
 #      - name: Download wheels
@@ -199,7 +199,7 @@ jobs:
     needs: ['manylinux']
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.7, 3.8, 3.9, "3.10"]
     steps:
       - name: Download wheels
         uses: actions/download-artifact@v2
