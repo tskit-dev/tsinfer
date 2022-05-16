@@ -1484,7 +1484,8 @@ def run_ancestor_quality(args):
         c="Frequency",
         cmap="brg",
         s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins),
+        # FIXME #669 pandas no longer (as of 1.3.0) supports passing "norm"
+        # norm=NormalizeBandWidths(band_widths=freq_bins),
     )
     ax.errorbar(
         x=data[x_col],
@@ -1577,7 +1578,8 @@ def run_ancestor_quality(args):
         c="Inferred time inaccuracy",
         cmap="BrBG",
         s=data.n_mismatches.values,
-        norm=MidpointNormalize(midpoint=0),
+        # FIXME #669 pandas no longer (as of 1.3.0) supports passing "norm"
+        # norm=MidpointNormalize(midpoint=0),
     )
     ax.set(**ax_params)
     ax.legend(handles=legend_elements, title="# bad sites\nper ancestor")
@@ -1630,14 +1632,15 @@ def run_ancestor_quality(args):
     with warnings.catch_warnings():
         # matplotlib warns for nans in error bars
         warnings.simplefilter("ignore")
-        plt.errorbar(
-            g.sem().index,
-            g.mean().values,
-            yerr=g.sem().values,
-            marker="o",
-            ls="none",
-            ecolor="0.6",
-        )
+        # FIXME #669 error in matplotlib here
+        # plt.errorbar(
+        #     g.sem().index,
+        #     g.mean().values,
+        #     yerr=g.sem().values,
+        #     marker="o",
+        #     ls="none",
+        #     ecolor="0.6",
+        # )
     plt.ylabel(Inaccuracy_label)
     plt.xlabel("Frequency")
     plt.ylim(None, args.diff_y_lim)
@@ -1650,7 +1653,8 @@ def run_ancestor_quality(args):
         c="Frequency",
         cmap="brg",
         s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins),
+        # FIXME #669 pandas no longer (as of 1.3.0) supports passing "norm"
+        # norm=NormalizeBandWidths(band_widths=freq_bins),
     )
     data = data.sort_values(by="Known time order")
     ax.errorbar(
@@ -1678,7 +1682,8 @@ def run_ancestor_quality(args):
         c="Frequency",
         cmap="brg",
         s=2,
-        norm=NormalizeBandWidths(band_widths=freq_bins),
+        # FIXME #669 pandas no longer (as of 1.3.0) supports passing "norm"
+        # norm=NormalizeBandWidths(band_widths=freq_bins),
     )
     ax.set(ylabel=Inaccuracy_label, xscale="log", ylim=(-0.01, 1), xlim=(1))
     save_figure(name_format.format(name))
