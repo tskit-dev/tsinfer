@@ -1,5 +1,8 @@
+# Pinned 2022-06-15 to get CircleCI build going, but with 
+# no particular rationale for versions since docs build
+# will move to GitHub actions soon. (#678)
 attrs
-six
-setuptools_scm 
-sphinx-argparse
-sphinx_rtd_theme
+setuptools_scm==6.0.1
+sphinx==4.5.0
+sphinx-argparse==0.3.1
+sphinx_rtd_theme==1.0.0
