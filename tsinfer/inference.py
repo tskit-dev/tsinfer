@@ -356,15 +356,21 @@ def generate_ancestors(
     :rtype: AncestorData
     """
     sample_data._check_finalised()
-    if np.any(np.isfinite(sample_data.sites_time[:])) and np.any(
-        tskit.is_unknown_time(sample_data.sites_time[:])
-    ):
+    times_as_frequencies = np.any(tskit.is_unknown_time(sample_data.sites_time[:]))
+    if np.any(np.isfinite(sample_data.sites_time[:])) and times_as_frequencies:
         raise ValueError(
             "Cannot generate ancestors from a sample_data instance that mixes user-"
             "specified times with times-as-frequencies. To explicitly set an undefined"
             "time for a site, permanently excluding it from inference, set it to np.nan."
         )
-    with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
+    time_units = (
+        tskit.TIME_UNITS_UNCALIBRATED
+        if times_as_frequencies
+        else sample_data.time_units
+    )
+    with formats.AncestorData(
+        sample_data, path=path, time_units=time_units, **kwargs
+    ) as ancestor_data:
         generator = AncestorsGenerator(
             sample_data,
             ancestor_data,
@@ -620,6 +626,10 @@ def match_samples(
         len(sample_indexes), dtype=sample_data.individuals_time.dtype
     )
     if force_sample_times:
+        if sample_data.time_units != ancestors_ts.time_units:
+            raise ValueError(
+                "Time unit mismatch between samples and ancestors when forcing times"
+            )
         individuals = sample_data.samples_individual[:][sample_indexes]
         # By construction all samples in an sd file have an individual: but check anyway
         assert np.all(individuals >= 0)
@@ -951,9 +961,9 @@ class AncestorsGenerator:
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
             ultimate_ancestor_time = root_time + av_timestep
             # Add the ultimate ancestor. This is an awkward hack really; we don't
-            # ever insert this ancestor. The only reason to add it here is that
-            # it makes sure that the ancestor IDs we have in the ancestor file are
-            # the same as in the ancestor tree sequence. This seems worthwhile.
+            # ever insert this ancestor. The only reason to add it here is that it makes
+            # sure that the ancestor IDs we have in the ancestor file are the same as
+            # used when building the ancestor tree sequence. This seems worthwhile.
             self.ancestor_data.add_ancestor(
                 start=0,
                 end=self.num_sites,
@@ -1409,6 +1419,7 @@ class AncestorMatcher(Matcher):
 
         flags, times = tsb.dump_nodes()
         pc_ancestors = is_pc_ancestor(flags)
+        tables.time_units = self.ancestor_data.time_units
         tables.nodes.set_columns(flags=flags, time=times)
 
         # # FIXME we should do this as a struct codec?
@@ -1471,6 +1482,7 @@ class AncestorMatcher(Matcher):
             tables = tskit.TableCollection(
                 sequence_length=self.ancestor_data.sequence_length
             )
+            tables.time_units = self.ancestor_data.time_units
             ts = tables.tree_sequence()
         return ts
 

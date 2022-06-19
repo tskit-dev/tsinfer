@@ -774,6 +774,36 @@ class TestZeroInferenceSites:
         self.verify([[1, 1], [1, 1], [1, 1]])
 
 
+class TestTimeUnits:
+    """
+    Tests that time units get set properly
+    """
+
+    def test_normally_uncalibrated(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        assert ts.time_units != tskit.TIME_UNITS_UNCALIBRATED
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        assert sd.time_units == ts.time_units
+        ancestors = tsinfer.generate_ancestors(sd)
+        assert ancestors.time_units == tskit.TIME_UNITS_UNCALIBRATED
+        ancestors_ts = tsinfer.match_ancestors(sd, ancestors)
+        assert ancestors_ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+        final_ts = tsinfer.match_samples(sd, ancestors_ts)
+        assert final_ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+
+    def test_with_site_times(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
+        assert ts.time_units != tskit.TIME_UNITS_UNCALIBRATED
+        sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=True)
+        assert sd.time_units == ts.time_units
+        ancestors = tsinfer.generate_ancestors(sd)
+        assert ancestors.time_units == ts.time_units
+        ancestors_ts = tsinfer.match_ancestors(sd, ancestors)
+        assert ancestors_ts.time_units == ts.time_units
+        final_ts = tsinfer.match_samples(sd, ancestors_ts)
+        assert final_ts.time_units == ts.time_units
+
+
 def random_string(rng, max_len=10):
     """
     Uses the specified random generator to generate a random string.
@@ -3781,6 +3811,36 @@ class TestHistoricalSamples:
                 sample = inf_ts.node(u)
                 assert sample.time == t
 
+    def test_insert_proxy_time_units_mismatch(self):
+        samples = [msprime.Sample(population=0, time=t) for t in (0.0, 0.0, 0.1, 1.5)]
+        ts = msprime.simulate(
+            samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321
+        )
+        sd1 = tsinfer.SampleData.from_tree_sequence(ts)
+        sd2 = tsinfer.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
+        generated_ancestors = tsinfer.generate_ancestors(sd1)
+        with pytest.raises(ValueError, match="the same time units"):
+            generated_ancestors.insert_proxy_samples(
+                sd2, require_same_sample_data=False
+            )
+
+    def test_match_samples_time_units_mismatch(self):
+        samples = [msprime.Sample(population=0, time=t) for t in (0.0, 0.0, 0.1, 1.5)]
+        ts = msprime.simulate(
+            samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321
+        )
+        sd1 = tsinfer.SampleData.from_tree_sequence(ts)
+        sd2 = tsinfer.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
+        generated_ancestors = tsinfer.generate_ancestors(sd1)
+        generated_ancestors.insert_proxy_samples(sd1)
+        ancestors_ts = tsinfer.match_ancestors(sd1, generated_ancestors)
+        with pytest.raises(ValueError, match="Time unit mismatch"):
+            tsinfer.match_samples(sd2, ancestors_ts, force_sample_times=True)
+
     def test_sample_too_old(self):
         # If we use force_sample_times=True but can't force the sample old enough
         samples = [msprime.Sample(population=0, time=t) for t in (0.0, 0.0, 0.1, 1.5)]
@@ -3788,9 +3848,6 @@ class TestHistoricalSamples:
             samples=samples, recombination_rate=1, mutation_rate=10, random_seed=321
         )
         assert ts.num_sites > 0
-        sd = tsinfer.SampleData.from_tree_sequence(
-            ts, use_sites_time=True, use_individuals_time=True
-        )
         sd = tsinfer.SampleData.from_tree_sequence(
             ts, use_sites_time=True, use_individuals_time=True
         )

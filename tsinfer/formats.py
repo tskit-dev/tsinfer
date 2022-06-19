@@ -379,6 +379,7 @@ class DataContainer:
         self,
         *,
         path=None,
+        time_units=None,
         num_flush_threads=0,
         compressor=DEFAULT_COMPRESSOR,
         chunk_size=1024,
@@ -394,6 +395,9 @@ class DataContainer:
         if path is not None:
             store = self._new_lmdb_store(max_file_size)
             self.data = zarr.open_group(store=store, mode="w")
+        if time_units is None:
+            time_units = tskit.TIME_UNITS_UNCALIBRATED
+        self.data.attrs["time_units"] = time_units
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
         self.data.attrs["uuid"] = str(uuid.uuid4())
@@ -679,6 +683,10 @@ class DataContainer:
         return str(self.data.attrs["uuid"])
 
     @property
+    def time_units(self):
+        return str(self.data.attrs["time_units"])
+
+    @property
     def num_provenances(self):
         return self.provenances_timestamp.shape[0]
 
@@ -715,6 +723,7 @@ class DataContainer:
             ("format_version", self.format_version),
             ("finalised", self.finalised),
             ("uuid", self.uuid),
+            ("time_units", self.time_units),
             ("num_provenances", self.num_provenances),
             ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
             ("provenances/record", zarr_summary(self.provenances_record)),
@@ -837,7 +846,7 @@ class Population:
 
 class SampleData(DataContainer):
     """
-    SampleData(sequence_length=0, *, path=None, num_flush_threads=0, \
+    SampleData(sequence_length=0, *, path=None, time_units=None, num_flush_threads=0, \
     compressor=DEFAULT_COMPRESSOR, chunk_size=1024, max_file_size=None)
 
     Class representing input sample data used for inference.
@@ -915,6 +924,9 @@ class SampleData(DataContainer):
         site coordinates must be less than this value.
     :param str path: The path of the file to store the sample data. If None,
         the information is stored in memory and not persistent.
+    :param str time_units: If times are input for sites or individuals, these
+        times are measured in the time units given here. If None (default)
+        assume ``tskit.TIME_UNITS_UNKNOWN``.
     :param int num_flush_threads: The number of background threads to use
         for compressing data and flushing to disc. If <= 0, do not spawn
         any threads but use a synchronous algorithm instead. Default=0.
@@ -933,16 +945,17 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (5, 0)
+    FORMAT_VERSION = (5, 1)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
     ADDING_SAMPLES = 1
     ADDING_SITES = 2
 
-    def __init__(self, sequence_length=0, **kwargs):
-
-        super().__init__(**kwargs)
+    def __init__(self, sequence_length=0, *, time_units=None, **kwargs):
+        if time_units is None:
+            time_units = tskit.TIME_UNITS_UNKNOWN
+        super().__init__(time_units=time_units, **kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["metadata"] = {}
         self.data.attrs["metadata_schema"] = permissive_json_schema()
@@ -1208,6 +1221,7 @@ class SampleData(DataContainer):
             ("sequence_length", self.sequence_length),
             ("metadata_schema", self.metadata_schema),
             ("metadata", self.metadata),
+            ("time_units", self.time_units),
             ("num_populations", self.num_populations),
             ("num_individuals", self.num_individuals),
             ("num_samples", self.num_samples),
@@ -1295,6 +1309,7 @@ class SampleData(DataContainer):
         """
         return (
             self.sequence_length == other.sequence_length
+            and self.time_units == other.time_units
             and self.formats_equal(other)
             and self.populations_equal(other)
             and self.individuals_equal(other)
@@ -1308,6 +1323,7 @@ class SampleData(DataContainer):
         False. This is useful for testing.
         """
         assert self.sequence_length == other.sequence_length
+        assert self.time_units == other.time_units
         assert self.formats_equal(other)
         assert self.populations_equal(other)
         assert self.individuals_equal(other)
@@ -1356,7 +1372,9 @@ class SampleData(DataContainer):
         sites = set(sites)
         if len(sites) != num_sites:
             raise ValueError("Duplicate site IDS")
-        with SampleData(sequence_length=self.sequence_length, **kwargs) as subset:
+        with SampleData(
+            sequence_length=self.sequence_length, time_units=self.time_units, **kwargs
+        ) as subset:
             # NOTE We don't bother filtering the populations, but we could.
             for population in self.populations():
                 subset.add_population(population.metadata)
@@ -1463,7 +1481,7 @@ class SampleData(DataContainer):
             ``use_sites_time`` is also ``True``. If ``False``, all individuals are set
             to time 0. Defaults to ``False``.
         :param \\**kwargs: Further arguments passed to the :class:`SampleData`
-            constructor.
+            constructor (time_units will be overridden with the time units from the ts).
         :return: A :class:`.SampleData` object.
         :rtype: SampleData
         """
@@ -1482,6 +1500,7 @@ class SampleData(DataContainer):
             use_individuals_time = False
 
         tables = ts.tables
+        kwargs["time_units"] = ts.time_units
         self = cls(sequence_length=ts.sequence_length, **kwargs)
 
         schema = tables.metadata_schema.schema
@@ -2132,8 +2151,8 @@ class Ancestor:
 
 class AncestorData(DataContainer):
     """
-    AncestorData(sample_data, *, path=None, num_flush_threads=0, compressor=None, \
-    chunk_size=1024, max_file_size=None)
+    AncestorData(sample_data, *, path=None, time_units=None, num_flush_threads=0, \
+    compressor=None, chunk_size=1024, max_file_size=None)
 
     Class representing the stored ancestor data produced by
     :func:`generate_ancestors`. See the ancestor data file format
@@ -2147,6 +2166,8 @@ class AncestorData(DataContainer):
         that this ancestor data file was generated from.
     :param str path: The path of the file to store the ancestor data. If None,
         the information is stored in memory and not persistent.
+    :param str time_units: The units of time which apply to the time of each
+        ancestor. If None (default), assume ``tskit.TIME_UNITS_UNCALIBRATED``.
     :param int num_flush_threads: The number of background threads to use
         for compressing data and flushing to disc. If <= 0, do not spawn
         any threads but use a synchronous algorithm instead. Default=0.
@@ -2165,7 +2186,7 @@ class AncestorData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-ancestor-data"
-    FORMAT_VERSION = (3, 0)
+    FORMAT_VERSION = (3, 1)
 
     def __init__(self, sample_data, **kwargs):
         super().__init__(**kwargs)
@@ -2352,7 +2373,8 @@ class AncestorData(DataContainer):
         Take a set of samples from a ``sample_data`` instance and create additional
         "proxy sample ancestors" from them, returning a new :class:`.AncestorData`
         instance including both the current ancestors and the additional ancestors
-        at the appropriate time points.
+        at the appropriate time points (taken from the time of the individual
+        associated with the sample).
 
         A *proxy sample ancestor* is an ancestor based upon a known sample. At
         sites used in the full inference process, the haplotype of this ancestor
@@ -2478,7 +2500,12 @@ class AncestorData(DataContainer):
             h[1] for h in sample_data.haplotypes(samples=sample_ids, sites=used_sites)
         ]
 
-        with AncestorData(sample_data, **kwargs) as other:
+        if self.time_units != sample_data.time_units and np.any(sample_times > 0):
+            raise ValueError(
+                "You must use a sample data file that uses the same time units"
+            )
+
+        with AncestorData(sample_data, time_units=self.time_units, **kwargs) as other:
             other.set_inference_sites(used_sites)
             mutated_sites = set()  # To check if mutations have ocurred yet
             ancestors_iter = self.ancestors()

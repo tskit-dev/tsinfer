@@ -162,6 +162,7 @@ class TestSampleData(DataContainerMixin):
         input_file.finalise()
         assert input_file.format_version == formats.SampleData.FORMAT_VERSION
         assert input_file.format_name == formats.SampleData.FORMAT_NAME
+        assert input_file.time_units == ts.time_units
         assert input_file.num_samples == ts.num_samples
         assert input_file.sequence_length == ts.sequence_length
         assert input_file.metadata_schema == ts.metadata_schema.schema
@@ -210,7 +211,9 @@ class TestSampleData(DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             input_file = formats.SampleData(
-                path=filename, sequence_length=ts.sequence_length
+                path=filename,
+                sequence_length=ts.sequence_length,
+                time_units=ts.time_units,
             )
             self.verify_data_round_trip(ts, input_file)
             compressor = formats.DEFAULT_COMPRESSOR
@@ -285,14 +288,19 @@ class TestSampleData(DataContainerMixin):
 
     def test_defaults_no_path(self):
         ts = tsutil.get_example_ts(10)
-        with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
+        with formats.SampleData(
+            sequence_length=ts.sequence_length,
+            time_units=ts.time_units,
+        ) as sample_data:
             self.verify_data_round_trip(ts, sample_data)
             for _, array in sample_data.arrays():
                 assert array.compressor == formats.DEFAULT_COMPRESSOR
 
     def test_with_metadata_and_individuals(self):
         ts = tsutil.get_example_individuals_ts_with_metadata(5, ploidy=2)
-        with formats.SampleData(sequence_length=ts.sequence_length) as sample_data:
+        with formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        ) as sample_data:
             self.verify_data_round_trip(ts, sample_data)
 
     def test_access_individuals(self):
@@ -364,10 +372,22 @@ class TestSampleData(DataContainerMixin):
 
     def test_from_tree_sequence_simple(self):
         ts = tsutil.get_example_ts(10)
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         assert sd1.data_equal(sd2)
+
+    def test_time_units(self):
+        ts = tsutil.get_example_ts(10)
+        tables = ts.dump_tables()
+        tables.time_units = "random time units"
+        ts = tables.tree_sequence()
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
+        self.verify_data_round_trip(ts, sd1)
 
     def test_from_tree_sequence_variable_allele_number(self):
         ts = tsutil.get_example_ts(10)
@@ -393,7 +413,9 @@ class TestSampleData(DataContainerMixin):
         ts = tables.tree_sequence()
         assert len(ts.site(0).mutations) > 1
         assert len(ts.site(ts.num_sites - 1).mutations) == 0
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, sd1)
         num_alleles = sd1.num_alleles()
         for var in ts.variants():
@@ -410,7 +432,9 @@ class TestSampleData(DataContainerMixin):
             ts.num_nodes, tskit.NULL, dtype=tables.nodes.individual.dtype
         )
         ts_no_individuals = tables.tree_sequence()
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts_no_individuals.time_units
+        )
         self.verify_data_round_trip(ts_no_individuals, sd1)
         sd2 = formats.SampleData.from_tree_sequence(
             ts_no_individuals, use_sites_time=True
@@ -419,7 +443,9 @@ class TestSampleData(DataContainerMixin):
 
     def test_from_tree_sequence_with_metadata_and_individuals(self):
         ts = tsutil.get_example_individuals_ts_with_metadata(5, ploidy=3)
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(ts, use_sites_time=True)
         sd1.assert_data_equal(sd2)
@@ -432,7 +458,9 @@ class TestSampleData(DataContainerMixin):
         # Test on a tree seq containing an individual with no nodes
         keep_samples = [u for i in ts.individuals() for u in i.nodes if i.id < n_indiv]
         ts = ts.simplify(samples=keep_samples, filter_individuals=False)
-        sd1 = formats.SampleData(sequence_length=ts.sequence_length)
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, sd1)
         sd2 = formats.SampleData.from_tree_sequence(
             ts, use_sites_time=True, use_individuals_time=True
@@ -470,12 +498,30 @@ class TestSampleData(DataContainerMixin):
         with pytest.raises(ValueError, match="Incompatible timescales"):
             _ = formats.SampleData.from_tree_sequence(ts, use_individuals_time=True)
 
+    def test_from_tree_sequence_time_units(self):
+        ploidy = 2
+        individual_times = np.arange(5)
+        ts = tsutil.get_example_historical_sampled_ts(individual_times, ploidy)
+        tables = ts.dump_tables()
+        tables.time_units = "generations"
+        ts = tables.tree_sequence()
+        sd1 = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
+        self.verify_data_round_trip(ts, sd1)
+        sd2 = formats.SampleData.from_tree_sequence(
+            ts, use_sites_time=True, use_individuals_time=True
+        )
+        sd1.assert_data_equal(sd2)
+
     def test_chunk_size(self):
         ts = tsutil.get_example_ts(4, mutation_rate=0.005)
         assert ts.num_sites > 50
         for chunk_size in [1, 2, 3, ts.num_sites - 1, ts.num_sites, ts.num_sites + 1]:
             input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, chunk_size=chunk_size
+                sequence_length=ts.sequence_length,
+                time_units=ts.time_units,
+                chunk_size=chunk_size,
             )
             self.verify_data_round_trip(ts, input_file)
             for name, array in input_file.arrays():
@@ -488,7 +534,9 @@ class TestSampleData(DataContainerMixin):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "samples.tmp")
             input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, path=filename
+                sequence_length=ts.sequence_length,
+                time_units=ts.time_units,
+                path=filename,
             )
             assert os.path.exists(filename)
             assert not os.path.isdir(filename)
@@ -512,6 +560,7 @@ class TestSampleData(DataContainerMixin):
                 files.append(filename)
                 with formats.SampleData(
                     sequence_length=ts.sequence_length,
+                    time_units=ts.time_units,
                     path=filename,
                     chunk_size=chunk_size,
                 ) as input_file:
@@ -537,6 +586,7 @@ class TestSampleData(DataContainerMixin):
                 for path in [None, filename]:
                     with formats.SampleData(
                         sequence_length=ts.sequence_length,
+                        time_units=ts.time_units,
                         path=path,
                         compressor=compressor,
                     ) as samples:
@@ -558,18 +608,24 @@ class TestSampleData(DataContainerMixin):
                     site=site.id, node=mutation.node, derived_state="T" * site.id
                 )
         ts = t.tree_sequence()
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
 
     def test_str(self):
         ts = tsutil.get_example_ts(5, random_seed=2)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
         assert len(str(input_file)) > 0
 
     def test_eq(self):
         ts = tsutil.get_example_ts(5, random_seed=3)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
         assert input_file == input_file
         assert not (input_file == [])
@@ -577,7 +633,9 @@ class TestSampleData(DataContainerMixin):
 
     def test_provenance(self):
         ts = tsutil.get_example_ts(4, random_seed=10)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
         assert input_file.num_provenances == 1
         timestamp = input_file.provenances_timestamp[0]
@@ -592,7 +650,9 @@ class TestSampleData(DataContainerMixin):
 
     def test_clear_provenance(self):
         ts = tsutil.get_example_ts(4, random_seed=6)
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
         assert input_file.num_provenances == 1
         with pytest.raises(ValueError):
@@ -861,7 +921,9 @@ class TestSampleData(DataContainerMixin):
         assert ts.num_sites > 50
         for chunk_size in [1, 2, 3, ts.num_sites - 1, ts.num_sites, ts.num_sites + 1]:
             input_file = formats.SampleData(
-                sequence_length=ts.sequence_length, chunk_size=chunk_size
+                sequence_length=ts.sequence_length,
+                time_units=ts.time_units,
+                chunk_size=chunk_size,
             )
             self.verify_data_round_trip(ts, input_file)
             # Bad lowest value
@@ -977,7 +1039,9 @@ class TestSampleData(DataContainerMixin):
         t.sort()
         ts = t.tree_sequence()
 
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
         assert len(str(input_file)) > 0
 
@@ -997,7 +1061,9 @@ class TestSampleData(DataContainerMixin):
         t.sort()
         ts = t.tree_sequence()
 
-        input_file = formats.SampleData(sequence_length=ts.sequence_length)
+        input_file = formats.SampleData(
+            sequence_length=ts.sequence_length, time_units=ts.time_units
+        )
         self.verify_data_round_trip(ts, input_file)
 
     def test_copy_error_wrong_mode(self):
