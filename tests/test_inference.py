@@ -1644,6 +1644,17 @@ class TestAncestorsTreeSequence:
         self.verify(sample_data, mismatch_ratio=100, recombination_rate=1e-9)
         self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
+    def test_time_units(self):
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [0, 1, 1])
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        assert ancestors_ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+        ancestors_ts = tsinfer.match_ancestors(
+            sample_data, ancestor_data, time_units="generations"
+        )
+        assert ancestors_ts.time_units == "generations"
+
 
 class TestAncestorsTreeSequenceFlags:
     """
@@ -1916,6 +1927,30 @@ class TestMatchSamples:
         for bad_samples in [[], [-1, 0], [0, 10]]:
             with pytest.raises(ValueError):
                 tsinfer.match_samples(sd, a_ts, indexes=bad_samples)
+
+    def test_time_units_default_uncalibrated(self):
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [0, 1, 1])
+        ts = tsinfer.infer(sample_data)
+        assert ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+
+    def test_time_units_passed_through(self):
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [0, 1, 1])
+        ts = tsinfer.infer(sample_data)
+        assert ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(
+            sample_data, ancestor_data, time_units="generations"
+        )
+        ts = tsinfer.match_samples(sample_data, ancestors_ts)
+        assert ts.time_units == "generations"
+
+    def test_time_units_in_infer(self):
+        with tsinfer.SampleData(1.0) as sample_data:
+            sample_data.add_site(0.5, [1, 1])
+        ts = tsinfer.infer(sample_data, time_units="generations")
+        assert ts.time_units == "generations"
 
 
 class AlgorithmsExactlyEqualMixin:

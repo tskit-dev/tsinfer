@@ -223,6 +223,7 @@ def infer(
     precision=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
+    time_units=None,
 ):
     """
     infer(sample_data, *, recombination_rate=None, mismatch_ratio=None,\
@@ -298,6 +299,7 @@ def infer(
         precision=precision,
         path_compression=path_compression,
         progress_monitor=progress_monitor,
+        time_units=time_units,
     )
     inferred_ts = match_samples(
         sample_data,
@@ -393,6 +395,7 @@ def match_ancestors(
     engine=constants.C_ENGINE,
     progress_monitor=None,
     extended_checks=False,
+    time_units=None,
 ):
     """
     match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
@@ -432,9 +435,11 @@ def match_ancestors(
     progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
     sample_data._check_finalised()
     ancestor_data._check_finalised()
+
     matcher = AncestorMatcher(
         sample_data,
         ancestor_data,
+        time_units=time_units,
         recombination_rate=recombination_rate,
         recombination=recombination,
         mismatch_ratio=mismatch_ratio,
@@ -1240,9 +1245,12 @@ class Matcher:
 
 
 class AncestorMatcher(Matcher):
-    def __init__(self, sample_data, ancestor_data, **kwargs):
+    def __init__(self, sample_data, ancestor_data, time_units=None, **kwargs):
         super().__init__(sample_data, ancestor_data.sites_position[:], **kwargs)
         self.ancestor_data = ancestor_data
+        if time_units is None:
+            time_units = tskit.TIME_UNITS_UNCALIBRATED
+        self.time_units = time_units
         self.num_ancestors = self.ancestor_data.num_ancestors
         self.epoch = self.ancestor_data.ancestors_time[:]
 
@@ -1394,10 +1402,10 @@ class AncestorMatcher(Matcher):
         logger.info("Finished ancestor matching")
         return ts
 
-    def get_ancestors_tree_sequence(self):
+    def get_ancestors_tables(self):
         """
-        Return the ancestors tree sequence. Only inference sites are included in this
-        tree sequence. All nodes have the sample flag bit set, and if a node
+        Return the ancestors tree sequence tables. Only inference sites are included in
+        this tree sequence. All nodes have the sample flag bit set, and if a node
         corresponds to an ancestor in the ancestors file, it is indicated via metadata.
         """
         logger.debug("Building ancestors tree sequence")
@@ -1461,18 +1469,18 @@ class AncestorMatcher(Matcher):
                 len(tables.sites),
             )
         )
-        return tables.tree_sequence()
+        return tables
 
     def store_output(self):
         if self.num_ancestors > 0:
-            ts = self.get_ancestors_tree_sequence()
+            tables = self.get_ancestors_tables()
         else:
             # Allocate an empty tree sequence.
             tables = tskit.TableCollection(
                 sequence_length=self.ancestor_data.sequence_length
             )
-            ts = tables.tree_sequence()
-        return ts
+        tables.time_units = self.time_units
+        return tables.tree_sequence()
 
 
 class SampleMatcher(Matcher):

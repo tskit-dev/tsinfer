@@ -1,4 +1,14 @@
 ********************
+[0.2.4] - 2022-06-xx
+********************
+
+**Breaking changes**:
+
+- Inference now sets time_units on both ancestor and final tree sequences to
+  tskit.TIME_UNITS_UNCALIBRATED, stopping accidental use of branch length
+  calculations on the ts. (:pr:`680`, :user:`hyanwong`)
+
+********************
 [0.2.3] - 2022-04-08
 ********************
 
