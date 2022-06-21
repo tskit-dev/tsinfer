@@ -2,6 +2,10 @@
 [0.2.4] - 2022-06-xx
 ********************
 
+**Fixes**
+
+- sample_data.subset() now accepts a sequence_length  (:pr:`681`, :user:`hyanwong`)
+
 **Breaking changes**:
 
 - Inference now sets time_units on both ancestor and final tree sequences to

@@ -1314,7 +1314,7 @@ class SampleData(DataContainer):
         assert self.samples_equal(other)
         assert self.sites_equal(other)
 
-    def subset(self, individuals=None, sites=None, **kwargs):
+    def subset(self, individuals=None, sites=None, *, sequence_length=None, **kwargs):
         """
         Returns a subset of this sample data file consisting of the specified
         individuals and sites. It is important to note that these are
@@ -1356,7 +1356,9 @@ class SampleData(DataContainer):
         sites = set(sites)
         if len(sites) != num_sites:
             raise ValueError("Duplicate site IDS")
-        with SampleData(sequence_length=self.sequence_length, **kwargs) as subset:
+        if sequence_length is None:
+            sequence_length = self.sequence_length
+        with SampleData(sequence_length=sequence_length, **kwargs) as subset:
             # NOTE We don't bother filtering the populations, but we could.
             for population in self.populations():
                 subset.add_population(population.metadata)
