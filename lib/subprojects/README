@@ -1,0 +1,3 @@
+This wrapfile is just used by meson for compiling the C code for 
+tests. It's not used by the top-level Python module in any
+way - that uses a git submodule to get the tskit code.

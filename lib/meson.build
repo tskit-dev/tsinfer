@@ -1,7 +1,5 @@
 project('tsinfer', 'c')
-
-kastore_proj = subproject('kastore')
-kastore_dep = kastore_proj.get_variable('kastore_dep')
+ 
 tskit_proj = subproject('tskit')
 tskit_dep = tskit_proj.get_variable('tskit_dep')
 
@@ -22,10 +20,10 @@ tsinfer_sources =[
 
 avl_lib = static_library('avl', sources: ['avl.c'])
 tsinfer_lib = static_library('tsinfer', 
-    sources: tsinfer_sources, dependencies: [m_dep, kastore_dep, tskit_dep], 
+    sources: tsinfer_sources, dependencies: [m_dep, tskit_dep], 
     c_args: extra_c_args, link_with:[avl_lib])
 
 unit_tests = executable('tests', 
     sources: ['tests/tests.c'], 
-    link_with: [tsinfer_lib], dependencies:[cunit_dep, kastore_dep, tskit_dep])
+    link_with: [tsinfer_lib], dependencies:[cunit_dep, tskit_dep])
 test('Unit tests', unit_tests)

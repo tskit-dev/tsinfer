@@ -50,9 +50,9 @@ handle_library_error(int err)
 }
 
 static int
-uint32_PyArray_converter(PyObject *in, PyObject **out)
+uint64_PyArray_converter(PyObject *in, PyObject **out)
 {
-    PyObject *ret = PyArray_FROMANY(in, NPY_UINT32, 1, 1, NPY_ARRAY_IN_ARRAY);
+    PyObject *ret = PyArray_FROMANY(in, NPY_UINT64, 1, 1, NPY_ARRAY_IN_ARRAY);
     if (ret == NULL) {
         return NPY_FAIL;
     }
@@ -439,7 +439,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
 
     self->tree_sequence_builder = NULL;
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|kk", kwlist,
-            uint32_PyArray_converter, &num_alleles,
+            uint64_PyArray_converter, &num_alleles,
             &max_nodes, &max_edges)) {
         goto out;
     }

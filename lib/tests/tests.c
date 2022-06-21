@@ -198,7 +198,7 @@ verify_round_trip(tsk_table_collection_t *tables, size_t num_samples, size_t num
     ret = tsk_table_collection_sort(tables, 0, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = tsk_treeseq_init(&ts, tables, TSK_BUILD_INDEXES);
+    ret = tsk_treeseq_init(&ts, tables, TSK_TS_INIT_BUILD_INDEXES);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     /* tsk_treeseq_print_state(&ts, stdout); */
@@ -212,10 +212,10 @@ verify_round_trip(tsk_table_collection_t *tables, size_t num_samples, size_t num
         ret = tsk_vargen_next(&vargen, &var);
         /* printf("ret = %s\n", tsk_strerror(ret)); */
         CU_ASSERT_FATAL(ret >= 0);
-        CU_ASSERT_EQUAL(var->site->id, j);
-        CU_ASSERT_EQUAL(var->site->position, (double) j);
+        CU_ASSERT_EQUAL(var->site.id, j);
+        CU_ASSERT_EQUAL(var->site.position, (double) j);
         for (k = 0; k < num_samples; k++) {
-            CU_ASSERT_EQUAL(var->genotypes.i8[k], samples[k][j]);
+            CU_ASSERT_EQUAL(var->genotypes[k], samples[k][j]);
         }
     }
 

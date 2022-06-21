@@ -20,9 +20,9 @@ class build_ext(_build_ext):
 
 
 libdir = "lib"
-tskroot = os.path.join(libdir, "subprojects", "tskit")
+tskroot = os.path.join("git-submodules", "tskit", "c")
 tskdir = os.path.join(tskroot, "tskit")
-kasdir = os.path.join(libdir, "subprojects", "kastore")
+kasdir = os.path.join(tskroot, "subprojects", "kastore")
 includes = [libdir, tskroot, tskdir, kasdir]
 
 tsi_source_files = [
@@ -81,7 +81,7 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        "tskit>=0.3.7",
+        "tskit>=0.5.0",
         "numcodecs>=0.6",
         # issues 965 and 967 at zarr-python prevent usage of 2.11.0 and 2.11.1
         "zarr>=2.2,!=2.11.0,!=2.11.1,!=2.11.2",
