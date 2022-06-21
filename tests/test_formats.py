@@ -1515,6 +1515,19 @@ class TestSampleDataSubset:
             sd2 = formats.SampleData.load(path)
             assert sd1.data_equal(sd2)
 
+    def test_sequence_length_change(self):
+        ts = tsutil.get_example_ts(10)
+        sd1 = formats.SampleData.from_tree_sequence(ts)
+        max_site_to_use = sd1.num_sites // 2
+        new_seq_length = sd1.sites_position[max_site_to_use + 1]
+        assert new_seq_length < sd1.sequence_length
+        assert max_site_to_use > 0
+        sd2 = sd1.subset(
+            sites=np.arange(max_site_to_use),
+            sequence_length=new_seq_length,
+        )
+        assert sd2.sequence_length == new_seq_length
+
 
 class TestSampleDataMerge:
     """
