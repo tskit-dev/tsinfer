@@ -2,6 +2,11 @@
 [0.2.4] - 2022-06-xx
 ********************
 
+**Features**
+
+- matching routines warn if no inference sites
+  (:pr:`685`, :issue:`683` :user:`hyanwong`)
+
 **Fixes**
 
 - sample_data.subset() now accepts a sequence_length  (:pr:`681`, :user:`hyanwong`)
