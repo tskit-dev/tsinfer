@@ -1027,6 +1027,8 @@ class Matcher:
         self.path_compression = path_compression
         self.num_samples = self.sample_data.num_samples
         self.num_sites = len(inference_site_position)
+        if self.num_sites == 0:
+            logging.warning("No sites used for inference")
         num_intervals = max(self.num_sites - 1, 0)
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass

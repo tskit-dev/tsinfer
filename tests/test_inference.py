@@ -22,6 +22,7 @@ Tests for the inference code.
 import io
 import itertools
 import json
+import logging
 import os.path
 import random
 import string
@@ -729,6 +730,14 @@ class TestZeroInferenceSites:
     Tests for the degenerate case in which we have no inference sites.
     """
 
+    @classmethod
+    def setup_class(cls):
+        logging.disable(logging.CRITICAL)
+
+    @classmethod
+    def teardown_class(cls):
+        logging.disable(logging.NOTSET)
+
     def verify(self, genotypes):
         genotypes = np.array(genotypes, dtype=np.int8)
         m = genotypes.shape[0]
@@ -772,6 +781,18 @@ class TestZeroInferenceSites:
     def test_three_sites(self):
         self.verify([[0, 0], [0, 0], [0, 0]])
         self.verify([[1, 1], [1, 1], [1, 1]])
+
+
+class TestZeroInferenceSitesWarning:
+    def test_warning_match_ancestors(self, caplog):
+        with tsinfer.SampleData(sequence_length=10) as sd:
+            sd.add_site(1, [0, 0])
+        ancestors = tsinfer.generate_ancestors(sd)
+        with caplog.at_level(logging.WARNING):
+            ats = tsinfer.match_ancestors(sd, ancestors)
+            assert caplog.text.count("No sites used") == 1
+            _ = tsinfer.match_samples(sd, ats)
+            assert caplog.text.count("No sites used") == 2
 
 
 def random_string(rng, max_len=10):
