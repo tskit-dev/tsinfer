@@ -378,6 +378,9 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
         Read the sites in the vcf and add them to the samples object, reordering the
         alleles to put the ancestral allele first, if it is available.
         """
+        # You may want to change the following line, e.g. here we allow * (a spanning
+        # deletion) to be a valid allele state
+        allowed_allele_chars = set("ATGCatgc*")
         pos = 0
         for variant in vcf:  # Loop over variants, each assumed at a unique site
             if pos == variant.POS:
@@ -387,9 +390,20 @@ variants from chromosome 24 of ten Norwegian and French house sparrows,
             if any([not phased for _, _, phased in variant.genotypes]):
                 raise ValueError("Unphased genotypes for variant at position", pos)
             alleles = [variant.REF] + variant.ALT
-            ancestral = variant.INFO.get("AA", variant.REF)
+            ancestral = variant.INFO.get("AA", ".")  # "." means unknown
+            # some VCFs (e.g. from 1000G) have many values in the AA field: take the 1st
+            ancestral = ancestral.split("|")[0]
+            if ancestral == ".":
+                # use the reference as ancestral, if unknown (NB: you may not want this)
+                ancestral = variant.REF
             # Ancestral state must be first in the allele list.
             ordered_alleles = [ancestral] + list(set(alleles) - {ancestral})
+            # Check we have ATCG alleles
+            for allele in ordered_alleles:
+                if len(set(allele) - allowed_allele_chars) > 0:
+                    raise ValueError(
+                        "Site at pos {pos}: allele {allele} not in {allowed_allele_chars}"
+                    )
             allele_index = {
                 old_index: ordered_alleles.index(allele)
                 for old_index, allele in enumerate(alleles)
