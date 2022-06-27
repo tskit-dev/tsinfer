@@ -1,7 +1,7 @@
 include lib/*.h
-include lib/subprojects/tskit/*.h
-include lib/subprojects/tskit/tskit/*.h
-include lib/subprojects/kastore/*.h
+include git-submodules/tskit/c/*.h
+include git-submodules/tskit/c/tskit/*.h
+include git-submodules/tskit/c/subprojects/kastore/*.h
 include README.txt
 include LICENSE
 recursive-include tests *.py
