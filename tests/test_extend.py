@@ -298,3 +298,49 @@ class TestExtendIdenticalSequences:
         }
         assert ts.node(6).flags == tsinfer.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR
         assert ts.node(7).flags == tsinfer.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR
+
+
+class TestExtendLsParameters:
+    def run(self, num_mismatches=None):
+
+        with tsinfer.SampleData(sequence_length=6) as sd:
+            sd.add_site(0, [0, 1, 1])
+            sd.add_site(1, [1, 0, 1])
+            sd.add_site(2, [0, 1, 1])
+            sd.add_site(3, [1, 0, 1])
+            sd.add_site(4, [0, 1, 1])
+            sd.add_site(5, [1, 0, 1])
+
+        extender = tsinfer.SequentialExtender(sd)
+        for j in range(3):
+            ts = extender.extend(
+                [j],
+                num_mismatches=num_mismatches,
+                num_threads=0,
+                engine=tsinfer.C_ENGINE,
+            )
+        return ts
+
+    @pytest.mark.parametrize("mismatches", [None, 0, 0.5])
+    def test_all_recombination(self, mismatches):
+        ts = self.run(mismatches)
+        # We have a recombination at every site and exactly one mutation per site.
+        assert ts.num_trees == ts.num_sites
+        assert ts.num_mutations == ts.num_sites
+
+    @pytest.mark.parametrize("mismatches", [3, 3.1, 4, 100, 1000])
+    def test_no_recombination(self, mismatches):
+        ts = self.run(mismatches)
+        assert ts.num_trees == 1
+        assert ts.num_mutations == 9
+
+    def test_one_mismatch(self):
+        ts = self.run(1)
+        # This is all quite tricky - not quite sure what to expect. Keep
+        # lint happy for now
+        assert ts is not None
+        # print(ts.tables)
+        # print()
+        # print(ts.draw_text())
+        # print(ts.tables.mutations[ts.tables.mutations.node == 4])
+        # print(ts.tables.mutations)

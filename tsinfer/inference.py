@@ -2342,6 +2342,31 @@ def minimise(ts):
     )
 
 
+def solve_num_mismatches(ts, k):
+    """
+    Return the low-level LS parameters corresponding to accepting
+    k mismatches in favour of a single recombination.
+    """
+    m = ts.num_sites
+    n = ts.num_nodes  # We can match against any node in tsinfer
+    if k == 0:
+        # Pathological things happen when k=0
+        r = 1e-3
+        mu = 1e-20
+    else:
+        mu = 1e-6
+        denom = (1 - mu) ** k + (n - 1) * mu**k
+        r = n * mu**k / denom
+        # print("n = ", n, "k = ",k)
+        # print(mu, r)
+        assert mu < 0.5
+        assert r < 0.5
+
+    ls_recomb = np.full(m - 1, r)
+    ls_mismatch = np.full(m, mu)
+    return ls_recomb, ls_mismatch
+
+
 class SequentialExtender:
     def __init__(self, sample_data):
         self.sample_data = sample_data
@@ -2368,11 +2393,17 @@ class SequentialExtender:
         tables.nodes.time += 1
         self.ancestors_ts = tables.tree_sequence()
 
-    def extend(self, samples, **kwargs):
+    def extend(self, samples, num_mismatches=None, **kwargs):
+        num_mismatches = 0 if num_mismatches is None else num_mismatches
+
+        ls_recomb, ls_mismatch = solve_num_mismatches(self.ancestors_ts, num_mismatches)
+
         manager = SampleMatcher(
             self.sample_data,
             self.ancestors_ts,
             allow_multiallele=True,
+            recombination=ls_recomb,
+            mismatch=ls_mismatch,
             **kwargs,
         )
         ts, haplotypes = manager.extend(
