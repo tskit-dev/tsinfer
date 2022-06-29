@@ -73,6 +73,16 @@ def num_nonsample_muts(ts):
     return np.sum(np.logical_not(np.isin(ts.tables.mutations.node, ts.samples())))
 
 
+def assign_individual_ids(ts):
+    tables = ts.dump_tables()
+    ind_md = [{"id": i} for i in range(ts.num_individuals)]
+    tables.individuals.metadata_schema = tskit.MetadataSchema.permissive_json()
+    tables.individuals.packset_metadata(
+        [tables.individuals.metadata_schema.validate_and_encode_row(r) for r in ind_md]
+    )
+    return tables.tree_sequence()
+
+
 @fixture(scope="session")
 def small_ts_fixture():
     """
@@ -81,6 +91,7 @@ def small_ts_fixture():
     """
     ts = msprime.sim_ancestry(10, sequence_length=1000, ploidy=1, random_seed=1)
     ts = msprime.sim_mutations(ts, rate=0.01, random_seed=1)
+    ts = assign_individual_ids(ts)
     assert num_nonsample_muts(ts) > 1
     return mark_mutation_times_unknown(ts)
 
@@ -112,14 +123,8 @@ def medium_ts_fixture():
     ts = msprime.sim_ancestry(
         10, sequence_length=1000, ploidy=1, recombination_rate=0.01, random_seed=3
     )
-    tables = ts.dump_tables()
-    ind_md = [{"id": i} for i in range(ts.num_individuals)]
-    tables.individuals.metadata_schema = tskit.MetadataSchema.permissive_json()
-    tables.individuals.packset_metadata(
-        [tables.individuals.metadata_schema.validate_and_encode_row(r) for r in ind_md]
-    )
-    ts = tables.tree_sequence()
     ts = msprime.sim_mutations(ts, rate=0.02, random_seed=3)
+    ts = assign_individual_ids(ts)
     assert ts.num_trees > 10
     assert num_nonsample_muts(ts) > 50
     return mark_mutation_times_unknown(ts)

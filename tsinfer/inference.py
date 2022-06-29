@@ -221,22 +221,24 @@ def infer(
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
-    simplify=True,
     exclude_positions=None,
+    post_process=None,
     num_threads=0,
     # Deliberately undocumented parameters below
     precision=None,
     engine=constants.C_ENGINE,
     progress_monitor=None,
     time_units=None,
+    simplify=None,  # Deprecated
 ):
     """
     infer(sample_data, *, recombination_rate=None, mismatch_ratio=None,\
-            path_compression=True, simplify=True, exclude_positions=None, num_threads=0)
+            path_compression=True, exclude_positions=None, post_process=None,\
+            num_threads=0)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
     :class:`SampleData` instance and returns the inferred
-    :class:`tskit.TreeSequence`.   See
+    :class:`tskit.TreeSequence`.  See
     :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
     in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
     and ``path_compression``.
@@ -261,12 +263,9 @@ def infer(
         recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
-    :param bool simplify: Whether to remove extra tree nodes and edges that are not
-        on a path between the root and any of the samples. To do so, the final tree
-        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
-        method with ``filter_sites``, ``filter_populations`` and
-        ``filter_individuals`` set to False, and ``keep_unary`` set to True
-        (default = ``True``).
+    :param bool post_process: Whether to run the :func:`post_process` method on the
+        the tree sequence which, among other things, removes ancestral material that
+        does not end up in the current samples (if not specified, defaults to ``True``)
     :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
         ancestors, and not used during the copying process. Any such sites that
@@ -277,6 +276,8 @@ def infer(
     :param int num_threads: The number of worker threads to use in parallelised
         sections of the algorithm. If <= 0, do not spawn any threads and
         use simpler sequential algorithms (default).
+    :param bool simplify: When post_processing, only simplify the tree sequence.
+        deprecated but retained for backwards compatibility (default: ``None``).
     :return: The :class:`tskit.TreeSequence` object inferred from the
         input sample data.
     :rtype: tskit.TreeSequence
@@ -314,9 +315,10 @@ def infer(
         recombination_rate=recombination_rate,
         mismatch_ratio=mismatch_ratio,
         precision=precision,
+        post_process=post_process,
         path_compression=path_compression,
-        simplify=simplify,
         progress_monitor=progress_monitor,
+        simplify=simplify,
     )
     return inferred_ts
 
@@ -547,8 +549,8 @@ def match_samples(
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
-    simplify=True,
     indexes=None,
+    post_process=None,
     force_sample_times=False,
     num_threads=0,
     # Deliberately undocumented parameters below
@@ -558,11 +560,12 @@ def match_samples(
     extended_checks=False,
     engine=constants.C_ENGINE,
     progress_monitor=None,
+    simplify=None,  # deprecated
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
-        mismatch_ratio=None, path_compression=True, simplify=True, indexes=None,\
-        force_sample_times=False, num_threads=0)
+        mismatch_ratio=None, path_compression=True, post_process=None,\
+        indexes=None, force_sample_times=False, num_threads=0)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
     on the specified :class:`SampleData` instance and ancestors tree sequence,
@@ -589,25 +592,41 @@ def match_samples(
         recombination rate has been set (default: 1)
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
-    :param bool simplify: Whether to remove extra tree nodes and edges that are not
-        on a path between the root and any of the samples. To do so, the final tree
-        sequence is simplified by appling the :meth:`tskit.TreeSequence.simplify`
-        method with ``filter_sites``, ``filter_populations`` and
-        ``filter_individuals`` set to False and ``keep_unary`` set to True
-        (default = ``True``).
     :param array_like indexes: An array of indexes into the sample_data file of
         the samples to match (in increasing order) or None for all samples.
+    :param bool post_process: Whether to run the :func:`post_process` method on the
+        the tree sequence which, among other things, removes ancestral material that
+        does not end up in the current samples (if not specified, defaults to ``True``)
     :param bool force_sample_times: After matching, should an attempt be made to
         adjust the time of "historical samples" (those associated with an individual
         having a non-zero time) such that the sample nodes in the tree sequence
         appear at the time of the individual with which they are associated.
     :param int num_threads: The number of match worker threads to use. If
         this is <= 0 then a simpler sequential algorithm is used (default).
+    :param bool simplify: Treated as an alias for ``post_process``, deprecated but
+        currently retained for backwards compatibility if set to ``False``.
 
     :return: The tree sequence representing the inferred history
         of the sample.
     :rtype: tskit.TreeSequence
     """
+    simplify_only = False  # if true, carry out "old" (deprecated) simplify behaviour
+    if simplify is None:
+        if post_process is None:
+            post_process = True
+    else:
+        if post_process is not None:
+            raise ValueError("Can't specify both `simplify` and `post_process`")
+        else:
+            if simplify:
+                logger.warning(
+                    "The `simplify` parameter is deprecated in favour of `post_process`"
+                )
+                simplify_only = True
+                post_process = True
+            else:
+                post_process = False
+
     sample_data._check_finalised()
     progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
     manager = SampleMatcher(
@@ -640,7 +659,11 @@ def match_samples(
         # we sometimes assume they are in the same order as in the file
 
     manager.match_samples(sample_indexes, sample_times)
-    ts = manager.finalise(simplify=simplify)
+    ts = manager.finalise()
+    if post_process:
+        ts = _post_process(
+            ts, warn_if_unexpected_format=True, simplify_only=simplify_only
+        )
     return ts
 
 
@@ -956,19 +979,17 @@ class AncestorsGenerator:
             root_time = max(self.timepoint_to_epoch.keys())
             av_timestep = root_time / len(self.timepoint_to_epoch)
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
-            ultimate_ancestor_time = root_time + av_timestep
-            # Add the ultimate ancestor. This is an awkward hack really; we don't
-            # ever insert this ancestor. The only reason to add it here is that
-            # it makes sure that the ancestor IDs we have in the ancestor file are
-            # the same as in the ancestor tree sequence. This seems worthwhile.
+            # Add an extra ancestor to act as a type of "virtual root" for the matching
+            # algorithm: rather an awkward hack, but also allows the ancestor IDs to
+            # line up. It's normally removed when processing the final tree sequence.
             self.ancestor_data.add_ancestor(
                 start=0,
                 end=self.num_sites,
-                time=ultimate_ancestor_time,
-                focal_sites=[],
+                time=root_time + av_timestep,
+                focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
             )
-            # Hack to ensure we always have a root with zeros at every position.
+            # This is the the "grand MRCA" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
                 end=self.num_sites,
@@ -1030,7 +1051,7 @@ class Matcher:
         self.num_samples = self.sample_data.num_samples
         self.num_sites = len(inference_site_position)
         if self.num_sites == 0:
-            logging.warning("No sites used for inference")
+            logger.warning("No sites used for inference")
         num_intervals = max(self.num_sites - 1, 0)
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
@@ -1263,10 +1284,10 @@ class AncestorMatcher(Matcher):
         for ancestor_id in range(self.num_ancestors):
             self.tree_sequence_builder.add_node(self.epoch[ancestor_id])
         self.ancestors = self.ancestor_data.ancestors()
-        # Consume the first ancestor.
-        a = next(self.ancestors, None)
+        # Consume the "virtual root" ancestor
+        virtual_root_ancestor = next(self.ancestors, None)
         self.num_epochs = 0
-        if a is not None:
+        if virtual_root_ancestor is not None:
             # assert np.array_equal(a.haplotype, np.zeros(self.num_sites, dtype=np.int8))
             # Create a list of all ID ranges in each epoch.
             breaks = np.where(self.epoch[1:] != self.epoch[:-1])[0]
@@ -1643,33 +1664,18 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def finalise(self, simplify):
+    def finalise(self):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
-        if simplify:
-            logger.info(
-                "Running simplify(filter_sites=False, filter_populations=False, "
-                "filter_individuals=False, keep_unary=True) on "
-                f"{ts.num_nodes} nodes and {ts.num_edges} edges"
-            )
-            ts = ts.simplify(
-                samples=list(self.sample_id_map.values()),
-                filter_sites=False,
-                filter_populations=False,
-                filter_individuals=False,
-                keep_unary=True,
-            )
-            logger.info(
-                "Finished simplify; now have {} nodes and {} edges".format(
-                    ts.num_nodes, ts.num_edges
-                )
-            )
+        # Check that there are the same number of samples as expected
+        assert len(self.sample_id_map) == ts.num_samples
         return ts
 
     def get_samples_tree_sequence(self, map_additional_sites=True):
         """
-        Returns the current state of the build tree sequence. All samples and
-        ancestors will have the sample node flag set. For correct sample reconstruction,
+        Returns the current state of the build tree sequence. Sample nodes will have the
+        sample node flag set and be in the same order as passed the order of
+        sample_indexes passed to match_samples. For correct sample reconstruction,
         the non-inference sites also need to be placed into the resulting tree sequence.
         """
         tsb = self.tree_sequence_builder
@@ -1749,7 +1755,10 @@ class SampleMatcher(Matcher):
             # we have a rooted tree, we add in edges for each sample to an artificial
             # root.
             assert left.shape[0] == 0
-            root = tables.nodes.add_row(flags=0, time=tables.nodes.time.max() + 1)
+            max_node_time = tables.nodes.time.max()
+            root = tables.nodes.add_row(flags=0, time=max_node_time + 1)
+            ultimate = tables.nodes.add_row(flags=0, time=max_node_time + 2)
+            tables.edges.add_row(0, tables.sequence_length, ultimate, root)
             for sample_id in sample_ids:
                 tables.edges.add_row(0, tables.sequence_length, root, sample_id)
         else:
@@ -1795,6 +1804,7 @@ class SampleMatcher(Matcher):
                 len(tables.mutations),
             )
         )
+
         ts = tables.tree_sequence()
         num_additional_sites = self.sample_data.num_sites - self.num_sites
         if map_additional_sites and num_additional_sites > 0:
@@ -1910,6 +1920,176 @@ class ResultBuffer:
 
     def get_mutations(self, node_id):
         return self.mutations[node_id]
+
+
+def has_single_edge_over_grand_root(ts):
+    # Internal function to check if this is a "raw" inferred tree sequence.
+    if ts.num_edges < 2:
+        # must have edge to grand root and above grand root
+        return False
+    last_edge = ts.edge(-1)
+    if last_edge.left != 0 or last_edge.right != ts.sequence_length:
+        return False  # Not a single edge spanning the entire genome
+    if ts.edge(-2).parent == last_edge.parent:
+        return False  # other edges point to the oldest node => not a virtual-like root
+    return True
+
+
+def has_same_root_everywhere(ts):
+    roots = set()
+    for tree in ts.trees():
+        if not tree.has_single_root:
+            return False
+        roots.add(tree.root)
+        if len(roots) > 1:
+            return False
+    return True
+
+
+def post_process(
+    ts,
+    *,
+    split_mrca=None,
+    # Parameters below deliberately undocumented
+    warn_if_unexpected_format=None,
+    simplify_only=None,
+):
+    """
+    post_process(ts, *, split_mrca=None)
+
+    Post-process a tsinferred tree sequence into a more conventional form. This is
+    the function run by default on the final tree sequence output by
+    :func:`match_samples`. It involves the following 3 steps:
+
+    #. If the oldest node is connected to a single child via an edge that spans the
+       entire tree sequence, this oldest node is removed, so that its child becomes
+       the new root (this step is undertaken to remove the "virtual-root-like node"
+       which is added to ancestor tree sequences to enable matching).
+    #. If the oldest node is removed in the first step and the new root spans the
+       entire genome, it is treated as the "grand MRCA" and (if split_mrca is ``True``)
+       the node is split into multiple coexisiting nodes with the splits
+       occurring whenever the children of the grand MRCA change. The rationale
+       is that tsinfer creates a grand MRCA consisting of a single ancestral haplotype
+       with all inference sites in the ancestral state: this is, however, unlikely
+       to represent a single ancestor in the past. If nodes in the tree sequence are
+       then dated, these MRCA nodes can be pushed to different times.
+    #. The sample nodes are reordered such that they are the first nodes listed in the
+       node table,  removing tree nodes and edges that are not on a path between the
+       root and any of the samples (by applying the :meth:`~tskit.TreeSequence.simplify`
+       method with ``keep_unary`` set to True but ``filter_sites``,
+       ``filter_populations`` and ``filter_individuals`` set to False).
+
+    :param bool split_mrca: If ``True`` (default) and the oldest node is the only
+        parent to a single "grand MRCA", split the grand MRCA into separate nodes
+        (see above). If ``False`` do not attempt to identify or split a grand MRCA.
+    :return: The post-processed tree sequence.
+    :rtype: tskit.TreeSequence
+    """
+    if split_mrca is None:
+        split_mrca = True
+
+    tables = ts.dump_tables()
+
+    if not simplify_only:
+        if has_single_edge_over_grand_root(ts):
+            logger.info(
+                "Removing the oldest edge to detach the virtual-root-like ancestor"
+            )
+            last_edge = ts.edge(-1)  # Edge with oldest parent is last in the edge table
+            tables.edges.truncate(tables.edges.num_rows - 1)
+
+            # move any mutations above the virtual-root-like ancestor to above the grand
+            # MRCA instead (these will be mutations placed by parsimony)
+            mutations_node = tables.mutations.node
+            mutations_node[mutations_node == last_edge.parent] = last_edge.child
+            tables.mutations.node = mutations_node
+
+            if split_mrca:
+                split_grand_mrca(tables, warn_if_unexpected_format)
+        elif warn_if_unexpected_format:
+            logger.warning(
+                "Cannot find a virtual-root-like ancestor during preprocessing"
+            )
+
+    logger.info(
+        "Simplifying with filter_sites=False, filter_populations=False, "
+        "filter_individuals=False, and keep_unary=True on "
+        f"{tables.nodes.num_rows} nodes and {ts.num_edges} edges"
+    )
+    # NB: if this is an inferred TS, match_samples is guaranteed to produce samples
+    # in the same order as passed in to sample_indexes, and simplification will
+    # simply stick all those at the start but keep their order the same
+    tables.simplify(
+        filter_sites=False,
+        filter_populations=False,
+        filter_individuals=False,
+        keep_unary=True,
+    )
+    logger.info(
+        "Finished simplify; now have {} nodes and {} edges".format(
+            tables.nodes.num_rows, tables.edges.num_rows
+        )
+    )
+    return tables.tree_sequence()
+
+
+def _post_process(*args, **kwargs):
+    return post_process(*args, **kwargs)
+
+
+def split_grand_mrca(tables, warn_if_unexpected_format=None):
+    # Internal function: if a single oldest node is a root across the entire genome,
+    # split it up into a set of contemporaneous nodes whenever the node children change
+
+    ts = tables.tree_sequence()
+    if not has_same_root_everywhere(ts):
+        if warn_if_unexpected_format:
+            logger.warning("Cannot find a single contiguous grand MRCA to split")
+        return
+
+    # Split into multiple contemporaneous nodes whenever the node children change
+    logger.info("Splitting the all zeros grand MRCA into separate nodes")
+    genomewide_mrca_id = ts.edge(-1).parent
+    genomewide_mrca = ts.node(genomewide_mrca_id)
+    root_breaks = set()
+    edges = tables.edges
+    j = len(edges) - 1  # the last edges are the ones connecting to the genomewide_mrca
+    while j >= 0 and edges[j].parent == genomewide_mrca_id:
+        root_breaks |= {edges[j].left, edges[j].right}
+        j -= 1
+    root_breaks = sorted(root_breaks)
+    assert root_breaks[0] == 0
+    if root_breaks[1] == tables.sequence_length:
+        # Only a single edge: no splitting needed
+        return
+
+    # detach the grand_mrca from all its children: it will then get simplified out
+    tables.edges.truncate(j + 1)
+
+    # Move the mutations above the grand_mrca to the new nodes
+    mutation_ids = np.where(tables.mutations.node == genomewide_mrca_id)[0]
+    mutation_positions = tables.sites.position[tables.mutations.site[mutation_ids]]
+    mut_iter = zip(mutation_ids, mutation_positions)
+    mutation_id, mutation_pos = next(mut_iter, (None, ts.sequence_length))
+
+    # Go through the trees, making a new root node whereever we hit a root_break
+    # and recreating the edges to the children each time
+    trees_iter = ts.trees()
+    tree = next(trees_iter)
+    left = root_breaks[0]
+    for right in root_breaks[1:]:
+        while tree.interval.right != right:
+            tree = next(trees_iter)
+        new_root = tables.nodes.append(genomewide_mrca)
+        for c in tree.children(genomewide_mrca_id):
+            tables.edges.add_row(parent=new_root, child=c, left=left, right=right)
+        while mutation_pos < right:
+            tables.mutations[mutation_id] = tables.mutations[mutation_id].replace(
+                node=new_root
+            )
+            mutation_id, mutation_pos = next(mut_iter, (None, ts.sequence_length))
+        left = right
+    tables.sort()
 
 
 def minimise(ts):
