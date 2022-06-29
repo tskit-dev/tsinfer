@@ -55,6 +55,8 @@ Running inference
 
 .. autofunction:: tsinfer.augment_ancestors
 
+.. autofunction:: tsinfer.post_process
+
 **********
 Exceptions
 **********

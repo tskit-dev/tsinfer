@@ -205,6 +205,7 @@ class TestRoundTrip:
         ]
         for params in test_params:
             ts = tsinfer.infer(sample_data, **params)
+
             self.assert_lossless(
                 ts, genotypes, positions, alleles, sample_data.sequence_length
             )
@@ -1018,12 +1019,11 @@ class TestMetadataRoundTrip:
             t1 = output_ts.simplify(subset).dump_tables()
             assert len(t1.individuals.metadata) > 0
             assert len(t1.individuals.location) > 0
-            t1.provenances.clear()
             t2 = tsinfer.match_samples(
                 sample_data, ancestors_ts, indexes=subset
             ).dump_tables()
             t2.simplify()
-            assert t1.equals(t2, ignore_provenance=True)
+            t1.assert_equals(t2, ignore_provenance=True)
 
     def test_individual_location(self):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
@@ -1920,9 +1920,10 @@ class TestMatchSamples:
     """
 
     def test_partial_samples(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
+        ts = msprime.sim_ancestry(
+            10, sequence_length=1e4, recombination_rate=2e-4, random_seed=233
         )
+        ts = msprime.sim_mutations(ts, rate=2e-4, random_seed=233)
         for tree_seq in [ts, eval_util.strip_singletons(ts)]:
             sd = tsinfer.SampleData.from_tree_sequence(tree_seq, use_sites_time=False)
             ts1 = tsinfer.infer(sd)
@@ -1971,6 +1972,17 @@ class TestMatchSamples:
             sample_data.add_site(0.5, [1, 1])
         ts = tsinfer.infer(sample_data, time_units="generations")
         assert ts.time_units == "generations"
+
+    def test_ultimate_ancestor_removed(self):
+        ts = msprime.simulate(10, mutation_rate=10, recombination_rate=2, random_seed=1)
+        assert ts.num_sites > 0
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        anc = tsinfer.generate_ancestors(sd)
+        ultimate_ancestor = anc.ancestor(0)
+        ancestors_ts = tsinfer.match_ancestors(sd, anc)
+        assert ancestors_ts.num_sites > 0
+        final_ts = tsinfer.match_samples(sd, ancestors_ts)
+        assert ultimate_ancestor.time not in final_ts.tables.nodes.time
 
 
 class AlgorithmsExactlyEqualMixin:
@@ -2476,36 +2488,318 @@ class TestWrongAncestorsTreeSequence:
 
 class TestSimplify:
     """
-    Check that the simplify argument to infer is correctly invoked.
+    Check that the simplify argument to infer is correctly invoked. This parameter is
+    deprecated but should continue to be supported.
+    """
+
+    def verify(self, ts, caplog):
+        n = ts.num_samples
+        assert ts.num_sites > 2
+        sd = tsinfer.SampleData.from_tree_sequence(ts)
+        with caplog.at_level(logging.WARNING):
+            ts1 = tsinfer.infer(sd, simplify=True)
+            assert caplog.text.count("deprecated") == 1
+            # When simplify is true the samples should be zero to n.
+            assert list(ts1.samples()) == list(range(n))
+            for tree in ts1.trees():
+                assert tree.num_samples() == len(list(tree.leaves()))
+
+        # When simplify is true and there is no path compression,
+        # the samples should be zero to N - n up to n
+        with caplog.at_level(logging.WARNING):
+            ts2 = tsinfer.infer(sd, simplify=False, path_compression=False)
+            assert caplog.text.count("deprecated") == 1
+            assert list(ts2.samples()) == list(range(ts2.num_nodes - n, ts2.num_nodes))
+
+        # Check that we're calling simplify with the correct arguments.
+        with caplog.at_level(logging.WARNING):
+            ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
+            assert caplog.text.count("deprecated") == 1
+            assert ts1.equals(ts2, ignore_provenance=True)
+
+    def test_single_tree(self, caplog):
+        ts = msprime.simulate(5, random_seed=1, mutation_rate=2)
+        self.verify(ts, caplog)
+
+    def test_many_trees(self, caplog):
+        ts = msprime.simulate(5, random_seed=1, recombination_rate=2, mutation_rate=2)
+        assert ts.num_trees > 2
+        self.verify(ts, caplog)
+
+
+def ts_root_tests():
+    """
+    Return (tree sequence, has_single_root_edge, name) tuples of tree seqs with various
+    odd root properties
+    """
+    tables = tskit.TableCollection(2)
+    yield tables.tree_sequence(), False, "Empty"
+
+    tables.nodes.add_row(time=1)  # Put in a few unreferenced nodes for good measure
+    tables.nodes.add_row(time=2)
+    tables.edges.add_row(parent=1, child=0, left=0, right=1)  # "dead" topology
+    yield tables.tree_sequence(), False, "Topology but no samples"
+
+    first_sample = tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE)
+    yield tables.tree_sequence(), False, "Isolated_node_1"
+
+    # Make a few isolated nodes
+    tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE)
+    tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE)
+    ts = tables.tree_sequence()
+    assert ts.first().num_roots > 1
+    yield ts, False, "Isolated_nodes_3"
+
+    tables.edges.add_row(parent=0, child=first_sample, left=0, right=1)
+    tables.sort()
+    ts = tables.tree_sequence()
+    assert ts.first().num_roots > 1
+    yield ts, False, "Partial_3_root"
+
+    tables.nodes.truncate(first_sample + 1)
+    ts = tables.tree_sequence()
+    assert ts.num_samples == 1
+    yield ts, False, "Partial_1_root"
+
+    tables.edges.add_row(parent=1, child=first_sample, left=1, right=ts.sequence_length)
+    tables.sort()
+    ts = tables.tree_sequence()
+    assert ts.at_index(0).root == ts.at_index(1).root
+    yield ts, False, "Two_edges_to_1_root"
+
+    tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE)
+    ts = tables.tree_sequence()
+    assert ts.at_index(0).num_roots > 1
+    yield ts, False, "Two_edges_to_1_root_plus_isolated"
+
+    tables.nodes.truncate(first_sample + 1)
+    tables.edges.truncate(len(tables.edges) - 1)
+    tables.edges.add_row(parent=0, child=first_sample, left=1, right=ts.sequence_length)
+    tables.sort()
+    ts = tables.tree_sequence()
+    assert ts.at_index(0).root != ts.at_index(1).root
+    yield ts, False, "Two_edges_to_2_roots"
+
+    oldest = tables.nodes.add_row(time=3)
+    tables.edges.add_row(parent=oldest, child=1, left=0, right=ts.sequence_length)
+    u = tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE)  # add an isolated node too
+    yield tables.tree_sequence(), True, "Single_root_edge"
+
+    tables.edges.add_row(parent=oldest, child=u, left=0, right=ts.sequence_length)
+    yield tables.tree_sequence(), False, "Multi_root_edge"
+
+
+def ts_root_test_params():
+    return [pytest.param(ts, id=name) for ts, _, name in ts_root_tests()]
+
+
+def ts_single_root_edge_test_params():
+    return [
+        pytest.param(ts, id=name)
+        for ts, has_single_root_edge, name in ts_root_tests()
+        if has_single_root_edge
+    ]
+
+
+def ts_not_single_root_edge_test_params():
+    return [
+        pytest.param(ts, id=name)
+        for ts, has_single_root_edge, name in ts_root_tests()
+        if not has_single_root_edge
+    ]
+
+
+class TestRootCheckingFunctions:
+    """
+    Tests some helper functions such as has_single_edge_over_grand_root and
+    has_same_root_everywhere
+    """
+
+    @pytest.mark.parametrize("ts", ts_root_test_params())
+    def test_has_same_root_everywhere(self, ts):
+        roots = {root for tree in ts.trees() for root in tree.roots}
+        if len(roots) == 1 and tskit.NULL not in roots:
+            assert tsinfer.has_same_root_everywhere(ts)
+        else:
+            assert not tsinfer.has_same_root_everywhere(ts)
+
+    @pytest.mark.parametrize("ts", ts_single_root_edge_test_params())
+    def test_has_single_edge_over_grand_root(self, ts):
+        assert tsinfer.has_single_edge_over_grand_root(ts)
+
+    @pytest.mark.parametrize("ts", ts_not_single_root_edge_test_params())
+    def test_not_has_single_edge_over_grand_root(self, ts):
+        assert not tsinfer.has_single_edge_over_grand_root(ts)
+
+
+class TestPostProcess:
+    """
+    Check that we correctly post_process the samples tree sequence.
     """
 
     def verify(self, ts):
         n = ts.num_samples
         assert ts.num_sites > 2
         sd = tsinfer.SampleData.from_tree_sequence(ts)
-        ts1 = tsinfer.infer(sd, simplify=True)
-        # When simplify is true the samples should be zero to n.
+        ts1 = tsinfer.infer(sd, post_process=True)
+        # When post processing, the samples should be zero to n.
         assert list(ts1.samples()) == list(range(n))
         for tree in ts1.trees():
             assert tree.num_samples() == len(list(tree.leaves()))
+        # Should be same order as in the sampledata file
+        for u, v in zip(ts.samples(), ts1.samples()):
+            # The fixtures allocate an "id" to the individuals
+            name_orig = ts.individual(ts.node(u).individual).metadata["id"]
+            name_infer = ts1.individual(ts1.node(v).individual).metadata["id"]
+            assert name_orig == name_infer
+        # the oldest node is last, and not associated with ancestor 0
+        last_node = ts1.node(ts1.num_nodes - 1)
+        assert np.max(ts1.tables.nodes.time) == last_node.time
+        md = last_node.metadata
+        md = json.loads(md.decode())  # At the moment node metadata has no schema
+        assert md.get("ancestor_data_id", None) != 0
 
-        # When simplify is true and there is no path compression,
+        # When not post processing and there is no path compression,
         # the samples should be zero to N - n up to n
-        ts2 = tsinfer.infer(sd, simplify=False, path_compression=False)
+        ts2 = tsinfer.infer(sd, post_process=False, path_compression=False)
         assert list(ts2.samples()) == list(range(ts2.num_nodes - n, ts2.num_nodes))
+        # the oldest node is first, and associated with ancestor 0
+        first_node = ts2.node(0)
+        assert np.max(ts2.tables.nodes.time) == first_node.time
+        md = first_node.metadata
+        md = json.loads(md.decode())  # At the moment node metadata has no schema
+        assert md["ancestor_data_id"] == 0
 
-        # Check that we're calling simplify with the correct arguments.
-        ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
-        assert ts1.equals(ts2, ignore_provenance=True)
+    @pytest.mark.parametrize("simp", [True, False])
+    @pytest.mark.parametrize("post_proc", [True, False])
+    def test_cant_simplify_with_postprocess(self, small_sd_fixture, simp, post_proc):
+        with pytest.raises(ValueError, match="Can't specify both"):
+            tsinfer.infer(small_sd_fixture, simplify=simp, post_process=post_proc)
 
-    def test_single_tree(self):
-        ts = msprime.simulate(5, random_seed=1, mutation_rate=2)
-        self.verify(ts)
+    def test_single_tree(self, small_ts_fixture):
+        self.verify(small_ts_fixture)
 
-    def test_many_trees(self):
-        ts = msprime.simulate(5, random_seed=1, recombination_rate=2, mutation_rate=2)
-        assert ts.num_trees > 2
-        self.verify(ts)
+    def test_many_trees(self, medium_ts_fixture):
+        self.verify(medium_ts_fixture)
+
+    def test_standalone_post_process(self, medium_sd_fixture):
+        # test we can post process separately, e.g. omitting the MRCA splitting step
+        ts_unsimplified = tsinfer.infer(medium_sd_fixture, post_process=False)
+        oldest_parent_id = ts_unsimplified.edge(-1).parent
+        assert oldest_parent_id == 0
+        md = ts_unsimplified.node(oldest_parent_id).metadata
+        md = json.loads(md.decode())  # At the moment node metadata has no schema
+        assert md["ancestor_data_id"] == 0
+
+        # Post processing removes ancestor_data_id 0
+        ts = tsinfer.post_process(ts_unsimplified, split_mrca=False)
+        assert not ts.equals(ts_unsimplified, ignore_provenance=True)
+        oldest_parent_id = ts.edge(-1).parent
+        assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) == 1
+        md = ts.node(oldest_parent_id).metadata
+        md = json.loads(md.decode())  # At the moment node metadata has no schema
+        assert md["ancestor_data_id"] == 1
+
+        ts = tsinfer.post_process(ts_unsimplified, split_mrca=True)
+        oldest_parent_id = ts.edge(-1).parent
+        assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) > 1
+        roots = set()
+        for tree in ts.trees():
+            roots.add(tree.root)
+            md = ts.node(tree.root).metadata
+            md = json.loads(md.decode())  # At the moment node metadata has no schema
+            assert md["ancestor_data_id"] == 1
+        assert len(roots) > 1
+
+    def test_post_process_non_tsinfer(self, small_ts_fixture, caplog):
+        # A normal ts does not have grand MRCAs etc, so if the samples
+        # are 0..n, and it is already simplified, it should be left untouched
+        ts = small_ts_fixture.simplify()
+        assert np.all(
+            small_ts_fixture.samples() == np.arange(small_ts_fixture.num_samples)
+        )
+        with caplog.at_level(logging.WARNING):
+            ts_postprocessed = tsinfer.post_process(small_ts_fixture)
+            assert caplog.text.count("virtual-root-like") == 0
+        with caplog.at_level(logging.WARNING):
+            ts_postprocessed = tsinfer.post_process(
+                small_ts_fixture, warn_if_unexpected_format=True
+            )
+            assert caplog.text.count("virtual-root-like") == 1
+
+        assert ts.equals(ts_postprocessed, ignore_provenance=True)
+
+    def test_has_shortened_edge_over_grand_root(self, small_sd_fixture):
+        # If there is something like a virtual-root-like ancestor, but
+        # which doesn't extend over the whole genome, we don't remove it
+        ts = tsinfer.infer(small_sd_fixture, post_process=False)
+        tables = ts.dump_tables()
+        tables.edges[ts.num_edges - 1] = tables.edges[ts.num_edges - 1].replace(left=1)
+        assert not tsinfer.has_single_edge_over_grand_root(tables.tree_sequence())
+
+    def test_virtual_like_root_removed(self, medium_sd_fixture):
+        ts = tsinfer.infer(medium_sd_fixture, post_process=False)
+        ts_simplified = ts.simplify(keep_unary=True)
+        assert tsinfer.has_single_edge_over_grand_root(ts)
+        ts_post_processed = tsinfer.post_process(ts, split_mrca=False)
+        assert ts_post_processed.num_edges == ts_simplified.num_edges - 1
+        assert not tsinfer.has_single_edge_over_grand_root(ts_post_processed)
+
+    def test_split_edges_one_tree(self, small_sd_fixture):
+        ts = tsinfer.infer(small_sd_fixture, post_process=False)
+        ts = tsinfer.post_process(ts, split_mrca=False)
+        assert ts.num_trees == 1
+        # Check that we don't delete and recreate the oldest node if there's only 1 tree
+        tables = ts.dump_tables()
+        oldest_node_in_topology = tables.edges[-1].parent
+        tsinfer.split_grand_mrca(tables)
+        assert tables.edges[-1].parent == oldest_node_in_topology
+        assert tables.edges.num_rows == ts.num_edges
+
+    def test_dont_split_edges_twice(self, medium_sd_fixture, caplog):
+        ts = tsinfer.infer(medium_sd_fixture, post_process=False)
+        ts = tsinfer.post_process(ts, split_mrca=False)
+        assert ts.num_trees > 1
+        assert tsinfer.has_same_root_everywhere(ts)
+        # Once the mrca has been split, it can't be split again
+        tables = ts.dump_tables()
+        oldest_node_in_topology = tables.edges[-1].parent
+        with caplog.at_level(logging.WARNING):
+            tsinfer.split_grand_mrca(tables, warn_if_unexpected_format=True)
+            assert tables.edges.num_rows > ts.num_edges
+            assert not tsinfer.has_same_root_everywhere(tables.tree_sequence())
+            # if it has split, the oldest node in the topology will have changed
+            assert tables.edges[-1].parent != oldest_node_in_topology
+            assert caplog.text.count("MRCA to split") == 0
+        # should fail has_same_root_everywhere, so will not be split again
+        assert not tsinfer.has_same_root_everywhere(tables.tree_sequence())
+        with caplog.at_level(logging.WARNING):
+            tsinfer.split_grand_mrca(tables, warn_if_unexpected_format=True)
+            assert caplog.text.count("MRCA to split") == 1
+
+    def test_sample_order(self, medium_sd_fixture):
+        anc = tsinfer.generate_ancestors(medium_sd_fixture)
+        ats = tsinfer.match_ancestors(medium_sd_fixture, anc)
+        idx = [0, medium_sd_fixture.num_samples // 2, medium_sd_fixture.num_samples - 1]
+        ts = tsinfer.match_samples(
+            medium_sd_fixture, ats, indexes=idx, post_process=False
+        )
+        for i, (orig_id, inferred_node_id) in enumerate(zip(idx, ts.samples())):
+            assert i != inferred_node_id
+            sd_individual = medium_sd_fixture.individual(
+                medium_sd_fixture.sample(orig_id).individual
+            )
+            inferred_individual = ts.individual(ts.node(inferred_node_id).individual)
+            assert sd_individual.metadata["id"] == inferred_individual.metadata["id"]
+        ts = tsinfer.post_process(ts)
+        # After post-processing, samples should be 0..n
+        for i, (orig_id, inferred_node_id) in enumerate(zip(idx, ts.samples())):
+            assert i == inferred_node_id
+            sd_individual = medium_sd_fixture.individual(
+                medium_sd_fixture.sample(orig_id).individual
+            )
+            inferred_individual = ts.individual(ts.node(inferred_node_id).individual)
+            assert sd_individual.metadata["id"] == inferred_individual.metadata["id"]
 
 
 def get_default_inference_sites(sample_data):
@@ -3033,7 +3327,8 @@ class TestExtractAncestors:
         # Population data isn't carried through in ancestors tree sequences
         # for now.
         t2.populations.clear()
-        assert t1.equals(t2, ignore_provenance=True, ignore_ts_metadata=True)
+
+        t1.assert_equals(t2, ignore_provenance=True, ignore_metadata=True)
 
         for node in ts.nodes():
             if node_id_map[node.id] != -1:
@@ -3117,9 +3412,7 @@ class TestInsertSrbAncestors:
         ancestors_ts_2 = tsinfer.insert_srb_ancestors(samples, ts)
         t1 = ancestors_ts_1.dump_tables()
         t2 = ancestors_ts_2.dump_tables()
-        t1.provenances.clear()
-        t2.provenances.clear()
-        assert t1 == t2
+        t1.assert_equals(t2, ignore_provenance=True)
 
         tsinfer.check_ancestors_ts(ancestors_ts_1)
         ts2 = tsinfer.match_samples(samples, ancestors_ts_1)

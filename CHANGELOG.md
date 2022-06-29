@@ -13,6 +13,14 @@
 
 **Breaking changes**:
 
+- The ``simplify`` parameter is now deprecated in favour of ``post_process``, which
+  prior to simplification, removes the "virtual-root-like" ancestor (inserted by
+  tsinfer to aid the matching process) then splits the grand MRCA into separate pieces.
+  If splitting is not required, the ``post_process`` step can also be called as a
+  separate function with the parameter ``split_mrca=False`` (:pr:`687`,
+  :issue:`673`, :user:`hyanwong`) 
+  
+
 - Inference now sets time_units on both ancestor and final tree sequences to
   tskit.TIME_UNITS_UNCALIBRATED, stopping accidental use of branch length
   calculations on the ts. ({pr}`680`, {user}`hyanwong`)
