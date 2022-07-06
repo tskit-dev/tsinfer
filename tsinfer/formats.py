@@ -2290,6 +2290,9 @@ class AncestorData(DataContainer):
 
     @property
     def sequence_length(self):
+        """
+        Returns the sequence length.
+        """
         return self.data.attrs["sequence_length"]
 
     @property
