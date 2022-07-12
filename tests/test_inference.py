@@ -1788,7 +1788,7 @@ class TestAncestorsTreeSequenceIndividuals:
                 samples.add_individual(ploidy=2, location=[100 * j], metadata={"X": j})
             for var in ts.variants():
                 samples.add_site(var.site.position, var.genotypes)
-        ancestors_ts = eval_util.make_ancestors_ts(samples, ts)
+        ancestors_ts = eval_util.make_ancestors_ts(ts)
         self.verify(samples, ancestors_ts)
 
 

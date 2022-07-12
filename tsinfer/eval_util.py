@@ -440,11 +440,11 @@ def subset_sites(ts, position):
     return tables.tree_sequence()
 
 
-def make_ancestors_ts(samples, ts, remove_leaves=False):
+def make_ancestors_ts(ts, remove_leaves=False):
     """
     Return a tree sequence suitable for use as an ancestors tree sequence from the
-    specified source tree sequence using the samples in the specified sample
-    data. If remove_leaves is True, remove any nodes that are at time zero.
+    specified source tree sequence. If remove_leaves is True, remove any nodes that
+    are at time zero.
 
     We generally assume that this is a standard tree sequence, as output by
     msprime.simulate. We remove populations, as normally ancestors tree sequences
@@ -693,7 +693,7 @@ def run_perfect_inference(
     if use_ts:
         # Use the actual tree sequence that was provided as the basis for copying.
         logger.info("Using provided tree sequence")
-        ancestors_ts = make_ancestors_ts(sample_data, ts, remove_leaves=True)
+        ancestors_ts = make_ancestors_ts(ts, remove_leaves=True)
     else:
         ancestor_data = formats.AncestorData(sample_data)
         build_simulated_ancestors(

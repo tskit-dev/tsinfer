@@ -529,9 +529,7 @@ class TestMakeAncestorsTs:
 
     def verify_from_source(self, ts, remove_leaves):
         samples = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
-        ancestors_ts = tsinfer.make_ancestors_ts(
-            samples, ts, remove_leaves=remove_leaves
-        )
+        ancestors_ts = tsinfer.make_ancestors_ts(ts, remove_leaves=remove_leaves)
         tsinfer.check_ancestors_ts(ancestors_ts)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
@@ -546,9 +544,7 @@ class TestMakeAncestorsTs:
         ts = msprime.simulate(15, recombination_rate=1, mutation_rate=2, random_seed=3)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         inferred = tsinfer.infer(samples)
-        ancestors_ts = tsinfer.make_ancestors_ts(
-            samples, inferred, remove_leaves=remove_leaves
-        )
+        ancestors_ts = tsinfer.make_ancestors_ts(inferred, remove_leaves=remove_leaves)
         tsinfer.check_ancestors_ts(ancestors_ts)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             final_ts = tsinfer.match_samples(samples, ancestors_ts, engine=engine)
