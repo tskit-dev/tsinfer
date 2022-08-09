@@ -5,4 +5,4 @@ attrs
 setuptools_scm==6.0.1
 sphinx==4.5.0
 sphinx-argparse==0.3.1
-sphinx_rtd_theme==1.0.0
+git+https://github.com/benjeffery/tskit-book-theme@master#egg=tskit-book-theme
