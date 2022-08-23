@@ -1334,6 +1334,9 @@ class SampleData(DataContainer):
             in the current dataset. Site IDs can be supplied in any order,
             but the order will *not* be preserved in the returned data file,
             so that sites are always in position sorted order in the output.
+        :param float sequence_length: The sequence length to use for the
+            returned object. If None, use the same sequence length as in the
+            original sample data file.
         :param \\**kwargs: Further arguments passed to the :class:`SampleData`
             constructor.
         :return: A :class:`.SampleData` object.
