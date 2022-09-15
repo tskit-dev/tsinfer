@@ -23,6 +23,20 @@ class TestExtend:
         ts = extender.extend(np.arange(num_samples))
         assert_variants_equal(ts, sd)
 
+    @pytest.mark.parametrize("num_samples", range(1, 5))
+    @pytest.mark.parametrize("num_sites", range(1, 5))
+    def test_single_binary_haplotype_two_epochs(self, num_samples, num_sites):
+        with tsinfer.SampleData(sequence_length=num_sites) as sd:
+            for j in range(num_sites):
+                sd.add_site(j, [1] * num_samples)
+        extender = tsinfer.SequentialExtender(sd)
+        ts = extender.extend(np.arange(num_samples))
+
+        extender = tsinfer.SequentialExtender(sd, ancestors_ts=ts)
+        ts = extender.extend(np.arange(num_samples))
+        assert ts.num_samples == 2 * num_samples
+        assert np.all(ts.genotype_matrix() == 1)
+
     @pytest.mark.parametrize("k", range(1, 5))
     def test_single_binary_haplotype_k_generations(self, k):
         num_sites = 5
@@ -35,6 +49,23 @@ class TestExtend:
         for _ in range(k):
             ts = extender.extend(np.arange(num_samples) * k)
         assert_variants_equal(ts, sd)
+
+    @pytest.mark.parametrize("k", range(1, 5))
+    def test_single_binary_haplotype_k_generations_two_epochs(self, k):
+        num_sites = 5
+        num_samples = 4
+        with tsinfer.SampleData(sequence_length=num_sites) as sd:
+            for j in range(num_sites):
+                sd.add_site(j, [1] * (num_samples * k))
+
+        extender = tsinfer.SequentialExtender(sd)
+        for _ in range(k):
+            ts = extender.extend(np.arange(num_samples) * k)
+        extender = tsinfer.SequentialExtender(sd, ts)
+        for _ in range(k):
+            ts = extender.extend(np.arange(num_samples) * k)
+        assert ts.num_samples == 2 * num_samples * k
+        assert np.all(ts.genotype_matrix() == 1)
 
     def test_single_haplotype_4_alleles(self):
         num_sites = 3
@@ -88,6 +119,49 @@ class TestExtend:
             assert np.all(var1.genotypes == var2.genotypes)
         for j, u in enumerate(ts.samples()):
             assert ts.node(u).metadata == {"ind_id": j}
+
+    @pytest.mark.parametrize("num_generations", [1, 2, 5])
+    @pytest.mark.parametrize("samples_per_generation", [1, 2, 13])
+    @pytest.mark.parametrize("num_epochs", range(1, 4))
+    def test_random_data_multi_epoch_fixed_sites(
+        self, num_generations, samples_per_generation, num_epochs
+    ):
+        rng = np.random.default_rng(142)
+        num_sites = 10
+        ancestors_ts = None
+        total_samples = num_epochs * num_generations * samples_per_generation
+        G = rng.integers(0, 4, size=(total_samples, num_sites))
+        for epoch in range(num_epochs):
+            num_samples = num_generations * samples_per_generation
+            epoch_start = epoch * num_samples
+            genotypes = G[epoch_start : epoch_start + num_samples]
+            with tsinfer.SampleData(sequence_length=num_sites) as sd:
+                # Store the genotypes with the individual metadata so
+                # we can compare later.
+                for j in range(num_samples):
+                    sd.add_individual(
+                        ploidy=1,
+                        metadata={
+                            "ind_id": (epoch, j),
+                            "genotypes": list(map(int, genotypes[j])),
+                        },
+                    )
+                for j in range(num_sites):
+                    sd.add_site(j, genotypes[:, j], alleles="ACGT")
+            extender = tsinfer.SequentialExtender(sd, ancestors_ts)
+            offset = 0
+            for _ in range(num_generations):
+                next_offset = offset + samples_per_generation
+                ts = extender.extend(np.arange(offset, next_offset))
+                offset = next_offset
+            assert ts.num_sites == num_sites
+            assert ts.num_samples == num_samples * (1 + epoch)
+            ancestors_ts = ts
+        # Do we round-trip all the data?
+        for j, u in enumerate(ts.samples()):
+            md = ts.node(u).metadata
+            assert md["ind_id"] == [j // num_samples, j % num_samples]
+            assert np.array_equal(md["genotypes"], G[j])
 
     def test_single_sample_metadata(self):
         with tsinfer.SampleData(sequence_length=1) as sd:

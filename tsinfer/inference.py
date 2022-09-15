@@ -1752,7 +1752,7 @@ class SampleMatcher(Matcher):
 
     def extend(self, samples, known_haplotypes, node_metadata):
         """
-        Runs the "extend" operation by matching for an explar sequence
+        Runs the "extend" operation by matching for an exemplar sequence
         from each of the distinct categories.
         """
         builder = self.tree_sequence_builder
@@ -2368,24 +2368,36 @@ def solve_num_mismatches(ts, k):
 
 
 class SequentialExtender:
-    def __init__(self, sample_data):
+    def __init__(self, sample_data, ancestors_ts=None):
         self.sample_data = sample_data
+        if ancestors_ts is None:
+            tables = tskit.TableCollection(sample_data.sequence_length)
+            for site in sample_data.sites():
+                tables.sites.add_row(site.position, site.ancestral_state)
+            tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+            for t in [2, 1]:
+                tables.nodes.add_row(time=t)
+            tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
+            self.ancestors_ts = tables.tree_sequence()
 
-        tables = tskit.TableCollection(sample_data.sequence_length)
-        for site in sample_data.sites():
-            tables.sites.add_row(site.position, site.ancestral_state)
-        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        for t in [2, 1]:
-            tables.nodes.add_row(time=t)
-        tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
-        self.ancestors_ts = tables.tree_sequence()
-        # Seed the known_haplotypes with the all-zeros haplotypes so that
-        # we don't create a spurious node for it in the first generation.
-        root_haplotype = next(sample_data.haplotypes())[1].copy()
-        root_haplotype[:] = 0
-        self.haplotypes = {root_haplotype.tobytes()}
-        assert self.sample_data.num_individuals == self.sample_data.num_samples
+            # Seed the known_haplotypes with the all-zeros haplotypes so that
+            # we don't create a spurious node for it in the first generation.
+            root_haplotype = next(sample_data.haplotypes())[1].copy()
+            root_haplotype[:] = 0
+            self.haplotypes = {root_haplotype.tobytes()}
+        else:
+            tables = ancestors_ts.dump_tables()
+            tables.nodes.time += 1
+            self.ancestors_ts = tables.tree_sequence()
+            # Add in the existing haplotypes. Note - this will probably
+            # be slow and might not be necessary/desirable at large scale.
+            self.haplotypes = set()
+            for h in self.ancestors_ts.haplotypes():
+                a = np.frombuffer(h.encode(), dtype=np.int8) - ord("0")
+                self.haplotypes.add(a.tobytes())
+
         self.node_metadata = sample_data.individuals_metadata[:]
+        assert self.sample_data.num_individuals == self.sample_data.num_samples
 
     def _update_ancestors_ts(self, ts):
         # Convert the input into an ancestors_ts
