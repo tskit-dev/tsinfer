@@ -2305,10 +2305,16 @@ class AncestorData(DataContainer):
 
     @property
     def num_sites(self):
+        """
+        The number of inference sites used to generate the ancestors
+        """
         return self.sites_position.shape[0]
 
     @property
     def sites_position(self):
+        """
+        The positions of the inference sites used to generate the ancestors
+        """
         return self.data["sites/position"]
 
     @property
