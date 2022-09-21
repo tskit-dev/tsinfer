@@ -710,8 +710,6 @@ def run_perfect_inference(
             extended_checks=extended_checks,
             progress_monitor=progress_monitor,
         )
-    # If time_chunking is turned on we need to stabilise the node ordering in the output
-    # to ensure that the node IDs are comparable.
     inferred_ts = inference.match_samples(
         sample_data,
         ancestors_ts,
@@ -720,11 +718,32 @@ def run_perfect_inference(
         num_threads=num_threads,
         extended_checks=extended_checks,
         progress_monitor=progress_monitor,
-        stabilise_node_ordering=time_chunking and not path_compression,
+        simplify=False,  # Don't simplify until we have stabilised the node order below
     )
+    # If time_chunking is turned on we need to stabilise the node ordering in the output
+    # to ensure that the node IDs are comparable.
+    if time_chunking and not path_compression:
+        inferred_ts = stabilise_node_ordering(inferred_ts)
+
     # to compare against the original, we need to remove unary nodes from the inferred TS
     inferred_ts = inferred_ts.simplify(keep_unary=False, filter_sites=False)
     return ts, inferred_ts
+
+
+def stabilise_node_ordering(ts):
+    # Ensure all the node times are distinct so that they will have
+    # stable IDs after simplifying. This could possibly also be done
+    # by reversing the IDs within a time slice. This is used for comparing
+    # tree sequences produced by perfect inference.
+    tables = ts.dump_tables()
+    times = tables.nodes.time
+    for t in range(1, int(times[0])):
+        index = np.where(times == t)[0]
+        k = index.shape[0]
+        times[index] += np.arange(k)[::-1] / k
+    tables.nodes.time = times
+    tables.sort()
+    return tables.tree_sequence()
 
 
 def count_sample_child_edges(ts):

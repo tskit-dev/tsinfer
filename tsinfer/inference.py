@@ -550,7 +550,6 @@ def match_samples(
     recombination=None,  # See :class:`Matcher`
     mismatch=None,  # See :class:`Matcher`
     precision=None,
-    stabilise_node_ordering=False,
     extended_checks=False,
     engine=constants.C_ENGINE,
     progress_monitor=None,
@@ -636,9 +635,7 @@ def match_samples(
         # we sometimes assume they are in the same order as in the file
 
     manager.match_samples(sample_indexes, sample_times)
-    ts = manager.finalise(
-        simplify=simplify, stabilise_node_ordering=stabilise_node_ordering
-    )
+    ts = manager.finalise(simplify=simplify)
     return ts
 
 
@@ -1641,7 +1638,7 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def finalise(self, simplify, stabilise_node_ordering):
+    def finalise(self, simplify):
         logger.info("Finalising tree sequence")
         ts = self.get_samples_tree_sequence()
         if simplify:
@@ -1650,20 +1647,6 @@ class SampleMatcher(Matcher):
                 "filter_individuals=False, keep_unary=True) on "
                 f"{ts.num_nodes} nodes and {ts.num_edges} edges"
             )
-            if stabilise_node_ordering:
-                # Ensure all the node times are distinct so that they will have
-                # stable IDs after simplifying. This could possibly also be done
-                # by reversing the IDs within a time slice. This is used for comparing
-                # tree sequences produced by perfect inference.
-                tables = ts.dump_tables()
-                times = tables.nodes.time
-                for t in range(1, int(times[0])):
-                    index = np.where(times == t)[0]
-                    k = index.shape[0]
-                    times[index] += np.arange(k)[::-1] / k
-                tables.nodes.time = times
-                tables.sort()
-                ts = tables.tree_sequence()
             ts = ts.simplify(
                 samples=list(self.sample_id_map.values()),
                 filter_sites=False,
