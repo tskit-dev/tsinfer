@@ -456,7 +456,8 @@ On a modern computer, this should only take a few seconds to run, producing this
     ``progressbar = tqdm.tqdm(total=samples.sequence_length, desc="Read VCF", unit='bp')``
     at the top of the ``add_diploid_sites`` function, followed by
     ``progressbar.update(variant.POS - pos)`` as the first line of the variant loop within
-    that function.
+    that function. This code can also be modified to read huge VCF files in parallel, see
+    `this issue <https://github.com/tskit-dev/tsinfer/issues/277#issuecomment-652024871>`_.
 
 +++++++++++++++++++++++
 Adding more information
