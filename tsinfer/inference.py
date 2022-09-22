@@ -73,10 +73,13 @@ inference_type_metadata_definition = {
 
 def add_to_schema(schema, name, definition=None, required=False):
     schema = copy.deepcopy(schema)
-    if name in schema["properties"]:
-        raise ValueError(f"The metadata {name} is reserved for use by tsinfer")
     if definition is None:
         definition = {}
+    try:
+        if name in schema["properties"]:
+            raise ValueError(f"The metadata {name} is reserved for use by tsinfer")
+    except KeyError:
+        schema["properties"] = {}
     schema["properties"][name] = definition
     if required:
         schema["required"].append(name)
