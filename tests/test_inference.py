@@ -1919,9 +1919,6 @@ class TestMatchSamples:
     Test specific features of the match_samples stage
     """
 
-    @pytest.mark.skip(
-        reason="Bug to be fixed: Issue https://github.com/tskit-dev/tsinfer/issues/493"
-    )
     def test_partial_samples(self):
         ts = msprime.simulate(
             10, mutation_rate=2, recombination_rate=2, random_seed=233
