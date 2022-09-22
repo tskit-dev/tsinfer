@@ -207,6 +207,8 @@ def check_sample_indexes(sample_data, indexes):
         raise ValueError("Must supply at least one sample to match")
     if np.any(indexes < 0) or np.any(indexes >= sample_data.num_samples):
         raise ValueError("Sample index out of bounds")
+    if np.any(indexes[:-1] >= indexes[1:]):
+        raise ValueError("Sample indexes must be in increasing order")
     return indexes
 
 
@@ -491,7 +493,7 @@ def augment_ancestors(
         :class:`tskit.TreeSequence` instance representing the inferred
         history among ancestral ancestral haplotypes.
     :param array indexes: The sample indexes to insert into the ancestors
-        tree sequence.
+        tree sequence, in increasing order.
     :param recombination_rate: Either a floating point value giving a constant rate
         :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
         object. This is used to calculate the probability of recombination between
@@ -591,7 +593,7 @@ def match_samples(
         ``filter_individuals`` set to False and ``keep_unary`` set to True
         (default = ``True``).
     :param array_like indexes: An array of indexes into the sample_data file of
-        the samples to match, or None for all samples.
+        the samples to match (in increasing order) or None for all samples.
     :param bool force_sample_times: After matching, should an attempt be made to
         adjust the time of "historical samples" (those associated with an individual
         having a non-zero time) such that the sample nodes in the tree sequence
