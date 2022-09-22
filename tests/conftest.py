@@ -38,6 +38,7 @@ per test session and re-used for subsequent tests.
 import msprime
 import numpy as np
 import pytest
+import tskit
 from pytest import fixture
 from tsutil import mark_mutation_times_unknown
 
@@ -78,7 +79,8 @@ def small_ts_fixture():
     A simple 1-tree sequence with at least 2 inference sites
     (i.e. mutations above a non-sample node), and no mutation times
     """
-    ts = msprime.simulate(10, mutation_rate=1, random_seed=1)
+    ts = msprime.sim_ancestry(10, sequence_length=1000, ploidy=1, random_seed=1)
+    ts = msprime.sim_mutations(ts, rate=0.01, random_seed=1)
     assert num_nonsample_muts(ts) > 1
     return mark_mutation_times_unknown(ts)
 
@@ -88,7 +90,7 @@ def small_sd_fixture(small_ts_fixture):
     """
     A sample data instance from the small 1-tree sequence
     """
-    return tsinfer.SampleData.from_tree_sequence(small_ts_fixture, use_sites_time=False)
+    return tsinfer.SampleData.from_tree_sequence(small_ts_fixture)
 
 
 @fixture(scope="session")
@@ -96,7 +98,7 @@ def small_sd_anc_fixture(small_ts_fixture):
     """
     A sample data and an ancestors instance from the small 1-tree sequence
     """
-    sd = tsinfer.SampleData.from_tree_sequence(small_ts_fixture, use_sites_time=False)
+    sd = tsinfer.SampleData.from_tree_sequence(small_ts_fixture)
     return sd, tsinfer.generate_ancestors(sd)
 
 
@@ -104,9 +106,20 @@ def small_sd_anc_fixture(small_ts_fixture):
 def medium_ts_fixture():
     """
     A medium sized tree sequence with a good number of trees and inference mutations
-    (i.e. mutations above a non-sample node), and no mutation
+    (i.e. mutations above a non-sample node), and no mutation times. Samples are
+    haploid, so we have one individual per sample, which has metadata for identification
     """
-    ts = msprime.simulate(10, recombination_rate=2, mutation_rate=10, random_seed=3)
+    ts = msprime.sim_ancestry(
+        10, sequence_length=1000, ploidy=1, recombination_rate=0.01, random_seed=3
+    )
+    tables = ts.dump_tables()
+    ind_md = [{"id": i} for i in range(ts.num_individuals)]
+    tables.individuals.metadata_schema = tskit.MetadataSchema.permissive_json()
+    tables.individuals.packset_metadata(
+        [tables.individuals.metadata_schema.validate_and_encode_row(r) for r in ind_md]
+    )
+    ts = tables.tree_sequence()
+    ts = msprime.sim_mutations(ts, rate=0.02, random_seed=3)
     assert ts.num_trees > 10
     assert num_nonsample_muts(ts) > 50
     return mark_mutation_times_unknown(ts)
