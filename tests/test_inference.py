@@ -1933,18 +1933,20 @@ class TestMatchSamples:
                 ts2 = tsinfer.match_samples(sd, anc_ts, indexes=samples).simplify()
                 assert ts1.simplify(samples).equals(ts2, ignore_provenance=True)
 
-    def test_partial_bad_indexes(self):
-        sd = tsinfer.SampleData.from_tree_sequence(
-            msprime.simulate(
-                10, mutation_rate=2, recombination_rate=2, random_seed=233
-            ),
-            use_sites_time=False,
-        )
-        ancestors = tsinfer.generate_ancestors(sd)
-        a_ts = tsinfer.match_ancestors(sd, ancestors)
-        for bad_samples in [[], [-1, 0], [0, 10]]:
-            with pytest.raises(ValueError):
-                tsinfer.match_samples(sd, a_ts, indexes=bad_samples)
+    @pytest.mark.parametrize(
+        "bad_indexes, match",
+        [
+            ([], "at least one"),
+            ([-1, 0], "bounds"),
+            ([0, 1000], "bounds"),
+            ([1, 0], "increasing"),
+        ],
+    )
+    def test_partial_bad_indexes(self, small_sd_fixture, bad_indexes, match):
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        a_ts = tsinfer.match_ancestors(small_sd_fixture, ancestors)
+        with pytest.raises(ValueError, match=match):
+            tsinfer.match_samples(small_sd_fixture, a_ts, indexes=bad_indexes)
 
     def test_time_units_default_uncalibrated(self):
         with tsinfer.SampleData(1.0) as sample_data:
