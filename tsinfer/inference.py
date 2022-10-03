@@ -2375,7 +2375,9 @@ class SequentialExtender:
             for site in sample_data.sites():
                 tables.sites.add_row(site.position, site.ancestral_state)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-            for t in [2, 1]:
+            # TODO should probably make the ultimate ancestor time something less
+            # plausible or at least configurable.
+            for t in [1, 0]:
                 tables.nodes.add_row(time=t)
             tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
             self.ancestors_ts = tables.tree_sequence()
@@ -2386,9 +2388,7 @@ class SequentialExtender:
             root_haplotype[:] = 0
             self.haplotypes = {root_haplotype.tobytes()}
         else:
-            tables = ancestors_ts.dump_tables()
-            tables.nodes.time += 1
-            self.ancestors_ts = tables.tree_sequence()
+            self.ancestors_ts = ancestors_ts
             # Add in the existing haplotypes. Note - this will probably
             # be slow and might not be necessary/desirable at large scale.
             self.haplotypes = set()
@@ -2399,17 +2399,17 @@ class SequentialExtender:
         self.node_metadata = sample_data.individuals_metadata[:]
         assert self.sample_data.num_individuals == self.sample_data.num_samples
 
-    def _update_ancestors_ts(self, ts):
-        # Convert the input into an ancestors_ts
-        tables = ts.dump_tables()
-        tables.nodes.time += 1
+    def _increment_ancestors_ts_time(self, increment):
+        tables = self.ancestors_ts.dump_tables()
+        tables.nodes.time += increment
         self.ancestors_ts = tables.tree_sequence()
 
-    def extend(self, samples, num_mismatches=None, **kwargs):
+    def extend(self, samples, num_mismatches=None, time_increment=None, **kwargs):
         num_mismatches = 0 if num_mismatches is None else num_mismatches
+        time_increment = 1 if time_increment is None else time_increment
 
         ls_recomb, ls_mismatch = solve_num_mismatches(self.ancestors_ts, num_mismatches)
-
+        self._increment_ancestors_ts_time(time_increment)
         manager = SampleMatcher(
             self.sample_data,
             self.ancestors_ts,
@@ -2422,5 +2422,5 @@ class SequentialExtender:
             np.array(samples), self.haplotypes, self.node_metadata
         )
         self.haplotypes |= haplotypes
-        self._update_ancestors_ts(ts)
+        self.ancestors_ts = ts
         return ts

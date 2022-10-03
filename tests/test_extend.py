@@ -61,9 +61,12 @@ class TestExtend:
         extender = tsinfer.SequentialExtender(sd)
         for _ in range(k):
             ts = extender.extend(np.arange(num_samples) * k)
+            # last num_samples should all have time 0
+            assert np.all(ts.tables.nodes.time[ts.samples()[-num_samples:]] == 0)
         extender = tsinfer.SequentialExtender(sd, ts)
         for _ in range(k):
             ts = extender.extend(np.arange(num_samples) * k)
+            assert np.all(ts.tables.nodes.time[ts.samples()[-num_samples:]] == 0)
         assert ts.num_samples == 2 * num_samples * k
         assert np.all(ts.genotype_matrix() == 1)
 
@@ -142,6 +145,7 @@ class TestExtend:
                     sd.add_individual(
                         ploidy=1,
                         metadata={
+                            "epoch": epoch,
                             "ind_id": (epoch, j),
                             "genotypes": list(map(int, genotypes[j])),
                         },
@@ -159,7 +163,8 @@ class TestExtend:
             ancestors_ts = ts
         # Do we round-trip all the data?
         for j, u in enumerate(ts.samples()):
-            md = ts.node(u).metadata
+            node = ts.node(u)
+            md = node.metadata
             assert md["ind_id"] == [j // num_samples, j % num_samples]
             assert np.array_equal(md["genotypes"], G[j])
 
@@ -207,6 +212,25 @@ class TestExtend:
         tree = ts.first()
         parents = {tree.parent(u) for u in ts.samples()}
         assert len(parents) == 1
+
+    def test_all_zeros_time_increment(self):
+        a = np.zeros(2 * 2, dtype=int)
+        with tsinfer.SampleData(sequence_length=2) as sd:
+            sd.add_site(0, a)
+        extender = tsinfer.SequentialExtender(sd)
+        ts = extender.extend([0, 1], time_increment=5)
+        np.testing.assert_array_equal(ts.nodes_time, [6, 5, 0, 0])
+        ts = extender.extend([2, 3], time_increment=2)
+        np.testing.assert_array_equal(ts.nodes_time, [8, 7, 2, 2, 0, 0])
+
+        extender = tsinfer.SequentialExtender(sd, ancestors_ts=ts)
+        ts = extender.extend([0, 1], time_increment=3)
+        np.testing.assert_array_equal(ts.nodes_time, [11, 10, 5, 5, 3, 3, 0, 0])
+
+        ts = extender.extend([0, 1], time_increment=0.1)
+        np.testing.assert_array_equal(
+            ts.nodes_time, [11.1, 10.1, 5.1, 5.1, 3.1, 3.1, 0.1, 0.1, 0, 0]
+        )
 
     @pytest.mark.parametrize("num_generations", range(1, 5))
     def test_provenance(self, num_generations):
