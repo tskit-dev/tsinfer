@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import tskit
 
 import tsinfer
 
@@ -226,11 +227,40 @@ class TestExtend:
         extender = tsinfer.SequentialExtender(sd, ancestors_ts=ts)
         ts = extender.extend([0, 1], time_increment=3)
         np.testing.assert_array_equal(ts.nodes_time, [11, 10, 5, 5, 3, 3, 0, 0])
+        assert ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
 
         ts = extender.extend([0, 1], time_increment=0.1)
         np.testing.assert_array_equal(
             ts.nodes_time, [11.1, 10.1, 5.1, 5.1, 3.1, 3.1, 0.1, 0.1, 0, 0]
         )
+        assert ts.time_units == tskit.TIME_UNITS_UNCALIBRATED
+
+    def test_all_zeros_time_units(self):
+        a = np.zeros(2 * 2, dtype=int)
+        with tsinfer.SampleData(sequence_length=2) as sd:
+            sd.add_site(0, a)
+        time_units = "days_ago"
+        extender = tsinfer.SequentialExtender(sd, time_units=time_units)
+        ts = extender.extend([0, 1])
+        assert ts.time_units == time_units
+        ts = extender.extend([2, 3])
+        assert ts.time_units == time_units
+
+        # Specifying different time_units gives an error
+        with pytest.raises(ValueError, match="time_units"):
+            extender = tsinfer.SequentialExtender(sd, ancestors_ts=ts)
+        with pytest.raises(ValueError, match="time_units"):
+            extender = tsinfer.SequentialExtender(
+                sd, ancestors_ts=ts, time_units="stuff"
+            )
+
+        extender = tsinfer.SequentialExtender(
+            sd, ancestors_ts=ts, time_units=time_units
+        )
+        ts = extender.extend([0, 1])
+        assert ts.time_units == time_units
+        ts = extender.extend([2, 3])
+        assert ts.time_units == time_units
 
     @pytest.mark.parametrize("num_generations", range(1, 5))
     def test_provenance(self, num_generations):

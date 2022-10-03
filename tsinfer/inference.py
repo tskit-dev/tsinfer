@@ -2368,10 +2368,12 @@ def solve_num_mismatches(ts, k):
 
 
 class SequentialExtender:
-    def __init__(self, sample_data, ancestors_ts=None):
+    def __init__(self, sample_data, ancestors_ts=None, time_units=None):
+        time_units = tskit.TIME_UNITS_UNCALIBRATED if time_units is None else time_units
         self.sample_data = sample_data
         if ancestors_ts is None:
             tables = tskit.TableCollection(sample_data.sequence_length)
+            tables.time_units = time_units
             for site in sample_data.sites():
                 tables.sites.add_row(site.position, site.ancestral_state)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
@@ -2389,6 +2391,10 @@ class SequentialExtender:
             self.haplotypes = {root_haplotype.tobytes()}
         else:
             self.ancestors_ts = ancestors_ts
+            if time_units is not None and self.ancestors_ts.time_units != time_units:
+                raise ValueError(
+                    f"Mismatched time_units: {time_units} != ancestors_ts.time_units",
+                )
             # Add in the existing haplotypes. Note - this will probably
             # be slow and might not be necessary/desirable at large scale.
             self.haplotypes = set()
