@@ -81,7 +81,7 @@ setup(
         "tqdm",
         "humanize",
         "daiquiri",
-        "tskit>=0.5.0",
+        "tskit>=0.5.3",
         "numcodecs>=0.6",
         # issues 965 and 967 at zarr-python prevent usage of 2.11.0 and 2.11.1
         "zarr>=2.2,!=2.11.0,!=2.11.1,!=2.11.2",
