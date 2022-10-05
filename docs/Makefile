@@ -1,24 +1,20 @@
-# Minimal makefile for Sphinx documentation
-#
 
-# You can set these variables from the command line.
-SPHINXOPTS    = -W
-SPHINXBUILD   = python3 -m sphinx
-SPHINXPROJ    = tsinfer
-SOURCEDIR     = .
+# Need to set PYTHONPATH so that we pick up the local tsinfer
+PYPATH=$(shell pwd)/../
+TSINF_VERSION:=$(shell PYTHONPATH=${PYPATH} \
+   python3 -c 'import tsinfer; print(tsinfer.__version__.split("+")[0])')
+
 BUILDDIR      = _build
 
-# JK: override the behaviour below, making html the default target.
-tsinferdefault: 
-	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+all: dev
 
-# Put it first so that "make" without argument is like "make help".
-help:
-	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+dev:
+	PYTHONPATH=${PYPATH} ./build.sh
 
-.PHONY: help Makefile
+dist:
+	@echo Building distribution for tskit version ${TSINF_VERSION}
+	sed -i -e s/__TSINFER_VERSION__/${TSINF_VERSION}/g _config.yml
+	PYTHONPATH=${PYPATH} ./build.sh
 
-# Catch-all target: route all unknown targets to Sphinx using the new
-# "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
-%: Makefile
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+clean:
+	rm -fR $(BUILDDIR)

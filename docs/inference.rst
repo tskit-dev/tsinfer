@@ -44,7 +44,7 @@ and uses the same concepts throughout. The intermediate file formats and APIs
 described here provide a bridge between this model and existing data sources. For
 convenience, we provide a brief description of concepts needed for importing
 data into ``tsinfer`` here. Please see the `tskit documentation
-<https://tskit.readthedocs.io/>`_ for more detailed information.
+<https://tskit.dev/tskit/docs/stable/>`_ for more detailed information.
 
 .. _sec_inference_data_model_individual:
 

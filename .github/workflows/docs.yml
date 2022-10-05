@@ -1,0 +1,64 @@
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags:
+      - '*'
+
+env:
+  COMMIT_EMAIL: ben.jeffery.well+adminbot@gmail.com
+  MAKE_TARGET: all
+  OWNER: tskit-dev
+  REPO: tsinfer
+
+jobs:
+  build-deploy-docs:
+    name: Docs
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.6.0
+        with:
+          access_token: ${{ github.token }}
+
+      - uses: actions/checkout@v2
+        # As we are using pull-request-target which uses the workflow from the base
+        # of the PR, we need to be specific
+        with:
+            ref: ${{ github.event.pull_request.head.ref }}
+            repository: ${{ github.event.pull_request.head.repo.full_name }}
+            submodules: true
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - uses: actions/cache@v2
+        id: cache
+        with:
+          path: venv
+          key: docs-venv-v1-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
+
+      - name: Build virtualenv
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python -m venv venv
+
+      - name: Install deps
+        run: venv/bin/activate && pip install -r requirements/CI-docs/requirements.txt
+
+      - name: Build C module
+        if: env.MAKE_TARGET
+        run: venv/bin/activate && make $MAKE_TARGET
+
+      - name: Build Docs
+        run: venv/bin/activate && cd docs && make dist
+
+      - name: Trigger docs site rebuild
+        if: github.ref == 'refs/heads/main'
+        run: |
+          curl -X POST https://api.github.com/repos/tskit-dev/tskit-site/dispatches \
+                    -H 'Accept: application/vnd.github.everest-preview+json' \
+                    -u AdminBot-tskit:${{ secrets.ADMINBOT_TOKEN }} \
+                    --data '{"event_type":"build-docs"}'

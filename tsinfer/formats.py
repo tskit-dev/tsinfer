@@ -1453,8 +1453,8 @@ class SampleData(DataContainer):
         <https://tskit.readthedocs.io/en/stable/metadata.html>`_ for more details
         on metadata schemas.
 
-        :param TreeSequence ts: The :class:`tskit.TreeSequence` from which to generate
-            samples.
+        :param tskit.TreeSequence ts: The :class:`tskit.TreeSequence` from which to
+            generate samples.
         :param bool use_sites_time: If ``True``, the times of nodes in the tree
             sequence are used to set a time for each site (which affects the relative
             temporal order of ancestors during inference). Times for a site are only
@@ -1923,7 +1923,7 @@ class SampleData(DataContainer):
             to merge.
         :return: A new SampleData instance which contains the merged data
             from the two datasets.
-        :rtype: .SampleData
+        :rtype: :class:`SampleData`
         """
         self._check_finalised()
         other._check_finalised()
@@ -2730,7 +2730,7 @@ class AncestorData(DataContainer):
         """
         Returns the ancestor with the specified ID.
 
-        :rtype: :class:`Ancestor`
+        :rtype: `Ancestor`
         """
         return Ancestor(
             id=id_,

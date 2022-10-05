@@ -94,14 +94,6 @@ jobs:
           command: python setup.py sdist
 
       - run:
-          name: Test the docs will build on RTD minimal environment.
-          command: |
-               python -m venv docs-venv
-               source docs-venv/bin/activate
-               pip install -r requirements/readthedocs.txt
-               make -C docs
-
-      - run:
           name: Install from the distribution tarball
           command: |
                python -m venv venv
