@@ -1,0 +1,28 @@
+
+format: jb-book
+root: index
+parts:
+- caption: Introduction
+  chapters:
+  - file: introduction
+- caption: Installation
+  chapters:
+  - file: installation
+- caption: Tutorial
+  chapters:
+  - file: tutorial
+- caption: Inference
+  chapters:
+  - file: inference
+- caption: Interfaces
+  chapters:
+  - file: api
+  - file: cli
+- caption: File Formats
+  chapters:
+    - file: file_formats
+- caption: Miscellaneous
+  chapters:
+  - file: development
+  - file: CITATION
+  - file: CHANGELOG

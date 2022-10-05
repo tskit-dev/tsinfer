@@ -550,7 +550,7 @@ Analysis
 +++++++++++
 
 To analyse your inferred tree sequence you can use all the analysis functions built in to
-the `tskit <//tskit.readthedocs.io/>`_ library. The
+the `tskit <https://tskit.dev/tskit/docs/stable/>`_ library. The
 :ref:`tskit tutorial<sec_tutorial_stats>` provides much more detail. Below we just give a
 flavour of the possibilities.
 

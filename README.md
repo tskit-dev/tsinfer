@@ -1,11 +1,11 @@
 # tsinfer <img align="right" width="145" height="90" src="https://raw.githubusercontent.com/tskit-dev/tsinfer/main/docs/tsinfer_logo.svg">
 
-[![CircleCI](https://circleci.com/gh/tskit-dev/tsinfer.svg?style=svg)](https://circleci.com/gh/tskit-dev/tsinfer) [![Build Status](https://travis-ci.org/tskit-dev/tsinfer.svg?branch=main)](https://travis-ci.org/tskit-dev/tsinfer) [![Documentation Status](https://readthedocs.org/projects/tsinfer/badge/?version=latest)](http://tsinfer.readthedocs.io/en/latest/?badge=latest) [![codecov](https://codecov.io/gh/tskit-dev/tsinfer/branch/main/graph/badge.svg)](https://codecov.io/gh/tskit-dev/tsinfer)
+[![CircleCI](https://circleci.com/gh/tskit-dev/tsinfer.svg?style=svg)](https://circleci.com/gh/tskit-dev/tsinfer) [![Build Status](https://travis-ci.org/tskit-dev/tsinfer.svg?branch=main)](https://travis-ci.org/tskit-dev/tsinfer) [![Docs Build](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml/badge.svg)](https://tskit.dev/tsinfer/docs/stable/introduction.html) [![codecov](https://codecov.io/gh/tskit-dev/tsinfer/branch/main/graph/badge.svg)](https://codecov.io/gh/tskit-dev/tsinfer)
 
 
 Infer a tree sequence from genetic variation data
 
-The [documentation](http://tsinfer.readthedocs.io/en/latest/) contains details of how to use this software, including [installation instructions](https://tsinfer.readthedocs.io/en/latest/installation.html).
+The [documentation](https://tskit.dev/tsinfer/docs/stable) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/stable/installation.html).
 
 The algorithm, its rationale, and results from testing on simulated and real data are described in the following [Nature Genetics paper](https://doi.org/10.1038/s41588-019-0483-y):
 

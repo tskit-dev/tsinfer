@@ -42,12 +42,12 @@ Tree sequences
 
 The goal of ``tsinfer`` is to infer correlated genealogies from variation
 data, and it uses the very efficient `succinct tree sequence
-<https://tskit.readthedocs.io/en/latest/data-model.html>`_ data structure
+<https://tskit.dev/tskit/docs/stable/data-model.html>`_ data structure
 to encode this output. Please see the `tskit documentation
-<https://tskit.readthedocs.io/>`_ for details on how to
+<https://tskit.dev/tskit/docs/stable/>`_ for details on how to
 process and manipulate such tree sequences.
 
 The intermediate ``.ancestors.trees`` file produced by the
 :ref:`sec_inference_match_ancestors` step is also a
 tree sequence and can be loaded and analysed using the
-`tskit API <https://tskit.readthedocs.io/en/latest/python-api.html>`_.
+`tskit API <https://tskit.dev/tskit/docs/stable/python-api.html>`_.
