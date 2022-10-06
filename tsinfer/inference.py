@@ -1752,8 +1752,10 @@ class SampleMatcher(Matcher):
 
     def extend(self, samples, known_haplotypes, node_metadata):
         """
-        Runs the "extend" operation by matching for an exemplar sequence
-        from each of the distinct categories.
+        Runs the "extend" operation by taking a set of samples, creating
+        "exemplar" proxy samples when we have multiple identical sequences,
+        then matching the exemplar (or the sample if unique) into the existing
+        tree sequence, returning a new tree sequence.
         """
         builder = self.tree_sequence_builder
         # Allocate nodes in the tree sequence consecutively for the input samples
@@ -1856,9 +1858,6 @@ class SampleMatcher(Matcher):
             f"Extended for {len(samples)} samples ({len(exemplars)} distinct) and "
             f"{new_mutations} new mutations."
         )
-        tables.provenances.clear()
-        record = provenance.get_provenance_dict(command="extend")
-        tables.provenances.add_row(record=json.dumps(record))
 
         return tables.tree_sequence(), set(distinct.keys())
 
