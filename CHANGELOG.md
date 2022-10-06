@@ -11,6 +11,8 @@
 
 - sample_data.subset() now accepts a sequence_length  ({pr}`681`, {user}`hyanwong`)
 
+- `verify` no longer raises error when comparing a genotype to missingness. ({pr}`716`, {issue}`625`, {user}`benjeffery`) 
+
 **Breaking changes**:
 
 - The ``simplify`` parameter is now deprecated in favour of ``post_process``, which

@@ -3228,6 +3228,28 @@ class TestVerify:
         tsinfer.verify(samples, inferred_ts)
         tsinfer.verify(samples, ts)
 
+    def test_missingness(self):
+        ts = msprime.simulate(10, mutation_rate=5, random_seed=1)
+        assert ts.num_sites > 0
+
+        # Mark some of the samples as missing in the ts by removing the edges that
+        # connect them
+        tables = ts.dump_tables()
+        edges = tables.edges.copy()
+        tables.edges.clear()
+        sample_to_redact = next(iter(ts.samples()))
+        for e in edges:
+            if e.child == sample_to_redact:
+                pass
+            else:
+                tables.edges.append(e)
+        missing_ts = tables.tree_sequence()
+        assert np.sum(missing_ts.genotype_matrix() == tskit.NULL) > 0
+        samples = tsinfer.SampleData.from_tree_sequence(missing_ts)
+        assert np.sum(samples.sites_genotypes[:] == tskit.NULL) > 0
+        inferred_ts = tsinfer.infer(samples)
+        tsinfer.verify(samples, inferred_ts)
+
     def test_bad_num_sites(self):
         n = 2
         ts = msprime.simulate(n, mutation_rate=5, random_seed=1)
