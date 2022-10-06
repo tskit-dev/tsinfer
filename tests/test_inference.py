@@ -36,6 +36,7 @@ import numpy as np
 import pytest
 import tskit
 import tsutil
+from tskit import MetadataSchema
 
 import _tsinfer
 import tsinfer
@@ -879,7 +880,7 @@ class TestMetadataRoundTrip:
 
     def test_ts_metadata(self):
         metadata = {f"x_{j}": j for j in range(10)}
-        schema = tsinfer.permissive_json_schema()
+        schema = tskit.MetadataSchema.permissive_json().schema
         for j in range(10):
             name = f"x_{j}"
             metadata[name] = j
@@ -896,29 +897,29 @@ class TestMetadataRoundTrip:
     def test_site_metadata(self, use_schema):
         ts = msprime.simulate(11, mutation_rate=5, recombination_rate=2, random_seed=15)
         assert ts.num_sites > 2
-        sample_data = tsinfer.SampleData(sequence_length=1)
+        sd = tsinfer.SampleData(sequence_length=1)
         if use_schema:
-            sample_data.sites_metadata_schema = tsinfer.permissive_json_schema()
+            sd.sites_metadata_schema = MetadataSchema.permissive_json().schema
         rng = random.Random(32)
         all_metadata = []
         for variant in ts.variants():
             metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
-            sample_data.add_site(
+            sd.add_site(
                 variant.site.position,
                 variant.genotypes,
                 alleles=["A", "T"],
                 metadata=metadata,
             )
             all_metadata.append(metadata)
-        sample_data.finalise()
+        sd.finalise()
 
-        for j, metadata in enumerate(sample_data.sites_metadata[:]):
+        for j, metadata in enumerate(sd.sites_metadata[:]):
             assert all_metadata[j] == metadata
 
-        for variant in sample_data.variants():
+        for variant in sd.variants():
             assert all_metadata[variant.site.id] == variant.site.metadata
 
-        output_ts = tsinfer.infer(sample_data)
+        output_ts = tsinfer.infer(sd)
         for variant in output_ts.variants():
             site = variant.site
             decoded_metadata = (
@@ -937,26 +938,25 @@ class TestMetadataRoundTrip:
     def test_population_metadata(self, use_schema):
         ts = msprime.simulate(12, mutation_rate=5, random_seed=16)
         assert ts.num_sites > 2
-        sample_data = tsinfer.SampleData(sequence_length=1)
+        sd = tsinfer.SampleData(sequence_length=1)
         if use_schema:
-            sample_data.populations_metadata_schema = tsinfer.permissive_json_schema()
+            sd.populations_metadata_schema = MetadataSchema.permissive_json().schema
+
         rng = random.Random(32)
         all_metadata = []
         for j in range(ts.num_samples):
             metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
-            sample_data.add_population(metadata=metadata)
+            sd.add_population(metadata=metadata)
             all_metadata.append(metadata)
         for j in range(ts.num_samples):
-            sample_data.add_individual(population=j)
+            sd.add_individual(population=j)
         for variant in ts.variants():
-            sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles
-            )
-        sample_data.finalise()
+            sd.add_site(variant.site.position, variant.genotypes, variant.alleles)
+        sd.finalise()
 
-        for j, metadata in enumerate(sample_data.populations_metadata[:]):
+        for j, metadata in enumerate(sd.populations_metadata[:]):
             assert all_metadata[j] == metadata
-        output_ts = tsinfer.infer(sample_data)
+        output_ts = tsinfer.infer(sd)
         output_metadata = [
             population.metadata if use_schema else json.loads(population.metadata)
             for population in output_ts.populations()
@@ -970,24 +970,22 @@ class TestMetadataRoundTrip:
     def test_individual_metadata(self, use_schema):
         ts = msprime.simulate(11, mutation_rate=5, random_seed=16)
         assert ts.num_sites > 2
-        sample_data = tsinfer.SampleData(sequence_length=1)
+        sd = tsinfer.SampleData(sequence_length=1)
         if use_schema:
-            sample_data.individuals_metadata_schema = tsinfer.permissive_json_schema()
+            sd.individuals_metadata_schema = MetadataSchema.permissive_json().schema
         rng = random.Random(32)
         all_metadata = []
         for j in range(ts.num_samples):
             metadata = {str(j): random_string(rng) for j in range(rng.randint(0, 5))}
-            sample_data.add_individual(metadata=metadata)
+            sd.add_individual(metadata=metadata)
             all_metadata.append(metadata)
         for variant in ts.variants():
-            sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles
-            )
-        sample_data.finalise()
+            sd.add_site(variant.site.position, variant.genotypes, variant.alleles)
+        sd.finalise()
 
-        for j, metadata in enumerate(sample_data.individuals_metadata[:]):
+        for j, metadata in enumerate(sd.individuals_metadata[:]):
             assert all_metadata[j] == metadata
-        output_ts = tsinfer.infer(sample_data)
+        output_ts = tsinfer.infer(sd)
         output_metadata = [
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
@@ -1001,27 +999,23 @@ class TestMetadataRoundTrip:
     def test_individual_metadata_subset(self, use_schema):
         ts = msprime.simulate(15, mutation_rate=4, random_seed=16)
         assert ts.num_sites > 2
-        sample_data = tsinfer.SampleData(sequence_length=1)
+        sd = tsinfer.SampleData(sequence_length=1)
         if use_schema:
-            sample_data.individuals_metadata_schema = tsinfer.permissive_json_schema()
+            sd.individuals_metadata_schema = MetadataSchema.permissive_json().schema
         rng = random.Random(132)
         all_metadata = []
         for _ in range(ts.num_samples):
-            sample_data.add_population()
+            sd.add_population()
         for j in range(ts.num_samples):
             metadata = {str(j): random_string(rng) for j in range(rng.randint(1, 6))}
             location = [rng.randint(-100, 100)]
-            sample_data.add_individual(
-                metadata=metadata, location=location, population=j
-            )
+            sd.add_individual(metadata=metadata, location=location, population=j)
             all_metadata.append(metadata)
         for variant in ts.variants():
-            sample_data.add_site(
-                variant.site.position, variant.genotypes, variant.alleles
-            )
-        sample_data.finalise()
+            sd.add_site(variant.site.position, variant.genotypes, variant.alleles)
+        sd.finalise()
 
-        output_ts = tsinfer.infer(sample_data)
+        output_ts = tsinfer.infer(sd)
         output_metadata = [
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
@@ -1030,20 +1024,18 @@ class TestMetadataRoundTrip:
         # so check all_metadata is "contained in" output_metadata
         for all, output in zip(all_metadata, output_metadata):
             assert all.items() <= output.items()
-        for j, metadata in enumerate(sample_data.individuals_metadata[:]):
+        for j, metadata in enumerate(sd.individuals_metadata[:]):
             assert all_metadata[j].items() <= metadata.items()
 
         # Now do this for various subsets of the data and make sure
         # that metadata comes through correctly.
-        ancestors = tsinfer.generate_ancestors(sample_data)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        ancestors = tsinfer.generate_ancestors(sd)
+        ancestors_ts = tsinfer.match_ancestors(sd, ancestors)
         for subset in [[0], [0, 1], [1], [2, 3, 4, 5]]:
             t1 = output_ts.simplify(subset).dump_tables()
             assert len(t1.individuals.metadata) > 0
             assert len(t1.individuals.location) > 0
-            t2 = tsinfer.match_samples(
-                sample_data, ancestors_ts, indexes=subset
-            ).dump_tables()
+            t2 = tsinfer.match_samples(sd, ancestors_ts, indexes=subset).dump_tables()
             t2.simplify()
             t1.assert_equals(t2, ignore_provenance=True)
 
@@ -1080,23 +1072,19 @@ class TestMetadataRoundTrip:
         ]
         samples = samples + historical_samples
         ts = msprime.simulate(samples=samples, mutation_rate=5, random_seed=16)
-        with tsinfer.SampleData(sequence_length=1) as sample_data:
+        with tsinfer.SampleData(sequence_length=1) as sd:
             if use_schema:
-                sample_data.individuals_metadata_schema = (
-                    tsinfer.permissive_json_schema()
-                )
+                sd.individuals_metadata_schema = MetadataSchema.permissive_json().schema
             all_times = []
             for j in range(ts.num_samples // 2):
                 time = samples[2 * j].time
-                sample_data.add_individual(time=time, ploidy=2)
+                sd.add_individual(time=time, ploidy=2)
                 all_times.append(time)
             for variant in ts.variants():
-                sample_data.add_site(
-                    variant.site.position, variant.genotypes, variant.alleles
-                )
-        for j, time in enumerate(sample_data.individuals_time[:]):
+                sd.add_site(variant.site.position, variant.genotypes, variant.alleles)
+        for j, time in enumerate(sd.individuals_time[:]):
             assert np.array_equal(all_times[j], time)
-        output_ts = tsinfer.infer(sample_data)
+        output_ts = tsinfer.infer(sd)
         assert output_ts.num_individuals == len(all_times)
         flags = output_ts.tables.nodes.flags
         flags_for_historical_sample = (
@@ -4247,30 +4235,29 @@ class TestAncestralAlleles:
 
 class TestAddToSchema:
     def test_is_copy(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         other = tsinfer.add_to_schema(schema, "name")
         assert schema is not other
 
     def test_name_collision(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         schema = tsinfer.add_to_schema(schema, "name")
         with pytest.raises(ValueError):
             tsinfer.add_to_schema(schema, "name")
 
     def test_defaults(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         schema = tsinfer.add_to_schema(schema, "name")
         assert schema["properties"]["name"] == {}
-        assert schema["required"] == []
 
     def test_definition(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         definition = {"type": "number", "description": "sdf"}
         schema = tsinfer.add_to_schema(schema, "name", definition=definition)
         assert schema["properties"]["name"] == definition
 
     def test_many_keys(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         name_map = {}
         for j in range(20):
             name = f"x_{j}"
@@ -4278,10 +4265,9 @@ class TestAddToSchema:
             name_map[name] = definition
             schema = tsinfer.add_to_schema(schema, name=name, definition=definition)
         assert schema["properties"] == name_map
-        assert schema["required"] == []
 
     def test_many_keys_required(self):
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
         name_map = {}
         names = []
         for j in range(10):

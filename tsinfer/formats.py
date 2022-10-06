@@ -64,18 +64,6 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 DEFAULT_MAX_FILE_SIZE = 2**30 if sys.platform == "win32" else 2**40
 
 
-def permissive_json_schema():
-    # A version of this should be in tskit, but we keep it here for now
-    # for convenience
-    return {
-        "codec": "json",
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": True,
-    }
-
-
 def np_obj_equal(np_obj_array1, np_obj_array2):
     """
     A replacement for np.array_equal to test equality of numpy arrays that
@@ -964,7 +952,9 @@ class SampleData(DataContainer):
         super().__init__(**kwargs)
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["metadata"] = {}
-        self.data.attrs["metadata_schema"] = permissive_json_schema()
+        self.data.attrs[
+            "metadata_schema"
+        ] = tskit.MetadataSchema.permissive_json().schema
         chunks = (self._chunk_size,)
         populations_group = self.data.create_group("populations")
         metadata = populations_group.create_dataset(
