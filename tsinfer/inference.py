@@ -187,12 +187,18 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
             # Alleles may be in a different order, or even present/absent if not in the
             # genotype matrix so we need to explicitly compare the decoded values (slow)
             for i, (g1, g2) in enumerate(zip(var1.genotypes, var2.genotypes)):
-                if var1.alleles[g1] != var2.alleles[g2]:
+                # We don't expect missingness in a tsinfer generated tree sequence
+                assert g2 != tskit.NULL
+                if g1 != tskit.NULL and var1.alleles[g1] != var2.alleles[g2]:
                     raise ValueError(
                         f"Alleles for sample {i} not equal at site {var1.site.id}"
                     )
         else:
-            if not np.array_equal(var1.genotypes, var2.genotypes):
+            g1 = var1.genotypes
+            g2 = np.copy(var2.genotypes)
+            missing_mask = g1 == tskit.NULL
+            g2[missing_mask] = tskit.NULL
+            if not np.array_equal(g1, g2):
                 raise ValueError(f"Genotypes not equal at site {var1.site.id}")
         progress.update()
     progress.close()
