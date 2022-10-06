@@ -25,8 +25,6 @@ import msprime
 import numpy as np
 import tskit
 
-import tsinfer
-
 
 def mark_mutation_times_unknown(ts):
     """
@@ -47,7 +45,7 @@ def add_default_schemas(ts):
     schemas on the tables that are used for round-tripping data in tsinfer.
     """
     tables = ts.dump_tables()
-    schema = tskit.MetadataSchema(tsinfer.permissive_json_schema())
+    schema = tskit.MetadataSchema.permissive_json()
     assert len(tables.metadata) == 0
     tables.metadata_schema = schema
     tables.metadata = {}

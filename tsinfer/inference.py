@@ -82,6 +82,8 @@ def add_to_schema(schema, name, definition=None, required=False):
         schema["properties"] = {}
     schema["properties"][name] = definition
     if required:
+        if "required" not in schema:
+            schema["required"] = []
         schema["required"].append(name)
     return schema
 

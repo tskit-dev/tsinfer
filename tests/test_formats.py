@@ -36,6 +36,7 @@ import pytest
 import tskit
 import tsutil
 import zarr
+from tskit import MetadataSchema
 
 import tsinfer
 import tsinfer.exceptions as exceptions
@@ -703,7 +704,9 @@ class TestSampleData(DataContainerMixin):
     def test_top_level_metadata(self):
         sample_data = formats.SampleData(sequence_length=10)
         sample_data.metadata = {"a": "b"}
-        schema = tsinfer.permissive_json_schema()
+        schema = MetadataSchema.permissive_json().schema
+        if "properties" not in schema:
+            schema["properties"] = {}
         schema["properties"]["xyz"] = {"type": "string"}
         sample_data.metadata_schema = schema
         sample_data.add_site(0, [0, 0])
@@ -1304,32 +1307,36 @@ class TestSampleDataMetadataSchemas:
     def test_metadata_schemas_default(self):
         with formats.SampleData() as sample_data:
             sample_data.add_site(0, [0, 0])
-        assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+        assert sample_data.metadata_schema == MetadataSchema.permissive_json().schema
         # Tables default to None for backward compatibility.
         assert sample_data.populations_metadata_schema is None
         assert sample_data.individuals_metadata_schema is None
         assert sample_data.sites_metadata_schema is None
 
     def test_metadata_schemas_non_json_codec(self):
-        bad_schema = tsinfer.permissive_json_schema()
+        bad_schema = MetadataSchema.permissive_json().schema
         bad_schema["codec"] = "struct"
         with formats.SampleData() as sample_data:
             sample_data.add_site(0, [0, 0])
-            with pytest.raises(ValueError):
+            with pytest.raises(KeyError):
                 sample_data.metadata_schema = bad_schema
-            with pytest.raises(ValueError):
+            with pytest.raises(KeyError):
                 sample_data.populations_metadata_schema = bad_schema
-            with pytest.raises(ValueError):
+            with pytest.raises(KeyError):
                 sample_data.individuals_metadata_schema = bad_schema
-            with pytest.raises(ValueError):
+            with pytest.raises(KeyError):
                 sample_data.sites_metadata_schema = bad_schema
 
     def test_set_top_level_metadata_schema(self):
-        example_schema = tsinfer.permissive_json_schema()
+        example_schema = MetadataSchema.permissive_json().schema
+        if "properties" not in example_schema:
+            example_schema["properties"] = {}
         example_schema["properties"]["xyz"] = {"type": "string"}
 
         with formats.SampleData() as sample_data:
-            assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+            assert (
+                sample_data.metadata_schema == MetadataSchema.permissive_json().schema
+            )
             sample_data.metadata_schema = example_schema
             assert sample_data.metadata_schema == example_schema
             sample_data.add_site(0, [0, 0])
@@ -1339,10 +1346,10 @@ class TestSampleDataMetadataSchemas:
             sample_data.add_site(0, [0, 0])
             with pytest.raises(ValueError):
                 sample_data.metadata_schema = None
-        assert sample_data.metadata_schema == tsinfer.permissive_json_schema()
+        assert sample_data.metadata_schema == MetadataSchema.permissive_json().schema
 
     def test_set_population_metadata_schema(self):
-        example_schema = tsinfer.permissive_json_schema()
+        example_schema = MetadataSchema.permissive_json().schema
         with formats.SampleData() as sample_data:
             assert sample_data.populations_metadata_schema is None
             sample_data.populations_metadata_schema = example_schema
@@ -1359,7 +1366,7 @@ class TestSampleDataMetadataSchemas:
         assert sample_data.populations_metadata_schema is None
 
     def test_set_individual_metadata_schema(self):
-        example_schema = tsinfer.permissive_json_schema()
+        example_schema = MetadataSchema.permissive_json().schema
         with formats.SampleData() as sample_data:
             assert sample_data.individuals_metadata_schema is None
             sample_data.individuals_metadata_schema = example_schema
@@ -1376,7 +1383,7 @@ class TestSampleDataMetadataSchemas:
         assert sample_data.individuals_metadata_schema is None
 
     def test_set_site_metadata_schema(self):
-        example_schema = tsinfer.permissive_json_schema()
+        example_schema = MetadataSchema.permissive_json().schema
         with formats.SampleData() as sample_data:
             assert sample_data.sites_metadata_schema is None
             sample_data.sites_metadata_schema = example_schema
