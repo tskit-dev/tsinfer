@@ -38,6 +38,7 @@ import numcodecs
 import numpy as np
 import tskit
 import zarr
+from tskit import MISSING_DATA
 
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
@@ -335,25 +336,25 @@ def merge_variants(sd1, sd2):
             var2 = next(var2_iter, None)
         elif var1.site.position < var2.site.position:
             genotypes[:n1] = var1.genotypes
-            genotypes[n1:] = tskit.MISSING_DATA
+            genotypes[n1:] = MISSING_DATA
             var1.genotypes = genotypes
             yield var1
             var1 = next(var1_iter, None)
         else:
-            genotypes[:n1] = tskit.MISSING_DATA
+            genotypes[:n1] = MISSING_DATA
             genotypes[n1:] = var2.genotypes
             var2.genotypes = genotypes
             yield var2
             var2 = next(var2_iter, None)
 
-    genotypes[n1:] = tskit.MISSING_DATA
+    genotypes[n1:] = MISSING_DATA
     while var1 is not None:
         genotypes[:n1] = var1.genotypes
         var1.genotypes = genotypes
         yield var1
         var1 = next(var1_iter, None)
 
-    genotypes[:n1] = tskit.MISSING_DATA
+    genotypes[:n1] = MISSING_DATA
     while var2 is not None:
         genotypes[n1:] = var2.genotypes
         var2.genotypes = genotypes
@@ -765,10 +766,28 @@ class Site:
     # TODO document properly.
     id = attr.ib()
     position = attr.ib()
-    ancestral_state = attr.ib()
+    ancestral_allele = attr.ib()  # here -1 (tskit.MISSING_DATA) means none defined
     metadata = attr.ib()
     time = attr.ib()
     alleles = attr.ib()
+
+    @property
+    def ancestral_state(self):
+        if self.ancestral_allele == MISSING_DATA:
+            return None
+        return self.alleles[self.ancestral_allele]
+
+    def reorder_alleles(self):
+        """
+        The alleles list reordered so that the ancestral allele is first
+        """
+        if self.ancestral_allele > 0:
+            return (
+                (self.alleles[self.ancestral_allele],)
+                + self.alleles[: self.ancestral_allele]
+                + self.alleles[self.ancestral_allele + 1 :]
+            )
+        return self.alleles
 
 
 @attr.s
@@ -933,7 +952,7 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (5, 0)
+    FORMAT_VERSION = (5, 1)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
@@ -1053,6 +1072,13 @@ class SampleData(DataContainer):
             compressor=self._compressor,
             dtype=object,
             object_codec=self._metadata_codec,
+        )
+        sites_group.create_dataset(
+            "ancestral_allele",
+            shape=(0,),
+            chunks=chunks,
+            compressor=self._compressor,
+            dtype=np.int8,
         )
         sites_group.create_dataset(
             "metadata",
@@ -1180,6 +1206,10 @@ class SampleData(DataContainer):
 
     @property
     def sites_genotypes(self):
+        """
+        The "raw" genotypes array for each site, as passed in when adding sites. The
+        values in this array correspond to indexes into the :attr:`sites_alleles` array.
+        """
         return self.data["sites/genotypes"]
 
     @property
@@ -1197,7 +1227,25 @@ class SampleData(DataContainer):
 
     @property
     def sites_alleles(self):
+        """
+        The alleles list for each site, in the order given when adding sites. If
+        missing data is present, the last allelic state will be ``None``.
+        """
         return self.data["sites/alleles"]
+
+    @property
+    def sites_ancestral_allele(self):
+        """
+        The index into each :attr:`sites_alleles` list which corresponds to the
+        ancestral state. If the ancestral state is unknown, this is indicated by
+        a value of tskit.MISSING_DATA (-1).
+        """
+        try:
+            return self.data["sites/ancestral_allele"]
+        except KeyError:
+            # Maintains backwards compatibility: in previous tsinfer versions the
+            # ancestral allele was always the zeroth element in the alleles list
+            return np.zeros(self.num_sites, dtype=np.int8)
 
     @property
     def sites_metadata(self):
@@ -1590,6 +1638,7 @@ class SampleData(DataContainer):
             "alleles": self.sites_alleles,
             "metadata": self.sites_metadata,
             "time": self.sites_time,
+            "ancestral_allele": self.sites_ancestral_allele,
         }
         self._sites_writer = BufferedItemWriter(
             arrays, num_threads=self._num_flush_threads
@@ -1699,6 +1748,7 @@ class SampleData(DataContainer):
         metadata=None,
         inference=None,
         time=None,
+        ancestral_allele=None,
     ):
         """
         Adds a new site to this :class:`.SampleData` and returns its ID.
@@ -1737,11 +1787,9 @@ class SampleData(DataContainer):
             dtype ``np.int8``; therefore, for maximum efficiency ensure
             that the input array is also of this type.
         :param list(str) alleles: A list of strings defining the alleles at this
-            site. The zero'th element of this list is the **ancestral state**
-            and further elements are the **derived states**. Only biallelic
-            sites can currently be used for inference. Sites with 3 or more
-            alleles cannot have ``inference`` (below) set to ``True``. If not
-            specified or None, defaults to ["0", "1"].
+            site. Only biallelic sites can currently be used for inference. Sites
+            with 3 or more alleles cannot have ``inference`` (below) set to ``True``.
+            If not specified or None, defaults to ["0", "1"].
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this site.
         :param float time: The time of occurence (pastwards) of the mutation to the
@@ -1753,6 +1801,13 @@ class SampleData(DataContainer):
             inference process. For sites not used in inference, such as singletons or
             sites with more than two alleles or when the time is specified as
             ``np.nan``, then the value is unused. Defaults to None.
+        :param int ancestral_allele: A positive index into the alleles array, specifying
+            which allele is the ancestral state, or ``tskit.MISSING_DATA`` (-1) if the
+            ancestral state is unknown (in which case the site will not be used for
+            inference, and the ancestral state will be inferred using parsimony).
+            Default: ``None``, treated as ``0``, so that the first allele in the list
+            is taken as the ancestral state.
+
         :return: The ID of the newly added site.
         :rtype: int
         """
@@ -1779,21 +1834,29 @@ class SampleData(DataContainer):
         if alleles is None:
             alleles = ["0", "1"]
         n_alleles = len(alleles)
-        non_missing = genotypes != tskit.MISSING_DATA
+        non_missing = genotypes != MISSING_DATA
         if len(set(alleles)) != n_alleles:
             raise ValueError("Alleles must be distinct")
         if n_alleles > 64:
             # This is mandated by tskit's map_mutations function.
             raise ValueError("Cannot have more than 64 alleles")
-        if np.any(genotypes == tskit.MISSING_DATA) and alleles[-1] is not None:
+        if np.any(genotypes == MISSING_DATA) and alleles[-1] is not None:
             # Don't modify the input parameter
             alleles = list(alleles) + [None]
-        if np.any(np.logical_and(genotypes < 0, genotypes != tskit.MISSING_DATA)):
+        if np.any(np.logical_and(genotypes < 0, genotypes != MISSING_DATA)):
             raise ValueError("Non-missing values for genotypes cannot be negative")
         if genotypes.shape != (self.num_samples,):
             raise ValueError(f"Must have {self.num_samples} (num_samples) genotypes.")
         if np.any(genotypes[non_missing] >= n_alleles):
             raise ValueError("Non-missing values for genotypes must be < num alleles")
+        if ancestral_allele is None:
+            ancestral_allele = 0
+        else:
+            if ancestral_allele >= n_alleles or ancestral_allele < MISSING_DATA:
+                raise ValueError(
+                    "ancestral_allele needs to be an index into the alleles array "
+                    "or tskit.MISSING_DATA"
+                )
         if position < 0:
             raise ValueError("Site position must be > 0")
         if self.sequence_length > 0 and position >= self.sequence_length:
@@ -1815,6 +1878,7 @@ class SampleData(DataContainer):
             metadata=self._check_metadata(metadata),
             alleles=alleles,
             time=time,
+            ancestral_allele=ancestral_allele,
         )
         self._last_position = position
         return site_id
@@ -1914,7 +1978,7 @@ class SampleData(DataContainer):
            and update the genotypes accordingly. It is an error if sites with
            the same position have different ancestral state, time, or metadata
            values. For sites that exist in one dataset and not the other,
-           we insert the site with MISSING_DATA present in the genotypes for
+           we insert the site with ``tskit.MISSING_DATA`` present in the genotypes for
            the dataset that does not contain the site.
         4. We add the provenances for this dataset, followed by the provenances
            for the other dataset.
@@ -1967,20 +2031,23 @@ class SampleData(DataContainer):
         sites can be returned using the ``ids`` parameter. This must
         be a list of integer site IDs.
         """
-        position = self.sites_position[:]
-        alleles = self.sites_alleles[:]
-        metadata = self.sites_metadata[:]
-        time = self.sites_time[:]
+        position_array = self.sites_position[:]
+        alleles_array = self.sites_alleles[:]
+        metadata_array = self.sites_metadata[:]
+        time_array = self.sites_time[:]
+        ancestral_allele_array = self.sites_ancestral_allele[:]
         if ids is None:
             ids = np.arange(0, self.num_sites, dtype=int)
         for j in ids:
+            anc_idx = ancestral_allele_array[j]
+            alleles = tuple(alleles_array[j])
             site = Site(
                 id=j,
-                position=position[j],
-                ancestral_state=alleles[j][0],
-                alleles=tuple(alleles[j]),
-                metadata=metadata[j],
-                time=time[j],
+                position=position_array[j],
+                ancestral_allele=anc_idx,
+                alleles=alleles,
+                metadata=metadata_array[j],
+                time=time_array[j],
             )
             yield site
 
@@ -2004,34 +2071,91 @@ class SampleData(DataContainer):
                 num_alleles[j] -= 1
         return num_alleles[sites]
 
-    def variants(self, sites=None):
+    def variants(self, sites=None, recode_ancestral=None):
         """
-        Returns an iterator over the Variant objects. This is equivalent to
-        the TreeSequence.variants iterator.
-        """
-        all_genotypes = chunk_iterator(self.sites_genotypes, indexes=sites)
-        for genotypes, site in zip(all_genotypes, self.sites(ids=sites)):
-            yield Variant(site=site, alleles=site.alleles, genotypes=genotypes)
+        Returns an iterator over the :class:`Variant` objects. This is equivalent to
+        the :meth:`tskit.TreeSequence.variants` iterator. If recode_ancestral is
+        ``True``, the ``.alleles`` attribute of each variant is guaranteed to return
+        the alleles in an order such that the ancestral state is the first item
+        in the list. In this case, ``variant.alleles`` may list the alleles in a
+        different order from the input order as listed in ``variant.site.alleles``,
+        and the values in genotypes array will be recoded so that the ancestral
+        state will have a genotype of 0. If the ancestral state is unknown, the
+        original input order is kept.
 
-    def __all_haplotypes(self, sites=None):
+        :param array sites: A numpy array of ascending site ids for which to return
+            data. If None (default) return all sites.
+        :param bool recode_ancestral: If True, recode genotypes at sites where the
+            ancestral state is known such that the ancestral state is coded as 0,
+            as described above. Otherwise return genotypes in the input allele encoding.
+            Default: ``None`` treated as ``False``.
+        :return: An iterator over the variants in the sample data file.
+        :rtype: iter(:class:`Variant`)
+        """
+        if recode_ancestral is None:
+            recode_ancestral = False
+        all_genotypes = chunk_iterator(self.sites_genotypes, indexes=sites)
+        assert MISSING_DATA < 0  # required for geno_map to remap MISSING_DATA
+        for genos, site in zip(all_genotypes, self.sites(ids=sites)):
+            aa = site.ancestral_allele
+            alleles = site.alleles
+            if aa != MISSING_DATA and aa > 0 and recode_ancestral:
+                # Need to recode this site
+                alleles = site.reorder_alleles()
+                # re-map the genotypes
+                geno_map = np.arange(len(alleles) - MISSING_DATA, dtype=genos.dtype)
+                geno_map[MISSING_DATA] = MISSING_DATA
+                geno_map[aa] = 0
+                geno_map[0:aa] += 1
+                genos = geno_map[genos]
+            yield Variant(site=site, alleles=alleles, genotypes=genos)
+
+    def __all_haplotypes(self, sites=None, recode_ancestral=None):
         # We iterate over chunks vertically here, and it's not worth complicating
         # the chunk iterator to handle this.
+        if recode_ancestral is None:
+            recode_ancestral = False
+        aa_index = self.sites_ancestral_allele[:]
+        # If ancestral allele is missing, keep the order unchanged (aa_index of zero)
+        aa_index[aa_index == MISSING_DATA] = 0
         chunk_size = self.sites_genotypes.chunks[1]
         for j in range(self.num_samples):
             if j % chunk_size == 0:
                 chunk = self.sites_genotypes[:, j : j + chunk_size].T
             a = chunk[j % chunk_size]
+            if recode_ancestral:
+                # Remap the genotypes at all sites, depending on the aa_index
+                a = np.where(
+                    a == aa_index,
+                    0,
+                    np.where(np.logical_and(a != MISSING_DATA, a < aa_index), a + 1, a),
+                )
             yield j, a if sites is None else a[sites]
 
-    def haplotypes(self, samples=None, sites=None):
+    def haplotypes(self, samples=None, sites=None, recode_ancestral=None):
         """
-        Returns an iterator over the (sample_id, haplotype) pairs.
+        Returns an iterator over the (sample_id, haplotype) pairs. Each haplotype is
+        an array of indexes, where the ``i`` th value is an index into the
+        alleles list for the ``i`` th specified site (but see warning below).
+
+        .. warning::
+            If ``recode_ancestral=True``, the haplotype values may not correspond
+            to indexes into the ``sites.alleles`` list. Instead, they will correspond to
+            the ``variant.alleles`` list, returned when iterating over :meth:`variants`
+            using ``variants(recode_ancestral=True)``.
 
         :param list samples: The sample IDs for which haplotypes are returned. If
             ``None``, return haplotypes for all sample nodes, otherwise this may be a
             numpy array (or array-like) object (converted to dtype=np.int32).
-        :param array sites: A numpy array of sites to use.
+        :param array sites: A numpy array of sites to use, or ``None`` for all sites.
+        :param bool recode_ancestral: If ``True``, recode genotypes so that the
+            ancestral state is coded as 0 as described under :meth:`variants`. Otherwise
+            return genotypes in the input allele encoding. Default: ``None``,
+            treated as ``False``.
+        :return: An iterator over (sample_id, haplotype) pairs.
+        :rtype: iter(int, numpy.ndarray(dtype=int8))
         """
+
         if samples is None:
             samples = np.arange(self.num_samples)
         else:
@@ -2041,7 +2165,8 @@ class SampleData(DataContainer):
             if samples.shape[0] > 0 and samples[-1] >= self.num_samples:
                 raise ValueError("Sample index too large.")
         j = 0
-        for index, a in self.__all_haplotypes(sites):
+
+        for index, a in self.__all_haplotypes(sites, recode_ancestral):
             if j == len(samples):
                 break
             if index == samples[j]:

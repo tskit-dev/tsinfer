@@ -158,6 +158,9 @@ class AncestorBuilder:
         leftwards or rightwards), augment the haplotype array a with the inferred sites
         Together with `make_ancestor`, which calls this function, these describe the main
         algorithm as implemented in Fig S2 of the preprint, with the buffer.
+
+        At the moment we assume that the derived state is 1. We should alter this so
+        that we allow the derived state to be a different non-zero integer.
         """
         focal_time = self.sites[focal_site].time
         S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
