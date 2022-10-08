@@ -740,12 +740,14 @@ class TestZeroInferenceSites:
     def teardown_class(cls):
         logging.disable(logging.NOTSET)
 
-    def verify(self, genotypes):
+    def verify(self, genotypes, anc_alleles=None):
         genotypes = np.array(genotypes, dtype=np.int8)
         m = genotypes.shape[0]
+        if anc_alleles is None:
+            anc_alleles = np.zeros(m, dtype=np.int8)
         with tsinfer.SampleData(sequence_length=m + 1) as sample_data:
             for j in range(m):
-                sample_data.add_site(j, genotypes[j])
+                sample_data.add_site(j, genotypes[j], ancestral_allele=anc_alleles[j])
         exclude_positions = sample_data.sites_position
         for path_compression in [False, True]:
             output_ts = tsinfer.infer(
@@ -756,12 +758,15 @@ class TestZeroInferenceSites:
             for tree in output_ts.trees():
                 if tree.num_edges > 0 or 0 < tree.index < output_ts.num_trees - 1:
                     assert tree.num_roots == 1
-            for site in output_ts.sites():
-                inf_type = json.loads(site.metadata)["inference_type"]
-                if len(site.mutations) == 0:
+            for v1, v2 in zip(sample_data.variants(), output_ts.variants()):
+                inf_type = json.loads(v2.site.metadata)["inference_type"]
+                if np.all(v1.genotypes == tskit.MISSING_DATA) or np.all(
+                    v1.genotypes == v1.site.ancestral_allele
+                ):
                     assert inf_type == tsinfer.INFERENCE_NONE
                 else:
                     assert inf_type == tsinfer.INFERENCE_PARSIMONY
+            return output_ts
 
     def test_many_sites(self):
         ts = msprime.simulate(10, mutation_rate=5, recombination_rate=4, random_seed=21)
@@ -784,6 +789,21 @@ class TestZeroInferenceSites:
     def test_three_sites(self):
         self.verify([[0, 0], [0, 0], [0, 0]])
         self.verify([[1, 1], [1, 1], [1, 1]])
+
+    def test_no_ancestral_allele(self):
+        output_ts = self.verify(
+            [[1, 1], [tskit.MISSING_DATA, tskit.MISSING_DATA], [0, 1], [0, 1]],
+            anc_alleles=[tskit.MISSING_DATA, tskit.MISSING_DATA, 1, 0],
+        )
+        var_iter = output_ts.variants()
+        v0 = next(var_iter)
+        assert v0.site.ancestral_state == "1"
+        v1 = next(var_iter)
+        assert v1.site.ancestral_state == ""  # can't deduce an ancestral state here
+        v2 = next(var_iter)
+        assert v2.site.ancestral_state == "1"
+        v3 = next(var_iter)
+        assert v3.site.ancestral_state == "0"
 
 
 class TestZeroInferenceSitesWarning:
@@ -4208,6 +4228,21 @@ class TestHistoricalSamples:
         sd_copy.finalise()
         with pytest.raises(ValueError):
             tsinfer.match_samples(sd_copy, ancestors_ts, force_sample_times=True)
+
+
+class TestAncestralAlleles:
+    def test_recoded_equivalents(self):
+        with tsinfer.SampleData(sequence_length=1) as sd:
+            sd.add_site(0, [1, 1, 0], alleles=("A", "T"), ancestral_allele=0)
+        ts1 = tsinfer.infer(sd)
+        with tsinfer.SampleData(sequence_length=1) as sd:
+            sd.add_site(0, [0, 0, 1], alleles=("T", "A"), ancestral_allele=1)
+        ts2 = tsinfer.infer(sd)
+        assert ts1.equals(ts2, ignore_provenance=True)
+        with tsinfer.SampleData(sequence_length=1) as sd:
+            sd.add_site(0, [0, 0, 1], alleles=("T", "A"))
+        ts3 = tsinfer.infer(sd)
+        assert not ts2.equals(ts3, ignore_provenance=True)
 
 
 class TestAddToSchema:

@@ -57,6 +57,15 @@ Running inference
 
 .. autofunction:: tsinfer.post_process
 
+*****************
+Container classes
+*****************
+
+.. autoclass:: tsinfer.Variant
+
+.. autoclass:: tsinfer.Site
+
+
 **********
 Exceptions
 **********

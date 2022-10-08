@@ -72,4 +72,6 @@ sphinx:
         [ "py:class", "array" ],
         [ "py:class", "dtype=float64" ],
         [ "py:class", "dtype=uint32" ],
+        [ "py:class", "dtype=int8" ],
+        [ "py:class", "iter" ],
       ]

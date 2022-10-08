@@ -173,7 +173,9 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
     if sample_data.sequence_length != tree_sequence.sequence_length:
         raise ValueError("Sequence lengths not equal")
     progress = progress_monitor.get("verify", tree_sequence.num_sites)
-    for var1, var2 in zip(sample_data.variants(), tree_sequence.variants()):
+    for var1, var2 in zip(
+        sample_data.variants(recode_ancestral=True), tree_sequence.variants()
+    ):
         if var1.site.position != var2.site.position:
             raise ValueError(
                 "site positions not equal: {} != {}".format(
@@ -705,6 +707,12 @@ def insert_missing_sites(
         sequence. In this case, the allelic state of the sample in the returned
         tree sequence will be imputed to the most parsimonious state.
 
+    .. note::
+        If the ancestral state at a site is unknown (i.e. ``tskit.MISSING_DATA``),
+        it will be inferred by parsimony. If it is unknown and all sample data
+        is missing at that site, the site will be created with an ancestral state
+        set to the empty string.
+
     :param SampleData sample_data: The :class:`SampleData` instance
         containing some sites that are not in the input tree sequence.
     :param tskit.TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
@@ -739,11 +747,11 @@ def insert_missing_sites(
 
     # Create new sites and add the mutations
     progress = progress_monitor.get("ms_extra_sites", len(new_sd_sites))
-    for variant in sample_data.variants(sites=new_sd_sites):
+    for variant in sample_data.variants(sites=new_sd_sites, recode_ancestral=True):
         site = variant.site
         pos = site.position
-        anc_state = site.ancestral_state  # NB: None means an unknown ancestral state
-        anc_value = 0  # sample_data files always have 0 as the ancestral allele idx
+        anc_state = site.ancestral_state
+        anc_value = 0  # variant(recode_ancestral=True) always has 0 as the anc index
         G = variant.genotypes[sample_id_map]
         # We can't perform parsimony inference if all sites are missing, and there's no
         # point if all non-missing sites are the ancestral state, so skip these cases
@@ -755,7 +763,7 @@ def insert_missing_sites(
                 metadata = _encode_raw_metadata(metadata)
             tables.sites.add_row(
                 position=pos,
-                ancestral_state=anc_state,
+                ancestral_state="" if anc_state is None else anc_state,
                 metadata=metadata,
             )
         else:
@@ -826,12 +834,11 @@ class AncestorsGenerator:
 
     def add_sites(self, exclude_positions=None):
         """
-        Add all sites that are suitable for inference into the
-        ancestor builder (and subsequent inference), unless they
-        are held in the specified list of excluded site positions.
-        Suitable sites have only 2 listed alleles, with at least two
-        samples carrying the derived allele and at least one sample
-        carrying the ancestral allele.
+        Add all sites that are suitable for inference into the ancestor builder
+        (and subsequent inference), unless they are held in the specified list of
+        excluded site positions. Suitable sites have only 2 listed alleles, one of
+        which is defined as the ancestral_state, and where at least two samples
+        carry the derived allele and at least one sample carries the ancestral allele.
 
         Suitable sites will be added at the time given by site.time, unless
         site.time is  ``np.nan`` or ``tskit.UNKNOWN_TIME``. In the first case,
@@ -852,16 +859,18 @@ class AncestorsGenerator:
         logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
-        for variant in self.sample_data.variants():
+        for variant in self.sample_data.variants(recode_ancestral=True):
             # If there's missing data the last allele is None
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
+
             counts = allele_counts(variant.genotypes)
             use_site = False
             site = variant.site
             if (
                 site.position not in exclude_positions
-                and num_alleles == 2
+                and num_alleles == 2  # This will ensure that the derived state is "1"
                 and 1 < counts.derived < counts.known
+                and site.ancestral_allele is not None
             ):
                 use_site = True
                 time = site.time
@@ -1296,14 +1305,14 @@ class Matcher:
                 metadata = _encode_raw_metadata(metadata)
             site_id = tables.sites.add_row(
                 site.position,
-                ancestral_state=site.alleles[0],
+                ancestral_state=site.ancestral_state,
                 metadata=metadata,
             )
             while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
                 tables.mutations.add_row(
                     site_id,
                     node=node[mutation_id],
-                    derived_state=site.alleles[derived_state[mutation_id]],
+                    derived_state=site.reorder_alleles()[derived_state[mutation_id]],
                 )
                 mutation_id += 1
             progress.update()
@@ -1602,7 +1611,7 @@ class SampleMatcher(Matcher):
                 mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
             ):
                 allele = mutations[mutation_id].derived_state
-                derived_state[mutation_id] = site.alleles.index(allele)
+                derived_state[mutation_id] = site.reorder_alleles().index(allele)
                 mutation_id += 1
             site_id += 1
         self.tree_sequence_builder.restore_mutations(
@@ -1623,7 +1632,9 @@ class SampleMatcher(Matcher):
 
     def __match_samples_single_threaded(self, indexes):
         sample_haplotypes = self.sample_data.haplotypes(
-            indexes, sites=self.inference_site_id
+            indexes,
+            sites=self.inference_site_id,
+            recode_ancestral=True,
         )
         for j, a in sample_haplotypes:
             assert len(a) == self.num_sites
@@ -1657,7 +1668,9 @@ class SampleMatcher(Matcher):
         logger.debug(f"Started {self.num_threads} match worker threads")
 
         sample_haplotypes = self.sample_data.haplotypes(
-            indexes, sites=self.inference_site_id
+            indexes,
+            sites=self.inference_site_id,
+            recode_ancestral=True,
         )
         for j, a in sample_haplotypes:
             match_queue.put((self.sample_id_map[j], a))
