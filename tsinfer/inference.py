@@ -1087,6 +1087,8 @@ class Matcher:
                     "Cannot simultaneously specify recombination & recombination_rate, "
                     "or mismatch and mismatch_ratio"
                 )
+            logger.info("Recombination and mismatch probabilities given by user")
+
         else:
             # Must set recombination and mismatch arrays
             if recombination_rate is None and mismatch_ratio is not None:
@@ -1099,6 +1101,10 @@ class Matcher:
                 default_mismatch_prob = 1e-20  # Substantially < the value above
                 recombination = np.full(num_intervals, default_recombination_prob)
                 mismatch = np.full(self.num_sites, default_mismatch_prob)
+                logger.info(
+                    "Mismatch prevented by setting constant high recombination and "
+                    + "low mismatch probabilities"
+                )
             else:
                 genetic_dists = self.recombination_rate_to_dist(
                     recombination_rate, inference_site_position
@@ -1111,6 +1117,10 @@ class Matcher:
                     self.mismatch_ratio_to_prob(
                         mismatch_ratio, np.median(genetic_dists), num_alleles
                     ),
+                )
+                logger.info(
+                    "Recombination and mismatch probabilities calculated from "
+                    + f"specified recomb rates with mismatch ratio = {mismatch_ratio}"
                 )
 
         if len(recombination) != num_intervals:
@@ -1127,6 +1137,31 @@ class Matcher:
         self.recombination[1:] = recombination
         self.mismatch[:] = mismatch
         self.precision = precision
+
+        if len(recombination) == 0:
+            logger.info("Fewer than two inference sites: no recombination possible")
+        else:
+            logger.info(
+                "Summary of recombination probabilities between sites: "
+                f"min={np.min(recombination):.5g}; "
+                f"max={np.max(recombination):.5g}; "
+                f"median={np.median(recombination):.5g}; "
+                f"mean={np.mean(recombination):.5g}"
+            )
+
+        if len(mismatch) == 0:
+            logger.info("No inference sites: no mismatch possible")
+        else:
+            logger.info(
+                "Summary of mismatch probabilities over sites: "
+                f"min={np.min(mismatch):.5g}; "
+                f"max={np.max(mismatch):.5g}; "
+                f"median={np.median(mismatch):.5g}; "
+                f"mean={np.mean(mismatch):.5g}"
+            )
+        logger.info(
+            f"Matching using {precision} digits of precision in likelihood calcs"
+        )
 
         if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
