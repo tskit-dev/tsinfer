@@ -25,6 +25,7 @@ import json
 import logging
 import os.path
 import random
+import re
 import string
 import tempfile
 import unittest
@@ -4203,3 +4204,110 @@ class TestAddToSchema:
             )
         assert schema["properties"] == name_map
         assert schema["required"] == names
+
+
+class TestDebugOutput:
+    def test_output_probabilities_no_mismatch(self, caplog, small_sd_fixture):
+        param = tsinfer.generate_ancestors(small_sd_fixture)
+        with caplog.at_level(logging.INFO):
+            for func in (tsinfer.match_ancestors, tsinfer.match_samples):
+                caplog.clear()
+                param = func(small_sd_fixture, param)
+                assert caplog.text.count("Mismatch prevented") == 1
+                assert caplog.text.count("mismatch ratio =") == 0
+                assert caplog.text.count("probabilities given by user") == 0
+                prev_value = 0
+                for name in ["mismatch", "recombination"]:
+                    m = re.search(
+                        rf"Summary of {name} probabilities[^\n]+"
+                        r"min=([-e\.\d]+);\s+"
+                        r"max=([-e\.\d]+);\s+"
+                        r"median=([-e\.\d]+);\s+"
+                        r"mean=([-e\.\d]+)",
+                        caplog.text,
+                    )
+                    assert m is not None
+                    assert m.group(1) == m.group(2) == m.group(3) == m.group(4)
+                    assert float(m.group(1)) > prev_value
+                    prev_value = float(m.group(1))
+
+    def test_output_probabilities_fixed_rec_mismatch(self, caplog, small_sd_fixture):
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        r_min = 1e-8
+        r_max = 1e-3
+        mm_min = 1e-9
+        mm_max = 1e-4
+        recombination = np.linspace(r_min, r_max, num=ancestors.num_sites - 1)
+        mismatch = np.linspace(mm_min, mm_max, num=ancestors.num_sites)
+        with caplog.at_level(logging.INFO):
+            tsinfer.match_ancestors(
+                small_sd_fixture,
+                ancestors,
+                recombination=recombination,
+                mismatch=mismatch,
+            )
+            assert caplog.text.count("mismatch ratio =") == 0
+            assert caplog.text.count("probabilities given by user") == 1
+            m = re.search(
+                r"Summary of recombination probabilities[^\n]+"
+                r"min=([-e\.\d]+);\s+"
+                r"max=([-e\.\d]+);\s+"
+                r"median=([-e\.\d]+);\s+"
+                r"mean=([-e\.\d]+)",
+                caplog.text,
+            )
+            assert m is not None
+            assert np.isclose(float(m.group(1)), r_min)
+            assert np.isclose(float(m.group(2)), r_max)
+            assert np.isclose(float(m.group(3)), np.median(recombination))
+            assert np.isclose(float(m.group(4)), np.mean(recombination))
+            m = re.search(
+                r"Summary of mismatch probabilities[^\n]+"
+                r"min=([-e\.\d]+);\s+"
+                r"max=([-e\.\d]+);\s+"
+                r"median=([-e\.\d]+);\s+"
+                r"mean=([-e\.\d]+)",
+                caplog.text,
+            )
+            assert m is not None
+            assert np.isclose(float(m.group(1)), mm_min)
+            assert np.isclose(float(m.group(2)), mm_max)
+            assert np.isclose(float(m.group(3)), np.median(mismatch))
+            assert np.isclose(float(m.group(4)), np.mean(mismatch))
+
+    def test_output_probabilities_rec(self, caplog, small_sd_fixture):
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        with caplog.at_level(logging.INFO):
+            tsinfer.match_ancestors(small_sd_fixture, ancestors, recombination_rate=0.1)
+            m = re.search(r"mismatch ratio = ([-e\.\d]+)", caplog.text)
+            assert m is not None
+            assert float(m.group(1)) == 1
+            assert "Summary of recombination probabilities" in caplog.text
+            assert "Summary of mismatch probabilities" in caplog.text
+
+    def test_no_rec(self, caplog, small_sd_fixture):
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        ancestors = tsinfer.generate_ancestors(
+            small_sd_fixture,
+            exclude_positions=ancestors.sites_position[1:],
+        )
+        assert ancestors.num_sites == 1
+        with caplog.at_level(logging.INFO):
+            tsinfer.match_ancestors(small_sd_fixture, ancestors)
+            assert "no recombination possible" in caplog.text
+            assert "Summary of recombination probabilities" not in caplog.text
+            assert "Summary of mismatch probabilities" in caplog.text
+
+    def test_no_mm(self, caplog, small_sd_fixture):
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        ancestors = tsinfer.generate_ancestors(
+            small_sd_fixture,
+            exclude_positions=ancestors.sites_position,
+        )
+        assert ancestors.num_sites == 0
+        with caplog.at_level(logging.INFO):
+            tsinfer.match_ancestors(small_sd_fixture, ancestors)
+            assert "no recombination possible" in caplog.text
+            assert "no mismatch possible" in caplog.text
+            assert "Summary of recombination probabilities" not in caplog.text
+            assert "Summary of mismatch probabilities" not in caplog.text
