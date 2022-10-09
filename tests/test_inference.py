@@ -754,7 +754,8 @@ class TestZeroInferenceSites:
                 exclude_positions=exclude_positions,
             )
             for tree in output_ts.trees():
-                assert tree.num_roots == 1
+                if tree.num_edges > 0 or 0 < tree.index < output_ts.num_trees - 1:
+                    assert tree.num_roots == 1
             for site in output_ts.sites():
                 inf_type = json.loads(site.metadata)["inference_type"]
                 if len(site.mutations) == 0:
@@ -2683,6 +2684,23 @@ class TestPostProcess:
     def test_many_trees(self, medium_ts_fixture):
         self.verify(medium_ts_fixture)
 
+    def test_flanking_regions_deleted(self, small_sd_fixture):
+        ts1 = tsinfer.infer(small_sd_fixture)
+        assert ts1.site(-1).position + 1 < ts1.sequence_length
+        assert ts1.first().num_edges == 0
+        assert ts1.last().num_edges == 0
+        assert ts1.first().interval.right == small_sd_fixture.sites_position[0]
+        assert ts1.last().interval.left == small_sd_fixture.sites_position[-1] + 1
+
+        # If seq length is less than the last pos + 1, right flank is not deleted
+        sd = small_sd_fixture.subset(sequence_length=ts1.site(-1).position + 0.1)
+        ts2 = tsinfer.infer(sd)
+        assert ts2.first().num_edges == 0
+        assert ts2.last().num_edges != 0
+        assert ts2.first().interval.right == sd.sites_position[0]
+
+        assert ts2.num_trees == ts1.num_trees - 1
+
     def test_standalone_post_process(self, medium_sd_fixture):
         # test we can post process separately, e.g. omitting the MRCA splitting step
         ts_unsimplified = tsinfer.infer(medium_sd_fixture, post_process=False)
@@ -2701,7 +2719,7 @@ class TestPostProcess:
         md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md["ancestor_data_id"] == 1
 
-        ts = tsinfer.post_process(ts_unsimplified, split_mrca=True)
+        ts = tsinfer.post_process(ts_unsimplified, split_mrca=True, erase_flanks=False)
         oldest_parent_id = ts.edge(-1).parent
         assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) > 1
         roots = set()
@@ -2720,11 +2738,13 @@ class TestPostProcess:
             small_ts_fixture.samples() == np.arange(small_ts_fixture.num_samples)
         )
         with caplog.at_level(logging.WARNING):
-            ts_postprocessed = tsinfer.post_process(small_ts_fixture)
+            ts_postprocessed = tsinfer.post_process(
+                small_ts_fixture, erase_flanks=False
+            )
             assert caplog.text.count("virtual-root-like") == 0
         with caplog.at_level(logging.WARNING):
             ts_postprocessed = tsinfer.post_process(
-                small_ts_fixture, warn_if_unexpected_format=True
+                small_ts_fixture, warn_if_unexpected_format=True, erase_flanks=False
             )
             assert caplog.text.count("virtual-root-like") == 1
 
@@ -2748,8 +2768,8 @@ class TestPostProcess:
 
     def test_split_edges_one_tree(self, small_sd_fixture):
         ts = tsinfer.infer(small_sd_fixture, post_process=False)
-        ts = tsinfer.post_process(ts, split_mrca=False)
         assert ts.num_trees == 1
+        ts = tsinfer.post_process(ts, split_mrca=False)
         # Check that we don't delete and recreate the oldest node if there's only 1 tree
         tables = ts.dump_tables()
         oldest_node_in_topology = tables.edges[-1].parent
@@ -2759,7 +2779,7 @@ class TestPostProcess:
 
     def test_dont_split_edges_twice(self, medium_sd_fixture, caplog):
         ts = tsinfer.infer(medium_sd_fixture, post_process=False)
-        ts = tsinfer.post_process(ts, split_mrca=False)
+        ts = tsinfer.post_process(ts, split_mrca=False, erase_flanks=False)
         assert ts.num_trees > 1
         assert tsinfer.has_same_root_everywhere(ts)
         # Once the mrca has been split, it can't be split again
@@ -2801,6 +2821,18 @@ class TestPostProcess:
             )
             inferred_individual = ts.individual(ts.node(inferred_node_id).individual)
             assert sd_individual.metadata["id"] == inferred_individual.metadata["id"]
+
+    def test_erase_flanks(self, small_sd_fixture):
+        ts1 = tsinfer.infer(small_sd_fixture, post_process=False)
+        ts2 = tsinfer.post_process(ts1, erase_flanks=False)
+        assert ts2.first().num_edges > 0
+        assert ts2.last().num_edges > 0
+        assert ts1.num_trees == ts2.num_trees
+
+        ts2 = tsinfer.post_process(ts1, erase_flanks=True)
+        assert ts2.first().num_edges == 0
+        assert ts2.last().num_edges == 0
+        assert ts1.num_trees == ts2.num_trees - 2
 
 
 def get_default_inference_sites(sample_data):
@@ -3991,7 +4023,8 @@ class TestInferenceSites:
             sample_data.add_site(0.4, [1, 1, 0], time=np.nan)
             sample_data.add_site(0.6, [1, 1, 0])
         ts = tsinfer.infer(sample_data)
-        assert ts.num_trees == 1
+        num_nonempty_trees = sum(1 for tree in ts.trees() if tree.num_edges > 0)
+        assert num_nonempty_trees == 1
         inf_type = [json.loads(site.metadata)["inference_type"] for site in ts.sites()]
         assert inf_type[0] == tsinfer.INFERENCE_FULL
         assert inf_type[1] == tsinfer.INFERENCE_PARSIMONY

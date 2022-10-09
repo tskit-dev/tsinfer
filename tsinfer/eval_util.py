@@ -776,9 +776,14 @@ def node_span(ts):
             for u in [edge.parent, edge.child]:
                 if start[u] == -1 and tree.num_samples(u) > 0:
                     start[u] = left
+    # add intervals for the last tree
     for u in tree.nodes():
         if tree.num_samples(u) > 0:
             S[u] += ts.sequence_length - start[u]
+    # isolated sample nodes (e.g. where topology was deleted) will have been missed when
+    # iterating over edges, but by definition they span the entire ts, so override them
+    for u in ts.samples():
+        S[u] = ts.sequence_length
     return S
 
 

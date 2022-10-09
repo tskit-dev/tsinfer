@@ -1985,29 +1985,35 @@ def post_process(
     ts,
     *,
     split_mrca=None,
+    erase_flanks=None,
     # Parameters below deliberately undocumented
     warn_if_unexpected_format=None,
     simplify_only=None,
 ):
     """
-    post_process(ts, *, split_mrca=None)
+    post_process(ts, *, split_mrca=None, erase_flanks=None)
 
     Post-process a tsinferred tree sequence into a more conventional form. This is
     the function run by default on the final tree sequence output by
-    :func:`match_samples`. It involves the following 3 steps:
+    :func:`match_samples`. It involves the following 4 steps:
 
     #. If the oldest node is connected to a single child via an edge that spans the
        entire tree sequence, this oldest node is removed, so that its child becomes
        the new root (this step is undertaken to remove the "virtual-root-like node"
        which is added to ancestor tree sequences to enable matching).
     #. If the oldest node is removed in the first step and the new root spans the
-       entire genome, it is treated as the "grand MRCA" and (if split_mrca is ``True``)
-       the node is split into multiple coexisiting nodes with the splits
+       entire genome, it is treated as the "grand MRCA" and (unless split_mrca is
+       ``False``) the node is split into multiple coexisiting nodes with the splits
        occurring whenever the children of the grand MRCA change. The rationale
        is that tsinfer creates a grand MRCA consisting of a single ancestral haplotype
        with all inference sites in the ancestral state: this is, however, unlikely
        to represent a single ancestor in the past. If nodes in the tree sequence are
        then dated, these MRCA nodes can be pushed to different times.
+    #. Often, extensive regions of genome exist before the first defined site and after
+       the last defined site. Since no data exists in these sections of the genome, post
+       processing by default erases the inferred topology in these regions. However,
+       if ``erase_flanks`` is False, the flanking regions at the start and end will be
+       assigned the same topology as inferred at the first and last site respectively.
     #. The sample nodes are reordered such that they are the first nodes listed in the
        node table,  removing tree nodes and edges that are not on a path between the
        root and any of the samples (by applying the :meth:`~tskit.TreeSequence.simplify`
@@ -2017,11 +2023,17 @@ def post_process(
     :param bool split_mrca: If ``True`` (default) and the oldest node is the only
         parent to a single "grand MRCA", split the grand MRCA into separate nodes
         (see above). If ``False`` do not attempt to identify or split a grand MRCA.
+    :param bool erase_flanks: If ``True`` (default), keep only the
+        inferred topology between the first and last sites. If ``False``,
+        output regions of topology inferred before the first site and after
+        the last site.
     :return: The post-processed tree sequence.
     :rtype: tskit.TreeSequence
     """
     if split_mrca is None:
         split_mrca = True
+    if erase_flanks is None:
+        erase_flanks = True
 
     tables = ts.dump_tables()
 
@@ -2046,10 +2058,21 @@ def post_process(
                 "Cannot find a virtual-root-like ancestor during preprocessing"
             )
 
+        if erase_flanks and ts.num_sites > 0:
+            logger.info("Removing topology in flanking regions with keep_intervals")
+            # So that the last site falls within a tree, we must add one to the
+            # site position (or simply extend to the end of the ts)
+            upper_cutoff = min(ts.sites_position[-1] + 1, ts.sequence_length)
+            tables.keep_intervals(
+                [[ts.sites_position[0], upper_cutoff]],
+                simplify=False,
+                record_provenance=False,
+            )
+
     logger.info(
         "Simplifying with filter_sites=False, filter_populations=False, "
         "filter_individuals=False, and keep_unary=True on "
-        f"{tables.nodes.num_rows} nodes and {ts.num_edges} edges"
+        f"{tables.nodes.num_rows} nodes and {tables.edges.num_rows} edges"
     )
     # NB: if this is an inferred TS, match_samples is guaranteed to produce samples
     # in the same order as passed in to sample_indexes, and simplification will
@@ -2059,6 +2082,7 @@ def post_process(
         filter_populations=False,
         filter_individuals=False,
         keep_unary=True,
+        record_provenance=False,
     )
     logger.info(
         "Finished simplify; now have {} nodes and {} edges".format(

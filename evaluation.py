@@ -1692,11 +1692,13 @@ def run_ancestor_quality(args):
 def get_node_degree_by_depth(ts):
     """
     Returns a tuple (degree, depth) for each node in each tree in the
-    specified tree sequence.
+    specified tree sequence (empty flanking regions are omitted)
     """
     degree = []
     depth = []
     for tree in ts.trees():
+        if tree.num_edges == 0 and (tree.index == 0 or tree.index == ts.num_trees - 1):
+            continue
         stack = [(tree.root, 0)]
         while len(stack) > 0:
             u, d = stack.pop()
