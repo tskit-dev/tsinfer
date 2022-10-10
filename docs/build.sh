@@ -19,3 +19,4 @@ else
     # Clear out any old reports
     rm -f $REPORTDIR/*
 fi
+exit $RETVAL
