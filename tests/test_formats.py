@@ -1318,13 +1318,13 @@ class TestSampleDataMetadataSchemas:
         bad_schema["codec"] = "struct"
         with formats.SampleData() as sample_data:
             sample_data.add_site(0, [0, 0])
-            with pytest.raises(KeyError):
+            with pytest.raises(BaseException):
                 sample_data.metadata_schema = bad_schema
-            with pytest.raises(KeyError):
+            with pytest.raises(BaseException):
                 sample_data.populations_metadata_schema = bad_schema
-            with pytest.raises(KeyError):
+            with pytest.raises(BaseException):
                 sample_data.individuals_metadata_schema = bad_schema
-            with pytest.raises(KeyError):
+            with pytest.raises(BaseException):
                 sample_data.sites_metadata_schema = bad_schema
 
     def test_set_top_level_metadata_schema(self):
