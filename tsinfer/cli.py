@@ -218,7 +218,7 @@ def run_match_samples(args):
         ancestors_trees,
         num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
-        simplify=not args.no_simplify,
+        post_process=not args.no_post_process,
         progress_monitor=args.progress,
     )
     logger.info(f"Writing output tree sequence to {output_trees}")
@@ -302,11 +302,12 @@ def add_path_compression_argument(parser):
     )
 
 
-def add_simplify_argument(parser):
+def add_postprocess_argument(parser):
     parser.add_argument(
-        "--no-simplify",
+        "--no-post-process",
+        "--no-simplify",  # Deprecated alias
         action="store_true",
-        help="Do not simplify the output tree sequence",
+        help="Do not post process the output tree sequence",
     )
 
 
@@ -434,7 +435,7 @@ def get_cli_parser():
     add_logging_arguments(parser)
     add_ancestors_trees_argument(parser)
     add_path_compression_argument(parser)
-    add_simplify_argument(parser)
+    add_postprocess_argument(parser)
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
