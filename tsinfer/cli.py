@@ -97,13 +97,8 @@ def setup_logging(args):
         logger.setLevel(log_level)
 
 
-def summarise_tree_sequence(path, ts):
-    print("path      =", path)
-    print("size      =", humanize.naturalsize(os.path.getsize(path), binary=True))
-    print("edges     =", ts.num_edges)
-    print("trees     =", ts.num_trees)
-    print("sites     =", ts.num_sites)
-    print("mutations =", ts.num_mutations)
+def summarise_tree_sequence(ts):
+    print(ts)
     # TODO Add optional tree statistics like mean degree, etc.
 
 
@@ -122,7 +117,7 @@ def run_list(args):
         else:
             print(tsinfer_file)
     else:
-        summarise_tree_sequence(args.path, ts)
+        summarise_tree_sequence(ts)
 
 
 def run_infer(args):
