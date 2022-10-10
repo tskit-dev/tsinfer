@@ -293,9 +293,25 @@ class TestMatchSamples(TestCli):
         output_trees_no_simplify = os.path.join(
             self.tempdir.name, "output-nosimplify.trees"
         )
+        output_trees_no_post_process = os.path.join(
+            self.tempdir.name, "output-nopostprocess.trees"
+        )
         self.run_command(["generate-ancestors", self.sample_file])
         self.run_command(["match-ancestors", self.sample_file])
         self.run_command(["match-samples", self.sample_file, "-O", output_trees])
+        self.run_command(
+            [
+                "match-samples",
+                self.sample_file,
+                "--no-post-process",
+                "-O",
+                output_trees_no_post_process,
+            ]
+        )
+        t1 = tskit.load(output_trees).tables
+        t2 = tskit.load(output_trees_no_post_process).tables
+        assert t1.nodes != t2.nodes
+        # --no-simplify is an alias
         self.run_command(
             [
                 "match-samples",
@@ -305,9 +321,8 @@ class TestMatchSamples(TestCli):
                 output_trees_no_simplify,
             ]
         )
-        t1 = tskit.load(output_trees).tables
-        t2 = tskit.load(output_trees_no_simplify).tables
-        assert t1.nodes != t2.nodes
+        t3 = tskit.load(output_trees_no_simplify).tables
+        assert t2.nodes == t3.nodes
 
 
 class TestList(TestCli):
