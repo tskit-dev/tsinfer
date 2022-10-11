@@ -32,6 +32,7 @@ except ImportError:
     resource = None  # resource.getrusage absent on windows, so skip outputting max mem
 
 import daiquiri
+import msprime  # for the RateMap class
 import tskit
 import humanize
 import time
@@ -83,6 +84,14 @@ def get_ancestors_trees_path(path, input_path):
 
 def get_output_trees_path(path, input_path):
     return get_default_path(path, input_path, ".trees")
+
+
+def get_recombination_map(args):
+    if args.recombination_rate is not None:
+        return args.recombination_rate
+    if args.recombination_map is not None:
+        return msprime.RateMap.read_hapmap(args.recombination_map)
+    return None
 
 
 def setup_logging(args):
@@ -153,7 +162,11 @@ def run_infer(args):
         )
     sample_data = tsinfer.SampleData.load(args.samples)
     ts = tsinfer.infer(
-        sample_data, progress_monitor=args.progress, num_threads=args.num_threads
+        sample_data,
+        progress_monitor=args.progress,
+        num_threads=args.num_threads,
+        recombination_rate=get_recombination_map(args),
+        mismatch_ratio=args.mismatch_ratio,
     )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     write_ts(ts, output_trees)
@@ -186,6 +199,8 @@ def run_match_ancestors(args):
         ancestor_data,
         num_threads=args.num_threads,
         progress_monitor=args.progress,
+        recombination_rate=get_recombination_map(args),
+        mismatch_ratio=args.mismatch_ratio,
         path_compression=not args.no_path_compression,
     )
     write_ts(ts, ancestors_trees)
@@ -214,6 +229,8 @@ def run_augment_ancestors(args):
         num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
         progress_monitor=args.progress,
+        recombination_rate=get_recombination_map(args),
+        mismatch_ratio=args.mismatch_ratio,
     )
     logger.info(f"Writing output tree sequence to {output_path}")
     ts.dump(output_path)
@@ -235,6 +252,8 @@ def run_match_samples(args):
         path_compression=not args.no_path_compression,
         post_process=not args.no_post_process,
         progress_monitor=args.progress,
+        recombination_rate=get_recombination_map(args),
+        mismatch_ratio=args.mismatch_ratio,
     )
     write_ts(ts, output_trees)
     summarise_usage()
@@ -325,6 +344,38 @@ def add_postprocess_argument(parser):
     )
 
 
+def add_recombination_arguments(parser):
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--recombination_rate",
+        default=None,
+        type=float,
+        help="The recombination rate per unit genome",
+    )
+    group.add_argument(
+        "--recombination_map",
+        default=None,
+        help=(
+            "The path to a file containing recombination rates along the chromosome "
+            "in HapMap format (see https://tskit.dev/msprime/docs/latest/api.html"
+            "#msprime.RateMap.read_hapmap for details of the format)"
+        ),
+    )
+
+
+def add_mismatch_argument(parser):
+    parser.add_argument(
+        "--mismatch_ratio",
+        type=float,
+        default=None,
+        help=(
+            "The mismatch ratio: measures the relative importance of multiple "
+            "mutation/error versus recombination during inference. This defaults "
+            "to unity if a recombination rate or map are specified."
+        ),
+    )
+
+
 def add_logging_arguments(parser):
     log_sections = ["tsinfer.inference", "tsinfer.formats", "tsinfer.threads"]
     parser.add_argument(
@@ -411,6 +462,8 @@ def get_cli_parser():
     add_num_threads_argument(parser)
     add_progress_argument(parser)
     add_path_compression_argument(parser)
+    add_recombination_arguments(parser)
+    add_mismatch_argument(parser)
     parser.set_defaults(runner=run_match_ancestors)
 
     parser = subparsers.add_parser(
@@ -435,6 +488,8 @@ def get_cli_parser():
     add_path_compression_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    add_recombination_arguments(parser)
+    add_mismatch_argument(parser)
     parser.set_defaults(runner=run_augment_ancestors)
 
     parser = subparsers.add_parser(
@@ -453,6 +508,8 @@ def get_cli_parser():
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    add_recombination_arguments(parser)
+    add_mismatch_argument(parser)
     parser.set_defaults(runner=run_match_samples)
 
     parser = subparsers.add_parser(
@@ -468,6 +525,8 @@ def get_cli_parser():
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    add_recombination_arguments(parser)
+    add_mismatch_argument(parser)
     parser.set_defaults(runner=run_infer)
 
     parser = subparsers.add_parser(
