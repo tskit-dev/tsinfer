@@ -2065,14 +2065,20 @@ def post_process(
             )
 
         if erase_flanks and ts.num_sites > 0:
-            logger.info("Removing topology in flanking regions with keep_intervals")
             # So that the last site falls within a tree, we must add one to the
             # site position (or simply extend to the end of the ts)
-            upper_cutoff = min(ts.sites_position[-1] + 1, ts.sequence_length)
+            keep_max = min(ts.sites_position[-1] + 1, ts.sequence_length)
             tables.keep_intervals(
-                [[ts.sites_position[0], upper_cutoff]],
+                [[ts.sites_position[0], keep_max]],
                 simplify=False,
                 record_provenance=False,
+            )
+            erased = ts.sites_position[0] + ts.sequence_length - keep_max
+            erased *= 100 / ts.sequence_length
+            logger.info(
+                f"Erased flanks covering {erased}% of the genome: "
+                f"{ts.sites_position[0]} units at the start and "
+                f"{ts.sequence_length - keep_max} units at the end"
             )
 
     logger.info(
@@ -2128,6 +2134,7 @@ def split_grand_mrca(tables, warn_if_unexpected_format=None):
         # Only a single edge: no splitting needed
         return
 
+    logger.info(f"Splitting grand MRCA into {len(root_breaks) - 1} separate nodes")
     # detach the grand_mrca from all its children: it will then get simplified out
     tables.edges.truncate(j + 1)
 
