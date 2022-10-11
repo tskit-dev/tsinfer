@@ -119,7 +119,7 @@ class TestCli(unittest.TestCase):
         )
         self.output_trees = str(pathlib.Path(self.tempdir.name, "input-data.trees"))
         self.input_ts = msprime.simulate(
-            10, mutation_rate=10, recombination_rate=10, random_seed=10
+            10, length=10, mutation_rate=1, recombination_rate=1, random_seed=10
         )
         sample_data = tsinfer.SampleData(
             sequence_length=self.input_ts.sequence_length, path=self.sample_file
@@ -327,6 +327,106 @@ class TestProvenance(TestCli):
             ]
         )
         self.verify_ts_provenance(output_trees)
+
+
+class TestRecombinationAndMismatch(TestCli):
+    """
+    Test that we correctly parse and use recombination and mismatch arguments
+    """
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+    )
+    def test_separate_calls(self):
+        self.run_command(["generate-ancestors", self.sample_file])
+        with mock.patch("tsinfer.match_ancestors") as ma:
+            self.run_command(
+                [
+                    "match-ancestors",
+                    self.sample_file,
+                    "--recombination_rate",
+                    "0.001",
+                    "--mismatch_ratio",
+                    "0.01",
+                ]
+            )
+            args, kwargs = ma.call_args
+            assert kwargs["recombination_rate"] == 0.001
+            assert kwargs["mismatch_ratio"] == 0.01
+
+        with mock.patch("tsinfer.match_samples") as ms:
+            self.run_command(
+                [
+                    "match-samples",
+                    self.sample_file,
+                    "--recombination_rate",
+                    "10",
+                    "--mismatch_ratio",
+                    "100",
+                ]
+            )
+            args, kwargs = ms.call_args
+            assert kwargs["recombination_rate"] == 10
+            assert kwargs["mismatch_ratio"] == 100
+
+    def test_infer(self):
+        command = [
+            "infer",
+            self.sample_file,
+            "--recombination_rate",
+            "0.1",
+            "--mismatch_ratio",
+            "10",
+        ]
+        with mock.patch("tsinfer.infer") as infer:
+            self.run_command(command)
+            args, kwargs = infer.call_args
+            assert kwargs["recombination_rate"] == 0.1
+            assert kwargs["mismatch_ratio"] == 10
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+    )
+    def test_map(self):
+        ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
+        with open(ratemap, "wt") as map:
+            print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
+            print("chr1 0 0.1 0", file=map)
+            print("chr1 1 0.2 0.002", file=map)
+        command = [
+            "infer",
+            self.sample_file,
+            "--recombination_map",
+            ratemap,
+        ]
+        with mock.patch("tsinfer.infer") as infer:
+            self.run_command(command)
+            args, kwargs = infer.call_args
+            assert type(kwargs["recombination_rate"]) == msprime.RateMap
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+    )
+    def test_fails_on_bad_map(self):
+        output_trees = os.path.join(self.tempdir.name, "output_test_map.trees")
+        ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
+        sd = tsinfer.load(self.sample_file)
+        last_pos = sd.sites_position[-1]
+        assert last_pos > 2
+        with open(ratemap, "wt") as map:
+            print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
+            print("chr1 0 0.1 0.0", file=map)
+            print(f"chr1 {int(last_pos) - 1} 0.2 0.001", file=map)
+        command = [
+            "infer",
+            self.sample_file,
+            "--recombination_map",
+            ratemap,
+            "-O",
+            output_trees,
+        ]
+        with pytest.raises(ValueError, match="Cannot have positions"):
+            self.run_command(command)
 
 
 class TestMatchSamples(TestCli):
