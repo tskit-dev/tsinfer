@@ -20,6 +20,7 @@
 Tests for the tsinfer CLI.
 """
 import io
+import json
 import os.path
 import pathlib
 import sys
@@ -278,6 +279,54 @@ class TestProgress(TestCli):
                 augmented_ancestors,
             ]
         )
+
+
+class TestProvenance(TestCli):
+    """
+    Tests that we get provenance in the output trees
+    """
+
+    # Need to mock out setup_logging here or we spew logging to the console
+    # in later tests.
+    @mock.patch("tsinfer.cli.setup_logging")
+    def run_command(self, command, mock_setup_logging):
+        stdout, stderr = capture_output(cli.tsinfer_main, command)
+        assert stderr == ""
+        assert stdout == ""
+
+    def verify_ts_provenance(self, treefile):
+        ts = tskit.load(treefile)
+        prov = json.loads(ts.provenance(-1).record)
+        # Getting actual values out of the JSON is problematic here because
+        # we're getting the pytest command line.
+        assert isinstance(prov["parameters"]["command"], str)
+        assert isinstance(prov["parameters"]["args"], list)
+
+    def test_infer(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["infer", self.sample_file, "-O", output_trees])
+        self.verify_ts_provenance(output_trees)
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+    )
+    def test_chain(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        ancestors_trees = os.path.join(self.tempdir.name, "ancestors.trees")
+        self.run_command(["generate-ancestors", self.sample_file])
+        self.run_command(["match-ancestors", self.sample_file, "-A", ancestors_trees])
+        self.verify_ts_provenance(ancestors_trees)
+        self.run_command(
+            [
+                "match-samples",
+                self.sample_file,
+                "-A",
+                ancestors_trees,
+                "-O",
+                output_trees,
+            ]
+        )
+        self.verify_ts_provenance(output_trees)
 
 
 class TestMatchSamples(TestCli):

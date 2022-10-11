@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -20,6 +20,7 @@
 Command line interfaces to tsinfer.
 """
 import argparse
+import json
 import logging
 import math
 import os.path
@@ -38,6 +39,7 @@ import numpy as np
 
 import tsinfer
 import tsinfer.exceptions as exceptions
+import tsinfer.provenance as provenance
 
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,21 @@ def run_list(args):
         summarise_tree_sequence(ts)
 
 
+def write_ts(ts, path):
+    logger.info(f"Writing output tree sequence to {path}")
+    tables = ts.dump_tables()
+    # Following guidance at
+    # https://tskit.dev/tskit/docs/stable/provenance.html#cli-invocations
+    record = provenance.get_provenance_dict(
+        command=sys.argv[0],
+        args=sys.argv[1:],
+    )
+    tables.provenances.add_row(json.dumps(record))
+    # Avoid creating a new TS object by writing tables.
+    assert tables.has_index()
+    tables.dump(path)
+
+
 def run_infer(args):
     setup_logging(args)
     try:
@@ -139,8 +156,7 @@ def run_infer(args):
         sample_data, progress_monitor=args.progress, num_threads=args.num_threads
     )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
-    logger.info(f"Writing output tree sequence to {output_trees}")
-    ts.dump(output_trees)
+    write_ts(ts, output_trees)
     summarise_usage()
 
 
@@ -172,8 +188,7 @@ def run_match_ancestors(args):
         progress_monitor=args.progress,
         path_compression=not args.no_path_compression,
     )
-    logger.info(f"Writing ancestors tree sequence to {ancestors_trees}")
-    ts.dump(ancestors_trees)
+    write_ts(ts, ancestors_trees)
     summarise_usage()
 
 
@@ -221,8 +236,7 @@ def run_match_samples(args):
         post_process=not args.no_post_process,
         progress_monitor=args.progress,
     )
-    logger.info(f"Writing output tree sequence to {output_trees}")
-    ts.dump(output_trees)
+    write_ts(ts, output_trees)
     summarise_usage()
 
 
