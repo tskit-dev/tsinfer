@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-18.04
     steps:
       - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.6.0
+        uses: styfle/cancel-workflow-action@0.11.0
         with:
           access_token: ${{ github.token }}
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         # As we are using pull-request-target which uses the workflow from the base
         # of the PR, we need to be specific
         with:
@@ -31,11 +31,11 @@ jobs:
             repository: ${{ github.event.pull_request.head.repo.full_name }}
             submodules: true
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: 3.8
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         id: cache
         with:
           path: venv
