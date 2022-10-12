@@ -20,7 +20,7 @@ class build_ext(_build_ext):
 
 
 libdir = "lib"
-tskroot = os.path.join("git-submodules", "tskit", "c")
+tskroot = os.path.join("lib", "subprojects", "tskit")
 tskdir = os.path.join(tskroot, "tskit")
 kasdir = os.path.join(tskroot, "subprojects", "kastore")
 includes = [libdir, tskroot, tskdir, kasdir]
