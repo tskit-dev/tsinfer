@@ -50,67 +50,49 @@ jobs:
           name: osx-wheel-${{ matrix.python }}
           path: dist
 
-#  windows:
-#    runs-on: windows-latest
-#    strategy:
-#      matrix:
-#        python: [3.7, 3.8, 3.9, "3.10"]
-#        wordsize: [64]
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v2
-#        with:
-#            submodules: true
-#      - name: Install deps
-#        env:
-#          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
-#        shell: bash
-#        run: |
-#          set -ex
-#          ${PYTHON} -m pip install --upgrade pip
-#          ${PYTHON} -m pip install setuptools wheel
-#          # Instead of letting setup.py install a newer numpy we install it here
-#          # using the oldest supported version for ABI compatibility
-#          ${PYTHON} -m pip install oldest-supported-numpy
-#      - name: Build C Extension
-#        env:
-#          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
-#        shell: bash
-#        run: |
-#          set -ex
-#          git reset --hard
-#          ${PYTHON} -VV
-#          # For some reason I can't work out the C compiler is not following symlinks
-#          cd lib
-#          rm -r subprojects/kastore
-#          rm -r subprojects/tskit
-#          rm -r subprojects/git-submodules/tskit/c/subprojects
-#          rm -r subprojects/git-submodules/tskit/c/tests
-#          cp -r --dereference subprojects/git-submodules/kastore/c subprojects/kastore
-#          cp -r --dereference subprojects/git-submodules/tskit/c subprojects/tskit
-#          cp -r --dereference subprojects/git-submodules/tskit/python/lwt_interface/* subprojects/tskit/.
-#          cp -r --dereference subprojects/git-submodules/tskit/python/lwt_interface ../lwt_interface
-#          cd ..
-#          #Do a little dance to restore the version to a clean tag for setuptools_scm
-#          git config --global user.email "CI@CI.com"
-#          git config --global user.name "Mr Robot"
-#          git tag -d ${{ github.ref_name }}
-#          git add -u
-#          git commit -m "tag dance"
-#          git tag ${{ github.ref_name }}
-#          ${PYTHON} setup.py build_ext --inplace
-#      - name: Build Wheel
-#        env:
-#          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
-#        shell: bash
-#        run: |
-#          set -ex
-#          ${PYTHON} setup.py bdist_wheel
-#      - name: Upload Wheels
-#        uses: actions/upload-artifact@v2
-#        with:
-#          name: win-wheel-${{ matrix.python }}-${{ matrix.wordsize }}
-#          path: dist
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python: [3.7, 3.8, 3.9, "3.10"]
+        wordsize: [64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            submodules: true
+      - name: Install deps
+        env:
+          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
+        shell: bash
+        run: |
+          set -ex
+          ${PYTHON} -m pip install --upgrade pip
+          ${PYTHON} -m pip install setuptools wheel
+          # Instead of letting setup.py install a newer numpy we install it here
+          # using the oldest supported version for ABI compatibility
+          ${PYTHON} -m pip install oldest-supported-numpy
+      - name: Build C Extension
+        env:
+          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
+        shell: bash
+        run: |
+          set -ex
+          git reset --hard
+          ${PYTHON} -VV
+          ${PYTHON} setup.py build_ext --inplace
+      - name: Build Wheel
+        env:
+          PYTHON: "py -${{ matrix.python }}-${{ matrix.wordsize }}"
+        shell: bash
+        run: |
+          set -ex
+          ${PYTHON} setup.py bdist_wheel
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v2
+        with:
+          name: win-wheel-${{ matrix.python }}-${{ matrix.wordsize }}
+          path: dist
 
   manylinux:
     runs-on: ubuntu-latest
@@ -169,30 +151,30 @@ jobs:
           pip install tsinfer --only-binary tsinfer -f .
           python -c "import tsinfer"
 
-#  windows-test:
-#    needs: ['windows']
-#    runs-on: windows-latest
-#    strategy:
-#      matrix:
-#        python: [3.7, 3.8, 3.9, "3.10"]
-#        wordsize: [64]
-#    steps:
-#      - name: Download wheels
-#        uses: actions/download-artifact@v2
-#        with:
-#          name: win-wheel-${{ matrix.python }}-${{ matrix.wordsize }}
-#      - name: Set up Python ${{ matrix.python }}
-#        uses: actions/setup-python@v2
-#        with:
-#          python-version: ${{ matrix.python }}
-#      - name: Install wheel and test
-#        run: |
-#          python -VV
-#          #patch-ng required to build lmdb
-#          pip install patch-ng
-#          # Install the local wheel
-#          pip install tsinfer --only-binary tsinfer -f .
-#          python -c "import tsinfer"
+  windows-test:
+    needs: ['windows']
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python: [3.7, 3.8, 3.9, "3.10"]
+        wordsize: [64]
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v2
+        with:
+          name: win-wheel-${{ matrix.python }}-${{ matrix.wordsize }}
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install wheel and test
+        run: |
+          python -VV
+          #patch-ng required to build lmdb
+          pip install patch-ng
+          # Install the local wheel
+          pip install tsinfer --only-binary tsinfer -f .
+          python -c "import tsinfer"
 
   manylinux-test:
     runs-on: ubuntu-latest
@@ -219,8 +201,7 @@ jobs:
 
   PyPI_Upload:
     runs-on: ubuntu-latest
-#    needs: ['windows-test', 'OSX-test', 'manylinux-test']
-    needs: ['OSX-test', 'manylinux-test']
+    needs: ['windows-test', 'OSX-test', 'manylinux-test']
     steps:
       - name: Download all
         uses: actions/download-artifact@v2
