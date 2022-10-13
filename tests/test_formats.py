@@ -1304,6 +1304,16 @@ class TestSampleData(DataContainerMixin):
 
 
 class TestSampleDataMetadataSchemas:
+    def test_non_json_metadata_schema(self):
+        with formats.SampleData() as sample_data:
+            sample_data.add_site(0, [0, 0])
+            with pytest.raises(ValueError, match="Only the JSON codec"):
+                sample_data.metadata_schema = {
+                    "codec": "struct",
+                    "properties": {},
+                    "type": "object",
+                }
+
     def test_metadata_schemas_default(self):
         with formats.SampleData() as sample_data:
             sample_data.add_site(0, [0, 0])
