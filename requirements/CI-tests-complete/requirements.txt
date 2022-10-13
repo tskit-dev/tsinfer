@@ -1,4 +1,5 @@
 attrs==21.4.0
+build==0.8.0
 codecov==2.1.12
 colorama==0.4.4
 daiquiri==3.0.1
@@ -14,7 +15,9 @@ pytest==7.1.2
 pytest-cov==3.0.0
 pytest-xdist==2.5.0
 seaborn==0.11.2
+setuptools==65.4.1
 sortedcontainers==2.4.0
 tqdm==4.64.0
 tskit==0.5.3
+twine==4.0.1
 zarr==2.11.3

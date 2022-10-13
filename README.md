@@ -9,7 +9,7 @@ The [documentation](https://tskit.dev/tsinfer/docs/stable) contains details of h
 
 The algorithm, its rationale, and results from testing on simulated and real data are described in the following [Nature Genetics paper](https://doi.org/10.1038/s41588-019-0483-y):
 
-> Jerome Kelleher, Yan Wong, Anthony W Wohns, Chaimaa Fadil, Patrick K Albers and Gil McVean (2019) _Inferring whole-genome histories in large population datasets_. Nature Genetics **51**: 1330-1338
+> Jerome Kelleher, Yan Wong, Anthony W Wohns, Chaimaa Fadil, Patrick K Albers and Gil McVean (2019) *Inferring whole-genome histories in large population datasets*. Nature Genetics **51**: 1330-1338
 
 Please cite this if you use ``tsinfer`` in your work. Code to reproduce the results in the paper is present in a [separate GitHub repository](https://github.com/mcveanlab/treeseq-inference).
 

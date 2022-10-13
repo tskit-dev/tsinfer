@@ -25,6 +25,7 @@ numa; sys_platform == 'linux'
 sphinx
 sphinx-argparse
 sphinx_rtd_theme
+setuptools>=45
 setuptools_scm
 # Needed for evaluation script.
 pandas
