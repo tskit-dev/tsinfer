@@ -872,7 +872,7 @@ class AncestorsGenerator:
                 site.position not in exclude_positions
                 and num_alleles == 2  # This will ensure that the derived state is "1"
                 and 1 < counts.derived < counts.known
-                and site.ancestral_allele is not None
+                and site.ancestral_state is not None
             ):
                 use_site = True
                 time = site.time

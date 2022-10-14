@@ -137,7 +137,9 @@ class TestRoundTrip:
     Test that we can round-trip data tsinfer.
     """
 
-    def assert_lossless(self, ts, genotypes, positions, alleles, sequence_length):
+    def assert_lossless(
+        self, ts, genotypes, positions, alleles, sequence_length, anc_alleles
+    ):
         assert ts.sequence_length == sequence_length
         assert ts.num_sites == len(positions)
         # Make sure we've computed the mutation parents properly.
@@ -149,19 +151,20 @@ class TestRoundTrip:
             missing = genotypes[site_id] == tskit.MISSING_DATA
             non_missing = genotypes[site_id] != tskit.MISSING_DATA
             assert v.position == positions[site_id]
-            if alleles is None or len(alleles[site_id]) == 2:
-                assert np.array_equal(
-                    genotypes[site_id, non_missing], v.genotypes[non_missing]
-                )
+            a1 = np.array(v.alleles)
+            if alleles is None:
+                a = ["0", "1"]
             else:
                 a = alleles[site_id]
-                assert v.site.ancestral_state == a[0]
-                assert set(v.alleles) <= set(a)
-                a1 = np.array(a)
-                a2 = np.array(v.alleles)
-                assert np.array_equal(
-                    a1[genotypes[site_id, non_missing]], a2[v.genotypes[non_missing]]
-                )
+            if anc_alleles is not None and anc_alleles[site_id] != tskit.MISSING_DATA:
+                assert v.site.ancestral_state == a[anc_alleles[site_id]]
+            assert set(v.alleles) <= set(a)
+            a1 = np.array(v.alleles)
+            a2 = np.array(a)
+            assert np.array_equal(
+                a2[genotypes[site_id, non_missing]], a1[v.genotypes[non_missing]]
+            )
+            # Check we have imputed something
             assert np.all(v.genotypes[missing] >= 0)
 
     def create_sample_data(
@@ -172,9 +175,12 @@ class TestRoundTrip:
         sequence_length,
         site_times,
         individual_times,
+        ancestral_alleles,
     ):
         if sequence_length is None:
             sequence_length = positions[-1] + 1
+        if ancestral_alleles is None:
+            ancestral_alleles = np.zeros(genotypes.shape[0], dtype=np.int8)
         with tsinfer.SampleData(sequence_length=sequence_length) as sample_data:
             for i in range(genotypes.shape[1]):
                 t = 0 if individual_times is None else individual_times[i]
@@ -182,7 +188,13 @@ class TestRoundTrip:
             for j in range(genotypes.shape[0]):
                 t = None if site_times is None else site_times[j]
                 site_alleles = None if alleles is None else alleles[j]
-                sample_data.add_site(positions[j], genotypes[j], site_alleles, time=t)
+                sample_data.add_site(
+                    positions[j],
+                    genotypes[j],
+                    site_alleles,
+                    ancestral_allele=ancestral_alleles[j],
+                    time=t,
+                )
         return sample_data
 
     def verify_data_round_trip(
@@ -193,9 +205,16 @@ class TestRoundTrip:
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
         test_params = [
             {"engine": tsinfer.PY_ENGINE},
@@ -209,7 +228,12 @@ class TestRoundTrip:
             ts = tsinfer.infer(sample_data, **params)
 
             self.assert_lossless(
-                ts, genotypes, positions, alleles, sample_data.sequence_length
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
             )
             assert ts.num_provenances > 0
 
@@ -275,6 +299,24 @@ class TestRoundTrip:
         G[20, :] = 1
         G[22, :] = 0
         self.verify_data_round_trip(G, positions)
+
+    def test_random_data_alt_ancestral_alleles(self):
+        G, positions = get_random_data_example(39, 25)
+        ancestral_alleles = np.zeros(len(positions), dtype=np.int8)
+        ancestral_alleles[10] = 1
+        ancestral_alleles[15] = 1
+        ancestral_alleles[20] = 1
+        ancestral_alleles[22] = 1
+        self.verify_data_round_trip(G, positions, ancestral_alleles=ancestral_alleles)
+
+    def test_random_data_missing_ancestral_alleles(self):
+        G, positions = get_random_data_example(39, 25)
+        ancestral_alleles = np.zeros(len(positions), dtype=np.int8)
+        ancestral_alleles[10] = tskit.MISSING_DATA
+        ancestral_alleles[15] = tskit.MISSING_DATA
+        ancestral_alleles[20] = tskit.MISSING_DATA
+        ancestral_alleles[22] = tskit.MISSING_DATA
+        self.verify_data_round_trip(G, positions, ancestral_alleles=ancestral_alleles)
 
     def test_triallelic(self, small_ts_fixture):
         mutation_0_node = next(small_ts_fixture.mutations()).node
@@ -398,9 +440,16 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
@@ -413,7 +462,12 @@ class TestAugmentedAncestorsRoundTrip(TestRoundTrip):
             )
             ts = tsinfer.match_samples(sample_data, augmented_ts, engine=engine)
             self.assert_lossless(
-                ts, genotypes, positions, alleles, sample_data.sequence_length
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
             )
 
 
@@ -430,9 +484,16 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
@@ -451,7 +512,12 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
                 engine=engine,
             )
             self.assert_lossless(
-                ts, genotypes, positions, alleles, sample_data.sequence_length
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
             )
 
 
@@ -468,9 +534,16 @@ class TestTruncateAncestorsRoundTrip(TestRoundTrip):
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
         ancestors = tsinfer.generate_ancestors(sample_data)
         time = np.sort(ancestors.ancestors_time[:])
@@ -500,7 +573,12 @@ class TestTruncateAncestorsRoundTrip(TestRoundTrip):
                     engine=engine,
                 )
                 self.assert_lossless(
-                    ts, genotypes, positions, alleles, sample_data.sequence_length
+                    ts,
+                    genotypes,
+                    positions,
+                    alleles,
+                    sample_data.sequence_length,
+                    ancestral_alleles,
                 )
 
 
@@ -518,9 +596,22 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
+        # making our own ancestors => only use examples where ancestral states are known
+        if ancestral_alleles is not None and np.any(
+            np.array(ancestral_alleles) == tskit.MISSING_DATA
+        ):
+            return
+
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
 
         num_alleles = sample_data.num_alleles()
@@ -542,7 +633,12 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
                 engine=engine,
             )
             self.assert_lossless(
-                ts, genotypes, positions, alleles, sample_data.sequence_length
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
             )
 
     # Skipping these tests as the HMM is currently not working properly
@@ -578,13 +674,20 @@ class TestMissingDataRoundTrip(TestRoundTrip):
         sequence_length=None,
         site_times=None,
         individual_times=None,
+        ancestral_alleles=None,
     ):
         genotypes = genotypes.copy()
         m, n = genotypes.shape
         for j in range(m):
             genotypes[j, j % n] = tskit.MISSING_DATA
         sample_data = self.create_sample_data(
-            genotypes, positions, alleles, sequence_length, site_times, individual_times
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
         )
 
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
@@ -596,7 +699,12 @@ class TestMissingDataRoundTrip(TestRoundTrip):
                 engine=engine,
             )
             self.assert_lossless(
-                ts, genotypes, positions, alleles, sample_data.sequence_length
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
             )
 
 
