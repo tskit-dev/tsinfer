@@ -167,6 +167,7 @@ def run_infer(args):
         num_threads=args.num_threads,
         recombination_rate=get_recombination_map(args),
         mismatch_ratio=args.mismatch_ratio,
+        record_provenance=False,
     )
     output_trees = get_output_trees_path(args.output_trees, args.samples)
     write_ts(ts, output_trees)
@@ -180,10 +181,13 @@ def run_generate_ancestors(args):
     tsinfer.generate_ancestors(
         sample_data,
         progress_monitor=args.progress,
-        path=ancestors_path,
         num_flush_threads=args.num_flush_threads,
         num_threads=args.num_threads,
+        path=ancestors_path,
+        record_provenance=False,
     )
+    # NB: ideally we should store the cli provenance in here, but this creates
+    # perf issues - see https://github.com/tskit-dev/tsinfer/issues/743
     summarise_usage()
 
 
@@ -202,6 +206,7 @@ def run_match_ancestors(args):
         recombination_rate=get_recombination_map(args),
         mismatch_ratio=args.mismatch_ratio,
         path_compression=not args.no_path_compression,
+        record_provenance=False,
     )
     write_ts(ts, ancestors_trees)
     summarise_usage()
@@ -231,6 +236,7 @@ def run_augment_ancestors(args):
         progress_monitor=args.progress,
         recombination_rate=get_recombination_map(args),
         mismatch_ratio=args.mismatch_ratio,
+        record_provenance=False,
     )
     logger.info(f"Writing output tree sequence to {output_path}")
     ts.dump(output_path)
@@ -254,6 +260,7 @@ def run_match_samples(args):
         progress_monitor=args.progress,
         recombination_rate=get_recombination_map(args),
         mismatch_ratio=args.mismatch_ratio,
+        record_provenance=False,
     )
     write_ts(ts, output_trees)
     summarise_usage()

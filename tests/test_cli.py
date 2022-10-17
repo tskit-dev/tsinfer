@@ -294,9 +294,10 @@ class TestProvenance(TestCli):
         assert stderr == ""
         assert stdout == ""
 
-    def verify_ts_provenance(self, treefile):
+    def verify_ts_provenance(self, treefile, expected_num_provenances):
         ts = tskit.load(treefile)
         prov = json.loads(ts.provenance(-1).record)
+        assert ts.num_provenances == expected_num_provenances
         # Getting actual values out of the JSON is problematic here because
         # we're getting the pytest command line.
         assert isinstance(prov["parameters"]["command"], str)
@@ -304,8 +305,19 @@ class TestProvenance(TestCli):
 
     def test_infer(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
+        sd = tsinfer.load(self.sample_file)
         self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.verify_ts_provenance(output_trees)
+        self.verify_ts_provenance(output_trees, sd.num_provenances + 1)
+
+    @pytest.mark.skip(
+        reason="Ancestors not saving provenance:"
+        "see https://github.com/tskit-dev/tsinfer/issues/743"
+    )
+    def test_ancestors(self):
+        sd = tsinfer.load(self.sample_file)
+        self.run_command(["generate-ancestors", self.sample_file])
+        ancestors = tsinfer.load(self.ancestor_file)
+        assert ancestors.num_provenances == sd.num_provenances + 1
 
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"
@@ -314,8 +326,9 @@ class TestProvenance(TestCli):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         ancestors_trees = os.path.join(self.tempdir.name, "ancestors.trees")
         self.run_command(["generate-ancestors", self.sample_file])
+        num_provenances_ancestors = tsinfer.load(self.ancestor_file).num_provenances
         self.run_command(["match-ancestors", self.sample_file, "-A", ancestors_trees])
-        self.verify_ts_provenance(ancestors_trees)
+        self.verify_ts_provenance(ancestors_trees, num_provenances_ancestors + 1)
         self.run_command(
             [
                 "match-samples",
@@ -326,7 +339,7 @@ class TestProvenance(TestCli):
                 output_trees,
             ]
         )
-        self.verify_ts_provenance(output_trees)
+        self.verify_ts_provenance(output_trees, num_provenances_ancestors + 2)
 
 
 class TestRecombinationAndMismatch(TestCli):
