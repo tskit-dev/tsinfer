@@ -402,7 +402,7 @@ class TestRecombinationAndMismatch(TestCli):
         with mock.patch("tsinfer.infer") as infer:
             self.run_command(command)
             args, kwargs = infer.call_args
-            assert type(kwargs["recombination_rate"]) == msprime.RateMap
+            assert isinstance(kwargs["recombination_rate"], msprime.RateMap)
 
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"
