@@ -27,8 +27,10 @@ sphinx-argparse
 sphinx_rtd_theme
 setuptools>=45
 setuptools_scm
+cyvcf2
 # Needed for evaluation script.
 pandas
 matplotlib
 seaborn
 colorama
+
