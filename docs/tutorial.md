@@ -470,10 +470,11 @@ def chromosome_length(vcf):
     return vcf.seqlens[0]
 
 
-# URL for the VCF
-url = "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
+vcf_location = "_static/P_dom_chr24_phased.vcf.gz"
+# NB: could also read from an online version by setting vcf_location to
+# "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
 
-vcf = cyvcf2.VCF(url)
+vcf = cyvcf2.VCF(vcf_location)
 with tsinfer.SampleData(
     path="P_dom_chr24_phased.samples", sequence_length=chromosome_length(vcf)
 ) as samples:
@@ -540,9 +541,11 @@ def add_diploid_individuals(vcf, samples, populations):
 
 
 # Repeat as previously but add both populations and individuals
-url = "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
+vcf_location = "_static/P_dom_chr24_phased.vcf.gz"
+# NB: could also read from an online version by setting vcf_location to
+# "https://github.com/tskit-dev/tsinfer/raw/main/docs/_static/P_dom_chr24_phased.vcf.gz"
 
-vcf = cyvcf2.VCF(url)
+vcf = cyvcf2.VCF(vcf_location)
 with tsinfer.SampleData(
     path="P_dom_chr24_phased.samples", sequence_length=chromosome_length(vcf)
 ) as samples:
