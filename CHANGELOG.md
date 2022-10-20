@@ -1,27 +1,47 @@
 # Changelog
 
-## [0.2.4] - 2022-06-xx
+## [0.3] - 2022-06-xx
 
 **Features**
+
+- When calling `sample_data.add_site()` the ancestral state does not need to be the
+  first allele (index 0): alternatively, an ancestral allele index can be given
+  (and if `MISSING_DATA`, the ancestral state will be imputed). ({pr}`718`,
+  {issue}`686` {user}`hyanwong`)
+
+- The CLI interface now allows recombination rate (or rate maps) and mismatch ratios
+  to be specified ({pr}`731`, {issue}`435` {user}`hyanwong`)
+  
+- The calls to match-ancestors and match-samples via the CLI are now logged
+  in the provenance entries of the output tree sequence ({pr}`732` and `741`,
+  {issue}`730` {user}`hyanwong`)
+  
+- The CLI interface allows `--no-post-process` to be specified (for details of post-
+  processing, see "Breaking changes" below) ({pr}`727`, {issue}`721` {user}`hyanwong`)
 
 - matching routines warn if no inference sites
   ({pr}`685`, {issue}`683` {user}`hyanwong`)
 
 **Fixes**
 
-- sample_data.subset() now accepts a sequence_length  ({pr}`681`, {user}`hyanwong`)
+- `sample_data.subset()` now accepts a sequence_length  ({pr}`681`, {user}`hyanwong`)
 
-- `verify` no longer raises error when comparing a genotype to missingness. ({pr}`716`, {issue}`625`, {user}`benjeffery`) 
+- `verify` no longer raises error when comparing a genotype to missingness.
+  ({pr}`716`, {issue}`625`, {user}`benjeffery`) 
 
 **Breaking changes**:
 
-- The ``simplify`` parameter is now deprecated in favour of ``post_process``, which
+- The `simplify` parameter is now deprecated in favour of `post_process`, which
   prior to simplification, removes the "virtual-root-like" ancestor (inserted by
   tsinfer to aid the matching process) then splits the grand MRCA into separate pieces.
-  If splitting is not required, the ``post_process`` step can also be called as a
-  separate function with the parameter ``split_mrca=False`` (:pr:`687`,
-  :issue:`673`, :user:`hyanwong`) 
+  If splitting is not required, the `post_process` step can also be called as a
+  separate function with the parameter `split_mrca=False` ({pr}`687`,
+  {issue}`673`, {user}`hyanwong`) 
   
+- Post-processing by default erases tree topology that exists before the first site
+  and one unit after the last site, to avoid extrapolating into regions with no data.
+  This can be disabled by calling `post_process` step as a separate function with the
+  parameter `erase_flanks=False` ({pr}`720`, {issue}`483`, {user}`hyanwong`)
 
 - Inference now sets time_units on both ancestor and final tree sequences to
   tskit.TIME_UNITS_UNCALIBRATED, stopping accidental use of branch length
