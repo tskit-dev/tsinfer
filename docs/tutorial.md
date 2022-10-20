@@ -386,7 +386,7 @@ whether node 3 was closer to node 1 or 2, so we have three children of node 7 in
 tree.
 
 Finally, you should note that inference does not always get the right answer. At the
-first site in the inferred trees, node 5 is places as an outgroup, but at this site
+first site in the inferred trees, node 5 is placed as an outgroup, but at this site
 it is actually closer to the group consisting of nodes 0 and 4.
 
 :::{note}
