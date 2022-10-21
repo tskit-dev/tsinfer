@@ -64,7 +64,7 @@ templates_path = ["_templates"]
 source_suffix = ".rst"
 
 # The master toctree document.
-master_doc = "index"
+master_doc = "index_rename_to_get_404_redirect"
 
 # General information about the project.
 project = "tsinfer"
