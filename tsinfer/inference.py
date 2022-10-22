@@ -1041,7 +1041,7 @@ class AncestorsGenerator:
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
             )
-            # This is the the "grand MRCA" of all zeros
+            # This is the the "ultimate ancestor" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
                 end=self.num_sites,
@@ -2027,14 +2027,14 @@ def has_same_root_everywhere(ts):
 def post_process(
     ts,
     *,
-    split_mrca=None,
+    split_ultimate=None,
     erase_flanks=None,
     # Parameters below deliberately undocumented
     warn_if_unexpected_format=None,
     simplify_only=None,
 ):
     """
-    post_process(ts, *, split_mrca=None, erase_flanks=None)
+    post_process(ts, *, split_ultimate=None, erase_flanks=None)
 
     Post-process a tsinferred tree sequence into a more conventional form. This is
     the function run by default on the final tree sequence output by
@@ -2045,13 +2045,14 @@ def post_process(
        the new root (this step is undertaken to remove the "virtual-root-like node"
        which is added to ancestor tree sequences to enable matching).
     #. If the oldest node is removed in the first step and the new root spans the
-       entire genome, it is treated as the "grand MRCA" and (unless split_mrca is
-       ``False``) the node is split into multiple coexisiting nodes with the splits
-       occurring whenever the children of the grand MRCA change. The rationale
-       is that tsinfer creates a grand MRCA consisting of a single ancestral haplotype
-       with all inference sites in the ancestral state: this is, however, unlikely
-       to represent a single ancestor in the past. If nodes in the tree sequence are
-       then dated, these MRCA nodes can be pushed to different times.
+       entire genome, it is treated as the "ultimate ancestor" and (unless
+       ``split_ultimate`` is ``False``) the node is split into multiple coexisiting
+       nodes with the splits occurring whenever the children of the ultimate ancestor
+       change. The rationale is that tsinfer creates a single ancestral haplotype with
+       all inference sites in the ancestral state: this is, however, unlikely to
+       represent a single ancestor in the past. If the tree sequence is then dated,
+       the fact that ultimate ancestor is split into separate nodes allows these nodes
+       to be dated to different times.
     #. Often, extensive regions of genome exist before the first defined site and after
        the last defined site. Since no data exists in these sections of the genome, post
        processing by default erases the inferred topology in these regions. However,
@@ -2063,9 +2064,10 @@ def post_process(
        method with ``keep_unary`` set to True but ``filter_sites``,
        ``filter_populations`` and ``filter_individuals`` set to False).
 
-    :param bool split_mrca: If ``True`` (default) and the oldest node is the only
-        parent to a single "grand MRCA", split the grand MRCA into separate nodes
-        (see above). If ``False`` do not attempt to identify or split a grand MRCA.
+    :param bool split_ultimate: If ``True`` (default) and the oldest node is the only
+        parent to a single "ultimate ancestor" node, attempt to split this node into
+        many separate nodes (see above). If ``False`` do not attempt to identify or
+        split an ultimate ancestor node.
     :param bool erase_flanks: If ``True`` (default), keep only the
         inferred topology between the first and last sites. If ``False``,
         output regions of topology inferred before the first site and after
@@ -2073,8 +2075,8 @@ def post_process(
     :return: The post-processed tree sequence.
     :rtype: tskit.TreeSequence
     """
-    if split_mrca is None:
-        split_mrca = True
+    if split_ultimate is None:
+        split_ultimate = True
     if erase_flanks is None:
         erase_flanks = True
 
@@ -2088,14 +2090,14 @@ def post_process(
             last_edge = ts.edge(-1)  # Edge with oldest parent is last in the edge table
             tables.edges.truncate(tables.edges.num_rows - 1)
 
-            # move any mutations above the virtual-root-like ancestor to above the grand
-            # MRCA instead (these will be mutations placed by parsimony)
+            # move any mutations above the virtual-root-like ancestor to above the
+            # ultimate ancestor instead (these will be mutations placed by parsimony)
             mutations_node = tables.mutations.node
             mutations_node[mutations_node == last_edge.parent] = last_edge.child
             tables.mutations.node = mutations_node
 
-            if split_mrca:
-                split_grand_mrca(tables, warn_if_unexpected_format)
+            if split_ultimate:
+                split_ultimate_ancestor(tables, warn_if_unexpected_format)
         elif warn_if_unexpected_format:
             logger.warning(
                 "Cannot find a virtual-root-like ancestor during preprocessing"
@@ -2145,24 +2147,24 @@ def _post_process(*args, **kwargs):
     return post_process(*args, **kwargs)
 
 
-def split_grand_mrca(tables, warn_if_unexpected_format=None):
+def split_ultimate_ancestor(tables, warn_if_unexpected_format=None):
     # Internal function: if a single oldest node is a root across the entire genome,
     # split it up into a set of contemporaneous nodes whenever the node children change
 
     ts = tables.tree_sequence()
     if not has_same_root_everywhere(ts):
         if warn_if_unexpected_format:
-            logger.warning("Cannot find a single contiguous grand MRCA to split")
+            logger.warning("Cannot find a single contiguous ultimate ancestor to split")
         return
 
     # Split into multiple contemporaneous nodes whenever the node children change
-    logger.info("Splitting the all zeros grand MRCA into separate nodes")
-    genomewide_mrca_id = ts.edge(-1).parent
-    genomewide_mrca = ts.node(genomewide_mrca_id)
+    genomewide_ultimate_ancestor_id = ts.edge(-1).parent
+    genomewide_ultimate_ancestor = ts.node(genomewide_ultimate_ancestor_id)
+    logger.info("Located the all zeros ultimate ancestor")
     root_breaks = set()
     edges = tables.edges
-    j = len(edges) - 1  # the last edges are the ones connecting to the genomewide_mrca
-    while j >= 0 and edges[j].parent == genomewide_mrca_id:
+    j = len(edges) - 1  # the last edges are the ones connecting to the genomewide UA
+    while j >= 0 and edges[j].parent == genomewide_ultimate_ancestor_id:
         root_breaks |= {edges[j].left, edges[j].right}
         j -= 1
     root_breaks = sorted(root_breaks)
@@ -2171,12 +2173,12 @@ def split_grand_mrca(tables, warn_if_unexpected_format=None):
         # Only a single edge: no splitting needed
         return
 
-    logger.info(f"Splitting grand MRCA into {len(root_breaks) - 1} separate nodes")
-    # detach the grand_mrca from all its children: it will then get simplified out
+    logger.info(f"Splitting ultimate ancestor into {len(root_breaks) - 1} nodes")
+    # detach the ultimate ancestor from all its children, so it can be simplified out
     tables.edges.truncate(j + 1)
 
-    # Move the mutations above the grand_mrca to the new nodes
-    mutation_ids = np.where(tables.mutations.node == genomewide_mrca_id)[0]
+    # Move the mutations above the ultimate ancestor to the new nodes
+    mutation_ids = np.where(tables.mutations.node == genomewide_ultimate_ancestor_id)[0]
     mutation_positions = tables.sites.position[tables.mutations.site[mutation_ids]]
     mut_iter = zip(mutation_ids, mutation_positions)
     mutation_id, mutation_pos = next(mut_iter, (None, ts.sequence_length))
@@ -2189,8 +2191,8 @@ def split_grand_mrca(tables, warn_if_unexpected_format=None):
     for right in root_breaks[1:]:
         while tree.interval.right != right:
             tree = next(trees_iter)
-        new_root = tables.nodes.append(genomewide_mrca)
-        for c in tree.children(genomewide_mrca_id):
+        new_root = tables.nodes.append(genomewide_ultimate_ancestor)
+        for c in tree.children(genomewide_ultimate_ancestor_id):
             tables.edges.add_row(parent=new_root, child=c, left=left, right=right)
         while mutation_pos < right:
             tables.mutations[mutation_id] = tables.mutations[mutation_id].replace(
