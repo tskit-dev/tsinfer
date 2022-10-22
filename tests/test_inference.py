@@ -2818,7 +2818,7 @@ class TestPostProcess:
         assert ts2.num_trees == ts1.num_trees - 1
 
     def test_standalone_post_process(self, medium_sd_fixture):
-        # test we can post process separately, e.g. omitting the MRCA splitting step
+        # test separate post process step, e.g. omitting splitting the ultimate ancestor
         ts_unsimplified = tsinfer.infer(medium_sd_fixture, post_process=False)
         oldest_parent_id = ts_unsimplified.edge(-1).parent
         assert oldest_parent_id == 0
@@ -2827,7 +2827,7 @@ class TestPostProcess:
         assert md["ancestor_data_id"] == 0
 
         # Post processing removes ancestor_data_id 0
-        ts = tsinfer.post_process(ts_unsimplified, split_mrca=False)
+        ts = tsinfer.post_process(ts_unsimplified, split_ultimate=False)
         assert not ts.equals(ts_unsimplified, ignore_provenance=True)
         oldest_parent_id = ts.edge(-1).parent
         assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) == 1
@@ -2835,7 +2835,9 @@ class TestPostProcess:
         md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md["ancestor_data_id"] == 1
 
-        ts = tsinfer.post_process(ts_unsimplified, split_mrca=True, erase_flanks=False)
+        ts = tsinfer.post_process(
+            ts_unsimplified, split_ultimate=True, erase_flanks=False
+        )
         oldest_parent_id = ts.edge(-1).parent
         assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) > 1
         roots = set()
@@ -2847,7 +2849,7 @@ class TestPostProcess:
         assert len(roots) > 1
 
     def test_post_process_non_tsinfer(self, small_ts_fixture, caplog):
-        # A normal ts does not have grand MRCAs etc, so if the samples
+        # A normal ts does not have a single ultimate ancestor etc, so if the samples
         # are 0..n, and it is already simplified, it should be left untouched
         ts = small_ts_fixture.simplify()
         assert np.all(
@@ -2878,41 +2880,41 @@ class TestPostProcess:
         ts = tsinfer.infer(medium_sd_fixture, post_process=False)
         ts_simplified = ts.simplify(keep_unary=True)
         assert tsinfer.has_single_edge_over_grand_root(ts)
-        ts_post_processed = tsinfer.post_process(ts, split_mrca=False)
+        ts_post_processed = tsinfer.post_process(ts, split_ultimate=False)
         assert ts_post_processed.num_edges == ts_simplified.num_edges - 1
         assert not tsinfer.has_single_edge_over_grand_root(ts_post_processed)
 
     def test_split_edges_one_tree(self, small_sd_fixture):
         ts = tsinfer.infer(small_sd_fixture, post_process=False)
         assert ts.num_trees == 1
-        ts = tsinfer.post_process(ts, split_mrca=False)
+        ts = tsinfer.post_process(ts, split_ultimate=False)
         # Check that we don't delete and recreate the oldest node if there's only 1 tree
         tables = ts.dump_tables()
         oldest_node_in_topology = tables.edges[-1].parent
-        tsinfer.split_grand_mrca(tables)
+        tsinfer.split_ultimate_ancestor(tables)
         assert tables.edges[-1].parent == oldest_node_in_topology
         assert tables.edges.num_rows == ts.num_edges
 
     def test_dont_split_edges_twice(self, medium_sd_fixture, caplog):
         ts = tsinfer.infer(medium_sd_fixture, post_process=False)
-        ts = tsinfer.post_process(ts, split_mrca=False, erase_flanks=False)
+        ts = tsinfer.post_process(ts, split_ultimate=False, erase_flanks=False)
         assert ts.num_trees > 1
         assert tsinfer.has_same_root_everywhere(ts)
-        # Once the mrca has been split, it can't be split again
+        # Once the ultimate ancestor has been split, it can't be split again
         tables = ts.dump_tables()
         oldest_node_in_topology = tables.edges[-1].parent
         with caplog.at_level(logging.WARNING):
-            tsinfer.split_grand_mrca(tables, warn_if_unexpected_format=True)
+            tsinfer.split_ultimate_ancestor(tables, warn_if_unexpected_format=True)
             assert tables.edges.num_rows > ts.num_edges
             assert not tsinfer.has_same_root_everywhere(tables.tree_sequence())
             # if it has split, the oldest node in the topology will have changed
             assert tables.edges[-1].parent != oldest_node_in_topology
-            assert caplog.text.count("MRCA to split") == 0
+            assert caplog.text.count("ultimate ancestor to split") == 0
         # should fail has_same_root_everywhere, so will not be split again
         assert not tsinfer.has_same_root_everywhere(tables.tree_sequence())
         with caplog.at_level(logging.WARNING):
-            tsinfer.split_grand_mrca(tables, warn_if_unexpected_format=True)
-            assert caplog.text.count("MRCA to split") == 1
+            tsinfer.split_ultimate_ancestor(tables, warn_if_unexpected_format=True)
+            assert caplog.text.count("ultimate ancestor to split") == 1
 
     def test_sample_order(self, medium_sd_fixture):
         anc = tsinfer.generate_ancestors(medium_sd_fixture)
