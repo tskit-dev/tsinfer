@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2021 University of Oxford
+# Copyright (C) 2018-2022 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -1096,6 +1096,7 @@ class Matcher:
         extended_checks=False,
         engine=constants.C_ENGINE,
         progress_monitor=None,
+        allow_multiallele=False,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1231,7 +1232,9 @@ class Matcher:
         # quickly be big enough even for very large instances.
         max_edges = 64 * 1024
         max_nodes = 64 * 1024
-        if np.any(num_alleles > 2):
+        if np.any(num_alleles > 2) and not allow_multiallele:
+            # Currently only used for unsupported extend operation. We can
+            # remove in future versions.
             raise ValueError("Cannot currently match with > 2 alleles.")
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
@@ -1712,12 +1715,10 @@ class SampleMatcher(Matcher):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-    def match_samples(self, sample_indexes, sample_times):
-        builder = self.tree_sequence_builder
+    def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
-        for j, t in zip(sample_indexes, sample_times):
-            self.sample_id_map[j] = builder.add_node(t)
-        flags, times = builder.dump_nodes()
+        builder = self.tree_sequence_builder
+        _, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
@@ -1748,6 +1749,126 @@ class SampleMatcher(Matcher):
                 builder.add_mutations(node_id, site, derived_state)
                 progress_monitor.update()
             progress_monitor.close()
+
+    def extend(self, samples, known_haplotypes, node_metadata):
+        """
+        Runs the "extend" operation by taking a set of samples, creating
+        "exemplar" proxy samples when we have multiple identical sequences,
+        then matching the exemplar (or the sample if unique) into the existing
+        tree sequence, returning a new tree sequence.
+        """
+        builder = self.tree_sequence_builder
+        # Allocate nodes in the tree sequence consecutively for the input samples
+        final_node_map = {}
+        for sd_id in samples:
+            self.sample_id_map[sd_id] = builder.add_node(0)
+            final_node_map[sd_id] = self.sample_id_map[sd_id]
+
+        distinct = collections.defaultdict(list)
+        for sd_id, a in self.sample_data.haplotypes(samples):
+            distinct[a.tobytes()].append(sd_id)
+        distinct_parents = {}
+        exemplars = []
+        for key, sd_ids in distinct.items():
+            exemplars.append(sd_ids[0])
+            if len(sd_ids) > 1 and key not in known_haplotypes:
+                # Several sample data IDs correspond to this haplotype. So that we can
+                # keep the output IDs contiguous, we remap the first haplotype to a
+                # *new* node ID, that we turn into an internal node later.
+                new_id = builder.add_node(0)
+                distinct_parents[key] = new_id
+                self.sample_id_map[sd_ids[0]] = new_id
+            else:
+                exemplars.extend(sd_ids[1:])
+
+        # Do the hard work
+        self._match_samples(sorted(exemplars))
+
+        tsb = self.tree_sequence_builder
+        tables = self.ancestors_ts_tables.copy()
+        tables.edges.clear()
+
+        logger.debug("Adding tree sequence nodes")
+        flags, times = tsb.dump_nodes()
+        # FIXME use this to get new PC ancestors
+        # num_pc_ancestors = count_pc_ancestors(flags)
+
+        # First add the sample nodes for *all* the input samples
+        for sd_id in samples:
+            final_node_id = tables.nodes.add_row(
+                flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
+            )
+
+        # Then add in the exemplar nodes that will become parents of the
+        # actual samples
+        for key, sd_ids in distinct.items():
+            if len(sd_ids) > 1 and key not in known_haplotypes:
+                final_node_id = tables.nodes.add_row(
+                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
+                    time=1 / 2,
+                )
+                assert final_node_id == distinct_parents[key]
+                for sd_id in sd_ids:
+                    tables.edges.add_row(
+                        left=0,
+                        right=tables.sequence_length,
+                        parent=final_node_id,
+                        child=final_node_map[sd_id],
+                    )
+        # Add in the remaining non-sample nodes.
+        for u in range(len(tables.nodes), tsb.num_nodes):
+            tables.nodes.add_row(flags=flags[u], time=times[u])
+
+        logger.debug("Adding tree sequence edges")
+        left, right, parent, child = tsb.dump_edges()
+        tables.edges.append_columns(
+            left=self.position_map[left],
+            right=self.position_map[right],
+            parent=parent,
+            child=child,
+        )
+
+        logger.debug("Sorting and building intermediate tree sequence.")
+        tables.sites.clear()
+        old_num_mutations = len(tables.mutations)
+        tables.mutations.clear()
+        tables.sort()
+        tables.build_index()
+
+        mut_site, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
+        mutation_id = 0
+        num_mutations = len(mut_site)
+        for site in self.sample_data.sites(self.inference_site_id):
+            site_id = tables.sites.add_row(
+                site.position,
+                ancestral_state=site.alleles[0],
+            )
+            while mutation_id < num_mutations and mut_site[mutation_id] == site_id:
+                tables.mutations.add_row(
+                    site_id,
+                    node=node[mutation_id],
+                    derived_state=site.alleles[derived_state[mutation_id]],
+                )
+                mutation_id += 1
+
+        tables.compute_mutation_parents()
+
+        new_mutations = num_mutations - old_num_mutations
+        logger.info(
+            f"Extended for {len(samples)} samples ({len(exemplars)} distinct) and "
+            f"{new_mutations} new mutations."
+        )
+
+        return tables.tree_sequence(), set(distinct.keys())
+
+    def match_samples(self, sample_indexes, sample_times=None):
+        if sample_times is None:
+            sample_times = np.zeros(len(sample_indexes))
+        builder = self.tree_sequence_builder
+        for j, t in zip(sample_indexes, sample_times):
+            self.sample_id_map[j] = builder.add_node(t)
+
+        self._match_samples(sample_indexes)
 
     def finalise(self):
         logger.info("Finalising tree sequence")
@@ -2218,3 +2339,93 @@ def minimise(ts):
         filter_individuals=False,
         filter_populations=False,
     )
+
+
+def solve_num_mismatches(ts, k):
+    """
+    Return the low-level LS parameters corresponding to accepting
+    k mismatches in favour of a single recombination.
+    """
+    m = ts.num_sites
+    n = ts.num_nodes  # We can match against any node in tsinfer
+    if k == 0:
+        # Pathological things happen when k=0
+        r = 1e-3
+        mu = 1e-20
+    else:
+        mu = 1e-6
+        denom = (1 - mu) ** k + (n - 1) * mu**k
+        r = n * mu**k / denom
+        # print("n = ", n, "k = ",k)
+        # print(mu, r)
+        assert mu < 0.5
+        assert r < 0.5
+
+    ls_recomb = np.full(m - 1, r)
+    ls_mismatch = np.full(m, mu)
+    return ls_recomb, ls_mismatch
+
+
+class SequentialExtender:
+    def __init__(self, sample_data, ancestors_ts=None, time_units=None):
+        time_units = tskit.TIME_UNITS_UNCALIBRATED if time_units is None else time_units
+        self.sample_data = sample_data
+        if ancestors_ts is None:
+            tables = tskit.TableCollection(sample_data.sequence_length)
+            tables.time_units = time_units
+            for site in sample_data.sites():
+                tables.sites.add_row(site.position, site.ancestral_state)
+            tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+            # TODO should probably make the ultimate ancestor time something less
+            # plausible or at least configurable.
+            for t in [1, 0]:
+                tables.nodes.add_row(time=t)
+            tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
+            self.ancestors_ts = tables.tree_sequence()
+
+            # Seed the known_haplotypes with the all-zeros haplotypes so that
+            # we don't create a spurious node for it in the first generation.
+            root_haplotype = next(sample_data.haplotypes())[1].copy()
+            root_haplotype[:] = 0
+            self.haplotypes = {root_haplotype.tobytes()}
+        else:
+            self.ancestors_ts = ancestors_ts
+            if time_units is not None and self.ancestors_ts.time_units != time_units:
+                raise ValueError(
+                    f"Mismatched time_units: {time_units} != ancestors_ts.time_units",
+                )
+            # Add in the existing haplotypes. Note - this will probably
+            # be slow and might not be necessary/desirable at large scale.
+            self.haplotypes = set()
+            for h in self.ancestors_ts.haplotypes():
+                a = np.frombuffer(h.encode(), dtype=np.int8) - ord("0")
+                self.haplotypes.add(a.tobytes())
+
+        self.node_metadata = sample_data.individuals_metadata[:]
+        assert self.sample_data.num_individuals == self.sample_data.num_samples
+
+    def _increment_ancestors_ts_time(self, increment):
+        tables = self.ancestors_ts.dump_tables()
+        tables.nodes.time += increment
+        self.ancestors_ts = tables.tree_sequence()
+
+    def extend(self, samples, num_mismatches=None, time_increment=None, **kwargs):
+        num_mismatches = 0 if num_mismatches is None else num_mismatches
+        time_increment = 1 if time_increment is None else time_increment
+
+        ls_recomb, ls_mismatch = solve_num_mismatches(self.ancestors_ts, num_mismatches)
+        self._increment_ancestors_ts_time(time_increment)
+        manager = SampleMatcher(
+            self.sample_data,
+            self.ancestors_ts,
+            allow_multiallele=True,
+            recombination=ls_recomb,
+            mismatch=ls_mismatch,
+            **kwargs,
+        )
+        ts, haplotypes = manager.extend(
+            np.array(samples), self.haplotypes, self.node_metadata
+        )
+        self.haplotypes |= haplotypes
+        self.ancestors_ts = ts
+        return ts
