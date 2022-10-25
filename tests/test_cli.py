@@ -226,6 +226,42 @@ class TestCommandsDefaults(TestCli):
         self.verify_output(output_trees)
 
 
+class TestCommandsExtra(TestCli):
+    """
+    Test miscellaneous extra options for standard commands
+    """
+
+    def test_filenames_without_keeping_intermediates(self):
+        output_anc = os.path.join(self.tempdir.name, "test1")
+        output_anc_ts = os.path.join(self.tempdir.name, "test2")
+        with pytest.raises(ValueError, match="--keep-intermediates"):
+            self.run_command(["infer", self.sample_file, "-a", output_anc])
+        with pytest.raises(ValueError, match="--keep-intermediates"):
+            self.run_command(["infer", self.sample_file, "-A", output_anc_ts])
+
+    def test_keep_intermediates(self):
+        output_anc = os.path.join(self.tempdir.name, "test1")
+        output_anc_ts = os.path.join(self.tempdir.name, "test2")
+        self.run_command(
+            [
+                "infer",
+                self.sample_file,
+                "--keep-intermediates",
+                "-a",
+                output_anc,
+                "-A",
+                output_anc_ts,
+            ]
+        )
+        assert os.path.exists(output_anc)
+        ancestors = tsinfer.load(output_anc)
+        assert ancestors.num_ancestors > 0
+
+        assert os.path.exists(output_anc_ts)
+        anc_ts = tskit.load(output_anc_ts)
+        assert anc_ts.num_samples > 0
+
+
 class TestProgress(TestCli):
     """
     Tests that we get some output when we use the progress bar.
