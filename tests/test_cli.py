@@ -311,7 +311,7 @@ class TestProvenance(TestCli):
 
     @pytest.mark.skip(
         reason="Ancestors not saving provenance:"
-        "see https://github.com/tskit-dev/tsinfer/issues/743"
+        "see https://github.com/tskit-dev/tsinfer/issues/753"
     )
     def test_ancestors(self):
         sd = tsinfer.load(self.sample_file)
@@ -357,9 +357,9 @@ class TestRecombinationAndMismatch(TestCli):
                 [
                     "match-ancestors",
                     self.sample_file,
-                    "--recombination_rate",
+                    "--recombination-rate",
                     "0.001",
-                    "--mismatch_ratio",
+                    "--mismatch-ratio",
                     "0.01",
                 ]
             )
@@ -372,9 +372,9 @@ class TestRecombinationAndMismatch(TestCli):
                 [
                     "match-samples",
                     self.sample_file,
-                    "--recombination_rate",
+                    "--recombination-rate",
                     "10",
-                    "--mismatch_ratio",
+                    "--mismatch-ratio",
                     "100",
                 ]
             )
@@ -386,9 +386,9 @@ class TestRecombinationAndMismatch(TestCli):
         command = [
             "infer",
             self.sample_file,
-            "--recombination_rate",
+            "--recombination-rate",
             "0.1",
-            "--mismatch_ratio",
+            "--mismatch-ratio",
             "10",
         ]
         with mock.patch("tsinfer.infer") as infer:
@@ -397,6 +397,7 @@ class TestRecombinationAndMismatch(TestCli):
             assert kwargs["recombination_rate"] == 0.1
             assert kwargs["mismatch_ratio"] == 10
 
+    @pytest.mark.skip(reason="https://github.com/tskit-dev/tsinfer/issues/753")
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
@@ -409,7 +410,7 @@ class TestRecombinationAndMismatch(TestCli):
         command = [
             "infer",
             self.sample_file,
-            "--recombination_map",
+            "--recombination-map",
             ratemap,
         ]
         with mock.patch("tsinfer.infer") as infer:
@@ -417,6 +418,7 @@ class TestRecombinationAndMismatch(TestCli):
             args, kwargs = infer.call_args
             assert isinstance(kwargs["recombination_rate"], msprime.RateMap)
 
+    @pytest.mark.skip(reason="https://github.com/tskit-dev/tsinfer/issues/753")
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"
     )
@@ -433,7 +435,7 @@ class TestRecombinationAndMismatch(TestCli):
         command = [
             "infer",
             self.sample_file,
-            "--recombination_map",
+            "--recombination-map",
             ratemap,
             "-O",
             output_trees,
