@@ -32,7 +32,7 @@ except ImportError:
     resource = None  # resource.getrusage absent on windows, so skip outputting max mem
 
 import daiquiri
-import msprime  # for the RateMap class
+
 import tskit
 import humanize
 import time
@@ -89,8 +89,9 @@ def get_output_trees_path(path, input_path):
 def get_recombination_map(args):
     if args.recombination_rate is not None:
         return args.recombination_rate
-    if args.recombination_map is not None:
-        return msprime.RateMap.read_hapmap(args.recombination_map)
+    # uncomment below when https://github.com/tskit-dev/tsinfer/issues/753 fixed
+    # if args.recombination_map is not None:
+    #     return msprime.RateMap.read_hapmap(args.recombination_map)
     return None
 
 
@@ -354,25 +355,26 @@ def add_postprocess_argument(parser):
 def add_recombination_arguments(parser):
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--recombination_rate",
+        "--recombination-rate",
         default=None,
         type=float,
         help="The recombination rate per unit genome",
     )
-    group.add_argument(
-        "--recombination_map",
-        default=None,
-        help=(
-            "The path to a file containing recombination rates along the chromosome "
-            "in HapMap format (see https://tskit.dev/msprime/docs/latest/api.html"
-            "#msprime.RateMap.read_hapmap for details of the format)"
-        ),
-    )
+    # Uncomment below when https://github.com/tskit-dev/tsinfer/issues/753 fixed
+    # group.add_argument(
+    #     "--recombination-map",
+    #     default=None,
+    #     help=(
+    #         "The path to a file containing recombination rates along the chromosome "
+    #         "in HapMap format (see https://tskit.dev/msprime/docs/latest/api.html"
+    #         "#msprime.RateMap.read_hapmap for details of the format)"
+    #     ),
+    # )
 
 
 def add_mismatch_argument(parser):
     parser.add_argument(
-        "--mismatch_ratio",
+        "--mismatch-ratio",
         type=float,
         default=None,
         help=(
