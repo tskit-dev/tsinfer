@@ -162,37 +162,53 @@ def run_infer(args):
             "via the Python function `tsinfer.SampleData.from_tree_sequence()`)."
         )
     sample_data = tsinfer.SampleData.load(args.samples)
-    ts = tsinfer.infer(
-        sample_data,
-        progress_monitor=args.progress,
-        num_threads=args.num_threads,
-        recombination_rate=get_recombination_map(args),
-        mismatch_ratio=args.mismatch_ratio,
-        record_provenance=False,
-    )
-    output_trees = get_output_trees_path(args.output_trees, args.samples)
-    write_ts(ts, output_trees)
+    if args.keep_intermediates:
+        run_generate_ancestors(args, usage_summary=False)
+        run_match_ancestors(args, usage_summary=False)
+        run_match_samples(args, usage_summary=False)
+    else:
+        if args.ancestors is not None:
+            raise ValueError(
+                "Must specify --keep-intermediates to save an ancestors file"
+            )
+        if args.ancestors_trees is not None:
+            raise ValueError(
+                "Must specify --keep-intermediates to save an ancestors tree sequence"
+            )
+
+        ts = tsinfer.infer(
+            sample_data,
+            progress_monitor=args.progress,
+            num_threads=args.num_threads,
+            recombination_rate=get_recombination_map(args),
+            mismatch_ratio=args.mismatch_ratio,
+            path_compression=not args.no_path_compression,
+            record_provenance=False,
+        )
+        output_trees = get_output_trees_path(args.output_trees, args.samples)
+        write_ts(ts, output_trees)
     summarise_usage()
 
 
-def run_generate_ancestors(args):
+def run_generate_ancestors(args, usage_summary=True):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.samples)
     sample_data = tsinfer.SampleData.load(args.samples)
     tsinfer.generate_ancestors(
         sample_data,
         progress_monitor=args.progress,
-        num_flush_threads=args.num_flush_threads,
+        num_flush_threads=getattr(args, "num_flush_threads", 0),
         num_threads=args.num_threads,
         path=ancestors_path,
         record_provenance=False,
     )
     # NB: ideally we should store the cli provenance in here, but this creates
     # perf issues - see https://github.com/tskit-dev/tsinfer/issues/743
-    summarise_usage()
+    if usage_summary:
+        summarise_usage()
 
 
-def run_match_ancestors(args):
+def run_match_ancestors(args, usage_summary=True):
     setup_logging(args)
     ancestors_path = get_ancestors_path(args.ancestors, args.samples)
     logger.info(f"Loading ancestral haplotypes from {ancestors_path}")
@@ -210,10 +226,11 @@ def run_match_ancestors(args):
         record_provenance=False,
     )
     write_ts(ts, ancestors_trees)
-    summarise_usage()
+    if usage_summary:
+        summarise_usage()
 
 
-def run_augment_ancestors(args):
+def run_augment_ancestors(args, usage_summary=True):
     setup_logging(args)
 
     sample_data = tsinfer.SampleData.load(args.samples)
@@ -241,10 +258,11 @@ def run_augment_ancestors(args):
     )
     logger.info(f"Writing output tree sequence to {output_path}")
     ts.dump(output_path)
-    summarise_usage()
+    if usage_summary:
+        summarise_usage()
 
 
-def run_match_samples(args):
+def run_match_samples(args, usage_summary=True):
     setup_logging(args)
 
     sample_data = tsinfer.SampleData.load(args.samples)
@@ -264,7 +282,8 @@ def run_match_samples(args):
         record_provenance=False,
     )
     write_ts(ts, output_trees)
-    summarise_usage()
+    if usage_summary:
+        summarise_usage()
 
 
 def run_verify(args):
@@ -425,6 +444,19 @@ def add_num_flush_threads_argument(parser):
     )
 
 
+def add_keep_intermediates_argument(parser):
+    parser.add_argument(
+        "--keep-intermediates",
+        "-k",
+        action="store_true",
+        help=(
+            "Keep the intermediate ancestors and ancestors-tree-sequence files. "
+            "To override the default locations where these files are saved, use the "
+            "--ancestors and --ancestors-trees options"
+        ),
+    )
+
+
 def get_cli_parser():
     top_parser = argparse.ArgumentParser(
         description="Command line interface for tsinfer."
@@ -525,17 +557,21 @@ def get_cli_parser():
         "infer",
         help=(
             "Runs the generate-ancestors, match-ancestors and match-samples "
-            "commands without writing the intermediate files to disk. Not "
-            "recommended for large inferences."
+            "steps in one go. Not recommended for large inferences."
         ),
     )
     add_samples_file_argument(parser)
     add_logging_arguments(parser)
     add_output_trees_argument(parser)
+    add_path_compression_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    add_postprocess_argument(parser)
     add_recombination_arguments(parser)
     add_mismatch_argument(parser)
+    add_keep_intermediates_argument(parser)
+    add_ancestors_file_argument(parser)  # Only used if keep-intermediates
+    add_ancestors_trees_argument(parser)  # Only used if keep-intermediates
     parser.set_defaults(runner=run_infer)
 
     parser = subparsers.add_parser(
