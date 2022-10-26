@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <math.h>
 
+
 static inline bool
 is_nonzero_root(const tsk_id_t u, const tsk_id_t *restrict parent,
     const tsk_id_t *restrict left_child)
@@ -106,8 +107,6 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     double *mismatch_rate, unsigned int precision, int flags)
 {
     int ret = 0;
-    /* TODO make these input parameters. */
-    size_t traceback_block_size = 64 * 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_matcher_t));
     /* All allocs for arrays related to nodes are done in expand_nodes */
@@ -132,7 +131,12 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    ret = tsk_blkalloc_init(&self->traceback_allocator, traceback_block_size);
+    /* Alloc in 64MiB blocks. */
+    self->traceback_block_size = 64 * 1024 * 1024;
+    /* If the traceback allocator is using more than 2GiB of RAM free it, so
+     * that other threads can use the memory */
+    self->traceback_realloc_size = 2L * 1024L * 1024L * 1024L;
+    ret = tsk_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
     if (ret != 0) {
         goto out;
     }
@@ -553,9 +557,18 @@ ancestor_matcher_reset(ancestor_matcher_t *self)
     assert(self->num_nodes <= self->max_nodes);
 
     memset(self->allelic_state, 0xff, self->num_nodes * sizeof(*self->allelic_state));
-    ret = tsk_blkalloc_reset(&self->traceback_allocator);
-    if (ret != 0) {
-        goto out;
+
+    if (self->traceback_allocator.total_size > self->traceback_realloc_size) {
+        tsk_blkalloc_free(&self->traceback_allocator);
+        ret = tsk_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
+        if (ret != 0) {
+            goto out;
+        }
+    } else {
+        ret = tsk_blkalloc_reset(&self->traceback_allocator);
+        if (ret != 0) {
+            goto out;
+        }
     }
     self->total_traceback_size = 0;
     self->num_likelihood_nodes = 0;

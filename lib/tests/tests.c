@@ -555,6 +555,9 @@ test_matching_one_site(void)
     ret = tree_sequence_builder_freeze_indexes(&tsb);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
+    /* Make sure we hit the realloc behaviour on the ancestor matcher */
+    ancestor_matcher.traceback_realloc_size = 10;
+
     ret = ancestor_matcher_find_path(
         &ancestor_matcher, 0, 1, haplotype, match, &num_edges, &left, &right, &parent);
     CU_ASSERT_EQUAL_FATAL(ret, 0);

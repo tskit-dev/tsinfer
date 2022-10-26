@@ -186,6 +186,8 @@ typedef struct {
     node_state_list_t *traceback;
     tsk_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
+    size_t traceback_block_size;
+    size_t traceback_realloc_size;
     struct {
         tsk_id_t *left;
         tsk_id_t *right;
