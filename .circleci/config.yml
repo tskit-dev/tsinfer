@@ -7,7 +7,7 @@ jobs:
       - checkout
 
       - restore_cache:
-          key: tsinfer-{{ .Branch }}
+          key: tsinfer-{{ .Branch }}-v1
 
       - run:
           name: Install dependencies and set PATH
@@ -24,7 +24,7 @@ jobs:
               pip install -r requirements/CI-tests-complete/requirements.txt --user
 
       - save_cache:
-          key: tsinfer-{{ .Branch }}
+          key: tsinfer-{{ .Branch }}-v1
           paths:
             - "/home/circleci/.local"
 
@@ -105,9 +105,9 @@ jobs:
             source venv/bin/activate
             pip install dist/*.tar.gz
             python -c 'import tsinfer; print(tsinfer.__version__)'
-            
+
             #Also check the wheel
             pip uninstall --yes tsinfer
             pip install dist/*.whl
             python -c 'import tsinfer; print(tsinfer.__version__)'
-            
+
