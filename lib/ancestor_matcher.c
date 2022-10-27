@@ -26,7 +26,6 @@
 #include <stdbool.h>
 #include <math.h>
 
-
 static inline bool
 is_nonzero_root(const tsk_id_t u, const tsk_id_t *restrict parent,
     const tsk_id_t *restrict left_child)

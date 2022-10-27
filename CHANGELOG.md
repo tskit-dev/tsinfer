@@ -4,6 +4,12 @@
 
 In development
 
+**Performance improvements**
+
+- Reduce memory usage when running `match_samples` against large cohorts 
+  containing sequences with substantial amounts of error. 
+  ({pr}`761`, {user}`jeromekelleher`)
+
 ## [0.3.0] - 2022-10-25
 
 **Features**
