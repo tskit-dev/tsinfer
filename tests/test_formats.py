@@ -1077,7 +1077,6 @@ class TestSampleData(DataContainerMixin):
         data.finalise()
         copy = data.copy()
         copy.finalise()
-        assert copy.uuid != data.uuid
         assert copy.data_equal(data)
 
     def test_copy_update_sites_time(self):
@@ -1921,8 +1920,6 @@ class TestAncestorData(DataContainerMixin):
         ancestor_data.record_provenance("verify_data_round_trip")
         ancestor_data.finalise()
 
-        assert len(ancestor_data.uuid) > 0
-        assert ancestor_data.sample_data_uuid == sample_data.uuid
         assert ancestor_data.sequence_length == sample_data.sequence_length
         assert ancestor_data.format_name == formats.AncestorData.FORMAT_NAME
         assert ancestor_data.format_version == formats.AncestorData.FORMAT_VERSION
@@ -2195,11 +2192,9 @@ class TestAncestorData(DataContainerMixin):
     def test_insert_proxy_bad_sample_data(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
         ancestors = tsinfer.generate_ancestors(sample_data)
-        # by default, sample_data must be the same
         sd_copy, _ = self.get_example_data(10, 10, num_ancestors=40)
-        with pytest.raises(ValueError):
-            ancestors.insert_proxy_samples(sd_copy)
-        # But works if we don't require same data
+        ancestors.insert_proxy_samples(sd_copy)
+        # Deprecated flag should change nothing
         ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
         # Unless seq lengths differ
         sd_copy, _ = self.get_example_data(10, sequence_length=11, num_ancestors=40)
@@ -2229,8 +2224,8 @@ class TestAncestorData(DataContainerMixin):
         sample_data, _ = self.get_example_data(10, 10, 40)
         ancestors = tsinfer.generate_ancestors(sample_data)
         ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=[])
-        assert ancestors != ancestors_extra  # UUIDs should differ ...
-        assert ancestors.data_equal(ancestors_extra)  # but data be identical
+        assert ancestors == ancestors_extra  # Equality based on data
+        assert ancestors.data_equal(ancestors_extra)  # data should be identical
 
     def test_insert_proxy_1_sample(self):
         sample_data, _ = self.get_example_data(10, 10, 40)

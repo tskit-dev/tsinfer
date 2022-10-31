@@ -28,7 +28,6 @@ import os.path
 import queue
 import sys
 import threading
-import uuid
 import warnings
 
 import attr
@@ -385,7 +384,6 @@ class DataContainer:
             self.data = zarr.open_group(store=store, mode="w")
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
-        self.data.attrs["uuid"] = str(uuid.uuid4())
 
         chunks = self._chunk_size
         provenances_group = self.data.create_group("provenances")
@@ -486,8 +484,7 @@ class DataContainer:
         """
         Returns a copy of this DataContainer opened in 'edit' mode. If path
         is specified, this must not be equal to the path of the current
-        data container. The new container will have a different UUID to the
-        current.
+        data container.
         """
         if self._mode != self.READ_MODE:
             raise ValueError("Cannot copy unless in read mode.")
@@ -516,8 +513,6 @@ class DataContainer:
             store = other._new_lmdb_store(max_file_size)
             zarr.copy_store(self.data.store, store)
             other.data = zarr.group(store)
-        # Set a new UUID
-        other.data.attrs["uuid"] = str(uuid.uuid4())
         other.data.attrs[FINALISED_KEY] = False
         other._mode = self.EDIT_MODE
         return other
@@ -664,10 +659,6 @@ class DataContainer:
         return ret
 
     @property
-    def uuid(self):
-        return str(self.data.attrs["uuid"])
-
-    @property
     def num_provenances(self):
         return self.provenances_timestamp.shape[0]
 
@@ -693,7 +684,7 @@ class DataContainer:
     def __eq__(self, other):
         ret = NotImplemented
         if isinstance(other, type(self)):
-            ret = self.uuid == other.uuid and self.data_equal(other)
+            ret = self.data_equal(other)
         return ret
 
     def __str__(self):
@@ -703,7 +694,6 @@ class DataContainer:
             ("format_name", self.format_name),
             ("format_version", self.format_version),
             ("finalised", self.finalised),
-            ("uuid", self.uuid),
             ("num_provenances", self.num_provenances),
             ("provenances/timestamp", zarr_summary(self.provenances_timestamp)),
             ("provenances/record", zarr_summary(self.provenances_record)),
@@ -1320,10 +1310,10 @@ class SampleData(DataContainer):
         """
         Returns True if all the data attributes of this input file and the
         specified input file are equal. This compares every attribute except
-        the UUID and provenance.
+        the provenance.
 
         To compare two :class:`SampleData` instances for exact equality of
-        all data including UUIDs and provenance data, use ``s1 == s2``.
+        all data including provenance data, use ``s1 == s2``.
 
         :param SampleData other: The other :class:`SampleData` instance to
             compare with.
@@ -2246,13 +2236,6 @@ class SgkitSampleData(SampleData):
             return {"codec": "json"}
 
     @property
-    def uuid(self):
-        return (
-            "Hmm, not sure, could just generate a UUID, but then it wouldn't"
-            "be in the file - maybe we do need to write back on init"
-        )
-
-    @property
     def format_name(self):
         return self.FORMAT_NAME
 
@@ -2549,7 +2532,6 @@ class AncestorData(DataContainer):
         super().__init__(**kwargs)
         sample_data._check_finalised()
         self.sample_data = sample_data
-        self.data.attrs["sample_data_uuid"] = sample_data.uuid
         if self.sample_data.sequence_length == 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero")
         self.data.attrs["sequence_length"] = self.sample_data.sequence_length
@@ -2629,7 +2611,6 @@ class AncestorData(DataContainer):
     def __str__(self):
         values = [
             ("sequence_length", self.sequence_length),
-            ("sample_data_uuid", self.sample_data_uuid),
             ("num_ancestors", self.num_ancestors),
             ("num_sites", self.num_sites),
             ("sites/position", zarr_summary(self.sites_position)),
@@ -2644,12 +2625,10 @@ class AncestorData(DataContainer):
     def data_equal(self, other):
         """
         Returns True if all the data attributes of this input file and the
-        specified input file are equal. This compares every attribute except
-        the UUID.
+        specified input file are equal. This compares every attribute.
         """
         return (
             self.sequence_length == other.sequence_length
-            and self.sample_data_uuid == other.sample_data_uuid
             and self.format_name == other.format_name
             and self.format_version == other.format_version
             and self.num_ancestors == other.num_ancestors
@@ -2670,10 +2649,6 @@ class AncestorData(DataContainer):
         Returns the sequence length.
         """
         return self.data.attrs["sequence_length"]
-
-    @property
-    def sample_data_uuid(self):
-        return self.data.attrs["sample_data_uuid"]
 
     @property
     def num_ancestors(self):
@@ -2789,14 +2764,7 @@ class AncestorData(DataContainer):
             (i.e. breaking the infinite sites assumption), allowing them to possess
             derived alleles at sites where there are no pre-existing mutations in
             older ancestors.
-        :param bool require_same_sample_data: If ``True`` (default) then the
-            the ``sample_data`` parameter must point to the same :class:`.SampleData`
-            instance as that used to generate the current ancestors. If ``False``,
-            this requirement is not enforced, and it is the user's responsibility
-            to ensure that the encoding of alleles in ``sample_data`` matches the
-            encoding in the current :class:`AncestorData` instance (i.e. that in the
-            original :class:`.SampleData` instance on which the current ancestors
-            are based).
+        :param bool require_same_sample_data: **Deprecated** Has no effect.
         :param \\**kwargs: Further arguments passed to the constructor when creating
             the new :class:`AncestorData` instance which will be returned.
 
@@ -2805,11 +2773,6 @@ class AncestorData(DataContainer):
         """
         self._check_finalised()
         sample_data._check_finalised()
-        if require_same_sample_data:
-            if sample_data.uuid != self.sample_data_uuid:
-                raise ValueError(
-                    "sample_data differs from that used to build the initial ancestors"
-                )
         if self.sequence_length != sample_data.sequence_length:
             raise ValueError("sample_data does not have the correct sequence length")
         used_sites = np.isin(sample_data.sites_position[:], self.sites_position[:])
@@ -2904,8 +2867,6 @@ class AncestorData(DataContainer):
             other.clear_provenances()
             for timestamp, record in self.provenances():
                 other.add_provenance(timestamp, record)
-            if sample_data.uuid != self.sample_data_uuid:
-                pass  # TODO: if sample files don't match, we need extra provenance info
             other.record_provenance(command="insert_proxy_samples", **kwargs)
 
         assert other.num_ancestors == self.num_ancestors + len(sample_ids)
