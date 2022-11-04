@@ -494,10 +494,10 @@ class TestCoalesceMutations:
         ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
         tables = ts.dump_tables()
         tables.sites.add_row(0, "A")
-        tables.mutations.add_row(site=0, node=0, derived_state="T")
-        tables.mutations.add_row(site=0, node=1, derived_state="T")
-        tables.mutations.add_row(site=0, node=2, derived_state="G")
-        tables.mutations.add_row(site=0, node=3, derived_state="G")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G")
+        tables.mutations.add_row(site=0, node=3, time=0, derived_state="G")
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -519,6 +519,7 @@ class TestCoalesceMutations:
         tables.mutations.add_row(site=0, node=1, derived_state="T")
         tables.mutations.add_row(site=0, node=2, derived_state="G")
         tables.mutations.add_row(site=0, node=3, derived_state="G")
+        tables.compute_mutation_times()
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -538,6 +539,7 @@ class TestCoalesceMutations:
         tables.sites.add_row(0, "A")
         tables.mutations.add_row(site=0, node=0, derived_state="T")
         tables.mutations.add_row(site=0, node=3, derived_state="T")
+        tables.compute_mutation_times()
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -554,10 +556,10 @@ class TestCoalesceMutations:
         tables = ts.dump_tables()
         tables.sites.add_row(0, "A")
         tables.sites.add_row(0.5, "A")
-        tables.mutations.add_row(site=0, node=0, derived_state="T")
-        tables.mutations.add_row(site=0, node=1, derived_state="T")
-        tables.mutations.add_row(site=0, node=2, derived_state="T")
-        tables.mutations.add_row(site=1, node=2, derived_state="G")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="G")
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -574,11 +576,11 @@ class TestCoalesceMutations:
         tables = ts.dump_tables()
         tables.sites.add_row(0, "A")
         tables.sites.add_row(0.5, "A")
-        tables.mutations.add_row(site=0, node=0, derived_state="T")
-        tables.mutations.add_row(site=0, node=1, derived_state="T")
-        tables.mutations.add_row(site=0, node=2, derived_state="G")
-        tables.mutations.add_row(site=1, node=1, derived_state="T")
-        tables.mutations.add_row(site=1, node=2, derived_state="G")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G")
+        tables.mutations.add_row(site=1, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="G")
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -597,12 +599,12 @@ class TestCoalesceMutations:
         tables.sites.add_row(0, "A")
         tables.sites.add_row(0.25, "A")
         tables.sites.add_row(0.75, "A")
-        tables.mutations.add_row(site=0, node=0, derived_state="T")
-        tables.mutations.add_row(site=0, node=1, derived_state="T")
-        tables.mutations.add_row(site=1, node=0, derived_state="T")
-        tables.mutations.add_row(site=1, node=2, derived_state="T")
-        tables.mutations.add_row(site=2, node=0, derived_state="T")
-        tables.mutations.add_row(site=2, node=2, derived_state="T")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="T")
+        tables.mutations.add_row(site=2, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=2, node=2, time=0, derived_state="T")
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
@@ -618,8 +620,8 @@ class TestCoalesceMutations:
         ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
         tables = ts.dump_tables()
         tables.sites.add_row(0, "A")
-        tables.mutations.add_row(site=0, node=0, derived_state="T")
-        tables.mutations.add_row(site=0, node=0, derived_state="C", parent=0)
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="C", parent=0)
         ts = tables.tree_sequence()
 
         with pytest.raises(ValueError, match="Multiple mutations"):
@@ -635,12 +637,19 @@ class TestCoalesceMutations:
         ts = tskit.Tree.generate_balanced(3, arity=2).tree_sequence
         tables = ts.dump_tables()
         tables.sites.add_row(0, "A")
-        tables.mutations.add_row(site=0, node=3, derived_state="T")
-        tables.mutations.add_row(site=0, node=1, derived_state="G")
-        tables.mutations.add_row(site=0, node=2, derived_state="G")
+        tables.sites.add_row(0.1, "A")
+        tables.mutations.add_row(site=0, node=3, time=1, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="G", parent=0)
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G", parent=0)
+        # Site 1 has a complicated mutation pattern and no coalesceable mutations
+        tables.mutations.add_row(site=1, node=3, time=1, derived_state="G")
+        tables.mutations.add_row(site=1, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=1, time=0, derived_state="A", parent=4)
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="C", parent=4)
+
         ts = tables.tree_sequence()
 
         ts2 = tsinfer.inference.coalesce_mutations(ts)
         assert_sequences_equal(ts, ts2)
-        assert ts2.num_mutations == 2
-        assert ts2.num_nodes == 5
+        assert ts2.num_mutations == 6
+        assert ts2.num_nodes == 6

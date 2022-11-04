@@ -1767,7 +1767,7 @@ class SampleMatcher(Matcher):
         tables.edges.clear()
 
         logger.debug("Adding tree sequence nodes")
-        flags, times = tsb.dump_nodes()
+        flags, node_time = tsb.dump_nodes()
 
         # First add the sample nodes for *all* the input samples
         for sd_id in samples:
@@ -1775,7 +1775,7 @@ class SampleMatcher(Matcher):
                 flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
             )
         for u in range(len(tables.nodes), tsb.num_nodes):
-            tables.nodes.add_row(flags=flags[u], time=times[u])
+            tables.nodes.add_row(flags=flags[u], time=node_time[u])
 
         logger.debug("Adding tree sequence edges")
         left, right, parent, child = tsb.dump_edges()
@@ -1806,6 +1806,7 @@ class SampleMatcher(Matcher):
                     site_id,
                     node=node[mutation_id],
                     derived_state=site.alleles[derived_state[mutation_id]],
+                    time=node_time[node[mutation_id]],
                 )
                 mutation_id += 1
 
@@ -2351,6 +2352,7 @@ class SequentialExtender:
     def _increment_ancestors_ts_time(self, increment):
         tables = self.ancestors_ts.dump_tables()
         tables.nodes.time += increment
+        tables.mutations.time += increment
         self.ancestors_ts = tables.tree_sequence()
 
     def extend(self, samples, num_mismatches=None, time_increment=None, **kwargs):
@@ -2386,6 +2388,8 @@ def node_mutation_descriptors(ts, u):
 
 
 def coalesce_mutations(ts):
+    assert np.all(np.logical_not(np.isnan(ts.mutations_time)))
+
     # print(ts.draw_text())
     tree = ts.first()
     # For each node in one of the sib groups, the set of mutations.
@@ -2467,18 +2471,19 @@ def coalesce_mutations(ts):
         for sib in sibs:
             max_sib_time = max(max_sib_time, ts.nodes_time[sib])
             tables.edges.add_row(0, ts.sequence_length, group_parent, sib)
+        group_parent_time = max_sib_time + 0.00125  # FIXME
+
         tables.nodes.add_row(
             flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
-            time=max_sib_time + 0.00125,  # FIXME
+            time=group_parent_time,
         )
         # metadata={"mutations": overlap})
         for site, state, _ in overlap:
-            # We don't bother setting the mutation parent here because
-            # it gets recomputed anyway.
             tables.mutations.add_row(
                 site=site,
                 derived_state=state,
                 node=group_parent,
+                time=group_parent_time,
             )
 
     num_del_mutations = len(mutations_to_delete)
@@ -2487,18 +2492,21 @@ def coalesce_mutations(ts):
         f"Coalescing mutation: delete {num_del_mutations} mutations; "
         f"add {num_new_nodes} new nodes"
     )
+    # Updating the mutations is a real faff, and the only way I
+    # could get it to work is by setting the time values. This should
+    # be easier...
     mutations_to_keep = np.ones(len(tables.mutations), dtype=bool)
     mutations_to_keep[mutations_to_delete] = False
+    tables.mutations.replace_with(tables.mutations[mutations_to_keep])
+    # Set the parent values to -1 and recompute them later.
+    tables.mutations.parent = np.full_like(tables.mutations.parent, -1)
+
     edges_to_keep = np.ones(len(tables.edges), dtype=bool)
     edges_to_keep[edges_to_delete] = False
-    tables.mutations.replace_with(tables.mutations[mutations_to_keep])
     tables.edges.replace_with(tables.edges[edges_to_keep])
 
-    # Mutation parents were all invalidated.
-    tables.mutations.parent = np.full_like(tables.mutations.parent, -1)
     logger.info("Coalescing mutations: sorting and indexing final tables.")
     tables.sort()
     tables.build_index()
     tables.compute_mutation_parents()
-    # print(tables)
     return tables.tree_sequence()
