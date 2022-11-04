@@ -1754,6 +1754,9 @@ class SampleMatcher(Matcher):
         """
         Runs the "extend" operation matching a set of samples in the existing
         tree, returning a new tree sequence.
+
+        NOTE: this is not part of the public API is likely to be removed
+        once sc2ts moves over to using the tskit haplotype matching LS engine.
         """
         builder = self.tree_sequence_builder
         # Allocate nodes in the tree sequence consecutively for the input samples
@@ -2388,12 +2391,20 @@ def node_mutation_descriptors(ts, u):
 
 
 def coalesce_mutations(ts):
+    """
+    Examine all time-0 samples and their (full-sequence) sibs and create
+    new nodes to represent overlapping sets of mutations. The algorithm
+    is greedy and makes no guarantees about uniqueness or optimality.
+    Also note that we don't recurse and only reason about mutation sharing
+    at a single level in the tree.
+
+    Note: this function will most likely move to sc2ts once it has moved
+    over to tskit's hapotype matching engine.
+    """
+    # We depend on mutations having a time below.
     assert np.all(np.logical_not(np.isnan(ts.mutations_time)))
 
-    # print(ts.draw_text())
     tree = ts.first()
-    # For each node in one of the sib groups, the set of mutations.
-    node_mutations = {}
 
     # Get the samples that span the whole sequence
     samples = []
@@ -2403,9 +2414,10 @@ def coalesce_mutations(ts):
         edge = ts.edge(e)
         if edge.left == 0 and edge.right == ts.sequence_length:
             samples.append(u)
-
     logger.info(f"Coalescing mutations for {len(samples)} full-span samples")
 
+    # For each node in one of the sib groups, the set of mutations.
+    node_mutations = {}
     for sample in samples:
         u = tree.parent(sample)
         for v in tree.children(u):
@@ -2416,8 +2428,7 @@ def coalesce_mutations(ts):
             if edge.left == 0 and edge.right == ts.sequence_length:
                 if v not in node_mutations:
                     node_mutations[v] = node_mutation_descriptors(ts, v)
-    # print(sib_groups)
-    # print()
+
     # For each sample, what is the ("a" more accurately - this is greedy)
     # maximum mutation overlap with one of its sibs?
     max_sample_overlap = {}
@@ -2430,7 +2441,6 @@ def coalesce_mutations(ts):
                 if len(overlap) > len(max_overlap):
                     max_overlap = overlap
         max_sample_overlap[sample] = max_overlap
-        # print(sample, ":", node_mutations[sample], "max overlap=", max_overlap)
 
     # Group the maximum mutation overlaps by the parent and mutation pattern
     sib_groups = collections.defaultdict(set)
@@ -2442,9 +2452,10 @@ def coalesce_mutations(ts):
         key = (u, sample_overlap)
         if len(sample_overlap) > 0:
             for v in tree.children(u):
-                if sample_overlap.issubset(node_mutations[v]) and v not in used_nodes:
-                    sib_groups[key].add(v)
-                    used_nodes.add(v)
+                if v in node_mutations and v not in used_nodes:
+                    if sample_overlap.issubset(node_mutations[v]):
+                        sib_groups[key].add(v)
+                        used_nodes.add(v)
         # Avoid creating a new node when there's only one node in the sib group
         if len(sib_groups[key]) < 2:
             del sib_groups[key]
@@ -2452,7 +2463,6 @@ def coalesce_mutations(ts):
     mutations_to_delete = []
     edges_to_delete = []
     for (parent, overlap), sibs in sib_groups.items():
-        # print(parent, "->", overlap, "for", sibs)
         for site, _, parent in overlap:
             for sib in sibs:
                 condition = np.logical_and(
@@ -2471,12 +2481,18 @@ def coalesce_mutations(ts):
         for sib in sibs:
             max_sib_time = max(max_sib_time, ts.nodes_time[sib])
             tables.edges.add_row(0, ts.sequence_length, group_parent, sib)
-        group_parent_time = max_sib_time + 0.00125  # FIXME
+        parent_time = ts.nodes_time[parent]
+        assert max_sib_time < parent_time
+        diff = parent_time - max_sib_time
+        group_parent_time = max_sib_time + diff / 2
+        assert group_parent_time < parent_time
 
         tables.nodes.add_row(
             flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
             time=group_parent_time,
         )
+        # TODO would be good to store some provenance here about what
+        # motivated the creation of this node.
         # metadata={"mutations": overlap})
         for site, state, _ in overlap:
             tables.mutations.add_row(
