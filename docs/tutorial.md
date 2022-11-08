@@ -25,20 +25,22 @@ kernelspec:
 
 Suppose that we have observed the following data::
 
-    sample  haplotype
-    0       AGCGAT
-    1       TGACAG
-    2       AGACAC
-    3       ACCGCT
-    4       ACCGCT
+    sample  alignment
+    0       A..G......C..G.....AT
+    1       T..G......A..C.....AG
+    2       A..G......A..C.....AC
+    3       A..C......C..G.....CT
+    4       A..C......C..G.....CT
+            |         |         |
+            0         10        20
 
-Here we have phased haplotype data for five samples at six sites. We wish to infer the
-genealogies that gave rise to this data set. To import the data into `tsinfer` we must
-know the *ancestral state* for each site we wish to use for inference; there are many
-methods for achieving this: details are outside the scope of this manual, but we have
-started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523) on
-this issue to provide some recommendations. Assuming that we
-know the ancestral state, we can then import our data into a `tsinfer`
+Here we have phased haplotype data for five samples at six variable sites. We wish to
+infer the genealogies that gave rise to this data set. To import the data into `tsinfer`
+we must know the *ancestral state* for each site we wish to use for inference; there are
+many methods for achieving this: details are outside the scope of this manual, but we
+have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
+on this issue to provide some recommendations. Assuming that we
+know the ancestral states for most sites, we can then import our data into a `tsinfer`
 {ref}`Sample data<sec_file_formats_samples>` file using the Python
 {ref}`API<sec_api_file_formats>`:
 
@@ -46,13 +48,13 @@ know the ancestral state, we can then import our data into a `tsinfer`
 import tsinfer
 from tskit import MISSING_DATA
 
-with tsinfer.SampleData(sequence_length=6) as sample_data:
+with tsinfer.SampleData(sequence_length=21) as sample_data:
     sample_data.add_site(0, [0, 1, 0, 0, 0], ["A", "T"], ancestral_allele=0)
-    sample_data.add_site(1, [0, 0, 0, 1, 1], ["G", "C"], ancestral_allele=0)
-    sample_data.add_site(2, [0, 1, 1, 0, 0], ["C", "A"], ancestral_allele=0)
-    sample_data.add_site(3, [0, 1, 1, 0, 0], ["G", "C"], ancestral_allele=MISSING_DATA)
-    sample_data.add_site(4, [0, 0, 0, 1, 1], ["A", "C"], ancestral_allele=0)
-    sample_data.add_site(5, [0, 1, 2, 0, 0], ["T", "G", "C"], ancestral_allele=0)
+    sample_data.add_site(3, [0, 0, 0, 1, 1], ["G", "C"], ancestral_allele=0)
+    sample_data.add_site(10, [0, 1, 1, 0, 0], ["C", "A"], ancestral_allele=0)
+    sample_data.add_site(13, [0, 1, 1, 0, 0], ["G", "C"], ancestral_allele=MISSING_DATA)
+    sample_data.add_site(19, [0, 0, 0, 1, 1], ["A", "C"], ancestral_allele=0)
+    sample_data.add_site(20, [0, 1, 2, 0, 0], ["T", "G", "C"], ancestral_allele=0)
 ```
 
 Here we create a new {class}`.SampleData` object for five samples. We then
@@ -60,21 +62,21 @@ sequentially add the data for each site one-by-one using the
 {meth}`.SampleData.add_site` method. The first argument for `add_site` is the
 position of the site in genome coordinates. This can be any positive value
 (even floating point), but site positions must be unique and sites must be
-added in increasing order of position. For convenience we've given the sites
-position 0 to 5 here, but they could be any values. The second argument for
-`add_site` is a list of *genotypes* for the site. Each value in a genotypes
-array `g` is an integer, giving an index into the list provided as the third
+added in increasing order of position. Since `tskit` uses a zero-based notation,
+we've added the first site at position 0, and the sequence covers 21 bp. The second
+argument for `add_site` is a list of *genotypes* for the site. Each value in a
+genotypes array `g` is an integer, giving an index into the list provided as the third
 argument to ``add_site``: the list of *alleles* for this site. The fourth argument
 is the index in the allele list which represents the ancestral state.
-Each call to ``add_site`` thus stores a single column of the
+Each call to ``add_site`` thus stores a single variable site in the
 original haplotype data above. For example, the ancestral and derived states for
 the site at position 0 are "A" and "T" and the genotypes are 01000: this encodes
 the first column, ATAAA.
 
-Not all sites are used for genealogical inference: this includes fixed sites,
-singletons (in this example, the site at position 0), sites
-with more than 2 alleles (e.g. the site at position 5), and sites where the ancestral
-state is unknown (marked as {data}`tskit.MISSING_DATA`, e.g. the site at position 3).
+Not all sites are used for genealogical inference: this includes non-variable (fixed)
+sites, singletons (in this example, the site at position 0), sites
+with more than 2 alleles (e.g. the site at position 20), and sites where the ancestral
+state is unknown (marked as {data}`tskit.MISSING_DATA`, e.g. the site at position 10).
 Additionally, during the next step, extra sites can be flagged as not for use in
 inferring the genealogy, for example if they are deemed unreliable (this is done
 via the `exclude_positions` parameter). Note, however, that even if a site is not used
@@ -91,13 +93,29 @@ inferred_ts = tsinfer.infer(sample_data)
 
 And that's it: we now have a fully functional {class}`tskit.TreeSequence`
 object that we can interrogate in the usual ways. For example, we can look
-at the stored haplotypes and the inferred topology:
+at the alignments and the inferred topology:
 
 ```{code-cell} ipython3
-print("==Haplotypes==")
-for sample_id, h in enumerate(inferred_ts.haplotypes()):
-    print(sample_id, h, sep="\t")
-inferred_ts.draw_svg(y_axis=True)
+print("Sample\tInferred sequence")
+for sample_id, seq in zip(
+    inferred_ts.samples(),
+    inferred_ts.alignments(missing_data_character="."),
+):
+    print(sample_id, seq, sep="\t")
+
+mut_labels = {
+    m.id: "{:g}: {}→{}".format(
+        s.position,
+        inferred_ts.mutation(m.parent).derived_state if m.parent >= 0 else s.ancestral_state,
+        m.derived_state,
+    )
+    for s in inferred_ts.sites()
+    for m in s.mutations
+}
+node_labels = {u: u for u in inferred_ts.samples()}
+
+inferred_ts.draw_svg(
+    size=(500, 200), node_labels=node_labels, mutation_labels=mut_labels, y_axis=True)
 ```
 
 You will notice that the sample sequences generated by this tree sequence are identical
