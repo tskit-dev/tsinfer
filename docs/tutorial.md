@@ -315,8 +315,8 @@ $ ls -lh cli-simulation*
 -rw-r--r--  1 user  group   8.1M 14 Oct 13:50 cli-simulation.trees
 ```
 
-Therefore our output tree sequence file that we have just inferred in less than
-five minutes is *even smaller* than the original ``msprime`` simulated tree sequence!
+Therefore our output tree sequence file that we have just inferred in a few minutes is
+*even smaller* than the original ``msprime`` simulated tree sequence!
 Because the output file is also a {class}`tskit.TreeSequence`, we can use the same API
 to work with both. For example, to load up the original and inferred tree sequences
 from their corresponding `.trees` files you can simply use the {func}`tskit.load`
