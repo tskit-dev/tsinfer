@@ -1750,74 +1750,35 @@ class SampleMatcher(Matcher):
                 progress_monitor.update()
             progress_monitor.close()
 
-    def extend(self, samples, known_haplotypes, node_metadata):
+    def extend(self, samples, node_metadata):
         """
-        Runs the "extend" operation by taking a set of samples, creating
-        "exemplar" proxy samples when we have multiple identical sequences,
-        then matching the exemplar (or the sample if unique) into the existing
-        tree sequence, returning a new tree sequence.
+        Runs the "extend" operation matching a set of samples in the existing
+        tree, returning a new tree sequence.
+
+        NOTE: this is not part of the public API is likely to be removed
+        once sc2ts moves over to using the tskit haplotype matching LS engine.
         """
         builder = self.tree_sequence_builder
         # Allocate nodes in the tree sequence consecutively for the input samples
-        final_node_map = {}
         for sd_id in samples:
             self.sample_id_map[sd_id] = builder.add_node(0)
-            final_node_map[sd_id] = self.sample_id_map[sd_id]
 
-        distinct = collections.defaultdict(list)
-        for sd_id, a in self.sample_data.haplotypes(samples):
-            distinct[a.tobytes()].append(sd_id)
-        distinct_parents = {}
-        exemplars = []
-        for key, sd_ids in distinct.items():
-            exemplars.append(sd_ids[0])
-            if len(sd_ids) > 1 and key not in known_haplotypes:
-                # Several sample data IDs correspond to this haplotype. So that we can
-                # keep the output IDs contiguous, we remap the first haplotype to a
-                # *new* node ID, that we turn into an internal node later.
-                new_id = builder.add_node(0)
-                distinct_parents[key] = new_id
-                self.sample_id_map[sd_ids[0]] = new_id
-            else:
-                exemplars.extend(sd_ids[1:])
-
-        # Do the hard work
-        self._match_samples(sorted(exemplars))
+        self._match_samples(samples)
 
         tsb = self.tree_sequence_builder
         tables = self.ancestors_ts_tables.copy()
         tables.edges.clear()
 
         logger.debug("Adding tree sequence nodes")
-        flags, times = tsb.dump_nodes()
-        # FIXME use this to get new PC ancestors
-        # num_pc_ancestors = count_pc_ancestors(flags)
+        flags, node_time = tsb.dump_nodes()
 
         # First add the sample nodes for *all* the input samples
         for sd_id in samples:
-            final_node_id = tables.nodes.add_row(
+            tables.nodes.add_row(
                 flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
             )
-
-        # Then add in the exemplar nodes that will become parents of the
-        # actual samples
-        for key, sd_ids in distinct.items():
-            if len(sd_ids) > 1 and key not in known_haplotypes:
-                final_node_id = tables.nodes.add_row(
-                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
-                    time=1 / 2,
-                )
-                assert final_node_id == distinct_parents[key]
-                for sd_id in sd_ids:
-                    tables.edges.add_row(
-                        left=0,
-                        right=tables.sequence_length,
-                        parent=final_node_id,
-                        child=final_node_map[sd_id],
-                    )
-        # Add in the remaining non-sample nodes.
         for u in range(len(tables.nodes), tsb.num_nodes):
-            tables.nodes.add_row(flags=flags[u], time=times[u])
+            tables.nodes.add_row(flags=flags[u], time=node_time[u])
 
         logger.debug("Adding tree sequence edges")
         left, right, parent, child = tsb.dump_edges()
@@ -1848,18 +1809,17 @@ class SampleMatcher(Matcher):
                     site_id,
                     node=node[mutation_id],
                     derived_state=site.alleles[derived_state[mutation_id]],
+                    time=node_time[node[mutation_id]],
                 )
                 mutation_id += 1
 
         tables.compute_mutation_parents()
-
         new_mutations = num_mutations - old_num_mutations
         logger.info(
-            f"Extended for {len(samples)} samples ({len(exemplars)} distinct) and "
+            f"Extended for {len(samples)} samples and "
             f"{new_mutations} new mutations."
         )
-
-        return tables.tree_sequence(), set(distinct.keys())
+        return tables.tree_sequence()
 
     def match_samples(self, sample_indexes, sample_times=None):
         if sample_times is None:
@@ -2382,24 +2342,12 @@ class SequentialExtender:
                 tables.nodes.add_row(time=t)
             tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
             self.ancestors_ts = tables.tree_sequence()
-
-            # Seed the known_haplotypes with the all-zeros haplotypes so that
-            # we don't create a spurious node for it in the first generation.
-            root_haplotype = next(sample_data.haplotypes())[1].copy()
-            root_haplotype[:] = 0
-            self.haplotypes = {root_haplotype.tobytes()}
         else:
             self.ancestors_ts = ancestors_ts
             if time_units is not None and self.ancestors_ts.time_units != time_units:
                 raise ValueError(
                     f"Mismatched time_units: {time_units} != ancestors_ts.time_units",
                 )
-            # Add in the existing haplotypes. Note - this will probably
-            # be slow and might not be necessary/desirable at large scale.
-            self.haplotypes = set()
-            for h in self.ancestors_ts.haplotypes():
-                a = np.frombuffer(h.encode(), dtype=np.int8) - ord("0")
-                self.haplotypes.add(a.tobytes())
 
         self.node_metadata = sample_data.individuals_metadata[:]
         assert self.sample_data.num_individuals == self.sample_data.num_samples
@@ -2407,6 +2355,7 @@ class SequentialExtender:
     def _increment_ancestors_ts_time(self, increment):
         tables = self.ancestors_ts.dump_tables()
         tables.nodes.time += increment
+        tables.mutations.time += increment
         self.ancestors_ts = tables.tree_sequence()
 
     def extend(self, samples, num_mismatches=None, time_increment=None, **kwargs):
@@ -2423,9 +2372,157 @@ class SequentialExtender:
             mismatch=ls_mismatch,
             **kwargs,
         )
-        ts, haplotypes = manager.extend(
-            np.array(samples), self.haplotypes, self.node_metadata
-        )
-        self.haplotypes |= haplotypes
+        ts = manager.extend(np.array(samples), self.node_metadata)
+        ts = coalesce_mutations(ts)
         self.ancestors_ts = ts
         return ts
+
+
+def node_mutation_descriptors(ts, u):
+    descriptors = set()
+    for mut_id in np.where(ts.mutations_node == u)[0]:
+        mut = ts.mutation(mut_id)
+        if mut.parent != -1:
+            parent_mut = ts.mutation(mut.parent)
+            if parent_mut.node == u:
+                raise ValueError("Multiple mutations on same branch not supported")
+        descriptors.add((mut.site, mut.derived_state, mut.parent))
+    return descriptors
+
+
+def coalesce_mutations(ts):
+    """
+    Examine all time-0 samples and their (full-sequence) sibs and create
+    new nodes to represent overlapping sets of mutations. The algorithm
+    is greedy and makes no guarantees about uniqueness or optimality.
+    Also note that we don't recurse and only reason about mutation sharing
+    at a single level in the tree.
+
+    Note: this function will most likely move to sc2ts once it has moved
+    over to tskit's hapotype matching engine.
+    """
+    # We depend on mutations having a time below.
+    assert np.all(np.logical_not(np.isnan(ts.mutations_time)))
+
+    tree = ts.first()
+
+    # Get the samples that span the whole sequence
+    samples = []
+    for u in ts.samples(time=0):
+        e = tree.edge(u)
+        assert e != -1
+        edge = ts.edge(e)
+        if edge.left == 0 and edge.right == ts.sequence_length:
+            samples.append(u)
+    logger.info(f"Coalescing mutations for {len(samples)} full-span samples")
+
+    # For each node in one of the sib groups, the set of mutations.
+    node_mutations = {}
+    for sample in samples:
+        u = tree.parent(sample)
+        for v in tree.children(u):
+            # Filter out non-tree like things. If the edge spans the whole genome
+            # then it must be present in the first tree.
+            edge = ts.edge(tree.edge(v))
+            assert edge.child == v and edge.parent == u
+            if edge.left == 0 and edge.right == ts.sequence_length:
+                if v not in node_mutations:
+                    node_mutations[v] = node_mutation_descriptors(ts, v)
+
+    # For each sample, what is the ("a" more accurately - this is greedy)
+    # maximum mutation overlap with one of its sibs?
+    max_sample_overlap = {}
+    for sample in samples:
+        u = tree.parent(sample)
+        max_overlap = set()
+        for v in tree.children(u):
+            if v != sample and v in node_mutations:
+                overlap = node_mutations[sample] & node_mutations[v]
+                if len(overlap) > len(max_overlap):
+                    max_overlap = overlap
+        max_sample_overlap[sample] = max_overlap
+
+    # Group the maximum mutation overlaps by the parent and mutation pattern
+    sib_groups = collections.defaultdict(set)
+    # Make sure we don't use the same node in more than one sib-set
+    used_nodes = set()
+    for sample in samples:
+        u = tree.parent(sample)
+        sample_overlap = frozenset(max_sample_overlap[sample])
+        key = (u, sample_overlap)
+        if len(sample_overlap) > 0:
+            for v in tree.children(u):
+                if v in node_mutations and v not in used_nodes:
+                    if sample_overlap.issubset(node_mutations[v]):
+                        sib_groups[key].add(v)
+                        used_nodes.add(v)
+        # Avoid creating a new node when there's only one node in the sib group
+        if len(sib_groups[key]) < 2:
+            del sib_groups[key]
+
+    mutations_to_delete = []
+    edges_to_delete = []
+    for (parent, overlap), sibs in sib_groups.items():
+        for site, _, parent in overlap:
+            for sib in sibs:
+                condition = np.logical_and(
+                    ts.mutations_node == sib,
+                    ts.mutations_site == site,
+                    ts.mutations_parent == parent,
+                )
+                mutations_to_delete.extend(np.where(condition)[0])
+                edges_to_delete.append(tree.edge(sib))
+
+    tables = ts.dump_tables()
+    for (parent, overlap), sibs in sib_groups.items():
+        group_parent = len(tables.nodes)
+        tables.edges.add_row(0, ts.sequence_length, parent, group_parent)
+        max_sib_time = 0
+        for sib in sibs:
+            max_sib_time = max(max_sib_time, ts.nodes_time[sib])
+            tables.edges.add_row(0, ts.sequence_length, group_parent, sib)
+        parent_time = ts.nodes_time[parent]
+        assert max_sib_time < parent_time
+        diff = parent_time - max_sib_time
+        group_parent_time = max_sib_time + diff / 2
+        assert group_parent_time < parent_time
+
+        tables.nodes.add_row(
+            flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
+            time=group_parent_time,
+        )
+        # TODO would be good to store some provenance here about what
+        # motivated the creation of this node.
+        # metadata={"mutations": overlap})
+        for site, state, _ in overlap:
+            tables.mutations.add_row(
+                site=site,
+                derived_state=state,
+                node=group_parent,
+                time=group_parent_time,
+            )
+
+    num_del_mutations = len(mutations_to_delete)
+    num_new_nodes = len(tables.nodes) - ts.num_nodes
+    logger.info(
+        f"Coalescing mutation: delete {num_del_mutations} mutations; "
+        f"add {num_new_nodes} new nodes"
+    )
+    # Updating the mutations is a real faff, and the only way I
+    # could get it to work is by setting the time values. This should
+    # be easier...
+    mutations_to_keep = np.ones(len(tables.mutations), dtype=bool)
+    mutations_to_keep[mutations_to_delete] = False
+    tables.mutations.replace_with(tables.mutations[mutations_to_keep])
+    # Set the parent values to -1 and recompute them later.
+    tables.mutations.parent = np.full_like(tables.mutations.parent, -1)
+
+    edges_to_keep = np.ones(len(tables.edges), dtype=bool)
+    edges_to_keep[edges_to_delete] = False
+    tables.edges.replace_with(tables.edges[edges_to_keep])
+
+    logger.info("Coalescing mutations: sorting and indexing final tables.")
+    tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
+    return tables.tree_sequence()

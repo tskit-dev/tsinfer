@@ -462,3 +462,194 @@ class TestExtendLsParameters:
         # print(ts.draw_text())
         # print(ts.tables.mutations[ts.tables.mutations.node == 4])
         # print(ts.tables.mutations)
+
+
+def assert_sequences_equal(ts1, ts2):
+    """
+    Check that the variation data for the specifed tree sequences
+    is identical.
+    """
+    ts1.tables.sites.assert_equals(ts2.tables.sites)
+    for var1, var2 in zip(ts1.variants(), ts2.variants()):
+        states1 = np.array(var1.alleles)[var1.genotypes]
+        states2 = np.array(var2.alleles)[var2.genotypes]
+        np.testing.assert_array_equal(states1, states2)
+
+
+class TestCoalesceMutations:
+    def test_no_mutations(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts1 = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        ts2 = tsinfer.inference.coalesce_mutations(ts1)
+        ts1.tables.assert_equals(ts2.tables)
+
+    def test_two_mutation_groups_one_parent(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G")
+        tables.mutations.add_row(site=0, node=3, time=0, derived_state="G")
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 2
+        assert ts2.num_nodes == 7
+
+    def test_two_mutation_groups_two_parents(self):
+        # 2.00┊    6    ┊
+        #     ┊  ┏━┻━┓  ┊
+        # 1.00┊  4   5  ┊
+        #     ┊ ┏┻┓ ┏┻┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_balanced(4, arity=2).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.mutations.add_row(site=0, node=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, derived_state="G")
+        tables.mutations.add_row(site=0, node=3, derived_state="G")
+        tables.compute_mutation_times()
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 2
+        assert ts2.num_nodes == 9
+
+    def test_internal_sib(self):
+        # 2.00┊   4   ┊
+        #     ┊ ┏━┻┓  ┊
+        # 1.00┊ ┃  3  ┊
+        #     ┊ ┃ ┏┻┓ ┊
+        # 0.00┊ 0 1 2 ┊
+        #     0       1
+        ts = tskit.Tree.generate_balanced(3, arity=2).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.mutations.add_row(site=0, node=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=3, derived_state="T")
+        tables.compute_mutation_times()
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 1
+        assert ts2.num_nodes == 6
+
+    def test_nested_mutation(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.sites.add_row(0.5, "A")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="G")
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 2
+        assert ts2.num_nodes == 6
+
+    def test_conflicting_nested_mutations(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.sites.add_row(0.5, "A")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G")
+        tables.mutations.add_row(site=1, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="G")
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 4
+        assert ts2.num_nodes == 6
+
+    def test_node_in_multiple_mutation_sets(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        # Node 0 particpates in 3 different maximum sets.
+        ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.sites.add_row(0.25, "A")
+        tables.sites.add_row(0.75, "A")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="T")
+        tables.mutations.add_row(site=2, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=2, node=2, time=0, derived_state="T")
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 4
+        assert ts2.num_nodes == 6
+
+    def test_mutations_on_same_branch(self):
+        # 1.00┊    4    ┊
+        #     ┊ ┏━┳┻┳━┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=0, node=0, time=0, derived_state="C", parent=0)
+        ts = tables.tree_sequence()
+
+        with pytest.raises(ValueError, match="Multiple mutations"):
+            tsinfer.inference.coalesce_mutations(ts)
+
+    def test_mutation_parent(self):
+        # 2.00┊   4   ┊
+        #     ┊ ┏━┻┓  ┊
+        # 1.00┊ ┃  3  ┊
+        #     ┊ ┃ ┏┻┓ ┊
+        # 0.00┊ 0 1 2 ┊
+        #     0       1
+        ts = tskit.Tree.generate_balanced(3, arity=2).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.sites.add_row(0.1, "A")
+        tables.mutations.add_row(site=0, node=3, time=1, derived_state="T")
+        tables.mutations.add_row(site=0, node=1, time=0, derived_state="G", parent=0)
+        tables.mutations.add_row(site=0, node=2, time=0, derived_state="G", parent=0)
+        # Site 1 has a complicated mutation pattern and no coalesceable mutations
+        tables.mutations.add_row(site=1, node=3, time=1, derived_state="G")
+        tables.mutations.add_row(site=1, node=0, time=0, derived_state="T")
+        tables.mutations.add_row(site=1, node=1, time=0, derived_state="A", parent=4)
+        tables.mutations.add_row(site=1, node=2, time=0, derived_state="C", parent=4)
+
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.coalesce_mutations(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == 6
+        assert ts2.num_nodes == 6
