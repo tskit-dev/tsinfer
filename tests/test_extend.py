@@ -653,3 +653,56 @@ class TestCoalesceMutations:
         assert_sequences_equal(ts, ts2)
         assert ts2.num_mutations == 6
         assert ts2.num_nodes == 6
+
+
+class TestPushUpReversions:
+    def test_no_mutations(self):
+        ts1 = tskit.Tree.generate_balanced(4, arity=4).tree_sequence
+        ts2 = tsinfer.inference.push_up_reversions(ts1)
+        ts1.tables.assert_equals(ts2.tables)
+
+    def test_one_site_simple_reversion(self):
+        # 3.00┊   6     ┊
+        #     ┊ ┏━┻━┓   ┊
+        # 2.00┊ ┃   5   ┊
+        #     ┊ ┃ ┏━┻┓  ┊
+        # 1.00┊ ┃ ┃  4  ┊
+        #     ┊ ┃ ┃ ┏┻┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_comb(4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.mutations.add_row(site=0, node=4, time=1, derived_state="T")
+        tables.mutations.add_row(site=0, node=3, time=0, derived_state="A")
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.push_up_reversions(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == ts.num_mutations - 1
+        assert ts2.num_nodes == ts.num_nodes + 1
+
+    def test_two_sites_reversion_and_shared(self):
+        # 3.00┊   6     ┊
+        #     ┊ ┏━┻━┓   ┊
+        # 2.00┊ ┃   5   ┊
+        #     ┊ ┃ ┏━┻┓  ┊
+        # 1.00┊ ┃ ┃  4  ┊
+        #     ┊ ┃ ┃ ┏┻┓ ┊
+        # 0.00┊ 0 1 2 3 ┊
+        #     0         1
+        ts = tskit.Tree.generate_comb(4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(0, "A")
+        tables.sites.add_row(0.5, "A")
+        tables.mutations.add_row(site=0, node=4, time=1, derived_state="T")
+        tables.mutations.add_row(site=0, node=3, time=0, derived_state="A")
+        # Shared mutation over 4
+        tables.mutations.add_row(site=1, node=4, time=1, derived_state="T")
+
+        ts = tables.tree_sequence()
+
+        ts2 = tsinfer.inference.push_up_reversions(ts)
+        assert_sequences_equal(ts, ts2)
+        assert ts2.num_mutations == ts.num_mutations - 1
+        assert ts2.num_nodes == ts.num_nodes + 1

@@ -23,6 +23,7 @@ to other modules.
 """
 import collections
 import copy
+import dataclasses
 import heapq
 import json
 import logging
@@ -2374,20 +2375,62 @@ class SequentialExtender:
         )
         ts = manager.extend(np.array(samples), self.node_metadata)
         ts = coalesce_mutations(ts)
+        ts = push_up_reversions(ts)
         self.ancestors_ts = ts
         return ts
+
+
+@dataclasses.dataclass(frozen=True)
+class MutationDescriptor:
+    site: float
+    derived_state: str
+    inherited_state: str
+    parent: int
+
+    def is_reversion_of(self, other) -> bool:
+        """
+        Returns True if this mutation is a reversion of the other.
+        """
+        assert self.site == other.site
+        return self.derived_state == other.inherited_state
 
 
 def node_mutation_descriptors(ts, u):
     descriptors = set()
     for mut_id in np.where(ts.mutations_node == u)[0]:
         mut = ts.mutation(mut_id)
+        inherited_state = ts.site(mut.site).ancestral_state
         if mut.parent != -1:
             parent_mut = ts.mutation(mut.parent)
             if parent_mut.node == u:
                 raise ValueError("Multiple mutations on same branch not supported")
-        descriptors.add((mut.site, mut.derived_state, mut.parent))
+            inherited_state = parent_mut.derived_state
+        descriptors.add(
+            MutationDescriptor(mut.site, mut.derived_state, inherited_state, mut.parent)
+        )
     return descriptors
+
+
+def update_tables(tables, edges_to_delete, mutations_to_delete):
+
+    # Updating the mutations is a real faff, and the only way I
+    # could get it to work is by setting the time values. This should
+    # be easier...
+    mutations_to_keep = np.ones(len(tables.mutations), dtype=bool)
+    mutations_to_keep[mutations_to_delete] = False
+    tables.mutations.replace_with(tables.mutations[mutations_to_keep])
+    # Set the parent values to -1 and recompute them later.
+    tables.mutations.parent = np.full_like(tables.mutations.parent, -1)
+
+    edges_to_keep = np.ones(len(tables.edges), dtype=bool)
+    edges_to_keep[edges_to_delete] = False
+    tables.edges.replace_with(tables.edges[edges_to_keep])
+
+    logger.debug("Update tables: sorting and indexing final tables.")
+    tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
+    return tables.tree_sequence()
 
 
 def coalesce_mutations(ts):
@@ -2462,13 +2505,13 @@ def coalesce_mutations(ts):
 
     mutations_to_delete = []
     edges_to_delete = []
-    for (parent, overlap), sibs in sib_groups.items():
-        for site, _, parent in overlap:
+    for (_, overlap), sibs in sib_groups.items():
+        for mut_desc in overlap:
             for sib in sibs:
                 condition = np.logical_and(
                     ts.mutations_node == sib,
-                    ts.mutations_site == site,
-                    ts.mutations_parent == parent,
+                    ts.mutations_site == mut_desc.site,
+                    ts.mutations_parent == mut_desc.parent,
                 )
                 mutations_to_delete.extend(np.where(condition)[0])
                 edges_to_delete.append(tree.edge(sib))
@@ -2494,10 +2537,10 @@ def coalesce_mutations(ts):
         # TODO would be good to store some provenance here about what
         # motivated the creation of this node.
         # metadata={"mutations": overlap})
-        for site, state, _ in overlap:
+        for mut_desc in overlap:
             tables.mutations.add_row(
-                site=site,
-                derived_state=state,
+                site=mut_desc.site,
+                derived_state=mut_desc.derived_state,
                 node=group_parent,
                 time=group_parent_time,
             )
@@ -2508,21 +2551,115 @@ def coalesce_mutations(ts):
         f"Coalescing mutation: delete {num_del_mutations} mutations; "
         f"add {num_new_nodes} new nodes"
     )
-    # Updating the mutations is a real faff, and the only way I
-    # could get it to work is by setting the time values. This should
-    # be easier...
-    mutations_to_keep = np.ones(len(tables.mutations), dtype=bool)
-    mutations_to_keep[mutations_to_delete] = False
-    tables.mutations.replace_with(tables.mutations[mutations_to_keep])
-    # Set the parent values to -1 and recompute them later.
-    tables.mutations.parent = np.full_like(tables.mutations.parent, -1)
+    return update_tables(tables, edges_to_delete, mutations_to_delete)
 
-    edges_to_keep = np.ones(len(tables.edges), dtype=bool)
-    edges_to_keep[edges_to_delete] = False
-    tables.edges.replace_with(tables.edges[edges_to_keep])
 
-    logger.info("Coalescing mutations: sorting and indexing final tables.")
-    tables.sort()
-    tables.build_index()
-    tables.compute_mutation_parents()
-    return tables.tree_sequence()
+def push_up_reversions(ts):
+    # We depend on mutations having a time below.
+    assert np.all(np.logical_not(np.isnan(ts.mutations_time)))
+
+    tree = ts.first()
+    mutations_per_node = np.bincount(ts.mutations_node, minlength=ts.num_nodes)
+
+    # First get all the time-0 samples that have mutations, or the unique parents
+    # of those that do not.
+    samples = set()
+    for u in ts.samples(time=0):
+        if mutations_per_node[u] == 0:
+            u = tree.parent(u)
+            if ts.nodes_flags[u] == constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR:
+                # Not strictly a sample, but represents some time-0 samples
+                samples.add(u)
+        else:
+            samples.add(u)
+
+    # Get the samples that span the whole sequence and also have
+    # parents that span the full sequence. No reason we couldn't
+    # update the algorithm to work with partial edges, it's just easier
+    # this way and it covers the vast majority of simple reversions
+    # that we see
+    full_span_samples = []
+    for u in samples:
+        parent = tree.parent(u)
+        assert parent != -1
+        full_edge = True
+        for v in [u, parent]:
+            assert v != -1
+            e = tree.edge(v)
+            if e == -1:
+                # The parent is the root
+                full_edge = False
+                break
+            edge = ts.edge(e)
+            if edge.left != 0 or edge.right != ts.sequence_length:
+                full_edge = False
+                break
+        if full_edge:
+            full_span_samples.append(u)
+
+    logger.info(f"Pushing reversions for {len(full_span_samples)} full-span samples")
+
+    # For each node check if it has an immediate reversion
+    sib_groups = collections.defaultdict(list)
+    for child in full_span_samples:
+        parent = tree.parent(child)
+        child_muts = {desc.site: desc for desc in node_mutation_descriptors(ts, child)}
+        parent_muts = {
+            desc.site: desc for desc in node_mutation_descriptors(ts, parent)
+        }
+        reversions = []
+        for site in child_muts:
+            if site in parent_muts:
+                if child_muts[site].is_reversion_of(parent_muts[site]):
+                    reversions.append((site, child))
+        # Pick the maximum set of reversions per sib group so that we're not
+        # trying to resolve incompatible reversion sets.
+        if len(reversions) > len(sib_groups[parent]):
+            sib_groups[parent] = reversions
+
+    tables = ts.dump_tables()
+    edges_to_delete = []
+    mutations_to_delete = []
+    for parent, reversions in sib_groups.items():
+        if len(reversions) == 0:
+            continue
+
+        sample = reversions[0][1]
+        assert all(x[1] == sample for x in reversions)
+        sites = [x[0] for x in reversions]
+        # Remove the edges above the sample and its parent
+        edges_to_delete.extend([tree.edge(sample), tree.edge(parent)])
+        # Create new node that is fractionally older than the current
+        # parent that will be the parent of both nodes.
+        grandparent = tree.parent(parent)
+        # Arbitrarily make it 1/8 of the branch_length. Probably should
+        # make it proportional to the number of mutations or something.
+        eps = tree.branch_length(parent) * 0.125
+        w_time = tree.time(parent) + eps
+        w = tables.nodes.add_row(flags=1 << 22, time=w_time)
+        # Add new edges to join the sample and parent to w, and then
+        # w to the grandparent.
+        tables.edges.add_row(0, ts.sequence_length, parent=w, child=parent)
+        tables.edges.add_row(0, ts.sequence_length, parent=w, child=sample)
+        tables.edges.add_row(0, ts.sequence_length, parent=grandparent, child=w)
+
+        for site in sites:
+            # Delete the reversion mutations above the sample
+            muts = np.where(
+                np.logical_and(ts.mutations_node == sample, ts.mutations_site == site)
+            )[0]
+            assert len(muts) == 1
+            mutations_to_delete.extend(muts)
+        # Move any non-reversions mutations above the parent to the new node.
+        for mut in np.where(ts.mutations_node == parent)[0]:
+            row = tables.mutations[mut]
+            if row.site not in sites:
+                tables.mutations[mut] = row.replace(node=w, time=w_time)
+
+    num_del_mutations = len(mutations_to_delete)
+    num_new_nodes = len(tables.nodes) - ts.num_nodes
+    logger.info(
+        f"Push reversions: delete {num_del_mutations} mutations; "
+        f"add {num_new_nodes} new nodes"
+    )
+    return update_tables(tables, edges_to_delete, mutations_to_delete)
