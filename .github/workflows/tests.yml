@@ -106,4 +106,4 @@ jobs:
         run: |
           source ~/.profile
           conda activate anaconda-client-env
-          python -m pytest -xv -n0
+          python -m pytest -xv
