@@ -695,7 +695,9 @@ def run_perfect_inference(
         logger.info("Using provided tree sequence")
         ancestors_ts = make_ancestors_ts(ts, remove_leaves=True)
     else:
-        ancestor_data = formats.AncestorData(sample_data)
+        ancestor_data = formats.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         build_simulated_ancestors(
             sample_data, ancestor_data, ts, time_chunking=time_chunking
         )

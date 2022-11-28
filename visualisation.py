@@ -431,7 +431,9 @@ def visualise(
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
     if perfect_ancestors:
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         tsinfer.build_simulated_ancestors(
             sample_data, ancestor_data, ts, time_chunking=time_chunking
         )
