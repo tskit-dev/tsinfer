@@ -81,6 +81,33 @@ def exclude_id(attribute, value):
     return attribute.name != "id"
 
 
+def exclude_id_and_full_haplotype(attribute, value):
+    """
+    Used to filter out the id field from attrs objects such as Ancestor
+    """
+    return attribute.name not in ["id", "full_haplotype"]
+
+
+def open_lmbd_readonly(path):
+    # We set the mapsize here because LMBD will map 1TB of virtual memory if
+    # we don't, making it hard to figure out how much memory we're actually
+    # using.
+    map_size = None
+    try:
+        map_size = os.path.getsize(path)
+    except OSError as e:
+        raise exceptions.FileFormatError(str(e)) from e
+    try:
+        store = zarr.LMDBStore(
+            path, map_size=map_size, readonly=True, subdir=False, lock=False
+        )
+    except lmdb.InvalidError as e:
+        raise exceptions.FileFormatError(f"Unknown file format:{str(e)}") from e
+    except lmdb.Error as e:
+        raise exceptions.FileFormatError(str(e)) from e
+    return store
+
+
 def remove_lmdb_lockfile(lmdb_file):
     lockfile = lmdb_file + "-lock"
     if os.path.exists(lockfile):
@@ -96,12 +123,14 @@ class BufferedItemWriter:
 
     def __init__(self, array_map, num_threads=0):
         self.chunk_size = -1
-        for array in array_map.values():
+        for key, array in array_map.items():
+            chunked_dimension = 1 if "full_haplotype" in key else 0
             if self.chunk_size == -1:
-                self.chunk_size = array.chunks[0]
+                self.chunk_size = array.chunks[chunked_dimension]
             else:
-                if array.chunks[0] != self.chunk_size:
+                if array.chunks[chunked_dimension] != self.chunk_size:
                     raise ValueError("Chunk sizes must be equal")
+
         self.arrays = array_map
         if num_threads <= 0:
             # Use a syncronous algorithm.
@@ -118,12 +147,13 @@ class BufferedItemWriter:
             self.buffers[key] = [None for _ in range(self.num_buffers)]
             np_array = array[:]
             shape = list(array.shape)
-            shape[0] = self.chunk_size
+            chunked_dimension = 1 if "full_haplotype" in key else 0
+            shape[chunked_dimension] = self.chunk_size
             for j in range(self.num_buffers):
                 self.buffers[key][j] = np.empty_like(np_array)
                 self.buffers[key][j].resize(*shape)
             # Make sure the destination array is zero sized at the start.
-            shape[0] = 0
+            shape[chunked_dimension] = 0
             array.resize(*shape)
 
         self.start_offset = [0 for _ in range(self.num_buffers)]
@@ -157,18 +187,25 @@ class BufferedItemWriter:
     def _commit_write_buffer(self, write_buffer):
         start = self.start_offset[write_buffer]
         n = self.num_buffered_items[write_buffer]
+        if n == 0:
+            return
         end = start + n
         logger.debug(f"Flushing buffer {write_buffer}: start={start} n={n}")
         with self.resize_lock:
             if self.current_size < end:
                 self.current_size = end
-                for array in self.arrays.values():
+                for key, array in self.arrays.items():
                     shape = list(array.shape)
-                    shape[0] = self.current_size
+                    chunked_dimension = 1 if "full_haplotype" in key else 0
+                    shape[chunked_dimension] = self.current_size
                     array.resize(*shape)
         for key, array in self.arrays.items():
-            buffered = self.buffers[key][write_buffer][:n]
-            array[start:end] = buffered
+            if "full_haplotype" in key:
+                buffered = self.buffers[key][write_buffer][:, :n]
+                array[:, start:end] = buffered
+            else:
+                buffered = self.buffers[key][write_buffer][:n]
+                array[start:end] = buffered
         logger.debug(f"Buffer {write_buffer} flush done")
 
     def _flush_worker(self, thread_index):
@@ -210,7 +247,10 @@ class BufferedItemWriter:
             self._queue_flush_buffer()
         offset = self.num_buffered_items[self.write_buffer]
         for key, value in kwargs.items():
-            self.buffers[key][self.write_buffer][offset] = value
+            if "full_haplotype" in key:
+                self.buffers[key][self.write_buffer][:, offset, 0] = value
+            else:
+                self.buffers[key][self.write_buffer][offset] = value
         self.num_buffered_items[self.write_buffer] += 1
         self.total_items += 1
         return self.total_items - 1
@@ -243,29 +283,39 @@ def zarr_summary(array):
     return ret
 
 
-def chunk_iterator(array, indexes=None):
+def chunk_iterator(array, indexes=None, dimension=0):
     """
     Utility to iterate over closely spaced rows in the specified array efficiently
     by accessing one chunk at a time (normally used as an iterator over each row)
     """
+    # Only the first two dimensions are supported.
+    assert dimension < 2
     if indexes is None:
-        indexes = range(array.shape[0])
+        indexes = range(array.shape[dimension])
     else:
         if len(indexes) > 0 and (
             np.any(np.diff(indexes) <= 0)
             or indexes[0] < 0
-            or indexes[-1] >= array.shape[0]
+            or indexes[-1] >= array.shape[dimension]
         ):
             raise ValueError("ids must be positive and in ascending order")
 
-    chunk_size = array.chunks[0]
+    chunk_size = array.chunks[dimension]
     prev_chunk_id = -1
-    for j in indexes:
-        chunk_id = j // chunk_size
-        if chunk_id != prev_chunk_id:
-            chunk = array[chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
-            prev_chunk_id = chunk_id
-        yield chunk[j % chunk_size]
+    if dimension == 0:
+        for j in indexes:
+            chunk_id = j // chunk_size
+            if chunk_id != prev_chunk_id:
+                chunk = array[chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
+                prev_chunk_id = chunk_id
+            yield chunk[j % chunk_size]
+    elif dimension == 1:
+        for j in indexes:
+            chunk_id = j // chunk_size
+            if chunk_id != prev_chunk_id:
+                chunk = array[:, chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
+                prev_chunk_id = chunk_id
+            yield chunk[:, j % chunk_size]
 
 
 def merge_variants(sd1, sd2):
@@ -414,28 +464,9 @@ class DataContainer:
         elif self.path is not None:
             self.close()
 
-    def _open_lmbd_readonly(self):
-        # We set the mapsize here because LMBD will map 1TB of virtual memory if
-        # we don't, making it hard to figure out how much memory we're actually
-        # using.
-        map_size = None
-        try:
-            map_size = os.path.getsize(self.path)
-        except OSError as e:
-            raise exceptions.FileFormatError(str(e)) from e
-        try:
-            store = zarr.LMDBStore(
-                self.path, map_size=map_size, readonly=True, subdir=False, lock=False
-            )
-        except lmdb.InvalidError as e:
-            raise exceptions.FileFormatError(f"Unknown file format:{str(e)}") from e
-        except lmdb.Error as e:
-            raise exceptions.FileFormatError(str(e)) from e
-        return store
-
     def _open_readonly(self):
         if self.path is not None:
-            store = self._open_lmbd_readonly()
+            store = open_lmbd_readonly(self.path)
         else:
             # This happens when we finalise an in-memory container.
             store = self.data.store
@@ -525,6 +556,7 @@ class DataContainer:
         to fill the corresponding entry in the provenance dictionary.
         """
         self._check_write_modes()
+        zarr.consolidate_metadata(self.data.store)
         self.data.attrs[FINALISED_KEY] = True
         if self.path is not None:
             store = self.data.store
@@ -2490,7 +2522,11 @@ class Ancestor:
     end = attr.ib()
     time = attr.ib()
     focal_sites = attr.ib()
-    haplotype = attr.ib()
+    full_haplotype = attr.ib()
+
+    @property
+    def haplotype(self):
+        return self.full_haplotype[self.start : self.end]
 
     def __eq__(self, other):
         return (
@@ -2499,7 +2535,7 @@ class Ancestor:
             and self.end == other.end
             and self.time == other.time
             and np.array_equal(self.focal_sites, other.focal_sites)
-            and np.array_equal(self.haplotype, other.haplotype)
+            and np.array_equal(self.full_haplotype, other.full_haplotype)
         )
 
 
@@ -2531,8 +2567,11 @@ class AncestorData(DataContainer):
         they cannot compress buffers >2GB. If None, do not use any compression.
         Default=:class:`numcodecs.zstd.Zstd`.
     :param int chunk_size: The chunk size used for
-        `zarr arrays <http://zarr.readthedocs.io/>`_. This affects
-        compression level and algorithm performance. Default=1024.
+         `zarr arrays <http://zarr.readthedocs.io/>`_ in the sample dimension. This
+         affects compression level and algorithm performance. Default=1024.
+    :param int chunk_size_sites: The chunk size used for the genotype
+        `zarr arrays <http://zarr.readthedocs.io/>`_ in the sites dimension. This affects
+        compression level and algorithm performance. Default=16384.
     :param int max_file_size: If a file is being used to store this data, set
         a maximum size in bytes for the stored file. If None, the default
         value of 1GiB is used on Windows and 1TiB on other
@@ -2542,59 +2581,87 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
-    def __init__(self, position, sequence_length, **kwargs):
+    def __init__(self, position, sequence_length, chunk_size_sites=None, **kwargs):
         super().__init__(**kwargs)
         self._last_time = 0
-        chunks = self._chunk_size
+        self.inference_sites_set = False
+        if chunk_size_sites is None:
+            self._chunk_size_sites = 16384
+        else:
+            self._chunk_size_sites = chunk_size_sites
 
         self.data.attrs["sequence_length"] = sequence_length
         if self.sequence_length <= 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero or less")
 
-        self.data.create_dataset(
-            "sites/position",
+        # We specify fill_value here due to https://github.com/pydata/xarray/issues/7292
+        self.create_dataset("sample_start", dtype=np.int32)
+        self.create_dataset("sample_end", dtype=np.int32)
+        self.create_dataset("sample_time", dtype=np.float64)
+        self.create_dataset("sample_focal_sites", dtype="array:i4")
+
+        self.create_dataset(
+            "variant_position",
             data=position,
             shape=position.shape,
-            compressor=self._compressor,
+            chunks=self._chunk_size_sites,
             dtype=np.float64,
-        )
-        self.data.create_dataset(
-            "ancestors/start",
-            shape=(0,),
-            chunks=chunks,
-            compressor=self._compressor,
-            dtype=np.int32,
-        )
-        self.data.create_dataset(
-            "ancestors/end",
-            shape=(0,),
-            chunks=chunks,
-            compressor=self._compressor,
-            dtype=np.int32,
-        )
-        self.data.create_dataset(
-            "ancestors/time",
-            shape=(0,),
-            chunks=chunks,
-            compressor=self._compressor,
-            dtype=np.float64,
-        )
-        self.data.create_dataset(
-            "ancestors/focal_sites",
-            shape=(0,),
-            chunks=chunks,
-            dtype="array:i4",
-            compressor=self._compressor,
-        )
-        self.data.create_dataset(
-            "ancestors/haplotype",
-            shape=(0,),
-            chunks=chunks,
-            dtype="array:i1",
-            compressor=self._compressor,
+            dimensions=["variants"],
         )
 
+        # We have to include a ploidy dimension sgkit compatibility
+        a = self.create_dataset(
+            "call_genotype",
+            dtype="i1",
+            shape=(self.num_sites, 0, 1),
+            chunks=(self._chunk_size_sites, self._chunk_size, 1),
+            dimensions=["variants", "samples", "ploidy"],
+        )
+        a.attrs["mixed_ploidy"] = False
+
+        a = self.create_dataset(
+            "call_genotype_mask",
+            dtype="i1",
+            shape=(self.num_sites, 0, 1),
+            chunks=(self._chunk_size_sites, self._chunk_size, 1),
+            dimensions=["variants", "samples", "ploidy"],
+        )
+        # We add this to be identical to sgkit generated arrays
+        a.attrs["dtype"] = "bool"
+
         self._alloc_ancestor_writer()
+
+    def create_dataset(
+        self,
+        name,
+        *,
+        data=None,
+        shape=None,
+        chunks=None,
+        dtype=None,
+        compressor=None,
+        dimensions=None,
+    ):
+        if shape is None:
+            shape = (0,)
+        if chunks is None:
+            chunks = self._chunk_size
+        if compressor is None:
+            compressor = self._compressor
+        if dimensions is None:
+            dimensions = ["samples"]
+
+        ds = self.data.create_dataset(
+            name,
+            data=data,
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            compressor=compressor,
+            fill_value=None,
+        )
+        ds.attrs["_ARRAY_DIMENSIONS"] = dimensions
+        return ds
 
     def _alloc_ancestor_writer(self):
         self.ancestor_writer = BufferedItemWriter(
@@ -2603,7 +2670,8 @@ class AncestorData(DataContainer):
                 "end": self.ancestors_end,
                 "time": self.ancestors_time,
                 "focal_sites": self.ancestors_focal_sites,
-                "haplotype": self.ancestors_haplotype,
+                "full_haplotype": self.ancestors_full_haplotype,
+                "full_haplotype_mask": self.ancestors_full_haplotype_mask,
             },
             num_threads=self._num_flush_threads,
         )
@@ -2618,12 +2686,12 @@ class AncestorData(DataContainer):
             ("sequence_length", self.sequence_length),
             ("num_ancestors", self.num_ancestors),
             ("num_sites", self.num_sites),
-            ("sites/position", zarr_summary(self.sites_position)),
-            ("ancestors/start", zarr_summary(self.ancestors_start)),
-            ("ancestors/end", zarr_summary(self.ancestors_end)),
-            ("ancestors/time", zarr_summary(self.ancestors_time)),
-            ("ancestors/focal_sites", zarr_summary(self.ancestors_focal_sites)),
-            ("ancestors/haplotype", zarr_summary(self.ancestors_haplotype)),
+            ("variant_position", zarr_summary(self.sites_position)),
+            ("sample_start", zarr_summary(self.ancestors_start)),
+            ("sample_end", zarr_summary(self.ancestors_end)),
+            ("sample_time", zarr_summary(self.ancestors_time)),
+            ("sample_focal_sites", zarr_summary(self.ancestors_focal_sites)),
+            ("call_genotype", zarr_summary(self.ancestors_full_haplotype)),
         ]
         return super().__str__() + self._format_str(values)
 
@@ -2645,7 +2713,10 @@ class AncestorData(DataContainer):
             and np_obj_equal(
                 self.ancestors_focal_sites[:], other.ancestors_focal_sites[:]
             )
-            and np_obj_equal(self.ancestors_haplotype[:], other.ancestors_haplotype[:])
+            # TODO For large sets of ancestors, this needs to be done chunk-wise
+            and np_obj_equal(
+                self.ancestors_full_haplotype[:], other.ancestors_full_haplotype[:]
+            )
         )
 
     @property
@@ -2671,27 +2742,33 @@ class AncestorData(DataContainer):
         """
         The positions of the inference sites used to generate the ancestors
         """
-        return self.data["sites/position"]
+        return self.data["variant_position"]
 
     @property
     def ancestors_start(self):
-        return self.data["ancestors/start"]
+        return self.data["sample_start"]
 
     @property
     def ancestors_end(self):
-        return self.data["ancestors/end"]
+        return self.data["sample_end"]
 
     @property
     def ancestors_time(self):
-        return self.data["ancestors/time"]
+        return self.data["sample_time"]
 
     @property
     def ancestors_focal_sites(self):
-        return self.data["ancestors/focal_sites"]
+        return self.data["sample_focal_sites"]
 
     @property
-    def ancestors_haplotype(self):
-        return self.data["ancestors/haplotype"]
+    def ancestors_full_haplotype(self):
+        # Named and shaped to be compatible with sgkit
+        return self.data["call_genotype"]
+
+    @property
+    def ancestors_full_haplotype_mask(self):
+        # Only required for sgkit compatibility
+        return self.data["call_genotype_mask"]
 
     @property
     def ancestors_length(self):
@@ -2846,7 +2923,11 @@ class AncestorData(DataContainer):
                 sample_id = sample_ids[i]
                 haplotype = haplotypes[i]
                 while ancestor is not None and ancestor.time > proxy_time:
-                    other.add_ancestor(**attr.asdict(ancestor, filter=exclude_id))
+                    ancestor_dict = attr.asdict(
+                        ancestor, filter=exclude_id_and_full_haplotype
+                    )
+                    ancestor_dict["haplotype"] = ancestor.haplotype
+                    other.add_ancestor(**ancestor_dict)
                     mutated_sites.update(ancestor.focal_sites)
                     ancestor = next(ancestors_iter, None)
                 if not allow_mutation:
@@ -2868,7 +2949,11 @@ class AncestorData(DataContainer):
                 )
             # Add any ancestors remaining in the current instance
             while ancestor is not None:
-                other.add_ancestor(**attr.asdict(ancestor, filter=exclude_id))
+                ancestor_dict = attr.asdict(
+                    ancestor, filter=exclude_id_and_full_haplotype
+                )
+                ancestor_dict["haplotype"] = ancestor.haplotype
+                other.add_ancestor(**ancestor_dict)
                 ancestor = next(ancestors_iter, None)
 
             # TODO - set metadata on these ancestors, once ancestors have metadata
@@ -2946,7 +3031,7 @@ class AncestorData(DataContainer):
         end = self.ancestors_end[:]
         time = self.ancestors_time[:]
         focal_sites = self.ancestors_focal_sites[:]
-        haplotypes = self.ancestors_haplotype[:]
+        haplotypes = self.ancestors_full_haplotype[:]
         if upper_time_bound > np.max(time) or lower_time_bound > np.max(time):
             raise ValueError("Time bounds cannot be greater than older ancestor")
 
@@ -2985,15 +3070,17 @@ class AncestorData(DataContainer):
                     end[anc.id] = insert_pos_end
                     time[anc.id] = anc.time
                     focal_sites[anc.id] = anc.focal_sites
-                    haplotypes[anc.id] = anc.haplotype[
-                        insert_pos_start - anc.start : insert_pos_end - anc.start
-                    ]
+                    haplotypes[:, anc.id] = tskit.MISSING_DATA
+                    haplotypes[
+                        insert_pos_start:insert_pos_end, anc.id, 0
+                    ] = anc.full_haplotype[insert_pos_start:insert_pos_end]
                     # TODO - record truncation in ancestors' metadata when supported
         truncated.ancestors_start[:] = start
         truncated.ancestors_end[:] = end
         truncated.ancestors_time[:] = time
         truncated.ancestors_focal_sites[:] = focal_sites
-        truncated.ancestors_haplotype[:] = haplotypes
+        truncated.ancestors_full_haplotype[:] = haplotypes
+        truncated.ancestors_full_haplotype_mask[:] = haplotypes == tskit.MISSING_DATA
         truncated.record_provenance(command="truncate_ancestors")
         truncated.finalise()
 
@@ -3033,18 +3120,48 @@ class AncestorData(DataContainer):
         if self._last_time != 0 and time > self._last_time:
             raise ValueError("older ancestors must be added before younger ones")
         self._last_time = time
+        full_haplotype = np.full((self.num_sites), MISSING_DATA, "i8")
+        full_haplotype_mask = np.full((self.num_sites), True, "i8")
+        full_haplotype[start:end] = haplotype
+        full_haplotype_mask[start:end] = False
         return self.ancestor_writer.add(
             start=start,
             end=end,
             time=time,
             focal_sites=focal_sites,
-            haplotype=haplotype,
+            full_haplotype=full_haplotype,
+            full_haplotype_mask=full_haplotype_mask,
         )
 
     def finalise(self):
         if self._mode == self.BUILD_MODE:
             self.ancestor_writer.flush()
-            self.ancestor_writer = None
+
+        try:
+            del self.data["variant_allele"]
+        except KeyError:
+            pass
+        self.create_dataset(
+            "variant_allele",
+            data=np.tile(["0", "1"], (self.num_sites, 1)),
+            shape=(self.num_sites, 2),
+            chunks=(self.sites_position.chunks[0], 2),
+            dtype="U1",
+            compressor=self.sites_position.compressor,
+            dimensions=["variants", "alleles"],
+        )
+
+        try:
+            del self.data["sample_id"]
+        except KeyError:
+            pass
+        self.create_dataset(
+            "sample_id",
+            data=[f"tsinf_anc_{i}" for i in range(len(self.ancestors_start))],
+            shape=(len(self.ancestors_start),),
+            chunks=self.ancestors_start.chunks,
+            compressor=self.ancestors_start.compressor,
+        )
         super().finalise()
 
     ####################################
@@ -3063,7 +3180,7 @@ class AncestorData(DataContainer):
             end=self.ancestors_end[id_],
             time=self.ancestors_time[id_],
             focal_sites=self.ancestors_focal_sites[id_],
-            haplotype=self.ancestors_haplotype[id_],
+            full_haplotype=self.ancestors_full_haplotype[:, id_, 0],
         )
 
     def ancestors(self):
@@ -3075,14 +3192,17 @@ class AncestorData(DataContainer):
         end = self.ancestors_end[:]
         time = self.ancestors_time[:]
         focal_sites = self.ancestors_focal_sites[:]
-        for j, h in enumerate(chunk_iterator(self.ancestors_haplotype)):
+        for j, h in enumerate(
+            chunk_iterator(self.ancestors_full_haplotype, dimension=1)
+        ):
             yield Ancestor(
                 id=j,
                 start=start[j],
                 end=end[j],
                 time=time[j],
                 focal_sites=focal_sites[j],
-                haplotype=h,
+                # [0] to remove ploidy dimension
+                full_haplotype=h[:, 0],
             )
 
 

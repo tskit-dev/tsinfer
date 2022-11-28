@@ -43,7 +43,7 @@ jobs:
       - run:
           name: Run Python tests and upload coverage
           command: |
-              python3 -m pytest --cov=tsinfer  --cov-report=xml --cov-branch -n4 tests
+              python3 -m pytest --cov=tsinfer  --cov-report=xml --cov-branch -xvs tests
               python3 -m codecov -X gcov -F python
               rm .coverage
 

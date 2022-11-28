@@ -1929,15 +1929,16 @@ class TestAncestorData(DataContainerMixin):
         stored_start = ancestor_data.ancestors_start[:]
         stored_end = ancestor_data.ancestors_end[:]
         stored_time = ancestor_data.ancestors_time[:]
-        stored_ancestors = ancestor_data.ancestors_haplotype[:]
+        # Remove the ploidy dimension
+        stored_ancestors = ancestor_data.ancestors_full_haplotype[:, :, 0]
         stored_focal_sites = ancestor_data.ancestors_focal_sites[:]
         stored_length = ancestor_data.ancestors_length[:]
-        for j, (start, end, t, focal_sites, haplotype) in enumerate(ancestors):
+        for j, (start, end, t, focal_sites, full_haplotype) in enumerate(ancestors):
             assert stored_start[j] == start
             assert stored_end[j] == end
             assert stored_time[j] == t
             assert np.array_equal(stored_focal_sites[j], focal_sites)
-            assert np.array_equal(stored_ancestors[j], haplotype[start:end])
+            assert np.array_equal(stored_ancestors[:, j], full_haplotype)
             assert np.array_equal(ancestors_list[j], haplotype[start:end])
         pos = list(ancestor_data.sites_position[:]) + [ancestor_data.sequence_length]
         for j, anc in enumerate(ancestor_data.ancestors()):
@@ -1945,7 +1946,10 @@ class TestAncestorData(DataContainerMixin):
             assert stored_end[j] == anc.end
             assert stored_time[j] == anc.time
             assert np.array_equal(stored_focal_sites[j], anc.focal_sites)
-            assert np.array_equal(stored_ancestors[j], anc.haplotype)
+            assert np.array_equal(stored_ancestors[:, j], anc.full_haplotype)
+            assert np.array_equal(
+                stored_ancestors[anc.start : anc.end, j], anc.haplotype
+            )
             length = pos[anc.end] - pos[anc.start]
             assert stored_length[j] == length
 
@@ -2021,18 +2025,31 @@ class TestAncestorData(DataContainerMixin):
     def test_chunk_size(self):
         N = 20
         for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
-            sample_data, ancestors = self.get_example_data(6, 1, num_ancestors=N)
-            ancestor_data = tsinfer.AncestorData(
-                sample_data.sites_position,
-                sample_data.sequence_length,
-                chunk_size=chunk_size,
-            )
-            self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-            assert ancestor_data.ancestors_haplotype.chunks == (chunk_size,)
-            assert ancestor_data.ancestors_focal_sites.chunks == (chunk_size,)
-            assert ancestor_data.ancestors_start.chunks == (chunk_size,)
-            assert ancestor_data.ancestors_end.chunks == (chunk_size,)
-            assert ancestor_data.ancestors_time.chunks == (chunk_size,)
+            for chunk_size_sites in [None, 1, 2, 3, N - 1, N, N + 1]:
+                sample_data, ancestors = self.get_example_data(6, 1, num_ancestors=N)
+                ancestor_data = tsinfer.AncestorData(
+                    sample_data.sites_position,
+                    sample_data.sequence_length,
+                    chunk_size=chunk_size,
+                    chunk_size_sites=chunk_size_sites,
+                )
+                self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
+                if chunk_size_sites is None:
+                    assert ancestor_data.ancestors_full_haplotype.chunks == (
+                        16384,
+                        chunk_size,
+                        1,
+                    )
+                else:
+                    assert ancestor_data.ancestors_full_haplotype.chunks == (
+                        chunk_size_sites,
+                        chunk_size,
+                        1,
+                    )
+                assert ancestor_data.ancestors_focal_sites.chunks == (chunk_size,)
+                assert ancestor_data.ancestors_start.chunks == (chunk_size,)
+                assert ancestor_data.ancestors_end.chunks == (chunk_size,)
+                assert ancestor_data.ancestors_time.chunks == (chunk_size,)
 
     def test_filename(self):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
@@ -2069,7 +2086,11 @@ class TestAncestorData(DataContainerMixin):
                     chunk_size=chunk_size,
                 ) as ancestor_data:
                     self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
-                    assert ancestor_data.ancestors_haplotype.chunks == (chunk_size,)
+                    assert ancestor_data.ancestors_full_haplotype.chunks == (
+                        16384,
+                        chunk_size,
+                        1,
+                    )
             # Now reload the files and check they are equal
             with formats.AncestorData.load(files[0]) as file0:
                 with formats.AncestorData.load(files[1]) as file1:
@@ -2263,7 +2284,7 @@ class TestAncestorData(DataContainerMixin):
             inserted = -1
             self.assert_ancestor_full_span(ancestors_extra, [inserted])
             assert np.array_equal(
-                ancestors_extra.ancestors_haplotype[inserted],
+                ancestors_extra.ancestors_full_haplotype[:, inserted, 0],
                 sample_data.sites_genotypes[:, i][used_sites],
             )
 
@@ -2304,7 +2325,7 @@ class TestAncestorData(DataContainerMixin):
         assert ancestors.num_ancestors + 1 == ancestors_extra.num_ancestors
         self.assert_ancestor_full_span(ancestors_extra, [-1])
         assert np.array_equal(
-            ancestors_extra.ancestors_haplotype[-1], G[:, 9][used_sites]
+            ancestors_extra.ancestors_full_haplotype[:, -1, 0], G[:, 9][used_sites]
         )
         assert np.array_equal(
             ancestors_extra.ancestors_time[-1], historical_sample_time + epsilon
@@ -2320,14 +2341,14 @@ class TestAncestorData(DataContainerMixin):
             self.assert_ancestor_full_span(ancestors_extra, inserted)
             # Older sample
             assert np.array_equal(
-                ancestors_extra.ancestors_haplotype[-2], G[:, 9][used_sites]
+                ancestors_extra.ancestors_full_haplotype[:, -2, 0], G[:, 9][used_sites]
             )
             assert np.array_equal(
                 ancestors_extra.ancestors_time[-2], historical_sample_time + epsilon
             )
             # Younger sample
             assert np.array_equal(
-                ancestors_extra.ancestors_haplotype[-1], G[:, 0][used_sites]
+                ancestors_extra.ancestors_full_haplotype[:, -1, 0], G[:, 0][used_sites]
             )
             assert np.array_equal(ancestors_extra.ancestors_time[-1], epsilon)
 
@@ -2490,7 +2511,8 @@ class TestAncestorData(DataContainerMixin):
         ancestor_data.finalise()
         trunc_anc = ancestor_data.truncate_ancestors(0.3, 0.4, 1)
         assert np.array_equal(
-            trunc_anc.ancestors_haplotype[-1], ancestor_data.ancestors_haplotype[-1]
+            trunc_anc.ancestors_full_haplotype[-1],
+            ancestor_data.ancestors_full_haplotype[-1],
         )
 
 

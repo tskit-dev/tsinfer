@@ -20,6 +20,7 @@
 Tests for the data files.
 """
 import sys
+import tempfile
 
 import msprime
 import numpy as np
@@ -27,10 +28,11 @@ import pytest
 import sgkit
 
 import tsinfer
+from tsinfer import formats
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
-def test_sgkit_dataset(tmp_path):
+def test_sgkit_sampledata(tmp_path):
     import sgkit.io.vcf
 
     ts = msprime.sim_ancestry(
@@ -49,6 +51,18 @@ def test_sgkit_dataset(tmp_path):
     samples = tsinfer.SgkitSampleData(tmp_path / "data.zarr")
     inf_ts = tsinfer.infer(samples)
     assert np.array_equal(ts.genotype_matrix(), inf_ts.genotype_matrix())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+def test_sgkit_ancestor(small_sd_fixture, tmp_path):
+    with tempfile.TemporaryDirectory(prefix="tsi_eval") as tmpdir:
+        f = f"{tmpdir}/test.ancestors"
+        tsinfer.generate_ancestors(small_sd_fixture, path=f)
+        store = formats.open_lmbd_readonly(f)
+        ds = sgkit.load_dataset(store)
+        ds = sgkit.variant_stats(ds, merge=True)
+        ds = sgkit.sample_stats(ds, merge=True)
+        sgkit.display_genotypes(ds)
 
 
 class TestSgkitSampleDataErrors:

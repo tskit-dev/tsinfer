@@ -1409,12 +1409,13 @@ class AncestorMatcher(Matcher):
         # of knowing where mutations happen but instead having a non-zero
         # mutation rate and letting the mismatches do the work. We might
         # want to have a version with a zero mutation rate.
-        haplotype = np.full(self.num_sites, tskit.MISSING_DATA, dtype=np.int8)
-        start = ancestor.start
-        end = ancestor.end
-        assert ancestor.haplotype.shape[0] == (end - start)
-        haplotype[start:end] = ancestor.haplotype
-        self._find_path(ancestor.id, haplotype, start, end, thread_index)
+        self._find_path(
+            ancestor.id,
+            ancestor.full_haplotype,
+            ancestor.start,
+            ancestor.end,
+            thread_index,
+        )
 
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
