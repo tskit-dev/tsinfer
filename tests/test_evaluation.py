@@ -729,19 +729,19 @@ class TestCli:
 
     @pytest.mark.slow
     def test_ancestor_comparison(self):
-        self.run_command(["ancestor-properties", "-n", "5", "-l", "0.5"])
+        self.run_command(["ancestor-properties", "-n", "5", "-l", "0.5", "-s", "42"])
 
     @pytest.mark.slow
     def test_node_degree(self):
-        self.run_command(["node-degree", "-n", "5", "-l", "0.1"])
+        self.run_command(["node-degree", "-n", "5", "-l", "0.1", "-s", "42"])
 
     @pytest.mark.slow
     def test_ancestor_quality(self):
-        self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1"])
+        self.run_command(["ancestor-quality", "-n", "5", "-l", "0.1", "-s", "42"])
 
     @pytest.mark.slow
     def test_imputation_accuracy(self):
-        self.run_command(["imputation-accuracy", "-n", "5", "-l", "0.1"])
+        self.run_command(["imputation-accuracy", "-n", "5", "-l", "0.1", "-s", "40"])
 
 
 class TestCountSampleChildEdges:
