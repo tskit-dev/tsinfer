@@ -56,7 +56,7 @@ jobs:
             /usr/share/miniconda/envs/anaconda-client-env
             ~/osx-conda
             ~/.profile
-          key: ${{ runner.os }}-${{ matrix.python}}-conda-v13-${{ hashFiles('requirements/CI-tests-conda/requirements.txt') }}
+          key: ${{ runner.os }}-${{ matrix.python}}-conda-v14-${{ hashFiles('requirements/CI-tests-conda/requirements.txt')}}
 
       - name: Install Conda
         uses: conda-incubator/setup-miniconda@v2

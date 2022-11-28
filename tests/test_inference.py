@@ -1411,7 +1411,7 @@ class TestAncestorGeneratorsEquivalant:
         site_0_anc = site_0_anc[0]
         # Sites 0 and 2 should share the same ancestor
         assert np.all(adp.ancestors_focal_sites[:][site_0_anc] == [0, 2])
-        focal_site_0_haplotype = adp.ancestors_haplotype[:][site_0_anc]
+        focal_site_0_haplotype = adp.ancestors_full_haplotype[:, site_0_anc, 0]
         # High freq sites with all missing data (e.g. for sites 1 & 3 in the ancestral
         # haplotype focussed on sites 0 & 2) should default to tskit.MISSING_DATA
         expected_hap_focal_site_0 = [1, u, 1, u, 1]
@@ -1452,9 +1452,11 @@ class TestGeneratedAncestors:
         )
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
-        ancestors = ancestor_data.ancestors_haplotype[:]
+        ancestors = ancestor_data.ancestors_full_haplotype[:]
         for j in range(ancestor_data.num_ancestors):
-            A[start[j] : end[j], j] = ancestors[j]
+            A[start[j] : end[j], j] = ancestors[start[j] : end[j], j, 0]
+            assert np.all(ancestors[0 : start[j], j, 0] == tskit.MISSING_DATA)
+            assert np.all(ancestors[end[j] :, j, 0] == tskit.MISSING_DATA)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data, ancestor_data, engine=engine
@@ -1569,14 +1571,14 @@ class TestBuildAncestors:
         return sample_data, ancestor_data
 
     def verify_ancestors(self, sample_data, ancestor_data):
-        ancestors = ancestor_data.ancestors_haplotype[:]
+        ancestors = ancestor_data.ancestors_full_haplotype[:]
         position = sample_data.sites_position[:]
         start = ancestor_data.ancestors_start[:]
         end = ancestor_data.ancestors_end[:]
         times = ancestor_data.ancestors_time[:]
         focal_sites = ancestor_data.ancestors_focal_sites[:]
 
-        assert ancestor_data.num_ancestors == ancestors.shape[0]
+        assert ancestor_data.num_ancestors == ancestors.shape[1]
         assert ancestor_data.num_ancestors == times.shape[0]
         assert ancestor_data.num_ancestors == start.shape[0]
         assert ancestor_data.num_ancestors == end.shape[0]
@@ -1586,14 +1588,16 @@ class TestBuildAncestors:
         assert start[0] == 0
         assert end[0] == ancestor_data.num_sites
         assert list(focal_sites[0]) == []
-        assert np.all(ancestors[0] == 0)
+        assert np.all(ancestors[:, 0] == 0)
 
         used_sites = []
         for j in range(ancestor_data.num_ancestors):
-            a = ancestors[j]
-            assert a.shape[0] == end[j] - start[j]
+            a = ancestors[:, j, 0]
+            assert a.shape[0] == ancestor_data.num_sites
+            assert np.all(a[0 : start[j]] == tskit.MISSING_DATA)
+            assert np.all(a[end[j] :] == tskit.MISSING_DATA)
             h = np.zeros(ancestor_data.num_sites, dtype=np.uint8)
-            h[start[j] : end[j]] = a
+            h[start[j] : end[j]] = a[start[j] : end[j]]
             assert np.all(h[start[j] : end[j]] != tskit.MISSING_DATA)
             assert np.all(h[focal_sites[j]] == 1)
             used_sites.extend(focal_sites[j])

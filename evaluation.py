@@ -1213,24 +1213,17 @@ def run_ancestor_quality(args):
             olap_end = estim_positions[olap_end_estim]
             olap_end_exact = np.searchsorted(exact_anc.sites_position[:], olap_end)
 
-        # ancestors_haplotype[x] contains a vector of inferred sites only
-        # between ancestors_start[x] and ancestors_end[x]. To match it to the genome-wide
-        # mask we need to account for the offset before masking out non-shared sites
         offset1 = exact_anc.ancestors_start[:][exact_index]
         offset2 = estim_anc.ancestors_start[:][estim_index]
 
-        exact_full_hap = exact_anc.ancestors_haplotype[:][exact_index]
+        exact_full_hap = exact_anc.ancestors_full_haplotype[:, exact_index, 0]
         # slice the full haplotype to include only the overlapping region
-        exact_olap = exact_full_hap[
-            (olap_start_exact - offset1) : (olap_end_exact - offset1)
-        ]
+        exact_olap = exact_full_hap[olap_start_exact:olap_end_exact]
         # make a 1/0 array with only the comparable sites
         exact_comp = exact_olap[exact_sites_mask[olap_start_exact:olap_end_exact]]
 
-        estim_full_hap = estim_anc.ancestors_haplotype[estim_index]
-        estim_olap = estim_full_hap[
-            (olap_start_estim - offset2) : (olap_end_estim - offset2)
-        ]
+        estim_full_hap = estim_anc.ancestors_full_haplotype[:, estim_index, 0]
+        estim_olap = estim_full_hap[olap_start_estim:olap_end_estim]
         small_estim_mask = estim_sites_mask[olap_start_estim:olap_end_estim]
         estim_comp = estim_olap[small_estim_mask]
 
