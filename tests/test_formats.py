@@ -1951,7 +1951,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_defaults_no_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
         for _, array in ancestor_data.arrays():
             assert array.compressor == formats.DEFAULT_COMPRESSOR
@@ -1963,7 +1965,9 @@ class TestAncestorData(DataContainerMixin):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
-            ancestor_data = tsinfer.AncestorData(sample_data, path=filename)
+            ancestor_data = tsinfer.AncestorData(
+                sample_data.sites_position, sample_data.sequence_length, path=filename
+            )
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
             compressor = formats.DEFAULT_COMPRESSOR
             for _, array in ancestor_data.arrays():
@@ -1978,17 +1982,27 @@ class TestAncestorData(DataContainerMixin):
             for bad_size in ["a", "", -1]:
                 with pytest.raises(ValueError):
                     formats.AncestorData(
-                        sample_data, path=filename, max_file_size=bad_size
+                        sample_data.sites_position,
+                        sample_data.sequence_length,
+                        path=filename,
+                        max_file_size=bad_size,
                     )
             for bad_size in [[1, 3], np.array([1, 2])]:
                 with pytest.raises(TypeError):
                     formats.AncestorData(
-                        sample_data, path=filename, max_file_size=bad_size
+                        sample_data.sites_position,
+                        sample_data.sequence_length,
+                        path=filename,
+                        max_file_size=bad_size,
                     )
 
     def test_provenance(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
+        for timestamp, record in sample_data.provenances():
+            ancestor_data.add_provenance(timestamp, record)
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
         assert ancestor_data.num_provenances == sample_data.num_provenances + 1
 
@@ -2008,7 +2022,11 @@ class TestAncestorData(DataContainerMixin):
         N = 20
         for chunk_size in [1, 2, 3, N - 1, N, N + 1]:
             sample_data, ancestors = self.get_example_data(6, 1, num_ancestors=N)
-            ancestor_data = tsinfer.AncestorData(sample_data, chunk_size=chunk_size)
+            ancestor_data = tsinfer.AncestorData(
+                sample_data.sites_position,
+                sample_data.sequence_length,
+                chunk_size=chunk_size,
+            )
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
             assert ancestor_data.ancestors_haplotype.chunks == (chunk_size,)
             assert ancestor_data.ancestors_focal_sites.chunks == (chunk_size,)
@@ -2020,7 +2038,9 @@ class TestAncestorData(DataContainerMixin):
         sample_data, ancestors = self.get_example_data(10, 2, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
             filename = os.path.join(tempdir, "ancestors.tmp")
-            ancestor_data = tsinfer.AncestorData(sample_data, path=filename)
+            ancestor_data = tsinfer.AncestorData(
+                sample_data.sites_position, sample_data.sequence_length, path=filename
+            )
             assert os.path.exists(filename)
             assert not os.path.isdir(filename)
             self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
@@ -2043,7 +2063,10 @@ class TestAncestorData(DataContainerMixin):
                 filename = os.path.join(tempdir, f"samples_{chunk_size}.tmp")
                 files.append(filename)
                 with tsinfer.AncestorData(
-                    sample_data, path=filename, chunk_size=chunk_size
+                    sample_data.sites_position,
+                    sample_data.sequence_length,
+                    path=filename,
+                    chunk_size=chunk_size,
                 ) as ancestor_data:
                     self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
                     assert ancestor_data.ancestors_haplotype.chunks == (chunk_size,)
@@ -2054,7 +2077,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_add_ancestor_errors(self):
         sample_data, ancestors = self.get_example_data(22, 16, 30)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         num_sites = ancestor_data.num_sites
         haplotype = np.zeros(num_sites, dtype=np.int8)
         ancestor_data.add_ancestor(
@@ -2091,15 +2116,6 @@ class TestAncestorData(DataContainerMixin):
                 focal_sites=[],
                 haplotype=np.zeros(num_sites + 1, dtype=np.int8),
             )
-        # Haplotypes must be < num_alleles
-        with pytest.raises(ValueError):
-            ancestor_data.add_ancestor(
-                start=0,
-                end=num_sites,
-                time=1,
-                focal_sites=[],
-                haplotype=np.zeros(num_sites, dtype=np.int8) + 2,
-            )
         # focal sites must be within start:end
         with pytest.raises(ValueError):
             ancestor_data.add_ancestor(
@@ -2125,7 +2141,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_iterator(self):
         sample_data, ancestors = self.get_example_data(6, 10, 10)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
         assert ancestor_data.num_ancestors > 1
         assert ancestor_data.num_ancestors == len(ancestors)
@@ -2137,7 +2155,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_equals(self):
         sample_data, ancestors = self.get_example_data(6, 1, 2)
-        with tsinfer.AncestorData(sample_data) as ancestor_data:
+        with tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        ) as ancestor_data:
             num_sites = ancestor_data.num_sites
             haplotype = np.ones(num_sites, dtype=np.int8)
             ancestor_data.add_ancestor(
@@ -2151,7 +2171,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_accessor(self):
         sample_data, ancestors = self.get_example_data(6, 10, 10)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         self.verify_data_round_trip(sample_data, ancestor_data, ancestors)
         for i, new_ancestor in enumerate(ancestor_data.ancestors()):
             assert new_ancestor == ancestor_data.ancestor(i)
@@ -2178,7 +2200,9 @@ class TestAncestorData(DataContainerMixin):
 
     def test_bad_insert_proxy_samples(self):
         sample_data, ancestor_haps = self.get_example_data(10, 10, 40)
-        ancestors = tsinfer.AncestorData(sample_data)
+        ancestors = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         with pytest.raises(ValueError, match="not finalised"):
             ancestors.insert_proxy_samples(sample_data)
         self.verify_data_round_trip(sample_data, ancestors, ancestor_haps)
@@ -2458,7 +2482,9 @@ class TestAncestorData(DataContainerMixin):
         sample_data.add_site(5, [1, 0, 0, 1])
         sample_data.add_site(10, [1, 1, 1, 0])
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         ancestor_data.add_ancestor(0, 3, 0.6666, [0, 2], [1, 1, 0])
         ancestor_data.add_ancestor(1, 2, 0.333, [1], [1])
         ancestor_data.finalise()

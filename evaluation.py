@@ -147,7 +147,9 @@ def run_infer(
     sample_data = tsinfer.SampleData.from_tree_sequence(ts)
 
     if exact_ancestors:
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
     else:
@@ -535,7 +537,9 @@ def ancestor_properties_worker(args):
     }
 
     if compute_exact:
-        exact_anc = tsinfer.AncestorData(sample_data)
+        exact_anc = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         tsinfer.build_simulated_ancestors(sample_data, exact_anc, ts)
         exact_anc.finalise()
         # Show lengths as a fraction of the total.
@@ -819,7 +823,9 @@ def sim_true_and_inferred_ancestors(args):
     sample_data = generate_samples(ts, args.error)
 
     inferred_anc = tsinfer.generate_ancestors(sample_data, engine=args.engine)
-    true_anc = tsinfer.AncestorData(sample_data)
+    true_anc = tsinfer.AncestorData(
+        sample_data.sites_position, sample_data.sequence_length
+    )
     tsinfer.build_simulated_ancestors(sample_data, true_anc, ts)
     true_anc.finalise()
     return sample_data, true_anc, inferred_anc

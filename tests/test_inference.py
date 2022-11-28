@@ -50,18 +50,12 @@ def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
 
 
 class TestUnfinalisedErrors:
-    def make_ancestor_data_unfinalised(self, path=None):
-        with tsinfer.SampleData(path=path, sequence_length=2) as sample_data:
-            sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
-            with pytest.raises(ValueError):
-                tsinfer.AncestorData(sample_data)
-        if path is not None:
-            sample_data.close()
-
     def match_ancestors_ancestors_unfinalised(self, path=None):
         with tsinfer.SampleData(sequence_length=2) as sample_data:
             sample_data.add_site(1, genotypes=[0, 1, 1, 0], alleles=["G", "C"])
-        with tsinfer.AncestorData(sample_data, path=path) as ancestor_data:
+        with tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length, path=path
+        ) as ancestor_data:
             ancestor_data.add_ancestor(
                 start=0,
                 end=1,
@@ -74,14 +68,6 @@ class TestUnfinalisedErrors:
                 tsinfer.match_ancestors(sample_data, ancestor_data)
         if path is not None:
             ancestor_data.close()
-
-    def test_make_ancestor_data(self):
-        self.make_ancestor_data_unfinalised()
-
-    def test_make_ancestor_data_file(self):
-        with tempfile.TemporaryDirectory(prefix="tsinf_inference_test") as tempdir:
-            filename = os.path.join(tempdir, "samples.tmp")
-            self.make_ancestor_data_unfinalised(filename)
 
     def test_match_ancestors_ancestors(self):
         self.match_ancestors_ancestors_unfinalised()
@@ -615,7 +601,9 @@ class TestSparseAncestorsRoundTrip(TestRoundTrip):
         )
 
         num_alleles = sample_data.num_alleles()
-        with tsinfer.AncestorData(sample_data) as ancestor_data:
+        with tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        ) as ancestor_data:
             t = np.sum(num_alleles) + 1
             for j in range(sample_data.num_sites):
                 for allele in range(num_alleles[j] - 1):
@@ -1451,7 +1439,9 @@ class TestGeneratedAncestors:
         with tsinfer.SampleData(sequence_length=ts.sequence_length) as sample_data:
             for v in ts.variants():
                 sample_data.add_site(v.position, v.genotypes, v.alleles)
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
@@ -1539,12 +1529,9 @@ class TestBuildAncestors:
             (tsinfer.C_ENGINE, _tsinfer.LibraryError),
             (tsinfer.PY_ENGINE, ValueError),
         ]:
-            with tsinfer.formats.AncestorData(sample_data) as ancestor_data:
-                g = np.zeros(2, dtype=np.int8)
-                h = np.zeros(1, dtype=np.int8)
-            generator = tsinfer.AncestorsGenerator(
-                sample_data, ancestor_data, engine=engine
-            )
+            g = np.zeros(2, dtype=np.int8)
+            h = np.zeros(1, dtype=np.int8)
+            generator = tsinfer.AncestorsGenerator(sample_data, None, {}, engine=engine)
             generator.ancestor_builder.add_site(1, g)
             with pytest.raises(error):
                 generator.ancestor_builder.make_ancestor([0], h)
@@ -2118,7 +2105,9 @@ class AlgorithmsExactlyEqualMixin:
             sample_data.add_site(v.site.position, v.genotypes, v.alleles)
         sample_data.finalise()
 
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
         tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
@@ -2326,7 +2315,9 @@ class TestPartialAncestorMatching:
         for j in range(num_sites):
             sample_data.add_site(j, [0, 1, 1])
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
 
         ancestor_data.add_ancestor(  # ID 0
             start=0, end=6, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0]
@@ -2372,7 +2363,9 @@ class TestPartialAncestorMatching:
         for j in range(num_sites):
             sample_data.add_site(j, [0, 1, 1])
         sample_data.finalise()
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
 
         ancestor_data.add_ancestor(  # ID 0
             start=0, end=7, focal_sites=[], time=5, haplotype=[0, 0, 0, 0, 0, 0, 0]
@@ -2417,7 +2410,9 @@ class TestPartialAncestorMatching:
         with tsinfer.SampleData() as sample_data:
             for j in range(num_sites):
                 sample_data.add_site(j, [0, 1, 1])
-        ancestor_data = tsinfer.AncestorData(sample_data)
+        ancestor_data = tsinfer.AncestorData(
+            sample_data.sites_position, sample_data.sequence_length
+        )
 
         ancestor_data.add_ancestor(  # ID 0
             start=0,

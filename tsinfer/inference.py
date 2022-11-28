@@ -393,18 +393,21 @@ def generate_ancestors(
             "specified times with times-as-frequencies. To explicitly set an undefined"
             "time for a site, permanently excluding it from inference, set it to np.nan."
         )
-    with formats.AncestorData(sample_data, path=path, **kwargs) as ancestor_data:
-        generator = AncestorsGenerator(
-            sample_data,
-            ancestor_data,
-            num_threads=num_threads,
-            engine=engine,
-            progress_monitor=progress_monitor,
-        )
-        generator.add_sites(exclude_positions)
-        generator.run()
-        if record_provenance:
-            ancestor_data.record_provenance("generate_ancestors")
+    generator = AncestorsGenerator(
+        sample_data,
+        ancestor_data_path=path,
+        ancestor_data_kwargs=kwargs,
+        num_threads=num_threads,
+        engine=engine,
+        progress_monitor=progress_monitor,
+    )
+    generator.add_sites(exclude_positions)
+    ancestor_data = generator.run()
+    for timestamp, record in sample_data.provenances():
+        ancestor_data.add_provenance(timestamp, record)
+    if record_provenance:
+        ancestor_data.record_provenance("generate_ancestors")
+    ancestor_data.finalise()
     return ancestor_data
 
 
@@ -840,18 +843,21 @@ class AncestorsGenerator:
     def __init__(
         self,
         sample_data,
-        ancestor_data,
+        ancestor_data_path,
+        ancestor_data_kwargs,
         num_threads=0,
         engine=constants.C_ENGINE,
         progress_monitor=None,
     ):
         self.sample_data = sample_data
-        self.ancestor_data = ancestor_data
+        self.ancestor_data_path = ancestor_data_path
+        self.ancestor_data_kwargs = ancestor_data_kwargs
         self.progress_monitor = _get_progress_monitor(
             progress_monitor, generate_ancestors=True
         )
         self.max_sites = sample_data.num_sites
         self.num_sites = 0
+        self.inference_site_ids = []
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
         if engine == constants.C_ENGINE:
@@ -922,7 +928,7 @@ class AncestorsGenerator:
                 self.num_sites += 1
             progress.update()
         progress.close()
-        self.ancestor_data.set_inference_sites(inference_site_id)
+        self.inference_site_ids = inference_site_id
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
@@ -1022,6 +1028,12 @@ class AncestorsGenerator:
         for t, _ in reversed(self.descriptors):
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
+        self.ancestor_data = formats.AncestorData(
+            self.sample_data.sites_position[:][self.inference_site_ids],
+            self.sample_data.sequence_length,
+            path=self.ancestor_data_path,
+            **self.ancestor_data_kwargs,
+        )
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
@@ -1053,6 +1065,7 @@ class AncestorsGenerator:
                 self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
+        return self.ancestor_data
 
 
 class Matcher:

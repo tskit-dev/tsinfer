@@ -2493,8 +2493,8 @@ class Ancestor:
 
 class AncestorData(DataContainer):
     """
-    AncestorData(sample_data, *, path=None, num_flush_threads=0, compressor=None, \
-    chunk_size=1024, max_file_size=None)
+    AncestorData(position, sequence_length, *, path=None, num_flush_threads=0, \
+    compressor=None, chunk_size=1024, max_file_size=None)
 
     Class representing the stored ancestor data produced by
     :func:`generate_ancestors`. See the ancestor data file format
@@ -2504,8 +2504,10 @@ class AncestorData(DataContainer):
     See the documentation for :class:`SampleData` for a discussion of the
     ``max_file_size`` parameter.
 
-    :param SampleData sample_data: The :class:`.SampleData` instance
-        that this ancestor data file was generated from.
+    :param arraylike position: Integer array of the site positions of the ancestors.
+        All values should be >0 and the array should be monotonically increasing.
+    :param float sequence_length: Total length of the sequence, site positions must
+        be less than this value.
     :param str path: The path of the file to store the ancestor data. If None,
         the information is stored in memory and not persistent.
     :param int num_flush_threads: The number of background threads to use
@@ -2528,20 +2530,15 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
-    def __init__(self, sample_data, **kwargs):
+    def __init__(self, position, sequence_length, **kwargs):
         super().__init__(**kwargs)
-        sample_data._check_finalised()
-        self.sample_data = sample_data
-        if self.sample_data.sequence_length == 0:
-            raise ValueError("Bad samples file: sequence_length cannot be zero")
-        self.data.attrs["sequence_length"] = self.sample_data.sequence_length
         self._last_time = 0
-
         chunks = self._chunk_size
 
-        # By default all sites in the sample data file are used.
-        self._num_alleles = self.sample_data.num_alleles()
-        position = self.sample_data.sites_position[:]
+        self.data.attrs["sequence_length"] = sequence_length
+        if self.sequence_length <= 0:
+            raise ValueError("Bad samples file: sequence_length cannot be zero or less")
+
         self.data.create_dataset(
             "sites/position",
             data=position,
@@ -2586,10 +2583,6 @@ class AncestorData(DataContainer):
         )
 
         self._alloc_ancestor_writer()
-
-        # Add in the provenance trail from the sample_data file.
-        for timestamp, record in sample_data.provenances():
-            self.add_provenance(timestamp, record)
 
     def _alloc_ancestor_writer(self):
         self.ancestor_writer = BufferedItemWriter(
@@ -2828,8 +2821,11 @@ class AncestorData(DataContainer):
             h[1] for h in sample_data.haplotypes(samples=sample_ids, sites=used_sites)
         ]
 
-        with AncestorData(sample_data, **kwargs) as other:
-            other.set_inference_sites(used_sites)
+        with AncestorData(
+            sample_data.sites_position[:][used_sites],
+            sample_data.sequence_length,
+            **kwargs,
+        ) as other:
             mutated_sites = set()  # To check if mutations have ocurred yet
             ancestors_iter = self.ancestors()
             ancestor = next(ancestors_iter, None)
@@ -2998,21 +2994,6 @@ class AncestorData(DataContainer):
     # Write mode (building and editing)
     ####################################
 
-    def set_inference_sites(self, site_ids):
-        """
-        Sets the sites used for inference (i.e., the sites at which ancestor haplotypes
-        are defined) to the specified list of site IDs. This must be a subset of the
-        sites in the sample data file, and the IDs must be in increasing order.
-
-        This must be called before the first call to :meth:`.add_ancestor`.
-        """
-        self._check_build_mode()
-        position = self.sample_data.sites_position[:][site_ids]
-        array = self.data["sites/position"]
-        array.resize(position.shape)
-        array[:] = position
-        self._num_alleles = self.sample_data.num_alleles(site_ids)
-
     def add_ancestor(self, start, end, time, focal_sites, haplotype):
         """
         Adds an ancestor with the specified haplotype, with ancestral material over the
@@ -3033,8 +3014,6 @@ class AncestorData(DataContainer):
             raise ValueError("start must be < end")
         if haplotype.shape != (end - start,):
             raise ValueError("haplotypes incorrect shape.")
-        if np.any(haplotype >= self._num_alleles[start:end]):
-            raise ValueError("haplotype values must be < num_alleles.")
         if np.any(focal_sites < start) or np.any(focal_sites >= end):
             raise ValueError("focal sites must be between start and end")
         if time <= 0:
