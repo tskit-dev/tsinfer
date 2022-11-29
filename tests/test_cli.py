@@ -403,7 +403,7 @@ class TestRecombinationAndMismatch(TestCli):
     )
     def test_map(self):
         ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
-        with open(ratemap, "wt") as map:
+        with open(ratemap, "w") as map:
             print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
             print("chr1 0 0.1 0", file=map)
             print("chr1 1 0.2 0.002", file=map)
@@ -428,7 +428,7 @@ class TestRecombinationAndMismatch(TestCli):
         sd = tsinfer.load(self.sample_file)
         last_pos = sd.sites_position[-1]
         assert last_pos > 2
-        with open(ratemap, "wt") as map:
+        with open(ratemap, "w") as map:
             print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
             print("chr1 0 0.1 0.0", file=map)
             print(f"chr1 {int(last_pos) - 1} 0.2 0.001", file=map)
