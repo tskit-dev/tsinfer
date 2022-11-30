@@ -4,6 +4,11 @@
 
 In development
 
+**Breaking Changes**
+
+- Remove the `uuid` field from SampleData. SampleData equality is now purely based
+  on data. ({pr}`748`, {user}`benjeffery`)
+
 **Performance improvements**
 
 - Reduce memory usage when running `match_samples` against large cohorts 

@@ -2,7 +2,8 @@ attrs
 codecov
 coverage
 flake8
-numpy
+# Held at < 1.22 for sgkit compat
+numpy<1.22
 six
 tqdm
 humanize
@@ -29,8 +30,11 @@ setuptools>=45
 setuptools_scm
 cyvcf2
 # Needed for evaluation script.
-pandas
+# Held at < 1.4.0 for sgkit compat
+pandas<1.4.0
 matplotlib
 seaborn
 colorama
-
+sgkit[vcf]
+# Held at zarr<2.11.0,>=2.10.0 for sgkit compat
+zarr<2.11.0,>=2.10.0

@@ -485,9 +485,7 @@ def match_ancestors(
     for timestamp, record in ancestor_data.provenances():
         tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
     if record_provenance:
-        record = provenance.get_provenance_dict(
-            command="match_ancestors", source={"uuid": ancestor_data.uuid}
-        )
+        record = provenance.get_provenance_dict(command="match_ancestors")
         tables.provenances.add_row(record=json.dumps(record))
     ts = tables.tree_sequence()
     return ts
