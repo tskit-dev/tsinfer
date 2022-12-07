@@ -24,6 +24,7 @@ import sys
 import msprime
 import numpy as np
 import pytest
+import sgkit
 
 import tsinfer
 
@@ -48,3 +49,52 @@ def test_sgkit_dataset(tmp_path):
     samples = tsinfer.SgkitSampleData(tmp_path / "data.zarr")
     inf_ts = tsinfer.infer(samples)
     assert np.array_equal(ts.genotype_matrix(), inf_ts.genotype_matrix())
+
+
+class TestSgkitSampleDataErrors:
+    def test_missing_phase(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(
+            ValueError, match="The call_genotype_phased array is missing"
+        ):
+            tsinfer.SgkitSampleData(path)
+
+    def test_unphased(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
+        ds["call_genotype_phased"] = (
+            ds["call_genotype"].dims,
+            np.zeros(ds["call_genotype"].shape, dtype=bool),
+        )
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(ValueError, match="One or more genotypes are unphased"):
+            tsinfer.SgkitSampleData(path)
+
+    def test_phased(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
+        ds["call_genotype_phased"] = (
+            ds["call_genotype"].dims,
+            np.ones(ds["call_genotype"].shape, dtype=bool),
+        )
+        sgkit.save_dataset(ds, path)
+        tsinfer.SgkitSampleData(path)
+
+    def test_ploidy1_missing_phase(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        # Ploidy==1 is always ok
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        sgkit.save_dataset(ds, path)
+        tsinfer.SgkitSampleData(path)
+
+    def test_ploidy1_unphased(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds["call_genotype_phased"] = (
+            ds["call_genotype"].dims,
+            np.zeros(ds["call_genotype"].shape, dtype=bool),
+        )
+        sgkit.save_dataset(ds, path)
+        tsinfer.SgkitSampleData(path)

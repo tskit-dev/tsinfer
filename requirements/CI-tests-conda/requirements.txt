@@ -1,7 +1,7 @@
 attrs==22.1.0
 colorama==0.4.6
 daiquiri==3.0.0
-h5py==3.7.0 
+h5py==3.7.0
 humanize==4.4.0
 lmdb==0.9.29
 msprime==1.2.0

@@ -31,6 +31,7 @@ import threading
 import warnings
 
 import attr
+import dask.array as da
 import humanize
 import lmdb
 import numcodecs
@@ -2228,6 +2229,19 @@ class SgkitSampleData(SampleData):
         self._num_samples = self._num_individuals * self.ploidy
 
         assert self.ploidy == self.data["call_genotype"].chunks[2]
+        if self.ploidy > 1:
+            try:
+                if not da.all(self.data["call_genotype_phased"]).compute():
+                    raise ValueError(
+                        "One or more genotypes are unphased, tsinfer"
+                        " requires phased genotypes"
+                    )
+            except KeyError:
+                raise ValueError(
+                    "The call_genotype_phased array is missing from the"
+                    " sgkit dataset, indicating that all the genotypes are"
+                    " unphased"
+                )
 
     def __metadata_schema_getter(self, zarr_group):
         try:
