@@ -8,6 +8,7 @@ six
 tqdm
 humanize
 daiquiri
+dask[array]
 msprime >= 1.0.0
 tskit >= 0.5.3
 zarr!=2.11.0, !=2.11.1, !=2.11.2
