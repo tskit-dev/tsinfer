@@ -2267,9 +2267,7 @@ class SgkitSampleData(SampleData):
         try:
             return self.data["sites/metadata"]
         except KeyError:
-            return zarr.array(
-                [{}] * self.num_individuals, object_codec=numcodecs.JSON()
-            )
+            return zarr.array([{}] * self.num_sites, object_codec=numcodecs.JSON())
 
     @property
     def sites_time(self):
