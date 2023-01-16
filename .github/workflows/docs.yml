@@ -16,7 +16,7 @@ env:
 jobs:
   build-deploy-docs:
     name: Docs
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     steps:
       - name: Cancel Previous Runs
         uses: styfle/cancel-workflow-action@0.11.0
@@ -39,11 +39,14 @@ jobs:
         id: cache
         with:
           path: venv
-          key: docs-venv-v1-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
+          key: docs-venv-v2-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
 
       - name: Build virtualenv
         if: steps.cache.outputs.cache-hit != 'true'
         run: python -m venv venv
+
+      - name: Downgrade pip to allow conflicting deps
+        run: venv/bin/activate && pip install pip==20.0.2
 
       - name: Install deps
         run: venv/bin/activate && pip install -r requirements/CI-docs/requirements.txt
