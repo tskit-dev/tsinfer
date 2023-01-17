@@ -26,13 +26,13 @@ import msprime
 import numpy as np
 import pytest
 import sgkit
+import xarray as xr
 
 import tsinfer
 from tsinfer import formats
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
-def test_sgkit_sampledata(tmp_path):
+def make_ts_and_zarr(path):
     import sgkit.io.vcf
 
     ts = msprime.sim_ancestry(
@@ -40,24 +40,79 @@ def test_sgkit_sampledata(tmp_path):
         ploidy=3,
         recombination_rate=0.25,
         sequence_length=50,
-        random_seed=100,
+        random_seed=42,
     )
-    ts = msprime.sim_mutations(ts, rate=0.025, model=msprime.BinaryMutationModel())
-    with open(tmp_path / "data.vcf", "w") as f:
+    ts = msprime.sim_mutations(
+        ts, rate=0.025, model=msprime.BinaryMutationModel(), random_seed=42
+    )
+
+    with open(path / "data.vcf", "w") as f:
         ts.write_vcf(f)
     sgkit.io.vcf.vcf_to_zarr(
         # max_alt_alleles=4 tests tsinfer's ability to handle empty string alleles,
-        tmp_path / "data.vcf",
-        tmp_path / "data.zarr",
+        path / "data.vcf",
+        path / "data.zarr",
         ploidy=3,
         max_alt_alleles=4,
     )
-    samples = tsinfer.SgkitSampleData(tmp_path / "data.zarr")
+    return ts, path / "data.zarr"
+
+
+def add_array_to_dataset(name, array, zarr_path):
+    ds = sgkit.load_dataset(zarr_path)
+    ds.update({"variant_mask": xr.DataArray(data=array, dims=["variants"], name=name)})
+    sgkit.save_dataset(ds.drop_vars(set(ds.data_vars) - {name}), zarr_path, mode="a")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_sgkit_dataset(tmp_path):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    samples = tsinfer.SgkitSampleData(zarr_path)
     inf_ts = tsinfer.infer(samples)
     assert np.array_equal(ts.genotype_matrix(), inf_ts.genotype_matrix())
     # Check that the trees are non-trivial (i.e. the sites have actually been used)
     assert inf_ts.num_trees > 10
     assert inf_ts.num_edges > 200
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+class TestSgkitMask:
+    @pytest.mark.parametrize("sites", [[1, 2, 3, 5, 9, 27], [0], []])
+    def test_sgkit_variant_mask(self, tmp_path, sites):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        sites_mask = np.zeros_like(ds["variant_position"], dtype=bool)
+        for i in sites:
+            sites_mask[i] = True
+        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        assert samples.num_sites == len(sites)
+        assert np.array_equal(samples.sites_mask, sites_mask)
+        assert np.array_equal(
+            samples.sites_position, ts.tables.sites.position[sites_mask]
+        )
+        inf_ts = tsinfer.infer(samples)
+        assert np.array_equal(
+            ts.genotype_matrix()[sites_mask], inf_ts.genotype_matrix()
+        )
+        assert np.array_equal(
+            ts.tables.sites.position[sites_mask], inf_ts.tables.sites.position
+        )
+        assert np.array_equal(
+            ts.tables.sites.ancestral_state[sites_mask],
+            inf_ts.tables.sites.ancestral_state,
+        )
+
+    def test_sgkit_variant_bad_mask(self, tmp_path):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        sites_mask = np.arange(ds.sizes["variants"], dtype=int)
+        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
+        with pytest.raises(
+            ValueError,
+            match="The variant_mask array contains values " "other than 0 or 1",
+        ):
+            tsinfer.SgkitSampleData(zarr_path)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")

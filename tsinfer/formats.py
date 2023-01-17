@@ -305,15 +305,20 @@ def zarr_summary(array):
     return ret
 
 
-def chunk_iterator(array, indexes=None, dimension=0):
+def chunk_iterator(array, indexes=None, mask=None, dimension=0):
     """
     Utility to iterate over closely spaced rows in the specified array efficiently
     by accessing one chunk at a time (normally used as an iterator over each row)
     """
     # Only the first two dimensions are supported.
     assert dimension < 2
+    if mask is None:
+        mask = np.ones(array.shape[dimension], dtype=bool)
+    else:
+        assert len(mask) == len(array)
+
     if indexes is None:
-        indexes = range(array.shape[dimension])
+        indexes = range(np.sum(mask))
     else:
         if len(indexes) > 0 and (
             np.any(np.diff(indexes) <= 0)
@@ -322,6 +327,10 @@ def chunk_iterator(array, indexes=None, dimension=0):
         ):
             raise ValueError("ids must be positive and in ascending order")
 
+    # If there is a variant mask we need to translate the indexes from the masked
+    # space to the unmasked space.
+    if not np.all(mask):
+        indexes = np.nonzero(mask)[0][indexes]
     chunk_size = array.chunks[dimension]
     prev_chunk_id = -1
     if dimension == 0:
@@ -2282,7 +2291,8 @@ class SgkitSampleData(SampleData):
         self.path = path
         self.data = zarr.open(path, mode="r")
         genotypes_arr = self.data["call_genotype"]
-        self._num_sites, self._num_individuals, self.ploidy = genotypes_arr.shape
+        _, self._num_individuals, self.ploidy = genotypes_arr.shape
+        self._num_sites = np.sum(self.sites_mask)
         self._num_samples = self._num_individuals * self.ploidy
 
         assert self.ploidy == self.data["call_genotype"].chunks[2]
@@ -2336,29 +2346,43 @@ class SgkitSampleData(SampleData):
     @property
     def sites_metadata(self):
         try:
-            return self.data["sites/metadata"]
+            return self.data["sites/metadata"][:][self.sites_mask]
         except KeyError:
             return zarr.array([{}] * self.num_sites, object_codec=numcodecs.JSON())
 
     @property
     def sites_time(self):
         try:
-            return self.data["sites/time"]
+            return self.data["sites/time"][:][self.sites_mask]
         except KeyError:
-            return np.full(self.data["variant_position"].shape, tskit.UNKNOWN_TIME)
+            return np.full(self.num_sites, tskit.UNKNOWN_TIME)
 
     @property
     def sites_position(self):
-        return self.data["variant_position"]
+        return self.data["variant_position"][:][self.sites_mask]
 
     @property
     def sites_alleles(self):
-        return self.data["variant_allele"]
+        return self.data["variant_allele"][:][self.sites_mask]
+
+    @property
+    def sites_mask(self):
+        try:
+            # Often xarray will save a bool array as int8, so we need to cast,
+            # but check that a mistake hasn't been made by checking
+            # that the values are either 0 or 1
+            if da.max(self.data["variant_mask"].astype(np.int8)).compute() > 1:
+                raise ValueError(
+                    "The variant_mask array contains values other than 0 or 1"
+                )
+            return self.data["variant_mask"].astype(bool)
+        except KeyError:
+            return np.full(self.data["variant_position"].shape, True, dtype=bool)
 
     @property
     def sites_ancestral_allele(self):
         try:
-            return self.data["variant_ancestral_allele_index"]
+            return self.data["variant_ancestral_allele_index"][self.sites_mask]
         except KeyError:
             # Maintains backwards compatibility: in previous tsinfer versions the
             # ancestral allele was always the zeroth element in the alleles list
@@ -2367,9 +2391,11 @@ class SgkitSampleData(SampleData):
     @property
     def sites_genotypes(self):
         gt = self.data["call_genotype"]
-        # This method is only used for test/debug so we retrive and
+        # This method is only used for test/debug so we retrieve and
         # reshape the entire array.
-        return gt[...].reshape(gt.shape[0], gt.shape[1] * gt.shape[2])
+        return gt[...][self.sites_mask, :, :].reshape(
+            gt.shape[0], gt.shape[1] * gt.shape[2]
+        )
 
     @property
     def provenances_timestamp(self):
@@ -2489,7 +2515,9 @@ class SgkitSampleData(SampleData):
         """
         if recode_ancestral is None:
             recode_ancestral = False
-        all_genotypes = chunk_iterator(self.data["call_genotype"], indexes=sites)
+        all_genotypes = chunk_iterator(
+            self.data["call_genotype"], indexes=sites, mask=self.sites_mask
+        )
         assert MISSING_DATA < 0  # required for geno_map to remap MISSING_DATA
         for genos, site in zip(all_genotypes, self.sites(ids=sites)):
             # We have an extra ploidy dimension when coming from sgkit
@@ -2533,6 +2561,8 @@ class SgkitSampleData(SampleData):
         for j in range(self.num_individuals):
             if j % chunk_size == 0:
                 chunk = gt[:, j : j + chunk_size, :]
+                # Zarr doesn't support fancy indexing, so we have to do this after
+                chunk = chunk[self.sites_mask]
             indiv_gt = chunk[:, j % chunk_size, :]
             for k in range(self.ploidy):
                 a = indiv_gt[:, k].T
