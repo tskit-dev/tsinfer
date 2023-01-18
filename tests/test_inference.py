@@ -920,7 +920,7 @@ def random_string(rng, max_len=10):
     Uses the specified random generator to generate a random string.
     """
     s = ""
-    for _ in range(rng.randint(0, max_len)):
+    for _ in range(rng.randint(1, max_len)):
         s += rng.choice(string.ascii_letters)
     return s
 

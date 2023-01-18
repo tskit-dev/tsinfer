@@ -46,11 +46,18 @@ def test_sgkit_sampledata(tmp_path):
     with open(tmp_path / "data.vcf", "w") as f:
         ts.write_vcf(f)
     sgkit.io.vcf.vcf_to_zarr(
-        tmp_path / "data.vcf", tmp_path / "data.zarr", ploidy=3, max_alt_alleles=1
+        # max_alt_alleles=4 tests tsinfer's ability to handle empty string alleles,
+        tmp_path / "data.vcf",
+        tmp_path / "data.zarr",
+        ploidy=3,
+        max_alt_alleles=4,
     )
     samples = tsinfer.SgkitSampleData(tmp_path / "data.zarr")
     inf_ts = tsinfer.infer(samples)
     assert np.array_equal(ts.genotype_matrix(), inf_ts.genotype_matrix())
+    # Check that the trees are non-trivial (i.e. the sites have actually been used)
+    assert inf_ts.num_trees > 10
+    assert inf_ts.num_edges > 200
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
@@ -112,3 +119,15 @@ class TestSgkitSampleDataErrors:
         )
         sgkit.save_dataset(ds, path)
         tsinfer.SgkitSampleData(path)
+
+    def test_empty_alleles_not_at_end(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds["variant_allele"] = (
+            ds["variant_allele"].dims,
+            np.array([["", "C"], ["A", "C"], ["A", "C"]], dtype="S1"),
+        )
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(ValueError, match="Empty alleles must be at the end"):
+            samples = tsinfer.SgkitSampleData(path)
+            tsinfer.infer(samples)
