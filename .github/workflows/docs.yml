@@ -24,39 +24,38 @@ jobs:
           access_token: ${{ github.token }}
 
       - uses: actions/checkout@v3
-        # As we are using pull-request-target which uses the workflow from the base
-        # of the PR, we need to be specific
         with:
-            ref: ${{ github.event.pull_request.head.ref }}
-            repository: ${{ github.event.pull_request.head.repo.full_name }}
             submodules: true
 
       - uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: "3.10"
 
       - uses: actions/cache@v3
-        id: cache
+        id: venv-cache
         with:
           path: venv
-          key: docs-venv-v2-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
+          key: docs-venv-v1-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
 
-      - name: Build virtualenv
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: python -m venv venv
-
-      - name: Downgrade pip to allow conflicting deps
-        run: venv/bin/activate && pip install pip==20.0.2
-
-      - name: Install deps
-        run: venv/bin/activate && pip install -r requirements/CI-docs/requirements.txt
+      - name: Create venv and install deps (one by one to avoid conflict errors)
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip wheel
+          cat requirements/CI-docs/requirements.txt | sed -e '/^\s*#.*$/d' -e '/^\s*$/d' | xargs -n 1 pip install --no-dependencies          
+          
 
       - name: Build C module
         if: env.MAKE_TARGET
-        run: venv/bin/activate && make $MAKE_TARGET
+        run: |
+          . venv/bin/activate
+          make $MAKE_TARGET
 
       - name: Build Docs
-        run: venv/bin/activate && cd docs && make dist
+        run: |
+          . venv/bin/activate
+          cd docs && make dist
 
       - name: Trigger docs site rebuild
         if: github.ref == 'refs/heads/main'
