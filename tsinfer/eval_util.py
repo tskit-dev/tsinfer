@@ -389,31 +389,13 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
     print("Total mismatches             = ", total_mismatches)
 
 
-def subset_sites(ts, position):
+def subset_sites(ts, position, **kwargs):
     """
     Return a copy of the specified tree sequence with sites reduced to those
     with positions in the specified list.
     """
-    tables = ts.dump_tables()
-    lookup = frozenset(position)
-    tables.sites.clear()
-    tables.mutations.clear()
-    for site in ts.sites():
-        if site.position in lookup:
-            site_id = tables.sites.add_row(
-                site.position,
-                ancestral_state=site.ancestral_state,
-                metadata=site.metadata,
-            )
-            for mutation in site.mutations:
-                tables.mutations.add_row(
-                    site_id,
-                    node=mutation.node,
-                    parent=mutation.parent,
-                    derived_state=mutation.derived_state,
-                    metadata=mutation.metadata,
-                )
-    return tables.tree_sequence()
+    to_delete = np.where(np.logical_not(np.isin(ts.sites_position, position)))[0]
+    return ts.delete_sites(to_delete, **kwargs)
 
 
 def make_ancestors_ts(ts, remove_leaves=False):
@@ -529,7 +511,7 @@ def extract_ancestors(samples, ts):
     be used as an ancestors tree sequence.
     """
     position = get_tsinfer_inference_sites(ts)
-    ts = subset_sites(ts, position)
+    ts = subset_sites(ts, position, record_provenance=False)
     tables = ts.dump_tables()
 
     # The nodes that we want to keep are all those *except* what
