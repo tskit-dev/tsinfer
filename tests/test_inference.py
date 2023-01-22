@@ -2972,40 +2972,13 @@ class TestMatchSiteSubsets:
     a subset of the original sites.
     """
 
-    def subset_sites(self, ts, position):
-        """
-        Return a copy of the specified tree sequence with sites reduced to those
-        with positions in the specified list.
-        """
-        tables = ts.dump_tables()
-        lookup = set(position)
-        tables.sites.clear()
-        tables.mutations.clear()
-        for site in ts.sites():
-            if site.position in lookup:
-                site_id = tables.sites.add_row(
-                    site.position,
-                    ancestral_state=site.ancestral_state,
-                    metadata=site.metadata,
-                )
-                for mutation in site.mutations:
-                    tables.mutations.add_row(
-                        site_id,
-                        node=mutation.node,
-                        parent=mutation.parent,
-                        derived_state=mutation.derived_state,
-                        metadata=mutation.metadata,
-                    )
-        assert np.array_equal(tables.sites.position, position)
-        return tables.tree_sequence()
-
     def verify(self, sample_data, position_subset):
         full_ts = tsinfer.infer(sample_data)
-        subset_ts = self.subset_sites(full_ts, position_subset)
+        subset_ts = eval_util.subset_sites(full_ts, position_subset)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         subset_ancestors_ts = tsinfer.minimise(
-            self.subset_sites(ancestors_ts, position_subset)
+            eval_util.subset_sites(ancestors_ts, position_subset)
         )
         subset_ancestors_ts = subset_ancestors_ts.simplify()
         subset_sample_data = tsinfer.SampleData.from_tree_sequence(subset_ts)
