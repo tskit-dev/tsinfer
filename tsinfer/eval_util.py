@@ -87,30 +87,6 @@ def insert_errors(ts, probability, seed=None):
     return tables.tree_sequence()
 
 
-def tree_pairs(ts1, ts2):
-    """
-    Returns an iterator over the pairs of trees for each distinct
-    interval in the specified pair of tree sequences.
-    """
-    if ts1.sequence_length != ts2.sequence_length:
-        raise ValueError("Tree sequences must be equal length.")
-    L = ts1.sequence_length
-    trees1 = ts1.trees(sample_lists=True)
-    trees2 = ts2.trees(sample_lists=True)
-    tree1 = next(trees1)
-    tree2 = next(trees2)
-    right = 0
-    while right != L:
-        left = right
-        right = min(tree1.interval[1], tree2.interval[1])
-        yield (left, right), tree1, tree2
-        # Advance
-        if tree1.interval[1] == right:
-            tree1 = next(trees1, None)
-        if tree2.interval[1] == right:
-            tree2 = next(trees2, None)
-
-
 def compare(ts1, ts2):
     """
     Returns the KC distance between the specified tree sequences and
@@ -120,8 +96,8 @@ def compare(ts1, ts2):
         raise ValueError("Tree sequences must have the same samples")
     breakpoints = [0]
     metrics = []
-    for (_left, right), tree1, tree2 in tree_pairs(ts1, ts2):
-        breakpoints.append(right)
+    for interval, tree1, tree2 in ts1.coiterate(ts2, sample_lists=True):
+        breakpoints.append(interval.right)
         metrics.append(tree1.kc_distance(tree2))
     return np.array(breakpoints), np.array(metrics)
 
@@ -380,19 +356,19 @@ def print_tree_pairs(ts1, ts2, compute_distances=True):
     weighted_distance = 0
     total_mismatch_interval = 0
     total_mismatches = 0
-    for (left, right), tree1, tree2 in tree_pairs(ts1, ts2):
+    for interval, tree1, tree2 in ts1.coiterate(ts2, sample_lists=True):
         print("-" * 20)
-        print("Interval          =", left, "--", right)
+        print("Interval          =", interval.left, "--", interval.right)
         print("Source interval   =", tree1.interval)
         print("Inferred interval =", tree2.interval)
         if compute_distances:
             distance = tree1.kc_distance(tree2)
-            weighted_distance += (right - left) * distance
+            weighted_distance += (interval.right - interval.left) * distance
             trailer = ""
             if distance != 0:
-                total_mismatch_interval += right - left
+                total_mismatch_interval += interval.right - interval.left
                 total_mismatches += 1
-                trailer = f"[MISMATCH over {right - left:.2f}]"
+                trailer = f"[MISMATCH over {interval.right - interval.left:.2f}]"
             print("KC distance       =", distance, trailer)
         print()
         d1 = tree1.draw(format="unicode").splitlines()

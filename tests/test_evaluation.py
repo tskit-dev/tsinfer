@@ -95,9 +95,9 @@ class TestTreeSequenceCompare:
     # TODO add some examples testing for specific instances.
 
 
-class TestTreePairs:
+class TestCoiteration:
     """
-    Tests of the engine to compare to tree sequences.
+    Tests of ts.coiterate, used in evaluating.
     """
 
     def test_same_ts(self):
@@ -105,8 +105,8 @@ class TestTreePairs:
         ts = msprime.simulate(n, recombination_rate=10, random_seed=10)
         assert ts.num_trees > 1
         count = 0
-        for (left, right), tree1, tree2 in tsinfer.tree_pairs(ts, ts):
-            assert (left, right) == tree1.interval
+        for interval, tree1, tree2 in ts.coiterate(ts):
+            assert interval == tree1.interval
             assert tree1.interval == tree2.interval
             assert tree1.parent_dict == tree2.parent_dict
             count += 1
@@ -119,7 +119,7 @@ class TestTreePairs:
         assert ts1.num_trees == 1
         assert ts2.num_trees == 1
         count = 0
-        for (_left, _right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
+        for (_left, _right), tree1, tree2 in ts1.coiterate(ts2):
             assert (0, 1) == tree1.interval
             assert (0, 1) == tree2.interval
             assert tree1.tree_sequence is ts1
@@ -135,7 +135,7 @@ class TestTreePairs:
         assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
-        for (_left, _right), tree1, tree2 in tsinfer.tree_pairs(ts1, ts2):
+        for (_left, _right), tree1, tree2 in ts1.coiterate(ts2):
             assert (0, 1) == tree1.interval
             assert tree1.tree_sequence is ts1
             assert tree2.tree_sequence is ts2
@@ -154,7 +154,7 @@ class TestTreePairs:
         assert ts2.num_trees > 1
         trees2 = ts2.trees()
         count = 0
-        for (_left, _right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
+        for (_left, _right), tree2, tree1 in ts2.coiterate(ts1):
             assert (0, 1) == tree1.interval
             assert tree1.tree_sequence is ts1
             assert tree2.tree_sequence is ts2
@@ -169,9 +169,9 @@ class TestTreePairs:
         ts1 = msprime.simulate(2, length=10, random_seed=1)
         ts2 = msprime.simulate(2, length=11, random_seed=1)
         with pytest.raises(ValueError):
-            list(tsinfer.tree_pairs(ts1, ts2))
+            list(ts1.coiterate(ts2))
         with pytest.raises(ValueError):
-            list(tsinfer.tree_pairs(ts2, ts1))
+            list(ts2.coiterate(ts1))
 
     def test_many_trees(self):
         ts1 = msprime.simulate(20, recombination_rate=20, random_seed=10)
@@ -179,7 +179,7 @@ class TestTreePairs:
         assert ts1.num_trees > 1
         assert ts2.num_trees > 1
         breakpoints = [0]
-        for (left, right), tree2, tree1 in tsinfer.tree_pairs(ts2, ts1):
+        for (left, right), tree2, tree1 in ts2.coiterate(ts1):
             breakpoints.append(right)
             assert left >= tree1.interval[0]
             assert left >= tree2.interval[0]
