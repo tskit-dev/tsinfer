@@ -572,6 +572,7 @@ def augment_ancestors(
         len(sample_indexes), dtype=sample_data.individuals_time.dtype
     )
     manager.match_samples(sample_indexes, sample_times)
+    manager.insert_paths(sample_indexes)
     ts = manager.get_augmented_ancestors_tree_sequence(sample_indexes)
     if record_provenance:
         tables = ts.dump_tables()
@@ -619,7 +620,7 @@ def match_samples(
         representing the input data.
     :param tskit.TreeSequence ancestors_ts: The
         :class:`tskit.TreeSequence` instance representing the inferred
-        history among ancestral ancestral haplotypes.
+        history among ancestral haplotypes.
     :param recombination_rate: Either a floating point value giving a constant rate
         :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
         object. This is used to calculate the probability of recombination between
@@ -699,6 +700,8 @@ def match_samples(
         # we sometimes assume they are in the same order as in the file
 
     manager.match_samples(sample_indexes, sample_times)
+    manager.insert_paths(sample_indexes)
+
     ts = manager.finalise()
     if post_process:
         ts = _post_process(
@@ -708,6 +711,211 @@ def match_samples(
         tables = ts.dump_tables()
         # We don't have a source here because tree sequence files don't have a UUID yet.
         record = provenance.get_provenance_dict(command="match_samples")
+        tables.provenances.add_row(record=json.dumps(record))
+        ts = tables.tree_sequence()
+    return ts
+
+
+def match_sample_slice(
+    sample_data,
+    ancestors_ts,
+    slice_path,
+    *,
+    recombination_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    indexes=None,
+    force_sample_times=False,
+    num_threads=0,
+    # Deliberately undocumented parameters below
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
+    precision=None,
+    extended_checks=False,
+    engine=constants.C_ENGINE,
+    progress_monitor=None,
+):
+    """
+    match_sample_slice(sample_data, ancestors_ts, slice_path, *,
+        recombination_rate=None, mismatch_ratio=None, path_compression=True,
+        indexes=None, force_sample_times=False, num_threads=0)
+
+    Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
+    on the specified :class:`SampleData` instance for the given sample indexes and
+    saves their path and mutation data to ``path``. Use :meth:`combine_sample_slice` to
+    read in these path files and build the combined tree sequence. See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        representing the input data.
+    :param tskit.TreeSequence ancestors_ts: The
+        :class:`tskit.TreeSequence` instance representing the inferred
+        history among ancestral haplotypes.
+    :param str slice_path: String of the path to save the slice data to.
+    :param recombination_rate: Either a floating point value giving a constant rate
+        :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
+        object. This is used to calculate the probability of recombination between
+        adjacent sites. If ``None``, all matching conflicts are resolved by
+        recombination and all inference sites will have a single mutation
+        (equivalent to mismatch_ratio near zero)
+    :type recombination_rate: float, msprime.RateMap
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
+    :param array_like indexes: An array of indexes into the sample_data file of
+        the samples to match (in increasing order) or None for all samples.
+    :param bool force_sample_times: After matching, should an attempt be made to
+        adjust the time of "historical samples" (those associated with an individual
+        having a non-zero time) such that the sample nodes in the tree sequence
+        appear at the time of the individual with which they are associated.
+    :param int num_threads: The number of match worker threads to use. If
+        this is <= 0 then a simpler sequential algorithm is used (default).
+    :param str path: The path to save the sample path data to.
+    """
+    sample_data._check_finalised()
+    progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
+    manager = SampleMatcher(
+        sample_data,
+        ancestors_ts,
+        recombination_rate=recombination_rate,
+        mismatch_ratio=mismatch_ratio,
+        recombination=recombination,
+        mismatch=mismatch,
+        path_compression=path_compression,
+        num_threads=num_threads,
+        precision=precision,
+        extended_checks=extended_checks,
+        engine=engine,
+        progress_monitor=progress_monitor,
+    )
+    sample_indexes = check_sample_indexes(sample_data, indexes)
+    sample_times = np.zeros(
+        len(sample_indexes), dtype=sample_data.individuals_time.dtype
+    )
+    if force_sample_times:
+        individuals = sample_data.samples_individual[:][sample_indexes]
+        # By construction all samples in an sd file have an individual: but check anyway
+        assert np.all(individuals >= 0)
+        sample_times = sample_data.individuals_time[:][individuals]
+
+        # Here we might want to re-order sample_indexes and sample_times
+        # so that any historical ones come first, any we bomb out early if they conflict
+        # but that would mean re-ordering the sample nodes in the final ts, and
+        # we sometimes assume they are in the same order as in the file
+
+    manager.match_samples(sample_indexes, sample_times)
+    manager.save_paths(slice_path)
+
+
+def combine_sample_slices(
+    sample_data,
+    ancestors_ts,
+    slice_paths,
+    *,
+    recombination_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    indexes=None,
+    post_process=None,
+    force_sample_times=False,
+    # Deliberately undocumented parameters below
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
+    precision=None,
+    extended_checks=False,
+    engine=constants.C_ENGINE,
+    progress_monitor=None,
+    record_provenance=True,
+):
+    """
+    combine_split_samples(sample_data, ancestors_ts, slice_paths, *,
+        recombination_rate=None, mismatch_ratio=None, path_compression=True,
+        post_process=None,indexes=None, force_sample_times=False)
+
+    Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
+    on the specified :class:`SampleData` instance and ancestors tree sequence,
+    returning the final :class:`tskit.TreeSequence` instance containing
+    the full inferred history for all samples and sites. See
+    :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
+    in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
+    and ``path_compression``.
+
+    :param SampleData sample_data: The :class:`SampleData` instance
+        representing the input data.
+    :param tskit.TreeSequence ancestors_ts: The
+        :class:`tskit.TreeSequence` instance representing the inferred
+        history among ancestral haplotypes.
+    :param list slice_paths: List of paths to the slice data to combine.
+    :param recombination_rate: Either a floating point value giving a constant rate
+        :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
+        object. This is used to calculate the probability of recombination between
+        adjacent sites. If ``None``, all matching conflicts are resolved by
+        recombination and all inference sites will have a single mutation
+        (equivalent to mismatch_ratio near zero)
+    :type recombination_rate: float, msprime.RateMap
+    :param float mismatch_ratio: The probability of a mismatch relative to the median
+        probability of recombination between adjacent sites: can only be used if a
+        recombination rate has been set (default: 1)
+    :param bool path_compression: Whether to merge edges that share identical
+        paths (essentially taking advantage of shared recombination breakpoints).
+    :param array_like indexes: An array of indexes into the sample_data file of
+        the samples to match (in increasing order) or None for all samples.
+    :param bool post_process: Whether to run the :func:`post_process` method on the
+        the tree sequence which, among other things, removes ancestral material that
+        does not end up in the current samples (if not specified, defaults to ``True``)
+    :param bool force_sample_times: After matching, should an attempt be made to
+        adjust the time of "historical samples" (those associated with an individual
+        having a non-zero time) such that the sample nodes in the tree sequence
+        appear at the time of the individual with which they are associated.
+
+    :return: The tree sequence representing the inferred history
+        of the sample.
+    :rtype: tskit.TreeSequence
+    """
+    sample_data._check_finalised()
+    progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
+    manager = SampleMatcher(
+        sample_data,
+        ancestors_ts,
+        recombination_rate=recombination_rate,
+        mismatch_ratio=mismatch_ratio,
+        recombination=recombination,
+        mismatch=mismatch,
+        path_compression=path_compression,
+        precision=precision,
+        extended_checks=extended_checks,
+        engine=engine,
+        progress_monitor=progress_monitor,
+    )
+    sample_indexes = check_sample_indexes(sample_data, indexes)
+    sample_times = np.zeros(
+        len(sample_indexes), dtype=sample_data.individuals_time.dtype
+    )
+    if force_sample_times:
+        individuals = sample_data.samples_individual[:][sample_indexes]
+        # By construction all samples in an sd file have an individual: but check anyway
+        assert np.all(individuals >= 0)
+        sample_times = sample_data.individuals_time[:][individuals]
+
+        # Here we might want to re-order sample_indexes and sample_times
+        # so that any historical ones come first, any we bomb out early if they conflict
+        # but that would mean re-ordering the sample nodes in the final ts, and
+        # we sometimes assume they are in the same order as in the file
+
+    manager.load_paths(slice_paths, sample_times)
+    manager.insert_paths(sample_indexes)
+
+    ts = manager.finalise()
+    if post_process:
+        ts = _post_process(ts, warn_if_unexpected_format=True)
+    if record_provenance:
+        tables = ts.dump_tables()
+        # We don't have a source here because tree sequence files don't have a UUID yet.
+        record = provenance.get_provenance_dict(command="combine_sample_slices")
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
     return ts
@@ -1310,7 +1518,7 @@ class Matcher:
 
     def _find_path(self, child_id, haplotype, start, end, thread_index=0):
         """
-        Finds the path of the specified haplotype and upates the results
+        Finds the path of the specified haplotype and updates the results
         for the specified thread_index.
         """
         matcher = self.matcher[thread_index]
@@ -1610,8 +1818,9 @@ class SampleMatcher(Matcher):
         super().__init__(sample_data, self.ancestors_ts_tables.sites.position, **kwargs)
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
-        # node ID in the tree sequence.
+        # node ID in the tree sequence and vice-versa.
         self.sample_id_map = {}
+        self.node_id_map = {}
 
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
@@ -1729,8 +1938,6 @@ class SampleMatcher(Matcher):
 
     def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
-        builder = self.tree_sequence_builder
-        _, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
@@ -1739,11 +1946,16 @@ class SampleMatcher(Matcher):
             else:
                 self.__match_samples_multi_threaded(sample_indexes)
             self.match_progress.close()
-            logger.info(
-                "Inserting sample paths: {} edges in total".format(
-                    self.results.total_edges
-                )
-            )
+
+    def _insert_paths(self, sample_indexes):
+        num_samples = len(sample_indexes)
+        builder = self.tree_sequence_builder
+        _, times = builder.dump_nodes()
+
+        logger.info(
+            f"Inserting sample paths: {self.results.total_edges} edges in total"
+        )
+        if self.num_sites > 0:
             progress_monitor = self.progress_monitor.get("ms_paths", num_samples)
             for j in sample_indexes:
                 node_id = int(self.sample_id_map[j])
@@ -1768,8 +1980,42 @@ class SampleMatcher(Matcher):
         builder = self.tree_sequence_builder
         for j, t in zip(sample_indexes, sample_times):
             self.sample_id_map[j] = builder.add_node(t)
-
         self._match_samples(sample_indexes)
+
+    def save_paths(self, path):
+        with formats.PathData(path=path) as path_data:
+            path_data.write_result_buffer(self.results, self.sample_id_map)
+
+    def load_paths(self, file_paths, sample_times):
+        # We don't know until we load the paths, which samples are present,
+        # so we need all the sample times.
+        builder = self.tree_sequence_builder
+        progress = self.progress_monitor.get("ms_load_paths", len(file_paths))
+        for file_path in file_paths:
+            path_data = formats.PathData.load(file_path)
+            sample_ids = path_data.sample_id
+            lefts = path_data.left
+            rights = path_data.right
+            parents = path_data.parent
+            sites = path_data.site
+            derived_states = path_data.derived_state
+            # TODO There is some inefficiency here in unpacking the data into the
+            # the ResultBuffer, but for now it lets us make minimal changes
+            for i in range(len(sample_ids)):
+                child_id = builder.add_node(sample_times[sample_ids[i]])
+                self.sample_id_map[sample_ids[i]] = child_id
+                self.results.set_path(
+                    child_id,
+                    lefts[i],
+                    rights[i],
+                    parents[i],
+                )
+                self.results.set_mutations(child_id, sites[i], derived_states[i])
+            progress.update()
+        progress.close()
+
+    def insert_paths(self, sample_indexes):
+        self._insert_paths(sample_indexes)
 
     def finalise(self):
         logger.info("Finalising tree sequence")

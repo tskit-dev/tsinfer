@@ -589,3 +589,67 @@ class TestList(TestCli):
         else:
             with pytest.raises(IsADirectoryError):
                 self.run_command(["list", "/"])
+
+
+class TestSplitMergeSamples(TestCli):
+    """
+    Tests for the match samples options.
+    """
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+    )
+    def test_split_merge(self):
+        output_trees = os.path.join(self.tempdir.name, "output.trees")
+        self.run_command(["generate-ancestors", self.sample_file])
+        self.run_command(["match-ancestors", self.sample_file])
+        self.run_command(
+            [
+                "match-sample-slice",
+                self.sample_file,
+                "--start",
+                "0",
+                "--end",
+                "5",
+            ]
+        )
+        self.run_command(
+            [
+                "match-sample-slice",
+                self.sample_file,
+                "--start",
+                "5",
+                "--end",
+                "10",
+                # "--output-paths-file", #TODO - fix this
+                # "foobar.paths",
+            ]
+        )
+        self.run_command(
+            [
+                "combine-sample-slices",
+                self.sample_file,
+                "-O",
+                output_trees,
+                os.path.join(self.tempdir.name, "input-data.0-5.slice"),
+                os.path.join(self.tempdir.name, "input-data.5-10.slice"),
+            ]
+        )
+
+        inf_ts = tskit.load(output_trees)
+        assert np.array_equal(self.input_ts.genotype_matrix(), inf_ts.genotype_matrix())
+
+        # Out of order slices
+        self.run_command(
+            [
+                "combine-sample-slices",
+                self.sample_file,
+                "-O",
+                output_trees,
+                os.path.join(self.tempdir.name, "input-data.5-10.slice"),
+                os.path.join(self.tempdir.name, "input-data.0-5.slice"),
+            ]
+        )
+
+        inf_ts = tskit.load(output_trees)
+        assert np.array_equal(self.input_ts.genotype_matrix(), inf_ts.genotype_matrix())

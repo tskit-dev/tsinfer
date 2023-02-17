@@ -4469,3 +4469,77 @@ class TestDebugOutput:
             assert "no mismatch possible" in caplog.text
             assert "Summary of recombination probabilities" not in caplog.text
             assert "Summary of mismatch probabilities" not in caplog.text
+
+
+class TestSplitMergeRoundTrip(TestRoundTrip):
+    """
+    Test that we can round-trip data when we match samples in slices then combine.
+    """
+
+    def verify_data_round_trip(
+        self,
+        genotypes,
+        positions,
+        alleles=None,
+        sequence_length=None,
+        site_times=None,
+        individual_times=None,
+        ancestral_alleles=None,
+    ):
+        sample_data = self.create_sample_data(
+            genotypes,
+            positions,
+            alleles,
+            sequence_length,
+            site_times,
+            individual_times,
+            ancestral_alleles,
+        )
+        ancestors = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestors)
+        rho = [1e-9, 1e-3, 0.1]
+        mis = [1e-9, 1e-3, 0.1]
+        engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
+        for rec, mis_, engine in itertools.product(rho, mis, engines):
+            # Set the arrays directly - we need to do this here so that we
+            # gurarantee that there are mutations above samples. We need
+            # those to test the path saving fully.
+            recombination = np.full(max(ancestors_ts.num_sites - 1, 0), rec)
+            mismatch = np.full(ancestors_ts.num_sites, mis_)
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                tsinfer.match_sample_slice(
+                    sample_data,
+                    ancestors_ts,
+                    indexes=np.arange(0, sample_data.num_samples // 2),
+                    output_path=f"{tmpdirname}/1.paths",
+                    recombination=recombination,
+                    mismatch=mismatch,
+                    engine=engine,
+                )
+                tsinfer.match_sample_slice(
+                    sample_data,
+                    ancestors_ts,
+                    indexes=np.arange(
+                        sample_data.num_samples // 2, sample_data.num_samples
+                    ),
+                    output_path=f"{tmpdirname}/2.paths",
+                    recombination=recombination,
+                    mismatch=mismatch,
+                    engine=engine,
+                )
+                ts = tsinfer.combine_sample_slices(
+                    sample_data,
+                    ancestors_ts,
+                    recombination=recombination,
+                    mismatch=mismatch,
+                    engine=engine,
+                    path_array=[f"{tmpdirname}/1.paths", f"{tmpdirname}/2.paths"],
+                )
+            self.assert_lossless(
+                ts,
+                genotypes,
+                positions,
+                alleles,
+                sample_data.sequence_length,
+                ancestral_alleles,
+            )

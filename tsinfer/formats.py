@@ -3241,3 +3241,84 @@ def load(path):
             "for more details on what went wrong"
         )
     return tsinfer_file
+
+
+class PathData(DataContainer):
+
+    FORMAT_NAME = "tsinfer-path-data"
+    FORMAT_VERSION = (1, 1)
+
+    def write_result_buffer(self, result_buffer, sample_id_map):
+        sample_ids = np.fromiter(sample_id_map.keys(), dtype=np.uint32)
+        self.data.create_dataset(
+            "sample_id",
+            data=sample_ids,
+            dtype="u4",
+        )
+        paths = result_buffer.paths
+        for i, (array_name, dtype) in enumerate(
+            [("left", "array:u4"), ("right", "array:u4"), ("parent", "array:i4")]
+        ):
+            # We add extra 0s to the end of the array to ensure that the
+            # dtype is correct. If the array is length 1 or 0, then the inner dtype
+            # is object, which is not what we want.
+            # Note that not all samples are in the path data, so we need to
+            # insert empty paths for those that are not.
+            data = np.array(
+                [
+                    paths.get(sample_id_map[sample_id], ((), (), ()))[i]
+                    for sample_id in sample_ids
+                ]
+                + [0, 0],
+                dtype=object,
+            )
+            self.data.create_dataset(
+                array_name,
+                data=data,
+                dtype=dtype,
+            )
+        mutations = result_buffer.mutations
+        for i, (array_name, dtype) in enumerate(
+            [("site", "array:i4"), ("derived_state", "array:i1")]
+        ):
+            data = np.array(
+                [
+                    mutations.get(sample_id_map[sample_id], ((), ()))[i]
+                    for sample_id in sample_ids
+                ]
+                + [0, 0],
+                dtype=object,
+            )
+            self.data.create_dataset(
+                array_name,
+                data=data,
+                dtype=dtype,
+                chunks=self._chunk_size,
+            )
+
+    @property
+    def sample_id(self):
+        return self.data["sample_id"][:]
+
+    @property
+    def left(self):
+        return self.data["left"][:]
+
+    @property
+    def right(self):
+        return self.data["right"][:]
+
+    @property
+    def parent(self):
+        return self.data["parent"][:]
+
+    @property
+    def site(self):
+        return self.data["site"][:]
+
+    @property
+    def derived_state(self):
+        return self.data["derived_state"][:]
+
+    def summary(self, output=sys.stdout):
+        return f"PathData(num_samples={len(self.sample_id)})"
