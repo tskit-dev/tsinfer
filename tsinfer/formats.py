@@ -21,6 +21,7 @@ Manage tsinfer's various file formats.
 """
 import collections.abc as abc
 import datetime
+import functools
 import itertools
 import json
 import logging
@@ -152,6 +153,13 @@ class BufferedItemWriter:
             for j in range(self.num_buffers):
                 self.buffers[key][j] = np.empty_like(np_array)
                 self.buffers[key][j].resize(*shape)
+                # We need to initialise the buffers for the arrays where only the extent
+                # of the ancestor is written
+                if key == "full_haplotype":
+                    self.buffers[key][j][...] = MISSING_DATA
+                elif key == "full_haplotype_mask":
+                    self.buffers[key][j][...] = True
+
             # Make sure the destination array is zero sized at the start.
             shape[chunked_dimension] = 0
             array.resize(*shape)
@@ -206,6 +214,11 @@ class BufferedItemWriter:
             else:
                 buffered = self.buffers[key][write_buffer][:n]
                 array[start:end] = buffered
+            if key == "full_haplotype":
+                self.buffers[key][write_buffer][...] = MISSING_DATA
+            elif key == "full_haplotype_mask":
+                self.buffers[key][write_buffer][...] = True
+
         logger.debug(f"Buffer {write_buffer} flush done")
 
     def _flush_worker(self, thread_index):
@@ -247,8 +260,17 @@ class BufferedItemWriter:
             self._queue_flush_buffer()
         offset = self.num_buffered_items[self.write_buffer]
         for key, value in kwargs.items():
-            if "full_haplotype" in key:
-                self.buffers[key][self.write_buffer][:, offset, 0] = value
+            # Here we have to special case the haplotype for performance
+            # reasons, as writing the full haplotype is expensive.
+            if key == "haplotype":
+                start = kwargs["start"]
+                end = kwargs["end"]
+                self.buffers["full_haplotype"][self.write_buffer][
+                    start:end, offset, 0
+                ] = value
+                self.buffers["full_haplotype_mask"][self.write_buffer][
+                    start:end, offset, 0
+                ] = False
             else:
                 self.buffers[key][self.write_buffer][offset] = value
         self.num_buffered_items[self.write_buffer] += 1
@@ -263,7 +285,7 @@ class BufferedItemWriter:
         It is an error to call ``add`` after ``flush`` has been called.
         """
         self._queue_flush_buffer()
-        # Stop the the worker threads.
+        # Stop the worker threads.
         for _ in range(self.num_threads):
             self.flush_queue.put(None)
         for j in range(self.num_threads):
@@ -2730,7 +2752,7 @@ class AncestorData(DataContainer):
     def num_ancestors(self):
         return self.ancestors_start.shape[0]
 
-    @property
+    @functools.cached_property
     def num_sites(self):
         """
         The number of inference sites used to generate the ancestors
@@ -3120,17 +3142,12 @@ class AncestorData(DataContainer):
         if self._last_time != 0 and time > self._last_time:
             raise ValueError("older ancestors must be added before younger ones")
         self._last_time = time
-        full_haplotype = np.full((self.num_sites), MISSING_DATA, "i8")
-        full_haplotype_mask = np.full((self.num_sites), True, "i8")
-        full_haplotype[start:end] = haplotype
-        full_haplotype_mask[start:end] = False
         return self.ancestor_writer.add(
             start=start,
             end=end,
             time=time,
             focal_sites=focal_sites,
-            full_haplotype=full_haplotype,
-            full_haplotype_mask=full_haplotype_mask,
+            haplotype=haplotype,
         )
 
     def finalise(self):
