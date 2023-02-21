@@ -5,7 +5,8 @@ Introduction
 ============
 
 The goal of ``tsinfer`` is to infer *succinct tree sequences* from observed
-genetic variation data. A succinct tree sequence (or tree sequence, for short)
+genetic variation data. A succinct tree sequence (or
+:ref:`tree sequence<tutorials:sec_what_is>`, for short)
 is an efficient way of representing the correlated genealogies that
 describe the ancestry of many species. By inferring these tree sequences, we
 make two very important gains:
