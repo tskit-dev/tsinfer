@@ -11,12 +11,16 @@ In development
 
 **Performance improvements**
 
-- Reduce memory usage when running `match_samples` against large cohorts 
-  containing sequences with substantial amounts of error. 
+- Reduce memory usage when running `match_samples` against large cohorts
+  containing sequences with substantial amounts of error.
   ({pr}`761`, {user}`jeromekelleher`)
 
 - `truncate_ancestors` no longer requires loading all the ancestors into RAM.
   ({pr}`811`, {user}`benjeffery`)
+
+- Reduce memory requirements of the `generate_ancestors` function by providing
+  the `genotype_encoding` ({pr}`809`) and `mmap_temp_dir` ({pr}`808`) options
+  ({user}`jeromekelleher`).
 
 ## [0.3.0] - 2022-10-25
 
@@ -29,11 +33,11 @@ In development
 
 - The CLI interface now allows recombination rate (or rate maps) and mismatch ratios
   to be specified ({pr}`731`, {issue}`435` {user}`hyanwong`)
-  
+
 - The calls to match-ancestors and match-samples via the CLI are now logged
   in the provenance entries of the output tree sequence ({pr}`732` and `741`,
   {issue}`730` {user}`hyanwong`)
-  
+
 - The CLI interface allows `--no-post-process` to be specified (for details of post-
   processing, see "Breaking changes" below) ({pr}`727`, {issue}`721` {user}`hyanwong`)
 
@@ -45,7 +49,7 @@ In development
 - `sample_data.subset()` now accepts a sequence_length  ({pr}`681`, {user}`hyanwong`)
 
 - `verify` no longer raises error when comparing a genotype to missingness.
-  ({pr}`716`, {issue}`625`, {user}`benjeffery`) 
+  ({pr}`716`, {issue}`625`, {user}`benjeffery`)
 
 **Breaking changes**:
 
@@ -54,8 +58,8 @@ In development
   tsinfer to aid the matching process) then splits the ultimate ancestor into separate
   pieces. If splitting is not required, the `post_process` step can also be called as a
   separate function with the parameter `split_ultimate=False` ({pr}`687`, {pr}`750`,
-  {issue}`673`, {user}`hyanwong`) 
-  
+  {issue}`673`, {user}`hyanwong`)
+
 - Post-processing by default erases tree topology that exists before the first site
   and one unit after the last site, to avoid extrapolating into regions with no data.
   This can be disabled by calling `post_process` step as a separate function with the
@@ -94,7 +98,7 @@ In development
 - Oldest nodes in a standard inferred tree sequence are no longer set to frequencies ~2
   and ~3 (i.e. 2 or 3 times as old as all the other nodes), but are spaced above the
   others by the mean time between unique ancestor ages ({pr}`485`, {user}`hyanwong`)
-  
+
 - The `tsinfer.SampleData.from_tree_sequence()` function now defaults to setting
   `use_sites_time` and `use_individuals_time` to `False` rather than `True`
   ({pr}`599`, {user}`hyanwong`)

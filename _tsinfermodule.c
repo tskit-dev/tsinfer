@@ -92,13 +92,14 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_samples", "max_sites", "genotype_encoding", NULL};
+    static char *kwlist[] = {"num_samples", "max_sites", "genotype_encoding", "mmap_fd", NULL};
     int num_samples, max_sites, genotype_encoding;
     int flags = 0;
+    int mmap_fd = -1;
 
     self->builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii|i", kwlist,
-                &num_samples, &max_sites, &genotype_encoding)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii|ii", kwlist,
+                &num_samples, &max_sites, &genotype_encoding, &mmap_fd)) {
         goto out;
     }
     self->builder = PyMem_Malloc(sizeof(ancestor_builder_t));
@@ -108,7 +109,7 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
     }
     flags = genotype_encoding;
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_builder_alloc(self->builder, num_samples, max_sites, flags);
+    err = ancestor_builder_alloc(self->builder, num_samples, max_sites, mmap_fd, flags);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);

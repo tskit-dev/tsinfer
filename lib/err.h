@@ -26,6 +26,7 @@
 #define TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA             -22
 #define TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION              -23
 #define TSI_ERR_ONE_BIT_NON_BINARY                                  -24
+#define TSI_ERR_IO                                                  -25
 // clang-format on
 
 #ifdef __GNUC__

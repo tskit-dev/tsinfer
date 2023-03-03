@@ -116,6 +116,12 @@ typedef struct {
     size_t encoded_genotypes_size;
     size_t decoded_genotypes_size;
     uint8_t *genotype_encode_buffer;
+    /* Optional file-descriptor for the file to be used as the mmap memory
+     * store for encoded genotypes */
+    int mmap_fd;
+    void *mmap_buffer;
+    size_t mmap_offset;
+    size_t mmap_size;
 } ancestor_builder_t;
 
 typedef struct _mutation_list_node_t {
@@ -203,8 +209,8 @@ typedef struct {
     } output;
 } ancestor_matcher_t;
 
-int ancestor_builder_alloc(
-    ancestor_builder_t *self, size_t num_samples, size_t num_sites, int flags);
+int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
+    size_t num_sites, int mmap_fd, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_add_site(

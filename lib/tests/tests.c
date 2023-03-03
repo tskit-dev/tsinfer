@@ -331,7 +331,8 @@ initialise_builder(tree_sequence_builder_t *tsb, double oldest_time)
 
 static void
 run_random_data(size_t num_samples, size_t num_sites, int seed,
-    double recombination_rate, double mismatch_rate, int ancestor_builder_options)
+    double recombination_rate, double mismatch_rate, int ancestor_builder_mmap_fd,
+    int ancestor_builder_options)
 {
     tsk_table_collection_t tables;
     ancestor_builder_t ancestor_builder;
@@ -359,8 +360,8 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     }
 
     CU_ASSERT_FATAL(num_samples >= 2);
-    ret = ancestor_builder_alloc(
-        &ancestor_builder, num_samples, num_sites, ancestor_builder_options);
+    ret = ancestor_builder_alloc(&ancestor_builder, num_samples, num_sites,
+        ancestor_builder_mmap_fd, ancestor_builder_options);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -451,23 +452,37 @@ test_ancestor_builder_errors(void)
     allele_t genotypes_zeros[4] = { 0, 0, 0, 0 };
     tsk_id_t start, end;
     allele_t haplotype[4];
+    FILE *mmap_file;
 
-    ret = ancestor_builder_alloc(&ancestor_builder, 0, 1, 0);
+    /* Bad file descriptor for mmap FD */
+    ret = ancestor_builder_alloc(&ancestor_builder, 2, 1, -2, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_IO);
+    ancestor_builder_free(&ancestor_builder);
+
+    /* File is opened in the wrong mode */
+    mmap_file = fopen(_tmp_file_name, "w");
+    CU_ASSERT_FATAL(mmap_file != NULL);
+    ret = ancestor_builder_alloc(&ancestor_builder, 2, 1, fileno(mmap_file), 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_IO);
+    ancestor_builder_free(&ancestor_builder);
+    fclose(mmap_file);
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 0, 1, -1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_SAMPLES);
     ancestor_builder_free(&ancestor_builder);
 
-    ret = ancestor_builder_alloc(&ancestor_builder, 1, 1, 0);
+    ret = ancestor_builder_alloc(&ancestor_builder, 1, 1, -1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_NUM_SAMPLES);
     ancestor_builder_free(&ancestor_builder);
 
-    ret = ancestor_builder_alloc(&ancestor_builder, 2, 0, 0);
+    ret = ancestor_builder_alloc(&ancestor_builder, 2, 0, -1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     CU_ASSERT_EQUAL_FATAL(ancestor_builder.num_sites, 0);
     ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_ones);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_TOO_MANY_SITES);
     ancestor_builder_free(&ancestor_builder);
 
-    ret = ancestor_builder_alloc(&ancestor_builder, 4, 2, 0);
+    ret = ancestor_builder_alloc(&ancestor_builder, 4, 2, -1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_zeros);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -480,7 +495,6 @@ test_ancestor_builder_errors(void)
         ancestor_builder.descriptors[0].num_focal_sites,
         ancestor_builder.descriptors[0].focal_sites, &start, &end, haplotype);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_FOCAL_SITE);
-
     ancestor_builder_free(&ancestor_builder);
 }
 
@@ -493,7 +507,7 @@ test_ancestor_builder_one_site(void)
     allele_t ancestor[1];
     tsk_id_t start, end, focal_sites[1];
 
-    ret = ancestor_builder_alloc(&ancestor_builder, 4, 1, 0);
+    ret = ancestor_builder_alloc(&ancestor_builder, 4, 1, -1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -808,8 +822,8 @@ test_random_data_n5_m3(void)
 
     for (seed = 1; seed < 100; seed++) {
         /* printf("seed = %d\n", seed); */
-        run_random_data(5, 3, seed, 1e-3, 1e-20, 0);
-        run_random_data(5, 3, seed, 1e-20, 1e-3, 0);
+        run_random_data(5, 3, seed, 1e-3, 1e-20, -1, 0);
+        run_random_data(5, 3, seed, 1e-20, 1e-3, -1, 0);
     }
 }
 
@@ -822,8 +836,8 @@ test_random_data_n5_m20(void)
 
     for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
         for (seed = 1; seed < 10; seed++) {
-            run_random_data(5, 20, seed, 1e-3, 1e-20, options[j]);
-            run_random_data(5, 20, seed, 1e-20, 1e-3, options[j]);
+            run_random_data(5, 20, seed, 1e-3, 1e-20, -1, options[j]);
+            run_random_data(5, 20, seed, 1e-20, 1e-3, -1, options[j]);
         }
     }
 }
@@ -835,8 +849,8 @@ test_random_data_n10_m10(void)
     int options[] = { 0, TSI_GENOTYPE_ENCODING_ONE_BIT };
 
     for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
-        run_random_data(10, 10, 43, 1e-3, 1e-20, options[j]);
-        run_random_data(10, 10, 43, 1e-20, 1e-3, options[j]);
+        run_random_data(10, 10, 43, 1e-3, 1e-20, -1, options[j]);
+        run_random_data(10, 10, 43, 1e-20, 1e-3, -1, options[j]);
     }
 }
 
@@ -847,8 +861,8 @@ test_random_data_n10_m100(void)
     int options[] = { 0, TSI_GENOTYPE_ENCODING_ONE_BIT };
 
     for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
-        run_random_data(10, 100, 43, 1e-3, 1e-20, options[j]);
-        run_random_data(10, 100, 43, 1e-20, 1e-3, options[j]);
+        run_random_data(10, 100, 43, 1e-3, 1e-20, -1, options[j]);
+        run_random_data(10, 100, 43, 1e-20, 1e-3, -1, options[j]);
     }
 }
 
@@ -859,8 +873,8 @@ test_random_data_n100_m10(void)
     int options[] = { 0, TSI_GENOTYPE_ENCODING_ONE_BIT };
 
     for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
-        run_random_data(10, 10, 1243, 1e-3, 1e-20, options[j]);
-        run_random_data(10, 10, 1243, 1e-20, 1e-3, options[j]);
+        run_random_data(10, 10, 1243, 1e-3, 1e-20, -1, options[j]);
+        run_random_data(10, 10, 1243, 1e-20, 1e-3, -1, options[j]);
     }
 }
 
@@ -871,9 +885,24 @@ test_random_data_n100_m100(void)
     int options[] = { 0, TSI_GENOTYPE_ENCODING_ONE_BIT };
 
     for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
-        run_random_data(100, 100, 42, 1e-3, 1e-20, options[j]);
-        run_random_data(100, 100, 42, 1e-20, 1e-3, options[j]);
+        run_random_data(100, 100, 42, 1e-3, 1e-20, -1, options[j]);
+        run_random_data(100, 100, 42, 1e-20, 1e-3, -1, options[j]);
     }
+}
+
+static void
+test_random_data_ab_mmap(void)
+{
+    size_t j;
+    int options[] = { 0, TSI_GENOTYPE_ENCODING_ONE_BIT };
+    FILE *mmap_file = fopen(_tmp_file_name, "w+");
+
+    CU_ASSERT_FATAL(mmap_file != NULL);
+
+    for (j = 0; j < sizeof(options) / sizeof(*options); j++) {
+        run_random_data(100, 100, 42, 1e-3, 1e-20, fileno(mmap_file), options[j]);
+    }
+    fclose(mmap_file);
 }
 
 static void
@@ -1040,6 +1069,7 @@ main(int argc, char **argv)
         { "test_random_data_n10_m100", test_random_data_n10_m100 },
         { "test_random_data_n100_m10", test_random_data_n100_m10 },
         { "test_random_data_n100_m100", test_random_data_n100_m100 },
+        { "test_random_data_ab_mmap", test_random_data_ab_mmap },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },

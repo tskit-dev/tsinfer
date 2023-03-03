@@ -16,6 +16,15 @@
 ** You should have received a copy of the GNU General Public License
 ** along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 */
+/* It's not worth trying to get mmap'd genotypes working on windows,
+ * and is just a silent no-op if it's tried.
+ */
+#if defined(_WIN32)
+#else
+/* Needed for ftruncate */
+#define _XOPEN_SOURCE 700
+#define MMAP_GENOTYPES 1
+#endif
 
 #include "tsinfer.h"
 #include "err.h"
@@ -24,6 +33,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef MMAP_GENOTYPES
+#include <sys/mman.h>
+#include <unistd.h>
+#include <sys/types.h>
+#endif
 
 #include "avl.h"
 
@@ -135,6 +155,7 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
 
     fprintf(out, "Ancestor builder\n");
     fprintf(out, "flags = %d\n", (int) self->flags);
+    fprintf(out, "mmap_fd = %d\n", self->mmap_fd);
     fprintf(out, "num_samples = %d\n", (int) self->num_samples);
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
@@ -181,23 +202,62 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     return 0;
 }
 
+#ifdef MMAP_GENOTYPES
+
+static int
+ancestor_builder_make_genotype_mmap(ancestor_builder_t *self)
+{
+
+    int ret = 0;
+
+    self->mmap_size = self->max_sites * self->encoded_genotypes_size;
+    if (ftruncate(self->mmap_fd, (off_t) self->mmap_size) != 0) {
+        ret = TSI_ERR_IO;
+        goto out;
+    }
+    self->mmap_buffer = mmap(
+        NULL, self->mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, self->mmap_fd, 0);
+    if (self->mmap_buffer == MAP_FAILED) {
+        self->mmap_buffer = NULL;
+        ret = TSI_ERR_IO;
+        goto out;
+    }
+    self->mmap_offset = 0;
+out:
+    return ret;
+}
+
+static int
+ancestor_builder_free_genotype_mmap(ancestor_builder_t *self)
+{
+    if (self->mmap_buffer != NULL) {
+        /* There's nothing we can do about it here, so don't check errors. */
+        munmap(self->mmap_buffer, self->mmap_size);
+    }
+    /* Try to truncate to zero so we don't flush out all the data */
+    ftruncate(self->mmap_fd, 0);
+    return 0;
+}
+#endif
+
 int
-ancestor_builder_alloc(
-    ancestor_builder_t *self, size_t num_samples, size_t max_sites, int flags)
+ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t max_sites,
+    int mmap_fd, int flags)
 {
     int ret = 0;
     unsigned long max_size = 1024 * 1024;
 
     memset(self, 0, sizeof(ancestor_builder_t));
+    self->num_samples = num_samples;
+    self->max_sites = max_sites;
+    self->mmap_fd = mmap_fd;
+    self->num_sites = 0;
+    self->flags = flags;
+
     if (num_samples <= 1) {
         ret = TSI_ERR_BAD_NUM_SAMPLES;
         goto out;
     }
-
-    self->num_samples = num_samples;
-    self->max_sites = max_sites;
-    self->num_sites = 0;
-    self->flags = flags;
     if (self->flags & TSI_GENOTYPE_ENCODING_ONE_BIT) {
         self->encoded_genotypes_size = (num_samples / 8) + ((num_samples % 8) != 0);
         self->decoded_genotypes_size = self->encoded_genotypes_size * 8;
@@ -228,6 +288,14 @@ ancestor_builder_alloc(
     if (ret != 0) {
         goto out;
     }
+#if MMAP_GENOTYPES
+    if (self->mmap_fd != -1) {
+        ret = ancestor_builder_make_genotype_mmap(self);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+#endif
     avl_init_tree(&self->time_map, cmp_time_map, NULL);
 out:
     return ret;
@@ -236,13 +304,19 @@ out:
 size_t
 ancestor_builder_get_memsize(const ancestor_builder_t *self)
 {
-    /* Ignore the other allocs as insignificant */
+    /* Ignore the other allocs as insignificant, and don't report the
+     * size of the mmap'd region */
     return self->main_allocator.total_size + self->indexing_allocator.total_size;
 }
 
 int
 ancestor_builder_free(ancestor_builder_t *self)
 {
+#if MMAP_GENOTYPES
+    if (self->mmap_fd != -1) {
+        ancestor_builder_free_genotype_mmap(self);
+    }
+#endif
     tsi_safe_free(self->sites);
     tsi_safe_free(self->descriptors);
     tsk_safe_free(self->genotype_encode_buffer);
@@ -558,7 +632,18 @@ ancestor_builder_encode_genotypes(
 static uint8_t *
 ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
 {
-    return tsk_blkalloc_get(&self->main_allocator, self->encoded_genotypes_size);
+    uint8_t *ret = NULL;
+    void *p;
+
+    if (self->mmap_buffer == NULL) {
+        ret = tsk_blkalloc_get(&self->main_allocator, self->encoded_genotypes_size);
+    } else {
+        p = (char *) self->mmap_buffer + self->mmap_offset;
+        self->mmap_offset += self->encoded_genotypes_size;
+        assert(self->mmap_offset <= self->mmap_size);
+        ret = (uint8_t *) p;
+    }
+    return ret;
 }
 
 int WARN_UNUSED

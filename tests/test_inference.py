@@ -27,6 +27,7 @@ import os.path
 import random
 import re
 import string
+import sys
 import tempfile
 import unittest
 import unittest.mock as mock
@@ -41,6 +42,8 @@ from tskit import MetadataSchema
 import _tsinfer
 import tsinfer
 import tsinfer.eval_util as eval_util
+
+IS_WINDOWS = sys.platform == "win32"
 
 
 def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
@@ -1720,6 +1723,51 @@ class TestBuildAncestors:
             sample_data, genotype_encoding=genotype_encoding, num_threads=num_threads
         )
         a1.assert_data_equal(a2)
+
+    @pytest.mark.parametrize("genotype_encoding", tsinfer.GenotypeEncoding)
+    @pytest.mark.parametrize("num_threads", [0, 1, 10])
+    def test_mmap_identical_results(self, genotype_encoding, num_threads):
+        n = 27
+        m = 182
+        G, positions = get_random_data_example(n, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        # Do we get precisely the same result as the C engine with 8 bit encoding
+        # and non-mmaped storage?
+        a1 = tsinfer.generate_ancestors(sample_data)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a2 = tsinfer.generate_ancestors(
+                sample_data,
+                genotype_encoding=genotype_encoding,
+                num_threads=num_threads,
+                mmap_temp_dir=tmpdir,
+            )
+            # Temporary file should be deleted
+            assert len(os.listdir(tmpdir)) == 0
+        a1.assert_data_equal(a2)
+
+    def test_mmap_missing_dir(self):
+        m = 10
+        G, positions = get_random_data_example(2, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+        with pytest.raises(FileNotFoundError):
+            tsinfer.generate_ancestors(sample_data, mmap_temp_dir="/does_not_exist")
+
+    @pytest.mark.skipif(IS_WINDOWS, reason="Windows is annoying")
+    def test_mmap_unwriteable_dir(self):
+        m = 10
+        G, positions = get_random_data_example(2, m)
+        with tsinfer.SampleData(sequence_length=m) as sample_data:
+            for genotypes, position in zip(G, positions):
+                sample_data.add_site(position, genotypes)
+
+        with pytest.raises(PermissionError):
+            # Assuming /bin is unwriteable here
+            tsinfer.generate_ancestors(sample_data, mmap_temp_dir="/bin")
 
     def test_one_bit_encoding_missing_data(self):
         m = 10

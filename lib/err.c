@@ -18,6 +18,7 @@
 */
 
 #include "err.h"
+#include <tskit.h>
 
 const char *
 tsi_strerror(int err)
@@ -104,6 +105,9 @@ tsi_strerror(int err)
             break;
         case TSI_ERR_ONE_BIT_NON_BINARY:
             ret = "One-bit genotype encoding only supports binary 0/1 data";
+            break;
+        case TSI_ERR_IO:
+            ret = tsk_strerror(TSK_ERR_IO);
             break;
     }
     return ret;
