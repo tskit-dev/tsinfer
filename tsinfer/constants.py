@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2023 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -19,6 +19,8 @@
 """
 Collection of constants used in tsinfer. We also make use of constants defined in tskit.
 """
+import enum
+
 C_ENGINE = "C"
 PY_ENGINE = "P"
 
@@ -41,3 +43,20 @@ NODE_IS_HISTORICAL_SAMPLE = 1 << 20
 INFERENCE_NONE = "none"
 INFERENCE_FULL = "full"
 INFERENCE_PARSIMONY = "parsimony"
+
+
+class GenotypeEncoding(enum.IntEnum):
+    """
+    The encoding scheme used to store genotypes.
+    """
+
+    EIGHT_BIT = 0
+    """
+    The default approach of using one-byte per genotype. Supports up to 127 alleles
+    and missing data.
+    """
+
+    ONE_BIT = 1
+    """
+    Encode binary genotype data using a single bit.
+    """

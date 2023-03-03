@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018 University of Oxford
+** Copyright (C) 2018-2023 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -27,6 +27,56 @@
 
 #include "avl.h"
 
+/* Note: using an unoptimised version of bit packing here because we're
+ * only doing it once per site, and so it shouldn't matter much how fast
+ * the implementation is. */
+int
+packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest)
+{
+    int ret = 0;
+    size_t j, k, i;
+    int x = 0;
+
+    k = 0;
+    i = 0;
+    for (j = 0; j < len; j++) {
+        if (source[j] < 0 || source[j] > 1) {
+            ret = TSI_ERR_ONE_BIT_NON_BINARY;
+            goto out;
+        }
+        if (j % 8 == 0 && j > 0) {
+            dest[k] = (uint8_t) x;
+            k++;
+            i = 0;
+            x = 0;
+        }
+        x += source[j] << i;
+        i++;
+    }
+    dest[k] = (uint8_t) x;
+out:
+    return ret;
+}
+
+/* NOTE: this is a simple initial version, it will probably be worth having
+ * more highly tuned versions of this, using e.g., AVX registeres */
+void
+unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest)
+{
+    size_t j, k, i;
+    int v;
+
+    k = 0;
+    for (j = 0; j < len; j++) {
+        /* I'm assuming any compiler will unroll this? */
+        for (i = 0; i < 8; i++) {
+            v = source[j] & (1 << i);
+            dest[k + i] = (allele_t) v != 0;
+        }
+        k += 8;
+    }
+}
+
 static int
 cmp_time_map(const void *a, const void *b)
 {
@@ -40,12 +90,13 @@ cmp_pattern_map(const void *a, const void *b)
 {
     const pattern_map_t *ia = (pattern_map_t const *) a;
     const pattern_map_t *ib = (pattern_map_t const *) b;
-    int ret = memcmp(ia->genotypes, ib->genotypes, ia->num_samples * sizeof(allele_t));
+    int ret = memcmp(
+        ia->encoded_genotypes, ib->encoded_genotypes, ia->encoded_genotypes_size);
     return ret;
 }
 
 static void
-ancestor_builder_check_state(ancestor_builder_t *self)
+ancestor_builder_check_state(const ancestor_builder_t *self)
 {
     size_t count;
     avl_node_t *a, *b;
@@ -53,14 +104,19 @@ ancestor_builder_check_state(ancestor_builder_t *self)
     time_map_t *time_map;
     site_list_t *s;
 
+    assert(self->decoded_genotypes_size >= self->num_samples);
+
     for (a = self->time_map.head; a != NULL; a = a->next) {
         time_map = (time_map_t *) a->item;
         for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
+            assert(pattern_map->encoded_genotypes_size == self->encoded_genotypes_size);
             count = 0;
             for (s = pattern_map->sites; s != NULL; s = s->next) {
+                /* printf("HIT\n"); */
                 assert(self->sites[s->site].time == time_map->time);
-                assert(self->sites[s->site].genotypes == pattern_map->genotypes);
+                assert(self->sites[s->site].encoded_genotypes
+                       == pattern_map->encoded_genotypes);
                 count++;
             }
             assert(pattern_map->num_sites == count);
@@ -78,14 +134,17 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
     site_list_t *s;
 
     fprintf(out, "Ancestor builder\n");
+    fprintf(out, "flags = %d\n", (int) self->flags);
     fprintf(out, "num_samples = %d\n", (int) self->num_samples);
     fprintf(out, "num_sites = %d\n", (int) self->num_sites);
     fprintf(out, "num_ancestors = %d\n", (int) self->num_ancestors);
+    fprintf(out, "mem_size = %d\n", (int) ancestor_builder_get_memsize(self));
+    fprintf(out, "encoded_genotypes_size = %d\n", (int) self->encoded_genotypes_size);
+    fprintf(out, "decoded_genotypes_size = %d\n", (int) self->decoded_genotypes_size);
 
     fprintf(out, "Sites:\n");
     for (j = 0; j < self->num_sites; j++) {
-        fprintf(out, "%d\t%d\t%p\n", (int) j, (int) self->sites[j].time,
-            (void *) self->sites[j].genotypes);
+        fprintf(out, "%d\t%d\n", (int) j, (int) self->sites[j].time);
     }
     fprintf(out, "Time map:\n");
 
@@ -95,13 +154,14 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
             avl_count(&time_map->pattern_map));
         for (b = time_map->pattern_map.head; b != NULL; b = b->next) {
             pattern_map = (pattern_map_t *) b->item;
-            fprintf(out, "\t");
-            for (k = 0; k < self->num_samples; k++) {
-                fprintf(out, "%d", pattern_map->genotypes[k]);
+            fprintf(out, "\t%p\t[", (void *) pattern_map->encoded_genotypes);
+            for (k = 0; k < self->encoded_genotypes_size; k++) {
+                fprintf(out, "%d,", pattern_map->encoded_genotypes[k]);
             }
-            fprintf(out, "\t");
+            fprintf(out, "]\t");
             for (s = pattern_map->sites; s != NULL; s = s->next) {
-                fprintf(out, "%d ", s->site);
+                fprintf(out, "%d (%p)", s->site,
+                    (void *) self->sites[s->site].encoded_genotypes);
             }
             fprintf(out, "\n");
         }
@@ -115,7 +175,8 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
-    tsk_blkalloc_print_state(&self->allocator, out);
+    tsk_blkalloc_print_state(&self->main_allocator, out);
+    tsk_blkalloc_print_state(&self->indexing_allocator, out);
     ancestor_builder_check_state(self);
     return 0;
 }
@@ -137,19 +198,33 @@ ancestor_builder_alloc(
     self->max_sites = max_sites;
     self->num_sites = 0;
     self->flags = flags;
+    if (self->flags & TSI_GENOTYPE_ENCODING_ONE_BIT) {
+        self->encoded_genotypes_size = (num_samples / 8) + ((num_samples % 8) != 0);
+        self->decoded_genotypes_size = self->encoded_genotypes_size * 8;
+    } else {
+        self->encoded_genotypes_size = num_samples * sizeof(allele_t);
+        self->decoded_genotypes_size = self->encoded_genotypes_size;
+    }
     self->sites = calloc(max_sites, sizeof(site_t));
     self->descriptors = calloc(max_sites, sizeof(ancestor_descriptor_t));
-    if (self->sites == NULL || self->descriptors == NULL) {
+    self->genotype_encode_buffer = calloc(self->encoded_genotypes_size, 1);
+    if (self->sites == NULL || self->descriptors == NULL
+        || self->genotype_encode_buffer == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
+
     /* Pre-calculate the maximum sizes asked for in other methods when calling
      * tsk_blkalloc_get(&self->allocator, ...)  */
-    max_size = TSK_MAX(self->num_samples * sizeof(allele_t), max_size);
+    max_size = TSK_MAX(128 * self->num_samples * sizeof(allele_t), max_size);
     /* NB: using self->max_sites below is probably overkill: the real number should be
      * the maximum number of focal sites in a single ancestor, usually << max_sites */
     max_size = TSK_MAX(self->max_sites * sizeof(tsk_id_t), max_size);
-    ret = tsk_blkalloc_init(&self->allocator, max_size);
+    ret = tsk_blkalloc_init(&self->main_allocator, max_size);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = tsk_blkalloc_init(&self->indexing_allocator, max_size);
     if (ret != 0) {
         goto out;
     }
@@ -158,12 +233,21 @@ out:
     return ret;
 }
 
+size_t
+ancestor_builder_get_memsize(const ancestor_builder_t *self)
+{
+    /* Ignore the other allocs as insignificant */
+    return self->main_allocator.total_size + self->indexing_allocator.total_size;
+}
+
 int
 ancestor_builder_free(ancestor_builder_t *self)
 {
     tsi_safe_free(self->sites);
     tsi_safe_free(self->descriptors);
-    tsk_blkalloc_free(&self->allocator);
+    tsk_safe_free(self->genotype_encode_buffer);
+    tsk_blkalloc_free(&self->main_allocator);
+    tsk_blkalloc_free(&self->indexing_allocator);
     return 0;
 }
 
@@ -177,12 +261,13 @@ ancestor_builder_get_time_map(ancestor_builder_t *self, double time)
     search.time = time;
     avl_node = avl_search(&self->time_map, &search);
     if (avl_node == NULL) {
-        avl_node = tsk_blkalloc_get(&self->allocator, sizeof(*avl_node));
-        time_map = tsk_blkalloc_get(&self->allocator, sizeof(*time_map));
+        avl_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(*avl_node));
+        time_map = tsk_blkalloc_get(&self->indexing_allocator, sizeof(*time_map));
         if (avl_node == NULL || time_map == NULL) {
             goto out;
         }
         time_map->time = time;
+
         avl_init_tree(&time_map->pattern_map, cmp_pattern_map, NULL);
         avl_init_node(avl_node, time_map);
         avl_node = avl_insert_node(&self->time_map, avl_node);
@@ -195,12 +280,51 @@ out:
     return ret;
 }
 
+static void
+ancestor_builder_get_site_genotypes_subset(const ancestor_builder_t *self, tsk_id_t site,
+    const tsk_id_t *samples, size_t num_samples, allele_t *restrict dest)
+{
+    size_t j;
+    const uint8_t *restrict encoded = self->sites[site].encoded_genotypes;
+    tsk_id_t u;
+    uint8_t byte;
+    int v, bit_index;
+    allele_t *g = dest;
+
+    if (self->flags & TSI_GENOTYPE_ENCODING_ONE_BIT) {
+        for (j = 0; j < num_samples; j++) {
+            u = samples[j];
+            byte = encoded[u / 8];
+            bit_index = u % 8;
+            v = byte & (1 << bit_index);
+            g[j] = (allele_t) v != 0;
+        }
+    } else {
+        for (j = 0; j < num_samples; j++) {
+            g[j] = (allele_t) encoded[samples[j]];
+        }
+    }
+}
+
+static void
+ancestor_builder_get_site_genotypes(
+    const ancestor_builder_t *self, tsk_id_t site, allele_t *restrict dest)
+{
+    uint8_t *restrict encoded = self->sites[site].encoded_genotypes;
+
+    if (self->flags & TSI_GENOTYPE_ENCODING_ONE_BIT) {
+        unpackbits(encoded, self->encoded_genotypes_size, dest);
+    } else {
+        memcpy(dest, self->sites[site].encoded_genotypes, self->num_samples);
+    }
+}
+
 static inline void
-ancestor_builder_get_consistent_samples(
-    ancestor_builder_t *self, tsk_id_t site, tsk_id_t *samples, size_t *num_samples)
+ancestor_builder_get_consistent_samples(const ancestor_builder_t *self, tsk_id_t site,
+    tsk_id_t *samples, size_t *num_samples, allele_t *restrict genotypes)
 {
     tsk_id_t j, k;
-    allele_t *restrict genotypes = self->sites[site].genotypes;
+    ancestor_builder_get_site_genotypes(self, site, genotypes);
 
     k = 0;
     for (j = 0; j < (tsk_id_t) self->num_samples; j++) {
@@ -213,9 +337,9 @@ ancestor_builder_get_consistent_samples(
 }
 
 static int
-ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int direction,
+ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int direction,
     tsk_id_t focal_site, allele_t *ancestor, tsk_id_t *restrict sample_set,
-    bool *restrict disagree, tsk_id_t *last_site_ret)
+    bool *restrict disagree, tsk_id_t *last_site_ret, allele_t *restrict genotypes)
 {
     int ret = 0;
     tsk_id_t last_site = focal_site;
@@ -225,11 +349,10 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
     double focal_site_time = self->sites[focal_site].time;
     const site_t *restrict sites = self->sites;
     const size_t num_sites = self->num_sites;
-    const allele_t *restrict genotypes;
     allele_t consensus;
 
     ancestor_builder_get_consistent_samples(
-        self, focal_site, sample_set, &sample_set_size);
+        self, focal_site, sample_set, &sample_set_size, genotypes);
     /* This can't happen because we've already tested for it in
      * ancestor_builder_compute_between_focal_sites */
     assert(sample_set_size > 0);
@@ -246,15 +369,17 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
         if (sites[l].time > focal_site_time) {
 
             /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
-            /* /1* for (j = 0; j < sample_set_size; j++) { *1/ */
-            /* /1*     printf("%d, ", sample_set[j]); *1/ */
-            /* /1* } *1/ */
+            /* for (j = 0; j < sample_set_size; j++) { */
+            /*     printf("%d, ", sample_set[j]); */
+            /* } */
+            /* printf("\n"); */
 
-            genotypes = self->sites[l].genotypes;
+            ancestor_builder_get_site_genotypes_subset(
+                self, (tsk_id_t) l, sample_set, sample_set_size, genotypes);
             ones = 0;
             zeros = 0;
             for (j = 0; j < sample_set_size; j++) {
-                switch (genotypes[sample_set[j]]) {
+                switch (genotypes[j]) {
                     case 0:
                         zeros++;
                         break;
@@ -275,8 +400,8 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                 /* fflush(stdout); */
                 for (j = 0; j < sample_set_size; j++) {
                     u = sample_set[j];
-                    if (disagree[u] && (genotypes[u] != consensus)
-                        && (genotypes[u] != TSK_MISSING_DATA)) {
+                    if (disagree[u] && (genotypes[j] != consensus)
+                        && (genotypes[j] != TSK_MISSING_DATA)) {
                         /* This sample has disagreed with consensus twice in a row,
                          * so remove it */
                         /* printf("\t\tremoving %d\n", sample_set[j]); */
@@ -284,6 +409,15 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     }
                 }
                 ancestor[l] = consensus;
+                /* For the remaining samples, set the disagree flags based
+                 * on whether they agree with the consensus for this site. */
+                for (j = 0; j < sample_set_size; j++) {
+                    u = sample_set[j];
+                    if (u != -1) {
+                        disagree[u] = ((genotypes[j] != consensus)
+                                       && (genotypes[j] != TSK_MISSING_DATA));
+                    }
+                }
                 /* Repack the sample set */
                 tmp_size = 0;
                 for (j = 0; j < sample_set_size; j++) {
@@ -297,13 +431,6 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
                     /* printf("BREAK\n"); */
                     break;
                 }
-                /* For the remaining sample set, set the disagree flags based
-                 * on whether they agree with the consensus for this site. */
-                for (j = 0; j < sample_set_size; j++) {
-                    u = sample_set[j];
-                    disagree[u] = ((genotypes[u] != consensus)
-                                   && (genotypes[u] != TSK_MISSING_DATA));
-                }
             }
         }
     }
@@ -312,20 +439,19 @@ ancestor_builder_compute_ancestral_states(ancestor_builder_t *self, int directio
 }
 
 static int
-ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
-    size_t num_focal_sites, tsk_id_t *focal_sites, allele_t *ancestor,
-    tsk_id_t *sample_set)
+ancestor_builder_compute_between_focal_sites(const ancestor_builder_t *self,
+    size_t num_focal_sites, const tsk_id_t *focal_sites, allele_t *ancestor,
+    tsk_id_t *sample_set, allele_t *restrict genotypes)
 {
     int ret = 0;
     tsk_id_t l;
     size_t j, k, ones, zeros, sample_set_size;
     double focal_site_time;
     const site_t *restrict sites = self->sites;
-    const allele_t *restrict genotypes;
 
     assert(num_focal_sites > 0);
     ancestor_builder_get_consistent_samples(
-        self, focal_sites[0], sample_set, &sample_set_size);
+        self, focal_sites[0], sample_set, &sample_set_size, genotypes);
     if (sample_set_size == 0) {
         ret = TSI_ERR_BAD_FOCAL_SITE;
         goto out;
@@ -342,11 +468,13 @@ ancestor_builder_compute_between_focal_sites(ancestor_builder_t *self,
                 /* for (k = 0; k < sample_set_size; k++) { */
                 /*     printf("%d, ", sample_set[k]); */
                 /* } */
-                genotypes = self->sites[l].genotypes;
+
+                ancestor_builder_get_site_genotypes_subset(
+                    self, (tsk_id_t) l, sample_set, sample_set_size, genotypes);
                 ones = 0;
                 zeros = 0;
                 for (k = 0; k < sample_set_size; k++) {
-                    switch (genotypes[sample_set[k]]) {
+                    switch (genotypes[k]) {
                         case 0:
                             zeros++;
                             break;
@@ -369,29 +497,31 @@ out:
 
 /* Build the ancestors for sites in the specified focal sites */
 int
-ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
-    tsk_id_t *focal_sites, tsk_id_t *ret_start, tsk_id_t *ret_end, allele_t *ancestor)
+ancestor_builder_make_ancestor(const ancestor_builder_t *self, size_t num_focal_sites,
+    const tsk_id_t *focal_sites, tsk_id_t *ret_start, tsk_id_t *ret_end,
+    allele_t *ancestor)
 {
     int ret = 0;
     tsk_id_t focal_site, last_site;
     tsk_id_t *sample_set = malloc(self->num_samples * sizeof(tsk_id_t));
     bool *restrict disagree = calloc(self->num_samples, sizeof(*disagree));
+    allele_t *restrict genotypes = malloc(self->decoded_genotypes_size);
 
-    if (sample_set == NULL || disagree == NULL) {
+    if (sample_set == NULL || disagree == NULL || genotypes == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     memset(ancestor, 0xff, self->num_sites * sizeof(*ancestor));
 
     ret = ancestor_builder_compute_between_focal_sites(
-        self, num_focal_sites, focal_sites, ancestor, sample_set);
+        self, num_focal_sites, focal_sites, ancestor, sample_set, genotypes);
     if (ret != 0) {
         goto out;
     }
 
     focal_site = focal_sites[num_focal_sites - 1];
     ret = ancestor_builder_compute_ancestral_states(
-        self, +1, focal_site, ancestor, sample_set, disagree, &last_site);
+        self, +1, focal_site, ancestor, sample_set, disagree, &last_site, genotypes);
     if (ret != 0) {
         goto out;
     }
@@ -399,7 +529,7 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
 
     focal_site = focal_sites[0];
     ret = ancestor_builder_compute_ancestral_states(
-        self, -1, focal_site, ancestor, sample_set, disagree, &last_site);
+        self, -1, focal_site, ancestor, sample_set, disagree, &last_site, genotypes);
     if (ret != 0) {
         goto out;
     }
@@ -407,7 +537,28 @@ ancestor_builder_make_ancestor(ancestor_builder_t *self, size_t num_focal_sites,
 out:
     tsi_safe_free(sample_set);
     tsi_safe_free(disagree);
+    tsi_safe_free(genotypes);
     return ret;
+}
+
+static int WARN_UNUSED
+ancestor_builder_encode_genotypes(
+    const ancestor_builder_t *self, const allele_t *genotypes, uint8_t *dest)
+{
+    int ret = 0;
+
+    if (self->flags & TSI_GENOTYPE_ENCODING_ONE_BIT) {
+        ret = packbits(genotypes, self->num_samples, dest);
+    } else {
+        memcpy(dest, genotypes, self->num_samples * sizeof(allele_t));
+    }
+    return ret;
+}
+
+static uint8_t *
+ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
+{
+    return tsk_blkalloc_get(&self->main_allocator, self->encoded_genotypes_size);
 }
 
 int WARN_UNUSED
@@ -418,6 +569,8 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     avl_node_t *avl_node;
     site_list_t *list_node;
     pattern_map_t search, *map_elem;
+    uint8_t *encoded_genotypes = self->genotype_encode_buffer;
+    uint8_t *stored_genotypes = NULL;
     avl_tree_t *pattern_map;
     tsk_id_t site_id = (tsk_id_t) self->num_sites;
     time_map_t *time_map = ancestor_builder_get_time_map(self, time);
@@ -430,42 +583,41 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
         ret = TSI_ERR_TOO_MANY_SITES;
         goto out;
     }
+    ret = ancestor_builder_encode_genotypes(self, genotypes, encoded_genotypes);
+    if (ret != 0) {
+        goto out;
+    }
     self->num_sites++;
     pattern_map = &time_map->pattern_map;
     site = &self->sites[site_id];
     site->time = time;
 
-    search.genotypes = genotypes;
-    search.num_samples = self->num_samples;
+    search.encoded_genotypes = encoded_genotypes;
+    search.encoded_genotypes_size = self->encoded_genotypes_size;
     avl_node = avl_search(pattern_map, &search);
     if (avl_node == NULL) {
-        avl_node = tsk_blkalloc_get(&self->allocator, sizeof(avl_node_t));
-        map_elem = tsk_blkalloc_get(&self->allocator, sizeof(pattern_map_t));
-        site->genotypes
-            = tsk_blkalloc_get(&self->allocator, self->num_samples * sizeof(allele_t));
-        if (avl_node == NULL || map_elem == NULL || site->genotypes == NULL) {
+        stored_genotypes = ancestor_builder_allocate_genotypes(self);
+        avl_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(avl_node_t));
+        map_elem = tsk_blkalloc_get(&self->indexing_allocator, sizeof(pattern_map_t));
+        if (stored_genotypes == NULL || avl_node == NULL || map_elem == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
         }
-        memcpy(site->genotypes, genotypes, self->num_samples * sizeof(allele_t));
+        memcpy(stored_genotypes, encoded_genotypes, self->encoded_genotypes_size);
         avl_init_node(avl_node, map_elem);
-        map_elem->genotypes = site->genotypes;
-        map_elem->num_samples = self->num_samples;
+        map_elem->encoded_genotypes = stored_genotypes;
+        map_elem->encoded_genotypes_size = self->encoded_genotypes_size;
         map_elem->sites = NULL;
         map_elem->num_sites = 0;
         avl_node = avl_insert_node(pattern_map, avl_node);
         assert(avl_node != NULL);
-        if (site->genotypes == NULL) {
-            ret = TSI_ERR_NO_MEMORY;
-            goto out;
-        }
     } else {
         map_elem = (pattern_map_t *) avl_node->item;
-        site->genotypes = map_elem->genotypes;
     }
     map_elem->num_sites++;
+    self->sites[site_id].encoded_genotypes = map_elem->encoded_genotypes;
 
-    list_node = tsk_blkalloc_get(&self->allocator, sizeof(site_list_t));
+    list_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(site_list_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -473,6 +625,7 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     list_node->site = site_id;
     list_node->next = map_elem->sites;
     map_elem->sites = list_node;
+
 out:
     return ret;
 }
@@ -481,7 +634,7 @@ out:
  * site a to focal site b */
 static bool
 ancestor_builder_break_ancestor(ancestor_builder_t *self, tsk_id_t a, tsk_id_t b,
-    tsk_id_t *restrict samples, size_t num_samples)
+    const tsk_id_t *restrict samples, size_t num_samples, allele_t *restrict genotypes)
 {
     bool ret = false;
     tsk_id_t j, k;
@@ -489,10 +642,12 @@ ancestor_builder_break_ancestor(ancestor_builder_t *self, tsk_id_t a, tsk_id_t b
 
     for (j = a + 1; j < b && !ret; j++) {
         if (self->sites[j].time > self->sites[a].time) {
+            ancestor_builder_get_site_genotypes_subset(
+                self, j, samples, num_samples, genotypes);
             ones = 0;
             missing = 0;
             for (k = 0; k < (tsk_id_t) num_samples; k++) {
-                switch (self->sites[j].genotypes[samples[k]]) {
+                switch (genotypes[k]) {
                     case TSK_MISSING_DATA:
                         missing++;
                         break;
@@ -522,8 +677,9 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     tsk_id_t *focal_sites = NULL;
     tsk_id_t *p;
     tsk_id_t *consistent_samples = malloc(self->num_samples * sizeof(tsk_id_t));
+    allele_t *genotypes = malloc(self->decoded_genotypes_size);
 
-    if (consistent_samples == NULL) {
+    if (consistent_samples == NULL || genotypes == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -539,7 +695,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
             self->num_ancestors++;
             descriptor->time = time_map->time;
             focal_sites = tsk_blkalloc_get(
-                &self->allocator, pattern_map->num_sites * sizeof(tsk_id_t));
+                &self->main_allocator, pattern_map->num_sites * sizeof(tsk_id_t));
             if (focal_sites == NULL) {
                 ret = TSI_ERR_NO_MEMORY;
                 goto out;
@@ -554,13 +710,13 @@ ancestor_builder_finalise(ancestor_builder_t *self)
             /* Now check to see if we need to split this ancestor up
              * further */
             if (pattern_map->num_sites > 1) {
-                ancestor_builder_get_consistent_samples(
-                    self, focal_sites[0], consistent_samples, &num_consistent_samples);
+                ancestor_builder_get_consistent_samples(self, focal_sites[0],
+                    consistent_samples, &num_consistent_samples, genotypes);
             }
             for (j = 0; j < pattern_map->num_sites - 1; j++) {
                 if (ancestor_builder_break_ancestor(self, focal_sites[j],
-                        focal_sites[j + 1], consistent_samples,
-                        num_consistent_samples)) {
+                        focal_sites[j + 1], consistent_samples, num_consistent_samples,
+                        genotypes)) {
                     p = focal_sites + j + 1;
                     descriptor->num_focal_sites = (size_t)(p - descriptor->focal_sites);
                     descriptor = self->descriptors + self->num_ancestors;
@@ -572,7 +728,14 @@ ancestor_builder_finalise(ancestor_builder_t *self)
             }
         }
     }
+
+    /* After we've finalised, free up the large chunks of memory we're no longer using */
+    self->time_map.head = NULL;
+    self->time_map.tail = NULL;
+    tsk_blkalloc_free(&self->indexing_allocator);
+    memset(&self->indexing_allocator, 0, sizeof(self->indexing_allocator));
 out:
     tsi_safe_free(consistent_samples);
+    tsi_safe_free(genotypes);
     return ret;
 }

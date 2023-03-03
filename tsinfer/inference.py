@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2022 University of Oxford
+# Copyright (C) 2018-2023 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -348,6 +348,7 @@ def generate_ancestors(
     path=None,
     exclude_positions=None,
     num_threads=0,
+    genotype_encoding=None,
     # Deliberately undocumented parameters below
     engine=constants.C_ENGINE,
     progress_monitor=None,
@@ -356,7 +357,7 @@ def generate_ancestors(
 ):
     """
     generate_ancestors(sample_data, *, path=None, exclude_positions=None,\
-        num_threads=0, **kwargs)
+        num_threads=0, genotype_encoding=None, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
     on the specified :class:`SampleData` instance and returns the resulting
@@ -381,6 +382,9 @@ def generate_ancestors(
         need be in any particular order.
     :param int num_threads: The number of worker threads to use. If < 1, use a
         simpler synchronous algorithm.
+    :param int genotype_encoding: The encoding to use for genotype data internally
+        when generating ancestors. See the :class:`.GenotypeEncoding` class for
+        the available options. Defaults to one-byte per genotype.
     :return: The inferred ancestors stored in an :class:`AncestorData` instance.
     :rtype: AncestorData
     """
@@ -393,12 +397,17 @@ def generate_ancestors(
             "specified times with times-as-frequencies. To explicitly set an undefined"
             "time for a site, permanently excluding it from inference, set it to np.nan."
         )
+    if genotype_encoding is None:
+        # TODO should we provide some functionality to automatically figure
+        # out what the minimum encoding is?
+        genotype_encoding = constants.GenotypeEncoding.EIGHT_BIT
     generator = AncestorsGenerator(
         sample_data,
         ancestor_data_path=path,
         ancestor_data_kwargs=kwargs,
         num_threads=num_threads,
         engine=engine,
+        genotype_encoding=genotype_encoding,
         progress_monitor=progress_monitor,
     )
     generator.add_sites(exclude_positions)
@@ -847,6 +856,7 @@ class AncestorsGenerator:
         ancestor_data_kwargs,
         num_threads=0,
         engine=constants.C_ENGINE,
+        genotype_encoding=constants.GenotypeEncoding.EIGHT_BIT,
         progress_monitor=None,
     ):
         self.sample_data = sample_data
@@ -860,15 +870,20 @@ class AncestorsGenerator:
         self.inference_site_ids = []
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
+
         if engine == constants.C_ENGINE:
             logger.debug("Using C AncestorBuilder implementation")
             self.ancestor_builder = _tsinfer.AncestorBuilder(
-                self.num_samples, self.max_sites
+                self.num_samples,
+                self.max_sites,
+                genotype_encoding=genotype_encoding,
             )
         elif engine == constants.PY_ENGINE:
             logger.debug("Using Python AncestorBuilder implementation")
             self.ancestor_builder = algorithm.AncestorBuilder(
-                self.num_samples, self.max_sites
+                self.num_samples,
+                self.max_sites,
+                genotype_encoding=genotype_encoding,
             )
         else:
             raise ValueError(f"Unknown engine:{engine}")
@@ -946,7 +961,7 @@ class AncestorsGenerator:
                     start,
                     end,
                     end - start,
-                    focal_sites.shape[0],
+                    len(focal_sites),
                     focal_sites,
                 )
             )
@@ -1021,7 +1036,14 @@ class AncestorsGenerator:
         drain_add_queue()
 
     def run(self):
-        self.descriptors = self.ancestor_builder.ancestor_descriptors()
+        descriptors = self.ancestor_builder.ancestor_descriptors()
+        peak_ram = humanize.naturalsize(self.ancestor_builder.mem_size, binary=True)
+        logger.info(f"Ancestor builder peak RAM: {peak_ram}")
+
+        # Sort the descriptors so that we deterministically create ancestors
+        # in the same order across implementations
+        d = [(t, tuple(focal_sites)) for t, focal_sites in descriptors]
+        self.descriptors = sorted(d, reverse=True)
         self.num_ancestors = len(self.descriptors)
         # Maps epoch numbers to their corresponding ancestor times.
         self.timepoint_to_epoch = {}

@@ -49,6 +49,9 @@ Running inference
 
 .. autofunction:: tsinfer.generate_ancestors
 
+.. autoclass:: tsinfer.GenotypeEncoding
+   :members:
+
 .. autofunction:: tsinfer.match_ancestors
 
 .. autofunction:: tsinfer.match_samples
