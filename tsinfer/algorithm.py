@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2021 University of Oxford
+# Copyright (C) 2018-2023 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -57,7 +57,6 @@ class Site:
 
     id = attr.ib()
     time = attr.ib()
-    genotypes = attr.ib()
 
 
 class AncestorBuilder:
@@ -66,7 +65,12 @@ class AncestorBuilder:
     This implementation partially allows for multiple focal sites per ancestor
     """
 
-    def __init__(self, num_samples, max_sites):
+    def __init__(
+        self,
+        num_samples,
+        max_sites,
+        genotype_encoding=None,
+    ):
         self.num_samples = num_samples
         self.sites = []
         # Create a mapping from time to sites. Different sites can exist at the same
@@ -76,22 +80,71 @@ class AncestorBuilder:
         # It is handy to be able to add to d without checking, so we make this a
         # defaultdict of defaultdicts
         self.time_map = collections.defaultdict(lambda: collections.defaultdict(list))
+        if genotype_encoding is None:
+            genotype_encoding = constants.GenotypeEncoding.EIGHT_BIT
+        self.genotype_encoding = genotype_encoding
+        self.encoded_genotypes_size = num_samples
+        if genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
+            self.encoded_genotypes_size = num_samples // 8 + int((num_samples % 8) != 0)
+        self.genotype_store = np.zeros(
+            max_sites * self.encoded_genotypes_size, dtype=np.uint8
+        )
 
     @property
     def num_sites(self):
         return len(self.sites)
+
+    @property
+    def mem_size(self):
+        # Just here for compatibility with the C implementation.
+        return 0
+
+    def get_site_genotypes_subset(self, site_id, samples):
+        start = site_id * self.encoded_genotypes_size
+        g = np.zeros(len(samples), dtype=np.int8)
+        if self.genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
+            for j, u in enumerate(samples):
+                byte_index = u // 8
+                bit_index = u % 8
+                byte = self.genotype_store[start + byte_index]
+                mask = 1 << bit_index
+                g[j] = int((byte & mask) != 0)
+        else:
+            for j, u in enumerate(samples):
+                g[j] = self.genotype_store[start + u]
+        gp = self.get_site_genotypes(site_id)
+        np.testing.assert_array_equal(gp[samples], g)
+        return g
+
+    def get_site_genotypes(self, site_id):
+        start = site_id * self.encoded_genotypes_size
+        stop = start + self.encoded_genotypes_size
+        g = self.genotype_store[start:stop]
+        if self.genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
+            g = np.unpackbits(g, bitorder="little")[: self.num_samples]
+        g = g.astype(np.int8)
+        return g
+
+    def store_site_genotypes(self, site_id, genotypes):
+        if self.genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
+            assert np.all(genotypes >= 0) and np.all(genotypes <= 1)
+            genotypes = np.packbits(genotypes, bitorder="little")
+        start = site_id * self.encoded_genotypes_size
+        stop = start + self.encoded_genotypes_size
+        self.genotype_store[start:stop] = genotypes
 
     def add_site(self, time, genotypes):
         """
         Adds a new site at the specified ID to the builder.
         """
         site_id = len(self.sites)
-        self.sites.append(Site(site_id, time, genotypes))
+        self.store_site_genotypes(site_id, genotypes)
+        self.sites.append(Site(site_id, time))
         sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) and at the same time, are put into the same ancestor
-        # to which we allocate a unique ID (just use the genotypes.tobytes() value)
-        ancestor_uid = genotypes.tobytes()
+        # to which we allocate a unique ID (just use the genotypes value)
+        ancestor_uid = tuple(genotypes)
         # Add each site to the list for this ancestor_uid at this timepoint
         sites_at_fixed_timepoint[ancestor_uid].append(site_id)
 
@@ -100,7 +153,8 @@ class AncestorBuilder:
         print("Sites = ")
         for j in range(self.num_sites):
             site = self.sites[j]
-            print(j, site.genotypes, site.time, sep="\t")
+            genotypes = self.get_site_genotypes(j)
+            print(j, genotypes, site.time, sep="\t")
         print("Time map")
         for t in sorted(self.time_map.keys()):
             sites_at_fixed_timepoint = self.time_map[t]
@@ -118,10 +172,9 @@ class AncestorBuilder:
         which is not compatible with the focal site distribution)
         """
         # return True
-        index = np.where(samples == 1)[0]
         for j in range(a + 1, b):
             if self.sites[j].time > self.sites[a].time:
-                gj = self.sites[j].genotypes[index]
+                gj = self.get_site_genotypes_subset(j, samples)
                 gj = gj[gj != tskit.MISSING_DATA]
                 if not (np.all(gj == 1) or np.all(gj == 0)):
                     return True
@@ -129,24 +182,17 @@ class AncestorBuilder:
 
     def ancestor_descriptors(self):
         """
-        Returns a list of (time, focal_sites) tuples describing the ancestors in time
-        order (oldest first)
+        Returns a list of (time, focal_sites) tuples describing the ancestors in
+        in arbitrary order.
         """
-        # self.print_state()
         ret = []
-        for t in sorted(self.time_map.keys(), reverse=True):
-            # Find all the ancestors at the same timepoint
-            # We need to make the order in which these are returned deterministic,
-            # or ancestor IDs are not replicable between runs. In the C implementation
-            # We sort by the genotype patterns
-            keys = sorted(self.time_map[t].keys())
-            for key in keys:
-                focal_sites = np.array(self.time_map[t][key], dtype=np.int32)
-                samp = np.frombuffer(key, dtype=np.int8)
-                # print("focal_sites = ", key, samp, focal_sites)
+        for t in self.time_map.keys():
+            for focal_sites in self.time_map[t].values():
+                genotypes = self.get_site_genotypes(focal_sites[0])
+                samples = np.where(genotypes == 1)[0]
                 start = 0
                 for j in range(len(focal_sites) - 1):
-                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samp):
+                    if self.break_ancestor(focal_sites[j], focal_sites[j + 1], samples):
                         ret.append((t, focal_sites[start : j + 1]))
                         start = j + 1
                 ret.append((t, focal_sites[start:]))
@@ -163,7 +209,8 @@ class AncestorBuilder:
         that we allow the derived state to be a different non-zero integer.
         """
         focal_time = self.sites[focal_site].time
-        S = set(np.where(self.sites[focal_site].genotypes == 1)[0])
+        g = self.get_site_genotypes(focal_site)
+        S = set(np.where(g == 1)[0])
         # Break when we've lost half of S
         min_sample_set_size = len(S) // 2
         remove_buffer = []
@@ -173,7 +220,7 @@ class AncestorBuilder:
             a[site_index] = 0
             last_site = site_index
             if self.sites[site_index].time > focal_time:
-                g_l = self.sites[site_index].genotypes
+                g_l = self.get_site_genotypes(site_index)
                 ones = sum(g_l[u] == 1 for u in S)
                 zeros = sum(g_l[u] == 0 for u in S)
                 # print("pos", site_index, ". Ones:", ones, ". Zeros:", zeros)
@@ -210,7 +257,8 @@ class AncestorBuilder:
         a[:] = tskit.MISSING_DATA
         for focal_site in focal_sites:
             a[focal_site] = 1
-        S = set(np.where(self.sites[focal_sites[0]].genotypes == 1)[0])
+        g = self.get_site_genotypes(focal_sites[0])
+        S = set(np.where(g == 1)[0])
         if len(S) == 0:
             raise ValueError("Cannot compute ancestor for a site at freq 0")
         # Interpolate ancestral haplotype within focal region (i.e. region
@@ -220,7 +268,7 @@ class AncestorBuilder:
             for site_index in range(focal_sites[j] + 1, focal_sites[j + 1]):
                 a[site_index] = 0
                 if self.sites[site_index].time > focal_time:
-                    g_l = self.sites[site_index].genotypes
+                    g_l = self.get_site_genotypes(site_index)
                     ones = sum(g_l[u] == 1 for u in S)
                     zeros = sum(g_l[u] == 0 for u in S)
                     # print("\t", site_index, ones, zeros, sep="\t")

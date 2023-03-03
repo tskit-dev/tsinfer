@@ -102,6 +102,9 @@ tsi_strerror(int err)
         case TSI_ERR_BAD_FOCAL_SITE:
             ret = "Bad focal site.";
             break;
+        case TSI_ERR_ONE_BIT_NON_BINARY:
+            ret = "One-bit genotype encoding only supports binary 0/1 data";
+            break;
     }
     return ret;
 }

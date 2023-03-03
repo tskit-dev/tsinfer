@@ -2757,6 +2757,31 @@ class AncestorData(DataContainer):
             )
         )
 
+    def assert_data_equal(self, other):
+        if self.data_equal(other):
+            return
+
+        assert self.format_name == other.format_name
+        assert self.format_version == other.format_version
+        assert self.num_ancestors == other.num_ancestors
+        assert self.num_sites == other.num_sites
+        np.testing.assert_array_equal(self.sites_position[:], other.sites_position[:])
+        np.testing.assert_array_equal(self.ancestors_start[:], other.ancestors_start[:])
+        np.testing.assert_array_equal(self.ancestors_end[:], other.ancestors_end[:])
+        fc_self = self.ancestors_focal_sites[:]
+        fc_other = other.ancestors_focal_sites[:]
+        assert len(fc_self) == len(fc_other)
+        for sites_self, sites_other in zip(fc_self, fc_other):
+            np.testing.assert_array_equal(sites_self, sites_other)
+        haps_self = self.ancestors_full_haplotype[:]
+        haps_other = other.ancestors_full_haplotype[:]
+        for hap_self, hap_other in zip(haps_self, haps_other):
+            np.testing.assert_array_equal(hap_self.T, hap_other.T)
+        # Put this assert last to have an easy to change attribute so we can
+        # test this function.
+        assert self.sequence_length == other.sequence_length
+        raise AssertionError("Bug in this function")
+
     @property
     def sequence_length(self):
         """

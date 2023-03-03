@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2023 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -1358,7 +1358,9 @@ class TestAncestorGeneratorsEquivalant:
     Tests for the ancestor generation process.
     """
 
-    def verify_ancestor_generator(self, genotypes, times=None, num_threads=0):
+    def verify_ancestor_generator(
+        self, genotypes, times=None, encoding=0, num_threads=0
+    ):
         m, n = genotypes.shape
         with tsinfer.SampleData() as sample_data:
             for j in range(m):
@@ -1366,97 +1368,67 @@ class TestAncestorGeneratorsEquivalant:
                 sample_data.add_site(j, genotypes[j], time=t)
 
         adc = tsinfer.generate_ancestors(
-            sample_data, engine=tsinfer.C_ENGINE, num_threads=num_threads
+            sample_data,
+            engine=tsinfer.C_ENGINE,
+            num_threads=num_threads,
+            genotype_encoding=encoding,
         )
         adp = tsinfer.generate_ancestors(
-            sample_data, engine=tsinfer.PY_ENGINE, num_threads=num_threads
+            sample_data,
+            engine=tsinfer.PY_ENGINE,
+            num_threads=num_threads,
+            genotype_encoding=encoding,
         )
 
-        # TODO clean this up when we're finished mucking around with the
-        # ancestor generator.
-        # print()
-        # print(adc.ancestors_start[:])
-        # print(adp.ancestors_start[:])
-        # assert np.array_equal(adc.ancestors_start[:], adp.ancestors_start[:])
-
-        # print("end:")
-        # print(adc.ancestors_end[:])
-        # print(adp.ancestors_end[:])
-        # assert np.array_equal(adc.ancestors_end[:], adp.ancestors_end[:])
-
-        # print("focal_sites:")
-        # print(adc.ancestors_focal_sites[:])
-        # print(adp.ancestors_focal_sites[:])
-        # for fc, fp in zip(adc.ancestors_focal_sites[:], adp.ancestors_focal_sites[:]):
-        #     assert np.array_equal(fc, fp)
-
-        # print("haplotype:")
-        # print(adc.ancestors_haplotype[:])
-        # print()
-        # print(adp.ancestors_haplotype[:])
-
-        # j = 0
-        # for h1, h2 in zip(adc.ancestors_haplotype[:], adp.ancestors_haplotype[:]):
-        #     if not np.array_equal(h1, h2):
-        #         print("ANCESTOR = ", j)
-        #         print(h1)
-        #         print(h2)
-        #         print(adp.ancestors_focal_sites[j])
-        #         # print(adc.ancestors_focal_sites[j])
-        #         # print(adc.ancestors_start[j])
-        #         # print(adc.ancestors_end[j])
-        #     j += 1
-        # print(adc)
-        # print(adp)
-        assert adp.data_equal(adc)
+        adc.assert_data_equal(adp)
         return adp, adc
 
-    def verify_tree_sequence(self, ts):
-        self.verify_ancestor_generator(ts.genotype_matrix())
+    def verify_tree_sequence(self, ts, encoding=0):
+        self.verify_ancestor_generator(ts.genotype_matrix(), encoding=encoding)
         t = np.array([ts.node(site.mutations[0].node).time for site in ts.sites()])
-        self.verify_ancestor_generator(ts.genotype_matrix(), t)
+        self.verify_ancestor_generator(ts.genotype_matrix(), t, encoding=encoding)
         # Give some pathological times.
         t += 1
         t = t[::-1]
-        self.verify_ancestor_generator(ts.genotype_matrix(), t)
+        self.verify_ancestor_generator(ts.genotype_matrix(), t, encoding=encoding)
 
-    def test_no_recombination(self):
+    @pytest.mark.parametrize("encoding", tsinfer.GenotypeEncoding)
+    def test_no_recombination(self, encoding):
         ts = msprime.simulate(
             20, length=1, recombination_rate=0, mutation_rate=1, random_seed=1
         )
         assert ts.num_sites > 0 and ts.num_sites < 50
-        self.verify_tree_sequence(ts)
+        self.verify_tree_sequence(ts, encoding)
 
-    def test_with_recombination_short(self):
+    @pytest.mark.parametrize("encoding", tsinfer.GenotypeEncoding)
+    def test_with_recombination_short(self, encoding):
         ts = msprime.simulate(
             20, length=1, recombination_rate=1, mutation_rate=1, random_seed=1
         )
         assert ts.num_trees > 1
         assert ts.num_sites > 0 and ts.num_sites < 50
-        self.verify_tree_sequence(ts)
+        self.verify_tree_sequence(ts, encoding)
 
-    def test_with_recombination_long(self):
+    @pytest.mark.parametrize("encoding", tsinfer.GenotypeEncoding)
+    def test_with_recombination_long(self, encoding):
         ts = msprime.simulate(
             20, length=50, recombination_rate=1, mutation_rate=1, random_seed=1
         )
         assert ts.num_trees > 1
         assert ts.num_sites > 100
-        self.verify_tree_sequence(ts)
+        self.verify_tree_sequence(ts, encoding)
 
     def test_random_data(self):
         G, _ = get_random_data_example(20, 50, seed=1234)
-        # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
 
     def test_random_data_threads(self):
         G, _ = get_random_data_example(20, 50, seed=1234)
-        # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G, num_threads=4)
 
     def test_random_data_missing(self):
         G, _ = get_random_data_example(20, 50, seed=1234, num_states=3)
         G[G == 2] = tskit.MISSING_DATA
-        # G, _ = get_random_data_example(20, 10)
         self.verify_ancestor_generator(G)
 
     def test_all_missing_at_adjacent_site(self):
@@ -1731,6 +1703,36 @@ class TestBuildAncestors:
         expected_time_diff = oldest_non_root / len(unique_times[:-2])
         assert np.isclose(ultimate_root_time - root_time, expected_time_diff)
         assert np.isclose(root_time - oldest_non_root, expected_time_diff)
+
+    @pytest.mark.parametrize("genotype_encoding", tsinfer.GenotypeEncoding)
+    @pytest.mark.parametrize("num_threads", [0, 1, 10])
+    def test_encodings_identical_results(self, genotype_encoding, num_threads):
+        n = 26
+        m = 57
+        G, positions = get_random_data_example(n, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        # Do we get precisely the same result as the Python engine with no encoding?
+        a1 = tsinfer.generate_ancestors(sample_data, engine=tsinfer.PY_ENGINE)
+        a2 = tsinfer.generate_ancestors(
+            sample_data, genotype_encoding=genotype_encoding, num_threads=num_threads
+        )
+        a1.assert_data_equal(a2)
+
+    def test_one_bit_encoding_missing_data(self):
+        m = 10
+        G, positions = get_random_data_example(5, m, seed=1234, num_states=3)
+        G[G == 2] = tskit.MISSING_DATA
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        with pytest.raises(_tsinfer.LibraryError, match="binary 0/1 data"):
+            tsinfer.generate_ancestors(
+                sample_data, genotype_encoding=tsinfer.GenotypeEncoding.ONE_BIT
+            )
 
 
 class TestAncestorsTreeSequence:
@@ -3573,7 +3575,6 @@ class TestInsertSrbAncestors:
     """
 
     def insert_srb_ancestors(self, samples, ts):
-
         srb_index = {}
         edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
         last_edge = edges[0]
@@ -3659,7 +3660,6 @@ class TestAugmentedAncestors:
     def verify_augmented_ancestors(
         self, subset, ancestors_ts, augmented_ancestors, path_compression
     ):
-
         t1 = ancestors_ts.dump_tables()
         t2 = augmented_ancestors.dump_tables()
         k = len(subset)
@@ -4534,3 +4534,89 @@ class TestDebugOutput:
             assert "no mismatch possible" in caplog.text
             assert "Summary of recombination probabilities" not in caplog.text
             assert "Summary of mismatch probabilities" not in caplog.text
+
+
+# Simple functions to pack and unpack bit representations. Just here so that
+# we have something to base a C implementation off, probably should be moved
+# to another file.
+
+
+def packbits(a):
+    if len(a) == 0:
+        return a
+    b = []
+    j = 0
+    k = 1
+    x = a[0]
+    for j in range(1, len(a)):
+        if j % 8 == 0:
+            b.append(x)
+            x = 0
+            k = 0
+        x += a[j] << k
+        k += 1
+    b.append(x)
+    return b
+
+
+def unpackbits(a):
+    if len(a) == 0:
+        return a
+    b = []
+    for j in range(len(a)):
+        for k in range(8):
+            b.append(int(a[j] & (1 << k) != 0))
+    return b
+
+
+@pytest.mark.parametrize(
+    "a",
+    [
+        np.array([], dtype=np.uint8),
+        [0],
+        [1],
+        [0, 1],
+        [0, 1, 0, 1],
+        [0, 1, 0, 1, 0, 1, 0, 0],
+        [0, 1, 0, 1, 0, 1, 0, 0, 1],
+        np.ones(10, dtype=np.uint8),
+        np.zeros(10, dtype=np.uint8),
+        np.ones(15, dtype=np.uint8),
+        np.zeros(15, dtype=np.uint8),
+        np.ones(16, dtype=np.uint8),
+        np.zeros(16, dtype=np.uint8),
+        np.ones(17, dtype=np.uint8),
+        np.zeros(17, dtype=np.uint8),
+    ],
+)
+def test_packbits(a):
+    v1 = np.packbits(a, bitorder="little")
+    v2 = packbits(np.array(a, dtype=np.uint8))
+    np.testing.assert_array_equal(v1, v2)
+
+
+@pytest.mark.parametrize(
+    "a",
+    [
+        np.array([], dtype=np.uint8),
+        [0],
+        [1],
+        [0, 1],
+        [0, 1, 0, 1],
+        [0, 1, 0, 1, 0, 1, 0, 0],
+        [0, 1, 0, 1, 0, 1, 0, 0, 1],
+        np.ones(10, dtype=np.uint8),
+        np.zeros(10, dtype=np.uint8),
+        np.ones(15, dtype=np.uint8),
+        np.zeros(15, dtype=np.uint8),
+        np.ones(16, dtype=np.uint8),
+        np.zeros(16, dtype=np.uint8),
+        np.ones(17, dtype=np.uint8),
+        np.zeros(17, dtype=np.uint8),
+    ],
+)
+def test_unpackbits(a):
+    packed = np.packbits(np.array(a, dtype=np.uint8))
+    v1 = np.unpackbits(packed, bitorder="little")
+    v2 = unpackbits(packed)
+    np.testing.assert_array_equal(v1, v2)

@@ -2190,6 +2190,17 @@ class TestAncestorData(DataContainerMixin):
         assert ancestor_data.ancestor(0) == ancestor_data.ancestor(0)
         assert ancestor_data.ancestor(0) != ancestor_data.ancestor(1)  # IDs differ
 
+    def test_assert_data_equal(self):
+        sd1, _ = self.get_example_data(6, 1, 2)
+        a1 = tsinfer.generate_ancestors(sd1)
+        with a1.copy() as a2:
+            assert a1.data_equal(a2)
+            a1.assert_data_equal(a2)
+            a2.data.attrs["sequence_length"] = 100
+        assert not a1.data_equal(a2)
+        with pytest.raises(AssertionError):
+            a1.assert_data_equal(a2)
+
     def test_accessor(self):
         sample_data, ancestors = self.get_example_data(6, 10, 10)
         ancestor_data = tsinfer.AncestorData(
