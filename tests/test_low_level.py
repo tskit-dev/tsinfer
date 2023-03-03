@@ -26,6 +26,9 @@ import pytest
 import _tsinfer
 
 
+IS_WINDOWS = sys.platform == "win32"
+
+
 class TestOutOfMemory:
     """
     Make sure we raise the correct error when out of memory occurs in
@@ -116,10 +119,16 @@ class TestAncestorBuilder:
                 _tsinfer.AncestorBuilder(
                     num_samples=2, max_sites=2, genotype_encoding=bad_value
                 )
-
+            with pytest.raises(TypeError):
+                _tsinfer.AncestorBuilder(num_samples=2, max_sites=2, mmap_fd=bad_value)
         for bad_num_samples in [0, 1]:
             with pytest.raises(_tsinfer.LibraryError):
                 _tsinfer.AncestorBuilder(num_samples=bad_num_samples, max_sites=0)
+
+    @pytest.mark.skipif(IS_WINDOWS, reason="mmap_fd is a no-op on Windows")
+    def test_bad_fd(self):
+        with pytest.raises(_tsinfer.LibraryError, match="Bad file desc"):
+            _tsinfer.AncestorBuilder(num_samples=2, max_sites=2, mmap_fd=-2)
 
     def test_add_site(self):
         ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=10)

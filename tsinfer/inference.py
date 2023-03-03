@@ -27,6 +27,7 @@ import heapq
 import json
 import logging
 import queue
+import tempfile
 import threading
 import time
 
@@ -349,6 +350,7 @@ def generate_ancestors(
     exclude_positions=None,
     num_threads=0,
     genotype_encoding=None,
+    mmap_temp_dir=None,
     # Deliberately undocumented parameters below
     engine=constants.C_ENGINE,
     progress_monitor=None,
@@ -357,7 +359,7 @@ def generate_ancestors(
 ):
     """
     generate_ancestors(sample_data, *, path=None, exclude_positions=None,\
-        num_threads=0, genotype_encoding=None, **kwargs)
+        num_threads=0, genotype_encoding=None, mmap_temp_dir=None, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
     on the specified :class:`SampleData` instance and returns the resulting
@@ -372,6 +374,30 @@ def generate_ancestors(
     Other keyword arguments are passed to the :class:`AncestorData` constructor,
     which may be used to control the storage properties of the generated file.
 
+    Ancestor generation involves loading the entire genotype matrix into
+    memory, by default using one byte per haploid genotype, which can be
+    prohibitively large when working with sample sizes of 100,000 or more.
+    There are two options to help mitigate memory usage. The
+    ``genotype_encoding`` parameter allows the user to specify a more compact
+    encoding scheme, which reduces storage space for datasets with small
+    numbers of alleles. Currently, the :attr:`.GenotypeEncoding.ONE_BIT`
+    encoding is supported, which provides 8-fold compression of biallelic,
+    non-missing data. An error is raised if an encoding that does not support
+    the range of values present in a given dataset is provided.
+
+    The second option for reducing the RAM footprint of this function is to
+    use the ``mmap_temp_dir`` parameter. This allows the genotype data to be
+    cached on file, transparently using the operating system's virtual memory
+    subsystem to swap in and out the data. This can work well if the encoded
+    genotype matrix *almost* fits in RAM and fast local storage is available.
+    However, if the size of the encoded genotype matrix is more than, say,
+    twice the available RAM it is unlikely that this function will complete
+    in a reasonable time-frame. A temporary file is created in the specified
+    ``mmap_temp_dir``, which is automatically deleted when the function
+    completes.
+
+    .. warning:: The ``mmap_temp_dir`` option is a silent no-op on Windows!
+
     :param SampleData sample_data: The :class:`SampleData` instance that we are
         genering putative ancestors from.
     :param str path: The path of the file to store the sample data. If None,
@@ -385,6 +411,11 @@ def generate_ancestors(
     :param int genotype_encoding: The encoding to use for genotype data internally
         when generating ancestors. See the :class:`.GenotypeEncoding` class for
         the available options. Defaults to one-byte per genotype.
+    :param str mmap_temp_dir: The directory within which to create the
+        temporary backing file when using mmaped memory for bulk genotype
+        storage. If None (the default) allocate memory directly using the
+        standard mechanism. This is an advanced option, usually only relevant
+        when working with very large datasets (see above for more information).
     :return: The inferred ancestors stored in an :class:`AncestorData` instance.
     :rtype: AncestorData
     """
@@ -408,6 +439,7 @@ def generate_ancestors(
         num_threads=num_threads,
         engine=engine,
         genotype_encoding=genotype_encoding,
+        mmap_temp_dir=mmap_temp_dir,
         progress_monitor=progress_monitor,
     )
     generator.add_sites(exclude_positions)
@@ -857,6 +889,7 @@ class AncestorsGenerator:
         num_threads=0,
         engine=constants.C_ENGINE,
         genotype_encoding=constants.GenotypeEncoding.EIGHT_BIT,
+        mmap_temp_dir=None,
         progress_monitor=None,
     ):
         self.sample_data = sample_data
@@ -870,13 +903,27 @@ class AncestorsGenerator:
         self.inference_site_ids = []
         self.num_samples = sample_data.num_samples
         self.num_threads = num_threads
+        self.mmap_temp_file = None
+        mmap_fd = -1
 
+        genotype_matrix_size = self.max_sites * self.num_samples
+        if genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
+            genotype_matrix_size /= 8
+        genotype_mem = humanize.naturalsize(genotype_matrix_size, binary=True)
+        logging.info(f"Max encoded genotype matrix size={genotype_mem}")
+        if mmap_temp_dir is not None:
+            self.mmap_temp_file = tempfile.NamedTemporaryFile(
+                dir=mmap_temp_dir, prefix="tsinfer-mmap-genotypes-"
+            )
+            logging.info(f"Using mmapped {self.mmap_temp_file.name} for genotypes")
+            mmap_fd = self.mmap_temp_file.fileno()
         if engine == constants.C_ENGINE:
             logger.debug("Using C AncestorBuilder implementation")
             self.ancestor_builder = _tsinfer.AncestorBuilder(
                 self.num_samples,
                 self.max_sites,
                 genotype_encoding=genotype_encoding,
+                mmap_fd=mmap_fd,
             )
         elif engine == constants.PY_ENGINE:
             logger.debug("Using Python AncestorBuilder implementation")
@@ -1087,6 +1134,11 @@ class AncestorsGenerator:
                 self._run_threaded(progress)
             progress.close()
             logger.info("Finished building ancestors")
+        if self.mmap_temp_file is not None:
+            try:
+                self.mmap_temp_file.close()
+            except:  # noqa
+                pass
         return self.ancestor_data
 
 
