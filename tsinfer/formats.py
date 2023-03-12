@@ -314,8 +314,8 @@ def chunk_iterator(array, indexes=None, mask=None, dimension=0):
     assert dimension < 2
     if mask is None:
         mask = np.ones(array.shape[dimension], dtype=bool)
-    else:
-        assert len(mask) == len(array)
+    if len(mask) != array.shape[dimension]:
+        raise ValueError("Mask must be the same length as the array")
 
     if indexes is None:
         indexes = range(np.sum(mask))
@@ -325,7 +325,7 @@ def chunk_iterator(array, indexes=None, mask=None, dimension=0):
             or indexes[0] < 0
             or indexes[-1] >= array.shape[dimension]
         ):
-            raise ValueError("ids must be positive and in ascending order")
+            raise ValueError("Ids must be positive and in ascending order")
 
     # If there is a variant mask we need to translate the indexes from the masked
     # space to the unmasked space.
@@ -2310,12 +2310,6 @@ class SgkitSampleData(SampleData):
                     " unphased"
                 )
 
-    def __metadata_schema_getter(self, zarr_group):
-        try:
-            return self.data[zarr_group].attrs["metadata_schema"]
-        except KeyError:
-            return {"codec": "json"}
-
     @property
     def format_name(self):
         return self.FORMAT_NAME
@@ -2341,19 +2335,28 @@ class SgkitSampleData(SampleData):
 
     @property
     def sites_metadata_schema(self):
-        return self.__metadata_schema_getter("sites")
+        try:
+            return tskit.metadata.parse_metadata_schema(
+                self.data.attrs["sites_metadata_schema"]
+            ).schema
+        except KeyError:
+            return tskit.MetadataSchema.permissive_json().schema
 
     @property
     def sites_metadata(self):
+        schema = tskit.MetadataSchema(self.sites_metadata_schema)
         try:
-            return self.data["sites/metadata"][:][self.sites_mask]
+            return [
+                schema.decode_row(r)
+                for r in self.data["sites_metadata"][:][self.sites_mask]
+            ]
         except KeyError:
-            return zarr.array([{}] * self.num_sites, object_codec=numcodecs.JSON())
+            return [{} for _ in range(self.num_sites)]
 
     @property
     def sites_time(self):
         try:
-            return self.data["sites/time"][:][self.sites_mask]
+            return self.data["sites_time"][:][self.sites_mask]
         except KeyError:
             return np.full(self.num_sites, tskit.UNKNOWN_TIME)
 
@@ -2371,6 +2374,13 @@ class SgkitSampleData(SampleData):
             # Often xarray will save a bool array as int8, so we need to cast,
             # but check that a mistake hasn't been made by checking
             # that the values are either 0 or 1
+            if (
+                self.data["variant_mask"].shape[0]
+                != self.data["variant_position"].shape[0]
+            ):
+                raise ValueError(
+                    "Mask must be the same length as the number of unmasked sites"
+                )
             if da.max(self.data["variant_mask"].astype(np.int8)).compute() > 1:
                 raise ValueError(
                     "The variant_mask array contains values other than 0 or 1"
@@ -2407,7 +2417,7 @@ class SgkitSampleData(SampleData):
     @property
     def provenances_record(self):
         try:
-            return self.data["provenances_record"]
+            return [json.loads(r) for r in self.data["provenances_record"]]
         except KeyError:
             return np.array([], dtype=object)
 
@@ -2425,27 +2435,44 @@ class SgkitSampleData(SampleData):
     @property
     def metadata_schema(self):
         try:
-            return self.data.attrs["metadata_schema"]
+            return tskit.metadata.parse_metadata_schema(
+                self.data.attrs["metadata_schema"]
+            ).schema
         except KeyError:
-            None
+            return tskit.MetadataSchema.permissive_json().schema
 
     @property
     def metadata(self):
         try:
-            return self.data.attrs["metadata"]
+            return tskit.MetadataSchema(self.metadata_schema).decode_row(
+                self.data.attrs["metadata"]
+            )
         except KeyError:
-            return b""
+            return {}
+
+    @property
+    def num_populations(self):
+        try:
+            return len(self.data["populations_metadata"])
+        except KeyError:
+            return 0
 
     @property
     def populations_metadata(self):
+        schema = tskit.MetadataSchema(self.populations_metadata_schema)
         try:
-            return self.data["populations/metadata"]
+            return [schema.decode_row(r) for r in self.data["populations_metadata"][:]]
         except KeyError:
-            return np.array([], dtype=object)
+            return [{} for _ in range(self.num_populations)]
 
     @property
     def populations_metadata_schema(self):
-        return self.__metadata_schema_getter("populations")
+        try:
+            return tskit.metadata.parse_metadata_schema(
+                self.data.attrs["populations_metadata_schema"]
+            ).schema
+        except KeyError:
+            return tskit.MetadataSchema.permissive_json().schema
 
     @property
     def num_individuals(self):
@@ -2454,41 +2481,45 @@ class SgkitSampleData(SampleData):
     @property
     def individuals_time(self):
         try:
-            return self.data["individuals/time"]
+            return self.data["individuals_time"]
         except KeyError:
             return np.full(self.num_individuals, tskit.UNKNOWN_TIME)
 
     @property
     def individuals_metadata_schema(self):
-        return self.__metadata_schema_getter("individuals")
+        try:
+            return tskit.metadata.parse_metadata_schema(
+                self.data.attrs["individuals_metadata_schema"]
+            ).schema
+        except KeyError:
+            return tskit.MetadataSchema.permissive_json().schema
 
     @property
     def individuals_metadata(self):
+        schema = tskit.MetadataSchema(self.populations_metadata_schema)
         try:
-            return self.data["individuals/metadata"]
+            return [schema.decode_row(r) for r in self.data["individuals_metadata"][:]]
         except KeyError:
-            return zarr.array(
-                [{}] * self.num_individuals, object_codec=numcodecs.JSON()
-            )
+            return [{} for _ in range(self.num_individuals)]
 
     @property
     def individuals_location(self):
         try:
-            return self.data["individuals/location"]
+            return self.data["individuals_location"]
         except KeyError:
-            return zarr.array([[]] * self.num_individuals, dtype=float)
+            return np.array([[]] * self.num_individuals, dtype=float)
 
     @property
     def individuals_population(self):
         try:
-            return self.data["individuals/population"]
+            return self.data["individuals_population"]
         except KeyError:
             return np.full((self.num_individuals), tskit.NULL, dtype=np.int32)
 
     @property
     def individuals_flags(self):
         try:
-            return self.data["individuals/population"]
+            return self.data["individuals_flags"]
         except KeyError:
             return np.full((self.num_individuals), 0, dtype=np.int32)
 
