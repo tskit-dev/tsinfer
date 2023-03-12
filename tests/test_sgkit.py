@@ -287,9 +287,10 @@ def test_sgkit_accessors_defaults(tmp_path):
     for time in samples.sites_time:
         assert tskit.is_unknown_time(time)
     assert np.array_equal(samples.sites_mask, np.ones(ts.num_sites, dtype=bool))
-    assert np.array_equal(
-        samples.sites_ancestral_allele, np.zeros(ts.num_sites, dtype=np.int8)
-    )
+    with pytest.warns(UserWarning):
+        assert np.array_equal(
+            samples.sites_ancestral_allele, np.zeros(ts.num_sites, dtype=np.int8)
+        )
     assert np.array_equal(samples.provenances_timestamp, [])
     assert np.array_equal(samples.provenances_record, [])
     assert samples.metadata_schema == default_schema
@@ -317,7 +318,6 @@ class TestSgkitMask:
     def test_sgkit_variant_mask(self, tmp_path, sites):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        print(ds)
         sites_mask = np.zeros_like(ds["variant_position"], dtype=bool)
         for i in sites:
             sites_mask[i] = True
@@ -355,6 +355,17 @@ class TestSgkitMask:
         ):
             tsinfer.SgkitSampleData(zarr_path)
 
+    def test_sgkit_variant_bad_mask_negative(self, tmp_path):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        sites_mask = np.arange(0, -ds.sizes["variants"], -1, dtype=int)
+        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
+        with pytest.raises(
+            ValueError,
+            match="The variant_mask array contains values " "other than 0 or 1",
+        ):
+            tsinfer.SgkitSampleData(zarr_path)
+
     def test_sgkit_variant_bad_mask_length(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
@@ -377,6 +388,64 @@ class TestSgkitMask:
         ):
             for _ in chunk_iterator(ds.variant_position, mask=sites_mask):
                 pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+def test_sgkit_ancestral_allele(tmp_path):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ds = sgkit.load_dataset(zarr_path)
+    ancestral_allele = ds.variant_allele.values[:, 0]
+    ancestral_allele[::2] = ds.variant_allele.values[::2, 1]
+    add_array_to_dataset("variant_ancestral_allele", ancestral_allele, zarr_path)
+    samples = tsinfer.SgkitSampleData(zarr_path)
+    inf_ts = tsinfer.infer(samples)
+    for v, inf_v in zip(ts.variants(), inf_ts.variants()):
+        assert np.array_equal(
+            np.array(v.alleles)[v.genotypes], np.array(inf_v.alleles)[inf_v.genotypes]
+        )
+    for aa, inf_aa in zip(ancestral_allele, inf_ts.sites()):
+        assert aa == inf_aa.ancestral_state
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+def test_sgkit_missing_ancestral_allele(tmp_path):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ds = sgkit.load_dataset(zarr_path)
+    ancestral_allele = ds.variant_allele.values[:, 0]
+    ancestral_allele[::2] = ds.variant_allele.values[::2, 1]
+    ancestral_allele[-1] = "WTF"
+    add_array_to_dataset("variant_ancestral_allele", ancestral_allele, zarr_path)
+    samples = tsinfer.SgkitSampleData(zarr_path)
+    with pytest.raises(
+        ValueError, match="An ancestral allele is not present in the variant's alleles"
+    ):
+        tsinfer.infer(samples)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+@pytest.mark.parametrize("sites", [[1, 2, 3, 5, 9, 27], [0], []])
+def test_sgkit_ancestral_allele_with_mask(tmp_path, sites):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ds = sgkit.load_dataset(zarr_path)
+    ancestral_allele = ds.variant_allele.values[:, 0]
+    ancestral_allele[::2] = ds.variant_allele.values[::2, 1]
+    add_array_to_dataset("variant_ancestral_allele", ancestral_allele, zarr_path)
+    sites_mask = np.zeros_like(ds["variant_position"], dtype=bool)
+    for i in sites:
+        sites_mask[i] = True
+    add_array_to_dataset("variant_mask", sites_mask, zarr_path)
+    samples = tsinfer.SgkitSampleData(zarr_path)
+    inf_ts = tsinfer.infer(samples)
+    inf_var = inf_ts.variants()
+    for i, v in enumerate(ts.variants()):
+        if i in sites:
+            inf_v = next(inf_var)
+            assert np.array_equal(
+                np.array(v.alleles)[v.genotypes],
+                np.array(inf_v.alleles)[inf_v.genotypes],
+            )
+    for aa, inf_aa in zip(ancestral_allele[sites_mask], inf_ts.sites()):
+        assert aa == inf_aa.ancestral_state
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
