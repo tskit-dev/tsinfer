@@ -2365,9 +2365,6 @@ class SgkitSampleData(SampleData):
     @property
     def sites_mask(self):
         try:
-            # Often xarray will save a bool array as int8, so we need to cast,
-            # but check that a mistake hasn't been made by checking
-            # that the values are either 0 or 1
             if (
                 self.data["variant_mask"].shape[0]
                 != self.data["variant_position"].shape[0]
@@ -2375,7 +2372,11 @@ class SgkitSampleData(SampleData):
                 raise ValueError(
                     "Mask must be the same length as the number of unmasked sites"
                 )
-            if da.max(self.data["variant_mask"].astype(np.int8)).compute() > 1:
+            # Often xarray will save a bool array as int8, so we need to cast,
+            # but check that a mistake hasn't been made by checking
+            # that the values are either 0 or 1
+            mask = self.data["variant_mask"].astype(np.int8)
+            if da.max(mask).compute() > 1 or da.min(mask).compute() < 0:
                 raise ValueError(
                     "The variant_mask array contains values other than 0 or 1"
                 )
@@ -2386,11 +2387,23 @@ class SgkitSampleData(SampleData):
     @property
     def sites_ancestral_allele(self):
         try:
-            return self.data["variant_ancestral_allele_index"][self.sites_mask]
+            string_allele = self.data["variant_ancestral_allele"][:][self.sites_mask]
         except KeyError:
             # Maintains backwards compatibility: in previous tsinfer versions the
             # ancestral allele was always the zeroth element in the alleles list
+            warnings.warn("No ancestral allele information found, using 0th allele")
             return np.zeros(self.num_sites, dtype=np.int8)
+        try:
+            return np.array(
+                [
+                    np.where(allele == self.sites_alleles[i])[0][0]
+                    for i, allele in enumerate(string_allele)
+                ]
+            )
+        except IndexError:
+            raise ValueError(
+                "An ancestral allele is not present in the variant's alleles"
+            )
 
     @property
     def sites_genotypes(self):
