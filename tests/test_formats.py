@@ -2420,7 +2420,9 @@ class TestAncestorData(DataContainerMixin):
         ancestors = tsinfer.generate_ancestors(sample_data)
         lower_limit = 0.4
         upper_limit = 0.6
-        trunc_anc = ancestors.truncate_ancestors(lower_limit, upper_limit, 1)
+        trunc_anc = ancestors.truncate_ancestors(
+            lower_limit, upper_limit, 1, buffer_length=1
+        )
         original_lengths = ancestors.ancestors_length[:]
         trunc_lengths = trunc_anc.ancestors_length[:]
         # Check that ancestors older than upper_limit have been cut down
