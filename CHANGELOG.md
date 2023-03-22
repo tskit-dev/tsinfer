@@ -15,6 +15,9 @@ In development
   containing sequences with substantial amounts of error. 
   ({pr}`761`, {user}`jeromekelleher`)
 
+- `truncate_ancestors` no longer requires loading all the ancestors into RAM.
+  ({pr}`811`, {user}`benjeffery`)
+
 ## [0.3.0] - 2022-10-25
 
 **Features**

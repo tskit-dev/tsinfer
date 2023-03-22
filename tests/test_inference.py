@@ -546,7 +546,7 @@ class TestTruncateAncestorsRoundTrip(TestRoundTrip):
             params = [(0.4, 0.6, 1), (0, 1, 10)]
         for param in params:
             truncated_ancestors = ancestors.truncate_ancestors(
-                param[0], param[1], param[2]
+                param[0], param[1], param[2], buffer_length=2
             )
             engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
             for engine in engines:
@@ -571,6 +571,7 @@ class TestTruncateAncestorsRoundTrip(TestRoundTrip):
 class TestTruncateAncestorsRoundTripFromDisk(TestRoundTrip):
     """
     Tests that we can correctly round trip data when we truncate ancestral haplotypes
+    which have come from disk
     """
 
     def verify_data_round_trip(
@@ -596,9 +597,8 @@ class TestTruncateAncestorsRoundTripFromDisk(TestRoundTrip):
             tsinfer.generate_ancestors(sample_data, path=d + "ancestors.tsi")
             ancestors = tsinfer.AncestorData.load(d + "ancestors.tsi")
             time = np.sort(ancestors.ancestors_time[:])
-            if (
-                len(time) > 0
-            ):  # Some tests produce an AncestorData file with no ancestors
+            # Some tests produce an AncestorData file with no ancestors
+            if len(time) > 0:
                 lower_bound = np.min(time)
                 upper_bound = np.max(time)
                 midpoint = np.median(time)
@@ -611,7 +611,7 @@ class TestTruncateAncestorsRoundTripFromDisk(TestRoundTrip):
                 params = [(0.4, 0.6, 1), (0, 1, 10)]
             for param in params:
                 truncated_ancestors = ancestors.truncate_ancestors(
-                    param[0], param[1], param[2]
+                    *param, buffer_length=2
                 )
                 engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
                 for engine in engines:

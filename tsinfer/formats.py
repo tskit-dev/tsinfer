@@ -41,7 +41,6 @@ import tskit
 import zarr
 from tskit import MISSING_DATA
 
-import tsinfer
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
 import tsinfer.threads as threads
@@ -2670,20 +2669,6 @@ class AncestorData(DataContainer):
 
         self._alloc_ancestor_writer()
 
-    @property
-    def chunk_size(self):
-        try:
-            return self._chunk_size
-        except AttributeError:
-            return self.ancestors_full_haplotype.chunks[1]
-
-    @property
-    def chunk_size_sites(self):
-        try:
-            return self._chunk_size_sites
-        except AttributeError:
-            return self.ancestors_full_haplotype.chunks[0]
-
     def create_dataset(
         self,
         name,
@@ -3023,6 +3008,7 @@ class AncestorData(DataContainer):
         lower_time_bound,
         upper_time_bound,
         length_multiplier=2,
+        buffer_length=1000,
         **kwargs,
     ):
         """
@@ -3062,6 +3048,8 @@ class AncestorData(DataContainer):
             and ``uppper_time_bound`` (exclusive), i.e.
             if the longest ancestor in the interval is 1 megabase, a
             ``length_multiplier`` of 2 creates a maximum length of 2 megabases.
+        :param int buffer_length: The number of changed ancestors to buffer before
+            writing to disk.
         :param \\**kwargs: Further arguments passed to the :func:`AncestorData.copy`
             when creating the new :class:`AncestorData` instance which will be returned.
 
@@ -3084,15 +3072,6 @@ class AncestorData(DataContainer):
         if upper_time_bound > np.max(time) or lower_time_bound > np.max(time):
             raise ValueError("Time bounds cannot be greater than older ancestor")
 
-        truncated = tsinfer.AncestorData(
-            position=position,
-            sequence_length=self.sequence_length,
-            chunk_size=self.chunk_size,
-            chunk_size_sites=self.chunk_size_sites,
-            **kwargs,
-        )
-        for timestamp, record in self.provenances():
-            truncated.add_provenance(timestamp, record)
         anc_in_bound = np.logical_and(
             time >= lower_time_bound,
             time < upper_time_bound,
@@ -3101,9 +3080,50 @@ class AncestorData(DataContainer):
             raise ValueError("No ancestors in time bound")
         max_length = length_multiplier * np.max(self.ancestors_length[:][anc_in_bound])
 
-        for anc in self.ancestors():
-            insert_pos_start = anc.start
-            insert_pos_end = anc.end
+        truncated = self.copy(**kwargs)
+
+        # Create a buffer of buffer_length ancestors with their indexes
+        index_buffer = np.zeros(buffer_length, dtype=np.int32)
+        start_buffer = np.zeros(buffer_length, dtype=self.ancestors_start.dtype)
+        end_buffer = np.zeros(buffer_length, dtype=self.ancestors_end.dtype)
+        time_buffer = np.zeros(buffer_length, dtype=self.ancestors_time.dtype)
+        focal_sites_buffer = np.zeros(
+            buffer_length, dtype=self.ancestors_focal_sites.dtype
+        )
+        haplotype_buffer = np.full(
+            (self.ancestors_full_haplotype.shape[0], buffer_length, 1),
+            tskit.MISSING_DATA,
+            dtype=self.ancestors_full_haplotype.dtype,
+        )
+        buffer_pos = 0
+
+        def flush_buffers(buffer_pos):
+            # As we find ancestors that need to be truncated, we write them to the
+            # buffers, with index_buffer storing the index of the ancestor in the
+            # original AncestorData file. We can use then specify this index array to
+            # zarr to just write those changed lines to the new AncestorData file.
+            truncated.ancestors_start.set_orthogonal_selection(
+                index_buffer[:buffer_pos], start_buffer[:buffer_pos]
+            )
+            truncated.ancestors_end.set_orthogonal_selection(
+                index_buffer[:buffer_pos], end_buffer[:buffer_pos]
+            )
+            truncated.ancestors_time.set_orthogonal_selection(
+                index_buffer[:buffer_pos], time_buffer[:buffer_pos]
+            )
+            truncated.ancestors_focal_sites.set_orthogonal_selection(
+                index_buffer[:buffer_pos], focal_sites_buffer[:buffer_pos]
+            )
+            truncated.ancestors_full_haplotype.set_orthogonal_selection(
+                (slice(None), index_buffer[:buffer_pos]),
+                haplotype_buffer[:, :buffer_pos],
+            )
+            truncated.ancestors_full_haplotype_mask.set_orthogonal_selection(
+                (slice(None), index_buffer[:buffer_pos]),
+                haplotype_buffer[:, :buffer_pos] == tskit.MISSING_DATA,
+            )
+
+        for anc_index, anc in enumerate(self.ancestors()):
             if anc.time >= upper_time_bound and len(anc.focal_sites) > 0:
                 if position[anc.end - 1] - position[anc.start] > max_length:
                     left_focal_pos = position[np.min(anc.focal_sites)]
@@ -3125,13 +3145,20 @@ class AncestorData(DataContainer):
                         f"Truncating ancestor {anc.id} at time {anc.time}"
                         "Original length {original_length}. New length {new_length}"
                     )
-            truncated.add_ancestor(
-                start=insert_pos_start,
-                end=insert_pos_end,
-                time=anc.time,
-                focal_sites=anc.focal_sites,
-                haplotype=anc.full_haplotype[insert_pos_start:insert_pos_end],
-            )
+                    index_buffer[buffer_pos] = anc_index
+                    start_buffer[buffer_pos] = insert_pos_start
+                    end_buffer[buffer_pos] = insert_pos_end
+                    time_buffer[buffer_pos] = anc.time
+                    focal_sites_buffer[buffer_pos] = anc.focal_sites
+                    haplotype_buffer[
+                        insert_pos_start:insert_pos_end, buffer_pos, 0
+                    ] = anc.full_haplotype[insert_pos_start:insert_pos_end]
+                    buffer_pos += 1
+                    if buffer_pos == buffer_length:
+                        flush_buffers(buffer_length)
+                        buffer_pos = 0
+        if buffer_pos > 0:
+            flush_buffers(buffer_pos)
         truncated.record_provenance(command="truncate_ancestors")
         truncated.finalise()
 
