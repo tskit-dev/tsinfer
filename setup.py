@@ -10,7 +10,7 @@ libdir = "lib"
 tskroot = os.path.join(libdir, "subprojects", "tskit")
 tskdir = os.path.join(tskroot, "tskit")
 kasdir = os.path.join(tskroot, "subprojects", "kastore")
-includes = [libdir, tskroot, tskdir, kasdir]
+includes = ["lwt_interface", libdir, tskroot, tskdir, kasdir]
 
 tsi_source_files = [
     "ancestor_matcher.c",
@@ -21,7 +21,9 @@ tsi_source_files = [
     "avl.c",
     "tsi_blkalloc.c",
 ]
-tsk_source_files = ["core.c"]
+# We're not actually using very much of tskit at the moment, so
+# just build the stuff we need.
+tsk_source_files = ["core.c", "tables.c", "trees.c"]
 kas_source_files = ["kastore.c"]
 
 sources = (
