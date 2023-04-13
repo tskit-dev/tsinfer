@@ -209,6 +209,56 @@ typedef struct {
     } output;
 } ancestor_matcher_t;
 
+typedef struct {
+    tsk_flags_t flags;
+    const tsk_treeseq_t *ts;
+    tsk_size_t num_sites;
+    tsk_size_t num_nodes;
+    tsk_size_t num_edges;
+    /* FIXME Copying these in here as a quick way of getting the code working
+     * again. However, the memory cost might actually be worth it, needs checking
+     */
+    edge_t *left_index_edges;
+    edge_t *right_index_edges;
+    /* Copying this in here for simplicity. */
+    struct {
+        mutation_list_node_t **mutations;
+        tsk_size_t *num_alleles;
+    } sites;
+    /* Input LS model rates */
+    unsigned int precision;
+    double *recombination_rate;
+    double *mismatch_rate;
+    /* The quintuply linked tree */
+    tsk_id_t *parent;
+    tsk_id_t *left_child;
+    tsk_id_t *right_child;
+    tsk_id_t *left_sib;
+    tsk_id_t *right_sib;
+    double *likelihood;
+    double *likelihood_cache;
+    allele_t *allelic_state;
+    int num_likelihood_nodes;
+    /* At each site, record a node with the maximum likelihood. */
+    tsk_id_t *max_likelihood_node;
+    /* Used during traceback to map nodes where recombination is required. */
+    int8_t *recombination_required;
+    tsk_id_t *likelihood_nodes_tmp;
+    tsk_id_t *likelihood_nodes;
+    node_state_list_t *traceback;
+    tsk_blkalloc_t traceback_allocator;
+    size_t total_traceback_size;
+    size_t traceback_block_size;
+    size_t traceback_realloc_size;
+    struct {
+        tsk_id_t *left;
+        tsk_id_t *right;
+        tsk_id_t *parent;
+        size_t size;
+        size_t max_size;
+    } output;
+} lshmm_t;
+
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     size_t num_sites, int mmap_fd, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
@@ -266,6 +316,16 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self, tsk_id_t *le
     tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t *site,
     tsk_id_t *node, allele_t *derived_state, tsk_id_t *parent);
+
+int lshmm_alloc(lshmm_t *self, const tsk_treeseq_t *ts, const double *recombination_rate,
+    const double *mismatch_rate, unsigned int precision, tsk_flags_t flags);
+int lshmm_free(lshmm_t *self);
+int lshmm_find_path(lshmm_t *self, tsk_id_t start, tsk_id_t end, allele_t *haplotype,
+    allele_t *matched_haplotype, size_t *num_output_edges, tsk_id_t **left_output,
+    tsk_id_t **right_output, tsk_id_t **parent_output);
+int lshmm_print_state(lshmm_t *self, FILE *out);
+double lshmm_get_mean_traceback_size(lshmm_t *self);
+size_t lshmm_get_total_memory(lshmm_t *self);
 
 int packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest);
 void unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest);
