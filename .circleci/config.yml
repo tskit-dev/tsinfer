@@ -1,4 +1,8 @@
-version: 2
+version: 2.1
+
+orbs:
+  codecov: codecov/codecov@3.2.4
+
 jobs:
   build:
     docker:
@@ -44,8 +48,11 @@ jobs:
           name: Run Python tests and upload coverage
           command: |
               python3 -m pytest --cov=tsinfer  --cov-report=xml --cov-branch -xvs tests
-              python3 -m codecov -X gcov -F python
               rm .coverage
+
+      - codecov/upload:
+          flags: python
+          token: CODECOV_TOKEN
 
       - run:
           name: Compile C with gcc
@@ -77,7 +84,10 @@ jobs:
             gcov -pb ./libtsinfer.a.p/object_heap.c.gcno ../lib/object_heap.c
             gcov -pb ./libtsinfer.a.p/err.c.gcno ../lib/err.c
             cd ..
-            codecov -X gcov -F C
+
+      - codecov/upload:
+          flags: C
+          token: CODECOV_TOKEN
 
       - run:
           name: Valgrind for C tests.
