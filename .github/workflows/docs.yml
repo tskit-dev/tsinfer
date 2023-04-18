@@ -35,7 +35,7 @@ jobs:
         id: venv-cache
         with:
           path: venv
-          key: docs-venv-v1-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
+          key: docs-venv-v2-${{ hashFiles('requirements/CI-docs/requirements.txt') }}
 
       - name: Create venv and install deps (one by one to avoid conflict errors)
         if: steps.venv-cache.outputs.cache-hit != 'true'
