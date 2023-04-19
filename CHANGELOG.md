@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2023-04-19
+
+Bug fix release for a bad dependency specification.
+
+
 ## [0.3.0] - 2022-10-25
 
 **Features**
