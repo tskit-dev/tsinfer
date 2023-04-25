@@ -1,9 +1,22 @@
 """
 Tests for the haplotype matching algorithm.
 """
+import collections
+import dataclasses
+
 import numpy as np
-import pytest
+import sortedcontainers
 import tskit
+
+import _tsinfer
+
+
+@dataclasses.dataclass
+class Edge:
+    left: float = dataclasses.field(default=None)
+    right: float = dataclasses.field(default=None)
+    parent: int = dataclasses.field(default=None)
+    child: int = dataclasses.field(default=None)
 
 
 def example_binary(n, L):
@@ -33,19 +46,44 @@ COMPRESSED = -1
 NONZERO_ROOT = -2
 
 
+class TreeSequenceBuilder:
+    # Temporary dummy implementation to get things working.
+    def __init__(self, ts):
+        self.time = ts.nodes_time
+        self.num_nodes = ts.num_nodes
+        self.num_match_nodes = ts.num_nodes
+        self.num_sites = ts.num_sites
+        self.left_index = sortedcontainers.SortedDict()
+        self.right_index = sortedcontainers.SortedDict()
+
+        for edge in ts.edges():
+            self.left_index[(edge.left, self.time[edge.child], edge.child)] = edge
+            self.right_index[(edge.right, -self.time[edge.child], edge.child)] = edge
+        self.num_alleles = [var.num_alleles for var in ts.variants()]
+
+        self.mutations = collections.defaultdict(list)
+        for site in ts.sites():
+            for mutation in site.mutations:
+                # FIXME - should be allele index
+                self.mutations[site.id].append((mutation.node, 1))
+
+
 class AncestorMatcher:
     def __init__(
         self,
         ts,
-        recombination=None,
-        mismatch=None,
-        precision=None,
+        # recombination=None,
+        # mismatch=None,
+        # precision=None,
         extended_checks=False,
     ):
-        self.ts = ts
-        self.mismatch = mismatch
-        self.recombination = recombination
-        self.precision = precision
+        self.tree_sequence_builder = TreeSequenceBuilder(ts)
+        self.recombination = np.zeros(ts.num_sites) + 1e-9
+        self.mismatch = np.zeros(ts.num_sites)
+        # self.mismatch = mismatch
+        # self.recombination = recombination
+        # self.precision = precision
+        self.precision = 14
         self.extended_checks = extended_checks
         self.num_sites = ts.num_sites
         self.parent = None
@@ -498,8 +536,9 @@ class TestSingleBalancedTreeExample:
 
     def test_something(self):
         ts = self.ts()
-        print(ts.draw_text())
         am = AncestorMatcher(ts)
-        print(am)
-        match = [0 for _ in range(4)]
-        am.find_path([1, 0, 0, 0], 0, 4, match)
+        match = np.zeros(4, dtype=int)
+        left, right, parent = am.find_path([1, 0, 0, 0], 0, 4, match)
+        assert list(left) == [0]
+        assert list(right) == [4]
+        assert list(parent) == [2]
