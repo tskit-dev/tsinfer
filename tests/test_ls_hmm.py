@@ -3,8 +3,10 @@ Tests for the haplotype matching algorithm.
 """
 import collections
 import dataclasses
+import io
 
 import numpy as np
+import pytest
 import sortedcontainers
 import tskit
 
@@ -19,25 +21,38 @@ class Edge:
     child: int = dataclasses.field(default=None)
 
 
-def example_binary(n, L):
-    tables = tskit.TableCollection(L)
-    tables.nodes.add_row(time=1)
-    tables.nodes.add_row(time=0)
-    tables.edges.add_row(0, L, parent=0, child=1)
-    tree = tskit.Tree.generate_balanced(n, span=L)
-    binary_tables = tree.tree_sequence.dump_tables()
-    binary_tables.nodes.time += 1
-    tables.nodes.time += np.max(binary_tables.nodes.time) + 1
-    binary_tables.edges.child += len(tables.nodes)
-    binary_tables.edges.parent += len(tables.nodes)
-    for node in binary_tables.nodes:
+def add_vestigial_root(ts):
+    """
+    Adds the nodes and edges required by tsinfer to the specified tree sequence
+    and returns it.
+    """
+    if not ts.discrete_genome:
+        raise ValueError("Only discrete genome coords supported")
+
+    base_tables = ts.dump_tables()
+    tables = base_tables.copy()
+    tables.nodes.clear()
+    t = ts.max_root_time
+    tables.nodes.add_row(time=t + 1)
+    num_additonal_nodes = len(tables.nodes)
+    tables.mutations.node += num_additonal_nodes
+    tables.edges.child += num_additonal_nodes
+    tables.edges.parent += num_additonal_nodes
+    for node in base_tables.nodes:
         tables.nodes.append(node)
-    for edge in binary_tables.edges:
-        tables.edges.append(edge)
-    # FIXME brittle
-    tables.edges.add_row(0, L, parent=1, child=tree.root + 2)
+    for tree in ts.trees():
+        root = tree.root + num_additonal_nodes
+        tables.edges.add_row(
+            tree.interval.left, tree.interval.right, parent=0, child=root
+        )
+    tables.edges.squash()
     tables.sort()
     return tables.tree_sequence()
+
+
+def example_binary(n, L):
+    tree = tskit.Tree.generate_balanced(n, span=L)
+    return add_vestigial_root(tree.tree_sequence)
 
 
 # Special values used to indicate compressed paths and nodes that are
@@ -56,7 +71,10 @@ class TreeSequenceBuilder:
         self.left_index = sortedcontainers.SortedDict()
         self.right_index = sortedcontainers.SortedDict()
 
-        for edge in ts.edges():
+        for tsk_edge in ts.edges():
+            edge = Edge(
+                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
+            )
             self.left_index[(edge.left, self.time[edge.child], edge.child)] = edge
             self.right_index[(edge.right, -self.time[edge.child], edge.child)] = edge
         self.num_alleles = [var.num_alleles for var in ts.variants()]
@@ -514,15 +532,13 @@ class AncestorMatcher:
 
 
 class TestSingleBalancedTreeExample:
-    # 5.00┊    0    ┊
+    # 4.00┊    0    ┊
     #     ┊    ┃    ┊
-    # 4.00┊    1    ┊
-    #     ┊    ┃    ┊
-    # 3.00┊    8    ┊
+    # 3.00┊    7    ┊
     #     ┊  ┏━┻━┓  ┊
-    # 2.00┊  6   7  ┊
+    # 2.00┊  5   6  ┊
     #     ┊ ┏┻┓ ┏┻┓ ┊
-    # 1.00┊ 2 3 4 5 ┊
+    # 1.00┊ 1 2 3 4 ┊
     #     0         4
 
     @staticmethod
@@ -531,14 +547,83 @@ class TestSingleBalancedTreeExample:
         # Add a site for each sample with a single mutation above that sample.
         for j in range(4):
             tables.sites.add_row(j, "0")
-            tables.mutations.add_row(site=j, node=2 + j, derived_state="1")
+            tables.mutations.add_row(site=j, node=1 + j, derived_state="1")
         return tables.tree_sequence()
 
-    def test_something(self):
+    @pytest.mark.parametrize("j", [0, 1, 2, 3])
+    def test_match_sample(self, j):
         ts = self.ts()
         am = AncestorMatcher(ts)
-        match = np.zeros(4, dtype=int)
-        left, right, parent = am.find_path([1, 0, 0, 0], 0, 4, match)
+        m = 4
+        match = np.zeros(m, dtype=int)
+        h = np.zeros(m)
+        h[j] = 1
+        left, right, parent = am.find_path(h, 0, m, match)
         assert list(left) == [0]
-        assert list(right) == [4]
-        assert list(parent) == [2]
+        assert list(right) == [m]
+        assert list(parent) == [ts.samples()[j]]
+
+
+class TestMultiTreeExample:
+    # 1.84┊     0   ┊    0    ┊
+    #     ┊     ┃   ┊    ┃    ┊
+    # 0.84┊     8   ┊    8    ┊
+    #     ┊   ┏━┻━┓ ┊  ┏━┻━┓  ┊
+    # 0.42┊   ┃   ┃ ┊  7   ┃  ┊
+    #     ┊   ┃   ┃ ┊ ┏┻┓  ┃  ┊
+    # 0.05┊   6   ┃ ┊ ┃ ┃  ┃  ┊
+    #     ┊ ┏━┻┓  ┃ ┊ ┃ ┃  ┃  ┊
+    # 0.04┊ ┃  5  ┃ ┊ ┃ ┃  5  ┊
+    #     ┊ ┃ ┏┻┓ ┃ ┊ ┃ ┃ ┏┻┓ ┊
+    # 0.00┊ 1 2 3 4 ┊ 1 4 2 3 ┊
+    #     0         2         4
+    @staticmethod
+    def ts():
+        nodes = """\
+        is_sample       time
+        0       1.838075
+        1       0.000000
+        1       0.000000
+        1       0.000000
+        1       0.000000
+        0       0.041304
+        0       0.045967
+        0       0.416719
+        0       0.838075
+        """
+        edges = """\
+        left    right   parent  child
+        0.000000        4.000000       5       2
+        0.000000        4.000000       5       3
+        0.000000        2.000000       6       1
+        0.000000        2.000000       6       5
+        2.000000        4.000000       7       1
+        2.000000        4.000000       7       4
+        0.000000        2.000000       8       4
+        2.000000        4.000000       8       5
+        0.000000        2.000000       8       6
+        2.000000        4.000000       8       7
+        0.000000        4.000000       0       8
+        """
+        ts = tskit.load_text(
+            nodes=io.StringIO(nodes), edges=io.StringIO(edges), strict=False
+        )
+        tables = ts.dump_tables()
+        # Add a site for each sample with a single mutation above that sample.
+        for j in range(4):
+            tables.sites.add_row(j, "0")
+            tables.mutations.add_row(site=j, node=1 + j, derived_state="1")
+        return tables.tree_sequence()
+
+    @pytest.mark.parametrize("j", [0, 1, 2, 3])
+    def test_match_sample(self, j):
+        ts = self.ts()
+        am = AncestorMatcher(ts)
+        m = 4
+        match = np.zeros(m, dtype=int)
+        h = np.zeros(m)
+        h[j] = 1
+        left, right, parent = am.find_path(h, 0, m, match)
+        assert list(left) == [0]
+        assert list(right) == [m]
+        assert list(parent) == [ts.samples()[j]]
