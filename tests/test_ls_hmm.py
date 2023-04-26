@@ -60,15 +60,15 @@ COMPRESSED = -1
 NONZERO_ROOT = -2
 
 
-class FakeSortedSet:
-    def __init__(self, values):
-        self.values = values
-
-    def peekitem(self, index):
-        return None, self.values[index]
-
-    def __len__(self):
-        return len(self.values)
+def convert_edge_list(ts, order):
+    values = []
+    for j in order:
+        tsk_edge = ts.edge(j)
+        edge = Edge(
+            int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
+        )
+        values.append(edge)
+    return values
 
 
 class AncestorMatcher:
@@ -101,32 +101,21 @@ class AncestorMatcher:
         # stuff that used to be in TreeSequenceBuilder
         self.num_nodes = ts.num_nodes
         self.num_match_nodes = ts.num_nodes
+
+        # Store the edges in left and right order.
+        # NOTE: we should probably pull these out into a per-process shared
+        # resources, since it would be a good bit of extra overhead to store them
+        # per match thread.
+        self.left_index = convert_edge_list(ts, ts.tables.indexes.edge_insertion_order)
+        self.right_index = convert_edge_list(ts, ts.tables.indexes.edge_removal_order)
+
+        # TODO update
         self.num_alleles = [var.num_alleles for var in ts.variants()]
         self.mutations = collections.defaultdict(list)
         for site in ts.sites():
             for mutation in site.mutations:
                 # FIXME - should be allele index
                 self.mutations[site.id].append((mutation.node, 1))
-
-        Il = ts.tables.indexes.edge_insertion_order
-        values = []
-        for j in Il:
-            tsk_edge = ts.edge(j)
-            edge = Edge(
-                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
-            )
-            values.append(edge)
-        self.left_index = FakeSortedSet(values)
-
-        Ir = ts.tables.indexes.edge_removal_order
-        values = []
-        for j in Ir:
-            tsk_edge = ts.edge(j)
-            edge = Edge(
-                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
-            )
-            values.append(edge)
-        self.right_index = FakeSortedSet(values)
 
     def print_state(self):
         # TODO - don't crash when self.max_likelihood_node or self.traceback == None
@@ -344,21 +333,21 @@ class AncestorMatcher:
         left = 0
         pos = 0
         right = m
-        if j < M and start < Il.peekitem(j)[1].left:
-            right = Il.peekitem(j)[1].left
-        while j < M and k < M and Il.peekitem(j)[1].left <= start:
-            while Ir.peekitem(k)[1].right == pos:
-                self.remove_edge(Ir.peekitem(k)[1])
+        if j < M and start < Il[j].left:
+            right = Il[j].left
+        while j < M and k < M and Il[j].left <= start:
+            while Ir[k].right == pos:
+                self.remove_edge(Ir[k])
                 k += 1
-            while j < M and Il.peekitem(j)[1].left == pos:
-                self.insert_edge(Il.peekitem(j)[1])
+            while j < M and Il[j].left == pos:
+                self.insert_edge(Il[j])
                 j += 1
             left = pos
             right = m
             if j < M:
-                right = min(right, Il.peekitem(j)[1].left)
+                right = min(right, Il[j].left)
             if k < M:
-                right = min(right, Ir.peekitem(k)[1].right)
+                right = min(right, Ir[k].right)
             pos = right
         assert left < right
 
@@ -379,7 +368,7 @@ class AncestorMatcher:
             # print("L:", {u: self.likelihood[u] for u in self.likelihood_nodes})
             assert left < right
             for site_index in range(remove_start, k):
-                edge = Ir.peekitem(site_index)[1]
+                edge = Ir[site_index]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
                         self.likelihood[u] = NONZERO_ROOT
@@ -405,8 +394,8 @@ class AncestorMatcher:
                 self.update_site(site, h[site])
 
             remove_start = k
-            while k < M and Ir.peekitem(k)[1].right == right:
-                edge = Ir.peekitem(k)[1]
+            while k < M and Ir[k].right == right:
+                edge = Ir[k]
                 self.remove_edge(edge)
                 k += 1
                 if self.likelihood[edge.child] == -1:
@@ -428,7 +417,7 @@ class AncestorMatcher:
                     self.likelihood_nodes.append(edge.child)
             # Clear the L cache
             for site_index in range(remove_start, k):
-                edge = Ir.peekitem(site_index)[1]
+                edge = Ir[site_index]
                 u = edge.parent
                 while L_cache[u] != -1:
                     L_cache[u] = -1
@@ -436,8 +425,8 @@ class AncestorMatcher:
             assert np.all(L_cache == -1)
 
             left = right
-            while j < M and Il.peekitem(j)[1].left == left:
-                edge = Il.peekitem(j)[1]
+            while j < M and Il[j].left == left:
+                edge = Il[j]
                 self.insert_edge(edge)
                 j += 1
                 # There's no point in compressing the likelihood tree here as we'll be
@@ -448,9 +437,9 @@ class AncestorMatcher:
                         self.likelihood_nodes.append(u)
             right = m
             if j < M:
-                right = min(right, Il.peekitem(j)[1].left)
+                right = min(right, Il[j].left)
             if k < M:
-                right = min(right, Ir.peekitem(k)[1].right)
+                right = min(right, Ir[k].right)
 
         return self.run_traceback(start, end, match)
 
@@ -480,20 +469,20 @@ class AncestorMatcher:
         pos = self.num_sites
         while pos > start:
             # print("Top of loop: pos = ", pos)
-            while k >= 0 and Il.peekitem(k)[1].left == pos:
-                edge = Il.peekitem(k)[1]
+            while k >= 0 and Il[k].left == pos:
+                edge = Il[k]
                 self.remove_edge(edge)
                 k -= 1
-            while j >= 0 and Ir.peekitem(j)[1].right == pos:
-                edge = Ir.peekitem(j)[1]
+            while j >= 0 and Ir[j].right == pos:
+                edge = Ir[j]
                 self.insert_edge(edge)
                 j -= 1
             right = pos
             left = 0
             if k >= 0:
-                left = max(left, Il.peekitem(k)[1].left)
+                left = max(left, Il[k].left)
             if j >= 0:
-                left = max(left, Ir.peekitem(j)[1].right)
+                left = max(left, Ir[j].right)
             pos = left
 
             assert left < right
