@@ -7,7 +7,6 @@ import io
 
 import numpy as np
 import pytest
-import sortedcontainers
 import tskit
 
 import _tsinfer
@@ -61,6 +60,17 @@ COMPRESSED = -1
 NONZERO_ROOT = -2
 
 
+class FakeSortedSet:
+    def __init__(self, values):
+        self.values = values
+
+    def peekitem(self, index):
+        return None, self.values[index]
+
+    def __len__(self):
+        return len(self.values)
+
+
 class AncestorMatcher:
     def __init__(
         self,
@@ -98,15 +108,25 @@ class AncestorMatcher:
                 # FIXME - should be allele index
                 self.mutations[site.id].append((mutation.node, 1))
 
-        self.left_index = sortedcontainers.SortedDict()
-        self.right_index = sortedcontainers.SortedDict()
-        time = ts.nodes_time
-        for tsk_edge in ts.edges():
+        Il = ts.tables.indexes.edge_insertion_order
+        values = []
+        for j in Il:
+            tsk_edge = ts.edge(j)
             edge = Edge(
                 int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
             )
-            self.left_index[(edge.left, time[edge.child], edge.child)] = edge
-            self.right_index[(edge.right, -time[edge.child], edge.child)] = edge
+            values.append(edge)
+        self.left_index = FakeSortedSet(values)
+
+        Ir = ts.tables.indexes.edge_removal_order
+        values = []
+        for j in Ir:
+            tsk_edge = ts.edge(j)
+            edge = Edge(
+                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
+            )
+            values.append(edge)
+        self.right_index = FakeSortedSet(values)
 
     def print_state(self):
         # TODO - don't crash when self.max_likelihood_node or self.traceback == None
