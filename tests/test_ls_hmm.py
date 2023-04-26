@@ -15,8 +15,8 @@ import _tsinfer
 
 @dataclasses.dataclass
 class Edge:
-    left: float = dataclasses.field(default=None)
-    right: float = dataclasses.field(default=None)
+    left: int = dataclasses.field(default=None)
+    right: int = dataclasses.field(default=None)
     parent: int = dataclasses.field(default=None)
     child: int = dataclasses.field(default=None)
 
@@ -61,31 +61,6 @@ COMPRESSED = -1
 NONZERO_ROOT = -2
 
 
-class TreeSequenceBuilder:
-    # Temporary dummy implementation to get things working.
-    def __init__(self, ts):
-        self.time = ts.nodes_time
-        self.num_nodes = ts.num_nodes
-        self.num_match_nodes = ts.num_nodes
-        self.num_sites = ts.num_sites
-        self.left_index = sortedcontainers.SortedDict()
-        self.right_index = sortedcontainers.SortedDict()
-
-        for tsk_edge in ts.edges():
-            edge = Edge(
-                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
-            )
-            self.left_index[(edge.left, self.time[edge.child], edge.child)] = edge
-            self.right_index[(edge.right, -self.time[edge.child], edge.child)] = edge
-        self.num_alleles = [var.num_alleles for var in ts.variants()]
-
-        self.mutations = collections.defaultdict(list)
-        for site in ts.sites():
-            for mutation in site.mutations:
-                # FIXME - should be allele index
-                self.mutations[site.id].append((mutation.node, 1))
-
-
 class AncestorMatcher:
     def __init__(
         self,
@@ -95,7 +70,6 @@ class AncestorMatcher:
         # precision=None,
         extended_checks=False,
     ):
-        self.tree_sequence_builder = TreeSequenceBuilder(ts)
         self.recombination = np.zeros(ts.num_sites) + 1e-9
         self.mismatch = np.zeros(ts.num_sites)
         # self.mismatch = mismatch
@@ -113,6 +87,26 @@ class AncestorMatcher:
         self.likelihood_nodes = None
         self.allelic_state = None
         self.total_memory = 0
+
+        # stuff that used to be in TreeSequenceBuilder
+        self.num_nodes = ts.num_nodes
+        self.num_match_nodes = ts.num_nodes
+        self.num_alleles = [var.num_alleles for var in ts.variants()]
+        self.mutations = collections.defaultdict(list)
+        for site in ts.sites():
+            for mutation in site.mutations:
+                # FIXME - should be allele index
+                self.mutations[site.id].append((mutation.node, 1))
+
+        self.left_index = sortedcontainers.SortedDict()
+        self.right_index = sortedcontainers.SortedDict()
+        time = ts.nodes_time
+        for tsk_edge in ts.edges():
+            edge = Edge(
+                int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
+            )
+            self.left_index[(edge.left, time[edge.child], edge.child)] = edge
+            self.right_index[(edge.right, -time[edge.child], edge.child)] = edge
 
     def print_state(self):
         # TODO - don't crash when self.max_likelihood_node or self.traceback == None
@@ -150,7 +144,7 @@ class AncestorMatcher:
         # We know that 0 is always a root.
         # FIXME assuming for now that the ancestral state is always zero.
         self.allelic_state[0] = 0
-        for node, state in self.tree_sequence_builder.mutations[site]:
+        for node, state in self.mutations[site]:
             self.allelic_state[node] = state
 
     def unset_allelic_state(self, site):
@@ -159,20 +153,20 @@ class AncestorMatcher:
         """
         # We know that 0 is always a root.
         self.allelic_state[0] = -1
-        for node, _ in self.tree_sequence_builder.mutations[site]:
+        for node, _ in self.mutations[site]:
             self.allelic_state[node] = -1
         assert np.all(self.allelic_state == -1)
 
     def update_site(self, site, haplotype_state):
-        n = self.tree_sequence_builder.num_match_nodes
+        n = self.num_match_nodes
         rho = self.recombination[site]
         mu = self.mismatch[site]
-        num_alleles = self.tree_sequence_builder.num_alleles[site]
+        num_alleles = self.num_alleles[site]
         assert haplotype_state < num_alleles
 
         self.set_allelic_state(site)
 
-        for node, _ in self.tree_sequence_builder.mutations[site]:
+        for node, _ in self.mutations[site]:
             # Insert an new L-value for the mutation node if needed.
             if self.likelihood[node] == COMPRESSED:
                 u = node
@@ -306,11 +300,11 @@ class AncestorMatcher:
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
     def find_path(self, h, start, end, match):
-        Il = self.tree_sequence_builder.left_index
-        Ir = self.tree_sequence_builder.right_index
+        Il = self.left_index
+        Ir = self.right_index
         M = len(Il)
-        n = self.tree_sequence_builder.num_nodes
-        m = self.tree_sequence_builder.num_sites
+        n = self.num_nodes
+        m = self.num_sites
         self.parent = np.zeros(n, dtype=int) - 1
         self.left_child = np.zeros(n, dtype=int) - 1
         self.right_child = np.zeros(n, dtype=int) - 1
@@ -441,15 +435,13 @@ class AncestorMatcher:
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        Il = self.tree_sequence_builder.left_index
-        Ir = self.tree_sequence_builder.right_index
+        Il = self.left_index
+        Ir = self.right_index
         M = len(Il)
         u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
         output_edges = [output_edge]
-        recombination_required = (
-            np.zeros(self.tree_sequence_builder.num_nodes, dtype=int) - 1
-        )
+        recombination_required = np.zeros(self.num_nodes, dtype=int) - 1
 
         # Now go back through the trees.
         j = M - 1
@@ -465,7 +457,7 @@ class AncestorMatcher:
         self.left_sib[:] = -1
         self.right_sib[:] = -1
 
-        pos = self.tree_sequence_builder.num_sites
+        pos = self.num_sites
         while pos > start:
             # print("Top of loop: pos = ", pos)
             while k >= 0 and Il.peekitem(k)[1].left == pos:
@@ -531,6 +523,10 @@ class AncestorMatcher:
         return left, right, parent
 
 
+# TODO the tests on these two classes are the same right now, should
+# refactor.
+
+
 class TestSingleBalancedTreeExample:
     # 4.00┊    0    ┊
     #     ┊    ┃    ┊
@@ -562,6 +558,18 @@ class TestSingleBalancedTreeExample:
         assert list(left) == [0]
         assert list(right) == [m]
         assert list(parent) == [ts.samples()[j]]
+
+    def test_switch_each_sample(self):
+        ts = self.ts()
+        am = AncestorMatcher(ts)
+        m = 4
+        match = np.zeros(m, dtype=int)
+        h = np.zeros(m)
+        h[:] = 1
+        left, right, parent = am.find_path(h, 0, m, match)
+        assert list(left) == [3, 2, 1, 0]
+        assert list(right) == [4, 3, 2, 1]
+        assert list(parent) == [4, 3, 2, 1]
 
 
 class TestMultiTreeExample:
@@ -627,3 +635,15 @@ class TestMultiTreeExample:
         assert list(left) == [0]
         assert list(right) == [m]
         assert list(parent) == [ts.samples()[j]]
+
+    def test_switch_each_sample(self):
+        ts = self.ts()
+        am = AncestorMatcher(ts)
+        m = 4
+        match = np.zeros(m, dtype=int)
+        h = np.zeros(m)
+        h[:] = 1
+        left, right, parent = am.find_path(h, 0, m, match)
+        assert list(left) == [3, 2, 1, 0]
+        assert list(right) == [4, 3, 2, 1]
+        assert list(parent) == [4, 3, 2, 1]
