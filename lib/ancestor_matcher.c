@@ -1133,7 +1133,8 @@ lshmm_copy_mutation_data(lshmm_t *self)
         self->sites.num_alleles[j] = site.mutations_length;
         /* Next, allocate the corresponding mutation object here and link
          * to it. */
-        delibaretely not compiling
+        /* delibaretely not compiling */
+        printf("FIXME mutations not working\n");
     }
 out:
     return ret;

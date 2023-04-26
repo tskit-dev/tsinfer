@@ -986,6 +986,21 @@ test_packbits_errors(void)
 }
 
 static void
+test_matching_simplest_tree_one_site(void)
+{
+    int ret = 0;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 1;
+    printf("ADD some topology and one site here\n");
+    CU_ASSERT_FATAL(1 == 0);
+
+    tsk_table_collection_free(&tables);
+}
+
+static void
 test_strerror(void)
 {
     int j;
@@ -1076,6 +1091,8 @@ main(int argc, char **argv)
         { "test_packbits_3", test_packbits_3 },
         { "test_packbits_4", test_packbits_4 },
         { "test_packbits_errors", test_packbits_errors },
+
+        { "test_matching_simplest_tree_one_site", test_matching_simplest_tree_one_site },
 
         { "test_strerror", test_strerror },
 
