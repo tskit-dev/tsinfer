@@ -1962,3 +1962,139 @@ lshmm_get_total_memory(lshmm_t *self)
 
     return total;
 }
+
+static int
+matcher_indexes_copy_edge_indexes(matcher_indexes_t *self, const tsk_treeseq_t *ts)
+{
+    int ret = 0;
+    tsk_size_t j;
+    tsk_id_t k;
+    edge_t e;
+    const tsk_id_t *restrict I = ts->tables->indexes.edge_insertion_order;
+    const tsk_id_t *restrict O = ts->tables->indexes.edge_removal_order;
+    const double *restrict edges_right = ts->tables->edges.right;
+    const double *restrict edges_left = ts->tables->edges.left;
+    const tsk_id_t *restrict edges_child = ts->tables->edges.child;
+    const tsk_id_t *restrict edges_parent = ts->tables->edges.parent;
+
+    for (j = 0; j < self->num_edges; j++) {
+        k = I[j];
+        /* TODO check that the edges can be cast */
+        e.left = (tsk_id_t) edges_left[k];
+        e.right = (tsk_id_t) edges_right[k];
+        e.parent = edges_parent[k];
+        e.child = edges_child[k];
+        self->left_index_edges[j] = e;
+
+        k = O[j];
+        e.left = (tsk_id_t) edges_left[k];
+        e.right = (tsk_id_t) edges_right[k];
+        e.parent = edges_parent[k];
+        e.child = edges_child[k];
+        self->right_index_edges[j] = e;
+    }
+    return ret;
+}
+
+static int WARN_UNUSED
+matcher_indexes_add_mutation(
+    matcher_indexes_t *self, tsk_id_t site, tsk_id_t node, allele_t derived_state)
+{
+    int ret = 0;
+    mutation_list_node_t *list_node, *tail;
+
+    list_node = tsk_blkalloc_get(&self->allocator, sizeof(mutation_list_node_t));
+    if (list_node == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    list_node->node = node;
+    list_node->derived_state = derived_state;
+    list_node->next = NULL;
+    if (self->sites.mutations[site] == NULL) {
+        self->sites.mutations[site] = list_node;
+    } else {
+        tail = self->sites.mutations[site];
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = list_node;
+    }
+    self->num_mutations++;
+out:
+    return ret;
+}
+
+static int
+matcher_indexes_copy_mutation_data(matcher_indexes_t *self, const tsk_treeseq_t *ts)
+{
+    int ret = 0;
+    tsk_site_t site;
+    tsk_size_t j, k;
+
+    for (j = 0; j < self->num_sites; j++) {
+        ret = tsk_treeseq_get_site(ts, (tsk_id_t) j, &site);
+        if (ret != 0) {
+            goto out;
+        }
+        if (site.mutations_length > 1) {
+            ret = TSI_ERR_GENERIC;
+            goto out;
+        }
+        /* FIXME need to through this properly when we've got things working. */
+        self->sites.num_alleles[j] = site.mutations_length + 1;
+        for (k = 0; k < site.mutations_length; k++) {
+            ret = matcher_indexes_add_mutation(self, site.id, site.mutations[k].node, 1);
+            if (ret != 0) {
+                goto out;
+            }
+        }
+    }
+out:
+    return ret;
+}
+
+int
+matcher_indexes_alloc(
+    matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t flags)
+{
+    int ret = 0;
+
+    self->flags = flags;
+    self->num_edges = tsk_treeseq_get_num_edges(ts);
+    self->num_nodes = tsk_treeseq_get_num_nodes(ts);
+    self->num_sites = tsk_treeseq_get_num_sites(ts);
+    self->num_mutations = tsk_treeseq_get_num_mutations(ts);
+
+    self->left_index_edges = malloc(self->num_edges * sizeof(*self->left_index_edges));
+    self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));
+    self->sites.mutations = malloc(self->num_sites * sizeof(*self->sites.mutations));
+    self->sites.num_alleles = malloc(self->num_sites * sizeof(*self->sites.num_alleles));
+    if (self->left_index_edges == NULL || self->right_index_edges == NULL
+        || self->sites.mutations == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    ret = matcher_indexes_copy_edge_indexes(self, ts);
+    if (ret != 0) {
+        goto out;
+    }
+    ret = matcher_indexes_copy_mutation_data(self, ts);
+    if (ret != 0) {
+        goto out;
+    }
+out:
+    return ret;
+}
+
+int
+matcher_indexes_free(matcher_indexes_t *self)
+{
+    tsk_safe_free(self->left_index_edges);
+    tsk_safe_free(self->right_index_edges);
+    tsk_safe_free(self->sites.mutations);
+    tsk_safe_free(self->sites.num_alleles);
+    tsk_blkalloc_free(&self->allocator);
+    return 0;
+}

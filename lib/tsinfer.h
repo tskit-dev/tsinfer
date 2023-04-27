@@ -211,6 +211,24 @@ typedef struct {
 
 typedef struct {
     tsk_flags_t flags;
+    size_t num_sites;
+    size_t num_nodes;
+    size_t num_mutations;
+    size_t num_edges;
+    struct {
+        mutation_list_node_t **mutations;
+        tsk_size_t *num_alleles;
+    } sites;
+    /* TODO add nodes struct */
+    double *time;
+    uint32_t *node_flags;
+    edge_t *left_index_edges;
+    edge_t *right_index_edges;
+    tsk_blkalloc_t allocator;
+} matcher_indexes_t;
+
+typedef struct {
+    tsk_flags_t flags;
     const tsk_treeseq_t *ts;
     tsk_size_t num_sites;
     tsk_size_t num_nodes;
@@ -316,6 +334,10 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self, tsk_id_t *le
     tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t *site,
     tsk_id_t *node, allele_t *derived_state, tsk_id_t *parent);
+
+int matcher_indexes_alloc(
+    matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t flags);
+int matcher_indexes_free(matcher_indexes_t *self);
 
 int lshmm_alloc(lshmm_t *self, const tsk_treeseq_t *ts, const double *recombination_rate,
     const double *mismatch_rate, unsigned int precision, tsk_flags_t flags);
