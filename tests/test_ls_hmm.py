@@ -20,40 +20,6 @@ class Edge:
     child: int = dataclasses.field(default=None)
 
 
-def add_vestigial_root(ts):
-    """
-    Adds the nodes and edges required by tsinfer to the specified tree sequence
-    and returns it.
-    """
-    if not ts.discrete_genome:
-        raise ValueError("Only discrete genome coords supported")
-
-    base_tables = ts.dump_tables()
-    tables = base_tables.copy()
-    tables.nodes.clear()
-    t = ts.max_root_time
-    tables.nodes.add_row(time=t + 1)
-    num_additonal_nodes = len(tables.nodes)
-    tables.mutations.node += num_additonal_nodes
-    tables.edges.child += num_additonal_nodes
-    tables.edges.parent += num_additonal_nodes
-    for node in base_tables.nodes:
-        tables.nodes.append(node)
-    for tree in ts.trees():
-        root = tree.root + num_additonal_nodes
-        tables.edges.add_row(
-            tree.interval.left, tree.interval.right, parent=0, child=root
-        )
-    tables.edges.squash()
-    tables.sort()
-    return tables.tree_sequence()
-
-
-def example_binary(n, L):
-    tree = tskit.Tree.generate_balanced(n, span=L)
-    return add_vestigial_root(tree.tree_sequence)
-
-
 # Special values used to indicate compressed paths and nodes that are
 # not present in the current tree.
 COMPRESSED = -1
@@ -71,23 +37,46 @@ def convert_edge_list(ts, order):
     return values
 
 
+class MatcherIndexes:
+    def __init__(self, ts):
+
+        self.num_nodes = ts.num_nodes
+        self.num_sites = ts.num_sites
+
+        # Store the edges in left and right order.
+        self.left_index = convert_edge_list(ts, ts.tables.indexes.edge_insertion_order)
+        self.right_index = convert_edge_list(ts, ts.tables.indexes.edge_removal_order)
+
+        # TODO update
+        self.num_alleles = [var.num_alleles for var in ts.variants()]
+        self.mutations = collections.defaultdict(list)
+        for site in ts.sites():
+            if len(site.mutations) > 1:
+                raise ValueError("Only single mutations supported for now")
+            for mutation in site.mutations:
+                # FIXME - should be allele index
+                self.mutations[site.id].append((mutation.node, 1))
+
+
 class AncestorMatcher:
     def __init__(
         self,
-        ts,
+        matcher_indexes,
         # recombination=None,
         # mismatch=None,
         # precision=None,
         extended_checks=False,
     ):
-        self.recombination = np.zeros(ts.num_sites) + 1e-9
-        self.mismatch = np.zeros(ts.num_sites)
+        self.matcher_indexes = matcher_indexes
+        self.num_sites = matcher_indexes.num_sites
+        self.num_nodes = matcher_indexes.num_nodes
+        self.recombination = np.zeros(self.num_sites) + 1e-9
+        self.mismatch = np.zeros(self.num_sites)
         # self.mismatch = mismatch
         # self.recombination = recombination
         # self.precision = precision
         self.precision = 14
         self.extended_checks = extended_checks
-        self.num_sites = ts.num_sites
         self.parent = None
         self.left_child = None
         self.right_sib = None
@@ -97,25 +86,6 @@ class AncestorMatcher:
         self.likelihood_nodes = None
         self.allelic_state = None
         self.total_memory = 0
-
-        # stuff that used to be in TreeSequenceBuilder
-        self.num_nodes = ts.num_nodes
-        self.num_match_nodes = ts.num_nodes
-
-        # Store the edges in left and right order.
-        # NOTE: we should probably pull these out into a per-process shared
-        # resources, since it would be a good bit of extra overhead to store them
-        # per match thread.
-        self.left_index = convert_edge_list(ts, ts.tables.indexes.edge_insertion_order)
-        self.right_index = convert_edge_list(ts, ts.tables.indexes.edge_removal_order)
-
-        # TODO update
-        self.num_alleles = [var.num_alleles for var in ts.variants()]
-        self.mutations = collections.defaultdict(list)
-        for site in ts.sites():
-            for mutation in site.mutations:
-                # FIXME - should be allele index
-                self.mutations[site.id].append((mutation.node, 1))
 
     def print_state(self):
         # TODO - don't crash when self.max_likelihood_node or self.traceback == None
@@ -162,15 +132,15 @@ class AncestorMatcher:
         """
         # We know that 0 is always a root.
         self.allelic_state[0] = -1
-        for node, _ in self.mutations[site]:
+        for node, _ in self.matcher_indexes.mutations[site]:
             self.allelic_state[node] = -1
         assert np.all(self.allelic_state == -1)
 
     def update_site(self, site, haplotype_state):
-        n = self.num_match_nodes
+        n = self.num_nodes
         rho = self.recombination[site]
         mu = self.mismatch[site]
-        num_alleles = self.num_alleles[site]
+        num_alleles = self.matcher_indexes.num_alleles[site]
         assert haplotype_state < num_alleles
 
         self.set_allelic_state(site)
@@ -309,8 +279,8 @@ class AncestorMatcher:
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
     def find_path(self, h, start, end, match):
-        Il = self.left_index
-        Ir = self.right_index
+        Il = self.matcher_indexes.left_index
+        Ir = self.matcher_indexes.right_index
         M = len(Il)
         n = self.num_nodes
         m = self.num_sites
@@ -444,8 +414,8 @@ class AncestorMatcher:
         return self.run_traceback(start, end, match)
 
     def run_traceback(self, start, end, match):
-        Il = self.left_index
-        Ir = self.right_index
+        Il = self.matcher_indexes.left_index
+        Ir = self.matcher_indexes.right_index
         M = len(Il)
         u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
@@ -532,8 +502,51 @@ class AncestorMatcher:
         return left, right, parent
 
 
+def run_match(ts, h):
+    assert len(h) == ts.num_sites
+    matcher_indexes = MatcherIndexes(ts)
+    matcher = AncestorMatcher(matcher_indexes)
+    match = np.zeros(ts.num_sites, dtype=int)
+    left, right, parent = matcher.find_path(h, 0, ts.num_sites, match)
+    return left, right, parent, match
+
+
 # TODO the tests on these two classes are the same right now, should
 # refactor.
+
+
+def add_vestigial_root(ts):
+    """
+    Adds the nodes and edges required by tsinfer to the specified tree sequence
+    and returns it.
+    """
+    if not ts.discrete_genome:
+        raise ValueError("Only discrete genome coords supported")
+
+    base_tables = ts.dump_tables()
+    tables = base_tables.copy()
+    tables.nodes.clear()
+    t = ts.max_root_time
+    tables.nodes.add_row(time=t + 1)
+    num_additonal_nodes = len(tables.nodes)
+    tables.mutations.node += num_additonal_nodes
+    tables.edges.child += num_additonal_nodes
+    tables.edges.parent += num_additonal_nodes
+    for node in base_tables.nodes:
+        tables.nodes.append(node)
+    for tree in ts.trees():
+        root = tree.root + num_additonal_nodes
+        tables.edges.add_row(
+            tree.interval.left, tree.interval.right, parent=0, child=root
+        )
+    tables.edges.squash()
+    tables.sort()
+    return tables.tree_sequence()
+
+
+def example_binary(n, L):
+    tree = tskit.Tree.generate_balanced(n, span=L)
+    return add_vestigial_root(tree.tree_sequence)
 
 
 class TestSingleBalancedTreeExample:
@@ -558,12 +571,8 @@ class TestSingleBalancedTreeExample:
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
         ts = self.ts()
-        am = AncestorMatcher(ts)
-        m = 4
-        match = np.zeros(m, dtype=int)
-        h = np.zeros(m)
-        h[j] = 1
-        left, right, parent = am.find_path(h, 0, m, match)
+        h = np.zeros(4)
+        left, right, parent, match = run_match(ts, h)
         assert list(left) == [0]
         assert list(right) == [m]
         assert list(parent) == [ts.samples()[j]]
@@ -640,6 +649,7 @@ class TestMultiTreeExample:
         match = np.zeros(m, dtype=int)
         h = np.zeros(m)
         h[j] = 1
+        left, right, parent, match = run_match(self.ts(), h)
         left, right, parent = am.find_path(h, 0, m, match)
         assert list(left) == [0]
         assert list(right) == [m]
