@@ -22,8 +22,6 @@ class Edge:
 
 # Special values used to indicate compressed paths and nodes that are
 # not present in the current tree.
-COMPRESSED = -1
-NONZERO_ROOT = -2
 
 
 def convert_edge_list(ts, order):
@@ -38,8 +36,11 @@ def convert_edge_list(ts, order):
 
 
 class MatcherIndexes:
-    def __init__(self, ts):
+    """
+    The memory that can be shared between AncestorMatcher instances.
+    """
 
+    def __init__(self, ts):
         self.num_nodes = ts.num_nodes
         self.num_sites = ts.num_sites
 
@@ -56,6 +57,10 @@ class MatcherIndexes:
             for mutation in site.mutations:
                 # FIXME - should be allele index
                 self.mutations[site.id].append((mutation.node, 1))
+
+
+COMPRESSED = -1
+NONZERO_ROOT = -2
 
 
 class AncestorMatcher:
@@ -123,7 +128,7 @@ class AncestorMatcher:
         # We know that 0 is always a root.
         # FIXME assuming for now that the ancestral state is always zero.
         self.allelic_state[0] = 0
-        for node, state in self.mutations[site]:
+        for node, state in self.matcher_indexes.mutations[site]:
             self.allelic_state[node] = state
 
     def unset_allelic_state(self, site):
@@ -145,7 +150,7 @@ class AncestorMatcher:
 
         self.set_allelic_state(site)
 
-        for node, _ in self.mutations[site]:
+        for node, _ in self.matcher_indexes.mutations[site]:
             # Insert an new L-value for the mutation node if needed.
             if self.likelihood[node] == COMPRESSED:
                 u = node
@@ -572,22 +577,23 @@ class TestSingleBalancedTreeExample:
     def test_match_sample(self, j):
         ts = self.ts()
         h = np.zeros(4)
+        h[j] = 1
         left, right, parent, match = run_match(ts, h)
         assert list(left) == [0]
-        assert list(right) == [m]
+        assert list(right) == [4]
         assert list(parent) == [ts.samples()[j]]
+        np.testing.assert_array_equal(h, match)
 
     def test_switch_each_sample(self):
         ts = self.ts()
-        am = AncestorMatcher(ts)
         m = 4
-        match = np.zeros(m, dtype=int)
         h = np.zeros(m)
         h[:] = 1
-        left, right, parent = am.find_path(h, 0, m, match)
+        left, right, parent, match = run_match(ts, h)
         assert list(left) == [3, 2, 1, 0]
         assert list(right) == [4, 3, 2, 1]
         assert list(parent) == [4, 3, 2, 1]
+        np.testing.assert_array_equal(h, match)
 
 
 class TestMultiTreeExample:
@@ -644,25 +650,22 @@ class TestMultiTreeExample:
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
         ts = self.ts()
-        am = AncestorMatcher(ts)
         m = 4
-        match = np.zeros(m, dtype=int)
         h = np.zeros(m)
         h[j] = 1
         left, right, parent, match = run_match(self.ts(), h)
-        left, right, parent = am.find_path(h, 0, m, match)
         assert list(left) == [0]
         assert list(right) == [m]
         assert list(parent) == [ts.samples()[j]]
+        np.testing.assert_array_equal(h, match)
 
     def test_switch_each_sample(self):
         ts = self.ts()
-        am = AncestorMatcher(ts)
         m = 4
-        match = np.zeros(m, dtype=int)
         h = np.zeros(m)
         h[:] = 1
-        left, right, parent = am.find_path(h, 0, m, match)
+        left, right, parent, match = run_match(ts, h)
         assert list(left) == [3, 2, 1, 0]
         assert list(right) == [4, 3, 2, 1]
         assert list(parent) == [4, 3, 2, 1]
+        np.testing.assert_array_equal(h, match)
