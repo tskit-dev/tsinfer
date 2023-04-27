@@ -228,21 +228,11 @@ typedef struct {
 } matcher_indexes_t;
 
 typedef struct {
-    tsk_flags_t flags;
-    const tsk_treeseq_t *ts;
-    tsk_size_t num_sites;
-    tsk_size_t num_nodes;
-    tsk_size_t num_edges;
-    /* FIXME Copying these in here as a quick way of getting the code working
-     * again. However, the memory cost might actually be worth it, needs checking
-     */
-    edge_t *left_index_edges;
-    edge_t *right_index_edges;
-    /* Copying this in here for simplicity. */
-    struct {
-        mutation_list_node_t **mutations;
-        tsk_size_t *num_alleles;
-    } sites;
+    int flags;
+    const matcher_indexes_t *matcher_indexes;
+    size_t num_nodes;
+    size_t num_sites;
+    size_t max_nodes;
     /* Input LS model rates */
     unsigned int precision;
     double *recombination_rate;
@@ -275,7 +265,7 @@ typedef struct {
         size_t size;
         size_t max_size;
     } output;
-} lshmm_t;
+} ancestor_matcher2_t;
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     size_t num_sites, int mmap_fd, int flags);
@@ -335,19 +325,22 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self, tsk_id_t *le
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t *site,
     tsk_id_t *node, allele_t *derived_state, tsk_id_t *parent);
 
+/* New impelementation */
+
 int matcher_indexes_alloc(
     matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t flags);
 int matcher_indexes_free(matcher_indexes_t *self);
 
-int lshmm_alloc(lshmm_t *self, const tsk_treeseq_t *ts, const double *recombination_rate,
-    const double *mismatch_rate, unsigned int precision, tsk_flags_t flags);
-int lshmm_free(lshmm_t *self);
-int lshmm_find_path(lshmm_t *self, tsk_id_t start, tsk_id_t end, allele_t *haplotype,
-    allele_t *matched_haplotype, size_t *num_output_edges, tsk_id_t **left_output,
-    tsk_id_t **right_output, tsk_id_t **parent_output);
-int lshmm_print_state(lshmm_t *self, FILE *out);
-double lshmm_get_mean_traceback_size(lshmm_t *self);
-size_t lshmm_get_total_memory(lshmm_t *self);
+int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
+    const matcher_indexes_t *matcher_indexes, double *recombination_rate,
+    double *mismatch_rate, unsigned int precision, int flags);
+int ancestor_matcher2_free(ancestor_matcher2_t *self);
+int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
+    allele_t *haplotype, allele_t *matched_haplotype, size_t *num_output_edges,
+    tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output);
+int ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out);
+double ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self);
+size_t ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self);
 
 int packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest);
 void unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest);
