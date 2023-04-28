@@ -336,8 +336,7 @@ int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     double *mismatch_rate, unsigned int precision, int flags);
 int ancestor_matcher2_free(ancestor_matcher2_t *self);
 int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    allele_t *haplotype, allele_t *matched_haplotype, size_t *num_output_edges,
-    tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output);
+    const allele_t *haplotype, allele_t *matched_haplotype);
 int ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out);
 double ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self);
 size_t ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self);

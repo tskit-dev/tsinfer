@@ -31,6 +31,11 @@
 
 #include <CUnit/Basic.h>
 
+/* FIXME this needs to be updated somehow to allow the tests to be run from
+ * different directories, i.e., with ninja -C build test
+ */
+#define TEST_DATA_DIR "test_data"
+
 /* Global variables used for test in state in the test suite */
 
 char *_tmp_file_name;
@@ -985,19 +990,69 @@ test_packbits_errors(void)
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_ONE_BIT_NON_BINARY);
 }
 
+static int
+run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
+    allele_t *match, tsk_size_t *path_length, tsk_id_t *left, tsk_id_t *right,
+    tsk_id_t *parent)
+{
+    int ret;
+    ancestor_matcher2_t am;
+    matcher_indexes_t mi;
+    const size_t m = tsk_treeseq_get_num_sites(ts);
+    double *recombination_rate = calloc(m, sizeof(*recombination_rate));
+    double *mutation_rate = calloc(m, sizeof(*mutation_rate));
+    size_t j;
+
+    CU_ASSERT_FATAL(recombination_rate != NULL);
+    CU_ASSERT_FATAL(mutation_rate != NULL);
+    for (j = 0; j < m; j++) {
+        mutation_rate[j] = mu;
+        recombination_rate[j] = rho;
+    }
+
+    ret = matcher_indexes_alloc(&mi, ts, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher2_alloc(&am, &mi, recombination_rate, mutation_rate, 14, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_matcher2_find_path(&am, 0, (tsk_id_t) m, h, match);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    *path_length = am.output.size;
+    for (j = 0; j < am.output.size; j++) {
+        left[j] = am.output.left[j];
+        right[j] = am.output.right[j];
+        parent[j] = am.output.parent[j];
+    }
+
+    /* ancestor_matcher2_print_state(&am, stdout); */
+
+    ancestor_matcher2_free(&am);
+    matcher_indexes_free(&mi);
+    free(recombination_rate);
+    free(mutation_rate);
+
+    return 0;
+}
+
 static void
 test_matching_simplest_tree_one_site(void)
 {
     int ret = 0;
-    tsk_table_collection_t tables;
+    tsk_treeseq_t ts;
+    allele_t h[] = { 0, 0, 0, 0 };
+    allele_t match[4];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
 
-    ret = tsk_table_collection_init(&tables, 0);
+    ret = tsk_treeseq_load(&ts, TEST_DATA_DIR "/single_tree_example.trees", 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    tables.sequence_length = 1;
-    printf("ADD some topology and one site here\n");
-    CU_ASSERT_FATAL(1 == 0);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_sites(&ts), 4);
 
-    tsk_table_collection_free(&tables);
+    h[0] = 1;
+    run_match(&ts, 1e-8, 0, h, match, &path_length, left, right, parent);
+
+    tsk_treeseq_free(&ts);
 }
 
 static void

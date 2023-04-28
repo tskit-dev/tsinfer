@@ -742,6 +742,7 @@ insert_edge(edge_t edge, tsk_id_t *restrict parent, tsk_id_t *restrict left_chil
 {
     const tsk_id_t p = edge.parent;
     const tsk_id_t c = edge.child;
+    assert(right_child != NULL);
     const tsk_id_t u = right_child[p];
 
     parent[c] = p;
@@ -1092,6 +1093,8 @@ matcher_indexes_copy_mutation_data(matcher_indexes_t *self, const tsk_treeseq_t 
             ret = TSI_ERR_GENERIC;
             goto out;
         }
+        self->sites.mutations[j] = NULL;
+
         /* FIXME need to through this properly when we've got things working. */
         self->sites.num_alleles[j] = site.mutations_length + 1;
         for (k = 0; k < site.mutations_length; k++) {
@@ -1124,6 +1127,10 @@ matcher_indexes_alloc(
     if (self->left_index_edges == NULL || self->right_index_edges == NULL
         || self->sites.mutations == NULL) {
         ret = TSI_ERR_NO_MEMORY;
+        goto out;
+    }
+    ret = tsk_blkalloc_init(&self->allocator, 65536);
+    if (ret != 0) {
         goto out;
     }
 
@@ -1237,13 +1244,26 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->traceback = calloc(self->num_sites, sizeof(node_state_list_t));
     self->max_likelihood_node = malloc(self->num_sites * sizeof(tsk_id_t));
+    /* TODO get rid of output and just provide pointers from client code.
+     * We're allocating num_sites anyway, so there's no memory saving. */
     self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
+
     self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
+
+    self->parent = malloc(self->num_nodes * sizeof(*self->parent));
+    self->left_child = malloc(self->num_nodes * sizeof(*self->left_child));
+    self->right_child = malloc(self->num_nodes * sizeof(*self->right_child));
+    self->left_sib = malloc(self->num_nodes * sizeof(*self->left_sib));
+    self->right_sib = malloc(self->num_nodes * sizeof(*self->right_sib));
+    self->recombination_required
+        = malloc(self->num_nodes * sizeof(*self->recombination_required));
+
     if (self->recombination_rate == NULL || self->mismatch_rate == NULL
         || self->traceback == NULL || self->max_likelihood_node == NULL
         || self->output.left == NULL || self->output.right == NULL
         || self->output.parent == NULL) {
+        /* FIXME check tree allocs above */
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -1675,7 +1695,7 @@ ancestor_matcher2_unset_recombination_required(
 
 static int WARN_UNUSED
 ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    allele_t *TSK_UNUSED(haplotype), allele_t *match)
+    const allele_t *TSK_UNUSED(haplotype), allele_t *match)
 {
     int ret = 0;
     tsk_id_t l;
@@ -1774,7 +1794,7 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
 
 static int
 ancestor_matcher2_run_forwards_match(
-    ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end, allele_t *haplotype)
+    ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end, const allele_t *haplotype)
 {
     int ret = 0;
     tsk_id_t site;
@@ -1981,8 +2001,7 @@ out:
 
 int
 ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    allele_t *haplotype, allele_t *matched_haplotype, size_t *num_output_edges,
-    tsk_id_t **left_output, tsk_id_t **right_output, tsk_id_t **parent_output)
+    const allele_t *haplotype, allele_t *matched_haplotype)
 {
     int ret = 0;
 
@@ -2005,10 +2024,6 @@ ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t 
     memset(self->max_likelihood_node + start, 0xff,
         ((size_t)(end - start)) * sizeof(*self->max_likelihood_node));
 
-    *left_output = self->output.left;
-    *right_output = self->output.right;
-    *parent_output = self->output.parent;
-    *num_output_edges = self->output.size;
 out:
     return ret;
 }
