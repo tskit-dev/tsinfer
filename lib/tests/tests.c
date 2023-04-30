@@ -41,6 +41,10 @@
 char *_tmp_file_name;
 FILE *_devnull;
 
+/* FIXME add drawings and descriptions of the trees here */
+tsk_treeseq_t _single_tree_ex_ts;
+tsk_treeseq_t _multi_tree_ex_ts;
+
 static void
 dump_tree_sequence_builder(
     tree_sequence_builder_t *tsb, tsk_table_collection_t *tables, tsk_flags_t options)
@@ -1017,6 +1021,7 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
 
     ret = ancestor_matcher2_find_path(&am, 0, (tsk_id_t) m, h, match);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
+    /* ancestor_matcher2_print_state(&am, stdout); */
 
     *path_length = am.output.size;
     for (j = 0; j < am.output.size; j++) {
@@ -1024,8 +1029,6 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
         right[j] = am.output.right[j];
         parent[j] = am.output.parent[j];
     }
-
-    /* ancestor_matcher2_print_state(&am, stdout); */
 
     ancestor_matcher2_free(&am);
     matcher_indexes_free(&mi);
@@ -1036,23 +1039,75 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
 }
 
 static void
-test_matching_simplest_tree_one_site(void)
+check_matching_single_site_match(const tsk_treeseq_t *ts)
 {
-    int ret = 0;
-    tsk_treeseq_t ts;
     allele_t h[] = { 0, 0, 0, 0 };
+    allele_t match[4];
+    tsk_id_t j, left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_sites(ts), 4);
+
+    for (j = 0; j < 4; j++) {
+        memset(h, 0, sizeof(h));
+        h[j] = 1;
+        run_match(ts, 1e-8, 0, h, match, &path_length, left, right, parent);
+        CU_ASSERT_EQUAL_FATAL(path_length, 1);
+        CU_ASSERT_EQUAL_FATAL(left[0], 0);
+        CU_ASSERT_EQUAL_FATAL(right[0], 4);
+        CU_ASSERT_EQUAL_FATAL(parent[0], j + 1);
+    }
+}
+
+static void
+test_matching_single_tree_single_site_match(void)
+{
+    check_matching_single_site_match(&_single_tree_ex_ts);
+}
+
+static void
+test_matching_multi_tree_single_site_match(void)
+{
+    check_matching_single_site_match(&_multi_tree_ex_ts);
+}
+
+static void
+check_matching_multi_switch(const tsk_treeseq_t *ts)
+{
+    allele_t h[] = { 1, 1, 1, 1 };
     allele_t match[4];
     tsk_id_t left[4], right[4], parent[4];
     tsk_size_t path_length;
 
-    ret = tsk_treeseq_load(&ts, TEST_DATA_DIR "/single_tree_example.trees", 0);
-    CU_ASSERT_EQUAL_FATAL(ret, 0);
-    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_sites(&ts), 4);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_sites(ts), 4);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_sequence_length(ts), 4);
 
-    h[0] = 1;
-    run_match(&ts, 1e-8, 0, h, match, &path_length, left, right, parent);
+    run_match(ts, 1e-8, 0, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL_FATAL(path_length, 4);
+    CU_ASSERT_EQUAL_FATAL(left[3], 0);
+    CU_ASSERT_EQUAL_FATAL(right[3], 1);
+    CU_ASSERT_EQUAL_FATAL(parent[3], 1);
+    CU_ASSERT_EQUAL_FATAL(left[2], 1);
+    CU_ASSERT_EQUAL_FATAL(right[2], 2);
+    CU_ASSERT_EQUAL_FATAL(parent[2], 2);
+    CU_ASSERT_EQUAL_FATAL(left[1], 2);
+    CU_ASSERT_EQUAL_FATAL(right[1], 3);
+    CU_ASSERT_EQUAL_FATAL(parent[1], 3);
+    CU_ASSERT_EQUAL_FATAL(left[0], 3);
+    CU_ASSERT_EQUAL_FATAL(right[0], 4);
+    CU_ASSERT_EQUAL_FATAL(parent[0], 4);
+}
 
-    tsk_treeseq_free(&ts);
+static void
+test_matching_single_tree_multi_switch(void)
+{
+    check_matching_multi_switch(&_single_tree_ex_ts);
+}
+
+static void
+test_matching_multi_tree_multi_switch(void)
+{
+    check_matching_multi_switch(&_multi_tree_ex_ts);
 }
 
 static void
@@ -1074,11 +1129,13 @@ test_strerror(void)
 static int
 tsinfer_suite_init(void)
 {
-    int fd;
+    int ret, fd;
     static char template[] = "/tmp/tsi_c_test_XXXXXX";
 
     _tmp_file_name = NULL;
     _devnull = NULL;
+    memset(&_single_tree_ex_ts, 0, sizeof(_single_tree_ex_ts));
+    memset(&_multi_tree_ex_ts, 0, sizeof(_multi_tree_ex_ts));
 
     _tmp_file_name = malloc(sizeof(template));
     if (_tmp_file_name == NULL) {
@@ -1094,6 +1151,18 @@ tsinfer_suite_init(void)
     if (_devnull == NULL) {
         return CUE_SINIT_FAILED;
     }
+
+    ret = tsk_treeseq_load(
+        &_single_tree_ex_ts, TEST_DATA_DIR "/single_tree_example.trees", 0);
+    if (ret != 0) {
+        return CUE_SINIT_FAILED;
+    }
+    ret = tsk_treeseq_load(
+        &_multi_tree_ex_ts, TEST_DATA_DIR "/multi_tree_example.trees", 0);
+    if (ret != 0) {
+        return CUE_SINIT_FAILED;
+    }
+
     return CUE_SUCCESS;
 }
 
@@ -1107,6 +1176,8 @@ tsinfer_suite_cleanup(void)
     if (_devnull != NULL) {
         fclose(_devnull);
     }
+    tsk_treeseq_free(&_single_tree_ex_ts);
+    tsk_treeseq_free(&_multi_tree_ex_ts);
     return CUE_SUCCESS;
 }
 
@@ -1147,7 +1218,14 @@ main(int argc, char **argv)
         { "test_packbits_4", test_packbits_4 },
         { "test_packbits_errors", test_packbits_errors },
 
-        { "test_matching_simplest_tree_one_site", test_matching_simplest_tree_one_site },
+        { "test_matching_single_tree_single_site_match",
+            test_matching_single_tree_single_site_match },
+        { "test_matching_multi_tree_single_site_match",
+            test_matching_multi_tree_single_site_match },
+        { "test_matching_single_tree_multi_switch",
+            test_matching_single_tree_multi_switch },
+        { "test_matching_multi_tree_multi_switch",
+            test_matching_multi_tree_multi_switch },
 
         { "test_strerror", test_strerror },
 

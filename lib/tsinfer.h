@@ -232,7 +232,6 @@ typedef struct {
     const matcher_indexes_t *matcher_indexes;
     size_t num_nodes;
     size_t num_sites;
-    size_t max_nodes;
     /* Input LS model rates */
     unsigned int precision;
     double *recombination_rate;

@@ -576,7 +576,6 @@ class TestSingleBalancedTreeExample:
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
         ts = self.ts()
-        ts.dump("single_tree_example.trees")
         h = np.zeros(4)
         h[j] = 1
         left, right, parent, match = run_match(ts, h)
@@ -651,6 +650,7 @@ class TestMultiTreeExample:
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
         ts = self.ts()
+        ts.dump("multi_tree_example.trees")
         m = 4
         h = np.zeros(m)
         h[j] = 1

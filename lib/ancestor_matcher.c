@@ -1235,9 +1235,9 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     /* All allocs for arrays related to nodes are done in expand_nodes */
     self->flags = flags;
     self->precision = precision;
-    self->max_nodes = 0;
     self->matcher_indexes = matcher_indexes;
     self->num_sites = matcher_indexes->num_sites;
+    self->num_nodes = matcher_indexes->num_nodes;
     self->recombination_rate
         = malloc(self->num_sites * sizeof(*self->recombination_rate));
     self->mismatch_rate = malloc(self->num_sites * sizeof(*self->mismatch_rate));
@@ -1248,7 +1248,6 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
      * We're allocating num_sites anyway, so there's no memory saving. */
     self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
     self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
-
     self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
 
     self->parent = malloc(self->num_nodes * sizeof(*self->parent));
@@ -1256,14 +1255,24 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     self->right_child = malloc(self->num_nodes * sizeof(*self->right_child));
     self->left_sib = malloc(self->num_nodes * sizeof(*self->left_sib));
     self->right_sib = malloc(self->num_nodes * sizeof(*self->right_sib));
+    self->likelihood = malloc(self->num_nodes * sizeof(*self->likelihood));
+    self->allelic_state = malloc(self->num_nodes * sizeof(*self->allelic_state));
     self->recombination_required
         = malloc(self->num_nodes * sizeof(*self->recombination_required));
+    self->likelihood_cache = malloc(self->num_nodes * sizeof(*self->likelihood_cache));
+    self->likelihood_nodes = malloc(self->num_nodes * sizeof(*self->likelihood_nodes));
+    self->likelihood_nodes_tmp
+        = malloc(self->num_nodes * sizeof(*self->likelihood_nodes_tmp));
 
     if (self->recombination_rate == NULL || self->mismatch_rate == NULL
         || self->traceback == NULL || self->max_likelihood_node == NULL
+        || self->parent == NULL || self->left_child == NULL || self->right_child == NULL
+        || self->left_sib == NULL || self->right_sib == NULL
+        || self->recombination_required == NULL || self->likelihood == NULL
+        || self->likelihood_cache == NULL || self->likelihood_nodes == NULL
+        || self->likelihood_nodes_tmp == NULL || self->allelic_state == NULL
         || self->output.left == NULL || self->output.right == NULL
         || self->output.parent == NULL) {
-        /* FIXME check tree allocs above */
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
