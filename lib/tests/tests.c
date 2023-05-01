@@ -1019,16 +1019,10 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
     ret = ancestor_matcher2_alloc(&am, &mi, recombination_rate, mutation_rate, 14, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = ancestor_matcher2_find_path(&am, 0, (tsk_id_t) m, h, match);
+    ret = ancestor_matcher2_find_path(
+        &am, 0, (tsk_id_t) m, h, match, path_length, left, right, parent);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     /* ancestor_matcher2_print_state(&am, stdout); */
-
-    *path_length = am.output.size;
-    for (j = 0; j < am.output.size; j++) {
-        left[j] = am.output.left[j];
-        right[j] = am.output.right[j];
-        parent[j] = am.output.parent[j];
-    }
 
     ancestor_matcher2_free(&am);
     matcher_indexes_free(&mi);

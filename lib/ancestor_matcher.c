@@ -1241,14 +1241,8 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     self->recombination_rate
         = malloc(self->num_sites * sizeof(*self->recombination_rate));
     self->mismatch_rate = malloc(self->num_sites * sizeof(*self->mismatch_rate));
-    self->output.max_size = self->num_sites; /* We can probably make this smaller */
     self->traceback = calloc(self->num_sites, sizeof(node_state_list_t));
     self->max_likelihood_node = malloc(self->num_sites * sizeof(tsk_id_t));
-    /* TODO get rid of output and just provide pointers from client code.
-     * We're allocating num_sites anyway, so there's no memory saving. */
-    self->output.left = malloc(self->output.max_size * sizeof(tsk_id_t));
-    self->output.right = malloc(self->output.max_size * sizeof(tsk_id_t));
-    self->output.parent = malloc(self->output.max_size * sizeof(tsk_id_t));
 
     self->parent = malloc(self->num_nodes * sizeof(*self->parent));
     self->left_child = malloc(self->num_nodes * sizeof(*self->left_child));
@@ -1270,9 +1264,7 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
         || self->left_sib == NULL || self->right_sib == NULL
         || self->recombination_required == NULL || self->likelihood == NULL
         || self->likelihood_cache == NULL || self->likelihood_nodes == NULL
-        || self->likelihood_nodes_tmp == NULL || self->allelic_state == NULL
-        || self->output.left == NULL || self->output.right == NULL
-        || self->output.parent == NULL) {
+        || self->likelihood_nodes_tmp == NULL || self->allelic_state == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -1311,9 +1303,6 @@ ancestor_matcher2_free(ancestor_matcher2_t *self)
     tsi_safe_free(self->allelic_state);
     tsi_safe_free(self->max_likelihood_node);
     tsi_safe_free(self->traceback);
-    tsi_safe_free(self->output.left);
-    tsi_safe_free(self->output.right);
-    tsi_safe_free(self->output.parent);
     tsk_blkalloc_free(&self->traceback_allocator);
     return 0;
 }
@@ -1704,7 +1693,9 @@ ancestor_matcher2_unset_recombination_required(
 
 static int WARN_UNUSED
 ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    const allele_t *TSK_UNUSED(haplotype), allele_t *match)
+    const allele_t *TSK_UNUSED(haplotype), allele_t *restrict match,
+    size_t *path_length_out, tsk_id_t *restrict path_left, tsk_id_t *restrict path_right,
+    tsk_id_t *restrict path_parent)
 {
     int ret = 0;
     tsk_id_t l;
@@ -1718,17 +1709,17 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
     const edge_t *restrict out = self->matcher_indexes->left_index_edges;
     int_fast32_t in_index = (int_fast32_t) self->matcher_indexes->num_edges - 1;
     int_fast32_t out_index = (int_fast32_t) self->matcher_indexes->num_edges - 1;
+    size_t path_length = 0;
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
-    self->output.size = 0;
-    self->output.right[self->output.size] = end;
-    self->output.parent[self->output.size] = NULL_NODE;
+    path_right[path_length] = end;
+    path_parent[path_length] = NULL_NODE;
 
     max_likelihood_node = self->max_likelihood_node[end - 1];
     assert(max_likelihood_node != NULL_NODE);
-    self->output.parent[self->output.size] = max_likelihood_node;
-    assert(self->output.parent[self->output.size] != NULL_NODE);
+    path_parent[path_length] = max_likelihood_node;
+    assert(path_parent[path_length] != NULL_NODE);
 
     /* Now go through the trees in reverse and run the traceback */
     memset(parent, 0xff, self->num_nodes * sizeof(*parent));
@@ -1761,7 +1752,7 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
         assert(left < right);
         for (l = TSK_MIN(right, end) - 1; l >= (int) TSK_MAX(left, start); l--) {
             ancestor_matcher2_set_allelic_state(self, l, allelic_state);
-            u = self->output.parent[self->output.size];
+            u = path_parent[path_length];
             v = u;
             while (allelic_state[v] == TSK_NULL) {
                 v = parent[v];
@@ -1782,12 +1773,11 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
             if (recombination_required[u] && l > start) {
                 max_likelihood_node = self->max_likelihood_node[l - 1];
                 assert(max_likelihood_node != NULL_NODE);
-                self->output.left[self->output.size] = l;
-                self->output.size++;
-                assert(self->output.size < self->output.max_size);
+                path_left[path_length] = l;
+                path_length++;
                 /* Start the next output edge */
-                self->output.right[self->output.size] = l;
-                self->output.parent[self->output.size] = max_likelihood_node;
+                path_right[path_length] = l;
+                path_parent[path_length] = max_likelihood_node;
             }
             /* Unset the values in the tree for the next site. */
             ancestor_matcher2_unset_recombination_required(
@@ -1795,9 +1785,10 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
         }
     }
 
-    self->output.left[self->output.size] = start;
-    self->output.size++;
-    assert(self->output.right[self->output.size - 1] != start);
+    path_left[path_length] = start;
+    path_length++;
+    assert(path_right[path_length - 1] != start);
+    *path_length_out = path_length;
     return ret;
 }
 
@@ -2010,7 +2001,8 @@ out:
 
 int
 ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    const allele_t *haplotype, allele_t *matched_haplotype)
+    const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
+    tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent)
 {
     int ret = 0;
 
@@ -2022,8 +2014,8 @@ ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t 
     if (ret != 0) {
         goto out;
     }
-    ret = ancestor_matcher2_run_traceback(
-        self, start, end, haplotype, matched_haplotype);
+    ret = ancestor_matcher2_run_traceback(self, start, end, haplotype, matched_haplotype,
+        path_length, path_left, path_right, path_parent);
     if (ret != 0) {
         goto out;
     }

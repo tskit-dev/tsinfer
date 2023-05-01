@@ -257,13 +257,6 @@ typedef struct {
     size_t total_traceback_size;
     size_t traceback_block_size;
     size_t traceback_realloc_size;
-    struct {
-        tsk_id_t *left;
-        tsk_id_t *right;
-        tsk_id_t *parent;
-        size_t size;
-        size_t max_size;
-    } output;
 } ancestor_matcher2_t;
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
@@ -335,7 +328,8 @@ int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     double *mismatch_rate, unsigned int precision, int flags);
 int ancestor_matcher2_free(ancestor_matcher2_t *self);
 int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
-    const allele_t *haplotype, allele_t *matched_haplotype);
+    const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
+    tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent);
 int ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out);
 double ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self);
 size_t ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self);
