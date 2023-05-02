@@ -24,10 +24,10 @@ class Edge:
 # not present in the current tree.
 
 
-def convert_edge_list(ts, order):
+def convert_edge_list(edges, order):
     values = []
     for j in order:
-        tsk_edge = ts.edge(j)
+        tsk_edge = edges[j]
         edge = Edge(
             int(tsk_edge.left), int(tsk_edge.right), tsk_edge.parent, tsk_edge.child
         )
@@ -40,23 +40,28 @@ class MatcherIndexes:
     The memory that can be shared between AncestorMatcher instances.
     """
 
-    def __init__(self, ts):
-        self.num_nodes = ts.num_nodes
-        self.num_sites = ts.num_sites
+    def __init__(self, tables):
+        self.num_nodes = len(tables.nodes)
+        self.num_sites = len(tables.sites)
 
         # Store the edges in left and right order.
-        self.left_index = convert_edge_list(ts, ts.tables.indexes.edge_insertion_order)
-        self.right_index = convert_edge_list(ts, ts.tables.indexes.edge_removal_order)
+        self.left_index = convert_edge_list(
+            tables.edges, tables.indexes.edge_insertion_order
+        )
+        self.right_index = convert_edge_list(
+            tables.edges, tables.indexes.edge_removal_order
+        )
 
-        # TODO update
-        self.num_alleles = [var.num_alleles for var in ts.variants()]
+        # TODO fixme
+        self.num_alleles = np.zeros(self.num_sites, dtype=int) + 2
         self.mutations = collections.defaultdict(list)
-        for site in ts.sites():
-            if len(site.mutations) > 1:
+        last_site = -1
+        for mutation in tables.mutations:
+            if last_site == mutation.site:
                 raise ValueError("Only single mutations supported for now")
-            for mutation in site.mutations:
-                # FIXME - should be allele index
-                self.mutations[site.id].append((mutation.node, 1))
+            # FIXME - should be allele index
+            self.mutations[mutation.site].append((mutation.node, 1))
+            last_site = mutation.site
 
 
 COMPRESSED = -1
@@ -509,7 +514,7 @@ class AncestorMatcher:
 
 def run_match(ts, h):
     assert len(h) == ts.num_sites
-    matcher_indexes = MatcherIndexes(ts)
+    matcher_indexes = MatcherIndexes(ts.tables)
     matcher = AncestorMatcher(matcher_indexes)
     match = np.zeros(ts.num_sites, dtype=int)
     left, right, parent = matcher.find_path(h, 0, ts.num_sites, match)

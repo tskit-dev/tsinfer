@@ -156,6 +156,9 @@ class TestAncestorBuilder:
 
 class TestMatcherIndexes:
     def test_single_tree(self):
-        ts = tskit.Tree.generate_balanced(4)
-        mi = _tsinfer.MatcherIndexes(ts)
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
         print(mi)

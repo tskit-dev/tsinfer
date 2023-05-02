@@ -1614,11 +1614,12 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"tree_sequence", NULL};
+    tsk_table_collection_t *tables;
+    static char *kwlist[] = {"tables", NULL};
 
     self->matcher_indexes = NULL;
-    /* FIXME */
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!", kwlist,
+            &LightweightTableCollectionType, &tables)) {
         goto out;
     }
 
@@ -1627,7 +1628,7 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = matcher_indexes_alloc(self->matcher_indexes, NULL, 0);
+    err = matcher_indexes_alloc(self->matcher_indexes, tables, 0);
     if (err != 0) {
         handle_library_error(err);
         goto out;
