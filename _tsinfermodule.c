@@ -1602,7 +1602,7 @@ static void
 MatcherIndexes_dealloc(MatcherIndexes* self)
 {
     if (self->matcher_indexes != NULL) {
-        matcher_indexes_free(self->matcher_indexes);
+        /* matcher_indexes_free(self->matcher_indexes); */
         PyMem_Free(self->matcher_indexes);
         self->matcher_indexes = NULL;
     }
@@ -1614,7 +1614,7 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
-    tsk_table_collection_t *tables;
+    LightweightTableCollection *tables;
     static char *kwlist[] = {"tables", NULL};
 
     self->matcher_indexes = NULL;
@@ -1622,13 +1622,16 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
             &LightweightTableCollectionType, &tables)) {
         goto out;
     }
+    if (LightweightTableCollection_check_state(tables) != 0) {
+        goto out;
+    }
 
-    self->matcher_indexes = PyMem_Malloc(sizeof(*self->matcher_indexes));
+    self->matcher_indexes = PyMem_Calloc(1, sizeof(*self->matcher_indexes));
     if (self->matcher_indexes == NULL) {
         PyErr_NoMemory();
         goto out;
     }
-    err = matcher_indexes_alloc(self->matcher_indexes, tables, 0);
+    err = matcher_indexes_alloc(self->matcher_indexes, tables->tables, 0);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1637,6 +1640,7 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
 out:
     return ret;
 }
+
 /* TODO update to c99 form */
 static PyTypeObject MatcherIndexesType = {
     PyVarObject_HEAD_INIT(NULL, 0)

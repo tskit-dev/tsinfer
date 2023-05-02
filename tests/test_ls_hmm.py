@@ -675,3 +675,11 @@ class TestMultiTreeExample:
         assert list(right) == [4, 3, 2, 1]
         assert list(parent) == [4, 3, 2, 1]
         np.testing.assert_array_equal(h, match)
+
+    def test_matcher_indexes(self):
+        ts = self.ts()
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        print(mi)
