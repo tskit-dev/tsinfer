@@ -22,6 +22,7 @@ Integrity tests for the low-level module.
 import sys
 
 import pytest
+import tskit
 
 import _tsinfer
 
@@ -151,3 +152,10 @@ class TestAncestorBuilder:
                 assert str(record.value) == msg
 
     # TODO need tester methods for the remaining methonds in the class.
+
+
+class TestMatcherIndexes:
+    def test_single_tree(self):
+        ts = tskit.Tree.generate_balanced(4)
+        mi = _tsinfer.MatcherIndexes(ts)
+        print(mi)

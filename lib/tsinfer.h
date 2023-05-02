@@ -320,7 +320,7 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t
 /* New impelementation */
 
 int matcher_indexes_alloc(
-    matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t flags);
+    matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t options);
 int matcher_indexes_free(matcher_indexes_t *self);
 
 int ancestor_matcher2_alloc(ancestor_matcher2_t *self,

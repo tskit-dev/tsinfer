@@ -36,6 +36,17 @@ typedef struct {
     TreeSequenceBuilder *tree_sequence_builder;
 } AncestorMatcher;
 
+typedef struct {
+    PyObject_HEAD
+    matcher_indexes_t *matcher_indexes;
+} MatcherIndexes;
+
+typedef struct {
+    PyObject_HEAD
+    ancestor_matcher2_t *ancestor_matcher;
+    MatcherIndexes *matcher_indexes;
+} AncestorMatcher2;
+
 static void
 handle_library_error(int err)
 {
@@ -1579,6 +1590,90 @@ static PyTypeObject AncestorMatcherType = {
     (initproc)AncestorMatcher_init,      /* tp_init */
 };
 
+
+/*===================================================================
+ * MatcherIndexes
+ *===================================================================
+ */
+
+static void
+MatcherIndexes_dealloc(MatcherIndexes* self)
+{
+    if (self->matcher_indexes != NULL) {
+        matcher_indexes_free(self->matcher_indexes);
+        PyMem_Free(self->matcher_indexes);
+        self->matcher_indexes = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int
+MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
+{
+    int ret = -1;
+    int err;
+    static char *kwlist[] = {"tree_sequence", NULL};
+
+    self->matcher_indexes = NULL;
+    /* FIXME */
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist)) {
+        goto out;
+    }
+
+    self->matcher_indexes = PyMem_Malloc(sizeof(*self->matcher_indexes));
+    if (self->matcher_indexes == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+    err = matcher_indexes_alloc(self->matcher_indexes, NULL, 0);
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = 0;
+out:
+    return ret;
+}
+/* TODO update to c99 form */
+static PyTypeObject MatcherIndexesType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_tsinfer.MatcherIndexes",             /* tp_name */
+    sizeof(MatcherIndexes),             /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)MatcherIndexes_dealloc, /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,        /* tp_flags */
+    "MatcherIndexes objects",           /* tp_doc */
+    0,                     /* tp_traverse */
+    0,                     /* tp_clear */
+    0,                     /* tp_richcompare */
+    0,                     /* tp_weaklistoffset */
+    0,                     /* tp_iter */
+    0,                     /* tp_iternext */
+    0,                     /* tp_methods */
+    0,                     /* tp_members */
+    0,                         /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)MatcherIndexes_init,      /* tp_init */
+};
+
 /*===================================================================
  * Module level code.
  *===================================================================
@@ -1649,6 +1744,15 @@ init_tsinfer(void)
     }
     Py_INCREF(&TreeSequenceBuilderType);
     PyModule_AddObject(module, "TreeSequenceBuilder", (PyObject *) &TreeSequenceBuilderType);
+
+
+    /* MatcherIndexes type */
+    MatcherIndexesType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&MatcherIndexesType) < 0) {
+        INITERROR;
+    }
+    Py_INCREF(&MatcherIndexesType);
+    PyModule_AddObject(module, "MatcherIndexes", (PyObject *) &MatcherIndexesType);
 
     TsinfLibraryError = PyErr_NewException("_tsinfer.LibraryError", NULL, NULL);
     Py_INCREF(TsinfLibraryError);
