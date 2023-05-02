@@ -1016,18 +1016,19 @@ ancestor_matcher_get_total_memory(ancestor_matcher_t *self)
 /* New implementation */
 
 static int
-matcher_indexes_copy_edge_indexes(matcher_indexes_t *self, const tsk_treeseq_t *ts)
+matcher_indexes_copy_edge_indexes(
+    matcher_indexes_t *self, const tsk_table_collection_t *tables)
 {
     int ret = 0;
     tsk_size_t j;
     tsk_id_t k;
     edge_t e;
-    const tsk_id_t *restrict I = ts->tables->indexes.edge_insertion_order;
-    const tsk_id_t *restrict O = ts->tables->indexes.edge_removal_order;
-    const double *restrict edges_right = ts->tables->edges.right;
-    const double *restrict edges_left = ts->tables->edges.left;
-    const tsk_id_t *restrict edges_child = ts->tables->edges.child;
-    const tsk_id_t *restrict edges_parent = ts->tables->edges.parent;
+    const tsk_id_t *restrict I = tables->indexes.edge_insertion_order;
+    const tsk_id_t *restrict O = tables->indexes.edge_removal_order;
+    const double *restrict edges_right = tables->edges.right;
+    const double *restrict edges_left = tables->edges.left;
+    const tsk_id_t *restrict edges_child = tables->edges.child;
+    const tsk_id_t *restrict edges_parent = tables->edges.parent;
 
     for (j = 0; j < self->num_edges; j++) {
         k = I[j];
@@ -1078,47 +1079,51 @@ out:
 }
 
 static int
-matcher_indexes_copy_mutation_data(matcher_indexes_t *self, const tsk_treeseq_t *ts)
+matcher_indexes_copy_mutation_data(
+    matcher_indexes_t *self, const tsk_table_collection_t *tables)
 {
     int ret = 0;
-    tsk_site_t site;
-    tsk_size_t j, k;
+    tsk_size_t j;
+    tsk_id_t site, last_site;
+    const tsk_id_t *restrict mutations_site = tables->mutations.site;
+    const tsk_id_t *restrict mutations_node = tables->mutations.node;
+    const tsk_size_t total_mutations = tables->mutations.num_rows;
 
-    for (j = 0; j < self->num_sites; j++) {
-        ret = tsk_treeseq_get_site(ts, (tsk_id_t) j, &site);
-        if (ret != 0) {
-            goto out;
-        }
-        if (site.mutations_length > 1) {
+    last_site = -1;
+    for (j = 0; j < total_mutations; j++) {
+        site = mutations_site[j];
+        if (site == last_site) {
             ret = TSI_ERR_GENERIC;
             goto out;
         }
-        self->sites.mutations[j] = NULL;
 
-        /* FIXME need to through this properly when we've got things working. */
-        self->sites.num_alleles[j] = site.mutations_length + 1;
-        for (k = 0; k < site.mutations_length; k++) {
-            ret = matcher_indexes_add_mutation(self, site.id, site.mutations[k].node, 1);
-            if (ret != 0) {
-                goto out;
-            }
+        self->sites.mutations[site] = NULL;
+        /* FIXME */
+        self->sites.num_alleles[site] = 2;
+        ret = matcher_indexes_add_mutation(self, site, mutations_node[j], 1);
+        if (ret != 0) {
+            goto out;
         }
+        last_site = site;
     }
+
 out:
     return ret;
 }
 
 int
 matcher_indexes_alloc(
-    matcher_indexes_t *self, const tsk_treeseq_t *ts, tsk_flags_t flags)
+    matcher_indexes_t *self, const tsk_table_collection_t *tables, tsk_flags_t flags)
 {
     int ret = 0;
 
     self->flags = flags;
-    self->num_edges = tsk_treeseq_get_num_edges(ts);
-    self->num_nodes = tsk_treeseq_get_num_nodes(ts);
-    self->num_sites = tsk_treeseq_get_num_sites(ts);
-    self->num_mutations = tsk_treeseq_get_num_mutations(ts);
+    self->num_edges = tables->edges.num_rows;
+    self->num_nodes = tables->nodes.num_rows;
+    self->num_sites = tables->sites.num_rows;
+    /* FIXME this is used below by the code that adds in mutations in the linked
+     * list, so *don't* set from the tables */
+    self->num_mutations = 0;
 
     self->left_index_edges = malloc(self->num_edges * sizeof(*self->left_index_edges));
     self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));
@@ -1134,11 +1139,11 @@ matcher_indexes_alloc(
         goto out;
     }
 
-    ret = matcher_indexes_copy_edge_indexes(self, ts);
+    ret = matcher_indexes_copy_edge_indexes(self, tables);
     if (ret != 0) {
         goto out;
     }
-    ret = matcher_indexes_copy_mutation_data(self, ts);
+    ret = matcher_indexes_copy_mutation_data(self, tables);
     if (ret != 0) {
         goto out;
     }

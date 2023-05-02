@@ -1014,7 +1014,7 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
         recombination_rate[j] = rho;
     }
 
-    ret = matcher_indexes_alloc(&mi, ts, 0);
+    ret = matcher_indexes_alloc(&mi, ts->tables, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher2_alloc(&am, &mi, recombination_rate, mutation_rate, 14, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
