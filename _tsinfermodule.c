@@ -20,6 +20,8 @@
 static PyObject *TsinfLibraryError;
 static PyObject *TsinfMatchImpossible;
 
+#include "tskit_lwt_interface.h"
+
 typedef struct {
     PyObject_HEAD
     ancestor_builder_t *builder;
@@ -1722,6 +1724,8 @@ init_tsinfer(void)
     }
     /* Initialise numpy */
     import_array();
+
+    register_lwt_class(module);
 
     /* AncestorBuilder type */
     AncestorBuilderType.tp_new = PyType_GenericNew;

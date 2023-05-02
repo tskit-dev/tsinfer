@@ -12,7 +12,7 @@ libdir = "lib"
 tskroot = os.path.join(libdir, "subprojects", "tskit")
 tskdir = os.path.join(tskroot, "tskit")
 kasdir = os.path.join(tskroot, "subprojects", "kastore")
-includes = [libdir, tskroot, tskdir, kasdir]
+includes = ["lwt_interface", libdir, tskroot, tskdir, kasdir]
 
 tsi_source_files = [
     "ancestor_matcher.c",
