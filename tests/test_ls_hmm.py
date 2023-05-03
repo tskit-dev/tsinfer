@@ -10,6 +10,7 @@ import pytest
 import tskit
 
 import _tsinfer
+import tsinfer
 
 
 @dataclasses.dataclass
@@ -525,10 +526,11 @@ def run_match(ts, h):
     match = np.zeros(ts.num_sites, dtype=np.int8)
     left, right, parent = matcher.find_path(h, 0, ts.num_sites, match)
 
-    tables = ts.dump_tables()
-    ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
-    ll_tables.fromdict(tables.asdict())
-    mi = _tsinfer.MatcherIndexes(ll_tables)
+    # tables = ts.dump_tables()
+    # ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+    # ll_tables.fromdict(tables.asdict())
+    # mi = _tsinfer.MatcherIndexes(ll_tables)
+    mi = tsinfer.MatcherIndexes(ts)
     match_c = np.zeros(ts.num_sites, dtype=np.int8)
     am = _tsinfer.AncestorMatcher2(
         mi, recombination=recombination, mismatch=mismatch, precision=precision
@@ -701,11 +703,3 @@ class TestMultiTreeExample:
         assert list(right) == [4, 3, 2, 1]
         assert list(parent) == [4, 3, 2, 1]
         np.testing.assert_array_equal(h, match)
-
-    def test_matcher_indexes(self):
-        ts = self.ts()
-        tables = ts.dump_tables()
-        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
-        ll_tables.fromdict(tables.asdict())
-        mi = _tsinfer.MatcherIndexes(ll_tables)
-        print(mi)

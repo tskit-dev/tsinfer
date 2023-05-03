@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2023 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -16,28 +16,16 @@
 # You should have received a copy of the GNU General Public License
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
-"""
-Tree sequence inference.
+import _tsinfer
 
-Python 3 only.
-"""
-import sys
 
-if sys.version_info[0] < 3:
-    raise Exception("Python 3 only")
+class MatcherIndexes(_tsinfer.MatcherIndexes):
+    def __init__(self, ts):
+        # TODO make this polymorphic to accept tables as well
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        super().__init__(ll_tables)
 
-__version__ = "undefined"
-try:
-    from . import _version
 
-    __version__ = _version.version
-except ImportError:
-    pass
-
-from .inference import *  # NOQA
-from .formats import *  # NOQA
-from .eval_util import *  # NOQA
-from .exceptions import *  # NOQA
-from .constants import *  # NOQA
-from .matching import MatcherIndexes  # NOQA
-from .cli import get_cli_parser  # NOQA
+# TODO add the high-level classes fronting the other class
