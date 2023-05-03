@@ -72,20 +72,17 @@ class AncestorMatcher:
     def __init__(
         self,
         matcher_indexes,
-        # recombination=None,
-        # mismatch=None,
-        # precision=None,
+        recombination=None,
+        mismatch=None,
+        precision=None,
         extended_checks=False,
     ):
         self.matcher_indexes = matcher_indexes
         self.num_sites = matcher_indexes.num_sites
         self.num_nodes = matcher_indexes.num_nodes
-        self.recombination = np.zeros(self.num_sites) + 1e-9
-        self.mismatch = np.zeros(self.num_sites)
-        # self.mismatch = mismatch
-        # self.recombination = recombination
-        # self.precision = precision
-        self.precision = 14
+        self.mismatch = mismatch
+        self.recombination = recombination
+        self.precision = 22
         self.extended_checks = extended_checks
         self.parent = None
         self.left_child = None
@@ -513,11 +510,40 @@ class AncestorMatcher:
 
 
 def run_match(ts, h):
+    h = h.astype(np.int8)
     assert len(h) == ts.num_sites
+    recombination = np.zeros(ts.num_sites) + 1e-9
+    mismatch = np.zeros(ts.num_sites)
+    precision = 22
     matcher_indexes = MatcherIndexes(ts.tables)
-    matcher = AncestorMatcher(matcher_indexes)
-    match = np.zeros(ts.num_sites, dtype=int)
+    matcher = AncestorMatcher(
+        matcher_indexes,
+        recombination=recombination,
+        mismatch=mismatch,
+        precision=precision,
+    )
+    match = np.zeros(ts.num_sites, dtype=np.int8)
     left, right, parent = matcher.find_path(h, 0, ts.num_sites, match)
+
+    tables = ts.dump_tables()
+    ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+    ll_tables.fromdict(tables.asdict())
+    mi = _tsinfer.MatcherIndexes(ll_tables)
+    match_c = np.zeros(ts.num_sites, dtype=np.int8)
+    am = _tsinfer.AncestorMatcher2(
+        mi, recombination=recombination, mismatch=mismatch, precision=precision
+    )
+    path_len, left_c, right_c, parent_c = am.find_path(h, 0, ts.num_sites, match_c)
+    left_c = left_c[:path_len]
+    right_c = right_c[:path_len]
+    parent_c = parent_c[:path_len]
+
+    assert path_len == len(left)
+    np.testing.assert_array_equal(left, left_c)
+    np.testing.assert_array_equal(right, right_c)
+    np.testing.assert_array_equal(parent, parent_c)
+    np.testing.assert_array_equal(match, match_c)
+
     return left, right, parent, match
 
 
