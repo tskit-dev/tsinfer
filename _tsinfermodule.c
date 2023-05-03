@@ -62,6 +62,33 @@ handle_library_error(int err)
     }
 }
 
+static FILE *
+make_file(PyObject *fileobj, const char *mode)
+{
+    FILE *ret = NULL;
+    FILE *file = NULL;
+    int fileobj_fd, new_fd;
+
+    fileobj_fd = PyObject_AsFileDescriptor(fileobj);
+    if (fileobj_fd == -1) {
+        goto out;
+    }
+    new_fd = dup(fileobj_fd);
+    if (new_fd == -1) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto out;
+    }
+    file = fdopen(new_fd, mode);
+    if (file == NULL) {
+        (void) close(new_fd);
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto out;
+    }
+    ret = file;
+out:
+    return ret;
+}
+
 static int
 uint64_PyArray_converter(PyObject *in, PyObject **out)
 {
@@ -1641,45 +1668,66 @@ out:
     return ret;
 }
 
-/* TODO update to c99 form */
-static PyTypeObject MatcherIndexesType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "_tsinfer.MatcherIndexes",             /* tp_name */
-    sizeof(MatcherIndexes),             /* tp_basicsize */
-    0,                         /* tp_itemsize */
-    (destructor)MatcherIndexes_dealloc, /* tp_dealloc */
-    0,                         /* tp_print */
-    0,                         /* tp_getattr */
-    0,                         /* tp_setattr */
-    0,                         /* tp_reserved */
-    0,                         /* tp_repr */
-    0,                         /* tp_as_number */
-    0,                         /* tp_as_sequence */
-    0,                         /* tp_as_mapping */
-    0,                         /* tp_hash  */
-    0,                         /* tp_call */
-    0,                         /* tp_str */
-    0,                         /* tp_getattro */
-    0,                         /* tp_setattro */
-    0,                         /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,        /* tp_flags */
-    "MatcherIndexes objects",           /* tp_doc */
-    0,                     /* tp_traverse */
-    0,                     /* tp_clear */
-    0,                     /* tp_richcompare */
-    0,                     /* tp_weaklistoffset */
-    0,                     /* tp_iter */
-    0,                     /* tp_iternext */
-    0,                     /* tp_methods */
-    0,                     /* tp_members */
-    0,                         /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    (initproc)MatcherIndexes_init,      /* tp_init */
+static int
+MatcherIndexes_check_state(MatcherIndexes *self)
+{
+    int ret = 0;
+    if (self->matcher_indexes == NULL) {
+        PyErr_SetString(PyExc_SystemError, "MatcherIndexes not initialised");
+        ret = -1;
+    }
+    return ret;
+}
+
+
+static PyObject *
+MatcherIndexes_print_state(MatcherIndexes *self, PyObject *args)
+{
+    PyObject *ret = NULL;
+    PyObject *fileobj;
+    FILE *file = NULL;
+
+    if (MatcherIndexes_check_state(self) != 0) {
+        goto out;
+    }
+    if (!PyArg_ParseTuple(args, "O", &fileobj)) {
+        goto out;
+    }
+    file = make_file(fileobj, "w");
+    if (file == NULL) {
+        goto out;
+    }
+    matcher_indexes_print_state(self->matcher_indexes, file);
+    ret = Py_BuildValue("");
+out:
+    if (file != NULL) {
+        (void) fclose(file);
+    }
+    return ret;
+}
+
+
+static PyMethodDef MatcherIndexes_methods[] = {
+    {"print_state", (PyCFunction) MatcherIndexes_print_state,
+        METH_VARARGS, "Low-level debug method"},
+    {NULL}  /* Sentinel */
 };
+
+
+static PyTypeObject MatcherIndexesType = {
+    // clang-format off
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_tsinfer.MatcherIndexes",
+    .tp_basicsize = sizeof(MatcherIndexes),
+    .tp_dealloc = (destructor) MatcherIndexes_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_doc = "MatcherIndexes objects",
+    .tp_methods = MatcherIndexes_methods,
+    .tp_init = (initproc) MatcherIndexes_init,
+    .tp_new = PyType_GenericNew,
+    // clang-format on
+};
+
 
 /*===================================================================
  * Module level code.

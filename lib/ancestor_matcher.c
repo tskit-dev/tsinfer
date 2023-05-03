@@ -1015,6 +1015,33 @@ ancestor_matcher_get_total_memory(ancestor_matcher_t *self)
 
 /* New implementation */
 
+int
+matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out)
+{
+    size_t j;
+    mutation_list_node_t *u;
+
+    fprintf(out, "Matcher indexes state\n");
+    fprintf(out, "flags = %d\n", (int) self->flags);
+    fprintf(out, "num_sites = %d\n", (int) self->num_sites);
+    fprintf(out, "num_nodes = %d\n", (int) self->num_nodes);
+    fprintf(out, "num_edges = %d\n", (int) self->num_edges);
+
+    fprintf(out, "Mutations = \n");
+    fprintf(out, "site\t(node, derived_state),...\n");
+    for (j = 0; j < self->num_sites; j++) {
+        if (self->sites.mutations[j] != NULL) {
+            fprintf(out, "%d\t", (int) j);
+            for (u = self->sites.mutations[j]; u != NULL; u = u->next) {
+                fprintf(out, "(%d, %d) ", u->node, u->derived_state);
+            }
+            fprintf(out, "\n");
+        }
+    }
+
+    return 0;
+}
+
 static int
 matcher_indexes_copy_edge_indexes(
     matcher_indexes_t *self, const tsk_table_collection_t *tables)

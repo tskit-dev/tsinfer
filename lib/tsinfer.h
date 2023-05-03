@@ -219,9 +219,6 @@ typedef struct {
         mutation_list_node_t **mutations;
         tsk_size_t *num_alleles;
     } sites;
-    /* TODO add nodes struct */
-    double *time;
-    uint32_t *node_flags;
     edge_t *left_index_edges;
     edge_t *right_index_edges;
     tsk_blkalloc_t allocator;
@@ -321,6 +318,7 @@ int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t
 
 int matcher_indexes_alloc(
     matcher_indexes_t *self, const tsk_table_collection_t *tables, tsk_flags_t options);
+int matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out);
 int matcher_indexes_free(matcher_indexes_t *self);
 
 int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
