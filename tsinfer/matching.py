@@ -23,9 +23,42 @@ import numpy as np
 import _tsinfer
 
 
+def add_vestigial_root(ts):
+    """
+    Adds the nodes and edges required by tsinfer to the specified tree sequence
+    and returns it.
+    """
+    if not ts.discrete_genome:
+        raise ValueError("Only discrete genome coords supported")
+
+    base_tables = ts.dump_tables()
+    tables = base_tables.copy()
+    tables.nodes.clear()
+    t = ts.max_root_time
+    tables.nodes.add_row(time=t + 1)
+    num_additonal_nodes = len(tables.nodes)
+    tables.mutations.node += num_additonal_nodes
+    tables.edges.child += num_additonal_nodes
+    tables.edges.parent += num_additonal_nodes
+    for node in base_tables.nodes:
+        tables.nodes.append(node)
+    for tree in ts.trees():
+        root = tree.root + num_additonal_nodes
+        tables.edges.add_row(
+            tree.interval.left, tree.interval.right, parent=0, child=root
+        )
+    tables.edges.squash()
+    # FIXME probably don't need to sort here most of the time, or at least we
+    # can just sort almost the end of the table.
+    tables.sort()
+    return tables.tree_sequence()
+
+
 class MatcherIndexes(_tsinfer.MatcherIndexes):
     def __init__(self, ts):
         # TODO make this polymorphic to accept tables as well
+        # This is very wasteful, but we can do better if it all basically works.
+        ts = add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
@@ -65,4 +98,6 @@ class AncestorMatcher2(_tsinfer.AncestorMatcher2):
         left = left[:path_len][::-1]
         right = right[:path_len][::-1]
         parent = parent[:path_len][::-1]
+        # We added a 0-root everywhere above, so convert node IDs back
+        parent -= 1
         return Match(Path(left, right, parent), matched_haplotype)

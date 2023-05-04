@@ -43,7 +43,10 @@ class MatcherIndexes:
     The memory that can be shared between AncestorMatcher instances.
     """
 
-    def __init__(self, tables):
+    def __init__(self, in_tables):
+        ts = add_vestigial_root(in_tables.tree_sequence())
+        tables = ts.dump_tables()
+
         self.num_nodes = len(tables.nodes)
         self.num_sites = len(tables.sites)
 
@@ -509,6 +512,8 @@ class AncestorMatcher:
             right[j] = e.right
             parent[j] = e.parent
 
+        # Convert the parent node IDs back to original values
+        parent -= 1
         path = matching.Path(left[::-1], right[::-1], parent[::-1])
         return matching.Match(path, match)
 
@@ -527,13 +532,11 @@ def run_match(ts, h):
         precision=precision,
     )
     match_py = matcher.find_path(h, 0, ts.num_sites)
-
     mi = tsinfer.MatcherIndexes(ts)
     am = tsinfer.AncestorMatcher2(
         mi, recombination=recombination, mismatch=mismatch, precision=precision
     )
     match_c = am.find_match(h, 0, ts.num_sites)
-
     match_py.assert_equals(match_c)
 
     return match_py
@@ -578,6 +581,7 @@ def example_binary(n, L):
 
 
 class TestSingleBalancedTreeExample:
+    # FIXME remove root
     # 4.00┊    0    ┊
     #     ┊    ┃    ┊
     # 3.00┊    7    ┊
@@ -589,11 +593,12 @@ class TestSingleBalancedTreeExample:
 
     @staticmethod
     def ts():
-        tables = example_binary(4, 4).dump_tables()
+        # tables = example_binary(4, 4).dump_tables()
+        tables = tskit.Tree.generate_balanced(4, span=4).tree_sequence.dump_tables()
         # Add a site for each sample with a single mutation above that sample.
         for j in range(4):
             tables.sites.add_row(j, "0")
-            tables.mutations.add_row(site=j, node=1 + j, derived_state="1")
+            tables.mutations.add_row(site=j, node=j, derived_state="1")
         return tables.tree_sequence()
 
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
@@ -613,7 +618,7 @@ class TestSingleBalancedTreeExample:
         m = run_match(ts, h)
         assert list(m.path.left) == [0, 1, 2, 3]
         assert list(m.path.right) == [1, 2, 3, 4]
-        assert list(m.path.parent) == [1, 2, 3, 4]
+        assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
 
