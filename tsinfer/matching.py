@@ -62,8 +62,7 @@ class AncestorMatcher2(_tsinfer.AncestorMatcher2):
         path_len, left, right, parent, matched_haplotype = self.find_path(
             h, left, right
         )
-
-        left = left[:path_len]
-        right = right[:path_len]
-        parent = parent[:path_len]
+        left = left[:path_len][::-1]
+        right = right[:path_len][::-1]
+        parent = parent[:path_len][::-1]
         return Match(Path(left, right, parent), matched_haplotype)

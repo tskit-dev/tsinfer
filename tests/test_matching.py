@@ -4,6 +4,7 @@ Tests for the haplotype matching algorithm.
 import collections
 import dataclasses
 import io
+import pickle
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ import tskit
 
 import _tsinfer
 import tsinfer
+from tsinfer import matching
 
 
 @dataclasses.dataclass
@@ -507,8 +509,8 @@ class AncestorMatcher:
             right[j] = e.right
             parent[j] = e.parent
 
-        path = tsinfer.matching.Path(left, right, parent)
-        return tsinfer.matching.Match(path, match)
+        path = matching.Path(left[::-1], right[::-1], parent[::-1])
+        return matching.Match(path, match)
 
 
 def run_match(ts, h):
@@ -609,9 +611,9 @@ class TestSingleBalancedTreeExample:
         ts = self.ts()
         h = np.ones(4)
         m = run_match(ts, h)
-        assert list(m.path.left) == [3, 2, 1, 0]
-        assert list(m.path.right) == [4, 3, 2, 1]
-        assert list(m.path.parent) == [4, 3, 2, 1]
+        assert list(m.path.left) == [0, 1, 2, 3]
+        assert list(m.path.right) == [1, 2, 3, 4]
+        assert list(m.path.parent) == [1, 2, 3, 4]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
 
@@ -681,7 +683,16 @@ class TestMultiTreeExample:
         ts = self.ts()
         h = np.ones(4)
         m = run_match(ts, h)
-        assert list(m.path.left) == [3, 2, 1, 0]
-        assert list(m.path.right) == [4, 3, 2, 1]
-        assert list(m.path.parent) == [4, 3, 2, 1]
+        assert list(m.path.left) == [0, 1, 2, 3]
+        assert list(m.path.right) == [1, 2, 3, 4]
+        assert list(m.path.parent) == [1, 2, 3, 4]
         np.testing.assert_array_equal(h, m.matched_haplotype)
+
+
+class TestMatchClassUtils:
+    def test_pickle(self):
+        m1 = matching.Match(
+            matching.Path(np.array([0]), np.array([1]), np.array([0])), np.array([0])
+        )
+        m2 = pickle.loads(pickle.dumps(m1))
+        m1.assert_equals(m2)
