@@ -286,7 +286,7 @@ class AncestorMatcher:
     def is_nonzero_root(self, u):
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
-    def find_path(self, h, start, end, match):
+    def find_path(self, h, start, end):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
         M = len(Il)
@@ -419,9 +419,9 @@ class AncestorMatcher:
             if k < M:
                 right = min(right, Ir[k].right)
 
-        return self.run_traceback(start, end, match)
+        return self.run_traceback(start, end)
 
-    def run_traceback(self, start, end, match):
+    def run_traceback(self, start, end):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
         M = len(Il)
@@ -434,7 +434,7 @@ class AncestorMatcher:
         j = M - 1
         k = M - 1
         # Construct the matched haplotype
-        match[:] = 0
+        match = np.zeros(self.num_sites, dtype=np.int8)
         match[:start] = tskit.MISSING_DATA
         match[end:] = tskit.MISSING_DATA
         # Reset the tree.
@@ -507,7 +507,8 @@ class AncestorMatcher:
             right[j] = e.right
             parent[j] = e.parent
 
-        return left, right, parent
+        path = tsinfer.matching.Path(left, right, parent)
+        return tsinfer.matching.Match(path, match)
 
 
 def run_match(ts, h):
@@ -523,30 +524,17 @@ def run_match(ts, h):
         mismatch=mismatch,
         precision=precision,
     )
-    match = np.zeros(ts.num_sites, dtype=np.int8)
-    left, right, parent = matcher.find_path(h, 0, ts.num_sites, match)
+    match_py = matcher.find_path(h, 0, ts.num_sites)
 
-    # tables = ts.dump_tables()
-    # ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
-    # ll_tables.fromdict(tables.asdict())
-    # mi = _tsinfer.MatcherIndexes(ll_tables)
     mi = tsinfer.MatcherIndexes(ts)
-    match_c = np.zeros(ts.num_sites, dtype=np.int8)
-    am = _tsinfer.AncestorMatcher2(
+    am = tsinfer.AncestorMatcher2(
         mi, recombination=recombination, mismatch=mismatch, precision=precision
     )
-    path_len, left_c, right_c, parent_c = am.find_path(h, 0, ts.num_sites, match_c)
-    left_c = left_c[:path_len]
-    right_c = right_c[:path_len]
-    parent_c = parent_c[:path_len]
+    match_c = am.find_match(h, 0, ts.num_sites)
 
-    assert path_len == len(left)
-    np.testing.assert_array_equal(left, left_c)
-    np.testing.assert_array_equal(right, right_c)
-    np.testing.assert_array_equal(parent, parent_c)
-    np.testing.assert_array_equal(match, match_c)
+    match_py.assert_equals(match_c)
 
-    return left, right, parent, match
+    return match_py
 
 
 # TODO the tests on these two classes are the same right now, should
@@ -611,22 +599,20 @@ class TestSingleBalancedTreeExample:
         ts = self.ts()
         h = np.zeros(4)
         h[j] = 1
-        left, right, parent, match = run_match(ts, h)
-        assert list(left) == [0]
-        assert list(right) == [4]
-        assert list(parent) == [ts.samples()[j]]
-        np.testing.assert_array_equal(h, match)
+        m = run_match(ts, h)
+        assert list(m.path.left) == [0]
+        assert list(m.path.right) == [4]
+        assert list(m.path.parent) == [ts.samples()[j]]
+        np.testing.assert_array_equal(h, m.matched_haplotype)
 
     def test_switch_each_sample(self):
         ts = self.ts()
-        m = 4
-        h = np.zeros(m)
-        h[:] = 1
-        left, right, parent, match = run_match(ts, h)
-        assert list(left) == [3, 2, 1, 0]
-        assert list(right) == [4, 3, 2, 1]
-        assert list(parent) == [4, 3, 2, 1]
-        np.testing.assert_array_equal(h, match)
+        h = np.ones(4)
+        m = run_match(ts, h)
+        assert list(m.path.left) == [3, 2, 1, 0]
+        assert list(m.path.right) == [4, 3, 2, 1]
+        assert list(m.path.parent) == [4, 3, 2, 1]
+        np.testing.assert_array_equal(h, m.matched_haplotype)
 
 
 class TestMultiTreeExample:
@@ -683,23 +669,19 @@ class TestMultiTreeExample:
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
         ts = self.ts()
-        ts.dump("multi_tree_example.trees")
-        m = 4
-        h = np.zeros(m)
+        h = np.zeros(4)
         h[j] = 1
-        left, right, parent, match = run_match(self.ts(), h)
-        assert list(left) == [0]
-        assert list(right) == [m]
-        assert list(parent) == [ts.samples()[j]]
-        np.testing.assert_array_equal(h, match)
+        m = run_match(self.ts(), h)
+        assert list(m.path.left) == [0]
+        assert list(m.path.right) == [4]
+        assert list(m.path.parent) == [ts.samples()[j]]
+        np.testing.assert_array_equal(h, m.matched_haplotype)
 
     def test_switch_each_sample(self):
         ts = self.ts()
-        m = 4
-        h = np.zeros(m)
-        h[:] = 1
-        left, right, parent, match = run_match(ts, h)
-        assert list(left) == [3, 2, 1, 0]
-        assert list(right) == [4, 3, 2, 1]
-        assert list(parent) == [4, 3, 2, 1]
-        np.testing.assert_array_equal(h, match)
+        h = np.ones(4)
+        m = run_match(ts, h)
+        assert list(m.path.left) == [3, 2, 1, 0]
+        assert list(m.path.right) == [4, 3, 2, 1]
+        assert list(m.path.parent) == [4, 3, 2, 1]
+        np.testing.assert_array_equal(h, m.matched_haplotype)

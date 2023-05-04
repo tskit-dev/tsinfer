@@ -1713,7 +1713,6 @@ static PyMethodDef MatcherIndexes_methods[] = {
     {NULL}  /* Sentinel */
 };
 
-
 static PyTypeObject MatcherIndexesType = {
     // clang-format off
     PyVarObject_HEAD_INIT(NULL, 0)
@@ -1841,24 +1840,23 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"haplotype", "start", "end", "match", NULL};
+    static char *kwlist[] = {"haplotype", "start", "end", NULL};
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
-    PyObject *match = NULL;
-    PyArrayObject *match_array = NULL;
     npy_intp *shape;
     size_t num_edges;
     int start, end;
     PyArrayObject *left = NULL;
     PyArrayObject *right = NULL;
     PyArrayObject *parent = NULL;
+    PyArrayObject *match = NULL;
     npy_intp dims[1];
 
     if (AncestorMatcher2_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OiiO!", kwlist,
-                &haplotype, &start, &end, &PyArray_Type, &match)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Oii", kwlist,
+                &haplotype, &start, &end)) {
         goto out;
     }
     haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
@@ -1876,48 +1874,35 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
         goto out;
     }
 
-    match_array = (PyArrayObject *) PyArray_FROM_OTF(match, NPY_INT8,
-            NPY_ARRAY_INOUT_ARRAY);
-    if (match_array == NULL) {
-        goto out;
-    }
-    if (PyArray_NDIM(match_array) != 1) {
-        PyErr_SetString(PyExc_ValueError, "Dim != 1");
-        goto out;
-    }
-    shape = PyArray_DIMS(match_array);
-    if (shape[0] != (npy_intp) self->ancestor_matcher->num_sites) {
-        PyErr_SetString(PyExc_ValueError, "input match wrong size");
-        goto out;
-    }
     dims[0] = self->ancestor_matcher->num_sites;
     left = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_UINT32);
     right = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_UINT32);
     parent = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_INT32);
-    if (left == NULL || right == NULL || parent == NULL) {
+    match = (PyArrayObject *) PyArray_SimpleNew(1, dims, NPY_INT8);
+    if (left == NULL || right == NULL || parent == NULL || match == NULL) {
         goto out;
     }
 
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_matcher2_find_path(self->ancestor_matcher,
             (tsk_id_t) start, (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
-            (allele_t *) PyArray_DATA(match_array),
+            (allele_t *) PyArray_DATA(match),
             &num_edges, PyArray_DATA(left), PyArray_DATA(right), PyArray_DATA(parent));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("(kOOO)", (unsigned long) num_edges, left, right, parent);
+    ret = Py_BuildValue("(kOOOO)", (unsigned long) num_edges, left, right, parent, match);
     if (ret == NULL) {
         goto out;
     }
     left = NULL;
     right = NULL;
     parent = NULL;
+    match = NULL;
 out:
-    Py_XDECREF(haplotype_array);
-    Py_XDECREF(match_array);
+    Py_XDECREF(match);
     Py_XDECREF(left);
     Py_XDECREF(right);
     Py_XDECREF(parent);
@@ -2002,11 +1987,6 @@ out:
 }
 
 
-static PyMemberDef AncestorMatcher2_members[] = {
-    {NULL}  /* Sentinel */
-
-};
-
 static PyGetSetDef AncestorMatcher2_getsetters[] = {
     {"mean_traceback_size", (getter) AncestorMatcher2_get_mean_traceback_size,
         NULL, "The mean size of the traceback per site."},
@@ -2024,45 +2004,21 @@ static PyMethodDef AncestorMatcher2_methods[] = {
     {NULL}  /* Sentinel */
 };
 
-static PyTypeObject AncestorMatcher2Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "_tsinfer.AncestorMatcher2",             /* tp_name */
-    sizeof(AncestorMatcher2),             /* tp_basicsize */
-    0,                         /* tp_itemsize */
-    (destructor)AncestorMatcher2_dealloc, /* tp_dealloc */
-    0,                         /* tp_print */
-    0,                         /* tp_getattr */
-    0,                         /* tp_setattr */
-    0,                         /* tp_reserved */
-    0,                         /* tp_repr */
-    0,                         /* tp_as_number */
-    0,                         /* tp_as_sequence */
-    0,                         /* tp_as_mapping */
-    0,                         /* tp_hash  */
-    0,                         /* tp_call */
-    0,                         /* tp_str */
-    0,                         /* tp_getattro */
-    0,                         /* tp_setattro */
-    0,                         /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,        /* tp_flags */
-    "AncestorMatcher2 objects",           /* tp_doc */
-    0,                     /* tp_traverse */
-    0,                     /* tp_clear */
-    0,                     /* tp_richcompare */
-    0,                     /* tp_weaklistoffset */
-    0,                     /* tp_iter */
-    0,                     /* tp_iternext */
-    AncestorMatcher2_methods,             /* tp_methods */
-    AncestorMatcher2_members,             /* tp_members */
-    AncestorMatcher2_getsetters,          /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    (initproc)AncestorMatcher2_init,      /* tp_init */
-};
 
+static PyTypeObject AncestorMatcher2Type = {
+    // clang-format off
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_tsinfer.AncestorMatcher2",
+    .tp_basicsize = sizeof(AncestorMatcher2),
+    .tp_dealloc = (destructor) AncestorMatcher2_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_doc = "AncestorMatcher2 objects",
+    .tp_methods = AncestorMatcher2_methods,
+    .tp_getset = AncestorMatcher2_getsetters,
+    .tp_init = (initproc) AncestorMatcher2_init,
+    .tp_new = PyType_GenericNew,
+    // clang-format on
+};
 
 /*===================================================================
  * Module level code.
