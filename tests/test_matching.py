@@ -44,7 +44,7 @@ class MatcherIndexes:
     """
 
     def __init__(self, in_tables):
-        ts = add_vestigial_root(in_tables.tree_sequence())
+        ts = matching.add_vestigial_root(in_tables.tree_sequence())
         tables = ts.dump_tables()
 
         self.num_nodes = len(tables.nodes)
@@ -546,54 +546,16 @@ def run_match(ts, h):
 # refactor.
 
 
-def add_vestigial_root(ts):
-    """
-    Adds the nodes and edges required by tsinfer to the specified tree sequence
-    and returns it.
-    """
-    if not ts.discrete_genome:
-        raise ValueError("Only discrete genome coords supported")
-
-    base_tables = ts.dump_tables()
-    tables = base_tables.copy()
-    tables.nodes.clear()
-    t = ts.max_root_time
-    tables.nodes.add_row(time=t + 1)
-    num_additonal_nodes = len(tables.nodes)
-    tables.mutations.node += num_additonal_nodes
-    tables.edges.child += num_additonal_nodes
-    tables.edges.parent += num_additonal_nodes
-    for node in base_tables.nodes:
-        tables.nodes.append(node)
-    for tree in ts.trees():
-        root = tree.root + num_additonal_nodes
-        tables.edges.add_row(
-            tree.interval.left, tree.interval.right, parent=0, child=root
-        )
-    tables.edges.squash()
-    tables.sort()
-    return tables.tree_sequence()
-
-
-def example_binary(n, L):
-    tree = tskit.Tree.generate_balanced(n, span=L)
-    return add_vestigial_root(tree.tree_sequence)
-
-
 class TestSingleBalancedTreeExample:
-    # FIXME remove root
-    # 4.00┊    0    ┊
-    #     ┊    ┃    ┊
-    # 3.00┊    7    ┊
+    # 3.00┊    6    ┊
     #     ┊  ┏━┻━┓  ┊
-    # 2.00┊  5   6  ┊
+    # 2.00┊  4   5  ┊
     #     ┊ ┏┻┓ ┏┻┓ ┊
-    # 1.00┊ 1 2 3 4 ┊
+    # 1.00┊ 0 1 2 3 ┊
     #     0         4
 
     @staticmethod
     def ts():
-        # tables = example_binary(4, 4).dump_tables()
         tables = tskit.Tree.generate_balanced(4, span=4).tree_sequence.dump_tables()
         # Add a site for each sample with a single mutation above that sample.
         for j in range(4):
@@ -623,23 +585,20 @@ class TestSingleBalancedTreeExample:
 
 
 class TestMultiTreeExample:
-    # 1.84┊     0   ┊    0    ┊
-    #     ┊     ┃   ┊    ┃    ┊
-    # 0.84┊     8   ┊    8    ┊
+    # 0.84┊     7   ┊    7    ┊
     #     ┊   ┏━┻━┓ ┊  ┏━┻━┓  ┊
-    # 0.42┊   ┃   ┃ ┊  7   ┃  ┊
+    # 0.42┊   ┃   ┃ ┊  6   ┃  ┊
     #     ┊   ┃   ┃ ┊ ┏┻┓  ┃  ┊
-    # 0.05┊   6   ┃ ┊ ┃ ┃  ┃  ┊
+    # 0.05┊   5   ┃ ┊ ┃ ┃  ┃  ┊
     #     ┊ ┏━┻┓  ┃ ┊ ┃ ┃  ┃  ┊
-    # 0.04┊ ┃  5  ┃ ┊ ┃ ┃  5  ┊
+    # 0.04┊ ┃  4  ┃ ┊ ┃ ┃  4  ┊
     #     ┊ ┃ ┏┻┓ ┃ ┊ ┃ ┃ ┏┻┓ ┊
-    # 0.00┊ 1 2 3 4 ┊ 1 4 2 3 ┊
+    # 0.00┊ 0 1 2 3 ┊ 0 3 1 2 ┊
     #     0         2         4
     @staticmethod
     def ts():
         nodes = """\
         is_sample       time
-        0       1.838075
         1       0.000000
         1       0.000000
         1       0.000000
@@ -651,17 +610,16 @@ class TestMultiTreeExample:
         """
         edges = """\
         left    right   parent  child
-        0.000000        4.000000       5       2
-        0.000000        4.000000       5       3
-        0.000000        2.000000       6       1
-        0.000000        2.000000       6       5
-        2.000000        4.000000       7       1
+        0.000000        4.000000       4       1
+        0.000000        4.000000       4       2
+        0.000000        2.000000       5       0
+        0.000000        2.000000       5       4
+        2.000000        4.000000       6       0
+        2.000000        4.000000       6       3
+        0.000000        2.000000       7       3
         2.000000        4.000000       7       4
-        0.000000        2.000000       8       4
-        2.000000        4.000000       8       5
-        0.000000        2.000000       8       6
-        2.000000        4.000000       8       7
-        0.000000        4.000000       0       8
+        0.000000        2.000000       7       5
+        2.000000        4.000000       7       6
         """
         ts = tskit.load_text(
             nodes=io.StringIO(nodes), edges=io.StringIO(edges), strict=False
@@ -670,7 +628,7 @@ class TestMultiTreeExample:
         # Add a site for each sample with a single mutation above that sample.
         for j in range(4):
             tables.sites.add_row(j, "0")
-            tables.mutations.add_row(site=j, node=1 + j, derived_state="1")
+            tables.mutations.add_row(site=j, node=j, derived_state="1")
         return tables.tree_sequence()
 
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
@@ -690,7 +648,7 @@ class TestMultiTreeExample:
         m = run_match(ts, h)
         assert list(m.path.left) == [0, 1, 2, 3]
         assert list(m.path.right) == [1, 2, 3, 4]
-        assert list(m.path.parent) == [1, 2, 3, 4]
+        assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
 

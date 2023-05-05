@@ -41,9 +41,28 @@
 char *_tmp_file_name;
 FILE *_devnull;
 
-/* FIXME add drawings and descriptions of the trees here */
 tsk_treeseq_t _single_tree_ex_ts;
+/* 3.00┊    0    ┊ */
+/*     ┊    ┃    ┊ */
+/* 2.00┊    7    ┊ */
+/*     ┊  ┏━┻━┓  ┊ */
+/* 1.00┊  5   6  ┊ */
+/*     ┊ ┏┻┓ ┏┻┓ ┊ */
+/* 0.00┊ 1 2 3 4 ┊ */
+/*     0         4 */
 tsk_treeseq_t _multi_tree_ex_ts;
+/* 1.84┊     0   ┊    0    ┊ */
+/*     ┊     ┃   ┊    ┃    ┊ */
+/* 0.84┊     8   ┊    8    ┊ */
+/*     ┊   ┏━┻━┓ ┊  ┏━┻━┓  ┊ */
+/* 0.42┊   ┃   ┃ ┊  7   ┃  ┊ */
+/*     ┊   ┃   ┃ ┊ ┏┻┓  ┃  ┊ */
+/* 0.05┊   6   ┃ ┊ ┃ ┃  ┃  ┊ */
+/*     ┊ ┏━┻┓  ┃ ┊ ┃ ┃  ┃  ┊ */
+/* 0.04┊ ┃  5  ┃ ┊ ┃ ┃  5  ┊ */
+/*     ┊ ┃ ┏┻┓ ┃ ┊ ┃ ┃ ┏┻┓ ┊ */
+/* 0.00┊ 1 2 3 4 ┊ 1 4 2 3 ┊ */
+/*     0         2         4 */
 
 static void
 dump_tree_sequence_builder(
