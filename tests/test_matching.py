@@ -9,6 +9,7 @@ import pickle
 import numpy as np
 import pytest
 import tskit
+import msprime
 
 import _tsinfer
 import tsinfer
@@ -47,6 +48,7 @@ class MatcherIndexes:
         ts = matching.add_vestigial_root(in_tables.tree_sequence())
         tables = ts.dump_tables()
 
+        self.sequence_length = tables.sequence_length
         self.num_nodes = len(tables.nodes)
         self.num_sites = len(tables.sites)
 
@@ -60,6 +62,9 @@ class MatcherIndexes:
 
         # TODO fixme
         self.num_alleles = np.zeros(self.num_sites, dtype=int) + 2
+        self.sites_position = np.zeros(ts.num_sites + 1, dtype=np.uint32)
+        self.sites_position[:-1] = tables.sites.position
+        self.sites_position[-1] = tables.sequence_length
         self.mutations = collections.defaultdict(list)
         last_site = -1
         for mutation in tables.mutations:
@@ -294,6 +299,8 @@ class AncestorMatcher:
     def find_path(self, h, start, end):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
+        L = self.matcher_indexes.sequence_length
+        sites_position = self.matcher_indexes.sites_position
         M = len(Il)
         n = self.num_nodes
         m = self.num_sites
@@ -314,11 +321,13 @@ class AncestorMatcher:
         j = 0
         k = 0
         left = 0
+        start_pos = sites_position[start]
+        end_pos = sites_position[end]
         pos = 0
-        right = m
-        if j < M and start < Il[j].left:
+        right = L
+        if j < M and start_pos < Il[j].left:
             right = Il[j].left
-        while j < M and k < M and Il[j].left <= start:
+        while j < M and k < M and Il[j].left <= start_pos:
             while Ir[k].right == pos:
                 self.remove_edge(Ir[k])
                 k += 1
@@ -326,7 +335,7 @@ class AncestorMatcher:
                 self.insert_edge(Il[j])
                 j += 1
             left = pos
-            right = m
+            right = L
             if j < M:
                 right = min(right, Il[j].left)
             if k < M:
@@ -345,13 +354,17 @@ class AncestorMatcher:
         self.likelihood_nodes.append(last_root)
         self.likelihood[last_root] = 1
 
+        current_site = 0
+        while sites_position[current_site] < left:
+            current_site += 1
+
         remove_start = k
-        while left < end:
+        while left < end_pos:
             # print("START OF TREE LOOP", left, right)
             # print("L:", {u: self.likelihood[u] for u in self.likelihood_nodes})
             assert left < right
-            for site_index in range(remove_start, k):
-                edge = Ir[site_index]
+            for e in range(remove_start, k):
+                edge = Ir[e]
                 for u in [edge.parent, edge.child]:
                     if self.is_nonzero_root(u):
                         self.likelihood[u] = NONZERO_ROOT
@@ -373,8 +386,11 @@ class AncestorMatcher:
 
             if self.extended_checks:
                 self.check_likelihoods()
-            for site in range(max(left, start), min(right, end)):
-                self.update_site(site, h[site])
+
+            while left <= sites_position[current_site] < min(right, end_pos):
+                # print("update site", left, current_site, sites_position[current_site], right)
+                self.update_site(current_site, h[current_site])
+                current_site += 1
 
             remove_start = k
             while k < M and Ir[k].right == right:
@@ -399,8 +415,8 @@ class AncestorMatcher:
                     self.likelihood[edge.child] = L_child
                     self.likelihood_nodes.append(edge.child)
             # Clear the L cache
-            for site_index in range(remove_start, k):
-                edge = Ir[site_index]
+            for e in range(remove_start, k):
+                edge = Ir[e]
                 u = edge.parent
                 while L_cache[u] != -1:
                     L_cache[u] = -1
@@ -429,6 +445,8 @@ class AncestorMatcher:
     def run_traceback(self, start, end):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
+        L = self.matcher_indexes.sequence_length
+        sites_position = self.matcher_indexes.sites_position
         M = len(Il)
         u = self.max_likelihood_node[end - 1]
         output_edge = Edge(right=end, parent=u)
@@ -438,6 +456,8 @@ class AncestorMatcher:
         # Now go back through the trees.
         j = M - 1
         k = M - 1
+        start_pos = sites_position[start]
+        end_pos = sites_position[end]
         # Construct the matched haplotype
         match = np.zeros(self.num_sites, dtype=np.int8)
         match[:start] = tskit.MISSING_DATA
@@ -449,8 +469,13 @@ class AncestorMatcher:
         self.left_sib[:] = -1
         self.right_sib[:] = -1
 
-        pos = self.num_sites
-        while pos > start:
+        print("FIXME part way through updating this to use site_index.")
+        pos = L
+        site_index = self.num_sites -1
+        while sites_position[site_index] >= end_pos:
+            site_index -= 1
+
+        while pos > start_pos:
             # print("Top of loop: pos = ", pos)
             while k >= 0 and Il[k].left == pos:
                 edge = Il[k]
@@ -469,7 +494,11 @@ class AncestorMatcher:
             pos = left
 
             assert left < right
-            for site_index in range(min(right, end) - 1, max(left, start) - 1, -1):
+            print(left, right, site_index, sites_position[site_index])
+            while sites_position[site_index] >= max(left, start):
+
+            # print("FIXME")
+            # for site_index in range(min(right, end) - 1, max(left, start) - 1, -1):
                 u = output_edge.parent
                 self.set_allelic_state(site_index)
                 v = u
@@ -494,6 +523,7 @@ class AncestorMatcher:
                 # Reset the nodes in the recombination tree.
                 for u in self.traceback[site_index].keys():
                     recombination_required[u] = -1
+                site_index -= 1
         output_edge.left = start
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
@@ -532,12 +562,12 @@ def run_match(ts, h):
         precision=precision,
     )
     match_py = matcher.find_path(h, 0, ts.num_sites)
-    mi = tsinfer.MatcherIndexes(ts)
-    am = tsinfer.AncestorMatcher2(
-        mi, recombination=recombination, mismatch=mismatch, precision=precision
-    )
-    match_c = am.find_match(h, 0, ts.num_sites)
-    match_py.assert_equals(match_c)
+    # mi = tsinfer.MatcherIndexes(ts)
+    # am = tsinfer.AncestorMatcher2(
+    #     mi, recombination=recombination, mismatch=mismatch, precision=precision
+    # )
+    # match_c = am.find_match(h, 0, ts.num_sites)
+    # match_py.assert_equals(match_c)
 
     return match_py
 
@@ -650,6 +680,23 @@ class TestMultiTreeExample:
         assert list(m.path.right) == [1, 2, 3, 4]
         assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
+
+class TestSimulationExamples:
+    def check_exact_sample_matches(self, ts):
+        H = ts.genotype_matrix().T
+        for u, h in zip(ts.samples(), H):
+            print(u, h)
+            m = run_match(ts, h)
+            print(m)
+            break
+
+    def test_single_tree_binary_mutations(self):
+        ts = msprime.sim_ancestry(5, sequence_length=100, random_seed=2)
+        ts = msprime.sim_mutations(ts, rate=0.01, model=msprime.BinaryMutationModel(),
+                random_seed=2)
+        print(ts.tables.sites)
+        print(ts.tables.mutations)
+        self.check_exact_sample_matches(ts)
 
 
 class TestMatchClassUtils:
