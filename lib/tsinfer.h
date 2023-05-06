@@ -46,10 +46,12 @@
 #define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t)(1u << 16))
 
 typedef int8_t allele_t;
+/* TODO should probably change to uint32 when we have removed the old code.*/
+typedef tsk_id_t coordinate_t;
 
 typedef struct {
-    tsk_id_t left;
-    tsk_id_t right;
+    coordinate_t left;
+    coordinate_t right;
     tsk_id_t parent;
     tsk_id_t child;
 } edge_t;
@@ -216,6 +218,7 @@ typedef struct {
     size_t num_mutations;
     size_t num_edges;
     struct {
+        coordinate_t *position;
         mutation_list_node_t **mutations;
         tsk_size_t *num_alleles;
     } sites;

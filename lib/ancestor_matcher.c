@@ -1038,7 +1038,6 @@ matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out)
             fprintf(out, "\n");
         }
     }
-
     return 0;
 }
 
@@ -1112,9 +1111,17 @@ matcher_indexes_copy_mutation_data(
     int ret = 0;
     tsk_size_t j;
     tsk_id_t site, last_site;
+    const double *restrict sites_position = tables->sites.position;
     const tsk_id_t *restrict mutations_site = tables->mutations.site;
     const tsk_id_t *restrict mutations_node = tables->mutations.node;
     const tsk_size_t total_mutations = tables->mutations.num_rows;
+    coordinate_t *restrict converted_position = self->sites.position;
+
+    for (j = 0; j < self->num_sites; j++) {
+        /* TODO check for overflow */
+        converted_position[j] = (coordinate_t) sites_position[j];
+    }
+    converted_position[j] = (coordinate_t) tables->sequence_length;
 
     last_site = -1;
     for (j = 0; j < total_mutations; j++) {
@@ -1156,8 +1163,11 @@ matcher_indexes_alloc(
     self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));
     self->sites.mutations = malloc(self->num_sites * sizeof(*self->sites.mutations));
     self->sites.num_alleles = malloc(self->num_sites * sizeof(*self->sites.num_alleles));
+    self->sites.position
+        = malloc((self->num_sites + 1) * sizeof(*self->sites.mutations));
     if (self->left_index_edges == NULL || self->right_index_edges == NULL
-        || self->sites.mutations == NULL) {
+        || self->sites.mutations == NULL || self->sites.position == NULL
+        || self->sites.num_alleles == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -1184,6 +1194,7 @@ matcher_indexes_free(matcher_indexes_t *self)
     tsk_safe_free(self->left_index_edges);
     tsk_safe_free(self->right_index_edges);
     tsk_safe_free(self->sites.mutations);
+    tsk_safe_free(self->sites.position);
     tsk_safe_free(self->sites.num_alleles);
     tsk_blkalloc_free(&self->allocator);
     return 0;
