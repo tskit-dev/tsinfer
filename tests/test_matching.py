@@ -298,7 +298,7 @@ class AncestorMatcher:
     def find_path(self, h, start, end):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
-        L = self.matcher_indexes.sequence_length
+        sequence_length = self.matcher_indexes.sequence_length
         sites_position = self.matcher_indexes.sites_position
         M = len(Il)
         n = self.num_nodes
@@ -323,7 +323,7 @@ class AncestorMatcher:
         start_pos = sites_position[start]
         end_pos = sites_position[end]
         pos = 0
-        right = L
+        right = sequence_length
         if j < M and start_pos < Il[j].left:
             right = Il[j].left
         while j < M and k < M and Il[j].left <= start_pos:
@@ -334,7 +334,7 @@ class AncestorMatcher:
                 self.insert_edge(Il[j])
                 j += 1
             left = pos
-            right = L
+            right = sequence_length
             if j < M:
                 right = min(right, Il[j].left)
             if k < M:
@@ -432,7 +432,7 @@ class AncestorMatcher:
                     if u != 0 and self.likelihood[u] == NONZERO_ROOT:
                         self.likelihood[u] = 0
                         self.likelihood_nodes.append(u)
-            right = m
+            right = sequence_length
             if j < M:
                 right = min(right, Il[j].left)
             if k < M:
@@ -569,6 +569,23 @@ def run_match(ts, h):
 # refactor.
 
 
+def add_unique_sample_mutations(ts):
+    """
+    Adds a mutation for each of the samples at equally spaced locations
+    along the genome.
+    """
+    tables = ts.dump_tables()
+    L = int(ts.sequence_length)
+    assert L % ts.num_samples == 0
+    gap = L // ts.num_samples
+    x = 0
+    for u in ts.samples():
+        site = tables.sites.add_row(position=x, ancestral_state="0")
+        tables.mutations.add_row(site=site, derived_state="1", node=u)
+        x += gap
+    return tables.tree_sequence()
+
+
 class TestSingleBalancedTreeExample:
     # 3.00┊    6    ┊
     #     ┊  ┏━┻━┓  ┊
@@ -579,12 +596,9 @@ class TestSingleBalancedTreeExample:
 
     @staticmethod
     def ts():
-        tables = tskit.Tree.generate_balanced(4, span=4).tree_sequence.dump_tables()
-        # Add a site for each sample with a single mutation above that sample.
-        for j in range(4):
-            tables.sites.add_row(j, "0")
-            tables.mutations.add_row(site=j, node=j, derived_state="1")
-        return tables.tree_sequence()
+        return add_unique_sample_mutations(
+            tskit.Tree.generate_balanced(4, span=4).tree_sequence
+        )
 
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
@@ -647,12 +661,7 @@ class TestMultiTreeExample:
         ts = tskit.load_text(
             nodes=io.StringIO(nodes), edges=io.StringIO(edges), strict=False
         )
-        tables = ts.dump_tables()
-        # Add a site for each sample with a single mutation above that sample.
-        for j in range(4):
-            tables.sites.add_row(j, "0")
-            tables.mutations.add_row(site=j, node=j, derived_state="1")
-        return tables.tree_sequence()
+        return add_unique_sample_mutations(ts)
 
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
     def test_match_sample(self, j):
@@ -679,19 +688,49 @@ class TestSimulationExamples:
     def check_exact_sample_matches(self, ts):
         H = ts.genotype_matrix().T
         for u, h in zip(ts.samples(), H):
-            print(u, h)
             m = run_match(ts, h)
-            print(m)
-            break
+            np.testing.assert_array_equal(h, m.matched_haplotype)
+            assert list(m.path.left) == [0]
+            assert list(m.path.right) == [ts.num_sites]
+            assert list(m.path.parent) == [u]
 
-    def test_single_tree_binary_mutations(self):
-        ts = msprime.sim_ancestry(5, sequence_length=100, random_seed=2)
-        ts = msprime.sim_mutations(
-            ts, rate=0.01, model=msprime.BinaryMutationModel(), random_seed=2
-        )
-        print(ts.tables.sites)
-        print(ts.tables.mutations)
+    def check_switch_all_samples(self, ts):
+        h = np.ones(ts.num_sites, dtype=np.int8)
+        m = run_match(ts, h)
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+        np.testing.assert_array_equal(m.path.left, np.arange(ts.num_sites))
+        np.testing.assert_array_equal(m.path.right, 1 + np.arange(ts.num_sites))
+        np.testing.assert_array_equal(m.path.parent, ts.samples())
+
+    @pytest.mark.parametrize("n", [1, 2, 5, 10])
+    def test_single_tree_exact_match(self, n):
+        ts = msprime.sim_ancestry(n, sequence_length=100, random_seed=2)
+        ts = add_unique_sample_mutations(ts)
         self.check_exact_sample_matches(ts)
+
+    @pytest.mark.parametrize("n", [1, 2, 5, 10])
+    def test_multiple_trees_exact_match(self, n):
+        ts = msprime.sim_ancestry(
+            n, sequence_length=20, recombination_rate=0.1, random_seed=2234
+        )
+        assert ts.num_trees > 1
+        ts = add_unique_sample_mutations(ts)
+        self.check_exact_sample_matches(ts)
+
+    @pytest.mark.parametrize("n", [1, 2, 5, 10])
+    def test_single_tree_switch_all_samples(self, n):
+        ts = msprime.sim_ancestry(n, sequence_length=100, random_seed=2345)
+        ts = add_unique_sample_mutations(ts)
+        self.check_switch_all_samples(ts)
+
+    @pytest.mark.parametrize("n", [1, 2, 5, 10])
+    def test_multiple_trees_switch_all_sample(self, n):
+        ts = msprime.sim_ancestry(
+            n, sequence_length=20, recombination_rate=0.1, random_seed=12234
+        )
+        assert ts.num_trees > 1
+        ts = add_unique_sample_mutations(ts)
+        self.check_switch_all_samples(ts)
 
 
 class TestMatchClassUtils:
