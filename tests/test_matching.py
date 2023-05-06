@@ -6,13 +6,12 @@ import dataclasses
 import io
 import pickle
 
+import msprime
 import numpy as np
 import pytest
 import tskit
-import msprime
 
 import _tsinfer
-import tsinfer
 from tsinfer import matching
 
 
@@ -388,7 +387,6 @@ class AncestorMatcher:
                 self.check_likelihoods()
 
             while left <= sites_position[current_site] < min(right, end_pos):
-                # print("update site", left, current_site, sites_position[current_site], right)
                 self.update_site(current_site, h[current_site])
                 current_site += 1
 
@@ -469,12 +467,8 @@ class AncestorMatcher:
         self.left_sib[:] = -1
         self.right_sib[:] = -1
 
-        print("FIXME part way through updating this to use site_index.")
         pos = L
-        site_index = self.num_sites -1
-        while sites_position[site_index] >= end_pos:
-            site_index -= 1
-
+        site_index = self.num_sites - 1
         while pos > start_pos:
             # print("Top of loop: pos = ", pos)
             while k >= 0 and Il[k].left == pos:
@@ -494,36 +488,35 @@ class AncestorMatcher:
             pos = left
 
             assert left < right
-            print(left, right, site_index, sites_position[site_index])
-            while sites_position[site_index] >= max(left, start):
+            while left <= sites_position[site_index] < right:
+                if start_pos <= sites_position[site_index] < end_pos:
+                    u = output_edge.parent
+                    self.set_allelic_state(site_index)
+                    v = u
+                    while self.allelic_state[v] == -1:
+                        v = self.parent[v]
+                    match[site_index] = self.allelic_state[v]
+                    self.unset_allelic_state(site_index)
 
-            # print("FIXME")
-            # for site_index in range(min(right, end) - 1, max(left, start) - 1, -1):
-                u = output_edge.parent
-                self.set_allelic_state(site_index)
-                v = u
-                while self.allelic_state[v] == -1:
-                    v = self.parent[v]
-                match[site_index] = self.allelic_state[v]
-                self.unset_allelic_state(site_index)
-
-                for u, recombine in self.traceback[site_index].items():
-                    # Mark the traceback nodes on the tree.
-                    recombination_required[u] = recombine
-                # Now traverse up the tree from the current node. The first marked node
-                # we meet tells us whether we need to recombine.
-                u = output_edge.parent
-                while u != 0 and recombination_required[u] == -1:
-                    u = self.parent[u]
-                if recombination_required[u] and site_index > start:
-                    output_edge.left = site_index
-                    u = self.max_likelihood_node[site_index - 1]
-                    output_edge = Edge(right=site_index, parent=u)
-                    output_edges.append(output_edge)
-                # Reset the nodes in the recombination tree.
-                for u in self.traceback[site_index].keys():
-                    recombination_required[u] = -1
+                    for u, recombine in self.traceback[site_index].items():
+                        # Mark the traceback nodes on the tree.
+                        recombination_required[u] = recombine
+                    # Now traverse up the tree from the current node. The first
+                    # marked node we meet tells us whether we need to
+                    # recombine.
+                    u = output_edge.parent
+                    while u != 0 and recombination_required[u] == -1:
+                        u = self.parent[u]
+                    if recombination_required[u] and site_index > start:
+                        output_edge.left = site_index
+                        u = self.max_likelihood_node[site_index - 1]
+                        output_edge = Edge(right=site_index, parent=u)
+                        output_edges.append(output_edge)
+                    # Reset the nodes in the recombination tree.
+                    for u in self.traceback[site_index].keys():
+                        recombination_required[u] = -1
                 site_index -= 1
+
         output_edge.left = start
 
         self.mean_traceback_size = sum(len(t) for t in self.traceback) / self.num_sites
@@ -681,6 +674,7 @@ class TestMultiTreeExample:
         assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
+
 class TestSimulationExamples:
     def check_exact_sample_matches(self, ts):
         H = ts.genotype_matrix().T
@@ -692,8 +686,9 @@ class TestSimulationExamples:
 
     def test_single_tree_binary_mutations(self):
         ts = msprime.sim_ancestry(5, sequence_length=100, random_seed=2)
-        ts = msprime.sim_mutations(ts, rate=0.01, model=msprime.BinaryMutationModel(),
-                random_seed=2)
+        ts = msprime.sim_mutations(
+            ts, rate=0.01, model=msprime.BinaryMutationModel(), random_seed=2
+        )
         print(ts.tables.sites)
         print(ts.tables.mutations)
         self.check_exact_sample_matches(ts)
