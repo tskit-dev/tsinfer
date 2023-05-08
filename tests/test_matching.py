@@ -12,6 +12,7 @@ import pytest
 import tskit
 
 import _tsinfer
+import tsinfer
 from tsinfer import matching
 
 
@@ -555,12 +556,12 @@ def run_match(ts, h):
         precision=precision,
     )
     match_py = matcher.find_path(h, 0, ts.num_sites)
-    # mi = tsinfer.MatcherIndexes(ts)
-    # am = tsinfer.AncestorMatcher2(
-    #     mi, recombination=recombination, mismatch=mismatch, precision=precision
-    # )
-    # match_c = am.find_match(h, 0, ts.num_sites)
-    # match_py.assert_equals(match_c)
+    mi = tsinfer.MatcherIndexes(ts)
+    am = tsinfer.AncestorMatcher2(
+        mi, recombination=recombination, mismatch=mismatch, precision=precision
+    )
+    match_c = am.find_match(h, 0, ts.num_sites)
+    match_py.assert_equals(match_c)
 
     return match_py
 

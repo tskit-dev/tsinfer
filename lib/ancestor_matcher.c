@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018-2020 University of Oxford
+** Copyright (C) 2018-2023 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -1118,7 +1118,7 @@ matcher_indexes_copy_mutation_data(
     coordinate_t *restrict converted_position = self->sites.position;
 
     for (j = 0; j < self->num_sites; j++) {
-        /* TODO check for overflow */
+        /* TODO check for under/overflow */
         converted_position[j] = (coordinate_t) sites_position[j];
     }
     converted_position[j] = (coordinate_t) tables->sequence_length;
@@ -1741,18 +1741,23 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
     tsk_id_t *restrict path_parent)
 {
     int ret = 0;
-    tsk_id_t l;
+    tsk_id_t site;
     edge_t edge;
     tsk_id_t u, v, max_likelihood_node;
-    tsk_id_t left, right, pos;
+    coordinate_t left, right, pos, start_pos, end_pos;
     tsk_id_t *restrict parent = self->parent;
     allele_t *restrict allelic_state = self->allelic_state;
     int8_t *restrict recombination_required = self->recombination_required;
     const edge_t *restrict in = self->matcher_indexes->right_index_edges;
     const edge_t *restrict out = self->matcher_indexes->left_index_edges;
+    const coordinate_t *restrict sites_position = self->matcher_indexes->sites.position;
+    const coordinate_t sequence_length = sites_position[self->num_sites];
     int_fast32_t in_index = (int_fast32_t) self->matcher_indexes->num_edges - 1;
     int_fast32_t out_index = (int_fast32_t) self->matcher_indexes->num_edges - 1;
     size_t path_length = 0;
+
+    start_pos = sites_position[start];
+    end_pos = sites_position[end];
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
@@ -1768,9 +1773,10 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
     memset(parent, 0xff, self->num_nodes * sizeof(*parent));
     memset(
         recombination_required, 0xff, self->num_nodes * sizeof(*recombination_required));
-    pos = (tsk_id_t) self->num_sites;
+    pos = sequence_length;
+    site = (tsk_id_t) self->num_sites - 1;
 
-    while (pos > start) {
+    while (pos > start_pos) {
         while (out_index >= 0 && out[out_index].left == pos) {
             edge = out[out_index];
             out_index--;
@@ -1793,38 +1799,42 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
 
         /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
-        for (l = TSK_MIN(right, end) - 1; l >= (int) TSK_MAX(left, start); l--) {
-            ancestor_matcher2_set_allelic_state(self, l, allelic_state);
-            u = path_parent[path_length];
-            v = u;
-            while (allelic_state[v] == TSK_NULL) {
-                v = parent[v];
-            }
-            match[l] = allelic_state[v];
-            ancestor_matcher2_unset_allelic_state(self, l, allelic_state);
+        for (; site >= 0 && left <= sites_position[site] && sites_position[site] < right;
+             site--) {
+            if (start_pos <= sites_position[site] && sites_position[site] < end_pos) {
 
-            /* Mark the traceback nodes on the tree */
-            ancestor_matcher2_set_recombination_required(
-                self, l, recombination_required);
+                ancestor_matcher2_set_allelic_state(self, site, allelic_state);
+                u = path_parent[path_length];
+                v = u;
+                while (allelic_state[v] == TSK_NULL) {
+                    v = parent[v];
+                }
+                match[site] = allelic_state[v];
+                ancestor_matcher2_unset_allelic_state(self, site, allelic_state);
 
-            /* Traverse up the tree from the current node. The first marked node that we
-             * meed tells us whether we need to recombine */
-            while (u != 0 && recombination_required[u] == -1) {
-                u = parent[u];
-                assert(u != NULL_NODE);
+                /* Mark the traceback nodes on the tree */
+                ancestor_matcher2_set_recombination_required(
+                    self, site, recombination_required);
+
+                /* Traverse up the tree from the current node. The first marked node that
+                 * we meed tells us whether we need to recombine */
+                while (u != 0 && recombination_required[u] == -1) {
+                    u = parent[u];
+                    assert(u != NULL_NODE);
+                }
+                if (recombination_required[u] && site > start) {
+                    max_likelihood_node = self->max_likelihood_node[site - 1];
+                    assert(max_likelihood_node != NULL_NODE);
+                    path_left[path_length] = site;
+                    path_length++;
+                    /* Start the next output edge */
+                    path_right[path_length] = site;
+                    path_parent[path_length] = max_likelihood_node;
+                }
+                /* Unset the values in the tree for the next site. */
+                ancestor_matcher2_unset_recombination_required(
+                    self, site, recombination_required);
             }
-            if (recombination_required[u] && l > start) {
-                max_likelihood_node = self->max_likelihood_node[l - 1];
-                assert(max_likelihood_node != NULL_NODE);
-                path_left[path_length] = l;
-                path_length++;
-                /* Start the next output edge */
-                path_right[path_length] = l;
-                path_parent[path_length] = max_likelihood_node;
-            }
-            /* Unset the values in the tree for the next site. */
-            ancestor_matcher2_unset_recombination_required(
-                self, l, recombination_required);
         }
     }
 
@@ -1855,26 +1865,29 @@ ancestor_matcher2_run_forwards_match(
     tsk_id_t *restrict right_child = self->right_child;
     tsk_id_t *restrict left_sib = self->left_sib;
     tsk_id_t *restrict right_sib = self->right_sib;
-    tsk_id_t pos, left, right;
+    coordinate_t pos, left, right;
     const edge_t *restrict in = self->matcher_indexes->left_index_edges;
     const edge_t *restrict out = self->matcher_indexes->right_index_edges;
     const int_fast32_t M = (tsk_id_t) self->matcher_indexes->num_edges;
+    const coordinate_t *restrict sites_position = self->matcher_indexes->sites.position;
     int_fast32_t in_index, out_index, l, remove_start;
+    const coordinate_t start_pos = sites_position[start];
+    const coordinate_t end_pos = sites_position[end];
+    const coordinate_t sequence_length = sites_position[self->num_sites];
 
     /* Load the tree for start */
     left = 0;
     pos = 0;
     in_index = 0;
     out_index = 0;
-    right = (tsk_id_t) self->num_sites;
-    if (in_index < M && start < in[in_index].left) {
+    right = sequence_length;
+    if (in_index < M && start_pos < in[in_index].left) {
         right = in[in_index].left;
     }
 
-    /* TODO there's probably quite a big gain to made here by seeking
-     * directly to the tree that we're interested in rather than just
-     * building the trees sequentially */
-    while (in_index < M && out_index < M && in[in_index].left <= start) {
+    /* TODO don't add all edges trees but only insert edges that intersect
+     * with start_pos. Maybe a reasonable gain for short ancestral fragments */
+    while (in_index < M && out_index < M && in[in_index].left <= start_pos) {
         while (out_index < M && out[out_index].right == pos) {
             remove_edge(
                 out[out_index], parent, left_child, right_child, left_sib, right_sib);
@@ -1886,7 +1899,7 @@ ancestor_matcher2_run_forwards_match(
             in_index++;
         }
         left = pos;
-        right = (tsk_id_t) self->num_sites;
+        right = sequence_length;
         if (in_index < M) {
             right = TSK_MIN(right, in[in_index].left);
         }
@@ -1919,8 +1932,11 @@ ancestor_matcher2_run_forwards_match(
     self->likelihood_nodes[0] = last_root;
     self->num_likelihood_nodes = 1;
 
+    for (site = 0; sites_position[site] < left; site++)
+        ;
+
     remove_start = out_index;
-    while (left < end) {
+    while (left < end_pos) {
         assert(left < right);
 
         /* Remove the likelihoods for any nonzero roots that have just left
@@ -1962,12 +1978,15 @@ ancestor_matcher2_run_forwards_match(
         if (self->flags & TSI_EXTENDED_CHECKS) {
             ancestor_matcher2_check_state(self);
         }
-        for (site = TSK_MAX(left, start); site < TSK_MIN(right, end); site++) {
+
+        while (left <= sites_position[site]
+               && sites_position[site] < TSK_MIN(right, end_pos)) {
             ret = ancestor_matcher2_update_site_state(
                 self, site, haplotype[site], parent, L, L_cache);
             if (ret != 0) {
                 goto out;
             }
+            site++;
         }
 
         /* Move on to the next tree */
@@ -2030,7 +2049,7 @@ ancestor_matcher2_run_forwards_match(
                 self->num_likelihood_nodes++;
             }
         }
-        right = (tsk_id_t) self->num_sites;
+        right = sequence_length;
         if (in_index < M) {
             right = TSK_MIN(right, in[in_index].left);
         }
