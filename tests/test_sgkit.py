@@ -401,17 +401,6 @@ class TestSgkitSampleDataErrors:
         ):
             tsinfer.SgkitSampleData(path)
 
-    def test_unphased(self, tmp_path):
-        path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
-        ds["call_genotype_phased"] = (
-            ds["call_genotype"].dims,
-            np.zeros(ds["call_genotype"].shape, dtype=bool),
-        )
-        sgkit.save_dataset(ds, path)
-        with pytest.raises(ValueError, match="One or more genotypes are unphased"):
-            tsinfer.SgkitSampleData(path)
-
     def test_phased(self, tmp_path):
         path = tmp_path / "data.zarr"
         ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)

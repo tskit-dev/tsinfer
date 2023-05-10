@@ -2297,13 +2297,7 @@ class SgkitSampleData(SampleData):
 
         assert self.ploidy == self.data["call_genotype"].chunks[2]
         if self.ploidy > 1:
-            try:
-                if not da.all(self.data["call_genotype_phased"]).compute():
-                    raise ValueError(
-                        "One or more genotypes are unphased, tsinfer"
-                        " requires phased genotypes"
-                    )
-            except KeyError:
+            if "call_genotype_phased" not in self.data:
                 raise ValueError(
                     "The call_genotype_phased array is missing from the"
                     " sgkit dataset, indicating that all the genotypes are"
