@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: [ 3.8, "3.10" ]
+        python: [ 3.8, 3.11 ]
         os:  [ macos-latest, ubuntu-latest, windows-latest ]
     defaults:
       run:
@@ -56,7 +56,7 @@ jobs:
             /usr/share/miniconda/envs/anaconda-client-env
             ~/osx-conda
             ~/.profile
-          key: ${{ runner.os }}-${{ matrix.python}}-conda-v14-${{ hashFiles('requirements/CI-tests-conda/requirements.txt')}}
+          key: ${{ runner.os }}-${{ matrix.python}}-conda-v15-${{ hashFiles('requirements/CI-tests-conda/requirements.txt')}}
 
       - name: Install Conda
         uses: conda-incubator/setup-miniconda@v2
@@ -78,12 +78,14 @@ jobs:
       - name: Install compiler from conda
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash -l {0} #We need a login shell to get conda
-        run: conda install --yes c-compiler
+        run: |
+          conda install --yes c-compiler
+          conda install --yes mamba
 
       - name: Install conda deps
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash -l {0} #We need a login shell to get conda
-        run: conda install --yes --file=requirements/CI-tests-conda/requirements.txt
+        run: mamba install --yes --file=requirements/CI-tests-conda/requirements.txt
 
       - name: Install cyvcf2 #Fails if done via conda due to no windows support.
         if: steps.cache.outputs.cache-hit != 'true' && matrix.os != 'windows-latest'
