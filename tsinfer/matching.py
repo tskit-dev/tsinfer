@@ -34,7 +34,9 @@ def add_vestigial_root(ts):
     base_tables = ts.dump_tables()
     tables = base_tables.copy()
     tables.nodes.clear()
-    t = ts.max_root_time
+    t = 0
+    if ts.num_nodes > 0:
+        t = max(ts.nodes_time)
     tables.nodes.add_row(time=t + 1)
     num_additonal_nodes = len(tables.nodes)
     tables.mutations.node += num_additonal_nodes
@@ -42,15 +44,16 @@ def add_vestigial_root(ts):
     tables.edges.parent += num_additonal_nodes
     for node in base_tables.nodes:
         tables.nodes.append(node)
-    for tree in ts.trees():
-        root = tree.root + num_additonal_nodes
-        tables.edges.add_row(
-            tree.interval.left, tree.interval.right, parent=0, child=root
-        )
-    tables.edges.squash()
-    # FIXME probably don't need to sort here most of the time, or at least we
-    # can just sort almost the end of the table.
-    tables.sort()
+    if ts.num_nodes > 0:
+        for tree in ts.trees():
+            root = tree.root + num_additonal_nodes
+            tables.edges.add_row(
+                tree.interval.left, tree.interval.right, parent=0, child=root
+            )
+        tables.edges.squash()
+        # FIXME probably don't need to sort here most of the time, or at least we
+        # can just sort almost the end of the table.
+        tables.sort()
     return tables.tree_sequence()
 
 
