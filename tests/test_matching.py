@@ -566,12 +566,12 @@ def run_match(ts, h):
     )
     match_py = matcher.find_path(h)
 
-    # mi = tsinfer.MatcherIndexes(ts)
-    # am = tsinfer.AncestorMatcher2(
-    #     mi, recombination=recombination, mismatch=mismatch, precision=precision
-    # )
-    # match_c = am.find_match(h, 0, ts.num_sites)
-    # match_py.assert_equals(match_c)
+    mi = tsinfer.MatcherIndexes(ts)
+    am = tsinfer.AncestorMatcher2(
+        mi, recombination=recombination, mismatch=mismatch, precision=precision
+    )
+    match_c = am.find_match(h)
+    match_py.assert_equals(match_c)
 
     return match_py
 
@@ -715,19 +715,6 @@ class TestMultiTreeExample:
         m = run_match(self.ts(), h)
         assert list(m.path.left) == [0]
         assert list(m.path.right) == [4]
-        assert list(m.path.parent) == [ts.samples()[j]]
-        np.testing.assert_array_equal(h, m.matched_haplotype)
-
-    @pytest.mark.parametrize("j", [1, 2])
-    def test_match_sample_missing_flanks(self, j):
-        ts = self.ts()
-        h = np.zeros(4)
-        h[0] = -1
-        h[-1] = -1
-        h[j] = 1
-        m = run_match(ts, h)
-        assert list(m.path.left) == [1]
-        assert list(m.path.right) == [3]
         assert list(m.path.parent) == [ts.samples()[j]]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 

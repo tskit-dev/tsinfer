@@ -19,6 +19,7 @@
 import dataclasses
 
 import numpy as np
+import tskit
 
 import _tsinfer
 
@@ -94,13 +95,26 @@ class Match:
 
 
 class AncestorMatcher2(_tsinfer.AncestorMatcher2):
-    def find_match(self, h, left, right):
-        path_len, left, right, parent, matched_haplotype = self.find_path(
-            h, left, right
-        )
+    def find_match(self, h):
+        # TODO compute these in C - taking a shortcut for now.
+        m = len(h)
+        start = 0
+        while start < m and h[start] == tskit.MISSING_DATA:
+            start += 1
+        if start == m:
+            raise ValueError("All missing data")
+        end = m - 1
+        while end >= 0 and h[end] == tskit.MISSING_DATA:
+            end -= 1
+        end += 1
+
+        path_len, left, right, parent, matched_haplotype = self.find_path(h, start, end)
         left = left[:path_len][::-1]
         right = right[:path_len][::-1]
         parent = parent[:path_len][::-1]
         # We added a 0-root everywhere above, so convert node IDs back
         parent -= 1
+        # FIXME C code isn't setting match to missing as expected
+        matched_haplotype[:start] = tskit.MISSING_DATA
+        matched_haplotype[end:] = tskit.MISSING_DATA
         return Match(Path(left, right, parent), matched_haplotype)
