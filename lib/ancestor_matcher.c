@@ -1756,12 +1756,12 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
     int_fast32_t out_index = (int_fast32_t) self->matcher_indexes->num_edges - 1;
     size_t path_length = 0;
 
-    start_pos = sites_position[start];
+    start_pos = start == 0 ? 0 : sites_position[start];
     end_pos = sites_position[end];
 
     /* Prepare for the traceback and get the memory ready for recording
      * the output edges. */
-    path_right[path_length] = end;
+    path_right[path_length] = end_pos;
     path_parent[path_length] = NULL_NODE;
 
     max_likelihood_node = self->max_likelihood_node[end - 1];
@@ -1825,10 +1825,10 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
                 if (recombination_required[u] && site > start) {
                     max_likelihood_node = self->max_likelihood_node[site - 1];
                     assert(max_likelihood_node != NULL_NODE);
-                    path_left[path_length] = site;
+                    path_left[path_length] = sites_position[site];
                     path_length++;
                     /* Start the next output edge */
-                    path_right[path_length] = site;
+                    path_right[path_length] = sites_position[site];
                     path_parent[path_length] = max_likelihood_node;
                 }
                 /* Unset the values in the tree for the next site. */
@@ -1838,7 +1838,7 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
         }
     }
 
-    path_left[path_length] = start;
+    path_left[path_length] = start_pos;
     path_length++;
     assert(path_right[path_length - 1] != start);
     *path_length_out = path_length;

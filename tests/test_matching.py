@@ -548,6 +548,8 @@ class AncestorMatcher:
         # Convert the parent node IDs back to original values
         parent -= 1
         path = matching.Path(left[::-1], right[::-1], parent[::-1])
+        if start == 0 and path.left[0] == sites_position[0]:
+            path.left[0] = 0
         return matching.Match(path, match)
 
 
@@ -589,7 +591,7 @@ class TestMatchClassUtils:
 # refactor.
 
 
-def add_unique_sample_mutations(ts):
+def add_unique_sample_mutations(ts, start=0):
     """
     Adds a mutation for each of the samples at equally spaced locations
     along the genome.
@@ -598,7 +600,7 @@ def add_unique_sample_mutations(ts):
     L = int(ts.sequence_length)
     assert L % ts.num_samples == 0
     gap = L // ts.num_samples
-    x = 0
+    x = start
     for u in ts.samples():
         site = tables.sites.add_row(position=x, ancestral_state="0")
         tables.mutations.add_row(site=site, derived_state="1", node=u)
@@ -662,6 +664,41 @@ class TestSingleBalancedTreeExample:
         assert list(m.path.left) == [2, 4]
         assert list(m.path.right) == [4, 6]
         assert list(m.path.parent) == [1, 2]
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+
+
+class TestSingleBalancedTreeExampleNonZeroFirstSite:
+    # 3.00┊    6    ┊
+    #     ┊  ┏━┻━┓  ┊
+    # 2.00┊  4   5  ┊
+    #     ┊ ┏┻┓ ┏┻┓ ┊
+    # 1.00┊ 0 1 2 3 ┊
+    #     0         8
+
+    @staticmethod
+    def ts():
+        return add_unique_sample_mutations(
+            tskit.Tree.generate_balanced(4, span=8).tree_sequence, start=1
+        )
+
+    @pytest.mark.parametrize("j", [0, 1, 2, 3])
+    def test_match_sample(self, j):
+        ts = self.ts()
+        h = np.zeros(4)
+        h[j] = 1
+        m = run_match(ts, h)
+        assert list(m.path.left) == [0]
+        assert list(m.path.right) == [ts.sequence_length]
+        assert list(m.path.parent) == [ts.samples()[j]]
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+
+    def test_switch_each_sample(self):
+        ts = self.ts()
+        h = np.ones(4)
+        m = run_match(ts, h)
+        assert list(m.path.left) == [0, 3, 5, 7]
+        assert list(m.path.right) == [3, 5, 7, 8]
+        assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
 
