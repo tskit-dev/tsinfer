@@ -541,8 +541,8 @@ class AncestorMatcher:
             # instance we need to pop the last edge off the list. Or, see why we're
             # generating it in the first place.
             assert e.left < e.right
-            left[j] = e.left
-            right[j] = e.right
+            left[j] = sites_position[e.left]
+            right[j] = sites_position[e.right]
             parent[j] = e.parent
 
         # Convert the parent node IDs back to original values
@@ -612,12 +612,12 @@ class TestSingleBalancedTreeExample:
     # 2.00┊  4   5  ┊
     #     ┊ ┏┻┓ ┏┻┓ ┊
     # 1.00┊ 0 1 2 3 ┊
-    #     0         4
+    #     0         8
 
     @staticmethod
     def ts():
         return add_unique_sample_mutations(
-            tskit.Tree.generate_balanced(4, span=4).tree_sequence
+            tskit.Tree.generate_balanced(4, span=8).tree_sequence
         )
 
     @pytest.mark.parametrize("j", [0, 1, 2, 3])
@@ -627,7 +627,7 @@ class TestSingleBalancedTreeExample:
         h[j] = 1
         m = run_match(ts, h)
         assert list(m.path.left) == [0]
-        assert list(m.path.right) == [4]
+        assert list(m.path.right) == [ts.sequence_length]
         assert list(m.path.parent) == [ts.samples()[j]]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
@@ -639,8 +639,8 @@ class TestSingleBalancedTreeExample:
         h[-1] = -1
         h[j] = 1
         m = run_match(ts, h)
-        assert list(m.path.left) == [1]
-        assert list(m.path.right) == [3]
+        assert list(m.path.left) == [2]
+        assert list(m.path.right) == [6]
         assert list(m.path.parent) == [ts.samples()[j]]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
@@ -648,8 +648,8 @@ class TestSingleBalancedTreeExample:
         ts = self.ts()
         h = np.ones(4)
         m = run_match(ts, h)
-        assert list(m.path.left) == [0, 1, 2, 3]
-        assert list(m.path.right) == [1, 2, 3, 4]
+        assert list(m.path.left) == [0, 2, 4, 6]
+        assert list(m.path.right) == [2, 4, 6, 8]
         assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
@@ -659,8 +659,8 @@ class TestSingleBalancedTreeExample:
         h[0] = -1
         h[-1] = -1
         m = run_match(ts, h)
-        assert list(m.path.left) == [1, 2]
-        assert list(m.path.right) == [2, 3]
+        assert list(m.path.left) == [2, 4]
+        assert list(m.path.right) == [4, 6]
         assert list(m.path.parent) == [1, 2]
         np.testing.assert_array_equal(h, m.matched_haplotype)
 
@@ -746,15 +746,16 @@ class TestSimulationExamples:
             m = run_match(ts, h)
             np.testing.assert_array_equal(h, m.matched_haplotype)
             assert list(m.path.left) == [0]
-            assert list(m.path.right) == [ts.num_sites]
+            assert list(m.path.right) == [ts.sequence_length]
             assert list(m.path.parent) == [u]
 
     def check_switch_all_samples(self, ts):
         h = np.ones(ts.num_sites, dtype=np.int8)
         m = run_match(ts, h)
+        X = np.append(ts.sites_position, [ts.sequence_length])
         np.testing.assert_array_equal(h, m.matched_haplotype)
-        np.testing.assert_array_equal(m.path.left, np.arange(ts.num_sites))
-        np.testing.assert_array_equal(m.path.right, 1 + np.arange(ts.num_sites))
+        np.testing.assert_array_equal(m.path.left, X[:-1])
+        np.testing.assert_array_equal(m.path.right, X[1:])
         np.testing.assert_array_equal(m.path.parent, ts.samples())
 
     @pytest.mark.parametrize("n", [1, 2, 5, 10])

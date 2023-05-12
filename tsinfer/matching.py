@@ -39,13 +39,13 @@ def add_vestigial_root(ts):
     if ts.num_nodes > 0:
         t = max(ts.nodes_time)
     tables.nodes.add_row(time=t + 1)
-    num_additonal_nodes = len(tables.nodes)
+    num_additonal_nodes = 1
     tables.mutations.node += num_additonal_nodes
     tables.edges.child += num_additonal_nodes
     tables.edges.parent += num_additonal_nodes
     for node in base_tables.nodes:
         tables.nodes.append(node)
-    if ts.num_nodes > 0:
+    if ts.num_edges > 0:
         for tree in ts.trees():
             root = tree.root + num_additonal_nodes
             tables.edges.add_row(
@@ -75,6 +75,9 @@ class Path:
     right: np.ndarray
     parent: np.ndarray
 
+    def __iter__(self):
+        yield from zip(self.left, self.right, self.parent)
+
     def __len__(self):
         return len(self.left)
 
@@ -98,6 +101,10 @@ class AncestorMatcher2(_tsinfer.AncestorMatcher2):
     def find_match(self, h):
         # TODO compute these in C - taking a shortcut for now.
         m = len(h)
+        if m == 0:
+            # FIXME hardcoding 0 for parent here
+            return Match(Path([0], [m], [0]), [])
+
         start = 0
         while start < m and h[start] == tskit.MISSING_DATA:
             start += 1
