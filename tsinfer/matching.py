@@ -31,13 +31,13 @@ def add_vestigial_root(ts):
     """
     if not ts.discrete_genome:
         raise ValueError("Only discrete genome coords supported")
+    if ts.num_nodes == 0:
+        raise ValueError("Emtpy trees not supported")
 
     base_tables = ts.dump_tables()
     tables = base_tables.copy()
     tables.nodes.clear()
-    t = 0
-    if ts.num_nodes > 0:
-        t = max(ts.nodes_time)
+    t = max(ts.nodes_time)
     tables.nodes.add_row(time=t + 1)
     num_additonal_nodes = 1
     tables.mutations.node += num_additonal_nodes
@@ -66,6 +66,9 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
+        # TODO should really just reflect these from the low-level C values.
+        self.sequence_length = ts.sequence_length
+        self.num_sites = ts.num_sites
         super().__init__(ll_tables)
 
 
@@ -98,18 +101,29 @@ class Match:
 
 
 class AncestorMatcher2(_tsinfer.AncestorMatcher2):
+    def __init__(self, matcher_indexes, **kwargs):
+        super().__init__(matcher_indexes, **kwargs)
+        self.sequence_length = matcher_indexes.sequence_length
+        self.num_sites = matcher_indexes.num_sites
+
+    def zero_sites_path(self):
+        left = np.array([0], dtype=np.uint32)
+        right = np.array([self.sequence_length], dtype=np.uint32)
+        parent = np.array([0], dtype=np.uint32)
+        return Match(Path(left, right, parent), [])
+
     def find_match(self, h):
+        if self.num_sites == 0:
+            return self.zero_sites_path()
+
         # TODO compute these in C - taking a shortcut for now.
         m = len(h)
-        if m == 0:
-            # FIXME hardcoding 0 for parent here
-            return Match(Path([0], [m], [0]), [])
 
         start = 0
         while start < m and h[start] == tskit.MISSING_DATA:
             start += 1
-        if start == m:
-            raise ValueError("All missing data")
+        # if start == m:
+        #     raise ValueError("All missing data")
         end = m - 1
         while end >= 0 and h[end] == tskit.MISSING_DATA:
             end -= 1

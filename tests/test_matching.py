@@ -296,7 +296,13 @@ class AncestorMatcher:
     def is_nonzero_root(self, u):
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
+    def zero_sites_path(self):
+        path = matching.Path([0], [self.matcher_indexes.sites_position[-1]], [0])
+        return matching.Match(path, [])
+
     def find_path(self, h):
+        if self.num_sites == 0:
+            return self.zero_sites_path()
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
         sequence_length = self.matcher_indexes.sequence_length
@@ -330,7 +336,7 @@ class AncestorMatcher:
         j = 0
         k = 0
         left = 0
-        start_pos = sites_position[start]
+        start_pos = 0 if start == 0 else sites_position[start]
         end_pos = sites_position[end]
         pos = 0
         right = sequence_length
@@ -464,7 +470,7 @@ class AncestorMatcher:
         # Now go back through the trees.
         j = M - 1
         k = M - 1
-        start_pos = sites_position[start]
+        start_pos = 0 if start == 0 else sites_position[start]
         end_pos = sites_position[end]
         # Construct the matched haplotype
         match = np.zeros(self.num_sites, dtype=np.int8)
@@ -554,7 +560,7 @@ class AncestorMatcher:
 
 
 def run_match(ts, h):
-    h = h.astype(np.int8)
+    h = np.array(h).astype(np.int8)
     assert len(h) == ts.num_sites
     recombination = np.zeros(ts.num_sites) + 1e-9
     mismatch = np.zeros(ts.num_sites)
@@ -574,7 +580,6 @@ def run_match(ts, h):
     )
     match_c = am.find_match(h)
     match_py.assert_equals(match_c)
-
     return match_py
 
 
@@ -700,6 +705,17 @@ class TestSingleBalancedTreeExampleNonZeroFirstSite:
         assert list(m.path.right) == [3, 5, 7, 8]
         assert list(m.path.parent) == [0, 1, 2, 3]
         np.testing.assert_array_equal(h, m.matched_haplotype)
+
+
+class TestZeroSites:
+    @pytest.mark.parametrize("L", [1, 2, 5])
+    def test_one_node_ts(self, L):
+        tables = tskit.TableCollection(L)
+        tables.nodes.add_row(time=1)
+        m = run_match(tables.tree_sequence(), [])
+        assert list(m.path.left) == [0]
+        assert list(m.path.right) == [L]
+        assert list(m.path.parent) == [0]
 
 
 class TestMultiTreeExample:
