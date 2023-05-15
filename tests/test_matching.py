@@ -298,7 +298,7 @@ class AncestorMatcher:
 
     def zero_sites_path(self):
         path = matching.Path([0], [self.matcher_indexes.sites_position[-1]], [0])
-        return matching.Match(path, [])
+        return matching.Match(path, [], [])
 
     def find_path(self, h):
         if self.num_sites == 0:
@@ -454,9 +454,9 @@ class AncestorMatcher:
             if k < M:
                 right = min(right, Ir[k].right)
 
-        return self.run_traceback(start, end)
+        return self.run_traceback(start, end, h)
 
-    def run_traceback(self, start, end):
+    def run_traceback(self, start, end, query_haplotype):
         Il = self.matcher_indexes.left_index
         Ir = self.matcher_indexes.right_index
         L = self.matcher_indexes.sequence_length
@@ -556,7 +556,7 @@ class AncestorMatcher:
         path = matching.Path(left[::-1], right[::-1], parent[::-1])
         if start == 0 and path.left[0] == sites_position[0]:
             path.left[0] = 0
-        return matching.Match(path, match)
+        return matching.Match(path, query_haplotype, match)
 
 
 def run_match(ts, h):
@@ -586,7 +586,9 @@ def run_match(ts, h):
 class TestMatchClassUtils:
     def test_pickle(self):
         m1 = matching.Match(
-            matching.Path(np.array([0]), np.array([1]), np.array([0])), np.array([0])
+            matching.Path(np.array([0]), np.array([1]), np.array([0])),
+            np.array([0]),
+            np.array([0]),
         )
         m2 = pickle.loads(pickle.dumps(m1))
         m1.assert_equals(m2)
@@ -637,6 +639,7 @@ class TestSingleBalancedTreeExample:
         assert list(m.path.right) == [ts.sequence_length]
         assert list(m.path.parent) == [ts.samples()[j]]
         np.testing.assert_array_equal(h, m.matched_haplotype)
+        np.testing.assert_array_equal(h, m.query_haplotype)
 
     @pytest.mark.parametrize("j", [1, 2])
     def test_match_sample_missing_flanks(self, j):

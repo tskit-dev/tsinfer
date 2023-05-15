@@ -93,11 +93,13 @@ class Path:
 @dataclasses.dataclass
 class Match:
     path: Path
+    query_haplotype: np.ndarray
     matched_haplotype: np.ndarray
 
     def assert_equals(self, other):
         self.path.assert_equals(other.path)
         np.testing.assert_array_equal(self.matched_haplotype, other.matched_haplotype)
+        np.testing.assert_array_equal(self.query_haplotype, other.query_haplotype)
 
 
 class AncestorMatcher2(_tsinfer.AncestorMatcher2):
@@ -110,7 +112,7 @@ class AncestorMatcher2(_tsinfer.AncestorMatcher2):
         left = np.array([0], dtype=np.uint32)
         right = np.array([self.sequence_length], dtype=np.uint32)
         parent = np.array([0], dtype=np.uint32)
-        return Match(Path(left, right, parent), [])
+        return Match(Path(left, right, parent), [], [])
 
     def find_match(self, h):
         if self.num_sites == 0:
@@ -138,4 +140,4 @@ class AncestorMatcher2(_tsinfer.AncestorMatcher2):
         # FIXME C code isn't setting match to missing as expected
         matched_haplotype[:start] = tskit.MISSING_DATA
         matched_haplotype[end:] = tskit.MISSING_DATA
-        return Match(Path(left, right, parent), matched_haplotype)
+        return Match(Path(left, right, parent), h, matched_haplotype)
