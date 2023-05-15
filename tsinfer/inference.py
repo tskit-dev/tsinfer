@@ -27,13 +27,16 @@ import dataclasses
 import heapq
 import json
 import logging
+import pickle
 import queue
+import sys
 import tempfile
 import threading
 import time
 import time as time_
 
 import humanize
+import lmdb
 import numpy as np
 import tskit
 
@@ -472,6 +475,7 @@ def match_ancestors(
     extended_checks=False,
     time_units=None,
     record_provenance=True,
+    resume_lmdb_file=None,
 ):
     """
     match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
@@ -526,6 +530,7 @@ def match_ancestors(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
+        resume_lmdb_file=resume_lmdb_file,
     )
     ts = matcher.match_ancestors()
     tables = ts.dump_tables()
@@ -645,6 +650,7 @@ def match_samples(
     progress_monitor=None,
     simplify=None,  # deprecated
     record_provenance=True,
+    resume_lmdb_file=None,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
@@ -726,6 +732,7 @@ def match_samples(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
+        resume_lmdb_file=resume_lmdb_file,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -1184,6 +1191,7 @@ class Matcher:
         engine=constants.C_ENGINE,
         progress_monitor=None,
         allow_multiallele=False,
+        resume_lmdb_file=None,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1327,6 +1335,17 @@ class Matcher:
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
         )
         logger.debug(f"Allocated tree sequence builder with max_nodes={max_nodes}")
+        if resume_lmdb_file is not None:
+            self.resume_lmdb = lmdb.open(
+                # Windows doesn't have sparse files, so use a smaller map size
+                resume_lmdb_file,
+                subdir=False,
+                map_size=1 * 1024 * 1024 * 1024
+                if sys.platform == "win32"
+                else 100 * 1024 * 1024 * 1024,
+            )
+        else:
+            self.resume_lmdb = None
 
     @staticmethod
     def find_path(matcher, child_id, haplotype, start, end):
@@ -1576,14 +1595,34 @@ class AncestorMatcher(Matcher):
                 )
             else:
                 mapper = map
-            # We have to consume the iterator here, otherwise we'll match against
-            # ancestors in this epoch
-            results = []
-            for result in mapper(
-                worker_function, self.ancestor_data.ancestors(indexes=ancestor_ids)
-            ):
-                results.append(result)
-                self.match_progress.update()
+
+            key = (
+                f"{group}_{hash(tuple(ancestor_ids))}_"
+                f"{self.__class__.__name__}".encode()
+            )
+            results = None
+            if self.resume_lmdb is not None:
+                with self.resume_lmdb.begin() as txn:
+                    cached_results = txn.get(key)
+
+                if cached_results is not None:
+                    results = pickle.loads(cached_results)
+
+            if results is None:
+                # We have to consume the result iterator here, otherwise we'll match
+                # against ancestors in this epoch
+                results = []
+                for result in mapper(
+                    worker_function, self.ancestor_data.ancestors(indexes=ancestor_ids)
+                ):
+                    results.append(result)
+                    self.match_progress.update()
+                if self.resume_lmdb is not None:
+                    with self.resume_lmdb.begin(write=True) as txn:
+                        txn.put(
+                            key,
+                            pickle.dumps(results),
+                        )
 
             self.__complete_group(group, ancestor_ids, results)
 
