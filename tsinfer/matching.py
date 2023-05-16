@@ -47,6 +47,8 @@ def add_vestigial_root(ts):
         tables.nodes.append(node)
     if ts.num_edges > 0:
         for tree in ts.trees():
+            # if tree.num_roots > 1:
+            #     print(ts.draw_text())
             root = tree.root + num_additonal_nodes
             tables.edges.add_row(
                 tree.interval.left, tree.interval.right, parent=0, child=root
@@ -62,8 +64,17 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
     def __init__(self, ts):
         # TODO make this polymorphic to accept tables as well
         # This is very wasteful, but we can do better if it all basically works.
+        print("FIXME!")
+        # This is turning out to be a bit problematic for actual tsinfer'd trees
+        # because we have to mark things as samples to define the roots, but then
+        # we get multiple roots incorrectly when we mark everything as a sample.
+        # It's not clear that doing this is helpful for tsinfer generated trees,
+        # but then when we turn it off the current generator script results in
+        # C-level assertion trips. Hmm.
         ts = add_vestigial_root(ts)
+        # print(ts.draw_text())
         tables = ts.dump_tables()
+        # print(tables)
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
         # TODO should really just reflect these from the low-level C values.
