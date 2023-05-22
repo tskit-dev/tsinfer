@@ -23,7 +23,9 @@ to other modules.
 """
 import collections
 import copy
+import dataclasses
 import heapq
+import itertools
 import json
 import logging
 import queue
@@ -1326,25 +1328,36 @@ class Matcher:
         )
         logger.debug(f"Allocated tree sequence builder with max_nodes={max_nodes}")
 
-        # Allocate the matchers and statistics arrays.
-        num_threads = max(1, self.num_threads)
-        self.match = [
-            np.full(self.num_sites, tskit.MISSING_DATA, np.int8)
-            for _ in range(num_threads)
-        ]
-        self.results = ResultBuffer()
-        self.mean_traceback_size = np.zeros(num_threads)
-        self.num_matches = np.zeros(num_threads)
-        self.matcher = [
-            self.ancestor_matcher_class(
-                self.tree_sequence_builder,
-                recombination=self.recombination,
-                mismatch=self.mismatch,
-                precision=precision,
-                extended_checks=self.extended_checks,
+    @staticmethod
+    def find_path(matcher, child_id, haplotype, start, end):
+        """
+        Finds the path of the specified haplotype and returns the MatchResult object
+        """
+        missing = haplotype == tskit.MISSING_DATA
+        match = np.full(len(haplotype), tskit.MISSING_DATA, dtype=np.int8)
+        left, right, parent = matcher.find_path(haplotype, start, end, match)
+        match[missing] = tskit.MISSING_DATA
+        diffs = start + np.where(haplotype[start:end] != match[start:end])[0]
+        derived_state = haplotype[diffs]
+
+        result = MatchResult(
+            node=child_id,
+            path=Path(left=left, right=right, parent=parent),
+            mutations_site=diffs.astype(np.int32),
+            mutations_derived_state=derived_state,
+            mean_traceback_size=matcher.mean_traceback_size,
+        )
+
+        logger.debug(
+            "Matched node {}; "
+            "num_edges={} tb_size={:.2f} match_mem={}".format(
+                child_id,
+                left.shape[0],
+                matcher.mean_traceback_size,
+                humanize.naturalsize(matcher.total_memory, binary=True),
             )
-            for _ in range(num_threads)
-        ]
+        )
+        return result
 
     @staticmethod
     def recombination_rate_to_dist(rho, positions):
@@ -1382,34 +1395,13 @@ class Matcher:
         """
         return (1 - np.exp(-genetic_distances * ratio * num_alleles)) / num_alleles
 
-    def _find_path(self, child_id, haplotype, start, end, thread_index=0):
-        """
-        Finds the path of the specified haplotype and upates the results
-        for the specified thread_index.
-        """
-        matcher = self.matcher[thread_index]
-        match = self.match[thread_index]
-        missing = haplotype == tskit.MISSING_DATA
-
-        left, right, parent = matcher.find_path(haplotype, start, end, match)
-        self.results.set_path(child_id, left, right, parent)
-        match[missing] = tskit.MISSING_DATA
-        diffs = start + np.where(haplotype[start:end] != match[start:end])[0]
-        derived_state = haplotype[diffs]
-        self.results.set_mutations(child_id, diffs.astype(np.int32), derived_state)
-
-        self.match_progress.update()
-        self.mean_traceback_size[thread_index] += matcher.mean_traceback_size
-        self.num_matches[thread_index] += 1
-        logger.debug(
-            "Matched node {} against {} available;"
-            "num_edges={} tb_size={:.2f} match_mem={}".format(
-                child_id,
-                self.tree_sequence_builder.num_match_nodes,
-                left.shape[0],
-                matcher.mean_traceback_size,
-                humanize.naturalsize(matcher.total_memory, binary=True),
-            )
+    def create_matcher_instance(self):
+        return self.ancestor_matcher_class(
+            self.tree_sequence_builder,
+            recombination=self.recombination,
+            mismatch=self.mismatch,
+            precision=self.precision,
+            extended_checks=self.extended_checks,
         )
 
     def convert_inference_mutations(self, tables):
@@ -1478,19 +1470,6 @@ class AncestorMatcher(Matcher):
             [("epoch", str(self.epoch[start])), ("nanc", str(end - start))]
         )
 
-    def __ancestor_find_path(self, ancestor, thread_index=0):
-        # NOTE we're no longer using the ancestor's focal sites as a way
-        # of knowing where mutations happen but instead having a non-zero
-        # mutation rate and letting the mismatches do the work. We might
-        # want to have a version with a zero mutation rate.
-        self._find_path(
-            ancestor.id,
-            ancestor.full_haplotype,
-            ancestor.start,
-            ancestor.end,
-            thread_index,
-        )
-
     def __start_epoch(self, epoch_index):
         start, end = self.epoch_slices[epoch_index]
         info = collections.OrderedDict(
@@ -1499,105 +1478,86 @@ class AncestorMatcher(Matcher):
         self.progress_monitor.set_detail(info)
         self.tree_sequence_builder.freeze_indexes()
 
-    def __complete_epoch(self, epoch_index):
+    def __complete_epoch(self, epoch_index, results):
         start, end = map(int, self.epoch_slices[epoch_index])
         num_ancestors_in_epoch = end - start
-        current_time = self.epoch[start]
         nodes_before = self.tree_sequence_builder.num_nodes
         match_nodes_before = self.tree_sequence_builder.num_match_nodes
 
-        for child_id in range(start, end):
-            left, right, parent = self.results.get_path(child_id)
+        for child_id, result in zip(range(start, end), results):
+            assert result.node == child_id
             self.tree_sequence_builder.add_path(
                 child_id,
-                left,
-                right,
-                parent,
+                result.path.left,
+                result.path.right,
+                result.path.parent,
                 compress=self.path_compression,
                 extended_checks=self.extended_checks,
             )
-            site, derived_state = self.results.get_mutations(child_id)
-            self.tree_sequence_builder.add_mutations(child_id, site, derived_state)
+            self.tree_sequence_builder.add_mutations(
+                child_id, result.mutations_site, result.mutations_derived_state
+            )
 
         extra_nodes = self.tree_sequence_builder.num_nodes - nodes_before
         assert (
             self.tree_sequence_builder.num_match_nodes
             == match_nodes_before + extra_nodes + num_ancestors_in_epoch
         )
-        mean_memory = np.mean([matcher.total_memory for matcher in self.matcher])
         logger.debug(
-            "Finished epoch t={} with {} ancestors; {} extra nodes inserted; "
-            "mean_tb_size={:.2f} edges={}; mean_matcher_mem={}".format(
-                current_time,
+            "Finished epoch index={} with {} ancestors; {} extra nodes inserted; "
+            "mean_tb_size={:.2f} edges={};".format(
+                epoch_index,
                 num_ancestors_in_epoch,
                 extra_nodes,
-                np.sum(self.mean_traceback_size) / np.sum(self.num_matches),
+                sum(result.mean_traceback_size for result in results) / len(results),
                 self.tree_sequence_builder.num_edges,
-                humanize.naturalsize(mean_memory, binary=True),
             )
         )
-        self.mean_traceback_size[:] = 0
-        self.num_matches[:] = 0
-        self.results.clear()
-
-    def __match_ancestors_single_threaded(self):
-        for j in range(self.start_epoch, self.num_epochs):
-            self.__start_epoch(j)
-            start, end = map(int, self.epoch_slices[j])
-            for ancestor_id in range(start, end):
-                a = next(self.ancestors)
-                assert ancestor_id == a.id
-                self.__ancestor_find_path(a)
-            self.__complete_epoch(j)
-
-    def __match_ancestors_multi_threaded(self, start_epoch=1):
-        # See note on match samples multithreaded below. Should combine these
-        # into a single function. Possibly when trying to make the thread
-        # error handling more robust.
-        queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
-        match_queue = queue.Queue(queue_depth)
-
-        def match_worker(thread_index):
-            while True:
-                work = match_queue.get()
-                if work is None:
-                    break
-                self.__ancestor_find_path(work, thread_index)
-                match_queue.task_done()
-            match_queue.task_done()
-
-        match_threads = [
-            threads.queue_consumer_thread(
-                match_worker, match_queue, name=f"match-worker-{j}", index=j
-            )
-            for j in range(self.num_threads)
-        ]
-        logger.debug(f"Started {self.num_threads} match worker threads")
-
-        for j in range(self.start_epoch, self.num_epochs):
-            self.__start_epoch(j)
-            start, end = map(int, self.epoch_slices[j])
-            for ancestor_id in range(start, end):
-                a = next(self.ancestors)
-                assert a.id == ancestor_id
-                match_queue.put(a)
-            # Block until all matches have completed.
-            match_queue.join()
-            self.__complete_epoch(j)
-
-        # Stop the the worker threads.
-        for _ in range(self.num_threads):
-            match_queue.put(None)
-        for j in range(self.num_threads):
-            match_threads[j].join()
 
     def match_ancestors(self):
         logger.info(f"Starting ancestor matching for {self.num_epochs} epochs")
         self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
-        if self.num_threads <= 0:
-            self.__match_ancestors_single_threaded()
-        else:
-            self.__match_ancestors_multi_threaded()
+
+        local_data = threading.local()
+
+        def worker_function(ancestor_ancestor_id):
+            ancestor, ancestor_id = ancestor_ancestor_id
+            assert ancestor.id == ancestor_id
+            if not hasattr(local_data, "matcher"):
+                local_data.matcher = self.create_matcher_instance()
+            result = self.find_path(
+                matcher=local_data.matcher,
+                child_id=ancestor.id,
+                haplotype=ancestor.full_haplotype,
+                start=ancestor.start,
+                end=ancestor.end,
+            )
+            return result
+
+        for j in range(self.start_epoch, self.num_epochs):
+            self.__start_epoch(j)
+            start, end = map(int, self.epoch_slices[j])
+            if self.num_threads > 0:
+                mapper = lambda func, args: threads.threaded_map(  # noqa E731
+                    func, args, self.num_threads
+                )
+            else:
+                mapper = map
+            # We have to consume the iterator here, otherwise we'll match against
+            # ancestors in this epoch
+            results = []
+            work_iter = (
+                (ancestor, i + start)
+                for i, ancestor in enumerate(
+                    itertools.islice(self.ancestors, end - start)
+                )
+            )
+            for result in mapper(worker_function, work_iter):
+                results.append(result)
+                self.match_progress.update()
+
+            self.__complete_epoch(j, results)
+
         ts = self.store_output()
         self.match_progress.close()
         logger.info("Finished ancestor matching")
@@ -1747,60 +1707,6 @@ class SampleMatcher(Matcher):
             )
         )
 
-    def __process_sample(self, sample_id, haplotype, thread_index=0):
-        self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
-
-    def __match_samples_single_threaded(self, indexes):
-        sample_haplotypes = self.sample_data.haplotypes(
-            indexes,
-            sites=self.inference_site_id,
-            recode_ancestral=True,
-        )
-        for j, a in sample_haplotypes:
-            assert len(a) == self.num_sites
-            self.__process_sample(self.sample_id_map[j], a)
-
-    def __match_samples_multi_threaded(self, indexes):
-        # Note that this function is not almost identical to the match_ancestors
-        # multithreaded function above. All we need to do is provide a function
-        # to do the matching and some producer for the actual items and we
-        # can bring this into a single function.
-
-        queue_depth = 8 * self.num_threads  # Seems like a reasonable limit
-        match_queue = queue.Queue(queue_depth)
-
-        def match_worker(thread_index):
-            while True:
-                work = match_queue.get()
-                if work is None:
-                    break
-                sample_id, a = work
-                self.__process_sample(sample_id, a, thread_index)
-                match_queue.task_done()
-            match_queue.task_done()
-
-        match_threads = [
-            threads.queue_consumer_thread(
-                match_worker, match_queue, name=f"match-worker-{j}", index=j
-            )
-            for j in range(self.num_threads)
-        ]
-        logger.debug(f"Started {self.num_threads} match worker threads")
-
-        sample_haplotypes = self.sample_data.haplotypes(
-            indexes,
-            sites=self.inference_site_id,
-            recode_ancestral=True,
-        )
-        for j, a in sample_haplotypes:
-            match_queue.put((self.sample_id_map[j], a))
-
-        # Stop the the worker threads.
-        for _ in range(self.num_threads):
-            match_queue.put(None)
-        for j in range(self.num_threads):
-            match_threads[j].join()
-
     def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
         builder = self.tree_sequence_builder
@@ -1808,31 +1714,69 @@ class SampleMatcher(Matcher):
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites > 0:
             self.match_progress = self.progress_monitor.get("ms_match", num_samples)
-            if self.num_threads <= 0:
-                self.__match_samples_single_threaded(sample_indexes)
+            local_data = threading.local()
+
+            def worker_function(j_haplotype):
+                j, haplotype = j_haplotype
+                assert len(haplotype) == self.num_sites
+                if not hasattr(local_data, "matcher"):
+                    local_data.matcher = self.create_matcher_instance()
+                result = self.find_path(
+                    matcher=local_data.matcher,
+                    child_id=self.sample_id_map[j],
+                    haplotype=haplotype,
+                    start=0,
+                    end=self.num_sites,
+                )
+                self.match_progress.update()
+                return result
+
+            sample_haplotypes = self.sample_data.haplotypes(
+                sample_indexes,
+                sites=self.inference_site_id,
+                recode_ancestral=True,
+            )
+            if self.num_threads > 0:
+                mapper = lambda func, args: threads.threaded_map(  # noqa E731
+                    func, args, self.num_threads
+                )
             else:
-                self.__match_samples_multi_threaded(sample_indexes)
+                mapper = map
+            # We have to consume the iterator here, otherwise we'll match against
+            # ancestors in this epoch
+            results = []
+            for result in mapper(worker_function, sample_haplotypes):
+                results.append(result)
+                self.match_progress.update()
+
             self.match_progress.close()
             logger.info(
                 "Inserting sample paths: {} edges in total".format(
-                    self.results.total_edges
+                    sum(len(r.path.left) for r in results)
                 )
             )
             progress_monitor = self.progress_monitor.get("ms_paths", num_samples)
-            for j in sample_indexes:
+            for j, result in zip(sample_indexes, results):
                 node_id = int(self.sample_id_map[j])
-                left, right, parent = self.results.get_path(node_id)
-                if np.any(times[node_id] > times[parent]):
-                    p = parent[np.argmin(times[parent])]
+                assert node_id == result.node
+                if np.any(times[node_id] > times[result.path.parent]):
+                    p = result.path.parent[np.argmin(times[result.path.parent])]
                     raise ValueError(
                         f"Failed to put sample {j} (node {node_id}) at time "
                         f"{times[node_id]} as it has a younger parent (node {p})."
                     )
                 builder.add_path(
-                    node_id, left, right, parent, compress=self.path_compression
+                    result.node,
+                    result.path.left,
+                    result.path.right,
+                    result.path.parent,
+                    compress=self.path_compression,
                 )
-                site, derived_state = self.results.get_mutations(node_id)
-                builder.add_mutations(node_id, site, derived_state)
+                builder.add_mutations(
+                    result.node,
+                    result.mutations_site,
+                    result.mutations_derived_state,
+                )
                 progress_monitor.update()
             progress_monitor.close()
 
@@ -2060,40 +2004,20 @@ class SampleMatcher(Matcher):
         return tables.tree_sequence()
 
 
-class ResultBuffer:
-    """
-    A wrapper for numpy arrays representing the results of a copying operations.
-    """
+@dataclasses.dataclass
+class Path:
+    left: np.ndarray
+    right: np.ndarray
+    parent: np.ndarray
 
-    def __init__(self):
-        self.paths = {}
-        self.mutations = {}
-        self.lock = threading.Lock()
-        self.total_edges = 0
 
-    def clear(self):
-        """
-        Clears this result buffer.
-        """
-        self.paths.clear()
-        self.mutations.clear()
-        self.total_edges = 0
-
-    def set_path(self, node_id, left, right, parent):
-        with self.lock:
-            assert node_id not in self.paths
-            self.paths[node_id] = left, right, parent
-            self.total_edges += len(left)
-
-    def set_mutations(self, node_id, site, derived_state):
-        with self.lock:
-            self.mutations[node_id] = site, derived_state
-
-    def get_path(self, node_id):
-        return self.paths[node_id]
-
-    def get_mutations(self, node_id):
-        return self.mutations[node_id]
+@dataclasses.dataclass
+class MatchResult:
+    node: int
+    path: Path
+    mutations_site: list
+    mutations_derived_state: list
+    mean_traceback_size: int
 
 
 def has_single_edge_over_grand_root(ts):
