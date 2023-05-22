@@ -2388,12 +2388,13 @@ class TestAlgorithmDebugOutput:
     def test_ancestor_matcher_print_state(self):
         sample_data = self.sample_example(20, 50)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
-        matcher_container = tsinfer.AncestorMatcher(
+        matcher = tsinfer.AncestorMatcher(
             sample_data, ancestor_data, engine=tsinfer.PY_ENGINE
         )
-        matcher_container.match_ancestors()
         with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
-            matcher_container.matcher[0].print_state()
+            m = matcher.create_matcher_instance()
+            _ = m.find_path([0, 1], 0, 1, np.full(20, 0, dtype=np.int32))
+            m.print_state()
             # Simply check some text is output
             assert isinstance(mockOutput.getvalue(), str)
             assert len(mockOutput.getvalue()) > 0
