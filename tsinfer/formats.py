@@ -1778,8 +1778,11 @@ class SampleData(DataContainer):
             that the input array is also of this type.
         :param list(str) alleles: A list of strings defining the alleles at this
             site. Only biallelic sites can currently be used for inference. Sites
-            with 3 or more alleles cannot have ``inference`` (below) set to ``True``.
-            If not specified or None, defaults to ["0", "1"].
+            with 3 or more non-missing alleles cannot have ``inference`` (below)
+            set to ``True``. If missing data is present in the ``genotypes`` array,
+            the stored list of alleles will be modified as necessary so that
+            ``alleles[tskit.MISSING_DATA] == None``. If ``alleles`` is not specified
+            or None, a default of ["0", "1"] is used.
         :param dict metadata: A JSON encodable dict-like object containing
             metadata that is to be associated with this site.
         :param float time: The time of occurence (pastwards) of the mutation to the
@@ -2072,6 +2075,9 @@ class SampleData(DataContainer):
         and the values in genotypes array will be recoded so that the ancestral
         state will have a genotype of 0. If the ancestral state is unknown, the
         original input order is kept.
+
+        If a variant contains missing data, it is guaranteed that the alleles
+        attribute for that variant satisfies ``alleles[tskit.MISSING_DATA] == None``.
 
         :param array sites: A numpy array of ascending site ids for which to return
             data. If None (default) return all sites.
