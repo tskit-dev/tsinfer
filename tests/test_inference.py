@@ -29,9 +29,11 @@ import re
 import string
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock as mock
 
+import lmdb
 import msprime
 import numpy as np
 import pytest
@@ -1354,6 +1356,82 @@ class TestThreads:
         ts1 = tsinfer.infer(sample_data, num_threads=1)
         ts2 = tsinfer.infer(sample_data, num_threads=5)
         assert ts1.equals(ts2, ignore_provenance=True)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="Not enough disk space as no sparse files")
+class TestResume:
+    def count_keys(self, lmdb_file):
+        with lmdb.open(
+            lmdb_file, subdir=False, map_size=100 * 1024 * 1024 * 1024
+        ) as lmdb_file:
+            with lmdb_file.begin() as txn:
+                # Count the number of keys
+                n_keys = 0
+                for _ in txn.cursor():
+                    n_keys += 1
+        return n_keys
+
+    def test_equivalance(self, tmpdir):
+        lmdb_file = str(tmpdir / "LMDB")
+        ts = msprime.simulate(5, mutation_rate=2, recombination_rate=2, random_seed=2)
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestor_ts1 = tsinfer.match_ancestors(
+            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+        )
+        assert self.count_keys(lmdb_file) == 5
+        ancestor_ts2 = tsinfer.match_ancestors(
+            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+        )
+        ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
+        # TODO No caching on samples for now
+        # final_ts1 = tsinfer.match_samples(
+        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        # )
+        # assert self.count_keys(lmdb_file) == 4
+        # final_ts2 = tsinfer.match_samples(
+        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        # )
+        # final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
+
+    def test_cache_used_by_timing(self, tmpdir):
+        lmdb_file = str(tmpdir / "LMDB")
+        ts = msprime.sim_ancestry(
+            100, recombination_rate=1, sequence_length=1000, random_seed=42
+        )
+        ts = msprime.sim_mutations(
+            ts, rate=1, random_seed=42, model=msprime.InfiniteSites()
+        )
+        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        t = time.time()
+        ancestor_ts1 = tsinfer.match_ancestors(
+            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+        )
+        time1 = time.time() - t
+        assert self.count_keys(lmdb_file) >= 104
+        t = time.time()
+        ancestor_ts2 = tsinfer.match_ancestors(
+            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+        )
+        ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
+        time2 = time.time() - t
+        assert time2 < time1 / 2
+
+        # TODO No caching on samples for now
+        # t = time.time()
+        # final_ts1 = tsinfer.match_samples(
+        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        # )
+        # time1 = time.time() - t
+        # assert self.count_keys(lmdb_file) == 1201
+        # t = time.time()
+        # final_ts2 = tsinfer.match_samples(
+        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        # )
+        # time2 = time.time() - t
+        # assert time2 < time1 / 1.5
+        # final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
 
 class TestAncestorGeneratorsEquivalant:
