@@ -27,6 +27,7 @@ import dataclasses
 import heapq
 import json
 import logging
+import os
 import pickle
 import queue
 import sys
@@ -35,6 +36,8 @@ import threading
 import time
 import time as time_
 
+import dask
+import dask.bag as db
 import humanize
 import lmdb
 import numpy as np
@@ -76,6 +79,33 @@ inference_type_metadata_definition = {
         constants.INFERENCE_PARSIMONY,
     ],
 }
+
+
+class LMDBCache:
+    def __init__(self, lmdb):
+        self.lmdb = lmdb
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass  # No special cleanup needed
+
+    def get(self, key):
+        if self.lmdb is None:
+            return None
+
+        with self.lmdb.begin() as txn:
+            cached_data = txn.get(key)
+            if cached_data is not None:
+                return pickle.loads(cached_data)
+        return None
+
+    def put(self, key, value):
+        if self.lmdb is None:
+            return
+        with self.lmdb.begin(write=True) as txn:
+            txn.put(key, pickle.dumps(value))
 
 
 def add_to_schema(schema, name, definition=None, required=False):
@@ -480,6 +510,7 @@ def match_ancestors(
     time_units=None,
     record_provenance=True,
     resume_lmdb_file=None,
+    use_dask=False,
 ):
     """
     match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
@@ -536,6 +567,7 @@ def match_ancestors(
         engine=engine,
         progress_monitor=progress_monitor,
         resume_lmdb_file=resume_lmdb_file,
+        use_dask=use_dask,
     )
     ts = matcher.match_ancestors()
     tables = ts.dump_tables()
@@ -663,6 +695,7 @@ def match_samples(
     simplify=None,  # deprecated
     record_provenance=True,
     resume_lmdb_file=None,
+    use_dask=False,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
@@ -746,6 +779,7 @@ def match_samples(
         engine=engine,
         progress_monitor=progress_monitor,
         resume_lmdb_file=resume_lmdb_file,
+        use_dask=dask,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -1208,6 +1242,7 @@ class Matcher:
         progress_monitor=None,
         allow_multiallele=False,
         resume_lmdb_file=None,
+        use_dask=False,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1220,10 +1255,12 @@ class Matcher:
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
+        self.use_dask = use_dask
 
         all_sites = self.sample_data.sites_position[:]
         index = np.searchsorted(all_sites, inference_site_position)
         num_alleles = sample_data.num_alleles()[index]
+        self.num_alleles = num_alleles
         if not np.all(all_sites[index] == inference_site_position):
             raise ValueError(
                 "Site positions for inference must be a subset of those in "
@@ -1327,6 +1364,7 @@ class Matcher:
             f"Matching using {precision} digits of precision in likelihood calcs"
         )
 
+        self.engine = engine
         if engine == constants.C_ENGINE:
             logger.debug("Using C matcher implementation")
             self.tree_sequence_builder_class = _tsinfer.TreeSequenceBuilder
@@ -1341,16 +1379,16 @@ class Matcher:
 
         # Allocate 64K nodes and edges initially. This will double as needed and will
         # quickly be big enough even for very large instances.
-        max_edges = 64 * 1024
-        max_nodes = 64 * 1024
+        self.max_edges = 64 * 1024
+        self.max_nodes = 64 * 1024
         if np.any(num_alleles > 2) and not allow_multiallele:
             # Currently only used for unsupported extend operation. We can
             # remove in future versions.
             raise ValueError("Cannot currently match with > 2 alleles.")
         self.tree_sequence_builder = self.tree_sequence_builder_class(
-            num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
+            num_alleles=num_alleles, max_nodes=self.max_nodes, max_edges=self.max_edges
         )
-        logger.debug(f"Allocated tree sequence builder with max_nodes={max_nodes}")
+        logger.debug(f"Allocated tree sequence builder with max_nodes={self.max_nodes}")
         if resume_lmdb_file is not None:
             self.resume_lmdb = lmdb.open(
                 # Windows doesn't have sparse files, so use a smaller map size
@@ -1362,6 +1400,41 @@ class Matcher:
             )
         else:
             self.resume_lmdb = None
+
+    @staticmethod
+    def dask_find_path(
+        ancestor_id,
+        tree_sequence_builder_wrapper=None,
+        ancestor_data_path=None,
+        engine=None,
+        recombination=None,
+        mismatch=None,
+        precision=None,
+        extended_checks=None,
+    ):
+        ancestor_matcher_class = (
+            _tsinfer.AncestorMatcher
+            if engine == constants.C_ENGINE
+            else algorithm.AncestorMatcher
+        )
+        matcher = ancestor_matcher_class(
+            tree_sequence_builder_wrapper.tsb,
+            recombination=recombination,
+            mismatch=mismatch,
+            precision=precision,
+            extended_checks=extended_checks,
+        )
+        ancestor_data = formats.AncestorData.load(ancestor_data_path)
+        start = ancestor_data.ancestors_start[ancestor_id]
+        end = ancestor_data.ancestors_end[ancestor_id]
+        haplotype = np.full(ancestor_data.num_sites, tskit.MISSING_DATA, dtype=np.int8)
+        haplotype[start:end] = ancestor_data.ancestors_full_haplotype[
+            start:end, ancestor_id, 0
+        ]
+        # Pickle here rather than let dask deal with it so we can log sizes
+        return pickle.dumps(
+            AncestorMatcher.find_path(matcher, ancestor_id, haplotype, start, end)
+        )
 
     @staticmethod
     def find_path(matcher, child_id, haplotype, start, end):
@@ -1583,15 +1656,9 @@ class AncestorMatcher(Matcher):
             )
         )
 
-    def match_ancestors(self):
-        logger.info(
-            f"Starting ancestor matching for {len(self.ancestor_grouping)} groups"
-        )
-        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
-
-        local_data = threading.local()
-
-        def worker_function(ancestor):
+    def match_locally(self, ancestor_ids):
+        def thread_worker_function(ancestor):
+            local_data = threading.local()
             if not hasattr(local_data, "matcher"):
                 local_data.matcher = self.create_matcher_instance()
             result = self.find_path(
@@ -1603,44 +1670,102 @@ class AncestorMatcher(Matcher):
             )
             return result
 
-        for group, ancestor_ids in self.ancestor_grouping.items():
-            self.__start_group(group, ancestor_ids)
-            if self.num_threads > 0:
-                mapper = lambda func, args: threads.threaded_map(  # noqa E731
-                    func, args, self.num_threads
-                )
-            else:
-                mapper = map
-
-            key = (
-                f"{group}_{hash(tuple(ancestor_ids))}_"
-                f"{self.__class__.__name__}".encode()
+        if self.num_threads > 0:
+            results = threads.threaded_map(  # noqa E731
+                thread_worker_function,
+                self.ancestor_data.ancestors(indexes=ancestor_ids),
+                self.num_threads,
             )
-            results = None
-            if self.resume_lmdb is not None:
-                with self.resume_lmdb.begin() as txn:
-                    cached_results = txn.get(key)
+        else:
+            results = map(
+                thread_worker_function,
+                self.ancestor_data.ancestors(indexes=ancestor_ids),
+            )
 
-                if cached_results is not None:
-                    results = pickle.loads(cached_results)
+        return results
 
-            if results is None:
-                # We have to consume the result iterator here, otherwise we'll match
-                # against ancestors in this epoch
+    def match_with_dask(self, ancestor_ids, delayed_recombination, delayed_mismatch):
+        tree_sequence_builder_wrapper = TSBWrapper(
+            self.engine,
+            self.tree_sequence_builder,
+            self.num_alleles,
+            self.max_nodes,
+            self.max_edges,
+        )
+        # if the path is relative, resolve it to an absolute path
+        path = os.path.abspath(self.ancestor_data.path)
+        tree_sequence_builder_wrapper_delayed = dask.delayed(
+            tree_sequence_builder_wrapper
+        )
+        ancestor_ids_bag = db.from_sequence(ancestor_ids, npartitions=len(ancestor_ids))
+        results = db.map(
+            self.dask_find_path,
+            ancestor_ids_bag,
+            tree_sequence_builder_wrapper=tree_sequence_builder_wrapper_delayed,
+            ancestor_data_path=path,
+            engine=self.engine,
+            recombination=delayed_recombination,
+            mismatch=delayed_mismatch,
+            precision=self.precision,
+            extended_checks=self.extended_checks,
+        ).compute()
+        logger.info(f"Size of results: {sum(len(r) for r in results)}")
+        return map(pickle.loads, results)
+
+    def match_ancestors(self):
+        logger.info(
+            f"Starting ancestor matching for {len(self.ancestor_grouping)} groups"
+        )
+        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
+        if self.use_dask:
+            delayed_recombination = dask.delayed(self.recombination)
+            delayed_mismatch = dask.delayed(self.mismatch)
+        logger.info(f"{time_.time()} Starting matching")
+        with LMDBCache(self.resume_lmdb) as cache:
+            for group, ancestor_ids in self.ancestor_grouping.items():
+                t = time_.time()
+                logger.info(
+                    f"Starting group {group} with {len(ancestor_ids)} ancestors"
+                )
+                self.__start_group(group, ancestor_ids)
+
+                start_index = 0
                 results = []
-                for result in mapper(
-                    worker_function, self.ancestor_data.ancestors(indexes=ancestor_ids)
-                ):
-                    results.append(result)
-                    self.match_progress.update()
-                if self.resume_lmdb is not None:
-                    with self.resume_lmdb.begin(write=True) as txn:
-                        txn.put(
-                            key,
-                            pickle.dumps(results),
+                while start_index < len(ancestor_ids):
+                    end_index = min(start_index + 5000, len(ancestor_ids))
+                    batch_ancestor_ids = ancestor_ids[start_index:end_index]
+                    key = (
+                        f"{group}_{start_index}_{end_index}-{hash(tuple(ancestor_ids))}_"
+                        f"{self.__class__.__name__}".encode()
+                    )
+                    batch_results = cache.get(key)
+                    if batch_results is None:
+                        if self.use_dask and len(batch_ancestor_ids) > self.num_threads:
+                            batch_results = self.match_with_dask(
+                                batch_ancestor_ids,
+                                delayed_recombination,
+                                delayed_mismatch,
+                            )
+                        else:
+                            batch_results = self.match_locally(batch_ancestor_ids)
+                        batch_results_list = []
+                        for result in batch_results:
+                            batch_results_list.append(result)
+                            self.match_progress.update()
+                        batch_results = batch_results_list
+                        cache.put(key, batch_results)
+                    else:
+                        logger.info(
+                            f"Found cached results for group "
+                            f"{group}:{start_index}-{end_index}"
                         )
-
-            self.__complete_group(group, ancestor_ids, results)
+                    results.extend(batch_results)
+                    start_index = end_index
+                self.__complete_group(group, ancestor_ids, results)
+                logger.info(
+                    f"Finished matching for group {group} in "
+                    f"{time.time() - t:.2f} seconds"
+                )
 
         ts = self.store_output()
         self.match_progress.close()
@@ -2322,3 +2447,51 @@ def minimise(ts):
         filter_individuals=False,
         filter_populations=False,
     )
+
+
+class TSBWrapper:
+    def __init__(self, engine, tsb, num_alleles, max_nodes, max_edges):
+        self.engine = engine
+        self.tsb = tsb
+        self.num_alleles = num_alleles
+        self.max_nodes = max_nodes
+        self.max_edges = max_edges
+
+    def __getstate__(self):
+        r = {
+            "engine": self.engine,
+            "num_alleles": self.num_alleles,
+            "max_nodes": self.max_nodes,
+            "max_edges": self.max_edges,
+            "nodes": self.tsb.dump_nodes(),
+            "edges": self.tsb.dump_edges(),
+            "mutations": self.tsb.dump_mutations(),
+        }
+        total_size = 0
+        total_size += sum([r["nodes"][i].nbytes for i in range(2)])
+        total_size += sum([r["edges"][i].nbytes for i in range(4)])
+        total_size += sum([r["mutations"][i].nbytes for i in range(4)])
+
+        logger.info(f"TSB uncompressed size: {total_size/1e6:.2f} MB")
+        return r
+
+    def __setstate__(self, state):
+        self.engine = state["engine"]
+        self.num_alleles = state["num_alleles"]
+        self.max_nodes = state["max_nodes"]
+        self.max_edges = state["max_edges"]
+
+        if self.engine == constants.C_ENGINE:
+            self.tsb = _tsinfer.TreeSequenceBuilder(
+                self.num_alleles, self.max_nodes, self.max_edges
+            )
+        else:
+            self.tsb = algorithm.TreeSequenceBuilder(
+                self.num_alleles, self.max_nodes, self.max_edges
+            )
+
+        # Annoyingly dump and restore have these reversed
+        flags, time = state["nodes"]
+        self.tsb.restore_nodes(time, flags)
+        self.tsb.restore_edges(*state["edges"])
+        self.tsb.restore_mutations(*state["mutations"])
