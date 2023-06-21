@@ -271,7 +271,8 @@ def infer(
     :type recombination_rate: float, msprime.RateMap
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
-        recombination rate has been set (default: 1)
+        recombination rate has been set (default: ``None`` treated as 1 if
+        ``recombination_rate`` is set).
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param bool post_process: Whether to run the :func:`post_process` method on the
@@ -336,7 +337,10 @@ def infer(
     )
     if record_provenance:
         tables = inferred_ts.dump_tables()
-        record = provenance.get_provenance_dict(command="infer")
+        record = provenance.get_provenance_dict(
+            command="infer",
+            mismatch_ratio=mismatch_ratio,
+        )
         tables.provenances.add_row(record=json.dumps(record))
         inferred_ts = tables.tree_sequence()
     return inferred_ts
@@ -452,7 +456,8 @@ def match_ancestors(
     :type recombination_rate: float, msprime.RateMap
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
-        recombination rate has been set (default: 1)
+        recombination rate has been set (default: ``None`` treated as 1 if
+        ``recombination_rate`` is set).
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param int num_threads: The number of match worker threads to use. If
@@ -486,7 +491,9 @@ def match_ancestors(
         tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
     if record_provenance:
         record = provenance.get_provenance_dict(
-            command="match_ancestors", source={"uuid": ancestor_data.uuid}
+            command="match_ancestors",
+            source={"uuid": ancestor_data.uuid},
+            mismatch_ratio=mismatch_ratio,
         )
         tables.provenances.add_row(record=json.dumps(record))
     ts = tables.tree_sequence()
@@ -541,7 +548,8 @@ def augment_ancestors(
     :type recombination_rate: float, msprime.RateMap
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
-        recombination rate has been set (default: 1)
+        recombination rate has been set (default: ``None`` treated as 1 if
+        ``recombination_rate`` is set).
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param int num_threads: The number of match worker threads to use. If
@@ -574,7 +582,10 @@ def augment_ancestors(
     ts = manager.get_augmented_ancestors_tree_sequence(sample_indexes)
     if record_provenance:
         tables = ts.dump_tables()
-        record = provenance.get_provenance_dict(command="augment_ancestors")
+        record = provenance.get_provenance_dict(
+            command="augment_ancestors",
+            mismatch_ratio=mismatch_ratio,
+        )
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
     return ts
@@ -628,7 +639,8 @@ def match_samples(
     :type recombination_rate: float, msprime.RateMap
     :param float mismatch_ratio: The probability of a mismatch relative to the median
         probability of recombination between adjacent sites: can only be used if a
-        recombination rate has been set (default: 1)
+        recombination rate has been set (default: ``None`` treated as 1 if
+        ``recombination_rate`` is set).
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
     :param array_like indexes: An array of indexes into the sample_data file of
@@ -706,7 +718,10 @@ def match_samples(
     if record_provenance:
         tables = ts.dump_tables()
         # We don't have a source here because tree sequence files don't have a UUID yet.
-        record = provenance.get_provenance_dict(command="match_samples")
+        record = provenance.get_provenance_dict(
+            command="match_samples",
+            mismatch_ratio=mismatch_ratio,
+        )
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
     return ts
