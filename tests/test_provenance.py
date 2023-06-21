@@ -102,12 +102,16 @@ class TestIncludeProvenance:
         ts = tsinfer.match_samples(small_sd_fixture, anc_ts, record_provenance=False)
         assert ts.num_provenances == small_sd_fixture.num_provenances
 
-    def test_provenance_infer(self, small_sd_fixture):
-        ts = tsinfer.infer(small_sd_fixture)
+    @pytest.mark.parametrize("mmr", [None, 0.1])
+    def test_provenance_infer(self, small_sd_fixture, mmr):
+        ts = tsinfer.infer(
+            small_sd_fixture, mismatch_ratio=mmr, recombination_rate=1e-8
+        )
         assert ts.num_provenances == small_sd_fixture.num_provenances + 1
         record = json.loads(ts.provenance(-1).record)
         params = record["parameters"]
         assert params["command"] == "infer"
+        assert params["mismatch_ratio"] == mmr
 
     def test_provenance_generate_ancestors(self, small_sd_fixture):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
@@ -117,19 +121,26 @@ class TestIncludeProvenance:
         params = record["parameters"]
         assert params["command"] == "generate_ancestors"
 
-    def test_provenance_match_ancestors(self, small_sd_fixture):
+    @pytest.mark.parametrize("mmr", [None, 0.1])
+    def test_provenance_match_ancestors(self, small_sd_fixture, mmr):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
-        anc_ts = tsinfer.match_ancestors(small_sd_fixture, ancestors)
+        anc_ts = tsinfer.match_ancestors(
+            small_sd_fixture, ancestors, mismatch_ratio=mmr, recombination_rate=1e-8
+        )
         assert anc_ts.num_provenances == small_sd_fixture.num_provenances + 2
         params = json.loads(anc_ts.provenance(-2).record)["parameters"]
         assert params["command"] == "generate_ancestors"
         params = json.loads(anc_ts.provenance(-1).record)["parameters"]
         assert params["command"] == "match_ancestors"
+        assert params["mismatch_ratio"] == mmr
 
-    def test_provenance_match_samples(self, small_sd_fixture):
+    @pytest.mark.parametrize("mmr", [None, 0.1])
+    def test_provenance_match_samples(self, small_sd_fixture, mmr):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
         anc_ts = tsinfer.match_ancestors(small_sd_fixture, ancestors)
-        ts = tsinfer.match_samples(small_sd_fixture, anc_ts)
+        ts = tsinfer.match_samples(
+            small_sd_fixture, anc_ts, mismatch_ratio=mmr, recombination_rate=1e-8
+        )
         assert ts.num_provenances == small_sd_fixture.num_provenances + 3
         params = json.loads(ts.provenance(-3).record)["parameters"]
         assert params["command"] == "generate_ancestors"
@@ -137,6 +148,7 @@ class TestIncludeProvenance:
         assert params["command"] == "match_ancestors"
         params = json.loads(ts.provenance(-1).record)["parameters"]
         assert params["command"] == "match_samples"
+        assert params["mismatch_ratio"] == mmr
 
 
 class TestGetProvenance:
