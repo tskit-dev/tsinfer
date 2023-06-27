@@ -14,7 +14,7 @@ Binary packages
 The most reliable way to install ``tsinfer`` is to install the binary conda package:
 e.g.::
 
-    $ conda -c conda-forge install tsinfer
+    $ conda install tsinfer -c conda-forge
 
 you can then ``import tsinfer`` in python or use the ``tsinfer`` executable directly::
 
