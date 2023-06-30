@@ -398,6 +398,10 @@ def test_sgkit_ancestral_allele(tmp_path):
     ancestral_allele[::2] = ds.variant_allele.values[::2, 1]
     add_array_to_dataset("variant_ancestral_allele", ancestral_allele, zarr_path)
     samples = tsinfer.SgkitSampleData(zarr_path)
+    for alleles, aa, site_aa in zip(
+        ds.variant_allele.values, ancestral_allele, samples.sites_ancestral_allele[:]
+    ):
+        assert alleles[site_aa] == aa
     inf_ts = tsinfer.infer(samples)
     for v, inf_v in zip(ts.variants(), inf_ts.variants()):
         assert np.array_equal(
@@ -405,6 +409,17 @@ def test_sgkit_ancestral_allele(tmp_path):
         )
     for aa, inf_aa in zip(ancestral_allele, inf_ts.sites()):
         assert aa == inf_aa.ancestral_state
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+def test_default_ancestral_allele(tmp_path):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    samples = tsinfer.SgkitSampleData(zarr_path)
+    with pytest.warns(UserWarning, match="No ancestral allele information found"):
+        inf_ts = tsinfer.infer(samples)
+    ds = sgkit.load_dataset(zarr_path)
+    for alleles, inf_aa in zip(ds.variant_allele[:], inf_ts.sites()):
+        assert alleles[0] == inf_aa.ancestral_state
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
@@ -435,6 +450,12 @@ def test_sgkit_ancestral_allele_with_mask(tmp_path, sites):
         sites_mask[i] = True
     add_array_to_dataset("variant_mask", sites_mask, zarr_path)
     samples = tsinfer.SgkitSampleData(zarr_path)
+    for alleles, aa, site_aa in zip(
+        ds.variant_allele.values[sites_mask],
+        ancestral_allele[sites_mask],
+        samples.sites_ancestral_allele[:],
+    ):
+        assert alleles[site_aa] == aa
     inf_ts = tsinfer.infer(samples)
     inf_var = inf_ts.variants()
     for i, v in enumerate(ts.variants()):
