@@ -19,6 +19,7 @@
 """
 Manage tsinfer's various file formats.
 """
+import collections
 import collections.abc as abc
 import datetime
 import functools
@@ -2310,11 +2311,11 @@ class SgkitSampleData(SampleData):
                     " unphased"
                 )
 
-    @property
+    @functools.cached_property
     def format_name(self):
         return self.FORMAT_NAME
 
-    @property
+    @functools.cached_property
     def format_version(self):
         return self.FORMAT_VERSION
 
@@ -2392,25 +2393,33 @@ class SgkitSampleData(SampleData):
 
     @functools.cached_property
     def sites_ancestral_allele(self):
+        unknown_alleles = collections.Counter()
         try:
             string_allele = self.data["variant_ancestral_allele"][:][self.sites_mask]
         except KeyError:
-            # Maintains backwards compatibility: in previous tsinfer versions the
-            # ancestral allele was always the zeroth element in the alleles list
-            warnings.warn("No ancestral allele information found, using 0th allele")
-            return np.zeros(self.num_sites, dtype=np.int8)
-        sites_alleles = self.sites_alleles
-        try:
-            return np.array(
-                [
-                    np.where(allele == sites_alleles[i])[0][0]
-                    for i, allele in enumerate(string_allele)
-                ]
-            )
-        except IndexError:
             raise ValueError(
-                "An ancestral allele is not present in the variant's alleles"
+                "variant_ancestral_allele was not found in the dataset."
+                "This is required for tsinfer. If you know that the "
+                "zero-th allele at each site is the ancestral state, you "
+                "add this to the dataset by running:\n"
+                "ds.update({'variant_ancestral_allele': "
+                "ds['variant_allele'][:,0]})\n"
             )
+        ret = np.zeros(self.num_sites, dtype=np.int8)
+        for i, allele in enumerate(string_allele):
+            allele_index = -1
+            try:
+                allele_index = np.where(allele == self.sites_alleles[i])[0][0]
+            except IndexError:
+                unknown_alleles[allele] += 1
+            ret[i] = allele_index
+        if sum(unknown_alleles.values()) > 0:
+            warnings.warn(
+                "The following alleles were not found in the variant_allele array "
+                "and will be treated as unknown:\n"
+                f"{unknown_alleles}"
+            )
+        return ret
 
     @functools.cached_property
     def sites_genotypes(self):
@@ -2421,14 +2430,14 @@ class SgkitSampleData(SampleData):
             gt.shape[0], gt.shape[1] * gt.shape[2]
         )
 
-    @property
+    @functools.cached_property
     def provenances_timestamp(self):
         try:
             return self.data["provenances_timestamp"]
         except KeyError:
             return np.array([], dtype=object)
 
-    @property
+    @functools.cached_property
     def provenances_record(self):
         try:
             return [json.loads(r) for r in self.data["provenances_record"]]
@@ -2439,14 +2448,14 @@ class SgkitSampleData(SampleData):
     def num_samples(self):
         return self._num_samples
 
-    @property
+    @functools.cached_property
     def samples_individual(self):
         ret = np.zeros((self.num_samples), dtype=np.int32)
         for p in range(self.ploidy):
             ret[p :: self.ploidy] = np.arange(self.num_individuals)
         return ret
 
-    @property
+    @functools.cached_property
     def metadata_schema(self):
         try:
             return tskit.metadata.parse_metadata_schema(
@@ -2455,7 +2464,7 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return tskit.MetadataSchema.permissive_json().schema
 
-    @property
+    @functools.cached_property
     def metadata(self):
         try:
             return tskit.MetadataSchema(self.metadata_schema).decode_row(
@@ -2464,14 +2473,14 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return {}
 
-    @property
+    @functools.cached_property
     def num_populations(self):
         try:
             return len(self.data["populations_metadata"])
         except KeyError:
             return 0
 
-    @property
+    @functools.cached_property
     def populations_metadata(self):
         schema = tskit.MetadataSchema(self.populations_metadata_schema)
         try:
@@ -2479,7 +2488,7 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return [{} for _ in range(self.num_populations)]
 
-    @property
+    @functools.cached_property
     def populations_metadata_schema(self):
         try:
             return tskit.metadata.parse_metadata_schema(
@@ -2492,14 +2501,14 @@ class SgkitSampleData(SampleData):
     def num_individuals(self):
         return self._num_individuals
 
-    @property
+    @functools.cached_property
     def individuals_time(self):
         try:
             return self.data["individuals_time"]
         except KeyError:
             return np.full(self.num_individuals, tskit.UNKNOWN_TIME)
 
-    @property
+    @functools.cached_property
     def individuals_metadata_schema(self):
         try:
             return tskit.metadata.parse_metadata_schema(
@@ -2508,7 +2517,7 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return tskit.MetadataSchema.permissive_json().schema
 
-    @property
+    @functools.cached_property
     def individuals_metadata(self):
         schema = tskit.MetadataSchema(self.populations_metadata_schema)
         try:
@@ -2516,21 +2525,21 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return [{} for _ in range(self.num_individuals)]
 
-    @property
+    @functools.cached_property
     def individuals_location(self):
         try:
             return self.data["individuals_location"]
         except KeyError:
             return np.array([[]] * self.num_individuals, dtype=float)
 
-    @property
+    @functools.cached_property
     def individuals_population(self):
         try:
             return self.data["individuals_population"]
         except KeyError:
             return np.full((self.num_individuals), tskit.NULL, dtype=np.int32)
 
-    @property
+    @functools.cached_property
     def individuals_flags(self):
         try:
             return self.data["individuals_flags"]
