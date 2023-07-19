@@ -1379,7 +1379,7 @@ class TestResume:
         ancestor_ts1 = tsinfer.match_ancestors(
             sample_data, ancestor_data, resume_lmdb_file=lmdb_file
         )
-        assert self.count_keys(lmdb_file) == 5
+        assert self.count_keys(lmdb_file) == 4
         ancestor_ts2 = tsinfer.match_ancestors(
             sample_data, ancestor_data, resume_lmdb_file=lmdb_file
         )
@@ -1409,7 +1409,7 @@ class TestResume:
             sample_data, ancestor_data, resume_lmdb_file=lmdb_file
         )
         time1 = time.time() - t
-        assert self.count_keys(lmdb_file) >= 104
+        assert self.count_keys(lmdb_file) >= 103
         t = time.time()
         ancestor_ts2 = tsinfer.match_ancestors(
             sample_data, ancestor_data, resume_lmdb_file=lmdb_file

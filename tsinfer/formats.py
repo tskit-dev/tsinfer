@@ -2322,7 +2322,7 @@ class SgkitSampleData(SampleData):
     def finalised(self):
         return True
 
-    @property
+    @functools.cached_property
     def sequence_length(self):
         try:
             return self.data.attrs["sequence_length"]
@@ -2333,7 +2333,7 @@ class SgkitSampleData(SampleData):
     def num_sites(self):
         return self._num_sites
 
-    @property
+    @functools.cached_property
     def sites_metadata_schema(self):
         try:
             return tskit.metadata.parse_metadata_schema(
@@ -2342,7 +2342,7 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return tskit.MetadataSchema.permissive_json().schema
 
-    @property
+    @functools.cached_property
     def sites_metadata(self):
         schema = tskit.MetadataSchema(self.sites_metadata_schema)
         try:
@@ -2353,22 +2353,22 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return [{} for _ in range(self.num_sites)]
 
-    @property
+    @functools.cached_property
     def sites_time(self):
         try:
             return self.data["sites_time"][:][self.sites_mask]
         except KeyError:
             return np.full(self.num_sites, tskit.UNKNOWN_TIME)
 
-    @property
+    @functools.cached_property
     def sites_position(self):
         return self.data["variant_position"][:][self.sites_mask]
 
-    @property
+    @functools.cached_property
     def sites_alleles(self):
         return self.data["variant_allele"][:][self.sites_mask]
 
-    @property
+    @functools.cached_property
     def sites_mask(self):
         try:
             if (
@@ -2390,7 +2390,7 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return np.full(self.data["variant_position"].shape, True, dtype=bool)
 
-    @property
+    @functools.cached_property
     def sites_ancestral_allele(self):
         try:
             string_allele = self.data["variant_ancestral_allele"][:][self.sites_mask]
@@ -2399,10 +2399,11 @@ class SgkitSampleData(SampleData):
             # ancestral allele was always the zeroth element in the alleles list
             warnings.warn("No ancestral allele information found, using 0th allele")
             return np.zeros(self.num_sites, dtype=np.int8)
+        sites_alleles = self.sites_alleles
         try:
             return np.array(
                 [
-                    np.where(allele == self.sites_alleles[i])[0][0]
+                    np.where(allele == sites_alleles[i])[0][0]
                     for i, allele in enumerate(string_allele)
                 ]
             )
@@ -2411,7 +2412,7 @@ class SgkitSampleData(SampleData):
                 "An ancestral allele is not present in the variant's alleles"
             )
 
-    @property
+    @functools.cached_property
     def sites_genotypes(self):
         gt = self.data["call_genotype"]
         # This method is only used for test/debug so we retrieve and
