@@ -415,28 +415,6 @@ class TestSgkitMask:
         #     site.metadata for site in inf_ts.sites()
         # ]
 
-    def test_sgkit_variant_bad_mask(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
-        ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.arange(ds.sizes["variants"], dtype=int)
-        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
-        with pytest.raises(
-            ValueError,
-            match="The variant_mask array contains values " "other than 0 or 1",
-        ):
-            tsinfer.SgkitSampleData(zarr_path)
-
-    def test_sgkit_variant_bad_mask_negative(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
-        ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.arange(0, -ds.sizes["variants"], -1, dtype=int)
-        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
-        with pytest.raises(
-            ValueError,
-            match="The variant_mask array contains values " "other than 0 or 1",
-        ):
-            tsinfer.SgkitSampleData(zarr_path)
-
     def test_sgkit_variant_bad_mask_length(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)

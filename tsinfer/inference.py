@@ -34,7 +34,7 @@ import sys
 import tempfile
 import threading
 import time
-import time as time_
+import zlib
 
 import dask
 import dask.bag as db
@@ -784,7 +784,7 @@ def match_samples(
         engine=engine,
         progress_monitor=progress_monitor,
         resume_lmdb_file=resume_lmdb_file,
-        use_dask=dask,
+        use_dask=use_dask,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -1407,41 +1407,6 @@ class Matcher:
             self.resume_lmdb = None
 
     @staticmethod
-    def dask_find_path(
-        ancestor_id,
-        tree_sequence_builder_wrapper=None,
-        ancestor_data_path=None,
-        engine=None,
-        recombination=None,
-        mismatch=None,
-        precision=None,
-        extended_checks=None,
-    ):
-        ancestor_matcher_class = (
-            _tsinfer.AncestorMatcher
-            if engine == constants.C_ENGINE
-            else algorithm.AncestorMatcher
-        )
-        matcher = ancestor_matcher_class(
-            tree_sequence_builder_wrapper.tsb,
-            recombination=recombination,
-            mismatch=mismatch,
-            precision=precision,
-            extended_checks=extended_checks,
-        )
-        ancestor_data = formats.AncestorData.load(ancestor_data_path)
-        start = ancestor_data.ancestors_start[ancestor_id]
-        end = ancestor_data.ancestors_end[ancestor_id]
-        haplotype = np.full(ancestor_data.num_sites, tskit.MISSING_DATA, dtype=np.int8)
-        haplotype[start:end] = ancestor_data.ancestors_full_haplotype[
-            start:end, ancestor_id, 0
-        ]
-        # Pickle here rather than let dask deal with it so we can log sizes
-        return pickle.dumps(
-            AncestorMatcher.find_path(matcher, ancestor_id, haplotype, start, end)
-        )
-
-    @staticmethod
     def find_path(matcher, child_id, haplotype, start, end):
         """
         Finds the path of the specified haplotype and returns the MatchResult object
@@ -1559,17 +1524,60 @@ class AncestorMatcher(Matcher):
         self.num_ancestors = self.ancestor_data.num_ancestors
 
         # Find the dependencies
-        t = time_.time()
+        t = time.time()
         self.ancestor_grouping = self.group_by_linesweep()
         logging.info(
             f"Grouped {self.num_ancestors} ancestors into {len(self.ancestor_grouping)}"
-            f" groups in {time_.time() - t:.2f}s"
+            f" groups in {time.time() - t:.2f}s"
         )
 
         # Add nodes for all the ancestors so that the ancestor IDs are equal
         # to the node IDs.
         for t in self.ancestor_data.ancestors_time[:]:
             self.tree_sequence_builder.add_node(t)
+
+    @staticmethod
+    def dask_find_path(
+        ancestor_id,
+        tree_sequence_builder_wrapper=None,
+        data_path=None,
+        engine=None,
+        recombination=None,
+        mismatch=None,
+        precision=None,
+        extended_checks=None,
+    ):
+        ancestor_matcher_class = (
+            _tsinfer.AncestorMatcher
+            if engine == constants.C_ENGINE
+            else algorithm.AncestorMatcher
+        )
+        matcher = ancestor_matcher_class(
+            tree_sequence_builder_wrapper.tsb,
+            recombination=recombination,
+            mismatch=mismatch,
+            precision=precision,
+            extended_checks=extended_checks,
+        )
+        t = time.time()
+        logger.info(f"Loading ancestor {ancestor_id} from {data_path}")
+        ancestor_data = formats.AncestorData.load(data_path)
+        start = ancestor_data.ancestors_start[ancestor_id]
+        end = ancestor_data.ancestors_end[ancestor_id]
+        haplotype = np.full(ancestor_data.num_sites, tskit.MISSING_DATA, dtype=np.int8)
+        # We don't need to work about the mask here as ancestors aren't masked
+        haplotype[start:end] = ancestor_data.ancestors_full_haplotype[
+            start:end, ancestor_id, 0
+        ]
+        logger.info(f"Loaded ancestor {ancestor_id} in {time.time() - t:.2f}s")
+        # Pickle here rather than let dask deal with it so we can log sizes
+        t = time.time()
+        logger.info(f"Finding path for ancestor {ancestor_id}")
+        ret = pickle.dumps(
+            AncestorMatcher.find_path(matcher, ancestor_id, haplotype, start, end)
+        )
+        logger.info(f"Found path for ancestor {ancestor_id} in {time.time() - t:.2f}s")
+        return ret
 
     def group_by_linesweep(self):
         start = self.ancestor_data.ancestors_start[:]
@@ -1586,6 +1594,9 @@ class AncestorMatcher(Matcher):
         epoch_sizes = time_slices[:, 1] - time_slices[:, 0]
         median_size = np.median(epoch_sizes)
         cutoff = 500 * median_size
+        # Zero out the first half so that an initial large epoch doesn't
+        # get selected as the cutoff
+        epoch_sizes[: len(epoch_sizes) // 2] = 0
         # To choose a cutoff point find the first epoch that is 50 times larger than
         # the median epoch size. For a large set of human genomes the median epoch
         # size is around 10, so we'll stop grouping by linesweep at 5000.
@@ -1689,32 +1700,28 @@ class AncestorMatcher(Matcher):
 
         return results
 
-    def match_with_dask(self, ancestor_ids, delayed_recombination, delayed_mismatch):
-        tree_sequence_builder_wrapper = TSBWrapper(
-            self.engine,
-            self.tree_sequence_builder,
-            self.num_alleles,
-            self.max_nodes,
-            self.max_edges,
-        )
-        # if the path is relative, resolve it to an absolute path
+    def match_with_dask(
+        self,
+        tree_sequence_builder_wrapper_delayed,
+        ancestor_ids,
+        delayed_recombination,
+        delayed_mismatch,
+    ):
+        # if the path is relative, resolve it to an absolute path as workers don't
+        # necessarily have the same working directory as the client
         path = os.path.abspath(self.ancestor_data.path)
-        tree_sequence_builder_wrapper_delayed = dask.delayed(
-            tree_sequence_builder_wrapper
-        )
         ancestor_ids_bag = db.from_sequence(ancestor_ids, npartitions=len(ancestor_ids))
         results = db.map(
             self.dask_find_path,
             ancestor_ids_bag,
             tree_sequence_builder_wrapper=tree_sequence_builder_wrapper_delayed,
-            ancestor_data_path=path,
+            data_path=path,
             engine=self.engine,
             recombination=delayed_recombination,
             mismatch=delayed_mismatch,
             precision=self.precision,
             extended_checks=self.extended_checks,
-        ).compute()
-        logger.info(f"Size of results: {sum(len(r) for r in results)}")
+        )
         return map(pickle.loads, results)
 
     def match_ancestors(self):
@@ -1723,17 +1730,16 @@ class AncestorMatcher(Matcher):
         )
         self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
         if self.use_dask:
-            delayed_recombination = dask.delayed(self.recombination)
-            delayed_mismatch = dask.delayed(self.mismatch)
-        logger.info(f"{time_.time()} Starting matching")
+            logger.info("Using dask for ancestor matching")
+            delayed_recombination = dask.delayed(self.recombination, pure=True)
+            delayed_mismatch = dask.delayed(self.mismatch, pure=True)
         with LMDBCache(self.resume_lmdb) as cache:
             for group, ancestor_ids in self.ancestor_grouping.items():
-                t = time_.time()
+                t = time.time()
                 logger.info(
                     f"Starting group {group} with {len(ancestor_ids)} ancestors"
                 )
-                self.__start_group(group, ancestor_ids)
-
+                started = False
                 start_index = 0
                 results = []
                 while start_index < len(ancestor_ids):
@@ -1745,8 +1751,35 @@ class AncestorMatcher(Matcher):
                     )
                     batch_results = cache.get(key)
                     if batch_results is None:
-                        if self.use_dask and len(batch_ancestor_ids) > self.num_threads:
+                        use_dask = (
+                            self.use_dask
+                            and len(batch_ancestor_ids) > self.num_threads * 5
+                        )
+                        logger.info(
+                            f"Matching group {'with dask' if use_dask else ''} "
+                            f"{group}:{start_index}-{end_index}"
+                        )
+                        if not started:
+                            if use_dask:
+                                # Do this once per group, as it's expensive
+                                # to resend for each batch
+                                tree_sequence_builder_wrapper = TSBWrapper(
+                                    self.engine,
+                                    self.tree_sequence_builder,
+                                    self.num_alleles,
+                                    self.max_nodes,
+                                    self.max_edges,
+                                )
+                                tree_sequence_builder_wrapper_delayed = dask.delayed(
+                                    tree_sequence_builder_wrapper, pure=True
+                                ).persist()
+                            # Delay starting the group until we actually have to do some
+                            # matching, as for large datasets this can take over 10s.
+                            self.__start_group(group, ancestor_ids)
+                            started = True
+                        if use_dask:
                             batch_results = self.match_with_dask(
+                                tree_sequence_builder_wrapper_delayed,
                                 batch_ancestor_ids,
                                 delayed_recombination,
                                 delayed_mismatch,
@@ -1764,11 +1797,14 @@ class AncestorMatcher(Matcher):
                             f"Found cached results for group "
                             f"{group}:{start_index}-{end_index}"
                         )
-                    results.extend(batch_results)
+                    for result in batch_results:
+                        results.append(result)
+                        self.match_progress.update()
                     start_index = end_index
                 self.__complete_group(group, ancestor_ids, results)
                 logger.info(
-                    f"Finished matching for group {group} in "
+                    f"Finished matching for group {group} of "
+                    f"{len(self.ancestor_grouping)} in "
                     f"{time.time() - t:.2f} seconds"
                 )
 
@@ -1861,6 +1897,55 @@ class SampleMatcher(Matcher):
         # node ID in the tree sequence.
         self.sample_id_map = {}
 
+    @staticmethod
+    def dask_find_path(
+        samples_slice,
+        tree_sequence_builder_wrapper=None,
+        data_path=None,
+        engine=None,
+        recombination=None,
+        mismatch=None,
+        precision=None,
+        extended_checks=None,
+        site_indexes=None,
+        sample_id_map=None,
+    ):
+        t = time.time()
+        ancestor_matcher_class = (
+            _tsinfer.AncestorMatcher
+            if engine == constants.C_ENGINE
+            else algorithm.AncestorMatcher
+        )
+        matcher = ancestor_matcher_class(
+            tree_sequence_builder_wrapper.tsb,
+            recombination=recombination,
+            mismatch=mismatch,
+            precision=precision,
+            extended_checks=extended_checks,
+        )
+        logging.info(
+            f"Loading sample data from {data_path} at {time.time() - t:.2f} seconds"
+        )
+        sample_data = formats.SgkitSampleData(data_path)
+        logging.info(f"Loaded sample data at {time.time() - t:.2f} seconds")
+        haplotypes = sample_data._slice_haplotypes(
+            sites=site_indexes, recode_ancestral=True, samples_slice=samples_slice
+        )
+        logging.info(f"Init haplotypes at {time.time() - t:.2f} seconds")
+        # Pickle here rather than let dask deal with it so we can log sizes
+        results = []
+        for sample_id, haplotype in haplotypes:
+            logging.info(
+                f"Finding path for {sample_id} at {time.time() - t:.2f} seconds"
+            )
+            results.append(
+                AncestorMatcher.find_path(
+                    matcher, sample_id_map[sample_id], haplotype, 0, len(site_indexes)
+                )
+            )
+            logging.info(f"Found path for {sample_id} at {time.time() - t:.2f} seconds")
+        return pickle.dumps(results)
+
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
         if self.sample_data.sequence_length != tables.sequence_length:
@@ -1921,48 +2006,148 @@ class SampleMatcher(Matcher):
             )
         )
 
+    def match_locally(self, sample_indexes):
+        def thread_worker_function(j_haplotype):
+            j, haplotype = j_haplotype
+            assert len(haplotype) == self.num_sites
+            local_data = threading.local()
+            if not hasattr(local_data, "matcher"):
+                local_data.matcher = self.create_matcher_instance()
+            logger.info(
+                f"{time.time()}Thread {threading.get_ident()} starting haplotype {j}"
+            )
+            result = self.find_path(
+                matcher=local_data.matcher,
+                child_id=self.sample_id_map[j],
+                haplotype=haplotype,
+                start=0,
+                end=self.num_sites,
+            )
+            logger.info(
+                f"{time.time()}Thread {threading.get_ident()} finished haplotype {j}"
+            )
+            return result
+
+        sample_haplotypes = self.sample_data.haplotypes(
+            sample_indexes,
+            sites=self.inference_site_id,
+            recode_ancestral=True,
+        )
+        if self.num_threads > 0:
+            results = threads.threaded_map(
+                thread_worker_function, sample_haplotypes, self.num_threads
+            )
+        else:
+            results = map(thread_worker_function, sample_haplotypes)
+
+        return results
+
+    def match_with_dask(
+        self,
+        sample_slice,
+        tree_sequence_builder_wrapper_delayed,
+        delayed_recombination,
+        delayed_mismatch,
+        delayed_sites,
+        delayed_sample_id_map,
+    ):
+        path = os.path.abspath(self.sample_data.path)
+        # sample slice is a tuple of (start, stop),
+        # convert to a list of (start, stop) tuples that contain 5 each.
+        # The tradeoff here is between the extra cost of loading the samples,
+        # vs the RAM usage and long-running tasks.
+        start, stop = sample_slice
+        sample_slices = [
+            (sub_start, sub_start + 5 if sub_start + 5 < stop else stop)
+            for sub_start in range(start, stop, 5)
+        ]
+        samples_indexes_bag = db.from_sequence(
+            sample_slices, npartitions=len(sample_slices)
+        )
+        results = db.map(
+            self.dask_find_path,
+            samples_indexes_bag,
+            tree_sequence_builder_wrapper=tree_sequence_builder_wrapper_delayed,
+            data_path=path,
+            engine=self.engine,
+            recombination=delayed_recombination,
+            mismatch=delayed_mismatch,
+            precision=self.precision,
+            extended_checks=self.extended_checks,
+            site_indexes=delayed_sites,
+            sample_id_map=delayed_sample_id_map,
+        ).compute()
+        logger.info(f"Size of results: {sum(len(r) for r in results)}")
+        results = map(pickle.loads, results)
+        flat_results = []
+        for result in results:
+            flat_results.extend(result)
+        return flat_results
+
     def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
         builder = self.tree_sequence_builder
         _, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
-        if self.num_sites > 0:
-            self.match_progress = self.progress_monitor.get("ms_match", num_samples)
-            local_data = threading.local()
-
-            def worker_function(j_haplotype):
-                j, haplotype = j_haplotype
-                assert len(haplotype) == self.num_sites
-                if not hasattr(local_data, "matcher"):
-                    local_data.matcher = self.create_matcher_instance()
-                result = self.find_path(
-                    matcher=local_data.matcher,
-                    child_id=self.sample_id_map[j],
-                    haplotype=haplotype,
-                    start=0,
-                    end=self.num_sites,
-                )
-                self.match_progress.update()
-                return result
-
-            sample_haplotypes = self.sample_data.haplotypes(
-                sample_indexes,
-                sites=self.inference_site_id,
-                recode_ancestral=True,
+        if self.num_sites == 0:
+            return
+        self.match_progress = self.progress_monitor.get("ms_match", num_samples)
+        if self.use_dask:
+            logger.info("Using dask for sample matching")
+            delayed_recombination = dask.delayed(self.recombination)
+            delayed_mismatch = dask.delayed(self.mismatch)
+            delayed_sites = dask.delayed(self.inference_site_id)
+            delayed_sample_id_map = dask.delayed(self.sample_id_map)
+            tree_sequence_builder_wrapper = TSBWrapper(
+                self.engine,
+                self.tree_sequence_builder,
+                self.num_alleles,
+                self.max_nodes,
+                self.max_edges,
             )
-            if self.num_threads > 0:
-                mapper = lambda func, args: threads.threaded_map(  # noqa E731
-                    func, args, self.num_threads
-                )
-            else:
-                mapper = map
-            # We have to consume the iterator here, otherwise we'll match against
-            # ancestors in this epoch
+            tree_sequence_builder_wrapper_delayed = dask.delayed(
+                tree_sequence_builder_wrapper, pure=True
+            ).persist()
+        with LMDBCache(self.resume_lmdb) as cache:
+            start_index = 0
             results = []
-            for result in mapper(worker_function, sample_haplotypes):
-                results.append(result)
-                self.match_progress.update()
-
+            while start_index < len(sample_indexes):
+                t = time.time()
+                logger.info(f"Matching samples {start_index} to {start_index + 5000}")
+                end_index = min(start_index + 5000, len(sample_indexes))
+                key = f"{start_index}_{end_index}_{self.__class__.__name__}".encode()
+                batch_results = cache.get(key)
+                if batch_results is None:
+                    if self.use_dask:
+                        batch_results = self.match_with_dask(
+                            (start_index, end_index),
+                            tree_sequence_builder_wrapper_delayed,
+                            delayed_recombination,
+                            delayed_mismatch,
+                            delayed_sites,
+                            delayed_sample_id_map,
+                        )
+                    else:
+                        batch_results = self.match_locally(
+                            sample_indexes[start_index:end_index]
+                        )
+                    batch_results_list = []
+                    for result in batch_results:
+                        batch_results_list.append(result)
+                        self.match_progress.update()
+                    batch_results = batch_results_list
+                    cache.put(key, batch_results)
+                    logger.info(
+                        f"Finished matching for samples {start_index}-{end_index} in "
+                        f"{time.time() - t:.2f} seconds"
+                    )
+                else:
+                    logger.info(
+                        f"Found cached results for samples "
+                        f"{start_index}-{end_index} in {time.time() - t:.2f} seconds"
+                    )
+                results.extend(batch_results)
+                start_index = end_index
             self.match_progress.close()
             logger.info(
                 "Inserting sample paths: {} edges in total".format(
@@ -2477,10 +2662,17 @@ class TSBWrapper:
         total_size += sum([r["edges"][i].nbytes for i in range(4)])
         total_size += sum([r["mutations"][i].nbytes for i in range(4)])
 
-        logger.info(f"TSB uncompressed size: {total_size/1e6:.2f} MB")
-        return r
+        pkl = pickle.dumps(r)
+        compressed_pkl = zlib.compress(pkl)
+        logger.info(
+            f"TSB size: {total_size/1e6:.2f}MB"
+            f" (compressed {len(compressed_pkl)/1e6:.2f}MB)"
+        )
+        return compressed_pkl
 
-    def __setstate__(self, state):
+    def __setstate__(self, compressed_pkl):
+        pkl = zlib.decompress(compressed_pkl)
+        state = pickle.loads(pkl)
         self.engine = state["engine"]
         self.num_alleles = state["num_alleles"]
         self.max_nodes = state["max_nodes"]
