@@ -1384,15 +1384,14 @@ class TestResume:
             sample_data, ancestor_data, resume_lmdb_file=lmdb_file
         )
         ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
-        # TODO No caching on samples for now
-        # final_ts1 = tsinfer.match_samples(
-        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
-        # )
-        # assert self.count_keys(lmdb_file) == 4
-        # final_ts2 = tsinfer.match_samples(
-        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
-        # )
-        # final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
+        final_ts1 = tsinfer.match_samples(
+            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        )
+        assert self.count_keys(lmdb_file) == 5
+        final_ts2 = tsinfer.match_samples(
+            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        )
+        final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
     def test_cache_used_by_timing(self, tmpdir):
         lmdb_file = str(tmpdir / "LMDB")
@@ -1418,20 +1417,19 @@ class TestResume:
         time2 = time.time() - t
         assert time2 < time1 / 2
 
-        # TODO No caching on samples for now
-        # t = time.time()
-        # final_ts1 = tsinfer.match_samples(
-        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
-        # )
-        # time1 = time.time() - t
-        # assert self.count_keys(lmdb_file) == 1201
-        # t = time.time()
-        # final_ts2 = tsinfer.match_samples(
-        #     sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
-        # )
-        # time2 = time.time() - t
-        # assert time2 < time1 / 1.5
-        # final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
+        t = time.time()
+        final_ts1 = tsinfer.match_samples(
+            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        )
+        time1 = time.time() - t
+        assert self.count_keys(lmdb_file) == 104
+        t = time.time()
+        final_ts2 = tsinfer.match_samples(
+            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+        )
+        time2 = time.time() - t
+        assert time2 < time1 / 1.25
+        final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
 
 class TestAncestorGeneratorsEquivalant:

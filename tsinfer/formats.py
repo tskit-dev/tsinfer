@@ -33,7 +33,6 @@ import threading
 import warnings
 
 import attr
-import dask.array as da
 import humanize
 import lmdb
 import numcodecs
@@ -2379,14 +2378,7 @@ class SgkitSampleData(SampleData):
                 raise ValueError(
                     "Mask must be the same length as the number of unmasked sites"
                 )
-            # Often xarray will save a bool array as int8, so we need to cast,
-            # but check that a mistake hasn't been made by checking
-            # that the values are either 0 or 1
-            mask = self.data["variant_mask"].astype(np.int8)
-            if da.max(mask).compute() > 1 or da.min(mask).compute() < 0:
-                raise ValueError(
-                    "The variant_mask array contains values other than 0 or 1"
-                )
+
             return self.data["variant_mask"].astype(bool)
         except KeyError:
             return np.full(self.data["variant_position"].shape, True, dtype=bool)
@@ -2630,6 +2622,42 @@ class SgkitSampleData(SampleData):
                         ),
                     )
                 yield (j * self.ploidy) + k, a if sites is None else a[sites]
+
+    def _slice_haplotypes(self, samples_slice, sites=None, recode_ancestral=None):
+        # Note that this function loads the entire slice into RAM.
+        start, stop = samples_slice
+        if recode_ancestral is None:
+            recode_ancestral = False
+        aa_index = self.sites_ancestral_allele
+        # If ancestral allele is missing, keep the order unchanged (aa_index of zero)
+        aa_index[aa_index == MISSING_DATA] = 0
+        gt = self.data["call_genotype"]
+
+        # Calculate individual's start and stop points based on ploidy
+        indiv_start = start // self.ploidy
+        indiv_stop = (stop + self.ploidy - 1) // self.ploidy  # round up the division
+
+        gt_slice = gt[:, indiv_start:indiv_stop, :]
+        # Zarr doesn't support boolean indexing so we have to do this after
+        gt_slice = gt_slice[self.sites_mask]
+
+        for j, individual in enumerate(range(indiv_start, indiv_stop)):
+            for k in range(self.ploidy):
+                sample_index = (individual * self.ploidy) + k
+                if sample_index < start:
+                    continue
+                if sample_index >= stop:
+                    break
+                a = gt_slice[:, j, k].T
+                if recode_ancestral:
+                    a = np.where(
+                        a == aa_index,
+                        0,
+                        np.where(
+                            np.logical_and(a != MISSING_DATA, a < aa_index), a + 1, a
+                        ),
+                    )
+                yield sample_index, a if sites is None else a[sites]
 
 
 @attr.s(order=False, eq=False)
