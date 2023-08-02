@@ -43,7 +43,7 @@ jobs:
           python -m venv venv
           . venv/bin/activate
           pip install --upgrade pip wheel
-          cat requirements/CI-docs/requirements.txt | sed -e '/^\s*#.*$/d' -e '/^\s*$/d' | xargs -n 1 pip install --no-dependencies          
+          pip install -r requirements/CI-docs/requirements.txt          
           
 
       - name: Build C module
