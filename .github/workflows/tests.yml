@@ -67,7 +67,6 @@ jobs:
           channels: conda-forge
           channel-priority: strict
           auto-update-conda: true
-          use-only-tar-bz2: true
 
       - name: Fix windows .profile
         if: steps.cache.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
