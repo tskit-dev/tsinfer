@@ -270,7 +270,7 @@ def run_edges_performance(args):
 
     df = pd.DataFrame(results)
     df.length /= MB
-    dfg = df.groupby(df.length).mean()
+    dfg = df.groupby(df.length).mean(numeric_only=True)
     # print(dfg.estimated_anc_edges.describe())
     print(dfg)
 
@@ -595,7 +595,7 @@ def run_ancestor_properties(args):
     progress.close()
 
     df = pd.DataFrame(results)
-    dfg = df.groupby(df.length).mean()
+    dfg = df.groupby(df.length).mean(numeric_only=True)
     print(dfg)
 
     name_format = os.path.join(
@@ -1736,15 +1736,18 @@ def run_node_degree(args):
             path_compression=path_compression,
         )
         degree, depth = get_node_degree_by_depth(estimated_ancestors_ts)
-        df = df.append(
-            pd.DataFrame(
-                {
-                    "degree": degree,
-                    "depth": depth,
-                    "type": "estimated",
-                    "path_compression": path_compression,
-                }
-            )
+        df = pd.concat(
+            [
+                df,
+                pd.DataFrame(
+                    {
+                        "degree": degree,
+                        "depth": depth,
+                        "type": "estimated",
+                        "path_compression": path_compression,
+                    }
+                ),
+            ]
         )
         exact_ancestors_ts = run_infer(
             smc_ts,
@@ -1753,15 +1756,18 @@ def run_node_degree(args):
             path_compression=path_compression,
         )
         degree, depth = get_node_degree_by_depth(exact_ancestors_ts)
-        df = df.append(
-            pd.DataFrame(
-                {
-                    "degree": degree,
-                    "depth": depth,
-                    "type": "exact",
-                    "path_compression": path_compression,
-                }
-            )
+        df = pd.concat(
+            [
+                df,
+                pd.DataFrame(
+                    {
+                        "degree": degree,
+                        "depth": depth,
+                        "type": "exact",
+                        "path_compression": path_compression,
+                    }
+                ),
+            ]
         )
 
     name_format = os.path.join(
