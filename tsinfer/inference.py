@@ -696,6 +696,7 @@ def match_samples(
     record_provenance=True,
     resume_lmdb_file=None,
     use_dask=False,
+    map_additional_sites=None,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
@@ -762,6 +763,10 @@ def match_samples(
                 post_process = True
             else:
                 post_process = False
+    if map_additional_sites is None:
+        map_additional_sites = True
+    else:
+        map_additional_sites = map_additional_sites
 
     sample_data._check_finalised()
     progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
@@ -797,7 +802,7 @@ def match_samples(
         # we sometimes assume they are in the same order as in the file
 
     manager.match_samples(sample_indexes, sample_times)
-    ts = manager.finalise()
+    ts = manager.finalise(map_additional_sites)
     if post_process:
         ts = _post_process(
             ts, warn_if_unexpected_format=True, simplify_only=simplify_only
@@ -1998,9 +2003,9 @@ class SampleMatcher(Matcher):
 
         self._match_samples(sample_indexes)
 
-    def finalise(self):
+    def finalise(self, map_additional_sites):
         logger.info("Finalising tree sequence")
-        ts = self.get_samples_tree_sequence()
+        ts = self.get_samples_tree_sequence(map_additional_sites)
         # Check that there are the same number of samples as expected
         assert len(self.sample_id_map) == ts.num_samples
         return ts
