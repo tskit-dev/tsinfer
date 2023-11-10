@@ -1841,7 +1841,8 @@ class TestBuildAncestors:
             for genotypes, position in zip(G, positions):
                 sample_data.add_site(position, genotypes)
 
-        with pytest.raises(PermissionError):
+        # On OSX we sometimes get OSError depending on Pyhton version
+        with pytest.raises((PermissionError, OSError)):
             # Assuming /bin is unwriteable here
             tsinfer.generate_ancestors(sample_data, mmap_temp_dir="/bin")
 
