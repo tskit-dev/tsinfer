@@ -2512,10 +2512,21 @@ class SgkitSampleData(SampleData):
     @functools.cached_property
     def individuals_metadata(self):
         schema = tskit.MetadataSchema(self.populations_metadata_schema)
-        try:
-            return [schema.decode_row(r) for r in self.data["individuals_metadata"][:]]
-        except KeyError:
-            return [{} for _ in range(self.num_individuals)]
+        if "individuals_metadata" in self.data:
+            assert len(self.data["individuals_metadata"]) == self.num_individuals
+            assert self.num_individuals == len(self.data["sample_id"])
+            md_list = []
+            for sample_id, r in zip(
+                self.data["sample_id"], self.data["individuals_metadata"][:]
+            ):
+                md = schema.decode_row(r)
+                md["sgkit_sample_id"] = sample_id
+                md_list.append(md)
+            return md_list
+        else:
+            return [
+                {"sgkit_sample_id": sample_id} for sample_id in self.data["sample_id"]
+            ]
 
     @functools.cached_property
     def individuals_location(self):

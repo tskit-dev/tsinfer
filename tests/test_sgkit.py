@@ -260,6 +260,11 @@ def test_sgkit_dataset_roundtrip(tmp_path):
     samples = tsinfer.SgkitSampleData(zarr_path)
     inf_ts = tsinfer.infer(samples)
     ds = sgkit.load_dataset(zarr_path)
+
+    assert ts.num_individuals == inf_ts.num_individuals == ds.dims["samples"]
+    for (i, ind) in zip(inf_ts.individuals(), ds["sample_id"].values):
+        assert i.metadata["sgkit_sample_id"] == ind
+
     assert (
         ts.num_samples == inf_ts.num_samples == ds.dims["samples"] * ds.dims["ploidy"]
     )
@@ -283,6 +288,7 @@ def test_sgkit_dataset_roundtrip(tmp_path):
 def test_sgkit_dataset_accessors(tmp_path):
     ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True, shuffle_alleles=False)
     samples = tsinfer.SgkitSampleData(zarr_path)
+    ds = sgkit.load_dataset(zarr_path)
 
     assert samples.format_name == "tsinfer-sgkit-sample-data"
     assert samples.format_version == (0, 1)
@@ -325,7 +331,10 @@ def test_sgkit_dataset_accessors(tmp_path):
         samples.individuals_metadata_schema
         == ts.tables.individuals.metadata_schema.schema
     )
-    assert samples.individuals_metadata == [ind.metadata for ind in ts.individuals()]
+    assert samples.individuals_metadata == [
+        {"sgkit_sample_id": sample_id, **ind.metadata}
+        for ind, sample_id in zip(ts.individuals(), ds["sample_id"].values)
+    ]
     assert np.array_equal(
         samples.individuals_location,
         np.tile(np.array([["0", "1"]], dtype="float32"), (ts.num_individuals, 1)),
@@ -354,6 +363,7 @@ def test_sgkit_dataset_accessors(tmp_path):
 def test_sgkit_accessors_defaults(tmp_path):
     ts, zarr_path = make_ts_and_zarr(tmp_path)
     samples = tsinfer.SgkitSampleData(zarr_path)
+    ds = sgkit.load_dataset(zarr_path)
 
     default_schema = tskit.MetadataSchema.permissive_json().schema
     assert samples.sequence_length == ts.sequence_length
@@ -369,7 +379,9 @@ def test_sgkit_accessors_defaults(tmp_path):
     assert samples.populations_metadata_schema == default_schema
     assert samples.populations_metadata == []
     assert samples.individuals_metadata_schema == default_schema
-    assert samples.individuals_metadata == [{} for _ in range(ts.num_individuals)]
+    assert samples.individuals_metadata == [
+        {"sgkit_sample_id": sample_id} for sample_id in ds["sample_id"].values
+    ]
     for time in samples.individuals_time:
         assert tskit.is_unknown_time(time)
     assert np.array_equal(
