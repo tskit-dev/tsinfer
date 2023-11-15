@@ -101,7 +101,7 @@ class DummyProgress:
     Class that mimics the subset of the tqdm API that we use in this module.
     """
 
-    def update(self):
+    def update(self, n=None):
         pass
 
     def close(self):
