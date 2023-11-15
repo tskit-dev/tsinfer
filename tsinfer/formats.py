@@ -2512,6 +2512,8 @@ class SgkitSampleData(SampleData):
     @functools.cached_property
     def individuals_metadata(self):
         schema = tskit.MetadataSchema(self.populations_metadata_schema)
+        # We set the sample_id in the individual metadata as this is often useful,
+        # however we silently don't overwrite if the key exists
         if "individuals_metadata" in self.data:
             assert len(self.data["individuals_metadata"]) == self.num_individuals
             assert self.num_individuals == len(self.data["sample_id"])
@@ -2520,7 +2522,8 @@ class SgkitSampleData(SampleData):
                 self.data["sample_id"], self.data["individuals_metadata"][:]
             ):
                 md = schema.decode_row(r)
-                md["sgkit_sample_id"] = sample_id
+                if "sgkit_sample_id" not in md:
+                    md["sgkit_sample_id"] = sample_id
                 md_list.append(md)
             return md_list
         else:

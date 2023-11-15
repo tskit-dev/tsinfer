@@ -19,15 +19,18 @@
 """
 Tests for the data files.
 """
+import json
 import sys
 import tempfile
 
 import msprime
+import numcodecs
 import numpy as np
 import pytest
 import sgkit
 import tskit
 import xarray as xr
+import zarr
 
 import tsinfer
 from tsinfer import formats
@@ -262,8 +265,8 @@ def test_sgkit_dataset_roundtrip(tmp_path):
     ds = sgkit.load_dataset(zarr_path)
 
     assert ts.num_individuals == inf_ts.num_individuals == ds.dims["samples"]
-    for (i, ind) in zip(inf_ts.individuals(), ds["sample_id"].values):
-        assert i.metadata["sgkit_sample_id"] == ind
+    for ts_ind, sample_id in zip(inf_ts.individuals(), ds["sample_id"].values):
+        assert ts_ind.metadata["sgkit_sample_id"] == sample_id
 
     assert (
         ts.num_samples == inf_ts.num_samples == ds.dims["samples"] * ds.dims["ploidy"]
@@ -282,6 +285,35 @@ def test_sgkit_dataset_roundtrip(tmp_path):
     # Check that the trees are non-trivial (i.e. the sites have actually been used)
     assert inf_ts.num_trees > 10
     assert inf_ts.num_edges > 200
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_sgkit_individual_metadata_not_clobbered(tmp_path):
+    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    # Load the zarr to add metadata for testing
+    zarr_root = zarr.open(zarr_path)
+    empty_obj = json.dumps({}).encode()
+    indiv_metadata = np.array([empty_obj] * ts.num_individuals, dtype=object)
+    indiv_metadata[42] = json.dumps({"sgkit_sample_id": "foobar"}).encode()
+    zarr_root.create_dataset(
+        "individuals_metadata", data=indiv_metadata, object_codec=numcodecs.VLenBytes()
+    )
+    zarr_root.attrs["individuals_metadata_schema"] = repr(
+        tskit.MetadataSchema.permissive_json()
+    )
+
+    samples = tsinfer.SgkitSampleData(zarr_path)
+    inf_ts = tsinfer.infer(samples)
+    ds = sgkit.load_dataset(zarr_path)
+
+    assert ts.num_individuals == inf_ts.num_individuals == ds.dims["samples"]
+    for i, (ts_ind, sample_id) in enumerate(
+        zip(inf_ts.individuals(), ds["sample_id"].values)
+    ):
+        if i != 42:
+            assert ts_ind.metadata["sgkit_sample_id"] == sample_id
+        else:
+            assert ts_ind.metadata["sgkit_sample_id"] == "foobar"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
