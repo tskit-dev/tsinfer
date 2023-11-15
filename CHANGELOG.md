@@ -4,6 +4,15 @@
 
 In development
 
+**Features**
+
+- `tsinfer` now supports inferring data from an `sgkit` dataset. This allows users to
+  infer from VCFs via the optimised and parallel VCF parsing in `sgkit`.
+  - The `variant_mask` boolean array in the `sgkit` dataset can be used mask sites
+    not wanted for inference.
+  - `sgkit` `sample_ids` are inserted into individual metadata as `sgkit_sample_id` if
+    this key does not already exist.
+
 **Breaking Changes**
 
 - Remove the `uuid` field from SampleData. SampleData equality is now purely based
