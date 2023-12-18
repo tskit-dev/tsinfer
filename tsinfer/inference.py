@@ -1838,11 +1838,7 @@ class AncestorMatcher(Matcher):
                             )
                         else:
                             batch_results = self.match_locally(batch_ancestor_ids)
-                        batch_results_list = []
-                        for result in batch_results:
-                            batch_results_list.append(result)
-                            self.match_progress.update()
-                        batch_results = batch_results_list
+                        batch_results = list(batch_results)
                         cache.put(key, batch_results)
                     else:
                         logger.info(
