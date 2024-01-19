@@ -2405,11 +2405,20 @@ class SgkitSampleData(SampleData):
             except IndexError:
                 unknown_alleles[allele] += 1
             ret[i] = allele_index
-        if sum(unknown_alleles.values()) > 0:
+        tot = sum(unknown_alleles.values())
+        if tot > 0:
+            num_sites = len(string_allele)
+            frac_bad = tot / num_sites
+            frac_bad_per_type = [v / num_sites for v in unknown_alleles.values()]
+            summarise_unknown = [
+                f"'{k}': {v} ({frac * 100:.2f}% of sites)"  # Summarise per allele type
+                for (k, v), frac in zip(unknown_alleles.items(), frac_bad_per_type)
+            ]
             warnings.warn(
-                "The following alleles were not found in the variant_allele array "
-                "and will be treated as unknown:\n"
-                f"{unknown_alleles}"
+                "An ancestral allele was not found in the variant_allele array for "
+                + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
+                + "They will be treated as of unknown ancestral state:\n "
+                + "\n ".join(summarise_unknown)
             )
         return ret
 

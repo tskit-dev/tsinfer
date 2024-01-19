@@ -527,6 +527,7 @@ def test_ancestral_missingness(tmp_path):
     ancestral_allele = ds.variant_ancestral_allele.values
     ancestral_allele[0] = "N"
     ancestral_allele[11] = "-"
+    ancestral_allele[12] = "💩"
     ancestral_allele[15] = "💩"
     ds = ds.drop_vars(["variant_ancestral_allele"])
     sgkit.save_dataset(ds, str(zarr_path) + ".tmp")
@@ -538,19 +539,16 @@ def test_ancestral_missingness(tmp_path):
     )
     ds = sgkit.load_dataset(str(zarr_path) + ".tmp")
     sd = tsinfer.SgkitSampleData(str(zarr_path) + ".tmp")
-    with pytest.warns(UserWarning, match="The following alleles were not found"):
+    with pytest.warns(
+        UserWarning,
+        match=r"not found in the variant_allele array for the 4 [\s\S]*'💩': 2",
+    ):
         inf_ts = tsinfer.infer(sd)
-    for i, (
-        inf_var,
-        var,
-    ) in enumerate(zip(inf_ts.variants(), ts.variants())):
-        assert inf_var.site.ancestral_state == var.site.ancestral_state or i in [
-            0,
-            11,
-            15,
-        ]
-        if i in [0, 11, 15]:
+    for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
+        if i in [0, 11, 12, 15]:
             assert inf_var.site.metadata == {"inference_type": "parsimony"}
+        else:
+            assert inf_var.site.ancestral_state == var.site.ancestral_state
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
