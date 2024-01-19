@@ -615,8 +615,35 @@ class TestSgkitSampleDataErrors:
         )
         sgkit.save_dataset(ds, path)
         samples = tsinfer.SgkitSampleData(path)
-        with pytest.raises(ValueError, match="Empty alleles must be at the end"):
+        with pytest.raises(ValueError, match="empty alleles must be at the end"):
             tsinfer.infer(samples)
+
+    def test_empty_ancestral_alleles(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds["variant_allele"] = (
+            ds["variant_allele"].dims,
+            np.array(
+                [["", "A", "C", ""], ["A", "C", "", ""], ["A", "C", "", ""]], dtype="S1"
+            ),
+        )
+        ds["variant_ancestral_allele"] = (
+            ["variants"],
+            np.array(["", "A", ""], dtype="S1"),
+        )
+        sgkit.save_dataset(ds, path)
+        samples = tsinfer.SgkitSampleData(path)
+        for v in samples.variants(recode_ancestral=True):
+            if v.site.id == 0:
+                assert v.site.ancestral_state in (b"", "")
+                assert len(v.alleles) == 3
+                assert v.alleles[0] in (b"", "")
+            elif v.site.id == 1:
+                assert v.site.ancestral_state in (b"A", "A")
+                assert len(v.alleles) == 2
+            elif v.site.id == 3:
+                assert v.site.ancestral_state is None
+                assert len(v.alleles) == 3
 
 
 class TestSgkitMatchSamplesToDisk:

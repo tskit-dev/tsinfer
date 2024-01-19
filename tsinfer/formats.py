@@ -2584,24 +2584,34 @@ class SgkitSampleData(SampleData):
             genos = genos.reshape(self.num_samples)
             aa = site.ancestral_allele
             alleles = site.alleles
-            if aa != MISSING_DATA and aa > 0 and recode_ancestral:
-                # Need to recode this site
-                alleles = site.reorder_alleles()
-                # re-map the genotypes
-                geno_map = np.arange(len(alleles) - MISSING_DATA, dtype=genos.dtype)
-                geno_map[MISSING_DATA] = MISSING_DATA
-                geno_map[aa] = 0
-                geno_map[0:aa] += 1
-                genos = geno_map[genos]
+            aa_empty = False
+            if aa != MISSING_DATA:
+                if alleles[aa] == b"" or alleles[aa] == "":
+                    aa_empty = True
+                if aa > 0 and recode_ancestral:
+                    # Need to recode this site
+                    alleles = site.reorder_alleles()
+                    # re-map the genotypes
+                    geno_map = np.arange(len(alleles) - MISSING_DATA, dtype=genos.dtype)
+                    geno_map[MISSING_DATA] = MISSING_DATA
+                    geno_map[aa] = 0
+                    geno_map[0:aa] += 1
+                    genos = geno_map[genos]
             # Filter out empty alleles, as sgkit pads with them so that all sites have
             # the same number of alleles. This is only safe if the empty
             # alleles are at the end of the list, so check this.
             non_empty_alleles = []
             empty_seen = False
-            for allele in alleles:
+            for i, allele in enumerate(alleles):
                 if allele != b"" and allele != "":
                     if empty_seen:
-                        raise ValueError("Empty alleles must be at the end")
+                        raise ValueError(
+                            f"Site {site.id} (pos {site.position}): empty alleles "
+                            f"must be at the end, but alleles are {alleles}"
+                        )
+                    non_empty_alleles.append(allele)
+                elif i == 0 and aa_empty:
+                    # Single empty allele allowed if it is the starting ancestral allele
                     non_empty_alleles.append(allele)
                 else:
                     empty_seen = True
