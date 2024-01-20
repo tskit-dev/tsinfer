@@ -2309,6 +2309,12 @@ class SgkitSampleData(SampleData):
                     " sgkit dataset, indicating that all the genotypes are"
                     " unphased"
                 )
+        if np.any(np.diff(self.sites_position) <= 0):
+            raise ValueError(
+                "Values taken from the variant_position array are not strictly "
+                "increasing (i.e. have duplicate or out-of-order values). "
+                "These must be masked out to run tsinfer."
+            )
 
     @functools.cached_property
     def format_name(self):

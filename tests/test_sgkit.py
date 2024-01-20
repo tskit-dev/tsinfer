@@ -600,6 +600,22 @@ class TestSgkitSampleDataErrors:
         sgkit.save_dataset(ds, path)
         tsinfer.SgkitSampleData(path)
 
+    def test_duplicate_positions(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
+        ds["variant_position"][2] = ds["variant_position"][1]
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(ValueError, match="duplicate or out-of-order values"):
+            tsinfer.SgkitSampleData(path)
+
+    def test_bad_order_positions(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
+        ds["variant_position"][0] = ds["variant_position"][2] - 0.5
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(ValueError, match="duplicate or out-of-order values"):
+            tsinfer.SgkitSampleData(path)
+
     def test_empty_alleles_not_at_end(self, tmp_path):
         path = tmp_path / "data.zarr"
         ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
