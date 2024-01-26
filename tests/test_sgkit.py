@@ -481,8 +481,49 @@ class TestSgkitMask:
         with pytest.raises(
             ValueError, match="Mask must be the same length as the array"
         ):
-            for _ in chunk_iterator(ds.variant_position, mask=sites_mask):
+            for _ in chunk_iterator(ds.call_genotype, mask=sites_mask):
                 pass
+
+    @pytest.mark.parametrize("sample_list", [[1, 2, 3, 5, 9, 27], [0], []])
+    def test_sgkit_sample_mask(self, tmp_path, sample_list):
+        ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True)
+        ds = sgkit.load_dataset(zarr_path)
+        samples_mask = np.zeros_like(ds["sample_id"], dtype=bool)
+        for i in sample_list:
+            samples_mask[i] = True
+        add_array_to_dataset("samples_mask", samples_mask, zarr_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        assert samples.ploidy == 3
+        assert samples.num_individuals == len(sample_list)
+        assert samples.num_samples == len(sample_list) * samples.ploidy
+        assert np.array_equal(samples.individuals_mask, samples_mask)
+        assert np.array_equal(samples.samples_mask, np.repeat(samples_mask, 3))
+        assert np.array_equal(
+            samples.individuals_time, ds.individuals_time.values[samples_mask]
+        )
+        assert np.array_equal(
+            samples.individuals_location, ds.individuals_location.values[samples_mask]
+        )
+        assert np.array_equal(
+            samples.individuals_population,
+            ds.individuals_population.values[samples_mask],
+        )
+        assert np.array_equal(
+            samples.individuals_flags, ds.individuals_flags.values[samples_mask]
+        )
+        assert np.array_equal(
+            samples.samples_individual, np.repeat(np.arange(len(sample_list)), 3)
+        )
+        expected_gt = ds.call_genotype.values[:, samples_mask, :].reshape(
+            samples.num_sites, len(sample_list) * 3
+        )
+        assert np.array_equal(samples.sites_genotypes, expected_gt)
+        for v, gt in zip(samples.variants(), expected_gt):
+            assert np.array_equal(v.genotypes, gt)
+
+        for i, (id, haplo) in enumerate(samples.haplotypes()):
+            assert id == i
+            assert np.array_equal(haplo, expected_gt[:, i])
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
