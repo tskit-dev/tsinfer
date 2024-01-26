@@ -305,7 +305,7 @@ def zarr_summary(array):
     return ret
 
 
-def chunk_iterator(array, indexes=None, mask=None, dimension=0):
+def chunk_iterator(array, indexes=None, mask=None, orthogonal_mask=None, dimension=0):
     """
     Utility to iterate over closely spaced rows in the specified array efficiently
     by accessing one chunk at a time (normally used as an iterator over each row)
@@ -314,6 +314,8 @@ def chunk_iterator(array, indexes=None, mask=None, dimension=0):
     assert dimension < 2
     if mask is None:
         mask = np.ones(array.shape[dimension], dtype=bool)
+    if orthogonal_mask is None:
+        orthogonal_mask = np.ones(array.shape[int(not dimension)], dtype=bool)
     if len(mask) != array.shape[dimension]:
         raise ValueError("Mask must be the same length as the array")
 
@@ -339,14 +341,14 @@ def chunk_iterator(array, indexes=None, mask=None, dimension=0):
             if chunk_id != prev_chunk_id:
                 chunk = array[chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
                 prev_chunk_id = chunk_id
-            yield chunk[j % chunk_size]
+            yield chunk[j % chunk_size, orthogonal_mask]
     elif dimension == 1:
         for j in indexes:
             chunk_id = j // chunk_size
             if chunk_id != prev_chunk_id:
                 chunk = array[:, chunk_id * chunk_size : (chunk_id + 1) * chunk_size][:]
                 prev_chunk_id = chunk_id
-            yield chunk[:, j % chunk_size]
+            yield chunk[orthogonal_mask, j % chunk_size]
 
 
 def merge_variants(sd1, sd2):
@@ -2297,9 +2299,9 @@ class SgkitSampleData(SampleData):
         self.path = path
         self.data = zarr.open(path, mode="r")
         genotypes_arr = self.data["call_genotype"]
-        _, self._num_individuals, self.ploidy = genotypes_arr.shape
+        _, self._num_unmasked_individuals, self.ploidy = genotypes_arr.shape
         self._num_sites = np.sum(self.sites_mask)
-        self._num_samples = self._num_individuals * self.ploidy
+        self._num_unmasked_samples = self._num_unmasked_individuals * self.ploidy
 
         assert self.ploidy == self.data["call_genotype"].chunks[2]
         if self.ploidy > 1:
@@ -2338,6 +2340,19 @@ class SgkitSampleData(SampleData):
     @property
     def num_sites(self):
         return self._num_sites
+
+    @functools.cached_property
+    def individuals_mask(self):
+        try:
+            return self.data["samples_mask"][:].astype(bool)
+        except KeyError:
+            return np.full(self._num_unmasked_individuals, True, dtype=bool)
+
+    @functools.cached_property
+    def samples_mask(self):
+        # Samples in sgkit are individuals in tskit, so we need to expand
+        # the mask to cover all the samples for each individual.
+        return np.repeat(self.individuals_mask, self.ploidy)
 
     @functools.cached_property
     def sites_metadata_schema(self):
@@ -2433,9 +2448,9 @@ class SgkitSampleData(SampleData):
         gt = self.data["call_genotype"]
         # This method is only used for test/debug so we retrieve and
         # reshape the entire array.
-        return gt[...][self.sites_mask, :, :].reshape(
-            gt.shape[0], gt.shape[1] * gt.shape[2]
-        )
+        ret = gt[...][self.sites_mask, :, :]
+        ret = ret[:, self.individuals_mask, :]
+        return ret.reshape(ret.shape[0], ret.shape[1] * ret.shape[2])
 
     @functools.cached_property
     def provenances_timestamp(self):
@@ -2451,9 +2466,9 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return np.array([], dtype=object)
 
-    @property
+    @functools.cached_property
     def num_samples(self):
-        return self._num_samples
+        return np.sum(self.samples_mask)
 
     @functools.cached_property
     def samples_individual(self):
@@ -2506,12 +2521,12 @@ class SgkitSampleData(SampleData):
 
     @property
     def num_individuals(self):
-        return self._num_individuals
+        return np.sum(self.individuals_mask)
 
     @functools.cached_property
     def individuals_time(self):
         try:
-            return self.data["individuals_time"]
+            return self.data["individuals_time"][:][self.individuals_mask]
         except KeyError:
             return np.full(self.num_individuals, tskit.UNKNOWN_TIME)
 
@@ -2530,11 +2545,14 @@ class SgkitSampleData(SampleData):
         # We set the sample_id in the individual metadata as this is often useful,
         # however we silently don't overwrite if the key exists
         if "individuals_metadata" in self.data:
-            assert len(self.data["individuals_metadata"]) == self.num_individuals
-            assert self.num_individuals == len(self.data["sample_id"])
+            assert (
+                len(self.data["individuals_metadata"]) == self._num_unmasked_individuals
+            )
+            assert self._num_unmasked_individuals == len(self.data["sample_id"])
             md_list = []
             for sample_id, r in zip(
-                self.data["sample_id"], self.data["individuals_metadata"][:]
+                self.data["sample_id"][:][self.individuals_mask],
+                self.data["individuals_metadata"][:][self.individuals_mask],
             ):
                 md = schema.decode_row(r)
                 if "sgkit_sample_id" not in md:
@@ -2543,27 +2561,28 @@ class SgkitSampleData(SampleData):
             return md_list
         else:
             return [
-                {"sgkit_sample_id": sample_id} for sample_id in self.data["sample_id"]
+                {"sgkit_sample_id": sample_id}
+                for sample_id in self.data["sample_id"][:][self.individuals_mask]
             ]
 
     @functools.cached_property
     def individuals_location(self):
         try:
-            return self.data["individuals_location"]
+            return self.data["individuals_location"][:][self.individuals_mask]
         except KeyError:
             return np.array([[]] * self.num_individuals, dtype=float)
 
     @functools.cached_property
     def individuals_population(self):
         try:
-            return self.data["individuals_population"]
+            return self.data["individuals_population"][:][self.individuals_mask]
         except KeyError:
             return np.full((self.num_individuals), tskit.NULL, dtype=np.int32)
 
     @functools.cached_property
     def individuals_flags(self):
         try:
-            return self.data["individuals_flags"]
+            return self.data["individuals_flags"][:][self.individuals_mask]
         except KeyError:
             return np.full((self.num_individuals), 0, dtype=np.int32)
 
@@ -2591,7 +2610,10 @@ class SgkitSampleData(SampleData):
         if recode_ancestral is None:
             recode_ancestral = False
         all_genotypes = chunk_iterator(
-            self.data["call_genotype"], indexes=sites, mask=self.sites_mask
+            self.data["call_genotype"],
+            indexes=sites,
+            mask=self.sites_mask,
+            orthogonal_mask=self.individuals_mask,
         )
         assert MISSING_DATA < 0  # required for geno_map to remap MISSING_DATA
         for genos, site in zip(all_genotypes, self.sites(ids=sites)):
@@ -2633,9 +2655,11 @@ class SgkitSampleData(SampleData):
         aa_index[aa_index == MISSING_DATA] = 0
         gt = self.data["call_genotype"]
         chunk_size = gt.chunks[1]
-        for j in range(self.num_individuals):
-            if j % chunk_size == 0:
-                chunk = gt[:, j : j + chunk_size, :]
+        current_chunk = None
+        for j in np.where(self.individuals_mask)[0]:
+            if j // chunk_size != current_chunk:
+                current_chunk = j // chunk_size
+                chunk = gt[:, j // chunk_size : (j // chunk_size) + chunk_size, :]
                 # Zarr doesn't support fancy indexing, so we have to do this after
                 chunk = chunk[self.sites_mask]
             indiv_gt = chunk[:, j % chunk_size, :]
