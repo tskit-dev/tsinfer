@@ -435,25 +435,25 @@ class TestSgkitMask:
     def test_sgkit_variant_mask(self, tmp_path, sites):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.zeros_like(ds["variant_position"], dtype=bool)
+        sites_mask = np.ones_like(ds["variant_position"], dtype=bool)
         for i in sites:
-            sites_mask[i] = True
+            sites_mask[i] = False
         add_array_to_dataset("variant_mask", sites_mask, zarr_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         assert samples.num_sites == len(sites)
-        assert np.array_equal(samples.sites_mask, sites_mask)
+        assert np.array_equal(samples.sites_mask, ~sites_mask)
         assert np.array_equal(
-            samples.sites_position, ts.tables.sites.position[sites_mask]
+            samples.sites_position, ts.tables.sites.position[~sites_mask]
         )
         inf_ts = tsinfer.infer(samples)
         assert np.array_equal(
-            ts.genotype_matrix()[sites_mask], inf_ts.genotype_matrix()
+            ts.genotype_matrix()[~sites_mask], inf_ts.genotype_matrix()
         )
         assert np.array_equal(
-            ts.tables.sites.position[sites_mask], inf_ts.tables.sites.position
+            ts.tables.sites.position[~sites_mask], inf_ts.tables.sites.position
         )
         assert np.array_equal(
-            ts.tables.sites.ancestral_state[sites_mask],
+            ts.tables.sites.ancestral_state[~sites_mask],
             inf_ts.tables.sites.ancestral_state,
         )
         # TODO - site metadata needs merging not replacing
@@ -464,7 +464,7 @@ class TestSgkitMask:
     def test_sgkit_variant_bad_mask_length(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.ones(ds.sizes["variants"] + 1, dtype=int)
+        sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         add_array_to_dataset("variant_mask", sites_mask, zarr_path)
         with pytest.raises(
             ValueError,
@@ -475,7 +475,7 @@ class TestSgkitMask:
     def test_bad_mask_length_at_iterator(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.ones(ds.sizes["variants"] + 1, dtype=int)
+        sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         from tsinfer.formats import chunk_iterator
 
         with pytest.raises(
@@ -488,33 +488,33 @@ class TestSgkitMask:
     def test_sgkit_sample_mask(self, tmp_path, sample_list):
         ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True)
         ds = sgkit.load_dataset(zarr_path)
-        samples_mask = np.zeros_like(ds["sample_id"], dtype=bool)
+        samples_mask = np.ones_like(ds["sample_id"], dtype=bool)
         for i in sample_list:
-            samples_mask[i] = True
+            samples_mask[i] = False
         add_array_to_dataset("samples_mask", samples_mask, zarr_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         assert samples.ploidy == 3
         assert samples.num_individuals == len(sample_list)
         assert samples.num_samples == len(sample_list) * samples.ploidy
-        assert np.array_equal(samples.individuals_mask, samples_mask)
-        assert np.array_equal(samples.samples_mask, np.repeat(samples_mask, 3))
+        assert np.array_equal(samples.individuals_mask, ~samples_mask)
+        assert np.array_equal(samples.samples_mask, np.repeat(~samples_mask, 3))
         assert np.array_equal(
-            samples.individuals_time, ds.individuals_time.values[samples_mask]
+            samples.individuals_time, ds.individuals_time.values[~samples_mask]
         )
         assert np.array_equal(
-            samples.individuals_location, ds.individuals_location.values[samples_mask]
+            samples.individuals_location, ds.individuals_location.values[~samples_mask]
         )
         assert np.array_equal(
             samples.individuals_population,
-            ds.individuals_population.values[samples_mask],
+            ds.individuals_population.values[~samples_mask],
         )
         assert np.array_equal(
-            samples.individuals_flags, ds.individuals_flags.values[samples_mask]
+            samples.individuals_flags, ds.individuals_flags.values[~samples_mask]
         )
         assert np.array_equal(
             samples.samples_individual, np.repeat(np.arange(len(sample_list)), 3)
         )
-        expected_gt = ds.call_genotype.values[:, samples_mask, :].reshape(
+        expected_gt = ds.call_genotype.values[:, ~samples_mask, :].reshape(
             samples.num_sites, len(sample_list) * 3
         )
         assert np.array_equal(samples.sites_genotypes, expected_gt)
