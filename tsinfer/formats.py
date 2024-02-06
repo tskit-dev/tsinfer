@@ -2344,7 +2344,8 @@ class SgkitSampleData(SampleData):
     @functools.cached_property
     def individuals_mask(self):
         try:
-            return self.data["samples_mask"][:].astype(bool)
+            # We negate the mask as it is much easier in numpy to have True=keep
+            return ~(self.data["samples_mask"][:].astype(bool))
         except KeyError:
             return np.full(self._num_unmasked_individuals, True, dtype=bool)
 
@@ -2399,8 +2400,8 @@ class SgkitSampleData(SampleData):
                 raise ValueError(
                     "Mask must be the same length as the number of unmasked sites"
                 )
-
-            return self.data["variant_mask"].astype(bool)
+            # We negate the mask as it is much easier in numpy to have True=keep
+            return ~(self.data["variant_mask"].astype(bool)[:])
         except KeyError:
             return np.full(self.data["variant_position"].shape, True, dtype=bool)
 
