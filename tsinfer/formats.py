@@ -2295,9 +2295,11 @@ class SgkitSampleData(SampleData):
     FORMAT_NAME = "tsinfer-sgkit-sample-data"
     FORMAT_VERSION = (0, 1)
 
-    def __init__(self, path):
+    def __init__(self, path, sgkit_samples_mask_name=None, sites_mask_name=None):
         self.path = path
         self.data = zarr.open(path, mode="r")
+        self._sgkit_samples_mask_name = sgkit_samples_mask_name
+        self._sites_mask_name = sites_mask_name
         genotypes_arr = self.data["call_genotype"]
         _, self._num_unmasked_individuals, self.ploidy = genotypes_arr.shape
         self._num_sites = np.sum(self.sites_mask)
@@ -2343,11 +2345,17 @@ class SgkitSampleData(SampleData):
 
     @functools.cached_property
     def individuals_mask(self):
-        try:
-            # We negate the mask as it is much easier in numpy to have True=keep
-            return ~(self.data["samples_mask"][:].astype(bool))
-        except KeyError:
+        if self._sgkit_samples_mask_name is None:
             return np.full(self._num_unmasked_individuals, True, dtype=bool)
+        else:
+            try:
+                # We negate the mask as it is much easier in numpy to have True=keep
+                return ~(self.data[self._sgkit_samples_mask_name][:].astype(bool))
+            except KeyError:
+                raise ValueError(
+                    f"The sgkit samples mask {self._sgkit_samples_mask_name} was not"
+                    f" found in the dataset."
+                )
 
     @functools.cached_property
     def samples_mask(self):
@@ -2392,18 +2400,24 @@ class SgkitSampleData(SampleData):
 
     @functools.cached_property
     def sites_mask(self):
-        try:
-            if (
-                self.data["variant_mask"].shape[0]
-                != self.data["variant_position"].shape[0]
-            ):
-                raise ValueError(
-                    "Mask must be the same length as the number of unmasked sites"
-                )
-            # We negate the mask as it is much easier in numpy to have True=keep
-            return ~(self.data["variant_mask"].astype(bool)[:])
-        except KeyError:
+        if self._sites_mask_name is None:
             return np.full(self.data["variant_position"].shape, True, dtype=bool)
+        else:
+            try:
+                if (
+                    self.data[self._sites_mask_name].shape[0]
+                    != self.data["variant_position"].shape[0]
+                ):
+                    raise ValueError(
+                        "Mask must be the same length as the number of unmasked sites"
+                    )
+                # We negate the mask as it is much easier in numpy to have True=keep
+                return ~(self.data[self._sites_mask_name].astype(bool)[:])
+            except KeyError:
+                raise ValueError(
+                    f"The sites mask {self._sites_mask_name} was not found"
+                    f" in the dataset."
+                )
 
     @functools.cached_property
     def sites_ancestral_allele(self):
