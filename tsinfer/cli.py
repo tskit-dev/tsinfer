@@ -299,7 +299,7 @@ def add_samples_file_argument(parser):
         "samples",
         help=(
             "The input sample data in tsinfer 'samples' format. Please see the "
-            "documentation at http://tsinfer.readthedocs.io/ for information on "
+            "documentation at https://tskit.dev/tsinfer/docs/ for information on "
             "how to import data into this format."
         ),
     )
