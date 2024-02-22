@@ -19,7 +19,7 @@
 """
 A progress monitor class for tsinfer
 """
-import tqdm
+from tqdm.auto import tqdm
 
 
 class ProgressMonitor:
@@ -83,7 +83,7 @@ class ProgressMonitor:
             "{desc}{percentage:3.0f}%|{bar}"
             "| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]"
         )
-        self.current_instance = tqdm.tqdm(
+        self.current_instance = tqdm(
             desc=desc,
             total=total,
             disable=not self.enabled,
