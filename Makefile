@@ -1,4 +1,4 @@
-CC=gcc
+CC?=gcc
 CFLAGS=-std=c99 -g -O3 -march=native -funroll-loops -ffast-math \
        # -ftree-vectorize \
        # -ftree-vectorizer-verbose=6 \
