@@ -1780,7 +1780,9 @@ class AncestorMatcher(Matcher):
         logger.info(
             f"Starting ancestor matching for {len(self.ancestor_grouping)} groups"
         )
-        self.match_progress = self.progress_monitor.get("ma_match", self.num_ancestors)
+        self.match_progress = self.progress_monitor.get(
+            "ma_match", self.num_ancestors - 1
+        )
         if self.use_dask:
             logger.info("Using dask for ancestor matching")
             delayed_recombination = dask.delayed(self.recombination, pure=True)
