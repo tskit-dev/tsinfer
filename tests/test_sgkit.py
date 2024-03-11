@@ -435,25 +435,25 @@ class TestSgkitMask:
     def test_sgkit_variant_mask(self, tmp_path, sites):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.zeros_like(ds["variant_position"], dtype=bool)
+        sites_mask = np.ones_like(ds["variant_position"], dtype=bool)
         for i in sites:
-            sites_mask[i] = True
-        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+            sites_mask[i] = False
+        add_array_to_dataset("variant_mask_42", sites_mask, zarr_path)
+        samples = tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_42")
         assert samples.num_sites == len(sites)
-        assert np.array_equal(samples.sites_mask, sites_mask)
+        assert np.array_equal(samples.sites_mask, ~sites_mask)
         assert np.array_equal(
-            samples.sites_position, ts.tables.sites.position[sites_mask]
+            samples.sites_position, ts.tables.sites.position[~sites_mask]
         )
         inf_ts = tsinfer.infer(samples)
         assert np.array_equal(
-            ts.genotype_matrix()[sites_mask], inf_ts.genotype_matrix()
+            ts.genotype_matrix()[~sites_mask], inf_ts.genotype_matrix()
         )
         assert np.array_equal(
-            ts.tables.sites.position[sites_mask], inf_ts.tables.sites.position
+            ts.tables.sites.position[~sites_mask], inf_ts.tables.sites.position
         )
         assert np.array_equal(
-            ts.tables.sites.ancestral_state[sites_mask],
+            ts.tables.sites.ancestral_state[~sites_mask],
             inf_ts.tables.sites.ancestral_state,
         )
         # TODO - site metadata needs merging not replacing
@@ -464,25 +464,87 @@ class TestSgkitMask:
     def test_sgkit_variant_bad_mask_length(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.ones(ds.sizes["variants"] + 1, dtype=int)
-        add_array_to_dataset("variant_mask", sites_mask, zarr_path)
+        sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
+        add_array_to_dataset("variant_mask_foobar", sites_mask, zarr_path)
+        tsinfer.SgkitSampleData(zarr_path)
         with pytest.raises(
             ValueError,
             match="Mask must be the same length as the number of unmasked sites",
         ):
-            tsinfer.SgkitSampleData(zarr_path)
+            tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_foobar")
 
     def test_bad_mask_length_at_iterator(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.ones(ds.sizes["variants"] + 1, dtype=int)
+        sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         from tsinfer.formats import chunk_iterator
 
         with pytest.raises(
             ValueError, match="Mask must be the same length as the array"
         ):
-            for _ in chunk_iterator(ds.variant_position, mask=sites_mask):
+            for _ in chunk_iterator(ds.call_genotype, mask=sites_mask):
                 pass
+
+    @pytest.mark.parametrize("sample_list", [[1, 2, 3, 5, 9, 27], [0], []])
+    def test_sgkit_sample_mask(self, tmp_path, sample_list):
+        ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True)
+        ds = sgkit.load_dataset(zarr_path)
+        samples_mask = np.ones_like(ds["sample_id"], dtype=bool)
+        for i in sample_list:
+            samples_mask[i] = False
+        add_array_to_dataset("samples_mask_69", samples_mask, zarr_path)
+        samples = tsinfer.SgkitSampleData(
+            zarr_path, sgkit_samples_mask_name="samples_mask_69"
+        )
+        assert samples.ploidy == 3
+        assert samples.num_individuals == len(sample_list)
+        assert samples.num_samples == len(sample_list) * samples.ploidy
+        assert np.array_equal(samples.individuals_mask, ~samples_mask)
+        assert np.array_equal(samples.samples_mask, np.repeat(~samples_mask, 3))
+        assert np.array_equal(
+            samples.individuals_time, ds.individuals_time.values[~samples_mask]
+        )
+        assert np.array_equal(
+            samples.individuals_location, ds.individuals_location.values[~samples_mask]
+        )
+        assert np.array_equal(
+            samples.individuals_population,
+            ds.individuals_population.values[~samples_mask],
+        )
+        assert np.array_equal(
+            samples.individuals_flags, ds.individuals_flags.values[~samples_mask]
+        )
+        assert np.array_equal(
+            samples.samples_individual, np.repeat(np.arange(len(sample_list)), 3)
+        )
+        expected_gt = ds.call_genotype.values[:, ~samples_mask, :].reshape(
+            samples.num_sites, len(sample_list) * 3
+        )
+        assert np.array_equal(samples.sites_genotypes, expected_gt)
+        for v, gt in zip(samples.variants(), expected_gt):
+            assert np.array_equal(v.genotypes, gt)
+
+        for i, (id, haplo) in enumerate(samples.haplotypes()):
+            assert id == i
+            assert np.array_equal(haplo, expected_gt[:, i])
+
+    def test_sgkit_missing_masks(self, tmp_path):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples.individuals_mask
+        samples.sites_mask
+        with pytest.raises(
+            ValueError, match="The sites mask foobar was not found in the dataset."
+        ):
+            tsinfer.SgkitSampleData(zarr_path, sites_mask_name="foobar")
+        with pytest.raises(
+            ValueError,
+            match="The sgkit samples mask foobar2 was not found in the dataset.",
+        ):
+            samples = tsinfer.SgkitSampleData(
+                zarr_path, sgkit_samples_mask_name="foobar2"
+            )
+            samples.individuals_mask
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
