@@ -1644,6 +1644,7 @@ class AncestorMatcher(Matcher):
         epoch_end = np.hstack([breaks + 1, [self.num_ancestors]])
         time_slices = np.vstack([epoch_start, epoch_end]).T
         epoch_sizes = time_slices[:, 1] - time_slices[:, 0]
+
         median_size = np.median(epoch_sizes)
         cutoff = 500 * median_size
         # Zero out the first half so that an initial large epoch doesn't
