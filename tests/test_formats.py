@@ -252,7 +252,10 @@ class TestSampleData(DataContainerMixin):
                         genotypes=np.zeros(base_size, dtype=np.int8),
                     )
             # Work around https://github.com/tskit-dev/tsinfer/issues/201
-            small_sample_file.data.store.close()
+            try:
+                small_sample_file.data.store.close()
+            except UnboundLocalError:
+                pass
 
     def test_acceptable_max_file_size(self):
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
