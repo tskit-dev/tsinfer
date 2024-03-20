@@ -46,10 +46,12 @@
 #define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t)(1u << 16))
 
 typedef int8_t allele_t;
+/* TODO should probably change to uint32 when we have removed the old code.*/
+typedef tsk_id_t coordinate_t;
 
 typedef struct {
-    tsk_id_t left;
-    tsk_id_t right;
+    coordinate_t left;
+    coordinate_t right;
     tsk_id_t parent;
     tsk_id_t child;
 } edge_t;
@@ -209,6 +211,54 @@ typedef struct {
     } output;
 } ancestor_matcher_t;
 
+typedef struct {
+    tsk_flags_t flags;
+    size_t num_sites;
+    size_t num_nodes;
+    size_t num_mutations;
+    size_t num_edges;
+    struct {
+        coordinate_t *position;
+        mutation_list_node_t **mutations;
+        tsk_size_t *num_alleles;
+    } sites;
+    edge_t *left_index_edges;
+    edge_t *right_index_edges;
+    tsk_blkalloc_t allocator;
+} matcher_indexes_t;
+
+typedef struct {
+    int flags;
+    const matcher_indexes_t *matcher_indexes;
+    size_t num_nodes;
+    size_t num_sites;
+    /* Input LS model rates */
+    unsigned int precision;
+    double *recombination_rate;
+    double *mismatch_rate;
+    /* The quintuply linked tree */
+    tsk_id_t *parent;
+    tsk_id_t *left_child;
+    tsk_id_t *right_child;
+    tsk_id_t *left_sib;
+    tsk_id_t *right_sib;
+    double *likelihood;
+    double *likelihood_cache;
+    allele_t *allelic_state;
+    int num_likelihood_nodes;
+    /* At each site, record a node with the maximum likelihood. */
+    tsk_id_t *max_likelihood_node;
+    /* Used during traceback to map nodes where recombination is required. */
+    int8_t *recombination_required;
+    tsk_id_t *likelihood_nodes_tmp;
+    tsk_id_t *likelihood_nodes;
+    node_state_list_t *traceback;
+    tsk_blkalloc_t traceback_allocator;
+    size_t total_traceback_size;
+    size_t traceback_block_size;
+    size_t traceback_realloc_size;
+} ancestor_matcher2_t;
+
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     size_t num_sites, int mmap_fd, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
@@ -266,6 +316,24 @@ int tree_sequence_builder_dump_edges(tree_sequence_builder_t *self, tsk_id_t *le
     tsk_id_t *right, tsk_id_t *parent, tsk_id_t *children);
 int tree_sequence_builder_dump_mutations(tree_sequence_builder_t *self, tsk_id_t *site,
     tsk_id_t *node, allele_t *derived_state, tsk_id_t *parent);
+
+/* New impelementation */
+
+int matcher_indexes_alloc(
+    matcher_indexes_t *self, const tsk_table_collection_t *tables, tsk_flags_t options);
+int matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out);
+int matcher_indexes_free(matcher_indexes_t *self);
+
+int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
+    const matcher_indexes_t *matcher_indexes, double *recombination_rate,
+    double *mismatch_rate, unsigned int precision, int flags);
+int ancestor_matcher2_free(ancestor_matcher2_t *self);
+int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
+    const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
+    tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent);
+int ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out);
+double ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self);
+size_t ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self);
 
 int packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest);
 void unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest);

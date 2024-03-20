@@ -20,8 +20,10 @@
 Integrity tests for the low-level module.
 """
 import sys
+import tempfile
 
 import pytest
+import tskit
 
 import _tsinfer
 
@@ -151,3 +153,30 @@ class TestAncestorBuilder:
                 assert str(record.value) == msg
 
     # TODO need tester methods for the remaining methonds in the class.
+
+
+class TestMatcherIndexes:
+    def test_single_tree(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        print(mi)
+        mi.print_state(sys.stdout)
+
+    def test_print_state(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        with pytest.raises(TypeError):
+            mi.print_state()
+
+        with tempfile.TemporaryFile("w+") as f:
+            mi.print_state(f)
+            f.seek(0)
+            output = f.read()
+        assert len(output) > 0
+        assert "indexes" in output
