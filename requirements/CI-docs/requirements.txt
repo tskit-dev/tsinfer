@@ -1,11 +1,11 @@
 jupyter-book==0.15.1
 sphinx-issues==3.0.1
 sphinx-argparse==0.4.0
-humanize==4.7.0
+humanize==4.8.0
 lmdb==1.4.1
-tqdm==4.65.0
+tqdm==4.66.1
 daiquiri==3.2.1
 msprime==1.2.0
 sgkit[vcf]==0.7.0
-ipywidgets==8.1.0
+ipywidgets==8.1.1
 sphinx-book-theme #Unpinned to allow easy updating.
