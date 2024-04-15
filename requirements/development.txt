@@ -2,8 +2,6 @@ attrs
 codecov
 coverage
 flake8
-# Held at < 1.22 for sgkit compat
-numpy<1.22
 six
 tqdm
 humanize
@@ -12,6 +10,7 @@ dask[array]
 msprime >= 1.0.0
 tskit >= 0.5.3
 lmdb
+pre-commit
 pytest
 pytest-coverage
 # Only for giving nice error messages for incompatible older files
@@ -27,17 +26,11 @@ sphinx-argparse
 sphinx_rtd_theme
 setuptools>=45
 setuptools_scm
-cyvcf2
 # Needed for evaluation script.
-# Held at < 1.4.0 for sgkit compat
-pandas<1.4.0
 matplotlib
 seaborn
 colorama
 sgkit[vcf]
-# Held at zarr<2.11.0,>=2.10.0 for sgkit compat, was zarr!=2.11.0, !=2.11.1, !=2.11.2 for tskit
-zarr<2.11.0,>=2.10.0
-numba
 sphinx-book-theme
 jupyter-book
 sphinx-issues
