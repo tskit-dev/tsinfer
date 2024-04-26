@@ -25,243 +25,21 @@ import pickle
 import sys
 import tempfile
 
-import msprime
 import numcodecs
 import numpy as np
 import pytest
 import sgkit
 import tskit
-import xarray as xr
+import tsutil
 import zarr
 
 import tsinfer
 from tsinfer import formats
 
-EXAMPLE_SCHEMA = tskit.MetadataSchema(
-    {"codec": "json", "properties": {"foo": {"type": "integer"}}}
-)
-
-
-def add_array_to_dataset(name, array, zarr_path, dims=None):
-    ds = sgkit.load_dataset(zarr_path)
-    ds.update({name: xr.DataArray(data=array, dims=dims, name=name)})
-    sgkit.save_dataset(ds.drop_vars(set(ds.data_vars) - {name}), zarr_path, mode="a")
-
-
-def add_attribute_to_dataset(name, contents, zarr_path):
-    ds = sgkit.load_dataset(zarr_path)
-    ds.attrs[name] = contents
-    sgkit.save_dataset(ds, zarr_path, mode="a")
-
-
-def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
-    import sgkit.io.vcf
-
-    ts = msprime.sim_ancestry(
-        samples=100,
-        ploidy=3,
-        recombination_rate=0.25,
-        sequence_length=250,
-        random_seed=42,
-    )
-    ts = msprime.sim_mutations(ts, rate=0.025, model=msprime.JC69(), random_seed=42)
-    tables = ts.dump_tables()
-    tables.metadata_schema = EXAMPLE_SCHEMA
-    sites_copy = tables.sites.copy()
-    tables.sites.clear()
-    tables.sites.metadata_schema = EXAMPLE_SCHEMA
-    for i, site in enumerate(sites_copy):
-        tables.sites.append(site.replace(metadata={"id_site": i}))
-
-    pops_copy = tables.populations.copy()
-    tables.populations.clear()
-    tables.populations.metadata_schema = EXAMPLE_SCHEMA
-    for i, pop in enumerate(pops_copy):
-        tables.populations.append(pop.replace(metadata={"id_pop": i}))
-
-    indiv_copy = tables.individuals.copy()
-    tables.individuals.clear()
-    tables.individuals.metadata_schema = EXAMPLE_SCHEMA
-    for i, ind in enumerate(indiv_copy):
-        tables.individuals.append(ind.replace(metadata={"id_indiv": i}))
-
-    ts = tables.tree_sequence()
-
-    # For simplicity, we would like go directly from the tree sequence to the sgkit
-    # dataset, but for testing it is desirable to have sgkit code write as much of the
-    # data as possible.
-    with open(path / "data.vcf", "w") as f:
-        ts.write_vcf(f)
-    sgkit.io.vcf.vcf_to_zarr(
-        path / "data.vcf",
-        path / "data.zarr",
-        ploidy=3,
-        max_alt_alleles=4,  # tests tsinfer's ability to handle empty string alleles
-    )
-
-    ancestral_allele = [site.ancestral_state for site in ts.sites()]
-    add_array_to_dataset(
-        "variant_ancestral_allele",
-        ancestral_allele,
-        path / "data.zarr",
-        dims=["variants"],
-    )
-
-    unseen_ancestral_allele_count = 0
-    for variant in ts.variants():
-        ancestral_index = variant.alleles.index(variant.site.ancestral_state)
-        if ancestral_index not in variant.genotypes:
-            unseen_ancestral_allele_count += 1
-    assert unseen_ancestral_allele_count > 0
-
-    if shuffle_alleles:
-        # Tskit will always put the ancestral allele in the REF field, which will then
-        # be the zeroth allele in the zarr file.  We need to shuffle the alleles around
-        # to make sure that we test ancestral allele handling.
-        ds = sgkit.load_dataset(path / "data.zarr")
-        site_alleles = ds["variant_allele"].values
-        assert np.all(ds.variant_allele.values[:, 0] == ancestral_allele)
-        num_alleles = [len([a for a in alleles if a != ""]) for alleles in site_alleles]
-        random = np.random.RandomState(42)
-        new_ancestral_allele_pos = [random.randint(0, n) for n in num_alleles]
-        new_site_alleles = []
-        index_remappers = []
-        for alleles, new_pos in zip(site_alleles, new_ancestral_allele_pos):
-            alleles = list(alleles)
-            indexes = list(range(len(alleles)))
-            alleles.insert(new_pos, alleles.pop(0))
-            indexes.insert(new_pos, indexes.pop(0))
-            new_site_alleles.append(alleles)
-            indexes = np.argsort(indexes)
-            index_remappers.append(np.array(indexes))
-        new_site_alleles = np.array(new_site_alleles, dtype=object)
-        assert np.any(new_site_alleles[:, 0] != ancestral_allele)
-        ds["variant_allele"] = xr.DataArray(
-            new_site_alleles, dims=["variants", "alleles"]
-        )
-        genotypes = ds["call_genotype"].values
-        for i, remapper in enumerate(index_remappers):
-            genotypes[i] = remapper[genotypes[i]]
-        ds["call_genotype"] = xr.DataArray(
-            genotypes, dims=["variants", "samples", "ploidy"]
-        )
-        sgkit.save_dataset(
-            ds.drop_vars(set(ds.data_vars) - {"call_genotype", "variant_allele"}),
-            path / "data.zarr",
-            mode="a",
-        )
-
-    if add_optional:
-        add_attribute_to_dataset(
-            "sequence_length",
-            ts.sequence_length + 1337,
-            path / "data.zarr",
-        )
-        add_array_to_dataset(
-            "sites_metadata",
-            np.array(
-                [
-                    tables.sites.metadata_schema.encode_row(site.metadata)
-                    for site in ts.sites()
-                ]
-            ),
-            path / "data.zarr",
-            ["variants"],
-        )
-        add_array_to_dataset(
-            "sites_time",
-            np.arange(ts.num_sites) / ts.num_sites,
-            path / "data.zarr",
-            ["variants"],
-        )
-        add_attribute_to_dataset(
-            "sites_metadata_schema",
-            repr(tables.sites.metadata_schema),
-            path / "data.zarr",
-        )
-        add_attribute_to_dataset(
-            "metadata_schema",
-            repr(tables.metadata_schema),
-            path / "data.zarr",
-        )
-        add_array_to_dataset(
-            "provenances_timestamp",
-            ["2021-01-01T00:00:00", "2021-01-02T00:00:00"],
-            path / "data.zarr",
-            ["provenances"],
-        )
-        add_array_to_dataset(
-            "provenances_record",
-            ['{"foo": 1}', '{"foo": 2}'],
-            path / "data.zarr",
-            ["provenances"],
-        )
-        add_attribute_to_dataset(
-            "populations_metadata_schema",
-            repr(tables.populations.metadata_schema),
-            path / "data.zarr",
-        )
-        add_array_to_dataset(
-            "populations_metadata",
-            np.array(
-                [
-                    tables.populations.metadata_schema.encode_row(population.metadata)
-                    for population in ts.populations()
-                ]
-            ),
-            path / "data.zarr",
-            ["populations"],
-        )
-        add_array_to_dataset(
-            "individuals_time",
-            np.arange(ts.num_individuals, dtype=np.float32),
-            path / "data.zarr",
-            ["samples"],
-        )
-        add_array_to_dataset(
-            "individuals_metadata",
-            np.array(
-                [
-                    tables.individuals.metadata_schema.encode_row(individual.metadata)
-                    for individual in ts.individuals()
-                ]
-            ),
-            path / "data.zarr",
-            ["samples"],
-        )
-        add_array_to_dataset(
-            "individuals_location",
-            np.tile(np.array([["0", "1"]], dtype="float32"), (ts.num_individuals, 1)),
-            path / "data.zarr",
-            ["samples", "coordinates"],
-        )
-        add_array_to_dataset(
-            "individuals_population",
-            np.zeros(ts.num_individuals, dtype="int32"),
-            path / "data.zarr",
-            ["samples"],
-        )
-        add_array_to_dataset(
-            "individuals_flags",
-            np.random.RandomState(42).randint(
-                0, 2_000_000, ts.num_individuals, dtype="int32"
-            ),
-            path / "data.zarr",
-            ["samples"],
-        )
-        add_attribute_to_dataset(
-            "individuals_metadata_schema",
-            repr(tables.individuals.metadata_schema),
-            path / "data.zarr",
-        )
-        ds = sgkit.load_dataset(path / "data.zarr")
-
-    return ts, path / "data.zarr"
-
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_dataset_roundtrip(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     samples = tsinfer.SgkitSampleData(zarr_path)
     inf_ts = tsinfer.infer(samples)
     ds = sgkit.load_dataset(zarr_path)
@@ -291,7 +69,7 @@ def test_sgkit_dataset_roundtrip(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_individual_metadata_not_clobbered(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     # Load the zarr to add metadata for testing
     zarr_root = zarr.open(zarr_path)
     empty_obj = json.dumps({}).encode()
@@ -320,7 +98,9 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_dataset_accessors(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True, shuffle_alleles=False)
+    ts, zarr_path = tsutil.make_ts_and_zarr(
+        tmp_path, add_optional=True, shuffle_alleles=False
+    )
     samples = tsinfer.SgkitSampleData(zarr_path)
     ds = sgkit.load_dataset(zarr_path)
 
@@ -350,7 +130,7 @@ def test_sgkit_dataset_accessors(tmp_path):
     assert np.array_equal(
         samples.samples_individual, np.repeat(np.arange(ts.num_samples // 3), 3)
     )
-    assert samples.metadata_schema == EXAMPLE_SCHEMA.schema
+    assert samples.metadata_schema == tsutil.EXAMPLE_SCHEMA.schema
     assert samples.metadata == ts.tables.metadata
     assert (
         samples.populations_metadata_schema
@@ -384,7 +164,7 @@ def test_sgkit_dataset_accessors(tmp_path):
     )
 
     # Need to shuffle for the ancestral allele test
-    ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path, add_optional=True)
     samples = tsinfer.SgkitSampleData(zarr_path)
     for i in range(ts.num_sites):
         assert (
@@ -395,7 +175,7 @@ def test_sgkit_dataset_accessors(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_accessors_defaults(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     samples = tsinfer.SgkitSampleData(zarr_path)
     ds = sgkit.load_dataset(zarr_path)
 
@@ -433,12 +213,12 @@ def test_sgkit_accessors_defaults(tmp_path):
 class TestSgkitMask:
     @pytest.mark.parametrize("sites", [[1, 2, 3, 5, 9, 27], [0], []])
     def test_sgkit_variant_mask(self, tmp_path, sites):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
         sites_mask = np.ones_like(ds["variant_position"], dtype=bool)
         for i in sites:
             sites_mask[i] = False
-        add_array_to_dataset("variant_mask_42", sites_mask, zarr_path)
+        tsutil.add_array_to_dataset("variant_mask_42", sites_mask, zarr_path)
         samples = tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_42")
         assert samples.num_sites == len(sites)
         assert np.array_equal(samples.sites_mask, ~sites_mask)
@@ -462,10 +242,10 @@ class TestSgkitMask:
         # ]
 
     def test_sgkit_variant_bad_mask_length(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
         sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
-        add_array_to_dataset("variant_mask_foobar", sites_mask, zarr_path)
+        tsutil.add_array_to_dataset("variant_mask_foobar", sites_mask, zarr_path)
         tsinfer.SgkitSampleData(zarr_path)
         with pytest.raises(
             ValueError,
@@ -474,7 +254,7 @@ class TestSgkitMask:
             tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_foobar")
 
     def test_bad_mask_length_at_iterator(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
         sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         from tsinfer.formats import chunk_iterator
@@ -487,12 +267,12 @@ class TestSgkitMask:
 
     @pytest.mark.parametrize("sample_list", [[1, 2, 3, 5, 9, 27], [0], []])
     def test_sgkit_sample_mask(self, tmp_path, sample_list):
-        ts, zarr_path = make_ts_and_zarr(tmp_path, add_optional=True)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path, add_optional=True)
         ds = sgkit.load_dataset(zarr_path)
         samples_mask = np.ones_like(ds["sample_id"], dtype=bool)
         for i in sample_list:
             samples_mask[i] = False
-        add_array_to_dataset("samples_mask_69", samples_mask, zarr_path)
+        tsutil.add_array_to_dataset("samples_mask_69", samples_mask, zarr_path)
         samples = tsinfer.SgkitSampleData(
             zarr_path, sgkit_samples_mask_name="samples_mask_69"
         )
@@ -529,7 +309,7 @@ class TestSgkitMask:
             assert np.array_equal(haplo, expected_gt[:, i])
 
     def test_sgkit_sample_and_site_mask(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
         # Mask out a random 1/3 of sites
         variant_mask = np.zeros(ts.num_sites, dtype=bool)
@@ -542,10 +322,10 @@ class TestSgkitMask:
         samples_mask[
             random.choice(ts.num_individuals, ts.num_individuals // 3, replace=False)
         ] = True
-        add_array_to_dataset(
+        tsutil.add_array_to_dataset(
             "variant_mask_foobar", variant_mask, zarr_path, dims=["variants"]
         )
-        add_array_to_dataset(
+        tsutil.add_array_to_dataset(
             "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
         )
         samples = tsinfer.SgkitSampleData(
@@ -570,7 +350,7 @@ class TestSgkitMask:
             assert np.array_equal(v.genotypes, ds_genotypes[i])
 
     def test_sgkit_missing_masks(self, tmp_path):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         samples.individuals_mask
         samples.sites_mask
@@ -588,55 +368,29 @@ class TestSgkitMask:
             samples.individuals_mask
 
     def test_sgkit_subset_equivalence(self, tmp_path, tmpdir):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
-        ds = sgkit.load_dataset(zarr_path)
-        random = np.random.RandomState(42)
-        # Mask out a random 1/3 of sites
-        variant_mask = np.zeros(ts.num_sites, dtype=bool)
-        variant_mask[
-            random.choice(ts.num_sites, ts.num_sites // 3, replace=False)
-        ] = True
-        # Mask out a random 1/3 of samples
-        samples_mask = np.zeros(ts.num_individuals, dtype=bool)
-        samples_mask[
-            random.choice(ts.num_individuals, ts.num_individuals // 3, replace=False)
-        ] = True
-
-        add_array_to_dataset(
-            "variant_mask_foobar", variant_mask, zarr_path, dims=["variants"]
-        )
-        add_array_to_dataset(
-            "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
-        )
-
-        # Create a new sgkit dataset with the subset baked in
-        ds_subset = ds.isel(variants=~variant_mask, samples=~samples_mask)
-        sgkit.save_dataset(ds_subset, tmpdir / "subset.zarr")
-
-        sd_subset = tsinfer.SgkitSampleData(tmpdir / "subset.zarr")
-        sd = tsinfer.SgkitSampleData(
-            zarr_path,
-            sites_mask_name="variant_mask_foobar",
-            sgkit_samples_mask_name="samples_mask_foobar",
-        )
-
-        assert sd.num_sites == sd_subset.num_sites
-        assert sd.num_samples == sd_subset.num_samples
-        assert sd.num_individuals == sd_subset.num_individuals
-        assert np.array_equal(sd.individuals_mask, ~samples_mask)
-        assert np.array_equal(sd.samples_mask, np.repeat(~samples_mask, 3))
-        assert np.array_equal(sd.sites_position, sd_subset.sites_position)
-        assert np.array_equal(sd.sites_alleles, sd_subset.sites_alleles)
-        assert np.array_equal(sd.sites_mask, ~variant_mask)
+        (
+            mat_sd,
+            mask_sd,
+            samples_mask,
+            variant_mask,
+        ) = tsutil.make_materialized_and_masked_sampledata(tmp_path, tmpdir)
+        assert mat_sd.num_sites == mat_sd.num_sites
+        assert mask_sd.num_samples == mat_sd.num_samples
+        assert mask_sd.num_individuals == mat_sd.num_individuals
+        assert np.array_equal(mask_sd.individuals_mask, ~samples_mask)
+        assert np.array_equal(mask_sd.samples_mask, np.repeat(~samples_mask, 3))
+        assert np.array_equal(mask_sd.sites_position, mat_sd.sites_position)
+        assert np.array_equal(mask_sd.sites_alleles, mat_sd.sites_alleles)
+        assert np.array_equal(mask_sd.sites_mask, ~variant_mask)
         assert np.array_equal(
-            sd.sites_ancestral_allele, sd_subset.sites_ancestral_allele
+            mask_sd.sites_ancestral_allele, mat_sd.sites_ancestral_allele
         )
-        assert np.array_equal(sd.sites_genotypes, sd_subset.sites_genotypes)
-        assert np.array_equal(sd.samples_individual, sd_subset.samples_individual)
-        assert np.array_equal(sd.individuals_metadata, sd_subset.individuals_metadata)
+        assert np.array_equal(mask_sd.sites_genotypes, mat_sd.sites_genotypes)
+        assert np.array_equal(mask_sd.samples_individual, mat_sd.samples_individual)
+        assert np.array_equal(mask_sd.individuals_metadata, mat_sd.individuals_metadata)
 
-        haplotypes = list(sd.haplotypes())
-        haplotypes_subset = list(sd_subset.haplotypes())
+        haplotypes = list(mask_sd.haplotypes())
+        haplotypes_subset = list(mat_sd.haplotypes())
         assert len(haplotypes) == len(haplotypes_subset)
         for (id, haplo), (id_subset, haplo_subset) in zip(
             haplotypes, haplotypes_subset
@@ -644,14 +398,14 @@ class TestSgkitMask:
             assert id == id_subset
             assert np.array_equal(haplo, haplo_subset)
 
-        variants = list(sd.variants())
-        variants_subset = list(sd_subset.variants())
+        variants = list(mask_sd.variants())
+        variants_subset = list(mat_sd.variants())
         assert len(variants) == len(variants_subset)
         for v, v_subset in zip(variants, variants_subset):
             assert np.array_equal(v.genotypes, v_subset.genotypes)
 
-        haplotypes = list(sd._slice_haplotypes((0, sd.num_samples)))
-        haplotypes_subset = list(sd_subset._slice_haplotypes((0, sd.num_samples)))
+        haplotypes = list(mask_sd._slice_haplotypes((0, mask_sd.num_samples)))
+        haplotypes_subset = list(mat_sd._slice_haplotypes((0, mask_sd.num_samples)))
         assert len(haplotypes) == len(haplotypes_subset)
         for (id, haplo), (id_subset, haplo_subset) in zip(
             haplotypes, haplotypes_subset
@@ -659,8 +413,8 @@ class TestSgkitMask:
             assert id == id_subset
             assert np.array_equal(haplo, haplo_subset)
 
-        ancestors_subset = tsinfer.generate_ancestors(sd_subset)
-        ancestors = tsinfer.generate_ancestors(sd)
+        ancestors_subset = tsinfer.generate_ancestors(mat_sd)
+        ancestors = tsinfer.generate_ancestors(mask_sd)
         assert np.array_equal(ancestors_subset.sites_position, ancestors.sites_position)
         assert np.array_equal(
             ancestors_subset.ancestors_start, ancestors.ancestors_start
@@ -676,18 +430,18 @@ class TestSgkitMask:
             ancestors.ancestors_full_haplotype,
         )
 
-        anc_ts_subset = tsinfer.match_ancestors(sd_subset, ancestors_subset)
-        anc_ts = tsinfer.match_ancestors(sd, ancestors)
-        anc_ts_subset.tables.assert_equals(anc_ts.tables, ignore_timestamps=True)
+        mat_anc_ts = tsinfer.match_ancestors(mat_sd, ancestors_subset)
+        mask_anc_ts = tsinfer.match_ancestors(mask_sd, ancestors)
+        mat_anc_ts.tables.assert_equals(mask_anc_ts.tables, ignore_timestamps=True)
 
-        ts_subset = tsinfer.match_samples(sd_subset, anc_ts_subset)
-        ts = tsinfer.match_samples(sd, anc_ts)
-        ts_subset.tables.assert_equals(ts.tables, ignore_timestamps=True)
+        mat_ts = tsinfer.match_samples(mat_sd, mat_anc_ts)
+        mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)
+        mat_ts.tables.assert_equals(mask_ts.tables, ignore_timestamps=True)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_sgkit_ancestral_allele_same_ancestors(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ts_sampledata = tsinfer.SampleData.from_tree_sequence(ts)
     sg_sampledata = tsinfer.SgkitSampleData(zarr_path)
     ts_ancestors = tsinfer.generate_ancestors(ts_sampledata)
@@ -711,7 +465,7 @@ def test_sgkit_ancestral_allele_same_ancestors(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
 def test_missing_ancestral_allele(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
     ds = ds.drop_vars(["variant_ancestral_allele"])
     sgkit.save_dataset(ds, str(zarr_path) + ".tmp")
@@ -722,7 +476,7 @@ def test_missing_ancestral_allele(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_ancestral_missingness(tmp_path):
-    ts, zarr_path = make_ts_and_zarr(tmp_path)
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
     ancestral_allele = ds.variant_ancestral_allele.values
     ancestral_allele[0] = "N"
@@ -731,7 +485,7 @@ def test_ancestral_missingness(tmp_path):
     ancestral_allele[15] = "💩"
     ds = ds.drop_vars(["variant_ancestral_allele"])
     sgkit.save_dataset(ds, str(zarr_path) + ".tmp")
-    add_array_to_dataset(
+    tsutil.add_array_to_dataset(
         "variant_ancestral_allele",
         ancestral_allele,
         str(zarr_path) + ".tmp",
@@ -833,13 +587,11 @@ class TestSgkitSampleDataErrors:
             tsinfer.infer(samples)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 class TestSgkitMatchSamplesToDisk:
-    @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
-    @pytest.mark.parametrize("slice", [(0, 5), (0, 0), (0, 1), (10, 15)])
-    def test_match_samples_to_disk_write(
-        self, slice, small_sd_fixture, tmp_path, tmpdir
-    ):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+    @pytest.mark.parametrize("slice", [(0, 6), (0, 0), (0, 3), (12, 15)])
+    def test_match_samples_to_disk_write(self, slice, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
@@ -852,16 +604,25 @@ class TestSgkitMatchSamplesToDisk:
         for m in matches:
             assert isinstance(m, tsinfer.inference.MatchResult)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
-    def test_match_samples_to_disk_full(self, small_sd_fixture, tmp_path, tmpdir):
-        ts, zarr_path = make_ts_and_zarr(tmp_path)
+    def test_match_samples_to_disk_slice_error(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        ancestors = tsinfer.generate_ancestors(samples)
+        anc_ts = tsinfer.match_ancestors(samples, ancestors)
+        with pytest.raises(ValueError, match="Slice must be a multiple of ploidy"):
+            tsinfer.match_samples_slice_to_disk(
+                samples, anc_ts, (0, 1), tmpdir / "test.path"
+            )
+
+    def test_match_samples_to_disk_full(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
         ts = tsinfer.match_samples(samples, anc_ts)
         start_index = 0
         while start_index < ts.num_samples:
-            end_index = min(start_index + 5, ts.num_samples)
+            end_index = min(start_index + 6, ts.num_samples)
             tsinfer.match_samples_slice_to_disk(
                 samples,
                 anc_ts,
@@ -874,15 +635,59 @@ class TestSgkitMatchSamplesToDisk:
         )
         ts.tables.assert_equals(batch_ts.tables, ignore_provenance=True)
 
-        tmpdir.join("test-5.path").copy(tmpdir.join("test-5-copy.path"))
-        with pytest.raises(ValueError, match="Duplicate sample index 5"):
+        tmpdir.join("test-6.path").copy(tmpdir.join("test-6-copy.path"))
+        with pytest.raises(ValueError, match="Duplicate sample index 6"):
             tsinfer.match_samples(
                 samples, anc_ts, match_file_pattern=str(tmpdir / "*.path")
             )
 
-        os.remove(tmpdir / "test-5.path")
-        os.remove(tmpdir / "test-5-copy.path")
-        with pytest.raises(ValueError, match="index 5 not found"):
+        os.remove(tmpdir / "test-6.path")
+        os.remove(tmpdir / "test-6-copy.path")
+        with pytest.raises(ValueError, match="index 6 not found"):
             tsinfer.match_samples(
                 samples, anc_ts, match_file_pattern=str(tmpdir / "*.path")
             )
+
+    def test_match_samples_to_disk_with_mask(self, tmp_path, tmpdir):
+        mat_sd, mask_sd, _, _ = tsutil.make_materialized_and_masked_sampledata(
+            tmp_path, tmpdir
+        )
+        mat_ancestors = tsinfer.generate_ancestors(mat_sd)
+        mask_ancestors = tsinfer.generate_ancestors(mask_sd)
+        mat_anc_ts = tsinfer.match_ancestors(mat_sd, mat_ancestors)
+        mask_anc_ts = tsinfer.match_ancestors(mask_sd, mask_ancestors)
+        start_index = 0
+        while start_index < mat_sd.num_samples:
+            end_index = min(start_index + 6, mat_sd.num_samples)
+            tsinfer.match_samples_slice_to_disk(
+                mat_sd,
+                mat_anc_ts,
+                (start_index, end_index),
+                tmpdir / f"test-mat-{start_index}.path",
+            )
+            start_index = end_index
+
+        mat_ts_disk = tsinfer.match_samples(
+            mat_sd, mat_anc_ts, match_file_pattern=str(tmpdir / "test-mat-*.path")
+        )
+
+        start_index = 0
+        while start_index < mask_sd.num_samples:
+            end_index = min(start_index + 6, mask_sd.num_samples)
+            tsinfer.match_samples_slice_to_disk(
+                mask_sd,
+                mask_anc_ts,
+                (start_index, end_index),
+                tmpdir / f"test-mask-{start_index}.path",
+            )
+            start_index = end_index
+        mask_ts_disk = tsinfer.match_samples(
+            mask_sd, mask_anc_ts, match_file_pattern=str(tmpdir / "test-mask-*.path")
+        )
+
+        mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)
+        mat_ts = tsinfer.match_samples(mat_sd, mat_anc_ts)
+
+        mat_ts.tables.assert_equals(mask_ts.tables, ignore_timestamps=True)
+        mask_ts.tables.assert_equals(mask_ts_disk.tables, ignore_timestamps=True)
+        mask_ts_disk.tables.assert_equals(mat_ts_disk.tables, ignore_timestamps=True)

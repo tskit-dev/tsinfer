@@ -2693,6 +2693,11 @@ class SgkitSampleData(SampleData):
 
     def _slice_haplotypes(self, samples_slice, sites=None, recode_ancestral=None):
         # Note that this function loads the entire slice into RAM.
+
+        # Error if samples_slice is not multiple of ploidy
+        if samples_slice[0] % self.ploidy != 0 or samples_slice[1] % self.ploidy != 0:
+            raise ValueError("Slice must be a multiple of ploidy")
+
         start, stop = samples_slice
         if recode_ancestral is None:
             recode_ancestral = False
@@ -2704,8 +2709,8 @@ class SgkitSampleData(SampleData):
         # Calculate individual's start and stop points based on ploidy
         indiv_start = start // self.ploidy
         indiv_stop = (stop + self.ploidy - 1) // self.ploidy  # round up the division
-
         individuals_index = np.where(self.individuals_mask)[0]
+
         unmasked_start = individuals_index[indiv_start]
         unmasked_stop = individuals_index[indiv_stop - 1] + 1
         gt_slice = gt[:, unmasked_start:unmasked_stop, :]
