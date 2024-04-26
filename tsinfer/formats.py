@@ -2671,7 +2671,7 @@ class SgkitSampleData(SampleData):
         gt = self.data["call_genotype"]
         chunk_size = gt.chunks[1]
         current_chunk = None
-        for j in np.where(self.individuals_mask)[0]:
+        for i, j in enumerate(np.where(self.individuals_mask)[0]):
             if j // chunk_size != current_chunk:
                 current_chunk = j // chunk_size
                 chunk = gt[:, j // chunk_size : (j // chunk_size) + chunk_size, :]
@@ -2689,7 +2689,7 @@ class SgkitSampleData(SampleData):
                             np.logical_and(a != MISSING_DATA, a < aa_index), a + 1, a
                         ),
                     )
-                yield (j * self.ploidy) + k, a if sites is None else a[sites]
+                yield (i * self.ploidy) + k, a if sites is None else a[sites]
 
     def _slice_haplotypes(self, samples_slice, sites=None, recode_ancestral=None):
         # Note that this function loads the entire slice into RAM.
@@ -2705,9 +2705,13 @@ class SgkitSampleData(SampleData):
         indiv_start = start // self.ploidy
         indiv_stop = (stop + self.ploidy - 1) // self.ploidy  # round up the division
 
-        gt_slice = gt[:, indiv_start:indiv_stop, :]
+        individuals_index = np.where(self.individuals_mask)[0]
+        unmasked_start = individuals_index[indiv_start]
+        unmasked_stop = individuals_index[indiv_stop - 1] + 1
+        gt_slice = gt[:, unmasked_start:unmasked_stop, :]
         # Zarr doesn't support boolean indexing so we have to do this after
         gt_slice = gt_slice[self.sites_mask]
+        gt_slice = gt_slice[:, self.individuals_mask[unmasked_start:unmasked_stop]]
 
         for j, individual in enumerate(range(indiv_start, indiv_stop)):
             for k in range(self.ploidy):

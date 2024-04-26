@@ -803,7 +803,6 @@ def match_samples(
         # so that any historical ones come first, any we bomb out early if they conflict
         # but that would mean re-ordering the sample nodes in the final ts, and
         # we sometimes assume they are in the same order as in the file
-
     manager.match_samples(sample_indexes, sample_times)
     ts = manager.finalise(map_additional_sites)
     if post_process:
@@ -2021,6 +2020,7 @@ class SampleMatcher(Matcher):
         if isinstance(sampledata_or_path, formats.SampleData):
             sample_data = sampledata_or_path
         else:
+            raise AssertionError("MASKS NOT APPLIED")
             sample_data = formats.SgkitSampleData(sampledata_or_path)
 
         haplotypes = sample_data._slice_haplotypes(
@@ -2195,6 +2195,7 @@ class SampleMatcher(Matcher):
 
     def _process_samples_in_batches(self, sample_indexes):
         dask_args = self._dask_args() if self.use_dask else {}
+
         with LMDBCache(self.resume_lmdb) as cache:
             start_index = 0
             results = []

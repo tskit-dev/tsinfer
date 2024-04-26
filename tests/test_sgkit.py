@@ -528,6 +528,47 @@ class TestSgkitMask:
             assert id == i
             assert np.array_equal(haplo, expected_gt[:, i])
 
+    def test_sgkit_sample_and_site_mask(self, tmp_path):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        # Mask out a random 1/3 of sites
+        variant_mask = np.zeros(ts.num_sites, dtype=bool)
+        random = np.random.RandomState(42)
+        variant_mask[
+            random.choice(ts.num_sites, ts.num_sites // 3, replace=False)
+        ] = True
+        # Mask out a random 1/3 of samples
+        samples_mask = np.zeros(ts.num_individuals, dtype=bool)
+        samples_mask[
+            random.choice(ts.num_individuals, ts.num_individuals // 3, replace=False)
+        ] = True
+        add_array_to_dataset(
+            "variant_mask_foobar", variant_mask, zarr_path, dims=["variants"]
+        )
+        add_array_to_dataset(
+            "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
+        )
+        samples = tsinfer.SgkitSampleData(
+            zarr_path,
+            sites_mask_name="variant_mask_foobar",
+            sgkit_samples_mask_name="samples_mask_foobar",
+        )
+        genotypes = samples.sites_genotypes
+        ds_genotypes = ds.call_genotype.values[~variant_mask][
+            :, ~samples_mask, :
+        ].reshape(samples.num_sites, samples.num_samples)
+        assert np.array_equal(genotypes, ds_genotypes)
+
+        # Check that variants and haplotypes give the same matrix
+        for i, (id, haplo) in enumerate(samples.haplotypes()):
+            assert id == i
+            assert np.array_equal(haplo, genotypes[:, i])
+            assert np.array_equal(haplo, ds_genotypes[:, i])
+
+        for i, v in enumerate(samples.variants()):
+            assert np.array_equal(v.genotypes, genotypes[i])
+            assert np.array_equal(v.genotypes, ds_genotypes[i])
+
     def test_sgkit_missing_masks(self, tmp_path):
         ts, zarr_path = make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
@@ -545,6 +586,103 @@ class TestSgkitMask:
                 zarr_path, sgkit_samples_mask_name="foobar2"
             )
             samples.individuals_mask
+
+    def test_sgkit_subset_equivalence(self, tmp_path, tmpdir):
+        ts, zarr_path = make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        random = np.random.RandomState(42)
+        # Mask out a random 1/3 of sites
+        variant_mask = np.zeros(ts.num_sites, dtype=bool)
+        variant_mask[
+            random.choice(ts.num_sites, ts.num_sites // 3, replace=False)
+        ] = True
+        # Mask out a random 1/3 of samples
+        samples_mask = np.zeros(ts.num_individuals, dtype=bool)
+        samples_mask[
+            random.choice(ts.num_individuals, ts.num_individuals // 3, replace=False)
+        ] = True
+
+        add_array_to_dataset(
+            "variant_mask_foobar", variant_mask, zarr_path, dims=["variants"]
+        )
+        add_array_to_dataset(
+            "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
+        )
+
+        # Create a new sgkit dataset with the subset baked in
+        ds_subset = ds.isel(variants=~variant_mask, samples=~samples_mask)
+        sgkit.save_dataset(ds_subset, tmpdir / "subset.zarr")
+
+        sd_subset = tsinfer.SgkitSampleData(tmpdir / "subset.zarr")
+        sd = tsinfer.SgkitSampleData(
+            zarr_path,
+            sites_mask_name="variant_mask_foobar",
+            sgkit_samples_mask_name="samples_mask_foobar",
+        )
+
+        assert sd.num_sites == sd_subset.num_sites
+        assert sd.num_samples == sd_subset.num_samples
+        assert sd.num_individuals == sd_subset.num_individuals
+        assert np.array_equal(sd.individuals_mask, ~samples_mask)
+        assert np.array_equal(sd.samples_mask, np.repeat(~samples_mask, 3))
+        assert np.array_equal(sd.sites_position, sd_subset.sites_position)
+        assert np.array_equal(sd.sites_alleles, sd_subset.sites_alleles)
+        assert np.array_equal(sd.sites_mask, ~variant_mask)
+        assert np.array_equal(
+            sd.sites_ancestral_allele, sd_subset.sites_ancestral_allele
+        )
+        assert np.array_equal(sd.sites_genotypes, sd_subset.sites_genotypes)
+        assert np.array_equal(sd.samples_individual, sd_subset.samples_individual)
+        assert np.array_equal(sd.individuals_metadata, sd_subset.individuals_metadata)
+
+        haplotypes = list(sd.haplotypes())
+        haplotypes_subset = list(sd_subset.haplotypes())
+        assert len(haplotypes) == len(haplotypes_subset)
+        for (id, haplo), (id_subset, haplo_subset) in zip(
+            haplotypes, haplotypes_subset
+        ):
+            assert id == id_subset
+            assert np.array_equal(haplo, haplo_subset)
+
+        variants = list(sd.variants())
+        variants_subset = list(sd_subset.variants())
+        assert len(variants) == len(variants_subset)
+        for v, v_subset in zip(variants, variants_subset):
+            assert np.array_equal(v.genotypes, v_subset.genotypes)
+
+        haplotypes = list(sd._slice_haplotypes((0, sd.num_samples)))
+        haplotypes_subset = list(sd_subset._slice_haplotypes((0, sd.num_samples)))
+        assert len(haplotypes) == len(haplotypes_subset)
+        for (id, haplo), (id_subset, haplo_subset) in zip(
+            haplotypes, haplotypes_subset
+        ):
+            assert id == id_subset
+            assert np.array_equal(haplo, haplo_subset)
+
+        ancestors_subset = tsinfer.generate_ancestors(sd_subset)
+        ancestors = tsinfer.generate_ancestors(sd)
+        assert np.array_equal(ancestors_subset.sites_position, ancestors.sites_position)
+        assert np.array_equal(
+            ancestors_subset.ancestors_start, ancestors.ancestors_start
+        )
+        assert np.array_equal(ancestors_subset.ancestors_end, ancestors.ancestors_end)
+        assert np.array_equal(ancestors_subset.ancestors_time, ancestors.ancestors_time)
+        for ts_focal, sg_focal in zip(
+            ancestors_subset.ancestors_focal_sites, ancestors.ancestors_focal_sites
+        ):
+            assert np.array_equal(ts_focal, sg_focal)
+        assert np.array_equal(
+            ancestors_subset.ancestors_full_haplotype,
+            ancestors.ancestors_full_haplotype,
+        )
+
+        anc_ts_subset = tsinfer.match_ancestors(sd_subset, ancestors_subset)
+        anc_ts = tsinfer.match_ancestors(sd, ancestors)
+        anc_ts_subset.tables.assert_equals(anc_ts.tables, ignore_timestamps=True)
+
+        ts_subset = tsinfer.match_samples(sd_subset, anc_ts_subset)
+        ts = tsinfer.match_samples(sd, anc_ts)
+        ts_subset.tables.assert_equals(ts.tables, ignore_timestamps=True)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
