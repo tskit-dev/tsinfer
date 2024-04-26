@@ -696,7 +696,6 @@ def match_samples(
     simplify=None,  # deprecated
     record_provenance=True,
     resume_lmdb_file=None,
-    use_dask=False,
     map_additional_sites=None,
     match_file_pattern=None,
 ):
@@ -786,7 +785,6 @@ def match_samples(
         engine=engine,
         progress_monitor=progress_monitor,
         resume_lmdb_file=resume_lmdb_file,
-        use_dask=use_dask,
         match_file_pattern=match_file_pattern,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
@@ -1947,39 +1945,11 @@ class SampleMatcher(Matcher):
         # node ID in the tree sequence.
         self.sample_id_map = {}
 
-    @staticmethod
-    def dask_find_path(
-        samples_slice,
-        tree_sequence_builder_wrapper=None,
-        data_path=None,
-        engine=None,
-        recombination=None,
-        mismatch=None,
-        precision=None,
-        extended_checks=None,
-        site_indexes=None,
-        sample_id_map=None,
-    ):
-        result = SampleMatcher.inner_find_path(
-            samples_slice,
-            tree_sequence_builder_wrapper.tsb,
-            data_path,
-            engine,
-            recombination,
-            mismatch,
-            precision,
-            extended_checks,
-            site_indexes,
-            sample_id_map,
-        )
-        # Pickle here rather than let dask deal with it so we can log sizes
-        return pickle.dumps(result)
-
     def find_path_to_disk(self, samples_slice, output_path):
         result = self.inner_find_path(
             samples_slice=samples_slice,
             tsb=self.tree_sequence_builder,
-            sampledata_or_path=self.sample_data,
+            sampledata=self.sample_data,
             engine=self.engine,
             recombination=self.recombination,
             mismatch=self.mismatch,
@@ -1996,7 +1966,7 @@ class SampleMatcher(Matcher):
     def inner_find_path(
         samples_slice,
         tsb,
-        sampledata_or_path,
+        sampledata,
         engine,
         recombination,
         mismatch,
@@ -2017,13 +1987,7 @@ class SampleMatcher(Matcher):
             precision=precision,
             extended_checks=extended_checks,
         )
-        if isinstance(sampledata_or_path, formats.SampleData):
-            sample_data = sampledata_or_path
-        else:
-            raise AssertionError("MASKS NOT APPLIED")
-            sample_data = formats.SgkitSampleData(sampledata_or_path)
-
-        haplotypes = sample_data._slice_haplotypes(
+        haplotypes = sampledata._slice_haplotypes(
             sites=site_indexes, recode_ancestral=True, samples_slice=samples_slice
         )
         results = []
@@ -2132,70 +2096,7 @@ class SampleMatcher(Matcher):
 
         return results
 
-    def match_with_dask(
-        self,
-        sample_slice,
-        tree_sequence_builder_wrapper_delayed,
-        delayed_recombination,
-        delayed_mismatch,
-        delayed_sites,
-        delayed_sample_id_map,
-    ):
-        path = os.path.abspath(self.sample_data.path)
-        # sample slice is a tuple of (start, stop),
-        # convert to a list of (start, stop) tuples that contain 5 each.
-        # The tradeoff here is between the extra cost of loading the samples,
-        # vs the RAM usage and long-running tasks.
-        start, stop = sample_slice
-        sample_slices = [
-            (sub_start, sub_start + 5 if sub_start + 5 < stop else stop)
-            for sub_start in range(start, stop, 5)
-        ]
-        samples_indexes_bag = db.from_sequence(
-            sample_slices, npartitions=len(sample_slices)
-        )
-        results = db.map(
-            self.dask_find_path,
-            samples_indexes_bag,
-            tree_sequence_builder_wrapper=tree_sequence_builder_wrapper_delayed,
-            data_path=path,
-            engine=self.engine,
-            recombination=delayed_recombination,
-            mismatch=delayed_mismatch,
-            precision=self.precision,
-            extended_checks=self.extended_checks,
-            site_indexes=delayed_sites,
-            sample_id_map=delayed_sample_id_map,
-        ).compute()
-        logger.info(f"Size of results: {sum(len(r) for r in results)}")
-        results = map(pickle.loads, results)
-        flat_results = []
-        for result in results:
-            flat_results.extend(result)
-        return flat_results
-
-    def _dask_args(self):
-        logger.info("Using dask for sample matching")
-        return {
-            "tree_sequence_builder_wrapper_delayed": dask.delayed(
-                TSBWrapper(
-                    self.engine,
-                    self.tree_sequence_builder,
-                    self.num_alleles,
-                    self.max_nodes,
-                    self.max_edges,
-                ),
-                pure=True,
-            ).persist(),
-            "delayed_recombination": dask.delayed(self.recombination),
-            "delayed_mismatch": dask.delayed(self.mismatch),
-            "delayed_sites": dask.delayed(self.inference_site_id),
-            "delayed_sample_id_map": dask.delayed(self.sample_id_map),
-        }
-
     def _process_samples_in_batches(self, sample_indexes):
-        dask_args = self._dask_args() if self.use_dask else {}
-
         with LMDBCache(self.resume_lmdb) as cache:
             start_index = 0
             results = []
@@ -2206,16 +2107,9 @@ class SampleMatcher(Matcher):
                 key = f"{start_index}_{end_index}_{self.__class__.__name__}".encode()
                 batch_results = cache.get(key)
                 if batch_results is None:
-                    if self.use_dask:
-                        batch_results = self.match_with_dask(
-                            (start_index, end_index), **dask_args
-                        )
-                        for _ in batch_results:
-                            self.match_progress.update()
-                    else:
-                        batch_results = self.match_locally(
-                            sample_indexes[start_index:end_index]
-                        )
+                    batch_results = self.match_locally(
+                        sample_indexes[start_index:end_index]
+                    )
                     batch_results_list = []
                     for result in batch_results:
                         batch_results_list.append(result)
