@@ -256,6 +256,8 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
     sgkit.io.vcf.vcf_to_zarr(
         path / "data.vcf",
         path / "data.zarr",
+        chunk_length=10,
+        chunk_width=12,
         ploidy=3,
         max_alt_alleles=4,  # tests tsinfer's ability to handle empty string alleles
     )
@@ -442,7 +444,8 @@ def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
 
     # Create a new sgkit dataset with the subset baked in
     mat_ds = ds.isel(variants=~variant_mask, samples=~samples_mask)
-    sgkit.save_dataset(mat_ds, tmpdir / "subset.zarr")
+    mat_ds = mat_ds.unify_chunks()
+    sgkit.save_dataset(mat_ds, tmpdir / "subset.zarr", auto_rechunk=True)
 
     mat_sd = tsinfer.SgkitSampleData(tmpdir / "subset.zarr")
     mask_sd = tsinfer.SgkitSampleData(
