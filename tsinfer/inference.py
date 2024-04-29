@@ -1987,7 +1987,7 @@ class SampleMatcher(Matcher):
             precision=precision,
             extended_checks=extended_checks,
         )
-        haplotypes = sampledata._slice_haplotypes(
+        haplotypes = sampledata._all_haplotypes(
             sites=site_indexes, recode_ancestral=True, samples_slice=samples_slice
         )
         results = []

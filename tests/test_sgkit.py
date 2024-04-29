@@ -398,20 +398,25 @@ class TestSgkitMask:
             assert id == id_subset
             assert np.array_equal(haplo, haplo_subset)
 
+        haplotypes = list(
+            mask_sd._all_haplotypes(recode_ancestral=True, samples_slice=(9, 24))
+        )
+        haplotypes_subset = list(
+            mat_sd._all_haplotypes(recode_ancestral=True, samples_slice=(9, 24))
+        )
+        assert len(haplotypes) == len(haplotypes_subset)
+        for i, (id, haplo), (id_subset, haplo_subset) in zip(
+            range(9, 24), haplotypes, haplotypes_subset
+        ):
+            assert id == i
+            assert id == id_subset
+            assert np.array_equal(haplo, haplo_subset)
+
         variants = list(mask_sd.variants())
         variants_subset = list(mat_sd.variants())
         assert len(variants) == len(variants_subset)
         for v, v_subset in zip(variants, variants_subset):
             assert np.array_equal(v.genotypes, v_subset.genotypes)
-
-        haplotypes = list(mask_sd._slice_haplotypes((0, mask_sd.num_samples)))
-        haplotypes_subset = list(mat_sd._slice_haplotypes((0, mask_sd.num_samples)))
-        assert len(haplotypes) == len(haplotypes_subset)
-        for (id, haplo), (id_subset, haplo_subset) in zip(
-            haplotypes, haplotypes_subset
-        ):
-            assert id == id_subset
-            assert np.array_equal(haplo, haplo_subset)
 
         ancestors_subset = tsinfer.generate_ancestors(mat_sd)
         ancestors = tsinfer.generate_ancestors(mask_sd)
@@ -609,7 +614,9 @@ class TestSgkitMatchSamplesToDisk:
         samples = tsinfer.SgkitSampleData(zarr_path)
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
-        with pytest.raises(ValueError, match="Slice must be a multiple of ploidy"):
+        with pytest.raises(
+            ValueError, match="Samples slice must be a multiple of ploidy"
+        ):
             tsinfer.match_samples_slice_to_disk(
                 samples, anc_ts, (0, 1), tmpdir / "test.path"
             )
