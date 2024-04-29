@@ -2660,9 +2660,16 @@ class SgkitSampleData(SampleData):
             alleles = non_empty_alleles
             yield Variant(site=site, alleles=alleles, genotypes=genos)
 
-    def _all_haplotypes(self, sites=None, recode_ancestral=None):
+    def _all_haplotypes(self, sites=None, recode_ancestral=None, samples_slice=None):
         # We iterate over chunks vertically here, and it's not worth complicating
         # the chunk iterator to handle this.
+        if samples_slice is None:
+            samples_slice = (0, self.num_samples)
+        if samples_slice[0] % self.ploidy != 0 or samples_slice[1] % self.ploidy != 0:
+            raise ValueError("Samples slice must be a multiple of ploidy")
+        start, stop = samples_slice
+        indiv_start = start // self.ploidy
+        indiv_stop = (stop + self.ploidy - 1) // self.ploidy  # round up the division
         if recode_ancestral is None:
             recode_ancestral = False
         aa_index = self.sites_ancestral_allele[:]
@@ -2671,7 +2678,10 @@ class SgkitSampleData(SampleData):
         gt = self.data["call_genotype"]
         chunk_size = gt.chunks[1]
         current_chunk = None
-        for i, j in enumerate(np.where(self.individuals_mask)[0]):
+        for i, j in zip(
+            range(indiv_start, indiv_stop),
+            np.where(self.individuals_mask)[0][indiv_start:indiv_stop],
+        ):
             if j // chunk_size != current_chunk:
                 current_chunk = j // chunk_size
                 chunk = gt[:, j // chunk_size : (j // chunk_size) + chunk_size, :]
@@ -2690,51 +2700,6 @@ class SgkitSampleData(SampleData):
                         ),
                     )
                 yield (i * self.ploidy) + k, a if sites is None else a[sites]
-
-    def _slice_haplotypes(self, samples_slice, sites=None, recode_ancestral=None):
-        # Note that this function loads the entire slice into RAM.
-
-        # Error if samples_slice is not multiple of ploidy
-        if samples_slice[0] % self.ploidy != 0 or samples_slice[1] % self.ploidy != 0:
-            raise ValueError("Slice must be a multiple of ploidy")
-
-        start, stop = samples_slice
-        if recode_ancestral is None:
-            recode_ancestral = False
-        aa_index = self.sites_ancestral_allele
-        # If ancestral allele is missing, keep the order unchanged (aa_index of zero)
-        aa_index[aa_index == MISSING_DATA] = 0
-        gt = self.data["call_genotype"]
-
-        # Calculate individual's start and stop points based on ploidy
-        indiv_start = start // self.ploidy
-        indiv_stop = (stop + self.ploidy - 1) // self.ploidy  # round up the division
-        individuals_index = np.where(self.individuals_mask)[0]
-
-        unmasked_start = individuals_index[indiv_start]
-        unmasked_stop = individuals_index[indiv_stop - 1] + 1
-        gt_slice = gt[:, unmasked_start:unmasked_stop, :]
-        # Zarr doesn't support boolean indexing so we have to do this after
-        gt_slice = gt_slice[self.sites_mask]
-        gt_slice = gt_slice[:, self.individuals_mask[unmasked_start:unmasked_stop]]
-
-        for j, individual in enumerate(range(indiv_start, indiv_stop)):
-            for k in range(self.ploidy):
-                sample_index = (individual * self.ploidy) + k
-                if sample_index < start:
-                    continue
-                if sample_index >= stop:
-                    break
-                a = gt_slice[:, j, k].T
-                if recode_ancestral:
-                    a = np.where(
-                        a == aa_index,
-                        0,
-                        np.where(
-                            np.logical_and(a != MISSING_DATA, a < aa_index), a + 1, a
-                        ),
-                    )
-                yield sample_index, a if sites is None else a[sites]
 
 
 @attr.s(order=False, eq=False)
