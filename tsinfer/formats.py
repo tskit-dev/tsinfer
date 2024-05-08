@@ -2324,54 +2324,19 @@ class SgkitSampleData(SampleData):
         self.z_sites_mask = zarr.array(
             self.sites_mask, chunks=self.data["call_genotype"].chunks[0], dtype=bool
         )
-        self.z_individuals_mask = zarr.array(
-            self.individuals_mask,
-            chunks=self.data["call_genotype"].chunks[1],
-            dtype=bool,
-        )
-
         # Find the first chunk from the left and right that contains an unmasked site
-        self.sites_first_chunk = None
-        self.sites_last_chunk = 0
+        self.sites_used_chunks = []
         for sites_chunk in range(self.z_sites_mask.cdata_shape[0]):
             if np.sum(self.z_sites_mask.blocks[sites_chunk]) > 0:
-                if self.sites_first_chunk is None:
-                    self.sites_first_chunk = sites_chunk
-                self.sites_last_chunk = sites_chunk + 1
-        self.sites_first_chunk = (
-            0 if self.sites_first_chunk is None else self.sites_first_chunk
-        )
+                self.sites_used_chunks.append(sites_chunk)
 
-        # Same for individuals
-        self.individuals_first_chunk = None
-        self.individuals_last_chunk = 0
-        for individuals_chunk in range(self.z_individuals_mask.cdata_shape[0]):
-            if np.sum(self.z_individuals_mask.blocks[individuals_chunk]) > 0:
-                if self.individuals_first_chunk is None:
-                    self.individuals_first_chunk = individuals_chunk
-                self.individuals_last_chunk = individuals_chunk + 1
-
-        logging.info(f"Number of sites after applying mask: {self.num_sites}")
-        logging.info(
-            f"Sites chunk range: {self.sites_first_chunk} - {self.sites_last_chunk}"
+        logger.info(f"Number of sites after applying mask: {self.num_sites}")
+        logger.info(
+            f"Sites chunks used: {len(self.sites_used_chunks)} - "
             f"of {self.z_sites_mask.cdata_shape[0]}"
         )
-        logging.info(
+        logger.info(
             f"Number of individuals after applying mask: {self.num_individuals}"
-        )
-        logging.info(
-            f"Individuals chunk range: {self.individuals_first_chunk} - "
-            f"{self.individuals_last_chunk} of {self.z_individuals_mask.chunks[0]}"
-        )
-        haplo_mem_use = (
-            (self.sites_last_chunk - self.sites_first_chunk)
-            * self.z_sites_mask.chunks[0]
-            * self.z_individuals_mask.chunks[0]
-            * self.ploidy
-        )
-        logging.info(
-            f"Memory use for loading haplotypes (match_samples): "
-            f"{humanize.naturalsize(haplo_mem_use)}bytes"
         )
 
     @functools.cached_property
@@ -2735,35 +2700,45 @@ class SgkitSampleData(SampleData):
         ] = True
 
         sample_index = samples_slice[0]
-        for ind_chunk in range(0, self.data["call_genotype"].cdata_shape[1]):
-            ind_mask_chunk = ind_mask.blocks[ind_chunk]
-            if np.sum(ind_mask_chunk) == 0:
+        for ind_chunk_i in range(ind_mask.cdata_shape[0]):
+            ind_mask_chunk = ind_mask.blocks[ind_chunk_i]
+            num_samples_in_chunk = np.sum(ind_mask_chunk) * self.ploidy
+            if num_samples_in_chunk == 0:
                 continue
-            gt_chunk = self.data["call_genotype"].blocks[
-                self.sites_first_chunk : self.sites_last_chunk, ind_chunk, :
-            ]
-            gt_chunk = gt_chunk[
-                self.z_sites_mask.blocks[self.sites_first_chunk : self.sites_last_chunk]
-            ]
-            gt_chunk = gt_chunk[:, ind_mask_chunk]
-            for s in range(gt_chunk.shape[1]):
-                for p in range(self.ploidy):
-                    a = gt_chunk[:, s, p]
-                    if recode_ancestral:
-                        # Remap the genotypes at all sites, depending on the aa_index
-                        a = np.where(
-                            a == self.sites_ancestral_allele,
-                            0,
-                            np.where(
-                                np.logical_and(
-                                    a != MISSING_DATA, a < self.sites_ancestral_allele
-                                ),
-                                a + 1,
-                                a,
+            final_data = np.zeros((self.num_sites, num_samples_in_chunk), dtype=np.int8)
+            site_insertion_position = 0
+            for sites_chunk_i in self.sites_used_chunks:
+                site_mask = self.z_sites_mask.blocks[sites_chunk_i]
+                if np.sum(site_mask) == 0:
+                    continue
+                gt_chunk = self.data["call_genotype"].blocks[
+                    sites_chunk_i, ind_chunk_i, :
+                ]
+                gt_chunk = gt_chunk[site_mask, :, :]
+                gt_chunk = gt_chunk[:, ind_mask_chunk, :]
+                gt_chunk = gt_chunk.reshape(len(gt_chunk), num_samples_in_chunk)
+                final_data[
+                    site_insertion_position : site_insertion_position + len(gt_chunk), :
+                ] = gt_chunk
+                site_insertion_position += len(gt_chunk)
+            assert site_insertion_position == self.num_sites
+            for s in range(num_samples_in_chunk):
+                a = final_data[:, s]
+                if recode_ancestral:
+                    # Remap the genotypes at all sites, depending on the aa_index
+                    a = np.where(
+                        a == self.sites_ancestral_allele,
+                        0,
+                        np.where(
+                            np.logical_and(
+                                a != MISSING_DATA, a < self.sites_ancestral_allele
                             ),
-                        )
-                    yield sample_index, a if sites is None else a[sites]
-                    sample_index += 1
+                            a + 1,
+                            a,
+                        ),
+                    )
+                yield sample_index, a if sites is None else a[sites]
+                sample_index += 1
         assert sample_index == samples_slice[1]
 
 
