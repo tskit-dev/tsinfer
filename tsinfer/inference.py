@@ -24,19 +24,17 @@ to other modules.
 import collections
 import copy
 import dataclasses
-import glob
 import heapq
 import json
 import logging
+import os
 import pickle
 import queue
-import sys
 import tempfile
 import threading
 import time
 
 import humanize
-import lmdb
 import numpy as np
 import tskit
 
@@ -91,33 +89,6 @@ node_sample_data_id_metadata_definition = {
     ),
     "type": "number",
 }
-
-
-class LMDBCache:
-    def __init__(self, lmdb):
-        self.lmdb = lmdb
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass  # No special cleanup needed
-
-    def get(self, key):
-        if self.lmdb is None:
-            return None
-
-        with self.lmdb.begin() as txn:
-            cached_data = txn.get(key)
-            if cached_data is not None:
-                return pickle.loads(cached_data)
-        return None
-
-    def put(self, key, value):
-        if self.lmdb is None:
-            return
-        with self.lmdb.begin(write=True) as txn:
-            txn.put(key, pickle.dumps(value))
 
 
 def add_to_schema(schema, name, definition=None, required=False):
@@ -539,7 +510,7 @@ def match_ancestors(
     extended_checks=False,
     time_units=None,
     record_provenance=True,
-    resume_lmdb_file=None,
+    match_data_dir=None,
 ):
     """
     match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
@@ -595,7 +566,7 @@ def match_ancestors(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
-        resume_lmdb_file=resume_lmdb_file,
+        match_data_dir=match_data_dir,
     )
     ts = matcher.match_ancestors()
     tables = ts.dump_tables()
@@ -722,9 +693,8 @@ def match_samples(
     progress_monitor=None,
     simplify=None,  # deprecated
     record_provenance=True,
-    resume_lmdb_file=None,
+    match_data_dir=None,
     map_additional_sites=None,
-    match_file_pattern=None,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
@@ -811,8 +781,7 @@ def match_samples(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
-        resume_lmdb_file=resume_lmdb_file,
-        match_file_pattern=match_file_pattern,
+        match_data_dir=match_data_dir,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -878,7 +847,7 @@ def match_samples_slice_to_disk(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=None,
-        resume_lmdb_file=None,
+        match_data_dir=None,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -1279,6 +1248,17 @@ class AncestorsGenerator:
         return self.ancestor_data
 
 
+@dataclasses.dataclass
+class StoredMatchData:
+    """
+    A class to store the results of a matching run to disk, for later use.
+    """
+
+    group_id: str
+    num_sites: int
+    results: dict
+
+
 class Matcher:
     """
     A matching instance, used in both ``tsinfer.match_ancestors`` and
@@ -1319,8 +1299,7 @@ class Matcher:
         engine=constants.C_ENGINE,
         progress_monitor=None,
         allow_multiallele=False,
-        resume_lmdb_file=None,
-        match_file_pattern=None,
+        match_data_dir=None,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1333,7 +1312,6 @@ class Matcher:
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
-        self.match_file_pattern = match_file_pattern
 
         all_sites = self.sample_data.sites_position[:]
         index = np.searchsorted(all_sites, inference_site_position)
@@ -1467,17 +1445,38 @@ class Matcher:
             num_alleles=num_alleles, max_nodes=self.max_nodes, max_edges=self.max_edges
         )
         logger.debug(f"Allocated tree sequence builder with max_nodes={self.max_nodes}")
-        if resume_lmdb_file is not None:
-            self.resume_lmdb = lmdb.open(
-                # Windows doesn't have sparse files, so use a smaller map size
-                resume_lmdb_file,
-                subdir=False,
-                map_size=1 * 1024 * 1024 * 1024
-                if sys.platform == "win32"
-                else 100 * 1024 * 1024 * 1024,
-            )
-        else:
-            self.resume_lmdb = None
+
+        self.match_data_dir = match_data_dir
+        self._load_match_data()
+
+    def _load_match_data(self):
+        match_data = collections.defaultdict(dict)
+        match_data_dir = self.match_data_dir
+        if match_data_dir is not None:
+            os.makedirs(match_data_dir, exist_ok=True)
+            for file in os.listdir(match_data_dir):
+                with open(os.path.join(match_data_dir, file), "rb") as f:
+                    stored_data = pickle.load(f)
+                    if stored_data.num_sites != self.num_sites:
+                        raise ValueError(
+                            f"Number of sites in file {match_data_dir}/{file} "
+                            f"({stored_data.num_sites}) does not match the "
+                            f"number of sites used for matching: ({self.num_sites})"
+                        )
+                    for sample_index, result in stored_data.results.items():
+                        if sample_index in match_data[stored_data.group_id]:
+                            raise ValueError(
+                                f"Duplicate sample index {sample_index} in "
+                                f"file {match_data_dir}/{file}"
+                            )
+                        else:
+                            match_data[stored_data.group_id][sample_index] = result
+        logger.info(
+            f"Loaded {len(match_data)} match data files, "
+            f"with {len(match_data)} groups."
+            f"Totalling {sum(len(v) for v in match_data.values())} samples."
+        )
+        self.match_data = match_data
 
     @staticmethod
     def find_path(matcher, child_id, haplotype, start, end):
@@ -1715,18 +1714,23 @@ class AncestorMatcher(Matcher):
                 start=ancestor.start,
                 end=ancestor.end,
             )
+            self.match_progress.update()
             return result
 
         if self.num_threads > 0:
-            results = threads.threaded_map(  # noqa E731
-                thread_worker_function,
-                self.ancestor_data.ancestors(indexes=ancestor_ids),
-                self.num_threads,
+            results = list(
+                threads.threaded_map(  # noqa E731
+                    thread_worker_function,
+                    self.ancestor_data.ancestors(indexes=ancestor_ids),
+                    self.num_threads,
+                )
             )
         else:
-            results = map(
-                thread_worker_function,
-                self.ancestor_data.ancestors(indexes=ancestor_ids),
+            results = list(
+                map(
+                    thread_worker_function,
+                    self.ancestor_data.ancestors(indexes=ancestor_ids),
+                )
             )
 
         return results
@@ -1738,48 +1742,47 @@ class AncestorMatcher(Matcher):
         self.match_progress = self.progress_monitor.get(
             "ma_match", self.num_ancestors - 1
         )
-        with LMDBCache(self.resume_lmdb) as cache:
-            for group, ancestor_ids in self.ancestor_grouping.items():
-                t = time.time()
-                logger.info(
-                    f"Starting group {group} with {len(ancestor_ids)} ancestors"
-                )
-                started = False
-                start_index = 0
+        for group, ancestor_ids in self.ancestor_grouping.items():
+            t = time.time()
+            logger.info(
+                f"Starting group {group} of {len(self.ancestor_grouping)} "
+                f"with {len(ancestor_ids)} ancestors"
+            )
+            self.__start_group(group, ancestor_ids)
+            if group in self.match_data:
+                # If a group is in the match data, it must be there completely
                 results = []
-                while start_index < len(ancestor_ids):
-                    end_index = min(start_index + 5000, len(ancestor_ids))
-                    batch_ancestor_ids = ancestor_ids[start_index:end_index]
-                    key = (
-                        f"{group}_{start_index}_{end_index}-{hash(tuple(ancestor_ids))}_"
-                        f"{self.__class__.__name__}".encode()
-                    )
-                    batch_results = cache.get(key)
-                    if batch_results is None:
-                        logger.info(f"Matching group {group}:{start_index}-{end_index}")
-                        if not started:
-                            # Delay starting the group until we actually have to do some
-                            # matching, as for large datasets this can take over 10s.
-                            self.__start_group(group, ancestor_ids)
-                            started = True
-                        batch_results = self.match_locally(batch_ancestor_ids)
-                        batch_results = list(batch_results)
-                        cache.put(key, batch_results)
-                    else:
-                        logger.info(
-                            f"Found cached results for group "
-                            f"{group}:{start_index}-{end_index}"
+                for ancestor_id in ancestor_ids:
+                    try:
+                        results.append(self.match_data[group][ancestor_id])
+                    except KeyError:
+                        raise ValueError(
+                            f"Ancestor ID {ancestor_id} in group {group} "
+                            f"not found in match data"
                         )
-                    for result in batch_results:
-                        results.append(result)
-                        self.match_progress.update()
-                    start_index = end_index
-                self.__complete_group(group, ancestor_ids, results)
+                    self.match_progress.update()
                 logger.info(
-                    f"Finished matching for group {group} of "
-                    f"{len(self.ancestor_grouping)} in "
-                    f"{time.time() - t:.2f} seconds"
+                    f"Loaded {len(ancestor_ids)} paths from match data for group {group}"
                 )
+            else:
+                results = self.match_locally(ancestor_ids)
+                if self.match_data_dir is not None:
+                    stored_data = StoredMatchData(
+                        group_id=group,
+                        num_sites=self.num_sites,
+                        results={
+                            _id: result for _id, result in zip(ancestor_ids, results)
+                        },
+                    )
+                    with open(
+                        os.path.join(self.match_data_dir, f"{group}.pkl"), "wb"
+                    ) as f:
+                        pickle.dump(stored_data, f)
+            self.__complete_group(group, ancestor_ids, results)
+            logger.info(
+                f"Finished group {group} of {len(self.ancestor_grouping)} in "
+                f"{time.time() - t:.2f} seconds"
+            )
 
         ts = self.store_output()
         self.match_progress.close()
@@ -1864,7 +1867,7 @@ class SampleMatcher(Matcher):
         self.sample_id_map = {}
 
     def find_path_to_disk(self, samples_slice, output_path):
-        result = self.inner_find_path(
+        results = self.inner_find_path(
             samples_slice=samples_slice,
             tsb=self.tree_sequence_builder,
             sampledata=self.sample_data,
@@ -1876,9 +1879,15 @@ class SampleMatcher(Matcher):
             site_indexes=self.inference_site_id,
             sample_id_map=self.sample_id_map,
         )
-        result = pickle.dumps((samples_slice, result))
+        stored_data = StoredMatchData(
+            group_id="samples",
+            num_sites=self.num_sites,
+            results={
+                _id: result for _id, result in zip(range(*samples_slice), results)
+            },
+        )
         with open(output_path, "wb") as f:
-            f.write(result)
+            pickle.dump(stored_data, f)
 
     @staticmethod
     def inner_find_path(
@@ -2011,68 +2020,7 @@ class SampleMatcher(Matcher):
             )
         else:
             results = map(thread_worker_function, sample_haplotypes)
-
-        return results
-
-    def _process_samples_in_batches(self, sample_indexes):
-        with LMDBCache(self.resume_lmdb) as cache:
-            start_index = 0
-            results = []
-            while start_index < len(sample_indexes):
-                t = time.time()
-                logger.info(f"Matching samples {start_index} to {start_index + 5000}")
-                end_index = min(start_index + 5000, len(sample_indexes))
-                key = f"{start_index}_{end_index}_{self.__class__.__name__}".encode()
-                batch_results = cache.get(key)
-                if batch_results is None:
-                    batch_results = self.match_locally(
-                        sample_indexes[start_index:end_index]
-                    )
-                    batch_results_list = []
-                    for result in batch_results:
-                        batch_results_list.append(result)
-                    batch_results = batch_results_list
-                    cache.put(key, batch_results)
-                    logger.info(
-                        f"Finished matching for samples {start_index}-{end_index} in "
-                        f"{time.time() - t:.2f} seconds"
-                    )
-                else:
-                    self.match_progress.update(end_index - start_index)
-                    logger.info(
-                        f"Found cached results for samples "
-                        f"{start_index}-{end_index} in {time.time() - t:.2f} seconds"
-                    )
-                results.extend(batch_results)
-                start_index = end_index
-        return results
-
-    def results_from_disk(self, sample_indexes):
-        # Read in all the files that match the pattern
-        files = glob.glob(self.match_file_pattern)
-        results = {}
-        for file in files:
-            with open(file, "rb") as f:
-                (start, end), batch_results = pickle.load(f)
-                for j, result in zip(range(start, end), batch_results):
-                    if j in results:
-                        raise ValueError(f"Duplicate sample index {j} found in {file}")
-                    results[j] = result
-                    self.match_progress.update()
-        sorted_results = []
-        for i, sample_index in enumerate(sample_indexes):
-            try:
-                result = results[i]
-            except KeyError:
-                raise ValueError(f"Sample index {i} not found in results files")
-            node_id = int(self.sample_id_map[sample_index])
-            if node_id != result.node:
-                raise ValueError(
-                    f"Sample {i} in results file has node {result.node} but was"
-                    f" expecting {node_id}"
-                )
-            sorted_results.append(result)
-        return sorted_results
+        return list(results)
 
     def _match_samples(self, sample_indexes):
         num_samples = len(sample_indexes)
@@ -2082,10 +2030,32 @@ class SampleMatcher(Matcher):
         if self.num_sites == 0:
             return
         self.match_progress = self.progress_monitor.get("ms_match", num_samples)
-        if self.match_file_pattern:
-            results = self.results_from_disk(sample_indexes)
+
+        t = time.time()
+        if "samples" in self.match_data:
+            results = []
+            for j in sample_indexes:
+                try:
+                    results.append(self.match_data["samples"][j])
+                except KeyError:
+                    raise ValueError(f"Sample index {j} not found in match data")
+                self.match_progress.update()
+            logger.info(
+                f"Loaded {len(sample_indexes)} paths from match data for samples"
+            )
         else:
-            results = self._process_samples_in_batches(sample_indexes)
+            results = self.match_locally(sample_indexes)
+            if self.match_data_dir is not None:
+                stored_data = StoredMatchData(
+                    group_id="samples",
+                    num_sites=self.num_sites,
+                    results={j: result for j, result in zip(sample_indexes, results)},
+                )
+                with open(os.path.join(self.match_data_dir, "samples.pkl"), "wb") as f:
+                    pickle.dump(stored_data, f)
+        logger.info(
+            f"Finished matching for all samples in {time.time() - t:.2f} seconds"
+        )
         self.match_progress.close()
         logger.info(
             "Inserting sample paths: {} edges in total".format(
