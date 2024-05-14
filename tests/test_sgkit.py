@@ -653,12 +653,14 @@ class TestSgkitMatchSamplesToDisk:
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
         tsinfer.match_samples_slice_to_disk(
-            samples, anc_ts, slice, tmpdir / "test.path"
+            samples, anc_ts, slice, tmpdir / "samples.pkl"
         )
-        file_slice, matches = pickle.load(open(tmpdir / "test.path", "rb"))
-        assert slice == file_slice
-        assert len(matches) == slice[1] - slice[0]
-        for m in matches:
+        stored = pickle.load(open(tmpdir / "samples.pkl", "rb"))
+        assert stored.group_id == "samples"
+        assert stored.num_sites == 86  # Num inferred sites
+        assert len(stored.results) == slice[1] - slice[0]
+        for i, (s, m) in enumerate(stored.results.items()):
+            assert s == slice[0] + i
             assert isinstance(m, tsinfer.inference.MatchResult)
 
     def test_match_samples_to_disk_slice_error(self, tmp_path, tmpdir):
@@ -674,6 +676,8 @@ class TestSgkitMatchSamplesToDisk:
             )
 
     def test_match_samples_to_disk_full(self, tmp_path, tmpdir):
+        match_data_dir = tmpdir / "match_data"
+        os.mkdir(match_data_dir)
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
         ancestors = tsinfer.generate_ancestors(samples)
@@ -686,31 +690,31 @@ class TestSgkitMatchSamplesToDisk:
                 samples,
                 anc_ts,
                 (start_index, end_index),
-                tmpdir / f"test-{start_index}.path",
+                match_data_dir / f"test-{start_index}.pkl",
             )
             start_index = end_index
         batch_ts = tsinfer.match_samples(
-            samples, anc_ts, match_file_pattern=str(tmpdir / "*.path")
+            samples, anc_ts, match_data_dir=str(match_data_dir)
         )
         ts.tables.assert_equals(batch_ts.tables, ignore_provenance=True)
 
-        tmpdir.join("test-6.path").copy(tmpdir.join("test-6-copy.path"))
+        (match_data_dir / "test-6.pkl").copy(match_data_dir / "test-6-copy.pkl")
         with pytest.raises(ValueError, match="Duplicate sample index 6"):
-            tsinfer.match_samples(
-                samples, anc_ts, match_file_pattern=str(tmpdir / "*.path")
-            )
+            tsinfer.match_samples(samples, anc_ts, match_data_dir=str(match_data_dir))
 
-        os.remove(tmpdir / "test-6.path")
-        os.remove(tmpdir / "test-6-copy.path")
+        os.remove(match_data_dir / "test-6.pkl")
+        os.remove(match_data_dir / "test-6-copy.pkl")
         with pytest.raises(ValueError, match="index 6 not found"):
-            tsinfer.match_samples(
-                samples, anc_ts, match_file_pattern=str(tmpdir / "*.path")
-            )
+            tsinfer.match_samples(samples, anc_ts, match_data_dir=str(match_data_dir))
 
     def test_match_samples_to_disk_with_mask(self, tmp_path, tmpdir):
         mat_sd, mask_sd, _, _ = tsutil.make_materialized_and_masked_sampledata(
             tmp_path, tmpdir
         )
+        mat_data_dir = tmpdir / "mat_data"
+        os.mkdir(mat_data_dir)
+        mask_data_dir = tmpdir / "mask_data"
+        os.mkdir(mask_data_dir)
         mat_ancestors = tsinfer.generate_ancestors(mat_sd)
         mask_ancestors = tsinfer.generate_ancestors(mask_sd)
         mat_anc_ts = tsinfer.match_ancestors(mat_sd, mat_ancestors)
@@ -722,12 +726,12 @@ class TestSgkitMatchSamplesToDisk:
                 mat_sd,
                 mat_anc_ts,
                 (start_index, end_index),
-                tmpdir / f"test-mat-{start_index}.path",
+                mat_data_dir / f"test-mat-{start_index}.path",
             )
             start_index = end_index
 
         mat_ts_disk = tsinfer.match_samples(
-            mat_sd, mat_anc_ts, match_file_pattern=str(tmpdir / "test-mat-*.path")
+            mat_sd, mat_anc_ts, match_data_dir=str(mat_data_dir)
         )
 
         start_index = 0
@@ -737,11 +741,11 @@ class TestSgkitMatchSamplesToDisk:
                 mask_sd,
                 mask_anc_ts,
                 (start_index, end_index),
-                tmpdir / f"test-mask-{start_index}.path",
+                mask_data_dir / f"test-mask-{start_index}.path",
             )
             start_index = end_index
         mask_ts_disk = tsinfer.match_samples(
-            mask_sd, mask_anc_ts, match_file_pattern=str(tmpdir / "test-mask-*.path")
+            mask_sd, mask_anc_ts, match_data_dir=str(mask_data_dir)
         )
 
         mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)

@@ -24,6 +24,7 @@ import itertools
 import json
 import logging
 import os.path
+import pickle
 import random
 import re
 import string
@@ -33,7 +34,6 @@ import time
 import unittest
 import unittest.mock as mock
 
-import lmdb
 import msprime
 import numpy as np
 import pytest
@@ -1366,43 +1366,38 @@ class TestThreads:
         assert ts1.equals(ts2, ignore_provenance=True)
 
 
-@pytest.mark.skipif(IS_WINDOWS, reason="Not enough disk space as no sparse files")
 class TestResume:
-    def count_keys(self, lmdb_file):
-        with lmdb.open(
-            lmdb_file, subdir=False, map_size=100 * 1024 * 1024 * 1024
-        ) as lmdb_file:
-            with lmdb_file.begin() as txn:
-                # Count the number of keys
-                n_keys = 0
-                for _ in txn.cursor():
-                    n_keys += 1
-        return n_keys
+    def count_paths(self, match_data_dir):
+        path_count = 0
+        for filename in os.listdir(match_data_dir):
+            with open(os.path.join(match_data_dir, filename), "rb") as f:
+                stored_data = pickle.load(f)
+                path_count += len(stored_data.results)
+        return path_count
 
     def test_equivalance(self, tmpdir):
-        lmdb_file = str(tmpdir / "LMDB")
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=2, random_seed=2)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ancestor_ts1 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_data, match_data_dir=tmpdir
         )
-        assert self.count_keys(lmdb_file) == 4
+        assert self.count_paths(tmpdir) == 4
         ancestor_ts2 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_data, match_data_dir=tmpdir
         )
         ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
         final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_ts1, match_data_dir=tmpdir
         )
-        assert self.count_keys(lmdb_file) == 5
+        assert self.count_paths(tmpdir) == 9
         final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_ts1, match_data_dir=tmpdir
         )
         final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
     def test_cache_used_by_timing(self, tmpdir):
-        lmdb_file = str(tmpdir / "LMDB")
+
         ts = msprime.sim_ancestry(
             100, recombination_rate=1, sequence_length=1000, random_seed=42
         )
@@ -1413,13 +1408,13 @@ class TestResume:
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         t = time.time()
         ancestor_ts1 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_data, match_data_dir=tmpdir
         )
         time1 = time.time() - t
-        assert self.count_keys(lmdb_file) >= 103
+        assert self.count_paths(tmpdir) == 1001
         t = time.time()
         ancestor_ts2 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_data, match_data_dir=tmpdir
         )
         ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
         time2 = time.time() - t
@@ -1427,13 +1422,13 @@ class TestResume:
 
         t = time.time()
         final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_ts1, match_data_dir=tmpdir
         )
         time1 = time.time() - t
-        assert self.count_keys(lmdb_file) == 104
+        assert self.count_paths(tmpdir) == 1201
         t = time.time()
         final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, resume_lmdb_file=lmdb_file
+            sample_data, ancestor_ts1, match_data_dir=tmpdir
         )
         time2 = time.time() - t
         assert time2 < time1 / 1.25
