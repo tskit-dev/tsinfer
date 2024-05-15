@@ -39,4 +39,5 @@ from .formats import *  # NOQA
 from .eval_util import *  # NOQA
 from .exceptions import *  # NOQA
 from .constants import *  # NOQA
+from .matching import MatcherIndexes, AncestorMatcher2  # NOQA
 from .cli import get_cli_parser  # NOQA
