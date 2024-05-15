@@ -117,7 +117,7 @@ def test_sgkit_dataset_accessors(tmp_path):
         # sgkit alleles are padded to be rectangular
         assert np.all(alleles[: len(v.alleles)] == v.alleles)
         assert np.all(alleles[len(v.alleles) :] == "")
-    assert np.array_equal(samples.sites_mask, np.ones(ts.num_sites, dtype=bool))
+    assert np.array_equal(samples.sites_select, np.ones(ts.num_sites, dtype=bool))
     assert np.array_equal(
         samples.sites_ancestral_allele, np.zeros(ts.num_sites, dtype=np.int8)
     )
@@ -185,7 +185,7 @@ def test_sgkit_accessors_defaults(tmp_path):
     assert samples.sites_metadata == [{} for _ in range(ts.num_sites)]
     for time in samples.sites_time:
         assert tskit.is_unknown_time(time)
-    assert np.array_equal(samples.sites_mask, np.ones(ts.num_sites, dtype=bool))
+    assert np.array_equal(samples.sites_select, np.ones(ts.num_sites, dtype=bool))
     assert np.array_equal(samples.provenances_timestamp, [])
     assert np.array_equal(samples.provenances_record, [])
     assert samples.metadata_schema == default_schema
@@ -221,7 +221,7 @@ class TestSgkitMask:
         tsutil.add_array_to_dataset("variant_mask_42", sites_mask, zarr_path)
         samples = tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_42")
         assert samples.num_sites == len(sites)
-        assert np.array_equal(samples.sites_mask, ~sites_mask)
+        assert np.array_equal(samples.sites_select, ~sites_mask)
         assert np.array_equal(
             samples.sites_position, ts.tables.sites.position[~sites_mask]
         )
@@ -253,16 +253,16 @@ class TestSgkitMask:
         ):
             tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_foobar")
 
-    def test_bad_mask_length_at_iterator(self, tmp_path):
+    def test_bad_select_length_at_iterator(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         ds = sgkit.load_dataset(zarr_path)
-        sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
+        sites_select = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         from tsinfer.formats import chunk_iterator
 
         with pytest.raises(
             ValueError, match="Mask must be the same length as the array"
         ):
-            for _ in chunk_iterator(ds.call_genotype, mask=sites_mask):
+            for _ in chunk_iterator(ds.call_genotype, select=sites_select):
                 pass
 
     @pytest.mark.parametrize("sample_list", [[1, 2, 3, 5, 9, 27], [0], []])
@@ -279,8 +279,8 @@ class TestSgkitMask:
         assert samples.ploidy == 3
         assert samples.num_individuals == len(sample_list)
         assert samples.num_samples == len(sample_list) * samples.ploidy
-        assert np.array_equal(samples.individuals_mask, ~samples_mask)
-        assert np.array_equal(samples.samples_mask, np.repeat(~samples_mask, 3))
+        assert np.array_equal(samples.individuals_select, ~samples_mask)
+        assert np.array_equal(samples.samples_select, np.repeat(~samples_mask, 3))
         assert np.array_equal(
             samples.individuals_time, ds.individuals_time.values[~samples_mask]
         )
@@ -352,8 +352,8 @@ class TestSgkitMask:
     def test_sgkit_missing_masks(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.SgkitSampleData(zarr_path)
-        samples.individuals_mask
-        samples.sites_mask
+        samples.individuals_select
+        samples.sites_select
         with pytest.raises(
             ValueError, match="The sites mask foobar was not found in the dataset."
         ):
@@ -365,7 +365,7 @@ class TestSgkitMask:
             samples = tsinfer.SgkitSampleData(
                 zarr_path, sgkit_samples_mask_name="foobar2"
             )
-            samples.individuals_mask
+            samples.individuals_select
 
     def test_sgkit_subset_equivalence(self, tmp_path, tmpdir):
         (
@@ -377,11 +377,11 @@ class TestSgkitMask:
         assert mat_sd.num_sites == mat_sd.num_sites
         assert mask_sd.num_samples == mat_sd.num_samples
         assert mask_sd.num_individuals == mat_sd.num_individuals
-        assert np.array_equal(mask_sd.individuals_mask, ~samples_mask)
-        assert np.array_equal(mask_sd.samples_mask, np.repeat(~samples_mask, 3))
+        assert np.array_equal(mask_sd.individuals_select, ~samples_mask)
+        assert np.array_equal(mask_sd.samples_select, np.repeat(~samples_mask, 3))
         assert np.array_equal(mask_sd.sites_position, mat_sd.sites_position)
         assert np.array_equal(mask_sd.sites_alleles, mat_sd.sites_alleles)
-        assert np.array_equal(mask_sd.sites_mask, ~variant_mask)
+        assert np.array_equal(mask_sd.sites_select, ~variant_mask)
         assert np.array_equal(
             mask_sd.sites_ancestral_allele, mat_sd.sites_ancestral_allele
         )
