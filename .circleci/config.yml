@@ -6,7 +6,7 @@ orbs:
 jobs:
   build:
     docker:
-      - image: cimg/python:3.8
+      - image: cimg/python:3.9
     steps:
       - checkout
 
@@ -25,7 +25,7 @@ jobs:
       - run:
           name: Install development dependencies
           command: |
-              pyenv global 3.8
+              pyenv global 3.9
               pip install -r requirements/CI-tests-complete/requirements.txt --user
               pyenv rehash
 
