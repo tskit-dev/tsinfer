@@ -2304,8 +2304,46 @@ class SgkitSampleData(SampleData):
         self._sites_mask_name = sites_mask_name
         genotypes_arr = self.data["call_genotype"]
         _, self._num_individuals_before_mask, self.ploidy = genotypes_arr.shape
-        self._num_sites = np.sum(self.sites_select)
 
+        # Store sites_select
+        if self._sites_mask_name is None:
+            self.sites_select = np.full(
+                self.data["variant_position"].shape, True, dtype=bool
+            )
+        else:
+            try:
+                if (
+                    self.data[self._sites_mask_name].shape[0]
+                    != self.data["variant_position"].shape[0]
+                ):
+                    raise ValueError(
+                        "Mask must be the same length as the number of unmasked sites"
+                    )
+                # We negate the mask as it is much easier in numpy to have True=keep
+                self.sites_select = ~(self.data[self._sites_mask_name].astype(bool)[:])
+            except KeyError:
+                raise ValueError(
+                    f"The sites mask {self._sites_mask_name} was not found"
+                    f" in the dataset."
+                )
+        # Store individuals_select
+        if self._sgkit_samples_mask_name is None:
+            self.individuals_select = np.full(
+                self._num_individuals_before_mask, True, dtype=bool
+            )
+        else:
+            try:
+                # We negate the mask as it is much easier in numpy to have True=keep
+                self.individuals_select = ~(
+                    self.data[self._sgkit_samples_mask_name][:].astype(bool)
+                )
+            except KeyError:
+                raise ValueError(
+                    f"The sgkit samples mask {self._sgkit_samples_mask_name} was not"
+                    f" found in the dataset."
+                )
+
+        self._num_sites = np.sum(self.sites_select)
         assert self.ploidy == self.data["call_genotype"].chunks[2]
         if self.ploidy > 1:
             if "call_genotype_phased" not in self.data:
@@ -2364,20 +2402,6 @@ class SgkitSampleData(SampleData):
         return self._num_sites
 
     @functools.cached_property
-    def individuals_select(self):
-        if self._sgkit_samples_mask_name is None:
-            return np.full(self._num_individuals_before_mask, True, dtype=bool)
-        else:
-            try:
-                # We negate the mask as it is much easier in numpy to have True=keep
-                return ~(self.data[self._sgkit_samples_mask_name][:].astype(bool))
-            except KeyError:
-                raise ValueError(
-                    f"The sgkit samples mask {self._sgkit_samples_mask_name} was not"
-                    f" found in the dataset."
-                )
-
-    @functools.cached_property
     def samples_select(self):
         # Samples in sgkit are individuals in tskit, so we need to expand
         # the mask to cover all the samples for each individual.
@@ -2417,27 +2441,6 @@ class SgkitSampleData(SampleData):
     @functools.cached_property
     def sites_alleles(self):
         return self.data["variant_allele"][:][self.sites_select]
-
-    @functools.cached_property
-    def sites_select(self):
-        if self._sites_mask_name is None:
-            return np.full(self.data["variant_position"].shape, True, dtype=bool)
-        else:
-            try:
-                if (
-                    self.data[self._sites_mask_name].shape[0]
-                    != self.data["variant_position"].shape[0]
-                ):
-                    raise ValueError(
-                        "Mask must be the same length as the number of unmasked sites"
-                    )
-                # We negate the mask as it is much easier in numpy to have True=keep
-                return ~(self.data[self._sites_mask_name].astype(bool)[:])
-            except KeyError:
-                raise ValueError(
-                    f"The sites mask {self._sites_mask_name} was not found"
-                    f" in the dataset."
-                )
 
     @functools.cached_property
     def sites_ancestral_allele(self):
