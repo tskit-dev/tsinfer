@@ -1379,20 +1379,13 @@ class TestResume:
         ts = msprime.simulate(5, mutation_rate=2, recombination_rate=2, random_seed=2)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestor_ts1 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, match_data_dir=tmpdir
-        )
-        assert self.count_paths(tmpdir) == 4
-        ancestor_ts2 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, match_data_dir=tmpdir
-        )
-        ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
+        ancestor_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, match_data_dir=tmpdir
+            sample_data, ancestor_ts, match_data_dir=tmpdir
         )
-        assert self.count_paths(tmpdir) == 9
+        assert self.count_paths(tmpdir) == 5
         final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, match_data_dir=tmpdir
+            sample_data, ancestor_ts, match_data_dir=tmpdir
         )
         final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
@@ -1406,33 +1399,37 @@ class TestResume:
         )
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
-        t = time.time()
-        ancestor_ts1 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, match_data_dir=tmpdir
-        )
-        time1 = time.time() - t
-        assert self.count_paths(tmpdir) == 1001
-        t = time.time()
-        ancestor_ts2 = tsinfer.match_ancestors(
-            sample_data, ancestor_data, match_data_dir=tmpdir
-        )
-        ancestor_ts1.tables.assert_equals(ancestor_ts2.tables, ignore_provenance=True)
-        time2 = time.time() - t
-        assert time2 < time1 / 2
-
+        ancestor_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         t = time.time()
         final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, match_data_dir=tmpdir
+            sample_data, ancestor_ts, match_data_dir=tmpdir
         )
         time1 = time.time() - t
-        assert self.count_paths(tmpdir) == 1201
+        assert self.count_paths(tmpdir) == 200
         t = time.time()
         final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts1, match_data_dir=tmpdir
+            sample_data, ancestor_ts, match_data_dir=tmpdir
         )
         time2 = time.time() - t
         assert time2 < time1 / 1.25
         final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
+
+
+class TestBatchAncestorMatching:
+    def test_equivalance(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        ancestors = tsinfer.generate_ancestors(
+            samples, path=str(tmpdir / "ancestors.zarr")
+        )
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+        )
+        for group_index, _ in enumerate(metadata["ancestor_grouping"]):
+            tsinfer.match_ancestors_batch_group(tmpdir / "work", group_index)
+        ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+        ts2 = tsinfer.match_ancestors(samples, ancestors)
+        ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
 
 
 class TestAncestorGeneratorsEquivalant:
@@ -2485,7 +2482,7 @@ class TestAlgorithmDebugOutput:
         matcher_container = tsinfer.AncestorMatcher(
             sample_data, ancestor_data, engine=tsinfer.PY_ENGINE
         )
-        matcher_container.match_ancestors()
+        matcher_container.match_ancestors(matcher_container.group_by_linesweep())
         with mock.patch("sys.stdout", new=io.StringIO()) as mockOutput:
             matcher_container.tree_sequence_builder.print_state()
             # Simply check some text is output

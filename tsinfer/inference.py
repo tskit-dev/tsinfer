@@ -32,7 +32,7 @@ import pickle
 import queue
 import tempfile
 import threading
-import time
+import time as time_
 
 import humanize
 import numpy as np
@@ -510,7 +510,6 @@ def match_ancestors(
     extended_checks=False,
     time_units=None,
     record_provenance=True,
-    match_data_dir=None,
 ):
     """
     match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
@@ -566,9 +565,9 @@ def match_ancestors(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
-        match_data_dir=match_data_dir,
     )
-    ts = matcher.match_ancestors()
+    ancestor_grouping = matcher.group_by_linesweep()
+    ts = matcher.match_ancestors(ancestor_grouping)
     tables = ts.dump_tables()
     for timestamp, record in ancestor_data.provenances():
         tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
@@ -576,6 +575,135 @@ def match_ancestors(
         record = provenance.get_provenance_dict(
             command="match_ancestors",
             mismatch_ratio=mismatch_ratio,
+        )
+        tables.provenances.add_row(record=json.dumps(record))
+    ts = tables.tree_sequence()
+    return ts
+
+
+def match_ancestors_batch_init(
+    working_dir,
+    sample_data_path,
+    ancestor_data_path,
+    min_work_per_job,
+    *,
+    recombination_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    # Deliberately undocumented parameters below
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
+    precision=None,
+    engine=constants.C_ENGINE,
+    extended_checks=False,
+    time_units=None,
+    record_provenance=True,
+):
+    # Create work dir
+    os.mkdir(working_dir)
+    ancestors = formats.AncestorData.load(ancestor_data_path)
+    sample_data = formats.SgkitSampleData(sample_data_path)
+    ancestors._check_finalised()
+    sample_data._check_finalised()
+
+    matcher = AncestorMatcher(
+        sample_data,
+        ancestors,
+    )
+    ancestor_grouping = []
+    ancestor_lengths = ancestors.ancestors_length
+    for group_ancestors in matcher.group_by_linesweep().values():
+        # Make ancestor_ids JSON serialisable
+        group_ancestors = list(map(int, group_ancestors))
+        partitions = []
+        current_partition = []
+        current_partition_work = 0
+        # TODO: Can do better here by packing ancestors
+        # into as equal sized partitions as possible
+        for ancestor in group_ancestors:
+            if current_partition_work + ancestor_lengths[ancestor] > min_work_per_job:
+                partitions.append(current_partition)
+                current_partition = [ancestor]
+                current_partition_work = ancestor_lengths[ancestor]
+            else:
+                current_partition.append(ancestor)
+                current_partition_work += ancestor_lengths[ancestor]
+        partitions.append(current_partition)
+        group = {
+            "ancestors": group_ancestors,
+            "partitions": partitions if len(partitions) > 1 else None,
+        }
+        ancestor_grouping.append(group)
+
+    metadata = {
+        "sample_data_path": str(sample_data_path),
+        "ancestor_data_path": str(ancestor_data_path),
+        "recombination_rate": recombination_rate,
+        "mismatch_ratio": mismatch_ratio,
+        "path_compression": path_compression,
+        "recombination": recombination,
+        "mismatch": mismatch,
+        "precision": precision,
+        "engine": engine,
+        "extended_checks": extended_checks,
+        "time_units": time_units,
+        "record_provenance": record_provenance,
+        "ancestor_grouping": ancestor_grouping,
+    }
+    metadata_path = os.path.join(working_dir, "metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f)
+    return metadata
+
+
+def match_ancestors_batch_group(work_dir, group_index):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    group = metadata["ancestor_grouping"][group_index]
+    sample_data = formats.SgkitSampleData(metadata["sample_data_path"])
+    ancestors = formats.AncestorData.load(metadata["ancestor_data_path"])
+    sample_data._check_finalised()
+    ancestors._check_finalised()
+    if group_index == 0:
+        ancestors_ts = None
+    else:
+        ancestors_ts = tskit.load(
+            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+        )
+    matcher = AncestorMatcher(
+        sample_data,
+        ancestors,
+        ancestors_ts=ancestors_ts,
+        time_units=metadata["time_units"],
+        recombination_rate=metadata["recombination_rate"],
+        recombination=metadata["recombination"],
+        mismatch_ratio=metadata["mismatch_ratio"],
+        mismatch=metadata["mismatch"],
+        path_compression=metadata["path_compression"],
+        precision=metadata["precision"],
+        extended_checks=metadata["extended_checks"],
+        engine=metadata["engine"],
+    )
+    ts = matcher.match_ancestors({group_index: group["ancestors"]})
+    ts.dump(os.path.join(work_dir, f"ancestors_{group_index}.trees"))
+    return ts
+
+
+def match_ancestors_batch_finalise(work_dir):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    ancestor_data = formats.AncestorData.load(metadata["ancestor_data_path"])
+    final_group = len(metadata["ancestor_grouping"]) - 1
+    ts = tskit.load(os.path.join(work_dir, f"ancestors_{final_group}.trees"))
+    tables = ts.dump_tables()
+    for timestamp, record in ancestor_data.provenances():
+        tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+    if metadata["record_provenance"]:
+        record = provenance.get_provenance_dict(
+            command="match_ancestors",
+            mismatch_ratio=metadata["mismatch_ratio"],
         )
         tables.provenances.add_row(record=json.dumps(record))
     ts = tables.tree_sequence()
@@ -1103,9 +1231,9 @@ class AncestorsGenerator:
     def _run_synchronous(self, progress):
         a = np.zeros(self.num_sites, dtype=np.int8)
         for t, focal_sites in self.descriptors:
-            before = time.perf_counter()
+            before = time_.perf_counter()
             start, end = self.ancestor_builder.make_ancestor(focal_sites, a)
-            duration = time.perf_counter() - before
+            duration = time_.perf_counter() - before
             logger.debug(
                 "Made ancestor in {:.2f}s at timepoint {} "
                 "from {} to {} (len={}) with {} focal sites ({})".format(
@@ -1585,9 +1713,71 @@ class Matcher:
             progress.update()
         progress.close()
 
+    def restore_tree_sequence_builder(self):
+        tables = self.ancestors_ts_tables
+        if self.sample_data.sequence_length != tables.sequence_length:
+            raise ValueError(
+                "Ancestors tree sequence not compatible: sequence length is different to"
+                " sample data file."
+            )
+        if np.any(tables.nodes.time <= 0):
+            raise ValueError("All nodes must have time > 0")
+
+        edges = tables.edges
+        # Get the indexes into the position array.
+        left = np.searchsorted(self.position_map, edges.left)
+        if np.any(self.position_map[left] != edges.left):
+            raise ValueError("Invalid left coordinates")
+        right = np.searchsorted(self.position_map, edges.right)
+        if np.any(self.position_map[right] != edges.right):
+            raise ValueError("Invalid right coordinates")
+
+        # Need to sort by child ID here and left so that we can efficiently
+        # insert the child paths.
+        index = np.lexsort((left, edges.child))
+        nodes = tables.nodes
+        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
+        self.tree_sequence_builder.restore_edges(
+            left[index].astype(np.int32),
+            right[index].astype(np.int32),
+            edges.parent[index],
+            edges.child[index],
+        )
+        assert self.tree_sequence_builder.num_match_nodes == 1 + len(
+            np.unique(edges.child)
+        )
+
+        mutations = tables.mutations
+        derived_state = np.zeros(len(mutations), dtype=np.int8)
+        mutation_site = mutations.site
+        site_id = 0
+        mutation_id = 0
+        for site in self.sample_data.sites(self.inference_site_id):
+            while (
+                mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
+            ):
+                allele = mutations[mutation_id].derived_state
+                derived_state[mutation_id] = site.reorder_alleles().index(allele)
+                mutation_id += 1
+            site_id += 1
+        self.tree_sequence_builder.restore_mutations(
+            mutation_site, mutations.node, derived_state, mutations.parent
+        )
+        logger.info(
+            "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
+                self.num_samples,
+                len(nodes),
+                len(edges),
+                self.num_sites,
+                len(mutations),
+            )
+        )
+
 
 class AncestorMatcher(Matcher):
-    def __init__(self, sample_data, ancestor_data, time_units=None, **kwargs):
+    def __init__(
+        self, sample_data, ancestor_data, ancestors_ts=None, time_units=None, **kwargs
+    ):
         super().__init__(sample_data, ancestor_data.sites_position[:], **kwargs)
         self.ancestor_data = ancestor_data
         if time_units is None:
@@ -1595,20 +1785,17 @@ class AncestorMatcher(Matcher):
         self.time_units = time_units
         self.num_ancestors = self.ancestor_data.num_ancestors
 
-        # Find the dependencies
-        t = time.time()
-        self.ancestor_grouping = self.group_by_linesweep()
-        logging.info(
-            f"Grouped {self.num_ancestors} ancestors into {len(self.ancestor_grouping)}"
-            f" groups in {time.time() - t:.2f}s"
-        )
-
-        # Add nodes for all the ancestors so that the ancestor IDs are equal
-        # to the node IDs.
-        for t in self.ancestor_data.ancestors_time[:]:
-            self.tree_sequence_builder.add_node(t)
+        if ancestors_ts is None:
+            # Add nodes for all the ancestors so that the ancestor IDs are equal
+            # to the node IDs.
+            for t in self.ancestor_data.ancestors_time[:]:
+                self.tree_sequence_builder.add_node(t)
+        else:
+            self.ancestors_ts_tables = ancestors_ts.tables
+            self.restore_tree_sequence_builder()
 
     def group_by_linesweep(self):
+        t = time_.time()
         start = self.ancestor_data.ancestors_start[:]
         end = self.ancestor_data.ancestors_end[:]
         time = self.ancestor_data.ancestors_time[:]
@@ -1656,7 +1843,10 @@ class AncestorMatcher(Matcher):
             ancestor_grouping[0].remove(0)
         except KeyError:
             pass
-        logger.info(f"Finished grouping into {len(ancestor_grouping)} groups")
+        logger.info(
+            f"Finished grouping into {len(ancestor_grouping)} groups in "
+            f"{time_.time() - t:.2f} seconds"
+        )
         return ancestor_grouping
 
     def __start_group(self, level, ancestor_ids):
@@ -1735,53 +1925,23 @@ class AncestorMatcher(Matcher):
 
         return results
 
-    def match_ancestors(self):
-        logger.info(
-            f"Starting ancestor matching for {len(self.ancestor_grouping)} groups"
-        )
+    def match_ancestors(self, ancestor_grouping):
+        logger.info(f"Starting ancestor matching for {len(ancestor_grouping)} groups")
         self.match_progress = self.progress_monitor.get(
-            "ma_match", self.num_ancestors - 1
+            "ma_match", sum(len(ids) for ids in ancestor_grouping.values())
         )
-        for group, ancestor_ids in self.ancestor_grouping.items():
-            t = time.time()
+        for group, ancestor_ids in ancestor_grouping.items():
+            t = time_.time()
             logger.info(
-                f"Starting group {group} of {len(self.ancestor_grouping)} "
+                f"Starting group {group} of {len(ancestor_grouping)} "
                 f"with {len(ancestor_ids)} ancestors"
             )
             self.__start_group(group, ancestor_ids)
-            if group in self.match_data:
-                # If a group is in the match data, it must be there completely
-                results = []
-                for ancestor_id in ancestor_ids:
-                    try:
-                        results.append(self.match_data[group][ancestor_id])
-                    except KeyError:
-                        raise ValueError(
-                            f"Ancestor ID {ancestor_id} in group {group} "
-                            f"not found in match data"
-                        )
-                    self.match_progress.update()
-                logger.info(
-                    f"Loaded {len(ancestor_ids)} paths from match data for group {group}"
-                )
-            else:
-                results = self.match_locally(ancestor_ids)
-                if self.match_data_dir is not None:
-                    stored_data = StoredMatchData(
-                        group_id=group,
-                        num_sites=self.num_sites,
-                        results={
-                            _id: result for _id, result in zip(ancestor_ids, results)
-                        },
-                    )
-                    with open(
-                        os.path.join(self.match_data_dir, f"{group}.pkl"), "wb"
-                    ) as f:
-                        pickle.dump(stored_data, f)
+            results = self.match_locally(ancestor_ids)
             self.__complete_group(group, ancestor_ids, results)
             logger.info(
-                f"Finished group {group} of {len(self.ancestor_grouping)} in "
-                f"{time.time() - t:.2f} seconds"
+                f"Finished group {group} of {len(ancestor_grouping)} in "
+                f"{time_.time() - t:.2f} seconds"
             )
 
         ts = self.store_output()
@@ -1926,66 +2086,6 @@ class SampleMatcher(Matcher):
             )
         return results
 
-    def restore_tree_sequence_builder(self):
-        tables = self.ancestors_ts_tables
-        if self.sample_data.sequence_length != tables.sequence_length:
-            raise ValueError(
-                "Ancestors tree sequence not compatible: sequence length is different to"
-                " sample data file."
-            )
-        if np.any(tables.nodes.time <= 0):
-            raise ValueError("All nodes must have time > 0")
-
-        edges = tables.edges
-        # Get the indexes into the position array.
-        left = np.searchsorted(self.position_map, edges.left)
-        if np.any(self.position_map[left] != edges.left):
-            raise ValueError("Invalid left coordinates")
-        right = np.searchsorted(self.position_map, edges.right)
-        if np.any(self.position_map[right] != edges.right):
-            raise ValueError("Invalid right coordinates")
-
-        # Need to sort by child ID here and left so that we can efficiently
-        # insert the child paths.
-        index = np.lexsort((left, edges.child))
-        nodes = tables.nodes
-        self.tree_sequence_builder.restore_nodes(nodes.time, nodes.flags)
-        self.tree_sequence_builder.restore_edges(
-            left[index].astype(np.int32),
-            right[index].astype(np.int32),
-            edges.parent[index],
-            edges.child[index],
-        )
-        assert self.tree_sequence_builder.num_match_nodes == 1 + len(
-            np.unique(edges.child)
-        )
-
-        mutations = tables.mutations
-        derived_state = np.zeros(len(mutations), dtype=np.int8)
-        mutation_site = mutations.site
-        site_id = 0
-        mutation_id = 0
-        for site in self.sample_data.sites(self.inference_site_id):
-            while (
-                mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
-            ):
-                allele = mutations[mutation_id].derived_state
-                derived_state[mutation_id] = site.reorder_alleles().index(allele)
-                mutation_id += 1
-            site_id += 1
-        self.tree_sequence_builder.restore_mutations(
-            mutation_site, mutations.node, derived_state, mutations.parent
-        )
-        logger.info(
-            "Loaded {} samples {} nodes; {} edges; {} sites; {} mutations".format(
-                self.num_samples,
-                len(nodes),
-                len(edges),
-                self.num_sites,
-                len(mutations),
-            )
-        )
-
     def match_locally(self, sample_indexes):
         def thread_worker_function(j_haplotype):
             j, haplotype = j_haplotype
@@ -1994,7 +2094,7 @@ class SampleMatcher(Matcher):
             if not hasattr(local_data, "matcher"):
                 local_data.matcher = self.create_matcher_instance()
             logger.info(
-                f"{time.time()}Thread {threading.get_ident()} starting haplotype {j}"
+                f"{time_.time()}Thread {threading.get_ident()} starting haplotype {j}"
             )
             result = self.find_path(
                 matcher=local_data.matcher,
@@ -2005,7 +2105,7 @@ class SampleMatcher(Matcher):
             )
             self.match_progress.update()
             logger.info(
-                f"{time.time()}Thread {threading.get_ident()} finished haplotype {j}"
+                f"{time_.time()}Thread {threading.get_ident()} finished haplotype {j}"
             )
             return result
 
@@ -2031,7 +2131,7 @@ class SampleMatcher(Matcher):
             return
         self.match_progress = self.progress_monitor.get("ms_match", num_samples)
 
-        t = time.time()
+        t = time_.time()
         if "samples" in self.match_data:
             results = []
             for j in sample_indexes:
@@ -2054,7 +2154,7 @@ class SampleMatcher(Matcher):
                 with open(os.path.join(self.match_data_dir, "samples.pkl"), "wb") as f:
                     pickle.dump(stored_data, f)
         logger.info(
-            f"Finished matching for all samples in {time.time() - t:.2f} seconds"
+            f"Finished matching for all samples in {time_.time() - t:.2f} seconds"
         )
         self.match_progress.close()
         logger.info(
