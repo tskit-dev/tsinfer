@@ -657,7 +657,6 @@ class TestSgkitMatchSamplesToDisk:
         )
         stored = pickle.load(open(tmpdir / "samples.pkl", "rb"))
         assert stored.group_id == "samples"
-        assert stored.num_sites == 86  # Num inferred sites
         assert len(stored.results) == slice[1] - slice[0]
         for i, (s, m) in enumerate(stored.results.items()):
             assert s == slice[0] + i

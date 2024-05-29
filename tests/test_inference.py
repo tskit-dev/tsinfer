@@ -1415,6 +1415,7 @@ class TestResume:
         final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 class TestBatchAncestorMatching:
     def test_equivalance(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
@@ -1426,10 +1427,127 @@ class TestBatchAncestorMatching:
             tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
         )
         for group_index, _ in enumerate(metadata["ancestor_grouping"]):
-            tsinfer.match_ancestors_batch_group(tmpdir / "work", group_index)
+            tsinfer.match_ancestors_batch_groups(
+                tmpdir / "work", group_index, group_index + 1, 2
+            )
         ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
         ts2 = tsinfer.match_ancestors(samples, ancestors)
         ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
+
+    def test_equivalance_many_at_once(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        ancestors = tsinfer.generate_ancestors(
+            samples, path=str(tmpdir / "ancestors.zarr")
+        )
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+        )
+        tsinfer.match_ancestors_batch_groups(
+            tmpdir / "work", 0, len(metadata["ancestor_grouping"]) // 2, 2
+        )
+        tsinfer.match_ancestors_batch_groups(
+            tmpdir / "work",
+            len(metadata["ancestor_grouping"]) // 2,
+            len(metadata["ancestor_grouping"]),
+            2,
+        )
+        # TODO Check which ones written to disk
+        ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+        ts2 = tsinfer.match_ancestors(samples, ancestors)
+        ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
+
+    def test_equivalance_with_partitions(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        ancestors = tsinfer.generate_ancestors(
+            samples, path=str(tmpdir / "ancestors.zarr")
+        )
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+        )
+        for group_index, group in enumerate(metadata["ancestor_grouping"]):
+            if group["partitions"] is None:
+                tsinfer.match_ancestors_batch_groups(
+                    tmpdir / "work", group_index, group_index + 1
+                )
+            else:
+                for p_index, _ in enumerate(group["partitions"]):
+                    tsinfer.match_ancestors_batch_group_partition(
+                        tmpdir / "work", group_index, p_index
+                    )
+                ts = tsinfer.match_ancestors_batch_group_finalise(
+                    tmpdir / "work", group_index
+                )
+        ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+        ts2 = tsinfer.match_ancestors(samples, ancestors)
+        ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
+
+    def test_max_partitions(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        ancestors = tsinfer.generate_ancestors(
+            samples, path=str(tmpdir / "ancestors.zarr")
+        )
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work",
+            zarr_path,
+            tmpdir / "ancestors.zarr",
+            10000,
+            max_num_partitions=2,
+        )
+        for group_index, group in enumerate(metadata["ancestor_grouping"]):
+            if group["partitions"] is None:
+                tsinfer.match_ancestors_batch_groups(
+                    tmpdir / "work", group_index, group_index + 1
+                )
+            else:
+                assert len(group["partitions"]) <= 2
+                for p_index, _ in enumerate(group["partitions"]):
+                    tsinfer.match_ancestors_batch_group_partition(
+                        tmpdir / "work", group_index, p_index
+                    )
+                ts = tsinfer.match_ancestors_batch_group_finalise(
+                    tmpdir / "work", group_index
+                )
+        ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+        ts2 = tsinfer.match_ancestors(samples, ancestors)
+        ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
+
+    def test_errors(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+        )
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", -1, 1)
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", 0, -1)
+        with pytest.raises(ValueError, match="must be greater"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", 5, 4)
+
+        with pytest.raises(ValueError, match="has no partitions"):
+            tsinfer.match_ancestors_batch_group_partition(tmpdir / "work", 0, 1)
+        last_group = len(metadata["ancestor_grouping"]) - 1
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_group_partition(
+                tmpdir / "work", last_group, 1000
+            )
+
+        # Match a single group to get a ts written to disk
+        tsinfer.match_ancestors_batch_groups(tmpdir / "work", 0, 2)
+        assert (tmpdir / "work" / "ancestors_1.trees").exists()
+
+        # Modify to change sequence length
+        ts = tskit.load(str(tmpdir / "work" / "ancestors_1.trees"))
+        tables = ts.dump_tables()
+        tables.sequence_length += 1
+        ts = tables.tree_sequence()
+        ts.dump(str(tmpdir / "work" / "ancestors_1.trees"))
+        with pytest.raises(ValueError, match="sequence length is different"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", 2, 3)
 
 
 class TestAncestorGeneratorsEquivalant:
