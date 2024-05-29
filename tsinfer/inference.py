@@ -28,6 +28,7 @@ import heapq
 import json
 import logging
 import os
+import pathlib
 import pickle
 import queue
 import tempfile
@@ -554,6 +555,8 @@ def match_ancestors_batch_init(
     ancestor_data_path,
     min_work_per_job,
     *,
+    sgkit_samples_mask_name=None,
+    sites_mask_name=None,
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
@@ -567,9 +570,13 @@ def match_ancestors_batch_init(
     record_provenance=True,
 ):
     # Create work dir
-    os.mkdir(working_dir)
+    pathlib.Path(working_dir).mkdir(parents=True, exist_ok=True)
     ancestors = formats.AncestorData.load(ancestor_data_path)
-    sample_data = formats.SgkitSampleData(sample_data_path)
+    sample_data = formats.SgkitSampleData(
+        sample_data_path,
+        sgkit_samples_mask_name=sgkit_samples_mask_name,
+        sites_mask_name=sites_mask_name,
+    )
     ancestors._check_finalised()
     sample_data._check_finalised()
 
@@ -579,7 +586,7 @@ def match_ancestors_batch_init(
     )
     ancestor_grouping = []
     ancestor_lengths = ancestors.ancestors_length
-    for group_ancestors in matcher.group_by_linesweep().values():
+    for group_index, group_ancestors in matcher.group_by_linesweep().items():
         # Make ancestor_ids JSON serialisable
         group_ancestors = list(map(int, group_ancestors))
         partitions = []
@@ -587,15 +594,24 @@ def match_ancestors_batch_init(
         current_partition_work = 0
         # TODO: Can do better here by packing ancestors
         # into as equal sized partitions as possible
-        for ancestor in group_ancestors:
-            if current_partition_work + ancestor_lengths[ancestor] > min_work_per_job:
-                partitions.append(current_partition)
-                current_partition = [ancestor]
-                current_partition_work = ancestor_lengths[ancestor]
-            else:
-                current_partition.append(ancestor)
-                current_partition_work += ancestor_lengths[ancestor]
-        partitions.append(current_partition)
+        if group_index == 0:
+            partitions.append(group_ancestors)
+        else:
+            for ancestor in group_ancestors:
+                if (
+                    current_partition_work + ancestor_lengths[ancestor]
+                    > min_work_per_job
+                ):
+                    partitions.append(current_partition)
+                    current_partition = [ancestor]
+                    current_partition_work = ancestor_lengths[ancestor]
+                else:
+                    current_partition.append(ancestor)
+                    current_partition_work += ancestor_lengths[ancestor]
+            partitions.append(current_partition)
+        # Make directories for the path data
+        if len(partitions) > 1:
+            os.mkdir(os.path.join(working_dir, f"group_{group_index}"))
         group = {
             "ancestors": group_ancestors,
             "partitions": partitions if len(partitions) > 1 else None,
@@ -605,6 +621,8 @@ def match_ancestors_batch_init(
     metadata = {
         "sample_data_path": str(sample_data_path),
         "ancestor_data_path": str(ancestor_data_path),
+        "sgkit_samples_mask_name": sgkit_samples_mask_name,
+        "sites_mask_name": sites_mask_name,
         "recombination_rate": recombination_rate,
         "mismatch_ratio": mismatch_ratio,
         "path_compression": path_compression,
@@ -623,22 +641,16 @@ def match_ancestors_batch_init(
     return metadata
 
 
-def match_ancestors_batch_group(work_dir, group_index):
-    metadata_path = os.path.join(work_dir, "metadata.json")
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    group = metadata["ancestor_grouping"][group_index]
-    sample_data = formats.SgkitSampleData(metadata["sample_data_path"])
+def initialize_matcher(metadata, ancestors_ts=None, **kwargs):
+    sample_data = formats.SgkitSampleData(
+        metadata["sample_data_path"],
+        sgkit_samples_mask_name=metadata["sgkit_samples_mask_name"],
+        sites_mask_name=metadata["sites_mask_name"],
+    )
     ancestors = formats.AncestorData.load(metadata["ancestor_data_path"])
     sample_data._check_finalised()
     ancestors._check_finalised()
-    if group_index == 0:
-        ancestors_ts = None
-    else:
-        ancestors_ts = tskit.load(
-            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
-        )
-    matcher = AncestorMatcher(
+    return AncestorMatcher(
         sample_data,
         ancestors,
         ancestors_ts=ancestors_ts,
@@ -651,8 +663,76 @@ def match_ancestors_batch_group(work_dir, group_index):
         precision=metadata["precision"],
         extended_checks=metadata["extended_checks"],
         engine=metadata["engine"],
+        **kwargs,
     )
+
+
+def match_ancestors_batch_group(work_dir, group_index, num_threads=0):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    if group_index >= len(metadata["ancestor_grouping"]) or group_index < 0:
+        raise ValueError(f"Group {group_index} is out of range")
+    group = metadata["ancestor_grouping"][group_index]
+    if group_index == 0:
+        ancestors_ts = None
+    else:
+        ancestors_ts = tskit.load(
+            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+        )
+    matcher = initialize_matcher(metadata, ancestors_ts, num_threads=num_threads)
     ts = matcher.match_ancestors({group_index: group["ancestors"]})
+    path = os.path.join(work_dir, f"ancestors_{group_index}.trees")
+    logger.info(f"Dumping to {path}")
+    ts.dump(path)
+    return ts
+
+
+def match_ancestors_batch_group_partition(work_dir, group_index, partition_index):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    group = metadata["ancestor_grouping"][group_index]
+    if group["partitions"] is None:
+        raise ValueError(f"Group {group_index} has no partitions")
+    if partition_index >= len(group["partitions"]) or partition_index < 0:
+        raise ValueError(f"Partition {partition_index} is out of range")
+
+    ancestors_ts = tskit.load(
+        os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+    )
+    matcher = initialize_matcher(metadata, ancestors_ts)
+    ancestors_to_match = group["partitions"][partition_index]
+
+    results = matcher.match_partition(ancestors_to_match, group_index, partition_index)
+    partition_path = os.path.join(
+        work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
+    )
+    logger.info(f"Dumping to {partition_path}")
+    with open(partition_path, "wb") as f:
+        pickle.dump(results, f)
+
+
+def match_ancestors_batch_group_finalise(work_dir, group_index):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    group = metadata["ancestor_grouping"][group_index]
+    ancestors_ts = tskit.load(
+        os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+    )
+    matcher = initialize_matcher(metadata, ancestors_ts)
+    logger.info(
+        f"Finalising group {group_index}, loading {len(group['partitions'])} partitions"
+    )
+    results = []
+    for partition_index in range(len(group["partitions"])):
+        partition_path = os.path.join(
+            work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
+        )
+        with open(partition_path, "rb") as f:
+            results.extend(pickle.load(f))
+    ts = matcher.finalise_group(group, results, group_index)
     ts.dump(os.path.join(work_dir, f"ancestors_{group_index}.trees"))
     return ts
 
@@ -1914,6 +1994,29 @@ class AncestorMatcher(Matcher):
         ts = self.store_output()
         self.match_progress.close()
         logger.info("Finished ancestor matching")
+        return ts
+
+    def match_partition(self, ancestors_to_match, group_index, partition_index):
+        logger.info(
+            f"Matching group {group_index} partition {partition_index} "
+            f"with {len(ancestors_to_match)} ancestors"
+        )
+        t = time_.time()
+        self.__start_group(group_index, ancestors_to_match)
+        self.match_progress = self.progress_monitor.get(
+            "ma_match", len(ancestors_to_match)
+        )
+        results = self.match_locally(ancestors_to_match)
+        self.match_progress.close()
+        logger.info(f"Matching took {time_.time() - t:.2f} seconds")
+        return results
+
+    def finalise_group(self, group, results, group_index):
+        logger.info(f"Finalising group {group_index}")
+        self.__start_group(group_index, group["ancestors"])
+        self.__complete_group(group_index, group["ancestors"], results)
+        ts = self.store_output()
+        logger.info(f"Finalised group {group_index}")
         return ts
 
     def get_ancestors_tables(self):
