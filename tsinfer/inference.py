@@ -597,10 +597,14 @@ def match_ancestors_batch_init(
         if group_index == 0:
             partitions.append(group_ancestors)
         else:
+            total_work = sum(ancestor_lengths[ancestor] for ancestor in group_ancestors)
+            min_work_per_job_group = min_work_per_job
+            if total_work / 1000 > min_work_per_job:
+                min_work_per_job_group = total_work / 1000
             for ancestor in group_ancestors:
                 if (
                     current_partition_work + ancestor_lengths[ancestor]
-                    > min_work_per_job
+                    > min_work_per_job_group
                 ):
                     partitions.append(current_partition)
                     current_partition = [ancestor]
@@ -667,22 +671,30 @@ def initialize_matcher(metadata, ancestors_ts=None, **kwargs):
     )
 
 
-def match_ancestors_batch_group(work_dir, group_index, num_threads=0):
+def match_ancestors_batch_groups(
+    work_dir, group_index_start, group_index_end, num_threads=0
+):
     metadata_path = os.path.join(work_dir, "metadata.json")
     with open(metadata_path) as f:
         metadata = json.load(f)
-    if group_index >= len(metadata["ancestor_grouping"]) or group_index < 0:
-        raise ValueError(f"Group {group_index} is out of range")
-    group = metadata["ancestor_grouping"][group_index]
-    if group_index == 0:
+    if group_index_start >= len(metadata["ancestor_grouping"]) or group_index_start < 0:
+        raise ValueError(f"Group {group_index_start} is out of range")
+    if group_index_end > len(metadata["ancestor_grouping"]) or group_index_end < 1:
+        raise ValueError(f"Group {group_index_end} is out of range")
+    if group_index_start == 0:
         ancestors_ts = None
     else:
         ancestors_ts = tskit.load(
-            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+            os.path.join(work_dir, f"ancestors_{group_index_start-1}.trees")
         )
     matcher = initialize_matcher(metadata, ancestors_ts, num_threads=num_threads)
-    ts = matcher.match_ancestors({group_index: group["ancestors"]})
-    path = os.path.join(work_dir, f"ancestors_{group_index}.trees")
+    ts = matcher.match_ancestors(
+        {
+            group_index: metadata["ancestor_grouping"][group_index]["ancestors"]
+            for group_index in range(group_index_start, group_index_end)
+        }
+    )
+    path = os.path.join(work_dir, f"ancestors_{group_index_end-1}.trees")
     logger.info(f"Dumping to {path}")
     ts.dump(path)
     return ts
