@@ -2440,13 +2440,15 @@ class SgkitSampleData(SampleData):
 
     @functools.cached_property
     def sites_alleles(self):
-        return self.data["variant_allele"][:][self.sites_select]
+        return self.data["variant_allele"][:][self.sites_select].astype(str)
 
     @functools.cached_property
     def sites_ancestral_allele(self):
         unknown_alleles = collections.Counter()
         try:
-            string_allele = self.data["variant_ancestral_allele"][:][self.sites_select]
+            string_allele = (
+                self.data["variant_ancestral_allele"][:][self.sites_select]
+            ).astype(str)
         except KeyError:
             raise ValueError(
                 "variant_ancestral_allele was not found in the dataset."
