@@ -72,11 +72,29 @@ inference_type_metadata_definition = {
 
 
 def add_to_schema(schema, name, definition=None, required=False):
+    """
+    Adds the specified metadata name to the schema, with the specified definition.
+    If the metadata name is already in the schema then either will warn about
+    potential overwriting (if the definition is the same and there is a description),
+    or will raise an error otherwise (to avoid conflicting metadata definitions).
+    """
     schema = copy.deepcopy(schema)
     if definition is None:
         definition = {}
     try:
         if name in schema["properties"]:
+            try:
+                if (
+                    schema["properties"][name] == definition
+                    and definition["description"] != ""
+                ):
+                    logger.warning(
+                        f"Metadata {name} with identical description already in schema."
+                        " Schema left unchanged: existing metadata may be overwritten."
+                    )
+                    return schema
+            except KeyError:
+                pass
             raise ValueError(f"The metadata {name} is reserved for use by tsinfer")
     except KeyError:
         schema["properties"] = {}

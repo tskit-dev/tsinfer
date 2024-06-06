@@ -4351,9 +4351,37 @@ class TestAddToSchema:
 
     def test_name_collision(self):
         schema = MetadataSchema.permissive_json().schema
+        schema = tsinfer.add_to_schema(
+            schema, "name", definition={"type": "number", "description": "something"}
+        )
+        with pytest.raises(ValueError):
+            tsinfer.add_to_schema(
+                schema, "name", definition={"type": "number", "description": "alt"}
+            )
+
+    def test_name_collision_no_definition(self):
+        schema = MetadataSchema.permissive_json().schema
         schema = tsinfer.add_to_schema(schema, "name")
         with pytest.raises(ValueError):
             tsinfer.add_to_schema(schema, "name")
+
+    def test_name_collision_same_description(self, caplog):
+        schema = MetadataSchema.permissive_json().schema
+        with caplog.at_level(logging.WARNING):
+            schema1 = tsinfer.add_to_schema(
+                schema,
+                "name",
+                definition={"description": "a unique description", "type": "number"},
+            )
+            assert caplog.text == ""
+        with caplog.at_level(logging.WARNING):
+            schema2 = tsinfer.add_to_schema(
+                schema1,
+                "name",
+                definition={"type": "number", "description": "a unique description"},
+            )
+            assert "already in schema" in caplog.text
+        assert schema1 == schema2
 
     def test_defaults(self):
         schema = MetadataSchema.permissive_json().schema
