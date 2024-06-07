@@ -81,6 +81,21 @@ inference_type_metadata_definition = {
     ],
 }
 
+node_ancestor_data_id_metadata_definition = {
+    "description": (
+        "The ID of the tsinfer ancestor data node from which this node is derived."
+    ),
+    "type": "number",
+}
+
+node_sample_data_id_metadata_definition = {
+    "description": (
+        "The ID of the tsinfer sample data node from which this node is derived. "
+        "Only present for nodes in which historical samples are treated as ancestors."
+    ),
+    "type": "number",
+}
+
 
 class LMDBCache:
     def __init__(self, lmdb):
@@ -1879,7 +1894,7 @@ class AncestorMatcher(Matcher):
         logger.info("Finished ancestor matching")
         return ts
 
-    def get_ancestors_tables(self):
+    def fill_ancestors_tables(self, tables):
         """
         Return the ancestors tree sequence tables. Only inference sites are included in
         this tree sequence. All nodes have the sample flag bit set, and if a node
@@ -1888,20 +1903,9 @@ class AncestorMatcher(Matcher):
         logger.debug("Building ancestors tree sequence")
         tsb = self.tree_sequence_builder
 
-        tables = tskit.TableCollection(
-            sequence_length=self.ancestor_data.sequence_length
-        )
-
         flags, times = tsb.dump_nodes()
         pc_ancestors = is_pc_ancestor(flags)
         tables.nodes.set_columns(flags=flags, time=times)
-
-        # # FIXME we should do this as a struct codec?
-        # dict_schema = permissive_json_schema()
-        # dict_schema = add_to_schema(dict_schema, "ancestor_data_id",
-        #         {"type": "integer"})
-        # schema = tskit.MetadataSchema(dict_schema)
-        # tables.nodes.schema = schema
 
         # Add metadata for any non-PC node, pointing to the original ancestor
         metadata = []
@@ -1940,16 +1944,20 @@ class AncestorMatcher(Matcher):
                 len(tables.sites),
             )
         )
-        return tables
 
     def store_output(self):
+        tables = tskit.TableCollection(
+            sequence_length=self.ancestor_data.sequence_length
+        )
+        # We decided to use a permissive schema for the metadata, for flexibility
+        dict_schema = tskit.MetadataSchema.permissive_json().schema
+        dict_schema = add_to_schema(
+            dict_schema, "ancestor_data_id", node_ancestor_data_id_metadata_definition
+        )
+        tables.nodes.metadata_schema = tskit.MetadataSchema(dict_schema)
+
         if self.num_ancestors > 0:
-            tables = self.get_ancestors_tables()
-        else:
-            # Allocate an empty tree sequence.
-            tables = tskit.TableCollection(
-                sequence_length=self.ancestor_data.sequence_length
-            )
+            self.fill_ancestors_tables(tables)
         tables.time_units = self.time_units
         return tables.tree_sequence()
 
@@ -2385,6 +2393,12 @@ class SampleMatcher(Matcher):
         logger.debug("Building augmented ancestors tree sequence")
         tsb = self.tree_sequence_builder
         tables = self.ancestors_ts_tables.copy()
+        dict_schema = tables.nodes.metadata_schema.schema
+        assert dict_schema is not None
+        dict_schema = add_to_schema(
+            dict_schema, "sample_data_id", node_sample_data_id_metadata_definition
+        )
+        tables.nodes.metadata_schema = tskit.MetadataSchema(dict_schema)
 
         flags, times = tsb.dump_nodes()
         s = 0
@@ -2395,9 +2409,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata=_encode_raw_metadata(
-                        {"sample_data_id": int(sample_indexes[s])}
-                    ),
+                    metadata={"sample_data_id": int(sample_indexes[s])},
                 )
                 s += 1
             else:

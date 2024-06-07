@@ -59,10 +59,10 @@ def add_default_schemas(ts):
         tables.populations[pop.id] = pop
     tables.individuals.metadata_schema = schema
     assert len(tables.individuals.metadata) == 0
-    tables.individuals.packset_metadata([b"{}"] * ts.num_individuals)
     tables.sites.metadata_schema = schema
     assert len(tables.sites.metadata) == 0
-    tables.sites.packset_metadata([b"{}"] * ts.num_sites)
+    tables.nodes.metadata_schema = schema
+    assert len(tables.nodes.metadata) == 0
     return tables.tree_sequence()
 
 
