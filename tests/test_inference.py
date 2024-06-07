@@ -1233,8 +1233,16 @@ class TestMetadataRoundTrip:
             assert tsutil.json_metadata_is_subset(i1.metadata, i2.metadata)
         # Unless inference is perfect, internal nodes may differ, but sample nodes
         # should be identical
-        for n1, n2 in zip(ts.samples(), ts_inferred.samples()):
-            assert ts.node(n1) == ts_inferred.node(n2)
+        for u1, u2 in zip(ts.samples(), ts_inferred.samples()):
+            # NB - flags might differ if e.g. the node is a historical sample
+            # but original ones should be maintained
+            n1 = ts.node(u1)
+            n2 = ts.node(u2)
+            assert (n1.flags & n2.flags) == n1.flags  # n1.flags is subset of n2.flags
+            assert n1.time == n2.time
+            assert n1.population == n2.population
+            assert n1.individual == n2.individual
+            assert tsutil.json_metadata_is_subset(n1.metadata, n2.metadata)
         # Sites can have metadata added by the inference process, but inferred site
         # metadata should always include all the metadata in the original ts
         for s1, s2 in zip(ts.sites(), ts_inferred.sites()):
@@ -1723,7 +1731,7 @@ class TestAncestorsTreeSequence:
             ancestors_time = ancestor_data.ancestors_time[:]
             num_ancestor_nodes = 0
             for n in ancestors_ts.nodes():
-                md = json.loads(n.metadata) if n.metadata else {}
+                md = n.metadata
                 if tsinfer.is_pc_ancestor(n.flags):
                     assert not ("ancestor_data_id" in md)
                 else:
@@ -2774,7 +2782,6 @@ class TestPostProcess:
         last_node = ts1.node(ts1.num_nodes - 1)
         assert np.max(ts1.tables.nodes.time) == last_node.time
         md = last_node.metadata
-        md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md.get("ancestor_data_id", None) != 0
 
         # When not post processing and there is no path compression,
@@ -2785,7 +2792,6 @@ class TestPostProcess:
         first_node = ts2.node(0)
         assert np.max(ts2.tables.nodes.time) == first_node.time
         md = first_node.metadata
-        md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md["ancestor_data_id"] == 0
 
     @pytest.mark.parametrize("simp", [True, False])
@@ -2823,7 +2829,6 @@ class TestPostProcess:
         oldest_parent_id = ts_unsimplified.edge(-1).parent
         assert oldest_parent_id == 0
         md = ts_unsimplified.node(oldest_parent_id).metadata
-        md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md["ancestor_data_id"] == 0
 
         # Post processing removes ancestor_data_id 0
@@ -2832,7 +2837,6 @@ class TestPostProcess:
         oldest_parent_id = ts.edge(-1).parent
         assert np.sum(ts.tables.nodes.time == ts.node(oldest_parent_id).time) == 1
         md = ts.node(oldest_parent_id).metadata
-        md = json.loads(md.decode())  # At the moment node metadata has no schema
         assert md["ancestor_data_id"] == 1
 
         ts = tsinfer.post_process(
@@ -2844,7 +2848,6 @@ class TestPostProcess:
         for tree in ts.trees():
             roots.add(tree.root)
             md = ts.node(tree.root).metadata
-            md = json.loads(md.decode())  # At the moment node metadata has no schema
             assert md["ancestor_data_id"] == 1
         assert len(roots) > 1
 
@@ -3633,8 +3636,7 @@ class TestAugmentedAncestors:
             node = t2.nodes[m + j]
             assert node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR
             assert node.time == 1
-            metadata = json.loads(node.metadata.decode())
-            assert node_id == metadata["sample_data_id"]
+            assert node_id == node.metadata["sample_data_id"]
 
         t2.nodes.truncate(len(t1.nodes))
         # Adding and subtracting 1 can lead to small diffs, so we compare
@@ -3642,7 +3644,7 @@ class TestAugmentedAncestors:
         t2.nodes.time -= 1.0
         assert np.allclose(t2.nodes.time, t1.nodes.time)
         t2.nodes.time = t1.nodes.time
-        assert t1.nodes == t2.nodes
+        t1.nodes.assert_equals(t2.nodes, ignore_metadata=True)
         if not path_compression:
             # If we have path compression it's possible that some older edges
             # will be compressed out.
@@ -3784,8 +3786,7 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             num_sample_ancestors = 0
             for node in final_ts.nodes():
                 if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
-                    metadata = json.loads(node.metadata.decode())
-                    assert metadata["sample_data_id"] in subset
+                    assert node.metadata["sample_data_id"] in subset
                     num_sample_ancestors += 1
             assert expected_sample_ancestors == num_sample_ancestors
             tsinfer.verify(samples, final_ts.simplify())
