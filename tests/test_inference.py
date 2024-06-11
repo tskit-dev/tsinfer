@@ -1475,6 +1475,28 @@ class TestBatchAncestorMatching:
         ts2 = tsinfer.match_ancestors(samples, ancestors)
         ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
 
+    def test_errors(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.SgkitSampleData(zarr_path)
+        tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+        )
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", -1, 1)
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", 0, -1)
+        with pytest.raises(ValueError, match="must be greater"):
+            tsinfer.match_ancestors_batch_groups(tmpdir / "work", 5, 4)
+
+        with pytest.raises(ValueError, match="has no partitions"):
+            tsinfer.match_ancestors_batch_group_partition(tmpdir / "work", 0, 1)
+        last_group = len(metadata["ancestor_grouping"]) - 1
+        with pytest.raises(ValueError, match="out of range"):
+            tsinfer.match_ancestors_batch_group_partition(
+                tmpdir / "work", last_group, 1000
+            )
+
 
 class TestAncestorGeneratorsEquivalant:
     """

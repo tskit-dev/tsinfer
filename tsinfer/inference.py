@@ -681,6 +681,8 @@ def match_ancestors_batch_groups(
         raise ValueError(f"Group {group_index_start} is out of range")
     if group_index_end > len(metadata["ancestor_grouping"]) or group_index_end < 1:
         raise ValueError(f"Group {group_index_end} is out of range")
+    if group_index_end <= group_index_start:
+        raise ValueError("Group index end must be greater than start")
     if group_index_start == 0:
         ancestors_ts = None
     else:
