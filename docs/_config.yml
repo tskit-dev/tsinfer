@@ -42,7 +42,6 @@ sphinx:
       html_theme: sphinx_book_theme
       html_theme_options:
         pygment_dark_style: monokai
-      pygments_style: monokai
       myst_enable_extensions:
       - colon_fence
       - deflist
