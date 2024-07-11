@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] - 2024-07-12
+
+**Breaking Changes**
+
+- tsinfer now requires Python 3.9 or later
+
 ## [0.3.1] - 2023-04-19
 
 Bug fix release for a bad dependency specification.

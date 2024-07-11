@@ -3,10 +3,79 @@ requires = [
     "setuptools>=42",
     "setuptools_scm",
     "wheel",
-    "oldest-supported-numpy"
+    "numpy>=2"
 ]
-
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 write_to = "tsinfer/_version.py"
+
+[project]
+name = "tsinfer"
+dynamic = ["version"]
+authors = [
+    {name = "Tskit Developers", email = "admin@tskit.dev"},
+]
+description = "Infer tree sequences from genetic variation data."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "GNU GPLv3+"}
+classifiers = [
+    "Programming Language :: C",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Development Status :: 3 - Alpha",
+    "Environment :: Other Environment",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+keywords = [
+    "population genetics",
+    "tree sequence",
+    "ancestral recombination graph",
+    "evolutionary tree",
+    "inference",
+    "tsinfer",
+]
+dependencies = [
+    "numpy>=1.23.5",
+    "six",
+    "tqdm",
+    "humanize",
+    "daiquiri",
+    "tskit>=0.5.3",
+    "numcodecs>=0.6",
+    "zarr>=2.2,!=2.11.0,!=2.11.1,!=2.11.2,<3",
+    "lmdb",
+    "sortedcontainers",
+    "attrs>=19.2.0",
+    "dask[array]",
+    "numba",
+]
+
+[project.urls]
+Homepage = "https://tskit.dev/tsinfer"
+Documentation = "https://tskit.dev/tsinfer/docs/stable"
+Changelog = "https://tskit.dev/tsinfer/docs/stable/CHANGELOG.html"
+"Bug Tracker" = "https://github.com/tskit-dev/tsinfer/issues"
+"Source Code" = "https://github.com/tskit-dev/tsinfer/"
+
+[project.scripts]
+tsinfer = "tsinfer.__main__:main"
+
+[tool.setuptools]
+packages = ["tsinfer"]
+include-package-data = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
