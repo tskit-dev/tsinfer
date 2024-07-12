@@ -252,7 +252,7 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
     # dataset, but for testing it is desirable to have sgkit code write as much of the
     # data as possible.
     with open(path / "data.vcf", "w") as f:
-        ts.write_vcf(f)
+        ts.write_vcf(f, allow_position_zero=True)
     sgkit.io.vcf.vcf_to_zarr(
         path / "data.vcf",
         path / "data.zarr",
