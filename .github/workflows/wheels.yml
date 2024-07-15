@@ -126,7 +126,8 @@ jobs:
         run: |
           python -VV
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
   windows-test:
@@ -151,7 +152,8 @@ jobs:
           #patch-ng required to build lmdb
           pip install patch-ng
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
   manylinux-test:
@@ -173,7 +175,8 @@ jobs:
         run: |
           python -VV
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
 
