@@ -1,12 +1,10 @@
 # Changelog
 
-## [0.3.2] - 2022-1X-XX
-
-In development
+## [0.4.0] - 2024-XX-XX
 
 **Features**
 
-- `tsinfer` now supports inferring data from an `sgkit` dataset. This allows users to
+  - `tsinfer` now supports inferring data from an `sgkit` dataset. This allows users to
   infer from VCFs via the optimised and parallel VCF parsing in `sgkit`.
   - The `variant_mask` boolean array in the `sgkit` dataset can be used mask sites
     not wanted for inference.
@@ -17,8 +15,6 @@ In development
 
 - Remove the `uuid` field from SampleData. SampleData equality is now purely based
   on data. ({pr}`748`, {user}`benjeffery`)
-
-- tsinfer now requires Python 3.9 or later
 
 **Performance improvements**
 
@@ -35,6 +31,25 @@ In development
 
 - Increase parallelisation of `match_ancestors` by generating parallel groups from
   their implied dependency graph. ({pr}`828`, {issue}`147`,  {user}`benjeffery`)
+
+## [0.3.3] - 2024-07-17
+
+**Fixes**
+  - Bug fix release for numpy 2 ({issue}`937`).
+
+**Breaking Changes**
+  - A permissive json schema is now set on node table metadata
+    ({issue}`416` {pr}`931`, {user}`hyanwong`).
+
+## [0.3.2] - 2024-07-16
+
+**Features**
+
+  - `tsinfer` now supports numpy2 (and 1.XX) and python 3.12.
+
+**Breaking Changes**
+
+  - tsinfer now requires Python 3.9 or later
 
 ## [0.3.1] - 2023-04-19
  
