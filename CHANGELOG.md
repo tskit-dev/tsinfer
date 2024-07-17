@@ -1,10 +1,23 @@
 # Changelog
 
-## [0.3.2] - 2024-07-12
+## [0.3.3] - 2024-07-17
+
+**Fixes**
+  - Bug fix release for numpy 2 ({issue}`937`).
+
+**Breaking Changes**
+  - A permissive json schema is now set on node table metadata
+    ({issue}`416` {pr}`931`, {user}`hyanwong`).
+
+## [0.3.2] - 2024-07-16
+
+**Features**
+
+  - `tsinfer` now supports numpy2 (and 1.XX) and python 3.12.
 
 **Breaking Changes**
 
-- tsinfer now requires Python 3.9 or later
+  - tsinfer now requires Python 3.9 or later
 
 ## [0.3.1] - 2023-04-19
 
