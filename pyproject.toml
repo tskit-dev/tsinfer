@@ -49,7 +49,6 @@ keywords = [
 ]
 dependencies = [
     "numpy>=1.23.5",
-    "six",
     "tqdm",
     "humanize",
     "daiquiri",
@@ -59,8 +58,6 @@ dependencies = [
     "lmdb",
     "sortedcontainers",
     "attrs>=19.2.0",
-    "dask[array]",
-    "numba",
 ]
 
 [project.urls]
