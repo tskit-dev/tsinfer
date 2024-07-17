@@ -2293,7 +2293,10 @@ class SampleMatcher(Matcher):
 
         # All true ancestors are samples in the ancestors tree sequence. We unset
         # the SAMPLE flag but keep other flags intact.
-        new_flags = np.bitwise_and(tables.nodes.flags, ~tskit.NODE_IS_SAMPLE)
+        new_flags = tables.nodes.flags
+        new_flags = np.bitwise_and(
+            new_flags, ~new_flags.dtype.type(tskit.NODE_IS_SAMPLE)
+        )
         tables.nodes.flags = new_flags.astype(np.uint32)
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
