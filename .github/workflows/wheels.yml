@@ -99,7 +99,7 @@ jobs:
       - name: Build wheels in docker
         shell: bash
         run: |
-          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2010_x86_64 bash .github/workflows/docker/buildwheel.sh
+          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2014_x86_64 bash .github/workflows/docker/buildwheel.sh
 
       - name: Upload Wheels
         uses: actions/upload-artifact@v3
@@ -126,7 +126,8 @@ jobs:
         run: |
           python -VV
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
   windows-test:
@@ -151,7 +152,8 @@ jobs:
           #patch-ng required to build lmdb
           pip install patch-ng
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
   manylinux-test:
@@ -173,13 +175,17 @@ jobs:
         run: |
           python -VV
           # Install the local wheel
-          pip install tsinfer --only-binary tsinfer -f .
+          pip install --no-index --no-deps --find-links=. tsinfer
+          pip install tsinfer
           python -c "import tsinfer"
 
 
   PyPI_Upload:
     runs-on: ubuntu-latest
+    environment: release
     needs: ['windows-test', 'OSX-test', 'manylinux-test']
+    permissions:
+      id-token: write
     steps:
       - name: Download all
         uses: actions/download-artifact@v3
@@ -189,12 +195,9 @@ jobs:
           cp */*.{whl,gz} dist/.
       - name: Publish distribution to Test PyPI
         if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
-        uses: pypa/gh-action-pypi-publish@master
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.test_pypi_password }}
           repository_url: https://test.pypi.org/legacy/
       - name: Publish distribution to PRODUCTION PyPI
         if: github.event_name == 'release'
-        uses: pypa/gh-action-pypi-publish@master
-        with:
-          password: ${{ secrets.pypi_password }}
+        uses: pypa/gh-action-pypi-publish@release/v1
