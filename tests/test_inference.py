@@ -24,13 +24,11 @@ import itertools
 import json
 import logging
 import os.path
-import pickle
 import random
 import re
 import string
 import sys
 import tempfile
-import time
 import unittest
 import unittest.mock as mock
 
@@ -1366,55 +1364,6 @@ class TestThreads:
         assert ts1.equals(ts2, ignore_provenance=True)
 
 
-class TestResume:
-    def count_paths(self, match_data_dir):
-        path_count = 0
-        for filename in os.listdir(match_data_dir):
-            with open(os.path.join(match_data_dir, filename), "rb") as f:
-                stored_data = pickle.load(f)
-                path_count += len(stored_data.results)
-        return path_count
-
-    def test_equivalance(self, tmpdir):
-        ts = msprime.simulate(5, mutation_rate=2, recombination_rate=2, random_seed=2)
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestor_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts, match_data_dir=tmpdir
-        )
-        assert self.count_paths(tmpdir) == 5
-        final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts, match_data_dir=tmpdir
-        )
-        final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
-
-    def test_cache_used_by_timing(self, tmpdir):
-
-        ts = msprime.sim_ancestry(
-            100, recombination_rate=1, sequence_length=1000, random_seed=42
-        )
-        ts = msprime.sim_mutations(
-            ts, rate=1, random_seed=42, model=msprime.InfiniteSites()
-        )
-        sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        ancestor_data = tsinfer.generate_ancestors(sample_data)
-        ancestor_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        t = time.time()
-        final_ts1 = tsinfer.match_samples(
-            sample_data, ancestor_ts, match_data_dir=tmpdir
-        )
-        time1 = time.time() - t
-        assert self.count_paths(tmpdir) == 200
-        t = time.time()
-        final_ts2 = tsinfer.match_samples(
-            sample_data, ancestor_ts, match_data_dir=tmpdir
-        )
-        time2 = time.time() - t
-        assert time2 < time1
-        final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
-
-
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 class TestBatchAncestorMatching:
     def test_equivalance(self, tmp_path, tmpdir):
@@ -1565,6 +1514,58 @@ class TestBatchAncestorMatching:
         ts.dump(str(tmpdir / "work" / "ancestors_1.trees"))
         with pytest.raises(ValueError, match="sequence length is different"):
             tsinfer.match_ancestors_batch_groups(tmpdir / "work", 2, 3)
+
+
+class TestBatchSampleMatching:
+    def test_match_samples_batch(self, tmp_path, tmpdir):
+        mat_sd, mask_sd, _, _ = tsutil.make_materialized_and_masked_sampledata(
+            tmp_path, tmpdir
+        )
+        mat_ancestors = tsinfer.generate_ancestors(mat_sd)
+        mask_ancestors = tsinfer.generate_ancestors(mask_sd)
+        mat_anc_ts = tsinfer.match_ancestors(mat_sd, mat_ancestors)
+        mask_anc_ts = tsinfer.match_ancestors(mask_sd, mask_ancestors)
+        mat_anc_ts.dump(tmpdir / "mat_anc.trees")
+        mask_anc_ts.dump(tmpdir / "mask_anc.trees")
+
+        mat_md = tsinfer.match_samples_batch_init(
+            work_dir=tmpdir / "working_mat",
+            sample_data_path=mat_sd.path,
+            ancestral_allele="variant_ancestral_allele",
+            ancestor_ts_path=tmpdir / "mat_anc.trees",
+            min_work_per_job=1,
+            max_num_partitions=10,
+        )
+        for i in range(mat_md["num_partitions"]):
+            tsinfer.match_samples_batch_partition(
+                work_dir=tmpdir / "working_mat",
+                partition_index=i,
+            )
+        mat_ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working_mat")
+
+        mask_md = tsinfer.match_samples_batch_init(
+            work_dir=tmpdir / "working_mask",
+            sample_data_path=mask_sd.path,
+            ancestral_allele="variant_ancestral_allele",
+            ancestor_ts_path=tmpdir / "mask_anc.trees",
+            min_work_per_job=1,
+            max_num_partitions=10,
+            site_mask="variant_mask_foobar",
+            sample_mask="samples_mask_foobar",
+        )
+        for i in range(mask_md["num_partitions"]):
+            tsinfer.match_samples_batch_partition(
+                work_dir=tmpdir / "working_mask",
+                partition_index=i,
+            )
+        mask_ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working_mask")
+
+        mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)
+        mat_ts = tsinfer.match_samples(mat_sd, mat_anc_ts)
+
+        mat_ts.tables.assert_equals(mask_ts.tables, ignore_timestamps=True)
+        mask_ts.tables.assert_equals(mask_ts_batch.tables, ignore_timestamps=True)
+        mask_ts_batch.tables.assert_equals(mat_ts_batch.tables, ignore_timestamps=True)
 
 
 class TestAncestorGeneratorsEquivalant:
