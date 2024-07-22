@@ -27,6 +27,7 @@ import dataclasses
 import heapq
 import json
 import logging
+import math
 import os
 import pathlib
 import pickle
@@ -686,7 +687,7 @@ def match_ancestors_batch_init(
     return metadata
 
 
-def initialize_matcher(metadata, ancestors_ts=None, **kwargs):
+def initialize_ancestor_matcher(metadata, ancestors_ts=None, **kwargs):
     sample_data = formats.VariantData(
         metadata["sample_data_path"],
         ancestral_allele=metadata["ancestral_allele"],
@@ -731,7 +732,9 @@ def match_ancestors_batch_groups(
         ancestors_ts = tskit.load(
             os.path.join(work_dir, f"ancestors_{group_index_start-1}.trees")
         )
-    matcher = initialize_matcher(metadata, ancestors_ts, num_threads=num_threads)
+    matcher = initialize_ancestor_matcher(
+        metadata, ancestors_ts, num_threads=num_threads
+    )
     ts = matcher.match_ancestors(
         {
             group_index: metadata["ancestor_grouping"][group_index]["ancestors"]
@@ -757,7 +760,7 @@ def match_ancestors_batch_group_partition(work_dir, group_index, partition_index
     ancestors_ts = tskit.load(
         os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
     )
-    matcher = initialize_matcher(metadata, ancestors_ts)
+    matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
     ancestors_to_match = group["partitions"][partition_index]
 
     results = matcher.match_partition(ancestors_to_match, group_index, partition_index)
@@ -777,7 +780,7 @@ def match_ancestors_batch_group_finalise(work_dir, group_index):
     ancestors_ts = tskit.load(
         os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
     )
-    matcher = initialize_matcher(metadata, ancestors_ts)
+    matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
     logger.info(
         f"Finalising group {group_index}, loading {len(group['partitions'])} partitions"
     )
@@ -904,6 +907,173 @@ def augment_ancestors(
     return ts
 
 
+def load_variant_data_and_ancestors_ts(metadata):
+    variant_data = formats.VariantData(
+        metadata["sample_data_path"],
+        metadata["ancestral_allele"],
+        sample_mask=metadata["sample_mask"],
+        site_mask=metadata["site_mask"],
+    )
+    variant_data._check_finalised()
+    ancestor_ts = tskit.load(metadata["ancestor_ts_path"])
+    matcher = SampleMatcher(
+        variant_data,
+        ancestor_ts,
+        recombination_rate=metadata["recombination_rate"],
+        mismatch_ratio=metadata["mismatch_ratio"],
+        recombination=metadata["recombination"],
+        mismatch=metadata["mismatch"],
+        path_compression=metadata["path_compression"],
+        precision=metadata["precision"],
+        extended_checks=metadata["extended_checks"],
+        engine=metadata["engine"],
+    )
+    return variant_data, ancestor_ts, matcher
+
+
+def match_samples_batch_init(
+    work_dir,
+    sample_data_path,
+    ancestral_allele,
+    ancestor_ts_path,
+    min_work_per_job,
+    *,
+    max_num_partitions=None,
+    sample_mask=None,
+    site_mask=None,
+    recombination_rate=None,
+    mismatch_ratio=None,
+    path_compression=True,
+    indexes=None,
+    post_process=None,
+    force_sample_times=False,
+    # Deliberately undocumented parameters below
+    recombination=None,  # See :class:`Matcher`
+    mismatch=None,  # See :class:`Matcher`
+    precision=None,
+    extended_checks=False,
+    engine=constants.C_ENGINE,
+    record_provenance=True,
+    map_additional_sites=None,
+):
+    if max_num_partitions is None:
+        max_num_partitions = 1000
+
+    # Convert working_dir to pathlib.Path
+    work_dir = pathlib.Path(work_dir)
+
+    # Create work dir
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "sample_data_path": str(sample_data_path),
+        "ancestral_allele": ancestral_allele,
+        "sample_mask": sample_mask,
+        "site_mask": site_mask,
+        "ancestor_ts_path": str(ancestor_ts_path),
+        "recombination_rate": recombination_rate,
+        "mismatch_ratio": mismatch_ratio,
+        "path_compression": path_compression,
+        "indexes": indexes,
+        "recombination": recombination,
+        "mismatch": mismatch,
+        "precision": precision,
+        "engine": engine,
+        "extended_checks": extended_checks,
+        "post_process": post_process,
+        "force_sample_times": force_sample_times,
+        "map_additional_sites": map_additional_sites,
+        "record_provenance": record_provenance,
+    }
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    sample_indexes = check_sample_indexes(variant_data, indexes).tolist()
+    sample_times = np.zeros(
+        len(sample_indexes), dtype=variant_data.individuals_time.dtype
+    )
+    if force_sample_times:
+        individuals = variant_data.samples_individual[:][sample_indexes]
+        # By construction all samples in an sd file have an individual: but check anyway
+        assert np.all(individuals >= 0)
+        sample_times = variant_data.individuals_time[:][individuals]
+
+        # Here we might want to re-order sample_indexes and sample_times
+        # so that any historical ones come first, any we bomb out early if they conflict
+        # but that would mean re-ordering the sample nodes in the final ts, and
+        # we sometimes assume they are in the same order as in the file
+    sample_times = sample_times.tolist()
+    metadata["sample_indexes"] = sample_indexes
+    metadata["sample_times"] = sample_times
+    num_samples_per_partition = min_work_per_job // variant_data.num_sites
+    if num_samples_per_partition == 0:
+        num_samples_per_partition = 1
+    metadata["num_samples_per_partition"] = num_samples_per_partition
+    metadata["num_partitions"] = math.ceil(
+        len(sample_indexes) / num_samples_per_partition
+    )
+    metadata_path = work_dir / "metadata.json"
+    metadata_path.write_text(json.dumps(metadata))
+    return metadata
+
+
+def match_samples_batch_partition(work_dir, partition_index):
+    metadata_path = pathlib.Path(work_dir) / "metadata.json"
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    if partition_index >= metadata["num_partitions"] or partition_index < 0:
+        raise ValueError(f"Partition {partition_index} is out of range")
+    sample_indexes = metadata["sample_indexes"]
+    sample_times = metadata["sample_times"]
+    partition_slice = slice(
+        partition_index * metadata["num_samples_per_partition"],
+        min(
+            (partition_index + 1) * metadata["num_samples_per_partition"],
+            len(sample_indexes),
+        ),
+    )
+    logger.info(
+        f"Matching partition {partition_index} with {partition_slice.start} to"
+        f" {partition_slice.stop} of {len(sample_indexes)} samples"
+    )
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    results = matcher.match_samples(
+        sample_indexes, sample_times, slice_=partition_slice
+    )
+    path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
+    logger.info(f"Dumping to {path}")
+    with open(path, "wb") as f:
+        pickle.dump(results, f)
+
+
+def match_samples_batch_finalise(work_dir):
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    results = []
+    for partition_index in range(metadata["num_partitions"]):
+        path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
+        with open(path, "rb") as f:
+            results.extend(pickle.load(f))
+    return match_samples(
+        variant_data,
+        ancestor_ts,
+        recombination_rate=metadata["recombination_rate"],
+        mismatch_ratio=metadata["mismatch_ratio"],
+        path_compression=metadata["path_compression"],
+        indexes=metadata["indexes"],
+        post_process=metadata["post_process"],
+        force_sample_times=metadata["force_sample_times"],
+        recombination=metadata["recombination"],
+        mismatch=metadata["mismatch"],
+        precision=metadata["precision"],
+        extended_checks=metadata["extended_checks"],
+        engine=metadata["engine"],
+        record_provenance=metadata["record_provenance"],
+        map_additional_sites=metadata["map_additional_sites"],
+        results=results,
+    )
+
+
 def match_samples(
     sample_data,
     ancestors_ts,
@@ -924,8 +1094,8 @@ def match_samples(
     progress_monitor=None,
     simplify=None,  # deprecated
     record_provenance=True,
-    match_data_dir=None,
     map_additional_sites=None,
+    results=None,
 ):
     """
     match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
@@ -1012,7 +1182,6 @@ def match_samples(
         extended_checks=extended_checks,
         engine=engine,
         progress_monitor=progress_monitor,
-        match_data_dir=match_data_dir,
     )
     sample_indexes = check_sample_indexes(sample_data, indexes)
     sample_times = np.zeros(
@@ -1028,7 +1197,7 @@ def match_samples(
         # so that any historical ones come first, any we bomb out early if they conflict
         # but that would mean re-ordering the sample nodes in the final ts, and
         # we sometimes assume they are in the same order as in the file
-    manager.match_samples(sample_indexes, sample_times)
+    manager.match_samples(sample_indexes, sample_times, results)
     ts = manager.finalise(map_additional_sites)
     if post_process:
         ts = _post_process(
@@ -1044,52 +1213,6 @@ def match_samples(
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
     return ts
-
-
-def match_samples_slice_to_disk(
-    sample_data,
-    ancestors_ts,
-    samples_slice,
-    output_path,
-    *,
-    recombination_rate=None,
-    mismatch_ratio=None,
-    path_compression=True,
-    indexes=None,
-    # Deliberately undocumented parameters below
-    recombination=None,  # See :class:`Matcher`
-    mismatch=None,  # See :class:`Matcher`
-    precision=None,
-    extended_checks=False,
-    engine=constants.C_ENGINE,
-):
-    sample_data._check_finalised()
-
-    manager = SampleMatcher(
-        sample_data,
-        ancestors_ts,
-        recombination_rate=recombination_rate,
-        mismatch_ratio=mismatch_ratio,
-        recombination=recombination,
-        mismatch=mismatch,
-        path_compression=path_compression,
-        num_threads=0,
-        precision=precision,
-        extended_checks=extended_checks,
-        engine=engine,
-        progress_monitor=None,
-        match_data_dir=None,
-    )
-    sample_indexes = check_sample_indexes(sample_data, indexes)
-    sample_times = np.zeros(
-        len(sample_indexes), dtype=sample_data.individuals_time.dtype
-    )
-    if sample_times is None:
-        sample_times = np.zeros(len(sample_indexes))
-    builder = manager.tree_sequence_builder
-    for j, t in zip(sample_indexes, sample_times):
-        manager.sample_id_map[j] = builder.add_node(t)
-    manager.find_path_to_disk(samples_slice=samples_slice, output_path=output_path)
 
 
 def insert_missing_sites(
@@ -1530,7 +1653,6 @@ class Matcher:
         engine=constants.C_ENGINE,
         progress_monitor=None,
         allow_multiallele=False,
-        match_data_dir=None,
     ):
         self.sample_data = sample_data
         self.num_threads = num_threads
@@ -1676,38 +1798,6 @@ class Matcher:
             num_alleles=num_alleles, max_nodes=self.max_nodes, max_edges=self.max_edges
         )
         logger.debug(f"Allocated tree sequence builder with max_nodes={self.max_nodes}")
-
-        self.match_data_dir = match_data_dir
-        self._load_match_data()
-
-    def _load_match_data(self):
-        match_data = collections.defaultdict(dict)
-        match_data_dir = self.match_data_dir
-        if match_data_dir is not None:
-            os.makedirs(match_data_dir, exist_ok=True)
-            for file in os.listdir(match_data_dir):
-                with open(os.path.join(match_data_dir, file), "rb") as f:
-                    stored_data = pickle.load(f)
-                    if stored_data.num_sites != self.num_sites:
-                        raise ValueError(
-                            f"Number of sites in file {match_data_dir}/{file} "
-                            f"({stored_data.num_sites}) does not match the "
-                            f"number of sites used for matching: ({self.num_sites})"
-                        )
-                    for sample_index, result in stored_data.results.items():
-                        if sample_index in match_data[stored_data.group_id]:
-                            raise ValueError(
-                                f"Duplicate sample index {sample_index} in "
-                                f"file {match_data_dir}/{file}"
-                            )
-                        else:
-                            match_data[stored_data.group_id][sample_index] = result
-        logger.info(
-            f"Loaded {len(match_data)} match data files, "
-            f"with {len(match_data)} groups."
-            f"Totalling {sum(len(v) for v in match_data.values())} samples."
-        )
-        self.match_data = match_data
 
     @staticmethod
     def find_path(matcher, child_id, haplotype, start, end):
@@ -2152,66 +2242,6 @@ class SampleMatcher(Matcher):
         # node ID in the tree sequence.
         self.sample_id_map = {}
 
-    def find_path_to_disk(self, samples_slice, output_path):
-        results = self.inner_find_path(
-            samples_slice=samples_slice,
-            tsb=self.tree_sequence_builder,
-            sampledata=self.sample_data,
-            engine=self.engine,
-            recombination=self.recombination,
-            mismatch=self.mismatch,
-            precision=self.precision,
-            extended_checks=self.extended_checks,
-            site_indexes=self.inference_site_id,
-            sample_id_map=self.sample_id_map,
-        )
-        stored_data = StoredMatchData(
-            group_id="samples",
-            num_sites=self.num_sites,
-            results={
-                _id: result for _id, result in zip(range(*samples_slice), results)
-            },
-        )
-        with open(output_path, "wb") as f:
-            pickle.dump(stored_data, f)
-
-    @staticmethod
-    def inner_find_path(
-        samples_slice,
-        tsb,
-        sampledata,
-        engine,
-        recombination,
-        mismatch,
-        precision,
-        extended_checks,
-        site_indexes,
-        sample_id_map,
-    ):
-        ancestor_matcher_class = (
-            _tsinfer.AncestorMatcher
-            if engine == constants.C_ENGINE
-            else algorithm.AncestorMatcher
-        )
-        matcher = ancestor_matcher_class(
-            tsb,
-            recombination=recombination,
-            mismatch=mismatch,
-            precision=precision,
-            extended_checks=extended_checks,
-        )
-        haplotypes = sampledata._all_haplotypes(
-            sites=site_indexes, recode_ancestral=True, samples_slice=samples_slice
-        )
-        results = []
-        for sample_id, haplotype in haplotypes:
-            results.append(
-                AncestorMatcher.find_path(
-                    matcher, sample_id_map[sample_id], haplotype, 0, len(site_indexes)
-                )
-            )
-        return results
-
     def match_locally(self, sample_indexes):
         def thread_worker_function(j_haplotype):
             j, haplotype = j_haplotype
@@ -2248,41 +2278,21 @@ class SampleMatcher(Matcher):
             results = map(thread_worker_function, sample_haplotypes)
         return list(results)
 
-    def _match_samples(self, sample_indexes):
+    def _match_samples(self, sample_indexes, results=None):
         num_samples = len(sample_indexes)
         builder = self.tree_sequence_builder
         _, times = builder.dump_nodes()
         logger.info(f"Started matching for {num_samples} samples")
         if self.num_sites == 0:
             return
-        self.match_progress = self.progress_monitor.get("ms_match", num_samples)
-
-        t = time_.time()
-        if "samples" in self.match_data:
-            results = []
-            for j in sample_indexes:
-                try:
-                    results.append(self.match_data["samples"][j])
-                except KeyError:
-                    raise ValueError(f"Sample index {j} not found in match data")
-                self.match_progress.update()
-            logger.info(
-                f"Loaded {len(sample_indexes)} paths from match data for samples"
-            )
-        else:
+        if results is None:
+            self.match_progress = self.progress_monitor.get("ms_match", num_samples)
+            t = time_.time()
             results = self.match_locally(sample_indexes)
-            if self.match_data_dir is not None:
-                stored_data = StoredMatchData(
-                    group_id="samples",
-                    num_sites=self.num_sites,
-                    results={j: result for j, result in zip(sample_indexes, results)},
-                )
-                with open(os.path.join(self.match_data_dir, "samples.pkl"), "wb") as f:
-                    pickle.dump(stored_data, f)
-        logger.info(
-            f"Finished matching for all samples in {time_.time() - t:.2f} seconds"
-        )
-        self.match_progress.close()
+            logger.info(
+                f"Finished matching for all samples in {time_.time() - t:.2f} seconds"
+            )
+            self.match_progress.close()
         logger.info(
             "Inserting sample paths: {} edges in total".format(
                 sum(len(r.path.left) for r in results)
@@ -2312,15 +2322,20 @@ class SampleMatcher(Matcher):
             )
             progress_monitor.update()
         progress_monitor.close()
+        return results
 
-    def match_samples(self, sample_indexes, sample_times=None):
+    def match_samples(
+        self, sample_indexes, sample_times=None, results=None, slice_=None
+    ):
         if sample_times is None:
             sample_times = np.zeros(len(sample_indexes))
         builder = self.tree_sequence_builder
         for j, t in zip(sample_indexes, sample_times):
             self.sample_id_map[j] = builder.add_node(t)
 
-        self._match_samples(sample_indexes)
+        if slice_ is None:
+            slice_ = slice(0, len(sample_indexes))
+        return self._match_samples(sample_indexes[slice_], results)
 
     def finalise(self, map_additional_sites):
         logger.info("Finalising tree sequence")
