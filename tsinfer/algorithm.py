@@ -111,7 +111,8 @@ class AncestorBuilder:
                 g[j] = int((byte & mask) != 0)
         else:
             for j, u in enumerate(samples):
-                g[j] = self.genotype_store[start + u]
+                # NB missing data (-1) is stored as 255 in the genotype_store
+                g[j] = self.genotype_store[start + u].astype(np.int8)
         gp = self.get_site_genotypes(site_id)
         np.testing.assert_array_equal(gp[samples], g)
         return g
@@ -129,6 +130,8 @@ class AncestorBuilder:
         if self.genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
             assert np.all(genotypes >= 0) and np.all(genotypes <= 1)
             genotypes = np.packbits(genotypes, bitorder="little")
+        else:
+            assert np.all(genotypes <= 127)
         start = site_id * self.encoded_genotypes_size
         stop = start + self.encoded_genotypes_size
         self.genotype_store[start:stop] = genotypes
