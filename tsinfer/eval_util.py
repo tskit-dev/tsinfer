@@ -542,7 +542,9 @@ def extract_ancestors(samples, ts):
     index = tables.nodes.flags == tskit.NODE_IS_SAMPLE
     flags[index] = tskit.NODE_IS_SAMPLE
     index = tables.nodes.flags != tskit.NODE_IS_SAMPLE
-    flags[index] = np.bitwise_and(tables.nodes.flags[index], ~tskit.NODE_IS_SAMPLE)
+    flags[index] = np.bitwise_and(
+        tables.nodes.flags[index], ~flags.dtype.type(tskit.NODE_IS_SAMPLE)
+    )
 
     tables.nodes.set_columns(
         flags=flags,
