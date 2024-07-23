@@ -1271,7 +1271,7 @@ class SampleData(DataContainer):
     @sites_time.setter
     def sites_time(self, value):
         self._check_edit_mode()
-        self.data["sites/time"][:] = np.array(value, dtype=np.float64, copy=False)
+        self.data["sites/time"][:] = np.asarray(value, dtype=np.float64)
 
     @property
     def sites_alleles(self):

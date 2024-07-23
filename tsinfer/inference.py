@@ -148,7 +148,7 @@ def count_pc_ancestors(flags):
     Returns the number of values in the specified array which have the
     NODE_IS_PC_ANCESTOR set.
     """
-    flags = np.array(flags, dtype=np.uint32, copy=False)
+    flags = np.asarray(flags, dtype=np.uint32)
     return np.sum(is_pc_ancestor(flags))
 
 
@@ -157,7 +157,7 @@ def count_srb_ancestors(flags):
     Returns the number of values in the specified array which have the
     NODE_IS_SRB_ANCESTOR set.
     """
-    flags = np.array(flags, dtype=np.uint32, copy=False)
+    flags = np.asarray(flags, dtype=np.uint32)
     return np.sum(np.bitwise_and(flags, constants.NODE_IS_SRB_ANCESTOR) != 0)
 
 
