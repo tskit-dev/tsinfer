@@ -585,12 +585,13 @@ def match_ancestors(
 def match_ancestors_batch_init(
     working_dir,
     sample_data_path,
+    ancestral_allele,
     ancestor_data_path,
     min_work_per_job,
     *,
     max_num_partitions=None,
-    sgkit_samples_mask_name=None,
-    sites_mask_name=None,
+    sample_mask=None,
+    site_mask=None,
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
@@ -610,10 +611,11 @@ def match_ancestors_batch_init(
     working_dir.mkdir(parents=True, exist_ok=True)
 
     ancestors = formats.AncestorData.load(ancestor_data_path)
-    sample_data = formats.SgkitSampleData(
+    sample_data = formats.VariantData(
         sample_data_path,
-        sgkit_samples_mask_name=sgkit_samples_mask_name,
-        sites_mask_name=sites_mask_name,
+        ancestral_allele=ancestral_allele,
+        sample_mask=sample_mask,
+        site_mask=site_mask,
     )
     ancestors._check_finalised()
     sample_data._check_finalised()
@@ -663,9 +665,10 @@ def match_ancestors_batch_init(
 
     metadata = {
         "sample_data_path": str(sample_data_path),
+        "ancestral_allele": ancestral_allele,
         "ancestor_data_path": str(ancestor_data_path),
-        "sgkit_samples_mask_name": sgkit_samples_mask_name,
-        "sites_mask_name": sites_mask_name,
+        "sample_mask": sample_mask,
+        "site_mask": site_mask,
         "recombination_rate": recombination_rate,
         "mismatch_ratio": mismatch_ratio,
         "path_compression": path_compression,
@@ -684,10 +687,11 @@ def match_ancestors_batch_init(
 
 
 def initialize_matcher(metadata, ancestors_ts=None, **kwargs):
-    sample_data = formats.SgkitSampleData(
+    sample_data = formats.VariantData(
         metadata["sample_data_path"],
-        sgkit_samples_mask_name=metadata["sgkit_samples_mask_name"],
-        sites_mask_name=metadata["sites_mask_name"],
+        ancestral_allele=metadata["ancestral_allele"],
+        sample_mask=metadata["sample_mask"],
+        site_mask=metadata["site_mask"],
     )
     ancestors = formats.AncestorData.load(metadata["ancestor_data_path"])
     sample_data._check_finalised()

@@ -2292,56 +2292,61 @@ class SampleData(DataContainer):
             yield Population(j, metadata=metadata)
 
 
-class SgkitSampleData(SampleData):
+class VariantData(SampleData):
 
     FORMAT_NAME = "tsinfer-sgkit-sample-data"
     FORMAT_VERSION = (0, 1)
 
-    def __init__(self, path, sgkit_samples_mask_name=None, sites_mask_name=None):
+    def __init__(
+        self,
+        path,
+        ancestral_allele,
+        *,
+        sample_mask=None,
+        site_mask=None,
+        sites_time=None,
+    ):
         self.path = path
         self.data = zarr.open(path, mode="r")
-        self._sgkit_samples_mask_name = sgkit_samples_mask_name
-        self._sites_mask_name = sites_mask_name
         genotypes_arr = self.data["call_genotype"]
         _, self._num_individuals_before_mask, self.ploidy = genotypes_arr.shape
 
-        # Store sites_select
-        if self._sites_mask_name is None:
-            self.sites_select = np.full(
-                self.data["variant_position"].shape, True, dtype=bool
-            )
+        if site_mask is None:
+            site_mask = np.full(self.data["variant_position"].shape, False, dtype=bool)
+        elif isinstance(site_mask, np.ndarray):
+            pass
         else:
             try:
-                if (
-                    self.data[self._sites_mask_name].shape[0]
-                    != self.data["variant_position"].shape[0]
-                ):
-                    raise ValueError(
-                        "Mask must be the same length as the number of unmasked sites"
-                    )
-                # We negate the mask as it is much easier in numpy to have True=keep
-                self.sites_select = ~(self.data[self._sites_mask_name].astype(bool)[:])
+                site_mask = self.data[site_mask][:]
             except KeyError:
                 raise ValueError(
-                    f"The sites mask {self._sites_mask_name} was not found"
-                    f" in the dataset."
+                    f"The sites mask {site_mask} was not found" f" in the dataset."
                 )
-        # Store individuals_select
-        if self._sgkit_samples_mask_name is None:
-            self.individuals_select = np.full(
-                self._num_individuals_before_mask, True, dtype=bool
+        if site_mask.shape[0] != self.data["variant_position"].shape[0]:
+            raise ValueError(
+                "Site mask array must be the same length as the number of unmasked sites"
             )
+        # We negate the mask as it is much easier in numpy to have True=keep
+        self.sites_select = ~site_mask.astype(bool)
+
+        if sample_mask is None:
+            sample_mask = np.full(self._num_individuals_before_mask, False, dtype=bool)
+        elif isinstance(sample_mask, np.ndarray):
+            pass
         else:
             try:
                 # We negate the mask as it is much easier in numpy to have True=keep
-                self.individuals_select = ~(
-                    self.data[self._sgkit_samples_mask_name][:].astype(bool)
-                )
+                sample_mask = self.data[sample_mask][:]
             except KeyError:
                 raise ValueError(
-                    f"The sgkit samples mask {self._sgkit_samples_mask_name} was not"
-                    f" found in the dataset."
+                    f"The samples mask {sample_mask} was not" f" found in the dataset."
                 )
+        if sample_mask.shape[0] != self._num_individuals_before_mask:
+            raise ValueError(
+                "Samples mask array must be the same length as the number of"
+                " individuals"
+            )
+        self.individuals_select = ~sample_mask.astype(bool)
 
         self._num_sites = np.sum(self.sites_select)
         assert self.ploidy == self.data["call_genotype"].chunks[2]
@@ -2358,6 +2363,66 @@ class SgkitSampleData(SampleData):
                 "increasing (i.e. have duplicate or out-of-order values). "
                 "These must be masked out to run tsinfer."
             )
+
+        if sites_time is None:
+            self._sites_time = np.full(self.num_sites, tskit.UNKNOWN_TIME)
+        elif isinstance(sites_time, np.ndarray):
+            if sites_time.shape[0] != self.num_sites:
+                raise ValueError(
+                    "Sites time array must be the same length as the number of selected"
+                    " sites"
+                )
+            self._sites_time = sites_time
+        else:
+            try:
+                self._sites_time = self.data[sites_time][:][self.sites_select]
+            except KeyError:
+                raise ValueError(
+                    f"The sites time {sites_time} was not found" f" in the dataset."
+                )
+
+        if isinstance(ancestral_allele, np.ndarray):
+            if ancestral_allele.shape[0] != self.num_sites:
+                raise ValueError(
+                    "Ancestral allele array must be the same length as the number of"
+                    " selected sites"
+                )
+            self._sites_ancestral_allele = ancestral_allele
+        else:
+            try:
+                self._sites_ancestral_allele = self.data[ancestral_allele][:][
+                    self.sites_select
+                ]
+            except KeyError:
+                raise ValueError(
+                    f"The ancestral allele {ancestral_allele} was not"
+                    f" found in the dataset."
+                )
+        self._sites_ancestral_allele = self._sites_ancestral_allele.astype(str)
+        unknown_alleles = collections.Counter()
+        converted = np.zeros(self.num_sites, dtype=np.int8)
+        for i, allele in enumerate(self._sites_ancestral_allele):
+            allele_index = -1
+            try:
+                allele_index = np.where(allele == self.sites_alleles[i])[0][0]
+            except IndexError:
+                unknown_alleles[allele] += 1
+            converted[i] = allele_index
+        tot = sum(unknown_alleles.values())
+        if tot > 0:
+            frac_bad = tot / self.num_sites
+            frac_bad_per_type = [v / self.num_sites for v in unknown_alleles.values()]
+            summarise_unknown = [
+                f"'{k}': {v} ({frac * 100:.2f}% of sites)"  # Summarise per allele type
+                for (k, v), frac in zip(unknown_alleles.items(), frac_bad_per_type)
+            ]
+            warnings.warn(
+                "An ancestral allele was not found in the variant_allele array for "
+                + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
+                + "They will be treated as of unknown ancestral state:\n "
+                + "\n ".join(summarise_unknown)
+            )
+        self._sites_ancestral_allele = converted
 
         # Create zarr arrays for convenience when iterating over chunks
         self.z_sites_select = zarr.array(
@@ -2427,12 +2492,9 @@ class SgkitSampleData(SampleData):
         except KeyError:
             return [{} for _ in range(self.num_sites)]
 
-    @functools.cached_property
+    @property
     def sites_time(self):
-        try:
-            return self.data["sites_time"][:][self.sites_select]
-        except KeyError:
-            return np.full(self.num_sites, tskit.UNKNOWN_TIME)
+        return self._sites_time
 
     @functools.cached_property
     def sites_position(self):
@@ -2442,46 +2504,9 @@ class SgkitSampleData(SampleData):
     def sites_alleles(self):
         return self.data["variant_allele"][:][self.sites_select].astype(str)
 
-    @functools.cached_property
+    @property
     def sites_ancestral_allele(self):
-        unknown_alleles = collections.Counter()
-        try:
-            string_allele = (
-                self.data["variant_ancestral_allele"][:][self.sites_select]
-            ).astype(str)
-        except KeyError:
-            raise ValueError(
-                "variant_ancestral_allele was not found in the dataset."
-                "This is required for tsinfer. If you know that the "
-                "zero-th allele at each site is the ancestral state, you "
-                "add this to the dataset by running:\n"
-                "ds.update({'variant_ancestral_allele': "
-                "ds['variant_allele'][:,0]})\n"
-            )
-        ret = np.zeros(self.num_sites, dtype=np.int8)
-        for i, allele in enumerate(string_allele):
-            allele_index = -1
-            try:
-                allele_index = np.where(allele == self.sites_alleles[i])[0][0]
-            except IndexError:
-                unknown_alleles[allele] += 1
-            ret[i] = allele_index
-        tot = sum(unknown_alleles.values())
-        if tot > 0:
-            num_sites = len(string_allele)
-            frac_bad = tot / num_sites
-            frac_bad_per_type = [v / num_sites for v in unknown_alleles.values()]
-            summarise_unknown = [
-                f"'{k}': {v} ({frac * 100:.2f}% of sites)"  # Summarise per allele type
-                for (k, v), frac in zip(unknown_alleles.items(), frac_bad_per_type)
-            ]
-            warnings.warn(
-                "An ancestral allele was not found in the variant_allele array for "
-                + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
-                + "They will be treated as of unknown ancestral state:\n "
-                + "\n ".join(summarise_unknown)
-            )
-        return ret
+        return self._sites_ancestral_allele
 
     @functools.cached_property
     def sites_genotypes(self):
