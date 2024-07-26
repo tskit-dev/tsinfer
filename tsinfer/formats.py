@@ -2621,13 +2621,13 @@ class VariantData(SampleData):
                 self.data["individuals_metadata"][:][self.individuals_select],
             ):
                 md = schema.decode_row(r)
-                if "sgkit_sample_id" not in md:
-                    md["sgkit_sample_id"] = sample_id
+                if "variant_data_sample_id" not in md:
+                    md["variant_data_sample_id"] = sample_id
                 md_list.append(md)
             return md_list
         else:
             return [
-                {"sgkit_sample_id": sample_id}
+                {"variant_data_sample_id": sample_id}
                 for sample_id in self.data["sample_id"][:][self.individuals_select]
             ]
 

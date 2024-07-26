@@ -8,7 +8,7 @@
   infer from VCFs via the optimised and parallel VCF parsing in `sgkit`.
   - The `variant_mask` boolean array in the `sgkit` dataset can be used mask sites
     not wanted for inference.
-  - `sgkit` `sample_ids` are inserted into individual metadata as `sgkit_sample_id` if
+  - `sample_ids` are inserted into individual metadata as `variant_data_sample_id` if
     this key does not already exist.
 
 **Breaking Changes**
