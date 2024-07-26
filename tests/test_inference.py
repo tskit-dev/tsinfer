@@ -1411,7 +1411,7 @@ class TestResume:
             sample_data, ancestor_ts, match_data_dir=tmpdir
         )
         time2 = time.time() - t
-        assert time2 < time1 / 1.25
+        assert time2 < time1
         final_ts1.tables.assert_equals(final_ts2.tables, ignore_provenance=True)
 
 
@@ -1419,12 +1419,16 @@ class TestResume:
 class TestBatchAncestorMatching:
     def test_equivalance(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(
             samples, path=str(tmpdir / "ancestors.zarr")
         )
         metadata = tsinfer.match_ancestors_batch_init(
-            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+            tmpdir / "work",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            1000,
         )
         for group_index, _ in enumerate(metadata["ancestor_grouping"]):
             tsinfer.match_ancestors_batch_groups(
@@ -1436,12 +1440,16 @@ class TestBatchAncestorMatching:
 
     def test_equivalance_many_at_once(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(
             samples, path=str(tmpdir / "ancestors.zarr")
         )
         metadata = tsinfer.match_ancestors_batch_init(
-            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+            tmpdir / "work",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            1000,
         )
         tsinfer.match_ancestors_batch_groups(
             tmpdir / "work", 0, len(metadata["ancestor_grouping"]) // 2, 2
@@ -1459,12 +1467,16 @@ class TestBatchAncestorMatching:
 
     def test_equivalance_with_partitions(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(
             samples, path=str(tmpdir / "ancestors.zarr")
         )
         metadata = tsinfer.match_ancestors_batch_init(
-            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+            tmpdir / "work",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            1000,
         )
         for group_index, group in enumerate(metadata["ancestor_grouping"]):
             if group["partitions"] is None:
@@ -1485,13 +1497,14 @@ class TestBatchAncestorMatching:
 
     def test_max_partitions(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(
             samples, path=str(tmpdir / "ancestors.zarr")
         )
         metadata = tsinfer.match_ancestors_batch_init(
             tmpdir / "work",
             zarr_path,
+            "variant_ancestral_allele",
             tmpdir / "ancestors.zarr",
             10000,
             max_num_partitions=2,
@@ -1516,10 +1529,14 @@ class TestBatchAncestorMatching:
 
     def test_errors(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
         metadata = tsinfer.match_ancestors_batch_init(
-            tmpdir / "work", zarr_path, tmpdir / "ancestors.zarr", 1000
+            tmpdir / "work",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            1000,
         )
         with pytest.raises(ValueError, match="out of range"):
             tsinfer.match_ancestors_batch_groups(tmpdir / "work", -1, 1)

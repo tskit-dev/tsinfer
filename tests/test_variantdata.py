@@ -78,7 +78,7 @@ def ts_to_dataset(ts, chunks=None, samples=None):
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_dataset_roundtrip(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-    samples = tsinfer.SgkitSampleData(zarr_path)
+    samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
     inf_ts = tsinfer.infer(samples)
     ds = sgkit.load_dataset(zarr_path)
 
@@ -120,7 +120,7 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
         tskit.MetadataSchema.permissive_json()
     )
 
-    samples = tsinfer.SgkitSampleData(zarr_path)
+    samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
     inf_ts = tsinfer.infer(samples)
     ds = sgkit.load_dataset(zarr_path)
 
@@ -139,7 +139,9 @@ def test_sgkit_dataset_accessors(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(
         tmp_path, add_optional=True, shuffle_alleles=False
     )
-    samples = tsinfer.SgkitSampleData(zarr_path)
+    samples = tsinfer.VariantData(
+        zarr_path, "variant_ancestral_allele", sites_time="sites_time"
+    )
     ds = sgkit.load_dataset(zarr_path)
 
     assert samples.format_name == "tsinfer-sgkit-sample-data"
@@ -203,7 +205,7 @@ def test_sgkit_dataset_accessors(tmp_path):
 
     # Need to shuffle for the ancestral allele test
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path, add_optional=True)
-    samples = tsinfer.SgkitSampleData(zarr_path)
+    samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
     for i in range(ts.num_sites):
         assert (
             samples.sites_alleles[i][samples.sites_ancestral_allele[i]]
@@ -214,7 +216,7 @@ def test_sgkit_dataset_accessors(tmp_path):
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_accessors_defaults(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-    samples = tsinfer.SgkitSampleData(zarr_path)
+    samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
     ds = sgkit.load_dataset(zarr_path)
 
     default_schema = tskit.MetadataSchema.permissive_json().schema
@@ -247,6 +249,37 @@ def test_sgkit_accessors_defaults(tmp_path):
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_variantdata_sites_time_default(tmp_path):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+    samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
+
+    assert (
+        np.all(np.isnan(samples.sites_time))
+        and samples.sites_time.size == samples.num_sites
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_variantdata_sites_time_array(tmp_path):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+    sites_time = np.arange(ts.num_sites)
+    samples = tsinfer.VariantData(
+        zarr_path, "variant_ancestral_allele", sites_time=sites_time
+    )
+    assert np.array_equal(samples.sites_time, sites_time)
+    wrong_length_sites_time = np.arange(ts.num_sites + 1)
+    with pytest.raises(
+        ValueError,
+        match="Sites time array must be the same length as the number of selected sites",
+    ):
+        tsinfer.VariantData(
+            zarr_path,
+            "variant_ancestral_allele",
+            sites_time=wrong_length_sites_time,
+        )
+
+
 def test_simulate_genotype_call_dataset(tmp_path):
     # Test that byte alleles are correctly converted to string
     ts = msprime.sim_ancestry(4, sequence_length=1000, random_seed=123)
@@ -254,7 +287,7 @@ def test_simulate_genotype_call_dataset(tmp_path):
     ds = ts_to_dataset(ts)
     ds.update({"variant_ancestral_allele": ds["variant_allele"][:, 0]})
     ds.to_zarr(tmp_path, mode="w")
-    sd = tsinfer.SgkitSampleData(tmp_path)
+    sd = tsinfer.VariantData(tmp_path, "variant_ancestral_allele")
     ts = tsinfer.infer(sd)
     for v, ds_v, sd_v in zip(ts.variants(), ds.call_genotype, sd.sites_genotypes):
         assert np.all(v.genotypes == ds_v.values.flatten())
@@ -271,7 +304,11 @@ class TestSgkitMask:
         for i in sites:
             sites_mask[i] = False
         tsutil.add_array_to_dataset("variant_mask_42", sites_mask, zarr_path)
-        samples = tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_42")
+        samples = tsinfer.VariantData(
+            zarr_path,
+            "variant_ancestral_allele",
+            site_mask="variant_mask_42",
+        )
         assert samples.num_sites == len(sites)
         assert np.array_equal(samples.sites_select, ~sites_mask)
         assert np.array_equal(
@@ -298,12 +335,17 @@ class TestSgkitMask:
         ds = sgkit.load_dataset(zarr_path)
         sites_mask = np.zeros(ds.sizes["variants"] + 1, dtype=int)
         tsutil.add_array_to_dataset("variant_mask_foobar", sites_mask, zarr_path)
-        tsinfer.SgkitSampleData(zarr_path)
+        tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         with pytest.raises(
             ValueError,
-            match="Mask must be the same length as the number of unmasked sites",
+            match="Site mask array must be the same length as the number of"
+            " unmasked sites",
         ):
-            tsinfer.SgkitSampleData(zarr_path, sites_mask_name="variant_mask_foobar")
+            tsinfer.VariantData(
+                zarr_path,
+                "variant_ancestral_allele",
+                site_mask="variant_mask_foobar",
+            )
 
     def test_bad_select_length_at_iterator(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
@@ -325,8 +367,10 @@ class TestSgkitMask:
         for i in sample_list:
             samples_mask[i] = False
         tsutil.add_array_to_dataset("samples_mask_69", samples_mask, zarr_path)
-        samples = tsinfer.SgkitSampleData(
-            zarr_path, sgkit_samples_mask_name="samples_mask_69"
+        samples = tsinfer.VariantData(
+            zarr_path,
+            "variant_ancestral_allele",
+            sample_mask="samples_mask_69",
         )
         assert samples.ploidy == 3
         assert samples.num_individuals == len(sample_list)
@@ -380,10 +424,11 @@ class TestSgkitMask:
         tsutil.add_array_to_dataset(
             "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
         )
-        samples = tsinfer.SgkitSampleData(
+        samples = tsinfer.VariantData(
             zarr_path,
-            sites_mask_name="variant_mask_foobar",
-            sgkit_samples_mask_name="samples_mask_foobar",
+            "variant_ancestral_allele",
+            site_mask="variant_mask_foobar",
+            sample_mask="samples_mask_foobar",
         )
         genotypes = samples.sites_genotypes
         ds_genotypes = ds.call_genotype.values[~variant_mask][
@@ -403,21 +448,79 @@ class TestSgkitMask:
 
     def test_sgkit_missing_masks(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         samples.individuals_select
         samples.sites_select
         with pytest.raises(
             ValueError, match="The sites mask foobar was not found in the dataset."
         ):
-            tsinfer.SgkitSampleData(zarr_path, sites_mask_name="foobar")
+            tsinfer.VariantData(
+                zarr_path, "variant_ancestral_allele", site_mask="foobar"
+            )
         with pytest.raises(
             ValueError,
-            match="The sgkit samples mask foobar2 was not found in the dataset.",
+            match="The samples mask foobar2 was not found in the dataset.",
         ):
-            samples = tsinfer.SgkitSampleData(
-                zarr_path, sgkit_samples_mask_name="foobar2"
+            samples = tsinfer.VariantData(
+                zarr_path,
+                "variant_ancestral_allele",
+                sample_mask="foobar2",
             )
             samples.individuals_select
+
+    def test_variantdata_default_masks(self, tmp_path):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
+        assert np.array_equal(
+            samples.sites_select, np.full(samples.num_sites, True, dtype=bool)
+        )
+        assert np.array_equal(
+            samples.samples_select, np.full(samples.num_samples, True, dtype=bool)
+        )
+
+    def test_variantdata_mask_as_arrays(self, tmp_path):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        sample_mask = np.full(ts.num_individuals, False, dtype=bool)
+        site_mask = np.full(ts.num_sites, False, dtype=bool)
+        sample_mask[3] = True
+        site_mask[5] = True
+
+        samples = tsinfer.VariantData(
+            zarr_path,
+            "variant_ancestral_allele",
+            sample_mask=sample_mask,
+            site_mask=site_mask,
+        )
+
+        assert np.array_equal(samples.individuals_select, ~sample_mask)
+        assert np.array_equal(samples.sites_select, ~site_mask)
+
+    def test_variantdata_incorrect_mask_lengths(self, tmp_path):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        incorrect_sample_mask = np.array([True, False])  # Incorrect length
+        incorrect_site_mask = np.array([True, False, True])  # Incorrect length
+
+        with pytest.raises(
+            ValueError,
+            match="Samples mask array must be the same length as the"
+            " number of individuals",
+        ):
+            tsinfer.VariantData(
+                zarr_path,
+                "variant_ancestral_allele",
+                sample_mask=incorrect_sample_mask,
+            )
+
+        with pytest.raises(
+            ValueError,
+            match="Site mask array must be the same length as the number of"
+            " unmasked sites",
+        ):
+            tsinfer.VariantData(
+                zarr_path,
+                "variant_ancestral_allele",
+                site_mask=incorrect_site_mask,
+            )
 
     def test_sgkit_subset_equivalence(self, tmp_path, tmpdir):
         (
@@ -500,7 +603,7 @@ class TestSgkitMask:
 def test_sgkit_ancestral_allele_same_ancestors(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ts_sampledata = tsinfer.SampleData.from_tree_sequence(ts)
-    sg_sampledata = tsinfer.SgkitSampleData(zarr_path)
+    sg_sampledata = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
     ts_ancestors = tsinfer.generate_ancestors(ts_sampledata)
     sg_ancestors = tsinfer.generate_ancestors(sg_sampledata)
     assert np.array_equal(ts_ancestors.sites_position, sg_ancestors.sites_position)
@@ -526,9 +629,8 @@ def test_missing_ancestral_allele(tmp_path):
     ds = sgkit.load_dataset(zarr_path)
     ds = ds.drop_vars(["variant_ancestral_allele"])
     sgkit.save_dataset(ds, str(zarr_path) + ".tmp")
-    samples = tsinfer.SgkitSampleData(str(zarr_path) + ".tmp")
     with pytest.raises(ValueError, match="variant_ancestral_allele was not found"):
-        tsinfer.infer(samples)
+        tsinfer.VariantData(str(zarr_path) + ".tmp", "variant_ancestral_allele")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
@@ -549,12 +651,12 @@ def test_ancestral_missingness(tmp_path):
         ["variants"],
     )
     ds = sgkit.load_dataset(str(zarr_path) + ".tmp")
-    sd = tsinfer.SgkitSampleData(str(zarr_path) + ".tmp")
     with pytest.warns(
         UserWarning,
         match=r"not found in the variant_allele array for the 4 [\s\S]*'💩': 2",
     ):
-        inf_ts = tsinfer.infer(sd)
+        sd = tsinfer.VariantData(str(zarr_path) + ".tmp", "variant_ancestral_allele")
+    inf_ts = tsinfer.infer(sd)
     for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
         if i in [0, 11, 12, 15]:
             assert inf_var.site.metadata == {"inference_type": "parsimony"}
@@ -574,7 +676,7 @@ def test_sgkit_ancestor(small_sd_fixture, tmp_path):
         sgkit.display_genotypes(ds)
 
 
-class TestSgkitSampleDataErrors:
+class TestVariantDataErrors:
     def test_missing_phase(self, tmp_path):
         path = tmp_path / "data.zarr"
         ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
@@ -582,7 +684,7 @@ class TestSgkitSampleDataErrors:
         with pytest.raises(
             ValueError, match="The call_genotype_phased array is missing"
         ):
-            tsinfer.SgkitSampleData(path)
+            tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_phased(self, tmp_path):
         path = tmp_path / "data.zarr"
@@ -591,15 +693,23 @@ class TestSgkitSampleDataErrors:
             ds["call_genotype"].dims,
             np.ones(ds["call_genotype"].shape, dtype=bool),
         )
+        ds["variant_ancestral_allele"] = (
+            ds["variant_position"].dims,
+            np.array(["A", "C", "G"], dtype="S1"),
+        )
         sgkit.save_dataset(ds, path)
-        tsinfer.SgkitSampleData(path)
+        tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_ploidy1_missing_phase(self, tmp_path):
         path = tmp_path / "data.zarr"
         # Ploidy==1 is always ok
         ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds["variant_ancestral_allele"] = (
+            ds["variant_position"].dims,
+            np.array(["A", "C", "G"], dtype="S1"),
+        )
         sgkit.save_dataset(ds, path)
-        tsinfer.SgkitSampleData(path)
+        tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_ploidy1_unphased(self, tmp_path):
         path = tmp_path / "data.zarr"
@@ -608,8 +718,12 @@ class TestSgkitSampleDataErrors:
             ds["call_genotype"].dims,
             np.zeros(ds["call_genotype"].shape, dtype=bool),
         )
+        ds["variant_ancestral_allele"] = (
+            ds["variant_position"].dims,
+            np.array(["A", "C", "G"], dtype="S1"),
+        )
         sgkit.save_dataset(ds, path)
-        tsinfer.SgkitSampleData(path)
+        tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_duplicate_positions(self, tmp_path):
         path = tmp_path / "data.zarr"
@@ -617,7 +731,7 @@ class TestSgkitSampleDataErrors:
         ds["variant_position"][2] = ds["variant_position"][1]
         sgkit.save_dataset(ds, path)
         with pytest.raises(ValueError, match="duplicate or out-of-order values"):
-            tsinfer.SgkitSampleData(path)
+            tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_bad_order_positions(self, tmp_path):
         path = tmp_path / "data.zarr"
@@ -625,7 +739,7 @@ class TestSgkitSampleDataErrors:
         ds["variant_position"][0] = ds["variant_position"][2] - 0.5
         sgkit.save_dataset(ds, path)
         with pytest.raises(ValueError, match="duplicate or out-of-order values"):
-            tsinfer.SgkitSampleData(path)
+            tsinfer.VariantData(path, "variant_ancestral_allele")
 
     def test_empty_alleles_not_at_end(self, tmp_path):
         path = tmp_path / "data.zarr"
@@ -639,7 +753,7 @@ class TestSgkitSampleDataErrors:
             np.array(["C", "A", "A"], dtype="S1"),
         )
         sgkit.save_dataset(ds, path)
-        samples = tsinfer.SgkitSampleData(path)
+        samples = tsinfer.VariantData(path, "variant_ancestral_allele")
         with pytest.raises(ValueError, match="Empty alleles must be at the end"):
             tsinfer.infer(samples)
 
@@ -649,7 +763,7 @@ class TestSgkitMatchSamplesToDisk:
     @pytest.mark.parametrize("slice", [(0, 6), (0, 0), (0, 3), (12, 15)])
     def test_match_samples_to_disk_write(self, slice, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
         tsinfer.match_samples_slice_to_disk(
@@ -664,7 +778,7 @@ class TestSgkitMatchSamplesToDisk:
 
     def test_match_samples_to_disk_slice_error(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
         with pytest.raises(
@@ -678,7 +792,7 @@ class TestSgkitMatchSamplesToDisk:
         match_data_dir = tmpdir / "match_data"
         os.mkdir(match_data_dir)
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        samples = tsinfer.SgkitSampleData(zarr_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         ancestors = tsinfer.generate_ancestors(samples)
         anc_ts = tsinfer.match_ancestors(samples, ancestors)
         ts = tsinfer.match_samples(samples, anc_ts)

@@ -447,10 +447,11 @@ def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
     mat_ds = mat_ds.unify_chunks()
     sgkit.save_dataset(mat_ds, tmpdir / "subset.zarr", auto_rechunk=True)
 
-    mat_sd = tsinfer.SgkitSampleData(tmpdir / "subset.zarr")
-    mask_sd = tsinfer.SgkitSampleData(
+    mat_sd = tsinfer.VariantData(tmpdir / "subset.zarr", "variant_ancestral_allele")
+    mask_sd = tsinfer.VariantData(
         zarr_path,
-        sites_mask_name="variant_mask_foobar",
-        sgkit_samples_mask_name="samples_mask_foobar",
+        "variant_ancestral_allele",
+        site_mask="variant_mask_foobar",
+        sample_mask="samples_mask_foobar",
     )
     return mat_sd, mask_sd, samples_mask, variant_mask
