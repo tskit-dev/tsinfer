@@ -15,11 +15,11 @@ kernelspec:
 :::
 
 
-(sec_tutorial)=
+(sec_usage)=
 
-# Tutorial
+# Usage
 
-(sec_tutorial_toy_example)=
+(sec_usage_toy_example)=
 
 ## Toy example
 
@@ -61,7 +61,7 @@ for sample in range(ds['call_genotype'].shape[1]):
 We wish to infer a genealogy that could have given rise to this data set. To run _tsinfer_
 we wrap the .vcz file in a `tsinfer.VariantData` object. This requires an 
 *ancestral allele* to be specified for each site; there are
-many methods for calculating there: details are outside the scope of this manual, but we
+many methods for calculating these: details are outside the scope of this manual, but we
 have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
 on this issue to provide some recommendations.
 
@@ -83,19 +83,29 @@ ancestral_alleles[-1] = "."
 vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_alleles)
 ```
 
-The `.VariantData` object is a lightweight wrapper for the data from the 3 diploid samples
-in the .vcz file. We'll use the object to infer a tree sequence from the variant data.
-Howeve, note that some sites are not used for genealogical inference. This includes non-variable
-(fixed) sites, singleton sites, and sites where the ancestral allele is unknown: in this example,
-these are seen at site IDs 4, 5 and 7 respectively. In addition,
-multiallelic sites, with more than 2 alleles, are not used for inference (but see
-[here](https://github.com/tskit-dev/tsinfer/issues/670) for a workaround).
+The `VariantData` object is a lightweight wrapper around the .vcz file.
+We'll use it to infer a tree sequence on the basis of the sites that vary between the
+different samples. However, note that certain sites are not used by _tsinfer_ for inferring
+the genealogy (although they are still encoded in the final tree sequence), These are:
 
-Additionally, during the inference step, extra sites can be flagged as not for use in
-inferring the genealogy, for example if they are deemed unreliable (this is done
-via the `exclude_positions` parameter). Note, however, that even if a site is not used
-for genealogical inference, its genetic variation can still be encoded in the final
-tree sequence.
+* Non-variable (fixed) sites, e.g. site 4 above
+* Singleton sites, where only one genome has the derived allele e.g. site 5 above
+* Sites where the ancestral allele is unknown, e.g. demonstrated by site 7 above
+* Multialleleic sites, with more than 2 alleles (but see
+  [here](https://github.com/tskit-dev/tsinfer/issues/670) for a workaround)
+
+Additionally, during the inference step, additional sites can be flagged as not for use in
+inference, for example if they are deemed unreliable (this is done
+via the `exclude_positions` parameter).
+
+### Masks
+
+Sites which are not used for inference will still be included in the final tree sequence, with
+mutations at those sites being placed onto branches by parsimony. However, it is also possible
+to completely exclude sites and samples from the final tree sequence, by specifing a `site_mask`
+and/or a `sample_mask` when creating the `VariantData` object. Such sites or samples will be
+completely omitted from both inference and the final tree sequence. This can be useful, for
+example, to reduce the amount of computation required for an inference.
 
 ### Topology inference
 
@@ -186,7 +196,7 @@ algorithm is only intended to infer the genetic relationships between the sample
 (i.e. the *topology* of the tree sequence).
 
 
-(sec_tutorial_simulation_example)=
+(sec_usage_simulation_example)=
 
 ## Simulation example
 
@@ -416,7 +426,7 @@ Other than the sample node IDs, it is meaningless to compare node numbers in the
 source and inferred tree sequences.
 :::
 
-(sec_tutorial_data_example)=
+(sec_usage_data_example)=
 
 ## Data example
 
@@ -424,7 +434,7 @@ Inputting real data for inference is similar in principle to the examples above.
 All that is required is a .vcz file, which can be created using
 [vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html) as above
 
-(sec_tutorial_read_vcf)=
+(sec_usage_read_vcf)=
 
 ### Reading a VCF
 
@@ -440,7 +450,9 @@ vcf_location = "_static/P_dom_chr24_phased.vcf.gz"
 !python -m bio2zarr vcf2zarr convert --force {vcf_location} sparrows.vcz
 ```
 
-This creates the `sparrows.vcz` datastore, which we open using `tsinfer.VariantData`:
+This creates the `sparrows.vcz` datastore, which we open using `tsinfer.VariantData`.
+The original VCF had ancestral alleles specified in the `AA` INFO field, so we can
+simply provide the string `"variant_AA"` as the ancestral_allele parameter.
 
 ```{code-cell} ipython3
 # Do the inference: this VCF has ancestral alleles in the AA field
@@ -552,7 +564,7 @@ discrete groups on the tree, but be part of a larger mixing population. Note, ho
 that this is only one of thousands of trees, and may not be typical of the genome as a
 whole. Additionally, most data sets will have far more samples than this example, so
 trees visualized in this way are likely to be huge and difficult to understand. As in
-the {ref}`simulation example <sec_tutorial_simulation_example>` above, one possibility
+the {ref}`simulation example <sec_usage_simulation_example>` above, one possibility
 is to {meth}`~tskit.TreeSequence.simplify` the tree sequence to a limited number of
 samples, but it is likely that most studies will
 instead rely on various statistical summaries of the trees. Storing genetic data as a

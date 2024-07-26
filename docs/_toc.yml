@@ -8,9 +8,9 @@ parts:
 - caption: Installation
   chapters:
   - file: installation
-- caption: Tutorial
+- caption: Usage
   chapters:
-  - file: tutorial
+  - file: usage
 - caption: Inference
   chapters:
   - file: inference
