@@ -1,15 +1,16 @@
 # Changelog
 
-## [0.4.0] - 2024-XX-XX
+## [0.4.0a1] - 2024-07-26
+
+Alpha release of tsinfer 0.4.0
 
 **Features**
 
-  - `tsinfer` now supports inferring data from an `sgkit` dataset. This allows users to
-  infer from VCFs via the optimised and parallel VCF parsing in `sgkit`.
-  - The `variant_mask` boolean array in the `sgkit` dataset can be used mask sites
-    not wanted for inference.
-  - `sample_ids` are inserted into individual metadata as `variant_data_sample_id` if
-    this key does not already exist.
+- `tsinfer` now supports inferring data from an `vcf-zarr` dataset. This allows users 
+  to infer from VCFs via the optimised and parallel VCF parsing in `bio2zarr`.
+- The `VariantData` class can be used to load the vcf-data and be used for inference.
+- `vcf-zarr` `sample_ids` are inserted into individual metadata as `variant_data_sample_id`
+  if this key does not already exist.
 
 **Breaking Changes**
 
