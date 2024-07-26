@@ -45,7 +45,7 @@ jobs:
           pip install --upgrade pip wheel
           pip install -r requirements/CI-docs/requirements.txt
           # Tabix currently required for vcf conversion
-          conda install -c bioconda tabix
+          sudo apt-get install -y tabix
 
       - name: Build C module
         if: env.MAKE_TARGET
