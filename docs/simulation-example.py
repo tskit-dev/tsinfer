@@ -1,44 +1,42 @@
-import os
+import builtins
+import subprocess
 import sys
 
 import msprime
-import tqdm
+import numpy as np
+from Bio import bgzf
 
-sys.path.insert(0, os.path.abspath(".."))
-import tsinfer  # noqa
+if getattr(builtins, "__IPYTHON__", False):  # if running IPython: e.g. in a notebook
+    num_diploids, seq_len = 100, 10_000
+    name = "notebook-simulation"
+else:  # Take parameters from the command-line
+    num_diploids, seq_len = int(sys.argv[1]), float(sys.argv[2])
+    name = "cli-simulation"
 
-if True:
-    ts = msprime.simulate(
-        sample_size=10000,
-        Ne=10**4,
-        recombination_rate=1e-8,
-        mutation_rate=1e-8,
-        length=10 * 10**6,
-        random_seed=42,
-    )
-    ts.dump("simulation-source.trees")
-    print("Simulation done:", ts.num_trees, "trees and", ts.num_sites)
+ts = msprime.sim_ancestry(
+    num_diploids,
+    population_size=10**4,
+    recombination_rate=1e-8,
+    sequence_length=seq_len,
+    random_seed=6,
+)
+ts = msprime.sim_mutations(ts, rate=1e-8, random_seed=7)
+ts.dump(name + "-source.trees")
+print(
+    f"Simulated {ts.num_samples} samples over {seq_len/1e6} Mb:",
+    f"{ts.num_trees} trees and {ts.num_sites} sites",
+)
 
-    with tsinfer.SampleData(
-        sequence_length=ts.sequence_length,
-        path="simulation.samples",
-        num_flush_threads=2,
-    ) as samples:
-        for var in tqdm.tqdm(ts.variants(), total=ts.num_sites):
-            samples.add_site(var.site.position, var.genotypes, var.alleles)
-
-else:
-    source = msprime.load("simulation-source.trees")
-    inferred = msprime.load("simulation.trees")
-
-    subset = range(0, 6)
-    source_subset = source.simplify(subset)
-    inferred_subset = inferred.simplify(subset)
-
-    tree = source_subset.first()
-    print("True tree: interval=", tree.interval)
-    print(tree.draw(format="unicode"))
-
-    tree = inferred_subset.first()
-    print("Inferred tree: interval=", tree.interval)
-    print(tree.draw(format="unicode"))
+# Convert to a zarr file: this should be easier once a tskit2zarr utility is made, see
+# https://github.com/sgkit-dev/bio2zarr/issues/232
+np.save(f"{name}-AA.npy", [s.ancestral_state for s in ts.sites()])
+vcf_name = f"{name}.vcf.gz"
+with bgzf.open(vcf_name, "wt") as f:
+    ts.write_vcf(f)
+subprocess.run(["tabix", vcf_name])
+ret = subprocess.run(
+    "python -m bio2zarr vcf2zarr convert --force".split() + [vcf_name, name + ".vcz"],
+    stderr=subprocess.DEVNULL if name == "notebook-simulation" else None,
+)
+if ret.returncode == 0:
+    print(f"Converted to {name}.vcz")

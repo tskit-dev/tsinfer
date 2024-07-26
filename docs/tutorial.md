@@ -203,8 +203,10 @@ Python to simulate some data under the coalescent with recombination, using
 
 import builtins
 import sys
-from Bio import bgzf
+import os
 import subprocess
+
+from Bio import bgzf
 import numpy as np
 
 import msprime
@@ -213,10 +215,12 @@ import tsinfer
 if getattr(builtins, "__IPYTHON__", False):  # if running IPython: e.g. in a notebook
     num_diploids, seq_len = 100, 10_000
     name = "notebook-simulation"
+    python = sys.executable
 else:  # Take parameters from the command-line
     num_diploids, seq_len = int(sys.argv[1]), float(sys.argv[2])
     name = "cli-simulation"
-    
+    python = "python"
+
 ts = msprime.sim_ancestry(
     num_diploids,
     population_size=10**4,
@@ -239,9 +243,11 @@ with bgzf.open(vcf_name, "wt") as f:
     ts.write_vcf(f)
 subprocess.run(["tabix", vcf_name])
 ret = subprocess.run(
-    "python -m bio2zarr vcf2zarr convert --force".split() + [vcf_name, name+".vcz"],
-    stderr = subprocess.DEVNULL if name == "notebook-simulation" else None
+    [python, "-m", "bio2zarr", "vcf2zarr", "convert", "--force", vcf_name, f"{name}.vcz"],
+    stderr = subprocess.DEVNULL if name == "notebook-simulation" else None,
 )
+assert os.path.exists(f"{name}.vcz")
+
 if ret.returncode == 0:
     print(f"Converted to {name}.vcz")
 ```
