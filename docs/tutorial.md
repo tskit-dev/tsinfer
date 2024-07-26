@@ -77,19 +77,16 @@ import tsinfer
 
 # For this example take the REF allele (index 0) as ancestral
 ancestral_alleles = ds['variant_allele'][:,0].astype(str)
-# set the last site to an unknown ancestral allele, for this demo
+# This is just a numpy array, set the last site to an unknown value, for demo purposes
 ancestral_alleles[-1] = "."
 
 vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_alleles)
 ```
 
-Here we create a new `.VariantData` object for the 3 diploid samples in our
-dataset. Each diploid sample will correspond to an *individual* in the resulting tree
-sequence, and each of the 6 genomes will correspond to a sample node
-(hence `ts.num_samples == 6`). 
-
-Not all sites are used for genealogical inference: this includes non-variable (fixed)
-sites, singleton sites, and sites where the ancestral allele is unknown: in this example,
+The `.VariantData` object is a lightweight wrapper for the data from the 3 diploid samples
+in the .vcz file. We'll use the object to infer a tree sequence from the variant data.
+Howeve, note that some sites are not used for genealogical inference. This includes non-variable
+(fixed) sites, singleton sites, and sites where the ancestral allele is unknown: in this example,
 these are seen at site IDs 4, 5 and 7 respectively. In addition,
 multiallelic sites, with more than 2 alleles, are not used for inference (but see
 [here](https://github.com/tskit-dev/tsinfer/issues/670) for a workaround).
@@ -104,10 +101,14 @@ tree sequence.
 
 Once we have stored our data in a `.VariantData` object, we can easily infer 
 a {ref}`tree sequence<sec_python_api_trees_and_tree_sequences>` using the Python
-API:
+API. Note that each sample in the original .vcz file will correspond to an *individual*
+in the resulting tree sequence. Since these three individuals are diploid, the resulting
+tree sequence will have `ts.num_samples == 6` (i.e. unlike in a .vcz file, a "sample" in
+tskit refers to a haploid genome, not a diploid individual).
 
 ```{code-cell} ipython3
 inferred_ts = tsinfer.infer(vdata)
+print("Inferred a genetic genealogy for {inferred_ts.num_samples} (haploid) genomes")
 ```
 
 And that's it: we now have a fully functional {class}`tskit.TreeSequence`
