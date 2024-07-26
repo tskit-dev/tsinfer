@@ -1,0 +1,8 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "variants",
+        "samples"
+    ],
+    "comment": "A flag for each call indicating if it is phased or not. If omitted\nall calls are unphased.",
+    "dtype": "bool"
+}

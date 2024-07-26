@@ -1,0 +1,9 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "variants",
+        "samples",
+        "ploidy"
+    ],
+    "comment": "Call genotype. Encoded as allele values (0 for the reference, 1 for\nthe first allele, 2 for the second allele), -1 to indicate a\nmissing value, or -2 to indicate a non allele in mixed ploidy datasets.",
+    "mixed_ploidy": false
+}

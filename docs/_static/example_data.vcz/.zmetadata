@@ -1,0 +1,243 @@
+{
+    "metadata": {
+        ".zattrs": {
+            "contigs": [
+                "0"
+            ],
+            "source": "sgkit-0.9.0"
+        },
+        ".zgroup": {
+            "zarr_format": 2
+        },
+        "call_genotype/.zarray": {
+            "chunks": [
+                8,
+                3,
+                2
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "|i1",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8,
+                3,
+                2
+            ],
+            "zarr_format": 2
+        },
+        "call_genotype/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants",
+                "samples",
+                "ploidy"
+            ],
+            "comment": "Call genotype. Encoded as allele values (0 for the reference, 1 for\nthe first allele, 2 for the second allele), -1 to indicate a\nmissing value, or -2 to indicate a non allele in mixed ploidy datasets.",
+            "mixed_ploidy": false
+        },
+        "call_genotype_mask/.zarray": {
+            "chunks": [
+                8,
+                3,
+                2
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "|i1",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8,
+                3,
+                2
+            ],
+            "zarr_format": 2
+        },
+        "call_genotype_mask/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants",
+                "samples",
+                "ploidy"
+            ],
+            "comment": "A flag for each call indicating which values are missing.",
+            "dtype": "bool"
+        },
+        "call_genotype_phased/.zarray": {
+            "chunks": [
+                8,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "|i1",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "call_genotype_phased/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants",
+                "samples"
+            ],
+            "comment": "A flag for each call indicating if it is phased or not. If omitted\nall calls are unphased.",
+            "dtype": "bool"
+        },
+        "contig_id/.zarray": {
+            "chunks": [
+                1
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "<U1",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                1
+            ],
+            "zarr_format": 2
+        },
+        "contig_id/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "contigs"
+            ],
+            "comment": "Contig identifiers."
+        },
+        "sample_id/.zarray": {
+            "chunks": [
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "<U2",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                3
+            ],
+            "zarr_format": 2
+        },
+        "sample_id/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "samples"
+            ],
+            "comment": "The unique identifier of the sample."
+        },
+        "variant_allele/.zarray": {
+            "chunks": [
+                8,
+                2
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "|S1",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8,
+                2
+            ],
+            "zarr_format": 2
+        },
+        "variant_allele/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants",
+                "alleles"
+            ],
+            "comment": "The possible alleles for the variant."
+        },
+        "variant_contig/.zarray": {
+            "chunks": [
+                8
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "<i8",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8
+            ],
+            "zarr_format": 2
+        },
+        "variant_contig/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants"
+            ],
+            "comment": "Index corresponding to contig name for each variant. In some less common\nscenarios, this may also be equivalent to the contig names if the data\ngenerating process used contig names that were also integers."
+        },
+        "variant_position/.zarray": {
+            "chunks": [
+                8
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 5,
+                "cname": "lz4",
+                "id": "blosc",
+                "shuffle": 1
+            },
+            "dtype": "<i8",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8
+            ],
+            "zarr_format": 2
+        },
+        "variant_position/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "variants"
+            ],
+            "comment": "The reference position of the variant."
+        }
+    },
+    "zarr_consolidated_format": 1
+}

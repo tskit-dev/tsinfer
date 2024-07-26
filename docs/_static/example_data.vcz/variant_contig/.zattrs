@@ -1,0 +1,6 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "variants"
+    ],
+    "comment": "Index corresponding to contig name for each variant. In some less common\nscenarios, this may also be equivalent to the contig names if the data\ngenerating process used contig names that were also integers."
+}

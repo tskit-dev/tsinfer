@@ -1,0 +1,9 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "variants",
+        "samples",
+        "ploidy"
+    ],
+    "comment": "A flag for each call indicating which values are missing.",
+    "dtype": "bool"
+}

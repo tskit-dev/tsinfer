@@ -27,26 +27,24 @@ _Tsinfer_ takes as input a [Zarr](https://zarr.readthedocs.io/) file, with phase
 [VCF Zarr](https://github.com/sgkit-dev/vcf-zarr-spec/) (.vcz) format. The standard
 route to create such a file is by conversion from a VCF file, e.g. using
 [vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html) as described later in this
-document. For a quick introduction, however, we will instead create an example file using
-[sgkit](https://sgkit-dev.github.io/sgkit/latest/).
+document. However, for the moment we'll just use a pre-generated dataset:
 
 
 ```{code-cell} ipython3
-import sgkit
-ds = sgkit.simulate_genotype_call_dataset(n_variant=8, n_sample=3, missing_pct=0, phased=True, seed=79)
-sgkit.save_dataset(ds, "data.vcz", mode="w")
+import zarr
+ds = zarr.load("_static/example_data.vcz")
 ```
 
-This is what that generated data looks like:
+This is what the genotypes stored in that datafile look like:
 
 ```{code-cell}
 :"tags": ["remove-input"]
 import numpy as np
-assert all(len(np.unique(a)) == len(a) for a in ds['variant_allele'].values) 
-assert any([np.sum(g.values) == 1 for g in ds['call_genotype']]) # at least one singleton
-assert any([np.sum(g.values) == 0 for g in ds['call_genotype']]) # at least one non-variable
+assert all(len(np.unique(a)) == len(a) for a in ds['variant_allele']) 
+assert any([np.sum(g) == 1 for g in ds['call_genotype']]) # at least one singleton
+assert any([np.sum(g) == 0 for g in ds['call_genotype']]) # at least one non-variable
 
-alleles = ds['variant_allele'].values.astype(str)
+alleles = ds['variant_allele'].astype(str)
 sites = np.arange(ds['call_genotype'].shape[0])
 print(" " * 22, "Site:", " ".join(str(x) for x in range(8)), "\n")
 for sample in range(ds['call_genotype'].shape[1]):
@@ -54,16 +52,20 @@ for sample in range(ds['call_genotype'].shape[1]):
         genotypes = ds['call_genotype'][:,sample, genome]
         print(
             f"Diploid sample {sample} (genome {genome}):",
-            " ".join(alleles[sites, genotypes.values])
+            " ".join(alleles[sites, genotypes])
         )
 ```
+
+### VariantData and ancestral alleles
 
 We wish to infer a genealogy that could have given rise to this data set. To run _tsinfer_
 we wrap the .vcz file in a `tsinfer.VariantData` object. This requires an 
 *ancestral allele* to be specified for each site; there are
 many methods for calculating there: details are outside the scope of this manual, but we
 have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
-on this issue to provide some recommendations. Sometimes VCF files will contain the
+on this issue to provide some recommendations.
+
+Sometimes VCF files will contain the
 ancestral allele in the "AA" info field, in which case it will be encoded in the
 `variant_AA` field of the .vcz file. It's also possible to provide a numpy array
 of ancestral alleles, of the same length as the number of variants. Ancestral
@@ -73,17 +75,17 @@ and not used for inference (with a warning given).
 ```{code-cell}
 import tsinfer
 
-# In this example, take the REF allele (index 0) as ancestral
-ancestral_alleles = ds['variant_allele'].values[:,0].astype(str)
-# set the last site as of unknown ancestral allele
+# For this example take the REF allele (index 0) as ancestral
+ancestral_alleles = ds['variant_allele'][:,0].astype(str)
+# set the last site to an unknown ancestral allele, for this demo
 ancestral_alleles[-1] = "."
 
-vdata = tsinfer.VariantData("data.vcz", ancestral_alleles)
+vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_alleles)
 ```
 
 Here we create a new `.VariantData` object for the 3 diploid samples in our
 dataset. Each diploid sample will correspond to an *individual* in the resulting tree
-sequenece, and each of the 6 genomes will correspond to a sample node
+sequence, and each of the 6 genomes will correspond to a sample node
 (hence `ts.num_samples == 6`). 
 
 Not all sites are used for genealogical inference: this includes non-variable (fixed)
@@ -97,6 +99,8 @@ inferring the genealogy, for example if they are deemed unreliable (this is done
 via the `exclude_positions` parameter). Note, however, that even if a site is not used
 for genealogical inference, its genetic variation can still be encoded in the final
 tree sequence.
+
+### Topology inference
 
 Once we have stored our data in a `.VariantData` object, we can easily infer 
 a {ref}`tree sequence<sec_python_api_trees_and_tree_sequences>` using the Python

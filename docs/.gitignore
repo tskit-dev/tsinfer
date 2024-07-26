@@ -1,4 +1,7 @@
 notebook-simulation.trees
 notebook-simulation.samples
 notebook-simulation-source.trees
+notebook-simulation.vc*
+notebook-simulation-AA.npy
 P_dom_chr24_phased.samples
+sparrows.vcz
