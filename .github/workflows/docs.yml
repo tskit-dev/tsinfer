@@ -43,8 +43,9 @@ jobs:
           python -m venv venv
           . venv/bin/activate
           pip install --upgrade pip wheel
-          pip install -r requirements/CI-docs/requirements.txt          
-          
+          pip install -r requirements/CI-docs/requirements.txt
+          # Tabix currently required for vcf conversion
+          conda install -c bioconda tabix
 
       - name: Build C module
         if: env.MAKE_TARGET
