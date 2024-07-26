@@ -84,7 +84,7 @@ def test_sgkit_dataset_roundtrip(tmp_path):
 
     assert ts.num_individuals == inf_ts.num_individuals == ds.dims["samples"]
     for ts_ind, sample_id in zip(inf_ts.individuals(), ds["sample_id"].values):
-        assert ts_ind.metadata["sgkit_sample_id"] == sample_id
+        assert ts_ind.metadata["variant_data_sample_id"] == sample_id
 
     assert (
         ts.num_samples == inf_ts.num_samples == ds.dims["samples"] * ds.dims["ploidy"]
@@ -112,7 +112,7 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
     zarr_root = zarr.open(zarr_path)
     empty_obj = json.dumps({}).encode()
     indiv_metadata = np.array([empty_obj] * ts.num_individuals, dtype=object)
-    indiv_metadata[42] = json.dumps({"sgkit_sample_id": "foobar"}).encode()
+    indiv_metadata[42] = json.dumps({"variant_data_sample_id": "foobar"}).encode()
     zarr_root.create_dataset(
         "individuals_metadata", data=indiv_metadata, object_codec=numcodecs.VLenBytes()
     )
@@ -129,9 +129,9 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
         zip(inf_ts.individuals(), ds["sample_id"].values)
     ):
         if i != 42:
-            assert ts_ind.metadata["sgkit_sample_id"] == sample_id
+            assert ts_ind.metadata["variant_data_sample_id"] == sample_id
         else:
-            assert ts_ind.metadata["sgkit_sample_id"] == "foobar"
+            assert ts_ind.metadata["variant_data_sample_id"] == "foobar"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
@@ -186,7 +186,7 @@ def test_sgkit_dataset_accessors(tmp_path):
         == ts.tables.individuals.metadata_schema.schema
     )
     assert samples.individuals_metadata == [
-        {"sgkit_sample_id": sample_id, **ind.metadata}
+        {"variant_data_sample_id": sample_id, **ind.metadata}
         for ind, sample_id in zip(ts.individuals(), ds["sample_id"].values)
     ]
     assert np.array_equal(
@@ -234,7 +234,7 @@ def test_sgkit_accessors_defaults(tmp_path):
     assert samples.populations_metadata == []
     assert samples.individuals_metadata_schema == default_schema
     assert samples.individuals_metadata == [
-        {"sgkit_sample_id": sample_id} for sample_id in ds["sample_id"].values
+        {"variant_data_sample_id": sample_id} for sample_id in ds["sample_id"].values
     ]
     for time in samples.individuals_time:
         assert tskit.is_unknown_time(time)
