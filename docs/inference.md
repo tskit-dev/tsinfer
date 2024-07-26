@@ -141,7 +141,7 @@ still not as efficently as it is possible to analyse an equivalent tree sequence
 Rather than require the user to understand the internal structure of this
 file format, we provide a simple {ref}`Python API <sec_api_file_formats>`
 to allow the user to efficiently construct it from their own data.
-An example of how to use this API is given in the {ref}`sec_tutorial`.
+An example of how to use this API is given in the {ref}`sec_usage` documentation.
 
 We do not provide an automatic means of importing data from VCF (or any
 other format) intentionally, as we believe that this would be extremely difficult to do.
