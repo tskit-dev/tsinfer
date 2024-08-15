@@ -2555,7 +2555,7 @@ class VariantData(SampleData):
     def metadata(self):
         try:
             return tskit.MetadataSchema(self.metadata_schema).decode_row(
-                self.data.attrs["metadata"]
+                self.data.attrs["metadata"].encode()
             )
         except KeyError:
             return {}
@@ -2606,7 +2606,7 @@ class VariantData(SampleData):
 
     @functools.cached_property
     def individuals_metadata(self):
-        schema = tskit.MetadataSchema(self.populations_metadata_schema)
+        schema = tskit.MetadataSchema(self.individuals_metadata_schema)
         # We set the sample_id in the individual metadata as this is often useful,
         # however we silently don't overwrite if the key exists
         if "individuals_metadata" in self.data:

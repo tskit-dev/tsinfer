@@ -170,7 +170,7 @@ def test_sgkit_dataset_accessors(tmp_path):
     assert np.array_equal(
         samples.samples_individual, np.repeat(np.arange(ts.num_samples // 3), 3)
     )
-    assert samples.metadata_schema == tsutil.EXAMPLE_SCHEMA.schema
+    assert samples.metadata_schema == tsutil.example_schema("example").schema
     assert samples.metadata == ts.tables.metadata
     assert (
         samples.populations_metadata_schema
