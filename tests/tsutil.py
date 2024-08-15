@@ -198,9 +198,13 @@ def get_example_historical_sampled_ts(
     return tables.tree_sequence()
 
 
-EXAMPLE_SCHEMA = tskit.MetadataSchema(
-    {"codec": "json", "properties": {"foo": {"type": "integer"}}}
-)
+def example_schema(default):
+    return tskit.MetadataSchema(
+        {
+            "codec": "json",
+            "properties": {"default_prop": {"type": "string", "default": default}},
+        }
+    )
 
 
 def add_array_to_dataset(name, array, zarr_path, dims=None):
@@ -227,22 +231,23 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
     )
     ts = msprime.sim_mutations(ts, rate=0.025, model=msprime.JC69(), random_seed=42)
     tables = ts.dump_tables()
-    tables.metadata_schema = EXAMPLE_SCHEMA
+    tables.metadata_schema = example_schema("example")
+    tables.metadata = {"foo": "bar"}
     sites_copy = tables.sites.copy()
     tables.sites.clear()
-    tables.sites.metadata_schema = EXAMPLE_SCHEMA
+    tables.sites.metadata_schema = example_schema("sites")
     for i, site in enumerate(sites_copy):
         tables.sites.append(site.replace(metadata={"id_site": i}))
 
     pops_copy = tables.populations.copy()
     tables.populations.clear()
-    tables.populations.metadata_schema = EXAMPLE_SCHEMA
+    tables.populations.metadata_schema = example_schema("populations")
     for i, pop in enumerate(pops_copy):
         tables.populations.append(pop.replace(metadata={"id_pop": i}))
 
     indiv_copy = tables.individuals.copy()
     tables.individuals.clear()
-    tables.individuals.metadata_schema = EXAMPLE_SCHEMA
+    tables.individuals.metadata_schema = example_schema("individuals")
     for i, ind in enumerate(indiv_copy):
         tables.individuals.append(ind.replace(metadata={"id_indiv": i}))
 
@@ -320,12 +325,14 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
             ts.sequence_length + 1337,
             path / "data.zarr",
         )
+        sites_md = tables.sites.metadata
+        sites_md_offset = tables.sites.metadata_offset
         add_array_to_dataset(
             "sites_metadata",
             np.array(
                 [
-                    tables.sites.metadata_schema.encode_row(site.metadata)
-                    for site in ts.sites()
+                    sites_md[sites_md_offset[i] : sites_md_offset[i + 1]].tobytes()
+                    for i in range(ts.num_sites)
                 ]
             ),
             path / "data.zarr",
@@ -347,6 +354,11 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
             repr(tables.metadata_schema),
             path / "data.zarr",
         )
+        add_attribute_to_dataset(
+            "metadata",
+            tables.metadata_bytes.decode(),
+            path / "data.zarr",
+        )
         add_array_to_dataset(
             "provenances_timestamp",
             ["2021-01-01T00:00:00", "2021-01-02T00:00:00"],
@@ -364,12 +376,16 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
             repr(tables.populations.metadata_schema),
             path / "data.zarr",
         )
+        populations_md = tables.populations.metadata
+        populations_md_offset = tables.populations.metadata_offset
         add_array_to_dataset(
             "populations_metadata",
             np.array(
                 [
-                    tables.populations.metadata_schema.encode_row(population.metadata)
-                    for population in ts.populations()
+                    populations_md[
+                        populations_md_offset[i] : populations_md_offset[i + 1]
+                    ].tobytes()
+                    for i in range(ts.num_populations)
                 ]
             ),
             path / "data.zarr",
@@ -381,13 +397,15 @@ def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
             path / "data.zarr",
             ["samples"],
         )
+        indiv_md = tables.individuals.metadata
+        indiv_md_offset = tables.individuals.metadata_offset
         add_array_to_dataset(
             "individuals_metadata",
             np.array(
                 [
-                    tables.individuals.metadata_schema.encode_row(individual.metadata)
-                    for individual in ts.individuals()
-                ]
+                    indiv_md[indiv_md_offset[i] : indiv_md_offset[i + 1]].tobytes()
+                    for i in range(ts.num_individuals)
+                ],
             ),
             path / "data.zarr",
             ["samples"],
