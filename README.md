@@ -5,7 +5,7 @@
 
 Infer a tree sequence from genetic variation data
 
-The [documentation](https://tskit.dev/tsinfer/docs/stable) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/stable/installation.html).
+The [documentation](https://tskit.dev/tsinfer/docs/latest) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/latest/installation.html).
 
 The initial algorithm, its rationale, and results from testing on simulated and real data are described in the following [Nature Genetics paper](https://doi.org/10.1038/s41588-019-0483-y):
 
