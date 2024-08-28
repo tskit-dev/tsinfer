@@ -32,7 +32,7 @@ document. However, for the moment we'll just use a pre-generated dataset:
 
 ```{code-cell} ipython3
 import zarr
-ds = zarr.load("_static/example_data.vcz")
+ds = zarr.open("_static/example_data.vcz")
 ```
 
 This is what the genotypes stored in that datafile look like:
@@ -44,7 +44,7 @@ assert all(len(np.unique(a)) == len(a) for a in ds['variant_allele'])
 assert any([np.sum(g) == 1 for g in ds['call_genotype']]) # at least one singleton
 assert any([np.sum(g) == 0 for g in ds['call_genotype']]) # at least one non-variable
 
-alleles = ds['variant_allele'].astype(str)
+alleles = ds['variant_allele'][:].astype(str)
 sites = np.arange(ds['call_genotype'].shape[0])
 print(" " * 22, "Site:", " ".join(str(x) for x in range(8)), "\n")
 for sample in range(ds['call_genotype'].shape[1]):
@@ -76,11 +76,11 @@ and not used for inference (with a warning given).
 import tsinfer
 
 # For this example take the REF allele (index 0) as ancestral
-ancestral_alleles = ds['variant_allele'][:,0].astype(str)
+ancestral_allele = ds['variant_allele'][:,0].astype(str)
 # This is just a numpy array, set the last site to an unknown value, for demo purposes
-ancestral_alleles[-1] = "."
+ancestral_allele[-1] = "."
 
-vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_alleles)
+vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_allele)
 ```
 
 The `VariantData` object is a lightweight wrapper around the .vcz file.
@@ -98,14 +98,40 @@ Additionally, during the inference step, additional sites can be flagged as not 
 inference, for example if they are deemed unreliable (this is done
 via the `exclude_positions` parameter).
 
+Sites which are not used for inference will
+still be included in the final tree sequence, with mutations at those sites being placed
+onto branches by {meth}`parsimony<tskit.Tree.map_mutations>`. 
+
 ### Masks
 
-Sites which are not used for inference will still be included in the final tree sequence, with
-mutations at those sites being placed onto branches by parsimony. However, it is also possible
-to completely exclude sites and samples from the final tree sequence, by specifing a `site_mask`
-and/or a `sample_mask` when creating the `VariantData` object. Such sites or samples will be
-completely omitted from both inference and the final tree sequence. This can be useful, for
-example, to reduce the amount of computation required for an inference.
+It is also possible to *completely* exclude sites and samples, by specifing a boolean
+`site_mask` and/or a `sample_mask` when creating the `VariantData` object. Sites or samples with
+a mask value of `True` will be completely omitted both from inference and the final tree sequence.
+This can be useful, for example, if your VCF file contains multiple chromosomes (in which case
+`tsinfer` will need to be run separately on each chromosome) or if you wish to select only a subset
+of the chromosome for inference (e.g. to reduce computational load). If a `site_mask` is provided,
+note that the ancestral alleles array only specifies alleles for the unmasked sites.
+
+Below, for instance, is an example of including only sites up to position six in the contig
+labelled "chr1" in the `example_data.vcz` file:
+
+```{code-cell}
+import numpy as np
+
+# mask out any sites not associated with the contig named "chr1"
+# (for demonstration: all sites in this .vcz file are from "chr1" anyway)
+chr1_index = np.where(ds.contig_id[:] == "chr1")[0]
+site_mask = ds.variant_contig[:] != chr1_index
+# also mask out any sites with a position >= 6
+site_mask[ds.variant_position[:] >= 6] = True
+
+smaller_vdata = tsinfer.VariantData(
+    "_static/example_data.vcz",
+    ancestral_allele=ancestral_allele[site_mask == False],
+    site_mask=site_mask,
+)
+print(f"The `smaller_vdata` object returns data for only {smaller_vdata.num_sites} sites")
+```
 
 ### Topology inference
 
