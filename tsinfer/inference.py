@@ -907,26 +907,67 @@ def augment_ancestors(
     return ts
 
 
-def load_variant_data_and_ancestors_ts(metadata):
+@dataclasses.dataclass
+class SampleBatchWorkDescriptor:
+    sample_data_path: str
+    ancestral_allele: str
+    sample_mask: np.ndarray
+    site_mask: np.ndarray
+    ancestor_ts_path: str
+    recombination_rate: float
+    mismatch_ratio: float
+    path_compression: bool
+    indexes: np.ndarray
+    recombination: float
+    mismatch: float
+    precision: int
+    engine: str
+    extended_checks: bool
+    post_process: bool
+    force_sample_times: bool
+    map_additional_sites: bool
+    record_provenance: bool
+    sample_indexes: list
+    sample_times: list
+    num_samples_per_partition: int
+    num_partitions: int
+
+    def common_params(self) -> dict:
+        return {
+            "recombination_rate": self.recombination_rate,
+            "mismatch_ratio": self.mismatch_ratio,
+            "path_compression": self.path_compression,
+            "recombination": self.recombination,
+            "mismatch": self.mismatch,
+            "precision": self.precision,
+            "engine": self.engine,
+            "extended_checks": self.extended_checks,
+        }
+
+    def save(self, path):
+        with open(path, "w") as f:
+            json.dump(dataclasses.asdict(self), f)
+
+    @classmethod
+    def load(cls, path):
+        with open(path) as f:
+            wd_dict = json.load(f)
+        return cls(**wd_dict)
+
+
+def load_variant_data_and_ancestors_ts(wd: SampleBatchWorkDescriptor):
     variant_data = formats.VariantData(
-        metadata["sample_data_path"],
-        metadata["ancestral_allele"],
-        sample_mask=metadata["sample_mask"],
-        site_mask=metadata["site_mask"],
+        wd.sample_data_path,
+        wd.ancestral_allele,
+        sample_mask=wd.sample_mask,
+        site_mask=wd.site_mask,
     )
     variant_data._check_finalised()
-    ancestor_ts = tskit.load(metadata["ancestor_ts_path"])
+    ancestor_ts = tskit.load(wd.ancestor_ts_path)
     matcher = SampleMatcher(
         variant_data,
         ancestor_ts,
-        recombination_rate=metadata["recombination_rate"],
-        mismatch_ratio=metadata["mismatch_ratio"],
-        recombination=metadata["recombination"],
-        mismatch=metadata["mismatch"],
-        path_compression=metadata["path_compression"],
-        precision=metadata["precision"],
-        extended_checks=metadata["extended_checks"],
-        engine=metadata["engine"],
+        **wd.common_params(),
     )
     return variant_data, ancestor_ts, matcher
 
@@ -965,27 +1006,31 @@ def match_samples_batch_init(
     # Create work dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    metadata = {
-        "sample_data_path": str(sample_data_path),
-        "ancestral_allele": ancestral_allele,
-        "sample_mask": sample_mask,
-        "site_mask": site_mask,
-        "ancestor_ts_path": str(ancestor_ts_path),
-        "recombination_rate": recombination_rate,
-        "mismatch_ratio": mismatch_ratio,
-        "path_compression": path_compression,
-        "indexes": indexes,
-        "recombination": recombination,
-        "mismatch": mismatch,
-        "precision": precision,
-        "engine": engine,
-        "extended_checks": extended_checks,
-        "post_process": post_process,
-        "force_sample_times": force_sample_times,
-        "map_additional_sites": map_additional_sites,
-        "record_provenance": record_provenance,
-    }
-    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    wd = SampleBatchWorkDescriptor(
+        sample_data_path=str(sample_data_path),
+        ancestral_allele=ancestral_allele,
+        sample_mask=sample_mask,
+        site_mask=site_mask,
+        ancestor_ts_path=str(ancestor_ts_path),
+        recombination_rate=recombination_rate,
+        mismatch_ratio=mismatch_ratio,
+        path_compression=path_compression,
+        indexes=indexes,
+        recombination=recombination,
+        mismatch=mismatch,
+        precision=precision,
+        engine=engine,
+        extended_checks=extended_checks,
+        post_process=post_process,
+        force_sample_times=force_sample_times,
+        map_additional_sites=map_additional_sites,
+        record_provenance=record_provenance,
+        sample_indexes=[],
+        sample_times=[],
+        num_samples_per_partition=0,
+        num_partitions=0,
+    )
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
     sample_indexes = check_sample_indexes(variant_data, indexes).tolist()
     sample_times = np.zeros(
         len(sample_indexes), dtype=variant_data.individuals_time.dtype
@@ -1001,32 +1046,29 @@ def match_samples_batch_init(
         # but that would mean re-ordering the sample nodes in the final ts, and
         # we sometimes assume they are in the same order as in the file
     sample_times = sample_times.tolist()
-    metadata["sample_indexes"] = sample_indexes
-    metadata["sample_times"] = sample_times
+    wd.sample_indexes = sample_indexes
+    wd.sample_times = sample_times
     num_samples_per_partition = min_work_per_job // variant_data.num_sites
     if num_samples_per_partition == 0:
         num_samples_per_partition = 1
-    metadata["num_samples_per_partition"] = num_samples_per_partition
-    metadata["num_partitions"] = math.ceil(
-        len(sample_indexes) / num_samples_per_partition
-    )
-    metadata_path = work_dir / "metadata.json"
-    metadata_path.write_text(json.dumps(metadata))
-    return metadata
+    wd.num_samples_per_partition = num_samples_per_partition
+    wd.num_partitions = math.ceil(len(sample_indexes) / num_samples_per_partition)
+    wd_path = work_dir / "wd.json"
+    wd.save(wd_path)
+    return wd
 
 
 def match_samples_batch_partition(work_dir, partition_index):
-    metadata_path = pathlib.Path(work_dir) / "metadata.json"
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    if partition_index >= metadata["num_partitions"] or partition_index < 0:
+    wd_path = pathlib.Path(work_dir) / "wd.json"
+    wd = SampleBatchWorkDescriptor.load(wd_path)
+    if partition_index >= wd.num_partitions or partition_index < 0:
         raise ValueError(f"Partition {partition_index} is out of range")
-    sample_indexes = metadata["sample_indexes"]
-    sample_times = metadata["sample_times"]
+    sample_indexes = wd.sample_indexes
+    sample_times = wd.sample_times
     partition_slice = slice(
-        partition_index * metadata["num_samples_per_partition"],
+        partition_index * wd.num_samples_per_partition,
         min(
-            (partition_index + 1) * metadata["num_samples_per_partition"],
+            (partition_index + 1) * wd.num_samples_per_partition,
             len(sample_indexes),
         ),
     )
@@ -1034,7 +1076,7 @@ def match_samples_batch_partition(work_dir, partition_index):
         f"Matching partition {partition_index} with {partition_slice.start} to"
         f" {partition_slice.stop} of {len(sample_indexes)} samples"
     )
-    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
     results = matcher.match_samples(
         sample_indexes, sample_times, slice_=partition_slice
     )
@@ -1045,32 +1087,24 @@ def match_samples_batch_partition(work_dir, partition_index):
 
 
 def match_samples_batch_finalise(work_dir):
-    metadata_path = os.path.join(work_dir, "metadata.json")
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(metadata)
+    wd_path = os.path.join(work_dir, "wd.json")
+    wd = SampleBatchWorkDescriptor.load(wd_path)
+    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
     results = []
-    for partition_index in range(metadata["num_partitions"]):
+    for partition_index in range(wd.num_partitions):
         path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
         with open(path, "rb") as f:
             results.extend(pickle.load(f))
     return match_samples(
         variant_data,
         ancestor_ts,
-        recombination_rate=metadata["recombination_rate"],
-        mismatch_ratio=metadata["mismatch_ratio"],
-        path_compression=metadata["path_compression"],
-        indexes=metadata["indexes"],
-        post_process=metadata["post_process"],
-        force_sample_times=metadata["force_sample_times"],
-        recombination=metadata["recombination"],
-        mismatch=metadata["mismatch"],
-        precision=metadata["precision"],
-        extended_checks=metadata["extended_checks"],
-        engine=metadata["engine"],
-        record_provenance=metadata["record_provenance"],
-        map_additional_sites=metadata["map_additional_sites"],
+        indexes=wd.indexes,
+        post_process=wd.post_process,
+        force_sample_times=wd.force_sample_times,
+        record_provenance=wd.record_provenance,
+        map_additional_sites=wd.map_additional_sites,
         results=results,
+        **wd.common_params(),
     )
 
 
