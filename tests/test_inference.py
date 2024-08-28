@@ -1528,7 +1528,7 @@ class TestBatchSampleMatching:
         mat_anc_ts.dump(tmpdir / "mat_anc.trees")
         mask_anc_ts.dump(tmpdir / "mask_anc.trees")
 
-        mat_md = tsinfer.match_samples_batch_init(
+        mat_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mat",
             sample_data_path=mat_sd.path,
             ancestral_allele="variant_ancestral_allele",
@@ -1536,14 +1536,14 @@ class TestBatchSampleMatching:
             min_work_per_job=1,
             max_num_partitions=10,
         )
-        for i in range(mat_md["num_partitions"]):
+        for i in range(mat_wd.num_partitions):
             tsinfer.match_samples_batch_partition(
                 work_dir=tmpdir / "working_mat",
                 partition_index=i,
             )
         mat_ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working_mat")
 
-        mask_md = tsinfer.match_samples_batch_init(
+        mask_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mask",
             sample_data_path=mask_sd.path,
             ancestral_allele="variant_ancestral_allele",
@@ -1553,7 +1553,7 @@ class TestBatchSampleMatching:
             site_mask="variant_mask_foobar",
             sample_mask="samples_mask_foobar",
         )
-        for i in range(mask_md["num_partitions"]):
+        for i in range(mask_wd.num_partitions):
             tsinfer.match_samples_batch_partition(
                 work_dir=tmpdir / "working_mask",
                 partition_index=i,
