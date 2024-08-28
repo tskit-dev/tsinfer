@@ -946,7 +946,7 @@ class SampleBatchWorkDescriptor:
 
     def save(self, path):
         with open(path, "w") as f:
-            json.dump(dataclasses.asdict(self), f)
+            json.dump(dataclasses.asdict(self), f, indent=2)
 
     @classmethod
     def load(cls, path):
