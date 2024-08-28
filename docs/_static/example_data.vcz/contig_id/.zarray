@@ -9,8 +9,8 @@
         "id": "blosc",
         "shuffle": 1
     },
-    "dtype": "<U1",
-    "fill_value": null,
+    "dtype": "<U4",
+    "fill_value": "",
     "filters": null,
     "order": "C",
     "shape": [
