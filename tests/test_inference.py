@@ -1516,6 +1516,7 @@ class TestBatchAncestorMatching:
             tsinfer.match_ancestors_batch_groups(tmpdir / "work", 2, 3)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 class TestBatchSampleMatching:
     def test_match_samples_batch(self, tmp_path, tmpdir):
         mat_sd, mask_sd, _, _ = tsutil.make_materialized_and_masked_sampledata(
