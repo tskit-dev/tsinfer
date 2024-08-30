@@ -144,7 +144,7 @@ tskit refers to a haploid genome, not a diploid individual).
 
 ```{code-cell} ipython3
 inferred_ts = tsinfer.infer(vdata)
-print("Inferred a genetic genealogy for {inferred_ts.num_samples} (haploid) genomes")
+print(f"Inferred a genetic genealogy for {inferred_ts.num_samples} (haploid) genomes")
 ```
 
 And that's it: we now have a fully functional {class}`tskit.TreeSequence`
