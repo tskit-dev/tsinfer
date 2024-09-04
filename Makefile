@@ -7,7 +7,7 @@ CFLAGS=-std=c99 -g -O3 -march=native -funroll-loops -ffast-math \
 all: _tsinfer.cpython-34m.so 
 
 _tsinfer.cpython-34m.so: _tsinfermodule.c 
-	CC="${CC}" CFLAGS="${CFLAGS}" python setup.py build_ext --inplace
+	CC="${CC}" CFLAGS="${CFLAGS}" python3 setup.py build_ext --inplace
 
 ctags:
 	ctags lib/*.c lib/*.h tsinfer/*.py
