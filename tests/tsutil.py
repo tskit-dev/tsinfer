@@ -339,11 +339,6 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
         )
 
     if add_optional:
-        add_attribute_to_dataset(
-            "sequence_length",
-            ts.sequence_length + 1337,
-            path / "data.zarr",
-        )
         sites_md = tables.sites.metadata
         sites_md_offset = tables.sites.metadata_offset
         add_array_to_dataset(
