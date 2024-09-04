@@ -2785,6 +2785,10 @@ class VariantData(SampleData):
                 sample_index += 1
         assert sample_index == samples_slice[1]
 
+    @classmethod
+    def from_tree_sequence(*args, **kwargs):
+        raise NotImplementedError("This method is not implemented for VariantData")
+
 
 @attr.s(order=False, eq=False)
 class Ancestor:

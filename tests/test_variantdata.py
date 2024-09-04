@@ -757,3 +757,9 @@ class TestVariantDataErrors:
         samples = tsinfer.VariantData(path, "variant_ancestral_allele")
         with pytest.raises(ValueError, match="Empty alleles must be at the end"):
             tsinfer.infer(samples)
+
+    def test_unimplemented_from_tree_sequence(self):
+        # NB we should reimplement something like this functionality.
+        # Requires e.g. https://github.com/tskit-dev/tsinfer/issues/924
+        with pytest.raises(NotImplementedError):
+            tsinfer.VariantData.from_tree_sequence(None)
