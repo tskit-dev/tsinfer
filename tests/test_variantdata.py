@@ -20,8 +20,10 @@
 Tests for the data files.
 """
 import json
+import logging
 import sys
 import tempfile
+import warnings
 
 import msprime
 import numcodecs
@@ -627,14 +629,12 @@ def test_missing_ancestral_allele(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
-def test_ancestral_missingness(tmp_path):
+def test_deliberate_ancestral_missingness(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
     ancestral_allele = ds.variant_ancestral_allele.values
     ancestral_allele[0] = "N"
-    ancestral_allele[11] = "-"
-    ancestral_allele[12] = "💩"
-    ancestral_allele[15] = "💩"
+    ancestral_allele[1] = "n"
     ds = ds.drop_vars(["variant_ancestral_allele"])
     sgkit.save_dataset(ds, str(zarr_path) + ".tmp")
     tsutil.add_array_to_dataset(
@@ -644,15 +644,57 @@ def test_ancestral_missingness(tmp_path):
         ["variants"],
     )
     ds = sgkit.load_dataset(str(zarr_path) + ".tmp")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # No warning raised if AA deliberately missing
+        sd = tsinfer.VariantData(str(zarr_path) + ".tmp", "variant_ancestral_allele")
+    inf_ts = tsinfer.infer(sd)
+    for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
+        if i in [0, 1]:
+            assert inf_var.site.metadata == {"inference_type": "parsimony"}
+        else:
+            assert inf_var.site.ancestral_state == var.site.ancestral_state
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
+def test_ancestral_missing_warning(tmp_path):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+    ds = sgkit.load_dataset(zarr_path)
+    anc_state = ds.variant_ancestral_allele.values
+    anc_state[0] = "N"
+    anc_state[11] = "-"
+    anc_state[12] = "💩"
+    anc_state[15] = "💩"
     with pytest.warns(
         UserWarning,
         match=r"not found in the variant_allele array for the 4 [\s\S]*'💩': 2",
     ):
-        sd = tsinfer.VariantData(str(zarr_path) + ".tmp", "variant_ancestral_allele")
-    inf_ts = tsinfer.infer(sd)
+        vdata = tsinfer.VariantData(zarr_path, anc_state)
+    inf_ts = tsinfer.infer(vdata)
     for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
         if i in [0, 11, 12, 15]:
             assert inf_var.site.metadata == {"inference_type": "parsimony"}
+            assert inf_var.site.ancestral_state in var.site.alleles
+        else:
+            assert inf_var.site.ancestral_state == var.site.ancestral_state
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
+def test_ancestral_missing_info(tmp_path, caplog):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+    ds = sgkit.load_dataset(zarr_path)
+    anc_state = ds.variant_ancestral_allele.values
+    anc_state[0] = "N"
+    anc_state[11] = "N"
+    anc_state[12] = "n"
+    anc_state[15] = "n"
+    with caplog.at_level(logging.INFO):
+        vdata = tsinfer.VariantData(zarr_path, anc_state)
+    assert f"4 sites ({4/ts.num_sites * 100 :.2f}%) were deliberately " in caplog.text
+    inf_ts = tsinfer.infer(vdata)
+    for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
+        if i in [0, 11, 12, 15]:
+            assert inf_var.site.metadata == {"inference_type": "parsimony"}
+            assert inf_var.site.ancestral_state in var.site.alleles
         else:
             assert inf_var.site.ancestral_state == var.site.ancestral_state
 
@@ -670,6 +712,25 @@ def test_sgkit_ancestor(small_sd_fixture, tmp_path):
 
 
 class TestVariantDataErrors:
+    @staticmethod
+    def simulate_genotype_call_dataset(*args, **kwargs):
+        # roll our own simulate_genotype_call_dataset to hack around bug in sgkit where
+        # duplicate alleles are created. Doesn't need to be efficient: just for testing
+        if "seed" not in kwargs:
+            kwargs["seed"] = 123
+        ds = sgkit.simulate_genotype_call_dataset(*args, **kwargs)
+        variant_alleles = ds["variant_allele"].values
+        allowed_alleles = np.array(
+            ["A", "T", "C", "G", "N"], dtype=variant_alleles.dtype
+        )
+        for row in range(len(variant_alleles)):
+            alleles = variant_alleles[row]
+            if len(set(alleles)) != len(alleles):
+                # Just use a set that we know is unique
+                variant_alleles[row] = allowed_alleles[0 : len(alleles)]
+        ds["variant_allele"] = ds["variant_allele"].dims, variant_alleles
+        return ds
+
     def test_bad_zarr_spec(self):
         ds = zarr.group()
         ds["call_genotype"] = zarr.array(np.zeros(10, dtype=np.int8))
@@ -680,7 +741,7 @@ class TestVariantDataErrors:
 
     def test_missing_phase(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
         sgkit.save_dataset(ds, path)
         with pytest.raises(
             ValueError, match="The call_genotype_phased array is missing"
@@ -689,7 +750,7 @@ class TestVariantDataErrors:
 
     def test_phased(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3)
         ds["call_genotype_phased"] = (
             ds["call_genotype"].dims,
             np.ones(ds["call_genotype"].shape, dtype=bool),
@@ -700,13 +761,13 @@ class TestVariantDataErrors:
     def test_ploidy1_missing_phase(self, tmp_path):
         path = tmp_path / "data.zarr"
         # Ploidy==1 is always ok
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
         sgkit.save_dataset(ds, path)
         tsinfer.VariantData(path, ds["variant_allele"][:, 0].values.astype(str))
 
     def test_ploidy1_unphased(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
         ds["call_genotype_phased"] = (
             ds["call_genotype"].dims,
             np.zeros(ds["call_genotype"].shape, dtype=bool),
@@ -716,7 +777,7 @@ class TestVariantDataErrors:
 
     def test_duplicate_positions(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
         ds["variant_position"][2] = ds["variant_position"][1]
         sgkit.save_dataset(ds, path)
         with pytest.raises(ValueError, match="duplicate or out-of-order values"):
@@ -724,23 +785,46 @@ class TestVariantDataErrors:
 
     def test_bad_order_positions(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
         ds["variant_position"][0] = ds["variant_position"][2] - 0.5
         sgkit.save_dataset(ds, path)
         with pytest.raises(ValueError, match="duplicate or out-of-order values"):
             tsinfer.VariantData(path, "variant_ancestral_allele")
 
+    def test_bad_ancestral_state(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, phased=True)
+        ancestral_state = ds["variant_allele"][:, 0].values.astype(str)
+        ancestral_state[1] = ""
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(ValueError, match="cannot contain empty strings"):
+            tsinfer.VariantData(path, ancestral_state)
+
     def test_empty_alleles_not_at_end(self, tmp_path):
         path = tmp_path / "data.zarr"
-        ds = sgkit.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
         ds["variant_allele"] = (
             ds["variant_allele"].dims,
-            np.array([["", "A", "C"], ["A", "C", ""], ["A", "C", ""]], dtype="S1"),
+            np.array([["A", "", "C"], ["A", "C", ""], ["A", "C", ""]], dtype="S1"),
         )
         sgkit.save_dataset(ds, path)
-        vdata = tsinfer.VariantData(path, ds["variant_allele"][:, 0].values.astype(str))
-        with pytest.raises(ValueError, match="Empty alleles must be at the end"):
-            tsinfer.infer(vdata)
+        with pytest.raises(
+            ValueError, match='Bad alleles: fill value "" in middle of list'
+        ):
+            tsinfer.VariantData(path, ds["variant_allele"][:, 0].values.astype(str))
+
+    def test_unique_alleles(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=3, n_ploidy=1)
+        ds["variant_allele"] = (
+            ds["variant_allele"].dims,
+            np.array([["A", "C", "T"], ["A", "C", ""], ["A", "A", ""]], dtype="S1"),
+        )
+        sgkit.save_dataset(ds, path)
+        with pytest.raises(
+            ValueError, match="Duplicate allele values provided at site 2"
+        ):
+            tsinfer.VariantData(path, np.array(["A", "A", "A"], dtype="S1"))
 
     def test_unimplemented_from_tree_sequence(self):
         # NB we should reimplement something like this functionality.

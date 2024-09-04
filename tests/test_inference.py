@@ -1532,7 +1532,7 @@ class TestBatchSampleMatching:
         mat_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mat",
             sample_data_path=mat_sd.path,
-            ancestral_allele="variant_ancestral_allele",
+            ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mat_anc.trees",
             min_work_per_job=1,
             max_num_partitions=10,
@@ -1547,7 +1547,7 @@ class TestBatchSampleMatching:
         mask_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mask",
             sample_data_path=mask_sd.path,
-            ancestral_allele="variant_ancestral_allele",
+            ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mask_anc.trees",
             min_work_per_job=1,
             max_num_partitions=10,

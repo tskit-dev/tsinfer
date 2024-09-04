@@ -31,6 +31,7 @@ import queue
 import sys
 import threading
 import warnings
+from typing import Union  # noqa: F401
 
 import attr
 import humanize
@@ -2091,12 +2092,11 @@ class SampleData(DataContainer):
             ids = np.arange(0, self.num_sites, dtype=int)
         for j in ids:
             anc_idx = ancestral_allele_array[j]
-            alleles = tuple(alleles_array[j])
             site = Site(
                 id=j,
                 position=position_array[j],
                 ancestral_allele=anc_idx,
-                alleles=alleles,
+                alleles=tuple(alleles_array[j]),
                 metadata=metadata_array[j],
                 time=time_array[j],
             )
@@ -2293,6 +2293,48 @@ class SampleData(DataContainer):
 
 
 class VariantData(SampleData):
+    """
+    Class representing input variant data used for inference. This is
+    mostly a thin wrapper for a Zarr dataset storing information in
+    the VCF Zarr (.vcz) format, plus information specifing the ancestral allele
+    and (optional) data masks. It then provides various derived properties and
+    methods for accessing the data in a form suitable for inference.
+
+    .. note::
+        In the VariantData object, "samples" refer to the individuals in the dataset,
+        each of which can be of arbitrary ploidy. This is in contrast to ``tskit``,
+        in which each *haploid genome* is treated as a separate "sample". For example
+        in a diploid dataset, the inferred tree sequence returned at the end of
+        the inference process will have ``inferred_ts.num_samples`` equal to double
+        the number returned by ``VariantData.num_samples``.
+
+    :param str path: The path to the file containing the input dataset in VCF-Zarr
+        format.
+    :param Union(array, str) ancestral_state: A numpy array of strings specifying
+        the ancestral states (alleles) used in inference. This must be the same length
+        as the number of unmasked sites in the dataset. Alternatively, a single string
+        can be provided, giving the name of an array in the input dataset which contains
+        the ancestral states. Unknown ancestral states can be specified using "N".
+        Any ancestral states which do not match any of the known alleles at that site,
+        will be tallied, and a warning issued summarizing the unknown ancestral states.
+    :param Union(array, str) sample_mask: A numpy array of booleans specifying which
+        samples to mask out (exclude) from the dataset. Alternatively, a string
+        can be provided, giving the name of an array in the input dataset which contains
+        the sample mask. If ``None`` (default), all samples are included.
+    :param Union(array, str) site_mask: A numpy array of booleans specifying which
+        sites to mask out (exclude) from the dataset. Alternatively, a string
+        can be provided, giving the name of an array in the input dataset which contains
+        the site mask. If ``None`` (default), all sites are included.
+    :param Union(array, str) sites_time: A numpy array of floats specifying the relative
+        time of occurrence of the mutation to the derived state at each site. This must
+        be of the same length as the number of unmasked sites. Alternatively, a
+        string can be provided, giving the name of an array in the input dataset
+        which contains the site times. If ``None`` (default), the frequency of the
+        derived allele is used as a proxy for the time of occurrence: this is usually a
+        reasonable approximation to the relative order of ancestors used for inference.
+        Time values are ignored for sites not used in inference, such as singletons,
+        sites with more than two alleles, or sites with an unknown ancestral state.
+    """
 
     FORMAT_NAME = "tsinfer-variant-data"
     FORMAT_VERSION = (0, 1)
@@ -2300,7 +2342,7 @@ class VariantData(SampleData):
     def __init__(
         self,
         path_or_zarr,
-        ancestral_allele,
+        ancestral_state,
         *,
         sample_mask=None,
         site_mask=None,
@@ -2393,33 +2435,32 @@ class VariantData(SampleData):
                     f"The sites time {sites_time} was not found" f" in the dataset."
                 )
 
-        if isinstance(ancestral_allele, np.ndarray):
-            if ancestral_allele.shape[0] != self.num_sites:
+        if isinstance(ancestral_state, np.ndarray):
+            if ancestral_state.shape[0] != self.num_sites:
                 raise ValueError(
-                    "Ancestral allele array must be the same length as the number of"
+                    "Ancestral state array must be the same length as the number of"
                     " selected sites"
                 )
-            self._sites_ancestral_allele = ancestral_allele
         else:
             try:
-                self._sites_ancestral_allele = self.data[ancestral_allele][:][
-                    self.sites_select
-                ]
+                ancestral_state = self.data[ancestral_state][:][self.sites_select]
             except KeyError:
                 raise ValueError(
-                    f"The ancestral allele {ancestral_allele} was not"
+                    f"The ancestral state array {ancestral_state} was not"
                     f" found in the dataset."
                 )
-        self._sites_ancestral_allele = self._sites_ancestral_allele.astype(str)
+        ancestral_state = ancestral_state.astype(str)
+        if np.any(ancestral_state == ""):
+            raise ValueError("Ancestral state array cannot contain empty strings")
+
+        self._sites_ancestral_allele = np.full(self.num_sites, -1, dtype=np.int8)
         unknown_alleles = collections.Counter()
-        converted = np.zeros(self.num_sites, dtype=np.int8)
-        for i, allele in enumerate(self._sites_ancestral_allele):
-            allele_index = -1
-            try:
-                allele_index = np.where(allele == self.sites_alleles[i])[0][0]
-            except IndexError:
-                unknown_alleles[allele] += 1
-            converted[i] = allele_index
+        for i, (anc_state, site) in enumerate(zip(ancestral_state, self.sites())):
+            if anc_state in {"N", "n"} or anc_state not in site.alleles:
+                unknown_alleles[anc_state] += 1
+            else:
+                self._sites_ancestral_allele[i] = site.alleles.index(anc_state)
+        deliberately_unknown = sum([unknown_alleles.get(c, 0) for c in ("N", "n")])
         tot = sum(unknown_alleles.values())
         if tot > 0:
             frac_bad = tot / self.num_sites
@@ -2428,13 +2469,18 @@ class VariantData(SampleData):
                 f"'{k}': {v} ({frac * 100:.2f}% of sites)"  # Summarise per allele type
                 for (k, v), frac in zip(unknown_alleles.items(), frac_bad_per_type)
             ]
-            warnings.warn(
-                "An ancestral allele was not found in the variant_allele array for "
-                + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
-                + "They will be treated as of unknown ancestral state:\n "
-                + "\n ".join(summarise_unknown)
-            )
-        self._sites_ancestral_allele = converted
+            if tot == deliberately_unknown:
+                logging.info(
+                    f"{tot} sites ({frac_bad * 100 :.2f}%) were deliberately marked as "
+                    "of unknown ancestral state. They will not be used for inference"
+                )
+            else:
+                warnings.warn(
+                    "An ancestral allele was not found in the variant_allele array for "
+                    + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
+                    + "They will be treated as of unknown ancestral state:\n "
+                    + "\n ".join(summarise_unknown)
+                )
 
         # Create zarr arrays for convenience when iterating over chunks
         self.z_sites_select = zarr.array(
@@ -2664,6 +2710,45 @@ class VariantData(SampleData):
         except KeyError:
             return np.full((self.num_individuals), 0, dtype=np.int32)
 
+    @staticmethod
+    def _trim_allele_array(allele_array, site_id):
+        # Trim a list of allelic states to remove any trailing "" entries.
+        assert allele_array.shape[0] > 0
+        used = np.flatnonzero(allele_array != "")
+        allele_array = allele_array[: (used[-1] + 1)]
+        if np.any(allele_array == ""):
+            raise ValueError(
+                f'Bad alleles: fill value "" in middle of list: {allele_array}'
+            )
+        if len(set(allele_array)) != len(allele_array):
+            raise ValueError(f"Duplicate allele values provided at site {site_id}")
+        return allele_array
+
+    def sites(self, ids=None):
+        """
+        Returns an iterator over the Site objects. A subset of the
+        sites can be returned using the ``ids`` parameter. This must
+        be a list of integer site IDs.
+        """
+        position_array = self.sites_position[:]
+        alleles_array = self.sites_alleles[:]
+        metadata_array = self.sites_metadata[:]
+        time_array = self.sites_time[:]
+        ancestral_allele_array = self.sites_ancestral_allele[:]
+        if ids is None:
+            ids = np.arange(0, self.num_sites, dtype=int)
+        for j in ids:
+            anc_idx = ancestral_allele_array[j]
+            site = Site(
+                id=j,
+                position=position_array[j],
+                ancestral_allele=anc_idx,
+                alleles=tuple(self._trim_allele_array(alleles_array[j], j)),
+                metadata=metadata_array[j],
+                time=time_array[j],
+            )
+            yield site
+
     def variants(self, sites=None, recode_ancestral=None):
         """
         Returns an iterator over the :class:`Variant` objects. This is equivalent to
@@ -2708,19 +2793,8 @@ class VariantData(SampleData):
                 geno_map[aa] = 0
                 geno_map[0:aa] += 1
                 genos = geno_map[genos]
-            # Filter out empty alleles, as sgkit pads with them so that all sites have
-            # the same number of alleles. This is only safe if the empty
-            # alleles are at the end of the list, so check this.
-            non_empty_alleles = []
-            empty_seen = False
-            for allele in alleles:
-                if allele != b"" and allele != "":
-                    if empty_seen:
-                        raise ValueError("Empty alleles must be at the end")
-                    non_empty_alleles.append(allele)
-                else:
-                    empty_seen = True
-            alleles = non_empty_alleles
+            # Empty alleles (padded by sgkit) should never be seen
+            assert all(a != "" for a in alleles)
             yield Variant(site=site, alleles=alleles, genotypes=genos)
 
     def _all_haplotypes(self, sites=None, recode_ancestral=None, samples_slice=None):
