@@ -2398,6 +2398,12 @@ class VariantData(SampleData):
                     f"The ancestral allele {ancestral_allele} was not"
                     f" found in the dataset."
                 )
+        for i, (alleles, num_alleles) in enumerate(
+            zip(self.sites_alleles, self.num_alleles())
+        ):
+            if len(set(alleles) - {b"", "", None}) != num_alleles:
+                raise ValueError(f"Duplicate allele values provided at site {i}")
+
         self._sites_ancestral_allele = self._sites_ancestral_allele.astype(str)
         unknown_alleles = collections.Counter()
         converted = np.zeros(self.num_sites, dtype=np.int8)
