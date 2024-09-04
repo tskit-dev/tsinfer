@@ -12,6 +12,9 @@
 - If a mismatch ratio is provided to the `infer` command, it only applies during the
   `match_samples` phase ({issue}`980`, {pr}`981`, {user}`hyanwong`)
 
+- Get the `sequence_length` of the contig associated with the unmasked sites,
+  if contig lengths are provided ({pr}`964`, {user}`hyanwong`, {user}`benjeffery`)
+
 **Fixes**
 
 - Properly account for "N" as an unknown ancestral state, and ban "" from being
