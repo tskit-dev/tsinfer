@@ -103,7 +103,7 @@ ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 int
 ancestor_matcher_alloc(ancestor_matcher_t *self,
     tree_sequence_builder_t *tree_sequence_builder, double *recombination_rate,
-    double *mismatch_rate, unsigned int precision, int flags)
+    double *mismatch_rate, double likelihood_threshold, int flags)
 {
     int ret = 0;
     /* TODO make these input parameters. */
@@ -112,7 +112,7 @@ ancestor_matcher_alloc(ancestor_matcher_t *self,
     memset(self, 0, sizeof(ancestor_matcher_t));
     /* All allocs for arrays related to nodes are done in expand_nodes */
     self->flags = flags;
-    self->precision = precision;
+    self->likelihood_threshold = likelihood_threshold;
     self->max_nodes = 0;
     self->tree_sequence_builder = tree_sequence_builder;
     self->num_sites = tree_sequence_builder->num_sites;
@@ -366,7 +366,7 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     /* Renormalise the likelihoods. */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
-        L[u] = tsk_round(L[u] / max_L, self->precision);
+        L[u] = TSK_MAX(L[u] / max_L, self->likelihood_threshold);
     }
     ancestor_matcher_unset_allelic_state(self, site, allelic_state);
 out:
