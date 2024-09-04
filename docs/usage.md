@@ -60,14 +60,14 @@ for sample in range(ds['call_genotype'].shape[1]):
 
 We wish to infer a genealogy that could have given rise to this data set. To run _tsinfer_
 we wrap the .vcz file in a `tsinfer.VariantData` object. This requires an 
-*ancestral allele* to be specified for each site; there are
+*ancestral state* to be specified for each site; there are
 many methods for calculating these: details are outside the scope of this manual, but we
 have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
 on this issue to provide some recommendations.
 
 Sometimes VCF files will contain the
-ancestral allele in the "AA" info field, in which case it will be encoded in the
-`variant_AA` field of the .vcz file. It's also possible to provide a numpy array
+ancestral state in the "AA" ("ancestral allele") info field, in which case it will be encoded
+in the `variant_AA` field of the .vcz file. It's also possible to provide a numpy array
 of ancestral alleles, of the same length as the number of variants. Ancestral
 alleles that are not in the list of alleles for their respective site are treated as unknown
 and not used for inference (with a warning given).
@@ -76,11 +76,11 @@ and not used for inference (with a warning given).
 import tsinfer
 
 # For this example take the REF allele (index 0) as ancestral
-ancestral_allele = ds['variant_allele'][:,0].astype(str)
+ancestral_state = ds['variant_allele'][:,0].astype(str)
 # This is just a numpy array, set the last site to an unknown value, for demo purposes
-ancestral_allele[-1] = "."
+ancestral_state[-1] = "."
 
-vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_allele)
+vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state)
 ```
 
 The `VariantData` object is a lightweight wrapper around the .vcz file.
@@ -127,7 +127,7 @@ site_mask[ds.variant_position[:] >= 6] = True
 
 smaller_vdata = tsinfer.VariantData(
     "_static/example_data.vcz",
-    ancestral_allele=ancestral_allele[site_mask == False],
+    ancestral_state=ancestral_state[site_mask == False],
     site_mask=site_mask,
 )
 print(f"The `smaller_vdata` object returns data for only {smaller_vdata.num_sites} sites")
@@ -351,8 +351,8 @@ Once we have our `.vcz` file created, running the inference is straightforward.
 
 ```{code-cell} ipython3
 # Infer & save a ts from the notebook simulation.
-ancestral_alleles = np.load(f"{name}-AA.npy")
-vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_alleles)
+ancestral_states = np.load(f"{name}-AA.npy")
+vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_states)
 tsinfer.infer(vdata, progress_monitor=True, num_threads=4).dump(name + ".trees")
 ```
 
@@ -477,12 +477,12 @@ vcf_location = "_static/P_dom_chr24_phased.vcf.gz"
 ```
 
 This creates the `sparrows.vcz` datastore, which we open using `tsinfer.VariantData`.
-The original VCF had ancestral alleles specified in the `AA` INFO field, so we can
-simply provide the string `"variant_AA"` as the ancestral_allele parameter.
+The original VCF had the ancestral allelic state specified in the `AA` INFO field,
+so we can simply provide the string `"variant_AA"` as the ancestral_state parameter.
 
 ```{code-cell} ipython3
-# Do the inference: this VCF has ancestral alleles in the AA field
-vdata = tsinfer.VariantData("sparrows.vcz", ancestral_allele="variant_AA")
+# Do the inference: this VCF has ancestral states in the AA field
+vdata = tsinfer.VariantData("sparrows.vcz", ancestral_state="variant_AA")
 ts = tsinfer.infer(vdata)
 print(
     "Inferred tree sequence: {} trees over {} Mb ({} edges)".format(
@@ -534,7 +534,7 @@ Now when we carry out the inference, we get a tree sequence in which the nodes a
 correctly assigned to named populations
 
 ```{code-cell} ipython3
-vdata = tsinfer.VariantData("sparrows.vcz", ancestral_allele="variant_AA")
+vdata = tsinfer.VariantData("sparrows.vcz", ancestral_state="variant_AA")
 sparrow_ts = tsinfer.infer(vdata)
 
 for sample_node_id in sparrow_ts.samples():

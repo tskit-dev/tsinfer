@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0a3] - ****-**-**
+
+**Fixes**
+
+- Properly account for "N" as an unknown ancestral state, and ban "" from being
+  set as an ancestral state ({pr}`963`, {user}`hyanwong`))
+
 ## [0.4.0a2] - 2024-09-06
 
 2nd Alpha release of tsinfer 0.4.0
