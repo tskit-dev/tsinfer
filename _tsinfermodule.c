@@ -1283,21 +1283,21 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int err;
     int extended_checks = 0;
     static char *kwlist[] = {"tree_sequence_builder", "recombination",
-        "mismatch", "precision", "extended_checks", NULL};
+        "mismatch", "likelihood_threshold", "extended_checks", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     PyObject *recombination = NULL;
     PyObject *mismatch = NULL;
     PyArrayObject *recombination_array = NULL;
     PyArrayObject *mismatch_array = NULL;
     npy_intp *shape;
-    unsigned int precision = 22;
+    double likelihood_threshold = DBL_MIN;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|di", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
-                &recombination, &mismatch, &precision,
+                &recombination, &mismatch, &likelihood_threshold,
                 &extended_checks)) {
         goto out;
     }
@@ -1343,7 +1343,7 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
             self->tree_sequence_builder->tree_sequence_builder,
             PyArray_DATA(recombination_array),
             PyArray_DATA(mismatch_array),
-            precision, flags);
+            likelihood_threshold, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
