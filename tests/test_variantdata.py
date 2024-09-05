@@ -142,7 +142,7 @@ def test_sgkit_dataset_accessors(tmp_path):
     )
     ds = sgkit.load_dataset(zarr_path)
 
-    assert samples.format_name == "tsinfer-sgkit-sample-data"
+    assert samples.format_name == "tsinfer-variant-data"
     assert samples.format_version == (0, 1)
     assert samples.finalised
     assert samples.sequence_length == ts.sequence_length + 1337
