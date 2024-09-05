@@ -20,12 +20,15 @@
 Extra utility functions used in several test files
 """
 import json
+import tempfile
+from pathlib import Path
 
 import msprime
 import numpy as np
 import sgkit
 import tskit
 import xarray as xr
+import zarr
 
 import tsinfer
 
@@ -219,7 +222,23 @@ def add_attribute_to_dataset(name, contents, zarr_path):
     sgkit.save_dataset(ds, zarr_path, mode="a")
 
 
-def make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
+def make_ts_and_zarr(path=None, add_optional=False, shuffle_alleles=True):
+    if path is None:
+        in_mem_copy = zarr.group()
+        with tempfile.TemporaryDirectory() as path:
+            ts, zarr_path = _make_ts_and_zarr(
+                Path(path), add_optional=add_optional, shuffle_alleles=shuffle_alleles
+            )
+            # For testing only, return an in-memory copy of the dataset we just made
+            zarr.convenience.copy_all(zarr.open(zarr_path), in_mem_copy)
+        return ts, in_mem_copy
+    else:
+        return _make_ts_and_zarr(
+            path, add_optional=add_optional, shuffle_alleles=shuffle_alleles
+        )
+
+
+def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
     import sgkit.io.vcf
 
     ts = msprime.sim_ancestry(

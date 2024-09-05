@@ -2299,15 +2299,27 @@ class VariantData(SampleData):
 
     def __init__(
         self,
-        path,
+        path_or_zarr,
         ancestral_allele,
         *,
         sample_mask=None,
         site_mask=None,
         sites_time=None,
     ):
-        self.path = path
-        self.data = zarr.open(path, mode="r")
+        try:
+            if len(path_or_zarr.call_genotype.shape) == 3:
+                # Assumed to be a VCF Zarr hierarchy
+                self.path = None
+                self.data = path_or_zarr
+            else:
+                raise ValueError(
+                    "Expecting a VCF Zarr object with 3D call_genotype array: "
+                    "see https://github.com/sgkit-dev/vcf-zarr-spec/"
+                )
+        except AttributeError:
+            self.path = path_or_zarr
+            self.data = zarr.open(path_or_zarr, mode="r")
+
         genotypes_arr = self.data["call_genotype"]
         _, self._num_individuals_before_mask, self.ploidy = genotypes_arr.shape
 
