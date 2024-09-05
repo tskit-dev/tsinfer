@@ -2294,7 +2294,7 @@ class SampleData(DataContainer):
 
 class VariantData(SampleData):
 
-    FORMAT_NAME = "tsinfer-sgkit-sample-data"
+    FORMAT_NAME = "tsinfer-variant-data"
     FORMAT_VERSION = (0, 1)
 
     def __init__(
@@ -2354,7 +2354,7 @@ class VariantData(SampleData):
             if "call_genotype_phased" not in self.data:
                 raise ValueError(
                     "The call_genotype_phased array is missing from the"
-                    " sgkit dataset, indicating that all the genotypes are"
+                    " zarr dataset, indicating that all the genotypes are"
                     " unphased"
                 )
         if np.any(np.diff(self.sites_position) <= 0):
