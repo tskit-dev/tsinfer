@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0a2] - 2024-09-06
+
+2nd Alpha release of tsinfer 0.4.0
+
+**Features**
+
+- Add batch ancestor and sample matching APIs for splitting work across many independent jobs.
+  ({pr}`954`, {pr}`917`, {user}`benjeffery`)
+  
+
 ## [0.4.0a1] - 2024-07-26
 
 Alpha release of tsinfer 0.4.0
