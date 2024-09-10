@@ -2,10 +2,15 @@
 
 ## [0.4.0a3] - ****-**-**
 
+**Features**
+
+- Document that the `zarr-vcf` dataset can be either a path or an in-memory zarr group.
+  (feature introduced in {pr}`966`, documented in {pr}`974`, {user}`hyanwong`)
+
 **Fixes**
 
 - Properly account for "N" as an unknown ancestral state, and ban "" from being
-  set as an ancestral state ({pr}`963`, {user}`hyanwong`))
+  set as an ancestral state ({pr}`963`, {user}`hyanwong`)
 
 ## [0.4.0a2] - 2024-09-06
 
