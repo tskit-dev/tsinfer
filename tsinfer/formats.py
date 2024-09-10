@@ -2308,8 +2308,10 @@ class VariantData(SampleData):
         the inference process will have ``inferred_ts.num_samples`` equal to double
         the number returned by ``VariantData.num_samples``.
 
-    :param str path: The path to the file containing the input dataset in VCF-Zarr
-        format.
+    :param Union(str, zarr.hierarchy.Group) path_or_zarr: The input dataset in
+        `VCF Zarr <https://github.com/sgkit-dev/vcf-zarr-spec>`_ format.
+        This can either a path to the Zarr dataset saved on disk, or the
+        Zarr object itself.
     :param Union(array, str) ancestral_state: A numpy array of strings specifying
         the ancestral states (alleles) used in inference. This must be the same length
         as the number of unmasked sites in the dataset. Alternatively, a single string
