@@ -194,8 +194,8 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
             out, "%d\t%d\t%d\t%d\n", edge->left, edge->right, edge->parent, edge->child);
     }
 
-    fprintf(out, "tsk_blkalloc = \n");
-    tsk_blkalloc_print_state(&self->tsk_blkalloc, out);
+    fprintf(out, "tsi_blkalloc = \n");
+    tsi_blkalloc_print_state(&self->tsi_blkalloc, out);
     fprintf(out, "avl_node_heap = \n");
     object_heap_print_state(&self->avl_node_heap, out);
     fprintf(out, "edge_heap = \n");
@@ -244,7 +244,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
     if (ret != 0) {
         goto out;
     }
-    ret = tsk_blkalloc_init(&self->tsk_blkalloc,
+    ret = tsi_blkalloc_init(&self->tsi_blkalloc,
         TSK_MAX(8192, num_sites * sizeof(mutation_list_node_t) / 4));
     if (ret != 0) {
         goto out;
@@ -278,7 +278,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->sites.num_alleles);
     tsi_safe_free(self->left_index_edges);
     tsi_safe_free(self->right_index_edges);
-    tsk_blkalloc_free(&self->tsk_blkalloc);
+    tsi_blkalloc_free(&self->tsi_blkalloc);
     object_heap_free(&self->avl_node_heap);
     object_heap_free(&self->edge_heap);
     return 0;
@@ -418,7 +418,7 @@ tree_sequence_builder_add_mutation(
         }
     }
 
-    list_node = tsk_blkalloc_get(&self->tsk_blkalloc, sizeof(mutation_list_node_t));
+    list_node = tsi_blkalloc_get(&self->tsi_blkalloc, sizeof(mutation_list_node_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;

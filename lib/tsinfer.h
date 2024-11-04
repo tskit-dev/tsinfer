@@ -108,7 +108,7 @@ typedef struct {
     int flags;
     site_t *sites;
     avl_tree_t time_map;
-    tsk_blkalloc_t allocator;
+    tsi_blkalloc_t allocator;
     ancestor_descriptor_t *descriptors;
 } ancestor_builder_t;
 
@@ -141,7 +141,7 @@ typedef struct {
     size_t num_nodes;
     size_t num_match_nodes;
     size_t num_mutations;
-    tsk_blkalloc_t tsk_blkalloc;
+    tsi_blkalloc_t tsi_blkalloc;
     object_heap_t avl_node_heap;
     object_heap_t edge_heap;
     /* Dynamic edge indexes used for tree generation and path compression. The
@@ -184,7 +184,7 @@ typedef struct {
     tsk_id_t *likelihood_nodes_tmp;
     tsk_id_t *likelihood_nodes;
     node_state_list_t *traceback;
-    tsk_blkalloc_t traceback_allocator;
+    tsi_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
     struct {
         tsk_id_t *left;

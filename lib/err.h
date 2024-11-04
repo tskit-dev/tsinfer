@@ -41,4 +41,29 @@
 
 const char *tsi_strerror(int err);
 
+/* FIXME! Including a custom version of the tsk_blkalloc struct here so that
+ * we can use c11 atomics on the total_size attribute. Including it in this
+ * file and err.c as this is the least noisy place to put it, for now
+ * See https://github.com/jeromekelleher/sc2ts/issues/381 for reasoning.
+ */
+
+#include "tskit.h"
+#include <stdatomic.h>
+
+typedef struct {
+    size_t chunk_size; /* number of bytes per chunk */
+    size_t top;        /* the offset of the next available byte in the current chunk */
+    size_t current_chunk;      /* the index of the chunk currently being used */
+    _Atomic size_t total_size; /* the total number of bytes allocated + overhead. */
+    size_t total_allocated;    /* the total number of bytes allocated. */
+    size_t num_chunks;         /* the number of memory chunks. */
+    char **mem_chunks;         /* the memory chunks */
+} tsi_blkalloc_t;
+
+extern void tsi_blkalloc_print_state(tsi_blkalloc_t *self, FILE *out);
+extern int tsi_blkalloc_reset(tsi_blkalloc_t *self);
+extern int tsi_blkalloc_init(tsi_blkalloc_t *self, size_t chunk_size);
+extern void *tsi_blkalloc_get(tsi_blkalloc_t *self, size_t size);
+extern void tsi_blkalloc_free(tsi_blkalloc_t *self);
+
 #endif /*__ERR_H__*/
