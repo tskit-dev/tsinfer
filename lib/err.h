@@ -25,6 +25,7 @@
 #define TSI_ERR_BAD_FOCAL_SITE                                      -21
 #define TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA             -22
 #define TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION              -23
+#define TSI_ERR_BAD_ANCESTRAL_STATE                                 -24
 // clang-format on
 
 #ifdef __GNUC__

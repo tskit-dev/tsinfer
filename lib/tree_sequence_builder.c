@@ -207,7 +207,8 @@ tree_sequence_builder_print_state(tree_sequence_builder_t *self, FILE *out)
 
 int
 tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
-    tsk_size_t *num_alleles, size_t nodes_chunk_size, size_t edges_chunk_size, int flags)
+    tsk_size_t *num_alleles, allele_t *ancestral_state, size_t nodes_chunk_size,
+    size_t edges_chunk_size, int flags)
 {
     int ret = 0;
     size_t j;
@@ -229,8 +230,11 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
     self->path = calloc(self->max_nodes, sizeof(*self->path));
     self->sites.mutations = calloc(self->num_sites, sizeof(*self->sites.mutations));
     self->sites.num_alleles = calloc(self->num_sites, sizeof(*self->sites.num_alleles));
+    self->sites.ancestral_state
+        = calloc(self->num_sites, sizeof(*self->sites.ancestral_state));
     if (self->time == NULL || self->node_flags == NULL || self->path == NULL
-        || self->sites.mutations == NULL) {
+        || self->sites.mutations == NULL || self->sites.num_alleles == NULL
+        || self->sites.ancestral_state == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -263,6 +267,14 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
             }
             self->sites.num_alleles[j] = num_alleles[j];
         }
+        if (ancestral_state != NULL) {
+            if (ancestral_state[j] < 0
+                || ancestral_state[j] >= (allele_t) num_alleles[j]) {
+                ret = TSI_ERR_BAD_ANCESTRAL_STATE;
+                goto out;
+            }
+            self->sites.ancestral_state[j] = ancestral_state[j];
+        }
     }
 out:
     return ret;
@@ -276,6 +288,7 @@ tree_sequence_builder_free(tree_sequence_builder_t *self)
     tsi_safe_free(self->node_flags);
     tsi_safe_free(self->sites.mutations);
     tsi_safe_free(self->sites.num_alleles);
+    tsi_safe_free(self->sites.ancestral_state);
     tsi_safe_free(self->left_index_edges);
     tsi_safe_free(self->right_index_edges);
     tsi_blkalloc_free(&self->tsi_blkalloc);
