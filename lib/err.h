@@ -31,10 +31,16 @@
 #define WARN_UNUSED __attribute__((warn_unused_result))
 #define unlikely(expr) __builtin_expect(!!(expr), 0)
 #define likely(expr) __builtin_expect(!!(expr), 1)
+#include <stdatomic.h>
 #else
 /* On windows we don't do any perf related stuff */
 #define WARN_UNUSED
 #define restrict
+/* Although MSVS supports C11, it doesn't seem to include a working version of
+ * stdatomic.h, so we can't use it portably. For this experiment we'll just
+ * leave it out on Windows, as nobody is doing large-scale tsinfer'ing on
+ * Windows. */
+#define _Atomic
 #define unlikely(expr) (expr)
 #define likely(expr) (expr)
 #endif
@@ -48,7 +54,6 @@ const char *tsi_strerror(int err);
  */
 
 #include "tskit.h"
-#include <stdatomic.h>
 
 typedef struct {
     size_t chunk_size; /* number of bytes per chunk */
