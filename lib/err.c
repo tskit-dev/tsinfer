@@ -94,7 +94,7 @@ tsi_strerror(int err)
             ret = "Bad mutation information: mutation already exists for this node.";
             break;
         case TSI_ERR_BAD_ANCESTRAL_STATE:
-            ret = "Bad derived state for site";
+            ret = "Bad ancestral state for site";
             break;
         case TSI_ERR_BAD_NUM_SAMPLES:
             ret = "Must have at least 2 samples.";
