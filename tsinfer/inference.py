@@ -1274,7 +1274,7 @@ class Matcher:
                 f"mean={np.mean(mismatch):.5g}"
             )
         logger.info(
-                f"Matching using likelihood_threshold of {likelihood_threshold:.5g}"
+            f"Matching using likelihood_threshold of {likelihood_threshold:.5g}"
         )
 
         if engine == constants.C_ENGINE:
