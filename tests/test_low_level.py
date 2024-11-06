@@ -106,8 +106,8 @@ class TestTreeSequenceBuilder:
         for bad_array in [None, "serf", [[], []], ["asdf"], {}]:
             with pytest.raises(ValueError):
                 _tsinfer.TreeSequenceBuilder([2], ancestral_state=bad_array)
-        with pytest.raises(_tsinfer.LibraryError, match="Bad ancestral state"):
-            for bad_ancestral_state in [-1, 2, 100]:
+        for bad_ancestral_state in [-1, -2]:
+            with pytest.raises(_tsinfer.LibraryError, match="Bad ancestral state"):
                 _tsinfer.TreeSequenceBuilder([2], ancestral_state=[bad_ancestral_state])
 
         with pytest.raises(ValueError, match="ancestral state array wrong size"):

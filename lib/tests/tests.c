@@ -733,11 +733,6 @@ test_tsb_errors(void)
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_ANCESTRAL_STATE);
     tree_sequence_builder_free(&tsb);
 
-    ancestral_state = 2;
-    ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, &ancestral_state, 1, 1, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_ANCESTRAL_STATE);
-    tree_sequence_builder_free(&tsb);
-
     num_alleles = 2;
     ret = tree_sequence_builder_alloc(&tsb, 1, &num_alleles, NULL, 1, 1, 0);
     /* Add two nodes so we can test adding paths */

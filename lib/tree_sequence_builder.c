@@ -268,8 +268,7 @@ tree_sequence_builder_alloc(tree_sequence_builder_t *self, size_t num_sites,
             self->sites.num_alleles[j] = num_alleles[j];
         }
         if (ancestral_state != NULL) {
-            if (ancestral_state[j] < 0
-                || ancestral_state[j] >= (allele_t) num_alleles[j]) {
+            if (ancestral_state[j] < 0) {
                 ret = TSI_ERR_BAD_ANCESTRAL_STATE;
                 goto out;
             }
@@ -418,7 +417,7 @@ tree_sequence_builder_add_mutation(
         ret = TSI_ERR_BAD_MUTATION_SITE;
         goto out;
     }
-    if (derived_state < 0 || derived_state >= (allele_t) self->sites.num_alleles[site]) {
+    if (derived_state < 0) {
         ret = TSI_ERR_BAD_MUTATION_DERIVED_STATE;
         goto out;
     }
