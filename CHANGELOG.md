@@ -7,6 +7,11 @@
 - Document that the `zarr-vcf` dataset can be either a path or an in-memory zarr group.
   (feature introduced in {pr}`966`, documented in {pr}`974`, {user}`hyanwong`)
 
+**Breaking Changes**
+
+- If a mismatch ratio is provided to the `infer` command, it only applies during the
+  `match_samples` phase ({issue}`980`, {pr}`981`, {user}`hyanwong`)
+
 **Fixes**
 
 - Properly account for "N" as an unknown ancestral state, and ban "" from being
