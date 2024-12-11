@@ -23,7 +23,7 @@ jobs:
         run: |
           sudo pip install clang-format==6.0.1
           sudo ln -s /usr/local/bin/clang-format /usr/local/bin/clang-format-6.0
-      - uses: pre-commit/action@v3.0.0
+      - uses: pre-commit/action@v3
 
   test:
     name: Python
