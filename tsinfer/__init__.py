@@ -18,10 +18,18 @@
 #
 """
 Tree sequence inference.
-
-Python 3 only.
 """
 import sys
+import warnings
+
+# tsinfer #957. This warning pops up as a result of using fast-math. It bascially means
+# that tiny tiny values are being rounded to zero, which should be fine for our purposes.
+warnings.filterwarnings(
+    "ignore",
+    message="The value of the smallest subnormal for <class 'numpy.float64'> "
+    "type is zero",
+)
+
 
 if sys.version_info[0] < 3:
     raise Exception("Python 3 only")
