@@ -380,6 +380,11 @@ def infer(
         record = provenance.get_provenance_dict(
             command="infer",
             mismatch_ratio=mismatch_ratio,
+            path_compression=path_compression,
+            precision=precision,
+            simplify=simplify,
+            post_process=post_process,
+            # TODO: maybe record recombination rate (which could be a RateMap)
         )
         tables.provenances.add_row(record=json.dumps(record))
         inferred_ts = tables.tree_sequence()
@@ -577,6 +582,9 @@ def match_ancestors(
         record = provenance.get_provenance_dict(
             command="match_ancestors",
             mismatch_ratio=mismatch_ratio,
+            path_compression=path_compression,
+            precision=precision,
+            # TODO: maybe record recombination rate (which could be a RateMap)
         )
         tables.provenances.add_row(record=json.dumps(record))
     ts = tables.tree_sequence()
@@ -810,6 +818,8 @@ def match_ancestors_batch_finalise(work_dir):
         record = provenance.get_provenance_dict(
             command="match_ancestors",
             mismatch_ratio=metadata["mismatch_ratio"],
+            path_compression=metadata["path_compression"],
+            precision=metadata["precision"],
         )
         tables.provenances.add_row(record=json.dumps(record))
     ts = tables.tree_sequence()
@@ -901,6 +911,8 @@ def augment_ancestors(
         record = provenance.get_provenance_dict(
             command="augment_ancestors",
             mismatch_ratio=mismatch_ratio,
+            path_compression=path_compression,
+            precision=precision,
         )
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
@@ -1257,6 +1269,11 @@ def match_samples(
         record = provenance.get_provenance_dict(
             command="match_samples",
             mismatch_ratio=mismatch_ratio,
+            path_compression=path_compression,
+            precision=precision,
+            simplify=simplify,
+            post_process=post_process,
+            # TODO: maybe record recombination rate (which could be a RateMap)
         )
         tables.provenances.add_row(record=json.dumps(record))
         ts = tables.tree_sequence()
