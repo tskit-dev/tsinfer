@@ -75,6 +75,11 @@ def get_provenance_dict(command=None, **kwargs):
         raise ValueError("Command must be provided")
     parameters = dict(kwargs)
     parameters["command"] = command
+    if "simplify" in parameters:
+        if parameters["simplify"] is None:
+            del parameters["simplify"]  # simplify is deprecated version of post_process
+        else:
+            del parameters["post_process"]
     document = {
         "schema_version": "1.0.0",
         "software": {"name": "tsinfer", "version": __version__},

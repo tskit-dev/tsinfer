@@ -103,15 +103,27 @@ class TestIncludeProvenance:
         assert ts.num_provenances == small_sd_fixture.num_provenances
 
     @pytest.mark.parametrize("mmr", [None, 0.1])
-    def test_provenance_infer(self, small_sd_fixture, mmr):
+    @pytest.mark.parametrize("pc", [True, False])
+    @pytest.mark.parametrize("post", [True, False])
+    @pytest.mark.parametrize("precision", [4, 5])
+    def test_provenance_infer(self, small_sd_fixture, mmr, pc, post, precision):
         ts = tsinfer.infer(
-            small_sd_fixture, mismatch_ratio=mmr, recombination_rate=1e-8
+            small_sd_fixture,
+            path_compression=pc,
+            post_process=post,
+            precision=precision,
+            mismatch_ratio=mmr,
+            recombination_rate=1e-8,
         )
         assert ts.num_provenances == small_sd_fixture.num_provenances + 1
         record = json.loads(ts.provenance(-1).record)
         params = record["parameters"]
         assert params["command"] == "infer"
+        assert params["post_process"] == post
+        assert params["precision"] == precision
         assert params["mismatch_ratio"] == mmr
+        assert params["path_compression"] == pc
+        assert "simplify" not in params
 
     def test_provenance_generate_ancestors(self, small_sd_fixture):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
@@ -122,10 +134,17 @@ class TestIncludeProvenance:
         assert params["command"] == "generate_ancestors"
 
     @pytest.mark.parametrize("mmr", [None, 0.1])
-    def test_provenance_match_ancestors(self, small_sd_fixture, mmr):
+    @pytest.mark.parametrize("pc", [True, False])
+    @pytest.mark.parametrize("precision", [4, 5])
+    def test_provenance_match_ancestors(self, small_sd_fixture, mmr, pc, precision):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
         anc_ts = tsinfer.match_ancestors(
-            small_sd_fixture, ancestors, mismatch_ratio=mmr, recombination_rate=1e-8
+            small_sd_fixture,
+            ancestors,
+            mismatch_ratio=mmr,
+            recombination_rate=1e-8,
+            path_compression=pc,
+            precision=precision,
         )
         assert anc_ts.num_provenances == small_sd_fixture.num_provenances + 2
         params = json.loads(anc_ts.provenance(-2).record)["parameters"]
@@ -133,13 +152,24 @@ class TestIncludeProvenance:
         params = json.loads(anc_ts.provenance(-1).record)["parameters"]
         assert params["command"] == "match_ancestors"
         assert params["mismatch_ratio"] == mmr
+        assert params["path_compression"] == pc
+        assert params["precision"] == precision
 
     @pytest.mark.parametrize("mmr", [None, 0.1])
-    def test_provenance_match_samples(self, small_sd_fixture, mmr):
+    @pytest.mark.parametrize("pc", [True, False])
+    @pytest.mark.parametrize("post", [True, False])
+    @pytest.mark.parametrize("precision", [4, 5])
+    def test_provenance_match_samples(self, small_sd_fixture, mmr, pc, precision, post):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
         anc_ts = tsinfer.match_ancestors(small_sd_fixture, ancestors)
         ts = tsinfer.match_samples(
-            small_sd_fixture, anc_ts, mismatch_ratio=mmr, recombination_rate=1e-8
+            small_sd_fixture,
+            anc_ts,
+            mismatch_ratio=mmr,
+            path_compression=pc,
+            precision=precision,
+            post_process=post,
+            recombination_rate=1e-8,
         )
         assert ts.num_provenances == small_sd_fixture.num_provenances + 3
         params = json.loads(ts.provenance(-3).record)["parameters"]
@@ -149,6 +179,23 @@ class TestIncludeProvenance:
         params = json.loads(ts.provenance(-1).record)["parameters"]
         assert params["command"] == "match_samples"
         assert params["mismatch_ratio"] == mmr
+        assert params["path_compression"] == pc
+        assert params["precision"] == precision
+        assert params["post_process"] == post
+        assert "simplify" not in params  # deprecated
+
+    @pytest.mark.parametrize("simp", [True, False])
+    def test_deprecated_simplify(self, small_sd_fixture, simp):
+        # Included for completeness, but this is deprecated
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture)
+        anc_ts = tsinfer.match_ancestors(small_sd_fixture, ancestors)
+        ts1 = tsinfer.match_samples(small_sd_fixture, anc_ts, simplify=simp)
+        ts2 = tsinfer.infer(small_sd_fixture, simplify=simp)
+        for ts in [ts1, ts2]:
+            record = json.loads(ts.provenance(-1).record)
+            params = record["parameters"]
+            assert params["simplify"] == simp
+            assert "post_process" not in params
 
 
 class TestGetProvenance:
