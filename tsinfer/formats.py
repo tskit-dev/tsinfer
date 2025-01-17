@@ -2522,6 +2522,12 @@ class VariantData(SampleData):
         try:
             return self.data.attrs["sequence_length"]
         except KeyError:
+            warnings.warn(
+                "`sequence_length` was not found as an attribute in the dataset, so"
+                " the largest position has been used. It can be set with"
+                " ds.attrs['sequence_length'] = 1337; ds.to_zarr('path/to/store',"
+                " mode='a')"
+            )
             return int(np.max(self.data["variant_position"])) + 1
 
     @property
@@ -2655,6 +2661,12 @@ class VariantData(SampleData):
         try:
             return self.data["individuals_time"][:][self.individuals_select]
         except KeyError:
+            warnings.warn(
+                "`individuals_time` was not found as an array in the dataset, so "
+                "tskit.UNKNOWN_TIME has been used. It can be apppended to the dataset "
+                "with data_array.to_zarr('path/to/store', append_dim='samples', "
+                "mode='a')"
+            )
             return np.full(self.num_individuals, tskit.UNKNOWN_TIME)
 
     @functools.cached_property
@@ -2698,6 +2710,11 @@ class VariantData(SampleData):
         try:
             return self.data["individuals_location"][:][self.individuals_select]
         except KeyError:
+            warnings.warn(
+                "`individuals_location` was not found as an array in the dataset, "
+                "so [] has been used. It can be apppended to the dataset with "
+                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
+            )
             return np.array([[]] * self.num_individuals, dtype=float)
 
     @functools.cached_property
@@ -2705,6 +2722,11 @@ class VariantData(SampleData):
         try:
             return self.data["individuals_population"][:][self.individuals_select]
         except KeyError:
+            warnings.warn(
+                "`individuals_population` was not found as an array in the dataset, "
+                "so tskit.NULL has been used. It can be apppended to the dataset with "
+                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
+            )
             return np.full((self.num_individuals), tskit.NULL, dtype=np.int32)
 
     @functools.cached_property
@@ -2712,6 +2734,11 @@ class VariantData(SampleData):
         try:
             return self.data["individuals_flags"][:][self.individuals_select]
         except KeyError:
+            warnings.warn(
+                "`individuals_flags` was not found as an array in the dataset, so 0 "
+                "has been used. It can be apppended to the dataset with "
+                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
+            )
             return np.full((self.num_individuals), 0, dtype=np.int32)
 
     @staticmethod
