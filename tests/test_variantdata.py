@@ -218,7 +218,11 @@ def test_variantdata_accessors_defaults(tmp_path, in_mem):
     ds = data if in_mem else sgkit.load_dataset(data)
 
     default_schema = tskit.MetadataSchema.permissive_json().schema
-    assert vdata.sequence_length == ts.sequence_length
+    with pytest.warns(
+        UserWarning,
+        match="`sequence_length` was not found as an attribute in the dataset",
+    ):
+        assert vdata.sequence_length == ts.sequence_length
     assert vdata.sites_metadata_schema == default_schema
     assert vdata.sites_metadata == [{} for _ in range(ts.num_sites)]
     for time in vdata.sites_time:
@@ -234,17 +238,32 @@ def test_variantdata_accessors_defaults(tmp_path, in_mem):
     assert vdata.individuals_metadata == [
         {"variant_data_sample_id": sample_id} for sample_id in ds.sample_id[:]
     ]
-    for time in vdata.individuals_time:
-        assert tskit.is_unknown_time(time)
-    assert np.array_equal(
-        vdata.individuals_location, np.array([[]] * ts.num_individuals, dtype=float)
-    )
-    assert np.array_equal(
-        vdata.individuals_population, np.full(ts.num_individuals, tskit.NULL)
-    )
-    assert np.array_equal(
-        vdata.individuals_flags, np.zeros(ts.num_individuals, dtype=int)
-    )
+    with pytest.warns(
+        UserWarning, match="`individuals_time` was not found as an array in the dataset"
+    ):
+        for time in vdata.individuals_time:
+            assert tskit.is_unknown_time(time)
+    with pytest.warns(
+        UserWarning,
+        match="`individuals_location` was not found as an array in the dataset",
+    ):
+        assert np.array_equal(
+            vdata.individuals_location, np.array([[]] * ts.num_individuals, dtype=float)
+        )
+    with pytest.warns(
+        UserWarning,
+        match="`individuals_population` was not found as an array in the dataset",
+    ):
+        assert np.array_equal(
+            vdata.individuals_population, np.full(ts.num_individuals, tskit.NULL)
+        )
+    with pytest.warns(
+        UserWarning,
+        match="`individuals_flags` was not found as an array in the dataset",
+    ):
+        assert np.array_equal(
+            vdata.individuals_flags, np.zeros(ts.num_individuals, dtype=int)
+        )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
