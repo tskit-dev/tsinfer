@@ -16,6 +16,11 @@ File formats
 Sample data
 +++++++++++
 
+.. autoclass:: tsinfer.VariantData
+    :members:
+    :inherited-members:
+
+
 .. autoclass:: tsinfer.SampleData
     :members:
     :inherited-members:
@@ -59,6 +64,27 @@ Running inference
 .. autofunction:: tsinfer.augment_ancestors
 
 .. autofunction:: tsinfer.post_process
+
+*****************
+Batched inference
+*****************
+
+.. autofunction:: tsinfer.match_ancestors_batch_init
+
+.. autofunction:: tsinfer.match_ancestors_batch_groups
+
+.. autofunction:: tsinfer.match_ancestors_batch_group_partition
+
+.. autofunction:: tsinfer.match_ancestors_batch_group_finalise
+
+.. autofunction:: tsinfer.match_ancestors_batch_finalise
+
+.. autofunction:: tsinfer.match_samples_batch_init
+
+.. autofunction:: tsinfer.match_samples_batch_partition
+
+.. autofunction:: tsinfer.match_samples_batch_finalise
+
 
 *****************
 Container classes
