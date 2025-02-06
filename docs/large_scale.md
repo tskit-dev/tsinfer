@@ -45,7 +45,8 @@ Note the `genotype_encoding` argument, setting this to
 {class}`tsinfer.GenotypeEncoding.ONE_BIT` reduces the memory footprint of
 the genotype array by a factor of 8, for a surprisingly small increase in
 runtime. With this encoding, the RAM needed is roughly 
-`num_sites * num_samples * ploidy / 8 bytes.`
+`num_sites * num_samples * ploidy / 8 bytes.` However this encoding
+only supports biallelic sites, with no missingness.
 
 ## Ancestor matching
 
@@ -57,7 +58,7 @@ of a sample must be matched in an earlier group. For a typical human data set
 the number of samples per group varies from single digits up to approximately
 the number of samples.
 The plot below shows the number of ancestors matched in each group for a typical
-human data set:
+human data set, earlier groups are older ancestors:
 
 ```{figure} _static/ancestor_grouping.png
 :width: 80%
@@ -103,9 +104,9 @@ the `working_dir`. Once all are complete a single call to
 {meth}`match_ancestors_batch_group_finalise` will then insert the matches and
 output the tree sequence to `work_dir`.
 
-At anypoint the process can be resumed from the last successfully completed call to 
-{meth}`match_ancestors_batch_groups`. As the tree sequences in `work_dir` checkpoint the
-progress.
+Each call to {meth}`match_ancestors_batch_groups` and {meth}`match_ancestors_batch_group_finalise` results in a tree sequence being written to `work_dir`.
+These tree sequences are essentially checkpoints from with the batch matching workflow
+can be resumed on job failure.
 
 Finally after the final group, call {meth}`match_ancestors_batch_finalise` to
 combine the groups into a single tree sequence.

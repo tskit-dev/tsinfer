@@ -647,7 +647,7 @@ def match_ancestors_batch_init(
     :param int min_work_per_job: The minimum amount of work (as a count of genotypes) to
         allocate to a single parallel job. If the amount of work in a group of ancestors
         exceeds this level it will be broken up into parallel partitions, subject to
-        the constriant of `max_num_partitions`.
+        the constraint of `max_num_partitions`.
     :param int max_num_partitions: The maximum number of partitions to split a group of
         ancestors into. Useful for limiting the number of jobs in a workflow to
         avoid job overhead. Defaults to 1000.
@@ -1189,7 +1189,7 @@ def match_samples_batch_init(
     :param int min_work_per_job: The minimum amount of work (as a count of
         genotypes) to allocate to a single parallel job. If the amount of work in
         a group of samples exceeds this level it will be broken up into parallel
-        partitions, subject to the constriant of `max_num_partitions`.
+        partitions, subject to the constraint of `max_num_partitions`.
     :param int max_num_partitions: The maximum number of partitions to split a
         group of samples into. Useful for limiting the number of jobs in a
         workflow to avoid job overhead. Defaults to 1000.
