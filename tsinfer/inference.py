@@ -1899,17 +1899,6 @@ class AncestorsGenerator:
         return self.ancestor_data
 
 
-@dataclasses.dataclass
-class StoredMatchData:
-    """
-    A class to store the results of a matching run to disk, for later use.
-    """
-
-    group_id: str
-    num_sites: int
-    results: dict
-
-
 class Matcher:
     """
     A matching instance, used in both ``tsinfer.match_ancestors`` and

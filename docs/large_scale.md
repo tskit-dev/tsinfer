@@ -119,6 +119,46 @@ Calls to {meth}`match_ancestors_batch_group_partition` will only use a single co
 Therefore this value and cluster resources requested should be scaled with the number of ancestors,
 which can be read from the metadata dictionary.
 
+As an example of how the API methods can be used together, suppose the metadata dictionary
+created by {meth}`match_ancestors_batch_init` contains the following:
+
+```python
+{
+    "ancestor_grouping": [
+        {"ancestors": [0, ... 9], "partitions": None},
+        {
+          "ancestors": [10, ... 15],
+          "partitions": [[10, 11, 12], [13, 14, 15]]
+        },
+        {"ancestors": [16, ... 19], "partitions": None},
+        {"ancestors": [20, ... 25], "partitions": None},
+        {"ancestors": [26, ... 30], "partitions": None},
+        {
+          "ancestors": [31, ... 41],
+          "partitions": [[31, 32, 33, 34, 35, 36], [37, 38, 39, 40, 41]]
+        },
+        {"ancestors": [42, ... 45], "partitions": None},
+        {"ancestors": [46, ... 50], "partitions": None},
+        {
+          "ancestors": [51, ... 65],
+          "partitions": [
+            [51, 52, 53, 54],
+            [55, 56, 57, 58],
+            [59, 60, 61, 62, 63, 64, 65]
+          ]
+        },
+    ]
+}
+```
+Then the flow could look like the following diagram: (calls on the same horizontal line can be
+done in parallel, note that method names are shortened):
+
+```{figure} _static/example_flow.svg
+:width: 80%
+```
+
+Note that groups 1, 5 and 8 can be partitioned, but only groups 5 and 8 are actually partitioned in this example, as stated above partitioning for groups is optional. Groups 0-4 are matched in one call, groups 6 and 7 are matched in two calls, but
+could have been matched in one. By splitting 6 and 7 the flow makes an additional resume point in the case of job failure at the cost of job start up and queueing time.
 
 
 ## Sample matching 
