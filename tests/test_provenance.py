@@ -20,6 +20,8 @@
 Tests for the provenance stored in the output tree sequences.
 """
 import json
+import math
+import time
 
 import pytest
 import tskit
@@ -66,6 +68,51 @@ class TestProvenanceValid:
     def test_ancestors_file(self, small_sd_fixture):
         ancestor_data = tsinfer.generate_ancestors(small_sd_fixture)
         self.validate_file(ancestor_data)
+
+
+class TestResourceMetrics:
+    """
+    Tests for the ResourceMetrics dataclass.
+    """
+
+    def test_create_and_asdict(self):
+        metrics = provenance.ResourceMetrics(
+            elapsed_time=1.5, user_time=1.0, sys_time=0.5, max_memory=1000
+        )
+        d = metrics.asdict()
+        assert d == {
+            "elapsed_time": 1.5,
+            "user_time": 1.0,
+            "sys_time": 0.5,
+            "max_memory": 1000,
+        }
+
+    def test_combine_metrics(self):
+        m1 = provenance.ResourceMetrics(
+            elapsed_time=1.0, user_time=0.5, sys_time=0.2, max_memory=1000
+        )
+        m2 = provenance.ResourceMetrics(
+            elapsed_time=2.0, user_time=1.5, sys_time=0.3, max_memory=2000
+        )
+        combined = provenance.ResourceMetrics.combine([m1, m2])
+        assert combined.elapsed_time == 3.0
+        assert combined.user_time == 2.0
+        assert combined.sys_time == 0.5
+        assert combined.max_memory == 2000
+
+    def test_combine_empty_list(self):
+        with pytest.raises(ValueError):
+            provenance.ResourceMetrics.combine([])
+
+    def test_combine_single_metric(self):
+        m = provenance.ResourceMetrics(
+            elapsed_time=1.0, user_time=0.5, sys_time=0.2, max_memory=1000
+        )
+        combined = provenance.ResourceMetrics.combine([m])
+        assert combined.elapsed_time == 1.0
+        assert combined.user_time == 0.5
+        assert combined.sys_time == 0.2
+        assert combined.max_memory == 1000
 
 
 class TestIncludeProvenance:
@@ -124,6 +171,7 @@ class TestIncludeProvenance:
         assert params["mismatch_ratio"] == mmr
         assert params["path_compression"] == pc
         assert "simplify" not in params
+        assert "resources" in record
 
     def test_provenance_generate_ancestors(self, small_sd_fixture):
         ancestors = tsinfer.generate_ancestors(small_sd_fixture)
@@ -132,6 +180,7 @@ class TestIncludeProvenance:
             timestamp, record = p
         params = record["parameters"]
         assert params["command"] == "generate_ancestors"
+        assert "resources" in record
 
     @pytest.mark.parametrize("mmr", [None, 0.1])
     @pytest.mark.parametrize("pc", [True, False])
@@ -154,6 +203,9 @@ class TestIncludeProvenance:
         assert params["mismatch_ratio"] == mmr
         assert params["path_compression"] == pc
         assert params["precision"] == precision
+        for provenance_index in [-2, -1]:
+            record = json.loads(anc_ts.provenance(provenance_index).record)
+            assert "resources" in record
 
     @pytest.mark.parametrize("mmr", [None, 0.1])
     @pytest.mark.parametrize("pc", [True, False])
@@ -183,6 +235,9 @@ class TestIncludeProvenance:
         assert params["precision"] == precision
         assert params["post_process"] == post
         assert "simplify" not in params  # deprecated
+        for provenance_index in [-3, -2, -1]:
+            record = json.loads(ts.provenance(provenance_index).record)
+            assert "resources" in record
 
     @pytest.mark.parametrize("simp", [True, False])
     def test_deprecated_simplify(self, small_sd_fixture, simp):
@@ -207,15 +262,46 @@ class TestGetProvenance:
         with pytest.raises(ValueError):
             provenance.get_provenance_dict()
 
-    def validate_encoding(self, params):
-        pdict = provenance.get_provenance_dict("test", **params)
+    def validate_encoding(self, params, resources=None):
+        pdict = provenance.get_provenance_dict("test", resources=resources, **params)
         encoded = pdict["parameters"]
         assert encoded["command"] == "test"
         del encoded["command"]
         assert encoded == params
+        if resources is not None:
+            assert "resources" in pdict
+            assert pdict["resources"] == resources
+        else:
+            assert "resources" not in pdict
 
     def test_empty_params(self):
         self.validate_encoding({})
 
     def test_non_empty_params(self):
         self.validate_encoding({"a": 1, "b": "b", "c": 12345})
+
+    def test_with_resources(self):
+        self.validate_encoding(
+            {}, resources={"elapsed_time": 1.23, "max_memory": 567.89}
+        )
+
+
+def test_timing_and_memory_context_manager():
+    with provenance.TimingAndMemory() as timing:
+        # Do some work to ensure measurable changes
+        time.sleep(0.1)
+        for i in range(1000000):
+            math.sqrt(i)
+        _ = [0] * 1000000
+
+    assert timing.metrics is not None
+    assert timing.metrics.elapsed_time > 0.1
+    # Check we have highres timing
+    assert timing.metrics.elapsed_time < 1
+    assert timing.metrics.user_time > 0
+    assert timing.metrics.sys_time >= 0
+    assert timing.metrics.max_memory > 100_000_000
+
+    # Test metrics are not available during context
+    with provenance.TimingAndMemory() as timing2:
+        assert timing2.metrics is None
