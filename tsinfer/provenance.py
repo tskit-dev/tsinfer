@@ -20,12 +20,19 @@
 Common provenance methods used to determine the state and versions
 of various dependencies and the OS.
 """
+import dataclasses
 import platform
+import sys
+import time
 
 import lmdb
 import numcodecs
+import psutil
 import tskit
 import zarr
+
+if sys.platform != "win32":
+    import resource
 
 
 __version__ = "undefined"
@@ -35,6 +42,28 @@ try:
     __version__ = _version.version
 except ImportError:
     pass
+
+
+@dataclasses.dataclass
+class ResourceMetrics:
+    elapsed_time: float
+    user_time: float
+    sys_time: float
+    max_memory: int
+
+    def asdict(self):
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def combine(cls, metrics_list):
+        if not metrics_list:
+            raise ValueError("Cannot combine empty list of metrics")
+        return cls(
+            elapsed_time=sum(m.elapsed_time for m in metrics_list),
+            user_time=sum(m.user_time for m in metrics_list),
+            sys_time=sum(m.sys_time for m in metrics_list),
+            max_memory=max(m.max_memory for m in metrics_list),
+        )
 
 
 def get_environment():
@@ -64,7 +93,7 @@ def get_environment():
     return env
 
 
-def get_provenance_dict(command=None, **kwargs):
+def get_provenance_dict(command=None, resources=None, **kwargs):
     """
     Returns a dictionary encoding an execution of tsinfer following the
     tskit provenance schema.
@@ -86,4 +115,46 @@ def get_provenance_dict(command=None, **kwargs):
         "parameters": parameters,
         "environment": get_environment(),
     }
+    if resources is not None:
+        document["resources"] = resources
     return document
+
+
+def get_peak_memory_bytes():
+    # peak memory usage in bytes
+    if sys.platform in ("linux", "darwin"):
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        max_rss = usage.ru_maxrss
+
+        if sys.platform == "linux":
+            # Linux reports in kilobytes
+            return max_rss * 1024  # Convert KB to bytes
+        # macOS reports in bytes
+        return max_rss
+
+    elif sys.platform == "win32":
+        return psutil.Process().memory_info().peak_wset
+
+    else:
+        return None
+
+
+class TimingAndMemory:
+    # Context manager for tracking timing and memory usage.
+    def __init__(self):
+        self.metrics = None
+
+    def __enter__(self):
+        self.start_process = psutil.Process()
+        self.start_elapsed = time.perf_counter()
+        self.start_times = self.start_process.cpu_times()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_times = self.start_process.cpu_times()
+        self.metrics = ResourceMetrics(
+            elapsed_time=time.perf_counter() - self.start_elapsed,
+            user_time=end_times.user - self.start_times.user,
+            sys_time=end_times.system - self.start_times.system,
+            max_memory=get_peak_memory_bytes(),
+        )

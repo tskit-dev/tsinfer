@@ -334,51 +334,54 @@ def infer(
         input sample data.
     :rtype: tskit.TreeSequence
     """
-    progress_monitor = _get_progress_monitor(
-        progress_monitor,
-        generate_ancestors=True,
-        match_ancestors=True,
-        match_samples=True,
-    )
-    ancestor_data = generate_ancestors(
-        sample_data,
-        num_threads=num_threads,
-        exclude_positions=exclude_positions,
-        engine=engine,
-        progress_monitor=progress_monitor,
-        record_provenance=False,
-    )
-    # NB: do not pass or encourage use of the mismatch ratio / recombination rate in
-    # the ancestor matching phase. See https://github.com/tskit-dev/tsinfer/issues/980
-    ancestors_ts = match_ancestors(
-        sample_data,
-        ancestor_data,
-        engine=engine,
-        num_threads=num_threads,
-        precision=precision,
-        path_compression=path_compression,
-        progress_monitor=progress_monitor,
-        time_units=time_units,
-        record_provenance=False,
-    )
-    inferred_ts = match_samples(
-        sample_data,
-        ancestors_ts,
-        engine=engine,
-        num_threads=num_threads,
-        recombination_rate=recombination_rate,
-        mismatch_ratio=mismatch_ratio,
-        precision=precision,
-        post_process=post_process,
-        path_compression=path_compression,
-        progress_monitor=progress_monitor,
-        simplify=simplify,
-        record_provenance=False,
-    )
+    with provenance.TimingAndMemory() as timing:
+        progress_monitor = _get_progress_monitor(
+            progress_monitor,
+            generate_ancestors=True,
+            match_ancestors=True,
+            match_samples=True,
+        )
+        ancestor_data = generate_ancestors(
+            sample_data,
+            num_threads=num_threads,
+            exclude_positions=exclude_positions,
+            engine=engine,
+            progress_monitor=progress_monitor,
+            record_provenance=False,
+        )
+        # NB: do not pass or encourage use of the mismatch ratio / recombination rate in
+        # the ancestor matching phase. See
+        # https://github.com/tskit-dev/tsinfer/issues/980
+        ancestors_ts = match_ancestors(
+            sample_data,
+            ancestor_data,
+            engine=engine,
+            num_threads=num_threads,
+            precision=precision,
+            path_compression=path_compression,
+            progress_monitor=progress_monitor,
+            time_units=time_units,
+            record_provenance=False,
+        )
+        inferred_ts = match_samples(
+            sample_data,
+            ancestors_ts,
+            engine=engine,
+            num_threads=num_threads,
+            recombination_rate=recombination_rate,
+            mismatch_ratio=mismatch_ratio,
+            precision=precision,
+            post_process=post_process,
+            path_compression=path_compression,
+            progress_monitor=progress_monitor,
+            simplify=simplify,
+            record_provenance=False,
+        )
     if record_provenance:
         tables = inferred_ts.dump_tables()
         record = provenance.get_provenance_dict(
             command="infer",
+            resources=timing.metrics.asdict(),
             mismatch_ratio=mismatch_ratio,
             path_compression=path_compression,
             precision=precision,
@@ -467,35 +470,37 @@ def generate_ancestors(
     :return: The inferred ancestors stored in an :class:`AncestorData` instance.
     :rtype: AncestorData
     """
-    sample_data._check_finalised()
-    if np.any(np.isfinite(sample_data.sites_time[:])) and np.any(
-        tskit.is_unknown_time(sample_data.sites_time[:])
-    ):
-        raise ValueError(
-            "Cannot generate ancestors from a sample_data instance that mixes user-"
-            "specified times with times-as-frequencies. To explicitly set an undefined"
-            "time for a site, permanently excluding it from inference, set it to np.nan."
+    with provenance.TimingAndMemory() as timing:
+        sample_data._check_finalised()
+        if np.any(np.isfinite(sample_data.sites_time[:])) and np.any(
+            tskit.is_unknown_time(sample_data.sites_time[:])
+        ):
+            raise ValueError(
+                "Cannot generate ancestors from a sample_data instance that mixes"
+                " user-specified times with times-as-frequencies. To explicitly"
+                " set an undefined time for a site, permanently excluding it"
+                " from inference, set it to np.nan."
+            )
+        if genotype_encoding is None:
+            # TODO should we provide some functionality to automatically figure
+            # out what the minimum encoding is?
+            genotype_encoding = constants.GenotypeEncoding.EIGHT_BIT
+        generator = AncestorsGenerator(
+            sample_data,
+            ancestor_data_path=path,
+            ancestor_data_kwargs=kwargs,
+            num_threads=num_threads,
+            engine=engine,
+            genotype_encoding=genotype_encoding,
+            mmap_temp_dir=mmap_temp_dir,
+            progress_monitor=progress_monitor,
         )
-    if genotype_encoding is None:
-        # TODO should we provide some functionality to automatically figure
-        # out what the minimum encoding is?
-        genotype_encoding = constants.GenotypeEncoding.EIGHT_BIT
-    generator = AncestorsGenerator(
-        sample_data,
-        ancestor_data_path=path,
-        ancestor_data_kwargs=kwargs,
-        num_threads=num_threads,
-        engine=engine,
-        genotype_encoding=genotype_encoding,
-        mmap_temp_dir=mmap_temp_dir,
-        progress_monitor=progress_monitor,
-    )
-    generator.add_sites(exclude_positions)
-    ancestor_data = generator.run()
-    for timestamp, record in sample_data.provenances():
-        ancestor_data.add_provenance(timestamp, record)
+        generator.add_sites(exclude_positions)
+        ancestor_data = generator.run()
+        for timestamp, record in sample_data.provenances():
+            ancestor_data.add_provenance(timestamp, record)
     if record_provenance:
-        ancestor_data.record_provenance("generate_ancestors")
+        ancestor_data.record_provenance("generate_ancestors", timing.metrics.asdict())
     ancestor_data.finalise()
     return ancestor_data
 
@@ -554,33 +559,35 @@ def match_ancestors(
         of the set of ancestors.
     :rtype: tskit.TreeSequence
      """
-    progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
-    sample_data._check_finalised()
-    ancestor_data._check_finalised()
+    with provenance.TimingAndMemory() as timing:
+        progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
+        sample_data._check_finalised()
+        ancestor_data._check_finalised()
 
-    matcher = AncestorMatcher(
-        sample_data,
-        ancestor_data,
-        time_units=time_units,
-        recombination_rate=recombination_rate,
-        recombination=recombination,
-        mismatch_ratio=mismatch_ratio,
-        mismatch=mismatch,
-        path_compression=path_compression,
-        num_threads=num_threads,
-        precision=precision,
-        extended_checks=extended_checks,
-        engine=engine,
-        progress_monitor=progress_monitor,
-    )
-    ancestor_grouping = matcher.group_by_linesweep()
-    ts = matcher.match_ancestors(ancestor_grouping)
-    tables = ts.dump_tables()
-    for timestamp, record in ancestor_data.provenances():
-        tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+        matcher = AncestorMatcher(
+            sample_data,
+            ancestor_data,
+            time_units=time_units,
+            recombination_rate=recombination_rate,
+            recombination=recombination,
+            mismatch_ratio=mismatch_ratio,
+            mismatch=mismatch,
+            path_compression=path_compression,
+            num_threads=num_threads,
+            precision=precision,
+            extended_checks=extended_checks,
+            engine=engine,
+            progress_monitor=progress_monitor,
+        )
+        ancestor_grouping = matcher.group_by_linesweep()
+        ts = matcher.match_ancestors(ancestor_grouping)
+        tables = ts.dump_tables()
+        for timestamp, record in ancestor_data.provenances():
+            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
     if record_provenance:
         record = provenance.get_provenance_dict(
             command="match_ancestors",
+            resources=timing.metrics.asdict(),
             mismatch_ratio=mismatch_ratio,
             path_compression=path_compression,
             precision=precision,
@@ -615,6 +622,8 @@ def match_ancestors_batch_init(
 ):
     if max_num_partitions is None:
         max_num_partitions = 1000
+
+    start_time = time_.perf_counter()
 
     working_dir = pathlib.Path(working_dir)
     working_dir.mkdir(parents=True, exist_ok=True)
@@ -689,6 +698,7 @@ def match_ancestors_batch_init(
         "time_units": time_units,
         "record_provenance": record_provenance,
         "ancestor_grouping": ancestor_grouping,
+        "start_time": start_time,
     }
     metadata_path = working_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata))
@@ -734,28 +744,33 @@ def match_ancestors_batch_groups(
         raise ValueError(f"Group {group_index_end} is out of range")
     if group_index_end <= group_index_start:
         raise ValueError("Group index end must be greater than start")
-    if group_index_start == 0:
-        ancestors_ts = None
-    else:
-        ancestors_ts = tskit.load(
-            os.path.join(work_dir, f"ancestors_{group_index_start-1}.trees")
+
+    with provenance.TimingAndMemory() as timing:
+        if group_index_start == 0:
+            ancestors_ts = None
+        else:
+            ancestors_ts = tskit.load(
+                os.path.join(work_dir, f"ancestors_{group_index_start-1}.trees")
+            )
+        matcher = initialize_ancestor_matcher(
+            metadata, ancestors_ts, num_threads=num_threads
         )
-    matcher = initialize_ancestor_matcher(
-        metadata, ancestors_ts, num_threads=num_threads
-    )
-    ts = matcher.match_ancestors(
-        {
-            group_index: metadata["ancestor_grouping"][group_index]["ancestors"]
-            for group_index in range(group_index_start, group_index_end)
-        }
-    )
-    path = os.path.join(work_dir, f"ancestors_{group_index_end-1}.trees")
-    logger.info(f"Dumping to {path}")
-    ts.dump(path)
+        ts = matcher.match_ancestors(
+            {
+                group_index: metadata["ancestor_grouping"][group_index]["ancestors"]
+                for group_index in range(group_index_start, group_index_end)
+            }
+        )
+        path = os.path.join(work_dir, f"ancestors_{group_index_end-1}.trees")
+        logger.info(f"Dumping to {path}")
+        ts.dump(path)
+    with open(path + ".resources", "w") as f:
+        f.write(json.dumps(timing.metrics.asdict()))
     return ts
 
 
 def match_ancestors_batch_group_partition(work_dir, group_index, partition_index):
+    start_time = time_.perf_counter()
     metadata_path = os.path.join(work_dir, "metadata.json")
     with open(metadata_path) as f:
         metadata = json.load(f)
@@ -765,58 +780,89 @@ def match_ancestors_batch_group_partition(work_dir, group_index, partition_index
     if partition_index >= len(group["partitions"]) or partition_index < 0:
         raise ValueError(f"Partition {partition_index} is out of range")
 
-    ancestors_ts = tskit.load(
-        os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
-    )
-    matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
-    ancestors_to_match = group["partitions"][partition_index]
+    with provenance.TimingAndMemory() as timing:
+        ancestors_ts = tskit.load(
+            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+        )
+        matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
+        ancestors_to_match = group["partitions"][partition_index]
 
-    results = matcher.match_partition(ancestors_to_match, group_index, partition_index)
+        results = matcher.match_partition(
+            ancestors_to_match, group_index, partition_index
+        )
     partition_path = os.path.join(
         work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
     )
     logger.info(f"Dumping to {partition_path}")
     with open(partition_path, "wb") as f:
-        pickle.dump(results, f)
+        pickle.dump((start_time, timing.metrics, results), f)
 
 
 def match_ancestors_batch_group_finalise(work_dir, group_index):
-    metadata_path = os.path.join(work_dir, "metadata.json")
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    group = metadata["ancestor_grouping"][group_index]
-    ancestors_ts = tskit.load(
-        os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
-    )
-    matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
-    logger.info(
-        f"Finalising group {group_index}, loading {len(group['partitions'])} partitions"
-    )
-    results = []
-    for partition_index in range(len(group["partitions"])):
-        partition_path = os.path.join(
-            work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
+    with provenance.TimingAndMemory() as timing:
+        metadata_path = os.path.join(work_dir, "metadata.json")
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+        group = metadata["ancestor_grouping"][group_index]
+        ancestors_ts = tskit.load(
+            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
         )
-        with open(partition_path, "rb") as f:
-            results.extend(pickle.load(f))
-    ts = matcher.finalise_group(group, results, group_index)
-    ts.dump(os.path.join(work_dir, f"ancestors_{group_index}.trees"))
+        matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
+        logger.info(
+            f"Finalising group {group_index}, loading "
+            f"{len(group['partitions'])} partitions"
+        )
+        start_times = []
+        timings = []
+        results = []
+        for partition_index in range(len(group["partitions"])):
+            partition_path = os.path.join(
+                work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
+            )
+            with open(partition_path, "rb") as f:
+                start_time, part_timing, result = pickle.load(f)
+                start_times.append(start_time)
+                results.extend(result)
+                timings.append(part_timing)
+
+        ts = matcher.finalise_group(group, results, group_index)
+        path = os.path.join(work_dir, f"ancestors_{group_index}.trees")
+        ts.dump(path)
+
+    combined_metrics = provenance.ResourceMetrics.combine(timings + [timing.metrics])
+    combined_metrics.elapsed_time = time_.perf_counter() - min(start_times)
+    with open(path + ".resources", "w") as f:
+        f.write(json.dumps(combined_metrics.asdict()))
     return ts
 
 
 def match_ancestors_batch_finalise(work_dir):
-    metadata_path = os.path.join(work_dir, "metadata.json")
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    ancestor_data = formats.AncestorData.load(metadata["ancestor_data_path"])
-    final_group = len(metadata["ancestor_grouping"]) - 1
-    ts = tskit.load(os.path.join(work_dir, f"ancestors_{final_group}.trees"))
-    tables = ts.dump_tables()
-    for timestamp, record in ancestor_data.provenances():
-        tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
+    with provenance.TimingAndMemory() as timing:
+        metadata_path = os.path.join(work_dir, "metadata.json")
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+        ancestor_data = formats.AncestorData.load(metadata["ancestor_data_path"])
+        final_group = len(metadata["ancestor_grouping"]) - 1
+        ts = tskit.load(os.path.join(work_dir, f"ancestors_{final_group}.trees"))
+        tables = ts.dump_tables()
+        for timestamp, record in ancestor_data.provenances():
+            tables.provenances.add_row(timestamp=timestamp, record=json.dumps(record))
     if metadata["record_provenance"]:
+        # Find all the .resources files and combine them
+        resources = []
+        for root, _, files in os.walk(work_dir):
+            for file in files:
+                if file.endswith(".resources"):
+                    with open(os.path.join(root, file)) as f:
+                        resource = provenance.ResourceMetrics(**json.load(f))
+                        resources.append(resource)
+        combined_resources = provenance.ResourceMetrics.combine(
+            resources + [timing.metrics]
+        )
+        combined_resources.elapsed_time = time_.perf_counter() - metadata["start_time"]
         record = provenance.get_provenance_dict(
             command="match_ancestors",
+            resources=combined_resources.asdict(),
             mismatch_ratio=metadata["mismatch_ratio"],
             path_compression=metadata["path_compression"],
             precision=metadata["precision"],
@@ -943,6 +989,7 @@ class SampleBatchWorkDescriptor:
     sample_times: list
     num_samples_per_partition: int
     num_partitions: int
+    start_time: float
 
     def common_params(self) -> dict:
         return {
@@ -1055,6 +1102,7 @@ def match_samples_batch_init(
         sample_times=[],
         num_samples_per_partition=0,
         num_partitions=0,
+        start_time=time_.perf_counter(),
     )
     variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
     sample_indexes = check_sample_indexes(variant_data, indexes).tolist()
@@ -1102,36 +1150,51 @@ def match_samples_batch_partition(work_dir, partition_index):
         f"Matching partition {partition_index} with {partition_slice.start} to"
         f" {partition_slice.stop} of {len(sample_indexes)} samples"
     )
-    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
-    results = matcher.match_samples(
-        sample_indexes, sample_times, slice_=partition_slice
-    )
+    with provenance.TimingAndMemory() as timing:
+        variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
+        results = matcher.match_samples(
+            sample_indexes, sample_times, slice_=partition_slice
+        )
     path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
     logger.info(f"Dumping to {path}")
     with open(path, "wb") as f:
-        pickle.dump(results, f)
+        pickle.dump((timing.metrics, results), f)
 
 
 def match_samples_batch_finalise(work_dir):
-    wd_path = os.path.join(work_dir, "wd.json")
-    wd = SampleBatchWorkDescriptor.load(wd_path)
-    variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
-    results = []
-    for partition_index in range(wd.num_partitions):
-        path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
-        with open(path, "rb") as f:
-            results.extend(pickle.load(f))
-    return match_samples(
-        variant_data,
-        ancestor_ts,
-        indexes=wd.indexes,
-        post_process=wd.post_process,
-        force_sample_times=wd.force_sample_times,
-        record_provenance=wd.record_provenance,
-        map_additional_sites=wd.map_additional_sites,
-        results=results,
-        **wd.common_params(),
-    )
+    with provenance.TimingAndMemory() as timing:
+        wd_path = os.path.join(work_dir, "wd.json")
+        wd = SampleBatchWorkDescriptor.load(wd_path)
+        variant_data, ancestor_ts, matcher = load_variant_data_and_ancestors_ts(wd)
+        results = []
+        timings = []
+        for partition_index in range(wd.num_partitions):
+            path = os.path.join(work_dir, f"partition_{partition_index}.pkl")
+            with open(path, "rb") as f:
+                part_timing, part_results = pickle.load(f)
+                results.extend(part_results)
+                timings.append(part_timing)
+        ts = match_samples(
+            variant_data,
+            ancestor_ts,
+            indexes=wd.indexes,
+            post_process=wd.post_process,
+            force_sample_times=wd.force_sample_times,
+            record_provenance=wd.record_provenance,
+            map_additional_sites=wd.map_additional_sites,
+            results=results,
+            **wd.common_params(),
+        )
+    # Rewrite the last provenance with the correct info
+    start_time = wd.start_time
+    combined_metrics = provenance.ResourceMetrics.combine(timings + [timing.metrics])
+    combined_metrics.elapsed_time = time_.perf_counter() - start_time
+    tables = ts.dump_tables()
+    prov = tables.provenances[-1]
+    record = json.loads(prov.record)
+    record["resources"] = combined_metrics.asdict()
+    tables.provenances[-1] = prov.replace(record=json.dumps(record))
+    return tables.tree_sequence()
 
 
 def match_samples(
@@ -1227,47 +1290,51 @@ def match_samples(
     else:
         map_additional_sites = map_additional_sites
 
-    sample_data._check_finalised()
-    progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
-    manager = SampleMatcher(
-        sample_data,
-        ancestors_ts,
-        recombination_rate=recombination_rate,
-        mismatch_ratio=mismatch_ratio,
-        recombination=recombination,
-        mismatch=mismatch,
-        path_compression=path_compression,
-        num_threads=num_threads,
-        precision=precision,
-        extended_checks=extended_checks,
-        engine=engine,
-        progress_monitor=progress_monitor,
-    )
-    sample_indexes = check_sample_indexes(sample_data, indexes)
-    sample_times = np.zeros(
-        len(sample_indexes), dtype=sample_data.individuals_time.dtype
-    )
-    if force_sample_times:
-        individuals = sample_data.samples_individual[:][sample_indexes]
-        # By construction all samples in an sd file have an individual: but check anyway
-        assert np.all(individuals >= 0)
-        sample_times = sample_data.individuals_time[:][individuals]
-
-        # Here we might want to re-order sample_indexes and sample_times
-        # so that any historical ones come first, any we bomb out early if they conflict
-        # but that would mean re-ordering the sample nodes in the final ts, and
-        # we sometimes assume they are in the same order as in the file
-    manager.match_samples(sample_indexes, sample_times, results)
-    ts = manager.finalise(map_additional_sites)
-    if post_process:
-        ts = _post_process(
-            ts, warn_if_unexpected_format=True, simplify_only=simplify_only
+    with provenance.TimingAndMemory() as timing:
+        sample_data._check_finalised()
+        progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
+        manager = SampleMatcher(
+            sample_data,
+            ancestors_ts,
+            recombination_rate=recombination_rate,
+            mismatch_ratio=mismatch_ratio,
+            recombination=recombination,
+            mismatch=mismatch,
+            path_compression=path_compression,
+            num_threads=num_threads,
+            precision=precision,
+            extended_checks=extended_checks,
+            engine=engine,
+            progress_monitor=progress_monitor,
         )
+        sample_indexes = check_sample_indexes(sample_data, indexes)
+        sample_times = np.zeros(
+            len(sample_indexes), dtype=sample_data.individuals_time.dtype
+        )
+        if force_sample_times:
+            individuals = sample_data.samples_individual[:][sample_indexes]
+            # By construction all samples in an sd file have an
+            # individual: but check anyway
+            assert np.all(individuals >= 0)
+            sample_times = sample_data.individuals_time[:][individuals]
+
+            # Here we might want to re-order sample_indexes and sample_times
+            # so that any historical ones come first, any we bomb out early
+            # if they conflict but that would mean re-ordering the sample
+            # nodes in the final ts, and we sometimes assume they are in
+            # the same order as in the file
+        manager.match_samples(sample_indexes, sample_times, results)
+        ts = manager.finalise(map_additional_sites)
+        if post_process:
+            ts = _post_process(
+                ts, warn_if_unexpected_format=True, simplify_only=simplify_only
+            )
     if record_provenance:
         tables = ts.dump_tables()
         # We don't have a source here because tree sequence files don't have a UUID yet.
         record = provenance.get_provenance_dict(
             command="match_samples",
+            resources=timing.metrics.asdict(),
             mismatch_ratio=mismatch_ratio,
             path_compression=path_compression,
             precision=precision,

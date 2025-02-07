@@ -42,6 +42,7 @@ from tskit import MetadataSchema
 import _tsinfer
 import tsinfer
 import tsinfer.eval_util as eval_util
+import tsinfer.provenance as provenance
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -1440,7 +1441,14 @@ class TestBatchAncestorMatching:
                 ts = tsinfer.match_ancestors_batch_group_finalise(
                     tmpdir / "work", group_index
                 )
-        ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+        with provenance.TimingAndMemory() as final_timing:
+            ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
+
+        prov = json.loads(ts.provenances()[-1].record)
+        assert "resources" in prov
+        # Check that the time taken was longer than finalise took
+        assert prov["resources"]["elapsed_time"] > final_timing.metrics.elapsed_time
+
         ts2 = tsinfer.match_ancestors(samples, ancestors)
         ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
 
@@ -1542,7 +1550,13 @@ class TestBatchSampleMatching:
                 work_dir=tmpdir / "working_mat",
                 partition_index=i,
             )
-        mat_ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working_mat")
+        with provenance.TimingAndMemory() as final_timing:
+            mat_ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working_mat")
+
+        prov = json.loads(mat_ts_batch.provenances()[-1].record)
+        assert "resources" in prov
+        # Check that the time taken was longer than finalise took
+        assert prov["resources"]["elapsed_time"] > final_timing.metrics.elapsed_time
 
         mask_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mask",
@@ -1564,9 +1578,15 @@ class TestBatchSampleMatching:
         mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)
         mat_ts = tsinfer.match_samples(mat_sd, mat_anc_ts)
 
-        mat_ts.tables.assert_equals(mask_ts.tables, ignore_timestamps=True)
-        mask_ts.tables.assert_equals(mask_ts_batch.tables, ignore_timestamps=True)
-        mask_ts_batch.tables.assert_equals(mat_ts_batch.tables, ignore_timestamps=True)
+        mat_ts.tables.assert_equals(
+            mask_ts.tables, ignore_timestamps=True, ignore_provenance=True
+        )
+        mask_ts.tables.assert_equals(
+            mask_ts_batch.tables, ignore_timestamps=True, ignore_provenance=True
+        )
+        mask_ts_batch.tables.assert_equals(
+            mat_ts_batch.tables, ignore_timestamps=True, ignore_provenance=True
+        )
 
 
 class TestAncestorGeneratorsEquivalant:

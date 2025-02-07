@@ -691,13 +691,15 @@ class DataContainer:
         self.provenances_timestamp[n] = timestamp
         self.provenances_record[n] = record
 
-    def record_provenance(self, command=None, **kwargs):
+    def record_provenance(self, command=None, resources=None, **kwargs):
         """
         Records the provenance information for this file using the
         tskit provenances schema.
         """
         timestamp = datetime.datetime.now().isoformat()
-        record = provenance.get_provenance_dict(command=command, **kwargs)
+        record = provenance.get_provenance_dict(
+            command=command, resources=resources, **kwargs
+        )
         self.add_provenance(timestamp, record)
 
     def clear_provenances(self):
