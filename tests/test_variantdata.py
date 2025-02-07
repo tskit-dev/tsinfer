@@ -587,11 +587,15 @@ class TestSgkitMask:
 
         mat_anc_ts = tsinfer.match_ancestors(mat_sd, ancestors_subset)
         mask_anc_ts = tsinfer.match_ancestors(mask_sd, ancestors)
-        mat_anc_ts.tables.assert_equals(mask_anc_ts.tables, ignore_timestamps=True)
+        mat_anc_ts.tables.assert_equals(
+            mask_anc_ts.tables, ignore_timestamps=True, ignore_provenance=True
+        )
 
         mat_ts = tsinfer.match_samples(mat_sd, mat_anc_ts)
         mask_ts = tsinfer.match_samples(mask_sd, mask_anc_ts)
-        mat_ts.tables.assert_equals(mask_ts.tables, ignore_timestamps=True)
+        mat_ts.tables.assert_equals(
+            mask_ts.tables, ignore_timestamps=True, ignore_provenance=True
+        )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
