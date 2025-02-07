@@ -274,3 +274,25 @@ class TestGroupAncestorsLinesweep:
                     assert group_ids[anc_a] > group_ids[anc_b]
                 else:
                     assert group_ids[anc_a] < group_ids[anc_b]
+
+    def test_find_groups_cycle(self):
+        """
+        Test find_groups detects cycles in the dependency graph using a minimal example
+        """
+        # Create a direct cycle between two nodes where:
+        # Node 0 depends on node 1 (has incoming edge from 1)
+        # Node 1 depends on node 0 (has incoming edge from 0)
+        children_data = np.array(
+            [1, 0], dtype=np.int32
+        )  # Node 0 has child 1, node 1 has child 0
+        children_indices = np.array(
+            [0, 1, 2], dtype=np.int32
+        )  # Each node has one child
+        incoming_edge_count = np.array(
+            [1, 1], dtype=np.int32
+        )  # Each node has one incoming edge
+
+        with pytest.raises(
+            ValueError, match="Erroneous cycle in ancestor dependancies.*"
+        ):
+            ancestors.find_groups(children_data, children_indices, incoming_edge_count)
