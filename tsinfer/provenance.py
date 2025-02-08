@@ -21,9 +21,13 @@ Common provenance methods used to determine the state and versions
 of various dependencies and the OS.
 """
 import platform
+import resource
+import sys
+import time
 
 import lmdb
 import numcodecs
+import psutil
 import tskit
 import zarr
 
@@ -64,7 +68,7 @@ def get_environment():
     return env
 
 
-def get_provenance_dict(command=None, **kwargs):
+def get_provenance_dict(command=None, resources=None, **kwargs):
     """
     Returns a dictionary encoding an execution of tsinfer following the
     tskit provenance schema.
@@ -86,4 +90,51 @@ def get_provenance_dict(command=None, **kwargs):
         "parameters": parameters,
         "environment": get_environment(),
     }
+    if resources is not None:
+        document["resources"] = resources
     return document
+
+
+def get_peak_memory_bytes():
+    # peak memory usage in bytes
+    if sys.platform in ("linux", "darwin"):
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        max_rss = usage.ru_maxrss
+
+        if sys.platform == "darwin":
+            # macOS reports in bytes
+            return max_rss
+        else:
+            # Linux reports in kilobytes
+            return max_rss * 1024  # Convert KB to bytes
+
+    elif sys.platform == "win32":
+        return psutil.Process().memory_info().peak_wset
+
+    else:
+        return None
+
+
+class TimingAndMemory:
+    # Context manager for tracking timing and memory usage.
+    def __init__(self):
+        self.metrics = None
+
+    def __enter__(self):
+        self.start_process = psutil.Process()
+        self.start_elapsed = time.perf_counter()
+        self.start_times = self.start_process.cpu_times()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_times = self.start_process.cpu_times()
+        self.metrics = {
+            "elapsed_time": time.perf_counter() - self.start_elapsed,
+            "user_time": end_times.user - self.start_times.user,
+            "sys_time": end_times.system - self.start_times.system,
+            "max_memory": get_peak_memory_bytes(),
+        }
+
+    def get_metrics(self):
+        """Return the timing and memory metrics dictionary."""
+        return self.metrics
