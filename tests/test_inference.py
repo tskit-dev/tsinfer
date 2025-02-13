@@ -1401,16 +1401,16 @@ class TestBatchAncestorMatching:
             tmpdir / "ancestors.zarr",
             1000,
         )
-        tsinfer.match_ancestors_batch_groups(
-            tmpdir / "work", 0, len(metadata["ancestor_grouping"]) // 2, 2
-        )
+        num_groupings = len(metadata["ancestor_grouping"])
+        tsinfer.match_ancestors_batch_groups(tmpdir / "work", 0, num_groupings // 2, 2)
         tsinfer.match_ancestors_batch_groups(
             tmpdir / "work",
-            len(metadata["ancestor_grouping"]) // 2,
-            len(metadata["ancestor_grouping"]),
+            num_groupings // 2,
+            num_groupings,
             2,
         )
-        # TODO Check which ones written to disk
+        assert (tmpdir / "work" / f"ancestors_{(num_groupings//2)-1}.trees").exists()
+        assert (tmpdir / "work" / f"ancestors_{num_groupings-1}.trees").exists()
         ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
         ts2 = tsinfer.match_ancestors(samples, ancestors)
         ts.tables.assert_equals(ts2.tables, ignore_provenance=True)
@@ -1438,6 +1438,11 @@ class TestBatchAncestorMatching:
                     tsinfer.match_ancestors_batch_group_partition(
                         tmpdir / "work", group_index, p_index
                     )
+                with pytest.raises(ValueError, match="out of range"):
+                    tsinfer.match_ancestors_batch_group_partition(
+                        tmpdir / "work", group_index, p_index + 1000
+                    )
+
                 ts = tsinfer.match_ancestors_batch_group_finalise(
                     tmpdir / "work", group_index
                 )
@@ -1522,6 +1527,34 @@ class TestBatchAncestorMatching:
         ts.dump(str(tmpdir / "work" / "ancestors_1.trees"))
         with pytest.raises(ValueError, match="sequence length is different"):
             tsinfer.match_ancestors_batch_groups(tmpdir / "work", 2, 3)
+
+    def test_low_min_work_per_job(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
+        _ = tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            min_work_per_job=1,
+            max_num_partitions=2,
+        )
+        for group in metadata["ancestor_grouping"]:
+            assert group["partitions"] is None or len(group["partitions"]) <= 2
+
+        metadata = tsinfer.match_ancestors_batch_init(
+            tmpdir / "work2",
+            zarr_path,
+            "variant_ancestral_allele",
+            tmpdir / "ancestors.zarr",
+            min_work_per_job=1,
+            max_num_partitions=20000,
+        )
+        for group in metadata["ancestor_grouping"]:
+            if group["partitions"] is not None:
+                for partition in group["partitions"]:
+                    assert len(partition) == 1
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")

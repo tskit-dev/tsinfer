@@ -28,6 +28,7 @@ import heapq
 import json
 import logging
 import math
+import operator
 import os
 import pathlib
 import pickle
@@ -714,34 +715,41 @@ def match_ancestors_batch_init(
     for group_index, group_ancestors in matcher.group_by_linesweep().items():
         # Make ancestor_ids JSON serialisable
         group_ancestors = list(map(int, group_ancestors))
-        partitions = []
-        current_partition = []
-        current_partition_work = 0
-        # TODO: Can do better here by packing ancestors
-        # into as equal sized partitions as possible
+        # The first group is trivial so never partition
         if group_index == 0:
-            partitions.append(group_ancestors)
+            partitions = [
+                group_ancestors,
+            ]
         else:
             total_work = sum(ancestor_lengths[ancestor] for ancestor in group_ancestors)
-            min_work_per_job_group = min_work_per_job
-            if total_work / max_num_partitions > min_work_per_job:
-                min_work_per_job_group = total_work / max_num_partitions
-            for ancestor in group_ancestors:
-                if (
-                    current_partition_work + ancestor_lengths[ancestor]
-                    > min_work_per_job_group
-                ):
-                    partitions.append(current_partition)
-                    current_partition = [ancestor]
-                    current_partition_work = ancestor_lengths[ancestor]
-                else:
-                    current_partition.append(ancestor)
-                    current_partition_work += ancestor_lengths[ancestor]
-            partitions.append(current_partition)
+            parition_count = math.ceil(total_work / min_work_per_job)
+            if parition_count > max_num_partitions:
+                parition_count = max_num_partitions
+
+            # Partition into roughly equal sized bins (by work)
+            sorted_ancestors = sorted(
+                group_ancestors, key=lambda x: ancestor_lengths[x], reverse=True
+            )
+            partitions = []
+            partition_lengths = []
+            for _ in range(parition_count):
+                partitions.append([])
+                partition_lengths.append(0)
+
+            # Use greedy bin packing - place each ancestor in the bin with
+            # lowest total length
+            for ancestor in sorted_ancestors:
+                min_length_idx = min(
+                    range(len(partition_lengths)), key=lambda i: partition_lengths[i]
+                )
+                partitions[min_length_idx].append(ancestor)
+                partition_lengths[min_length_idx] += ancestor_lengths[ancestor]
+            partitions = [sorted(p) for p in partitions if len(p) > 0]
+
         if len(partitions) > 1:
             group_dir = work_dir / f"group_{group_index}"
             group_dir.mkdir()
-        # TODO: Should be a dataclass
+
         group = {
             "ancestors": group_ancestors,
             "partitions": partitions if len(partitions) > 1 else None,
@@ -902,7 +910,7 @@ def match_ancestors_batch_group_partition(work_dir, group_index, partition_index
     )
     logger.info(f"Dumping to {partition_path}")
     with open(partition_path, "wb") as f:
-        pickle.dump((start_time, timing.metrics, results), f)
+        pickle.dump((start_time, timing.metrics, ancestors_to_match, results), f)
 
 
 def match_ancestors_batch_group_finalise(work_dir, group_index):
@@ -935,17 +943,18 @@ def match_ancestors_batch_group_finalise(work_dir, group_index):
         )
         start_times = []
         timings = []
-        results = []
+        results = {}
         for partition_index in range(len(group["partitions"])):
             partition_path = os.path.join(
                 work_dir, f"group_{group_index}", f"partition_{partition_index}.pkl"
             )
             with open(partition_path, "rb") as f:
-                start_time, part_timing, result = pickle.load(f)
+                start_time, part_timing, ancestors, result = pickle.load(f)
                 start_times.append(start_time)
-                results.extend(result)
+                for ancestor, r in zip(ancestors, result):
+                    results[ancestor] = r
                 timings.append(part_timing)
-
+        results = list(map(operator.itemgetter(1), sorted(results.items())))
         ts = matcher.finalise_group(group, results, group_index)
         path = os.path.join(work_dir, f"ancestors_{group_index}.trees")
         ts.dump(path)
