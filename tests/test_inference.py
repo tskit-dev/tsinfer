@@ -1543,8 +1543,8 @@ class TestBatchSampleMatching:
             ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mat_anc.trees",
             min_work_per_job=1,
-            max_num_partitions=10,
         )
+        assert mat_wd.num_partitions == mat_sd.num_samples
         for i in range(mat_wd.num_partitions):
             tsinfer.match_samples_batch_partition(
                 work_dir=tmpdir / "working_mat",
@@ -1564,7 +1564,6 @@ class TestBatchSampleMatching:
             ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mask_anc.trees",
             min_work_per_job=1,
-            max_num_partitions=10,
             site_mask="variant_mask_foobar",
             sample_mask="samples_mask_foobar",
         )

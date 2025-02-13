@@ -1186,7 +1186,6 @@ def match_samples_batch_init(
     ancestor_ts_path,
     min_work_per_job,
     *,
-    max_num_partitions=None,
     sample_mask=None,
     site_mask=None,
     recombination_rate=None,
@@ -1206,7 +1205,7 @@ def match_samples_batch_init(
 ):
     """
     match_samples_batch_init(work_dir, sample_data_path, ancestral_state,
-    ancestor_ts_path, min_work_per_job, \\*, max_num_partitions=None,
+    ancestor_ts_path, min_work_per_job, \\*,
     sample_mask=None, site_mask=None, recombination_rate=None, mismatch_ratio=None,
     path_compression=True, indexes=None, post_process=None, force_sample_times=False)
 
@@ -1237,9 +1236,6 @@ def match_samples_batch_init(
         genotypes) to allocate to a single parallel job. If the amount of work in
         a group of samples exceeds this level it will be broken up into parallel
         partitions, subject to the constraint of `max_num_partitions`.
-    :param int max_num_partitions: The maximum number of partitions to split a
-        group of samples into. Useful for limiting the number of jobs in a
-        workflow to avoid job overhead. Defaults to 1000.
     :param Union(array, str) sample_mask: A numpy array of booleans specifying
         which samples to mask out (exclude) from the dataset. Alternatively, a
         string can be provided, giving the name of an array in the input dataset
@@ -1277,9 +1273,6 @@ def match_samples_batch_init(
     :return: A dictionary of the job metadata, as written to `metadata.json` in
         `work_dir`.
     """
-    if max_num_partitions is None:
-        max_num_partitions = 1000
-
     # Convert working_dir to pathlib.Path
     work_dir = pathlib.Path(work_dir)
 
