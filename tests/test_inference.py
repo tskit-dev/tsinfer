@@ -35,8 +35,10 @@ import unittest.mock as mock
 import msprime
 import numpy as np
 import pytest
+import sgkit
 import tskit
 import tsutil
+import xarray as xr
 from tskit import MetadataSchema
 
 import _tsinfer
@@ -1619,6 +1621,42 @@ class TestBatchSampleMatching:
         mask_ts_batch.tables.assert_equals(
             mat_ts_batch.tables, ignore_timestamps=True, ignore_provenance=True
         )
+
+    def test_force_sample_times(self, tmp_path, tmpdir):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        ds = sgkit.load_dataset(zarr_path)
+        array = [0.0001] * ts.num_individuals
+        ds.update(
+            {
+                "individuals_time": xr.DataArray(
+                    data=array, dims=["sample"], name="individuals_time"
+                )
+            }
+        )
+        sgkit.save_dataset(
+            ds.drop_vars(set(ds.data_vars) - {"individuals_time"}), zarr_path, mode="a"
+        )
+        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
+        anc = tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
+        anc_ts = tsinfer.match_ancestors(samples, anc)
+        anc_ts.dump(tmpdir / "anc.trees")
+
+        wd = tsinfer.match_samples_batch_init(
+            work_dir=tmpdir / "working",
+            sample_data_path=samples.path,
+            ancestral_state="variant_ancestral_allele",
+            ancestor_ts_path=tmpdir / "anc.trees",
+            min_work_per_job=1e6,
+            force_sample_times=True,
+        )
+        for i in range(wd.num_partitions):
+            tsinfer.match_samples_batch_partition(
+                work_dir=tmpdir / "working",
+                partition_index=i,
+            )
+        ts_batch = tsinfer.match_samples_batch_finalise(tmpdir / "working")
+        ts = tsinfer.match_samples(samples, anc_ts, force_sample_times=True)
+        ts.tables.assert_equals(ts_batch.tables, ignore_provenance=True)
 
 
 class TestAncestorGeneratorsEquivalant:
