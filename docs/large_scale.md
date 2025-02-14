@@ -195,8 +195,7 @@ of ancestors. There are three API methods that work together to enable distribut
 3. {meth}`match_samples_batch_finalise`
 
 {meth}`match_samples_batch_init` should be called to set up the batch matching and to determine the
-groupings of samples. Similar to {meth}`match_ancestors_batch_init` is has a `min_work_per_job` and
-`max_num_partitions` arguments to control the level of parallelism. The method writes a file
+groupings of samples. Similar to {meth}`match_ancestors_batch_init` it has a `min_work_per_job`  argument to control the level of parallelism. The method writes a file
 `metadata.json` to the directory `work_dir` that contains a JSON encoded dictionary with
 configuration for later steps. This is also returned by the call. The `num_partitions` key in
 this dictionary is the number of times {meth}`match_samples_batch_partition` will need
