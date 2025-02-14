@@ -133,6 +133,14 @@ def find_groups(children_data, children_indices, incoming_edge_count):
         # Add them to the group
         group_id[no_incoming] = current_group
         current_group += 1
+
+    # Check for unassigned nodes (cycles in dependency graph)
+    if np.any(group_id == -1):
+        raise ValueError(
+            "Erroneous cycle in ancestor dependancies, this is often "
+            "caused by too many unique site times. This fixed by discretising "
+            "the site times, for example rounding times to the nearest 0.1."
+        )
     return group_id
 
 
