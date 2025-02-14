@@ -1331,9 +1331,9 @@ def match_samples_batch_init(
     sample_times = sample_times.tolist()
     wd.sample_indexes = sample_indexes
     wd.sample_times = sample_times
-    num_samples_per_partition = int(min_work_per_job // variant_data.num_sites)
-    if num_samples_per_partition == 0:
-        num_samples_per_partition = 1
+    num_samples_per_partition = max(
+        1, math.ceil(min_work_per_job // variant_data.num_sites)
+    )
     wd.num_samples_per_partition = num_samples_per_partition
     wd.num_partitions = math.ceil(len(sample_indexes) / num_samples_per_partition)
     wd_path = work_dir / "metadata.json"
