@@ -717,35 +717,29 @@ def match_ancestors_batch_init(
         group_ancestors = list(map(int, group_ancestors))
         # The first group is trivial so never partition
         if group_index == 0:
-            partitions = [
-                group_ancestors,
-            ]
+            partitions = [group_ancestors]
         else:
             total_work = sum(ancestor_lengths[ancestor] for ancestor in group_ancestors)
-            parition_count = math.ceil(total_work / min_work_per_job)
-            if parition_count > max_num_partitions:
-                parition_count = max_num_partitions
+            partition_count = math.ceil(total_work / min_work_per_job)
+            if partition_count > max_num_partitions:
+                partition_count = max_num_partitions
 
             # Partition into roughly equal sized bins (by work)
             sorted_ancestors = sorted(
                 group_ancestors, key=lambda x: ancestor_lengths[x], reverse=True
             )
-            partitions = []
-            partition_lengths = []
-            for _ in range(parition_count):
-                partitions.append([])
-                partition_lengths.append(0)
 
             # Use greedy bin packing - place each ancestor in the bin with
             # lowest total length
+            heap = [(0, []) for _ in range(partition_count)]
             for ancestor in sorted_ancestors:
-                min_length_idx = min(
-                    range(len(partition_lengths)), key=lambda i: partition_lengths[i]
-                )
-                partitions[min_length_idx].append(ancestor)
-                partition_lengths[min_length_idx] += ancestor_lengths[ancestor]
-            partitions = [sorted(p) for p in partitions if len(p) > 0]
-
+                sum_len, partition = heapq.heappop(heap)
+                partition.append(ancestor)
+                sum_len += ancestor_lengths[ancestor]
+                heapq.heappush(heap, (sum_len, partition))
+            partitions = [
+                sorted(partition) for sum_len, partition in heap if sum_len > 0
+            ]
         if len(partitions) > 1:
             group_dir = work_dir / f"group_{group_index}"
             group_dir.mkdir()
