@@ -3422,22 +3422,22 @@ def get_default_inference_sites(sample_data):
 
 
 class TestMapAdditionalSitesToggle:
-    def test_map_additional_samples_toggle(self):
+    def test_overlay_non_inference_sites_toggle(self):
         ts = msprime.simulate(10, mutation_rate=2, random_seed=4)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         output_ts_default = tsinfer.match_samples(sample_data, ancestors_ts)
-        output_ts_no_map = tsinfer.match_samples(
-            sample_data, ancestors_ts, map_additional_sites=False
+        output_ts_no_overlay = tsinfer.match_samples(
+            sample_data, ancestors_ts, overlay_non_inference_sites=False
         )
-        output_ts_map = tsinfer.match_samples(
-            sample_data, ancestors_ts, map_additional_sites=True
+        output_ts_overlay = tsinfer.match_samples(
+            sample_data, ancestors_ts, overlay_non_inference_sites=True
         )
         num_inferred_sites = len(get_default_inference_sites(sample_data))
         assert output_ts_default.num_sites > num_inferred_sites
-        assert output_ts_default.num_sites == output_ts_map.num_sites
-        assert output_ts_no_map.num_sites == num_inferred_sites
+        assert output_ts_default.num_sites == output_ts_overlay.num_sites
+        assert output_ts_no_overlay.num_sites == num_inferred_sites
 
 
 class TestMatchSiteSubsets:

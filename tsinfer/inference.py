@@ -1120,7 +1120,7 @@ class SampleBatchWorkDescriptor:
     extended_checks: bool
     post_process: bool
     force_sample_times: bool
-    map_additional_sites: bool
+    overlay_non_inference_sites: bool
     record_provenance: bool
     sample_indexes: list
     sample_times: list
@@ -1197,6 +1197,7 @@ def match_samples_batch_init(
     indexes=None,
     post_process=None,
     force_sample_times=False,
+    overlay_non_inference_sites=None,
     # Deliberately undocumented parameters below
     recombination=None,  # See :class:`Matcher`
     mismatch=None,  # See :class:`Matcher`
@@ -1204,7 +1205,6 @@ def match_samples_batch_init(
     extended_checks=False,
     engine=constants.C_ENGINE,
     record_provenance=True,
-    map_additional_sites=None,
 ):
     """
     match_samples_batch_init(work_dir, sample_data_path, ancestral_state,
@@ -1273,6 +1273,10 @@ def match_samples_batch_init(
         individual having a non-zero time) such that the sample nodes in the tree
         sequence appear at the time of the individual with which they are
         associated.
+    :param bool overlay_non_inference_sites: If True, sites that were included in
+        the selected sites, but were not used for inference, will be added to the
+        tree sequence by mapping their mutations over the inferred topology.
+        Defaults to True.
     :return: A dictionary of the job metadata, as written to `metadata.json` in
         `work_dir`.
     """
@@ -1299,7 +1303,7 @@ def match_samples_batch_init(
         extended_checks=extended_checks,
         post_process=post_process,
         force_sample_times=force_sample_times,
-        map_additional_sites=map_additional_sites,
+        overlay_non_inference_sites=overlay_non_inference_sites,
         record_provenance=record_provenance,
         sample_indexes=[],
         sample_times=[],
@@ -1409,7 +1413,7 @@ def match_samples_batch_finalise(work_dir):
             post_process=wd.post_process,
             force_sample_times=wd.force_sample_times,
             record_provenance=wd.record_provenance,
-            map_additional_sites=wd.map_additional_sites,
+            overlay_non_inference_sites=wd.overlay_non_inference_sites,
             results=results,
             **wd.common_params(),
         )
@@ -1436,6 +1440,7 @@ def match_samples(
     post_process=None,
     force_sample_times=False,
     num_threads=0,
+    overlay_non_inference_sites=None,
     # Deliberately undocumented parameters below
     recombination=None,  # See :class:`Matcher`
     mismatch=None,  # See :class:`Matcher`
@@ -1445,7 +1450,6 @@ def match_samples(
     progress_monitor=None,
     simplify=None,  # deprecated
     record_provenance=True,
-    map_additional_sites=None,
     results=None,
 ):
     """
@@ -1492,7 +1496,10 @@ def match_samples(
         this is <= 0 then a simpler sequential algorithm is used (default).
     :param bool simplify: Treated as an alias for ``post_process``, deprecated but
         currently retained for backwards compatibility if set to ``False``.
-
+    :param bool overlay_non_inference_sites: If True, sites that were included in
+        the selected sites, but were not used for inference, will be added to the
+        tree sequence by mapping their mutations over the inferred topology.
+        Defaults to True.
     :return: The tree sequence representing the inferred history
         of the sample.
     :rtype: tskit.TreeSequence
@@ -1513,10 +1520,10 @@ def match_samples(
                 post_process = True
             else:
                 post_process = False
-    if map_additional_sites is None:
-        map_additional_sites = True
+    if overlay_non_inference_sites is None:
+        overlay_non_inference_sites = True
     else:
-        map_additional_sites = map_additional_sites
+        overlay_non_inference_sites = overlay_non_inference_sites
 
     with provenance.TimingAndMemory() as timing:
         sample_data._check_finalised()
@@ -1552,7 +1559,7 @@ def match_samples(
             # nodes in the final ts, and we sometimes assume they are in
             # the same order as in the file
         manager.match_samples(sample_indexes, sample_times, results)
-        ts = manager.finalise(map_additional_sites)
+        ts = manager.finalise(overlay_non_inference_sites)
         if post_process:
             ts = _post_process(
                 ts, warn_if_unexpected_format=True, simplify_only=simplify_only
@@ -2686,14 +2693,14 @@ class SampleMatcher(Matcher):
             slice_ = slice(0, len(sample_indexes))
         return self._match_samples(sample_indexes[slice_], results)
 
-    def finalise(self, map_additional_sites):
+    def finalise(self, overlay_non_inference_sites):
         logger.info("Finalising tree sequence")
-        ts = self.get_samples_tree_sequence(map_additional_sites)
+        ts = self.get_samples_tree_sequence(overlay_non_inference_sites)
         # Check that there are the same number of samples as expected
         assert len(self.sample_id_map) == ts.num_samples
         return ts
 
-    def get_samples_tree_sequence(self, map_additional_sites=True):
+    def get_samples_tree_sequence(self, overlay_non_inference_sites=True):
         """
         Returns the current state of the build tree sequence. Sample nodes will have the
         sample node flag set and be in the same order as passed the order of
@@ -2827,7 +2834,7 @@ class SampleMatcher(Matcher):
 
         ts = tables.tree_sequence()
         num_additional_sites = self.sample_data.num_sites - self.num_sites
-        if map_additional_sites and num_additional_sites > 0:
+        if overlay_non_inference_sites and num_additional_sites > 0:
             logger.info("Mapping additional sites")
             assert np.array_equal(ts.samples(), list(self.sample_id_map.values()))
             ts = insert_missing_sites(
