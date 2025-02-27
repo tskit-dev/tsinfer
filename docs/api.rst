@@ -20,6 +20,7 @@ Sample data
     :members:
     :inherited-members:
 
+.. autofunction:: tsinfer.add_ancestral_state_array
 
 .. autoclass:: tsinfer.SampleData
     :members:

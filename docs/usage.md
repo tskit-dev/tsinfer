@@ -68,22 +68,38 @@ on this issue to provide some recommendations.
 Sometimes VCF files will contain the
 ancestral state in the "AA" ("ancestral allele") info field, in which case it will be encoded
 in the `variant_AA` field of the .vcz file. It's also possible to provide a numpy array
-of ancestral alleles, of the same length as the number of variants. Ancestral
-alleles that are not in the list of alleles for their respective site are treated as unknown
-and not used for inference (with a warning given).
+of ancestral alleles, of the same length as the number of selected variants. If you have a string
+of the ancestral states (e.g. from FASTA) the {meth}`add_ancestral_state_array`
+method can be used to convert and save this to the VCF Zarr dataset (under the name
+`ancestral_state`). Note that the positions passed to the method should be
+zero-based, if you have one-based positions you should prepend an "X" to the string.
+Alleles that are not in the list of alleles for their respective site are
+treated as unknown and not used for inference (with a warning given).
 
 ```{code-cell}
 import tsinfer
+import zarr
+import pyfaidx
 
-# For this example take the REF allele (index 0) as ancestral
-ancestral_state = ds['variant_allele'][:,0].astype(str)
-# This is just a numpy array, set the last site to an unknown value, for demo purposes
-ancestral_state[-1] = "."
+vcf_zarr = zarr.open("_static/example_data.vcz")
 
-vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state)
+reader = pyfaidx.Fasta("_static/example_ancestral_state.fa")
+ancestral_string = str(reader["chr1"])
+# Our positions are zero-based, if they were one-based we would
+# prepend an X here.
+# e.g. ancestral_string = "X" + ancestral_string
+
+# Set the last site to unknown, for demonstration purposes
+ancestral_string = ancestral_string[:-1] + "N"
+
+tsinfer.add_ancestral_state_array(
+        vcf_zarr,
+        ancestral_string,
+) 
+vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state="ancestral_state")
 ```
 
-The `VariantData` object is a lightweight wrapper around the .vcz file.
+The {class}`VariantData` object is a lightweight wrapper around the .vcz file.
 We'll use it to infer a tree sequence on the basis of the sites that vary between the
 different samples. However, note that certain sites are not used by _tsinfer_ for inferring
 the genealogy (although they are still encoded in the final tree sequence), These are:
@@ -127,7 +143,7 @@ site_mask[ds.variant_position[:] >= 6] = True
 
 smaller_vdata = tsinfer.VariantData(
     "_static/example_data.vcz",
-    ancestral_state=ancestral_state[site_mask == False],
+    ancestral_state="ancestral_state",
     site_mask=site_mask,
 )
 print(f"The `smaller_vdata` object returns data for only {smaller_vdata.num_sites} sites")
