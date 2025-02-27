@@ -786,6 +786,9 @@ def test_ancestral_missing_warning(tmp_path):
         match=r"not found in the variant_allele array for the 4 [\s\S]*'💩': 2",
     ):
         vdata = tsinfer.VariantData(zarr_path, anc_state)
+    shuffled_anc_state = np.random.permutation(anc_state)
+    with pytest.warns(UserWarning, match=r"More than 20%"):
+        tsinfer.VariantData(zarr_path, shuffled_anc_state)
     inf_ts = tsinfer.infer(vdata)
     for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
         if i in [0, 11, 12, 15]:
@@ -982,3 +985,82 @@ class TestVariantDataErrors:
             tsinfer.VariantData(
                 path, ds["variant_allele"][:, 0].astype(str), sites_time="XX"
             )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
+class TestAddAncestralStateArray:
+    def test_add_ancestral_state_array(self, tmp_path):
+        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        store.create_dataset("variant_position", data=[10, 20, 30, 40, 50])
+        array = formats.add_ancestral_state_array(store, "A" * 60)
+
+        assert "ancestral_state" in store
+        np.testing.assert_array_equal(array[:], np.array(["A", "A", "A", "A", "A"]))
+        assert array.attrs["_ARRAY_DIMENSIONS"] == ["variants"]
+        array = formats.add_ancestral_state_array(
+            store, "A" * 60, array_name="custom_ancestral"
+        )
+        assert "custom_ancestral" in store
+
+    def test_mixed_case_and_different_nucleotides(self, tmp_path):
+        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        store.create_dataset("variant_position", data=[10, 20, 30, 40, 50])
+        array = formats.add_ancestral_state_array(
+            store, "A" * 10 + "c" + "G" * 9 + "t" + "C" * 9 + "a" + "T" * 19 + "g"
+        )
+        np.testing.assert_array_equal(array[:], np.array(["C", "T", "A", "T", "G"]))
+
+    def test_error_no_variant_position(self, tmp_path):
+        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        with pytest.raises(ValueError, match="must contain a 'variant_position' array"):
+            formats.add_ancestral_state_array(store, "A")
+
+    def test_error_fasta_too_short(self, tmp_path):
+        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        store.create_dataset("variant_position", data=[10, 20, 100])
+        fasta_string = "A" * 50  # Only 50 bases, not enough for position 100
+        with pytest.raises(
+            ValueError, match="length of the fasta string must be at least"
+        ):
+            formats.add_ancestral_state_array(store, fasta_string)
+
+    def test_empty_positions_array(self, tmp_path):
+        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        store.create_dataset("variant_position", data=[])
+        with pytest.raises(
+            ValueError,
+            match="variant_position array must contain at least one position",
+        ):
+            formats.add_ancestral_state_array(store, "A" * 10)
+
+    def test_with_variant_data(self, tmp_path):
+        ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+        root = zarr.open(zarr_path)
+        positions = root["variant_position"][:]
+        # Create a fasta string with variant bases at positions
+        fasta_string = ""
+        max_pos = int(positions.max()) + 1
+        bases = ["A", "C", "G", "T"]
+
+        for i in range(max_pos):
+            if i in positions:
+                idx = np.where(positions == i)[0][0] % 4
+                fasta_string += bases[idx]
+            else:
+                fasta_string += "N"
+
+        array = formats.add_ancestral_state_array(root, fasta_string)
+        vdata = tsinfer.VariantData(zarr_path, "ancestral_state")
+        assert vdata.num_sites == len(positions)
+
+        # Check that bases at variant positions match what we expect
+        for i, _ in enumerate(positions):
+            expected_base = bases[i % 4]
+            assert array[i] == expected_base
+            # Find the allele index in the site's alleles
+            match_idx = np.where(vdata.sites_alleles[i] == expected_base)[0]
+            if len(match_idx) > 0:
+                allele_idx = match_idx[0]
+            else:
+                allele_idx = -1
+            assert vdata.sites_ancestral_allele[i] == allele_idx

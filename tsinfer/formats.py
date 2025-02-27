@@ -2321,6 +2321,7 @@ class VariantData(SampleData):
         the ancestral states. Unknown ancestral states can be specified using "N".
         Any ancestral states which do not match any of the known alleles at that site,
         will be tallied, and a warning issued summarizing the unknown ancestral states.
+        Note that allelic states are case-sensitive in tsinfer.
     :param Union(array, str) sample_mask: A numpy array of booleans specifying which
         samples to mask out (exclude) from the dataset. Alternatively, a string
         can be provided, giving the name of an array in the input dataset which contains
@@ -2517,6 +2518,12 @@ class VariantData(SampleData):
                     + "They will be treated as of unknown ancestral state:\n "
                     + "\n ".join(summarise_unknown)
                 )
+                if frac_bad > 0.2:
+                    warnings.warn(
+                        "More than 20% of sites have unknown ancestral states. "
+                        "This might indicate that the ancestral sequence was misaligned "
+                        "or not from the correct reference genome."
+                    )
 
         # Create zarr arrays for convenience when iterating over chunks
         self.z_sites_select = zarr.array(
@@ -3729,3 +3736,55 @@ def load(path):
             "for more details on what went wrong"
         )
     return tsinfer_file
+
+
+def add_ancestral_state_array(
+    zarr_group, fasta_string, *, array_name="ancestral_state"
+):
+    """
+    Add an ancestral state array to a zarr group from a string of nucleotides
+    representing the ancestral sequence.
+
+    :param zarr.Group zarr_group: A zarr group to add the ancestral state array to.
+        This should be a VCF Zarr format group containing a "variant_position" array.
+    :param str fasta_string: A string containing the ancestral sequence,
+        from e.g. FASTA.
+    :param str array_name: The name of the array to create in the zarr group.
+        Default is "ancestral_state".
+    :return: The newly inserted ancestral state array.
+    :rtype: zarr.Array
+    """
+    if "variant_position" not in zarr_group:
+        raise ValueError("The zarr group must contain a 'variant_position' array")
+
+    positions = zarr_group["variant_position"][:]
+
+    if len(positions) == 0:
+        raise ValueError(
+            "The variant_position array must contain at least one position"
+        )
+
+    if len(fasta_string) < max(positions):
+        raise ValueError(
+            "The length of the fasta string must be at least as long as the "
+            "maximum position in the positions array."
+        )
+
+    ancestral_sequence = np.asarray(list(fasta_string), dtype="U1")
+    ancestral_states = ancestral_sequence[positions]
+    ancestral_states_upper = np.char.upper(ancestral_states)
+
+    # Create the ancestral state array in the zarr group with the
+    # same chunking as positions
+    ancestral_array = zarr_group.create_dataset(
+        array_name,
+        data=ancestral_states_upper,
+        shape=ancestral_states_upper.shape,
+        chunks=zarr_group["variant_position"].chunks,
+        dtype="U1",
+    )
+
+    # Add dimension attribute for compatibility with xarray/sgkit
+    ancestral_array.attrs["_ARRAY_DIMENSIONS"] = ["variants"]
+
+    return ancestral_array
