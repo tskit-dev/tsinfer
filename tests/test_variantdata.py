@@ -828,6 +828,16 @@ def test_sgkit_ancestor(small_sd_fixture, tmp_path):
         sgkit.display_genotypes(ds)
 
 
+def test_allelic_states_from_string():
+    fasta = "ACGTacgtN"
+    positions = np.array([0, 2, 4, 6, 8])  # 1-based positions
+    states, mask = formats.VariantData.allelic_states_from_string(fasta, positions)
+    assert np.array_equal(states, np.array(["A", "G", "A", "G", "N"]))
+    assert np.array_equal(mask, np.array([False, False, True, True, False]))
+    with pytest.raises(ValueError, match="must be at least as long as"):
+        formats.VariantData.allelic_states_from_string("ACG", np.array([1, 4]))
+
+
 class TestVariantDataErrors:
     @staticmethod
     def simulate_genotype_call_dataset(*args, **kwargs):
