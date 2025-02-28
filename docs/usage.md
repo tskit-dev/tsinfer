@@ -68,17 +68,21 @@ on this issue to provide some recommendations.
 Sometimes VCF files will contain the
 ancestral state in the "AA" ("ancestral allele") info field, in which case it will be encoded
 in the `variant_AA` field of the .vcz file. It's also possible to provide a numpy array
-of ancestral alleles, of the same length as the number of variants. Ancestral
-alleles that are not in the list of alleles for their respective site are treated as unknown
-and not used for inference (with a warning given).
+of ancestral alleles, of the same length as the number of variants. If you have a string
+of the ancestral states (e.g.  from FASTA) the {meth}`VariantData.allelic_states_from_string`
+method can be used to convert this an array. Note that the positions passed to the method
+should be zero-based. Alleles that are not in the list of alleles
+for their respective site are treated as unknown and not used for inference
+(with a warning given).
 
 ```{code-cell}
 import tsinfer
 
-# For this example take the REF allele (index 0) as ancestral
-ancestral_state = ds['variant_allele'][:,0].astype(str)
-# This is just a numpy array, set the last site to an unknown value, for demo purposes
-ancestral_state[-1] = "."
+ancestral_string = "GGCTCAG."
+ancestral_state, _ = tsinfer.VariantData.allelic_states_from_string(
+        ancestral_string,
+        ds['variant_position'][:]
+) 
 
 vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state)
 ```
