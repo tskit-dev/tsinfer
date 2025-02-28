@@ -2321,6 +2321,7 @@ class VariantData(SampleData):
         the ancestral states. Unknown ancestral states can be specified using "N".
         Any ancestral states which do not match any of the known alleles at that site,
         will be tallied, and a warning issued summarizing the unknown ancestral states.
+        Note that allelic states are case-sensitive in tsinfer.
     :param Union(array, str) sample_mask: A numpy array of booleans specifying which
         samples to mask out (exclude) from the dataset. Alternatively, a string
         can be provided, giving the name of an array in the input dataset which contains
@@ -2347,6 +2348,35 @@ class VariantData(SampleData):
 
     FORMAT_NAME = "tsinfer-variant-data"
     FORMAT_VERSION = (0, 1)
+
+    @classmethod
+    def allelic_states_from_string(cls, fasta_string, positions):
+        """
+        Create an ancestral state array suitable for use in a VariantData object
+        from a string of nucleotides representing the ancestral sequence.
+
+        :param str fasta_string: A string containing the ancestral sequence,
+            from e.g. FASTA.
+        :param arraylike positions: An array of positions in the sequence to
+            extract states from. NB The positions are 0-based into the string.
+            This will usually be zarr_vcf["variant_position"].
+        :return: A tuple of (ancestral_states, low_quality_mask) where
+            ancestral_states contains the uppercase alleles at each position
+            and low_quality_mask indicates which positions had lowercase
+            letters in the original string.
+        :rtype: tuple(numpy.ndarray, numpy.ndarray)
+        """
+        if len(fasta_string) < max(positions):
+            raise ValueError(
+                "The length of the fasta string must be at least as long as the "
+                "maximum position in the positions array."
+            )
+        ancestral_sequence = np.asarray(list(fasta_string), dtype="U1")
+        ancestral_states = ancestral_sequence[positions]
+        ancestral_states_upper = np.char.upper(ancestral_states)
+        low_quality_mask = ancestral_states != ancestral_states_upper
+
+        return (ancestral_states_upper, low_quality_mask)
 
     def __init__(
         self,
