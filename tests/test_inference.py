@@ -1157,7 +1157,7 @@ class TestMetadataRoundTrip:
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
-        # output metadata can have some extra fields, e.g. "sample_data_time"
+        # output metadata can have some extra fields, e.g. "variant_data_time"
         # so check all_metadata is "contained in" output_metadata
         for all, output in zip(all_metadata, output_metadata):
             assert all.items() <= output.items()
@@ -1187,7 +1187,7 @@ class TestMetadataRoundTrip:
             individual.metadata if use_schema else json.loads(individual.metadata)
             for individual in output_ts.individuals()
         ]
-        # output metadata can have some extra fields, e.g. "sample_data_time"
+        # output metadata can have some extra fields, e.g. "variant_data_time"
         # so check all_metadata is "contained in" output_metadata
         for all, output in zip(all_metadata, output_metadata):
             assert all.items() <= output.items()
@@ -1267,7 +1267,7 @@ class TestMetadataRoundTrip:
                     if use_schema
                     else json.loads(individual.metadata)
                 )
-                assert np.array_equal(time, md["sample_data_time"])
+                assert np.array_equal(time, md["variant_data_time"])
 
     def test_from_standard_tree_sequence(self):
         """
@@ -1574,7 +1574,7 @@ class TestBatchSampleMatching:
 
         mat_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mat",
-            sample_data_path=mat_sd.path,
+            variant_data_path=mat_sd.path,
             ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mat_anc.trees",
             min_work_per_job=1,
@@ -1595,7 +1595,7 @@ class TestBatchSampleMatching:
 
         mask_wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working_mask",
-            sample_data_path=mask_sd.path,
+            variant_data_path=mask_sd.path,
             ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "mask_anc.trees",
             min_work_per_job=1,
@@ -1643,7 +1643,7 @@ class TestBatchSampleMatching:
 
         wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working",
-            sample_data_path=samples.path,
+            variant_data_path=samples.path,
             ancestral_state="variant_ancestral_allele",
             ancestor_ts_path=tmpdir / "anc.trees",
             min_work_per_job=1e6,
@@ -1679,7 +1679,7 @@ class TestBatchSampleMatching:
 
         wd = tsinfer.match_samples_batch_init(
             work_dir=tmpdir / "working",
-            sample_data_path=samples.path,
+            variant_data_path=samples.path,
             sample_mask=sample_mask,
             site_mask=site_mask,
             ancestral_state="variant_ancestral_allele",
@@ -4077,7 +4077,7 @@ class TestAugmentedAncestors:
             node = t2.nodes[m + j]
             assert node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR
             assert node.time == 1
-            assert node_id == node.metadata["sample_data_id"]
+            assert node_id == node.metadata["variant_data_id"]
 
         t2.nodes.truncate(len(t1.nodes))
         # Adding and subtracting 1 can lead to small diffs, so we compare
@@ -4227,7 +4227,7 @@ class TestSequentialAugmentedAncestors(TestAugmentedAncestors):
             num_sample_ancestors = 0
             for node in final_ts.nodes():
                 if node.flags == tsinfer.NODE_IS_SAMPLE_ANCESTOR:
-                    assert node.metadata["sample_data_id"] in subset
+                    assert node.metadata["variant_data_id"] in subset
                     num_sample_ancestors += 1
             assert expected_sample_ancestors == num_sample_ancestors
             tsinfer.verify(samples, final_ts.simplify())

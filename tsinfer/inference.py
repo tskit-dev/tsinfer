@@ -53,7 +53,7 @@ import tsinfer.threads as threads
 logger = logging.getLogger(__name__)
 
 
-sample_data_time_metadata_definition = {
+variant_data_time_metadata_definition = {
     "description": "Time of an individual from the SampleData file.",
     "type": "number",
     # Defaults aren't currently used, see
@@ -85,7 +85,7 @@ node_ancestor_data_id_metadata_definition = {
     "type": "number",
 }
 
-node_sample_data_id_metadata_definition = {
+node_variant_data_id_metadata_definition = {
     "description": (
         "The ID of the tsinfer sample data node from which this node is derived. "
         "Only present for nodes in which historical samples are treated as ancestors."
@@ -196,28 +196,28 @@ def _update_site_metadata(current_metadata, inference_type):
     return {"inference_type": inference_type, **current_metadata}
 
 
-def verify(sample_data, tree_sequence, progress_monitor=None):
+def verify(variant_data, tree_sequence, progress_monitor=None):
     """
     verify(samples, tree_sequence)
 
     Verifies that the specified sample data and tree sequence files encode the
     same data.
 
-    :param SampleData samples: The input :class:`SampleData` instance
+    :param SampleData samples: The input `SampleData` instance
         representing the observed data that we wish to compare to.
     :param TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
         instance an encoding of the specified samples that we wish to verify.
     """
     progress_monitor = _get_progress_monitor(progress_monitor, verify=True)
-    if sample_data.num_sites != tree_sequence.num_sites:
+    if variant_data.num_sites != tree_sequence.num_sites:
         raise ValueError("numbers of sites not equal")
-    if sample_data.num_samples != tree_sequence.num_samples:
+    if variant_data.num_samples != tree_sequence.num_samples:
         raise ValueError("numbers of samples not equal")
-    if sample_data.sequence_length != tree_sequence.sequence_length:
+    if variant_data.sequence_length != tree_sequence.sequence_length:
         raise ValueError("Sequence lengths not equal")
     progress = progress_monitor.get("verify", tree_sequence.num_sites)
     for var1, var2 in zip(
-        sample_data.variants(recode_ancestral=True), tree_sequence.variants()
+        variant_data.variants(recode_ancestral=True), tree_sequence.variants()
     ):
         if var1.site.position != var2.site.position:
             raise ValueError(
@@ -249,17 +249,17 @@ def verify(sample_data, tree_sequence, progress_monitor=None):
     progress.close()
 
 
-def check_sample_indexes(sample_data, indexes):
+def check_sample_indexes(variant_data, indexes):
     """
     Checks that the specified sample indexes are valid for the specified
     sample data file.
     """
     if indexes is None:
-        return np.arange(sample_data.num_samples, dtype=np.int32)
+        return np.arange(variant_data.num_samples, dtype=np.int32)
     indexes = np.array(indexes)
     if len(indexes) == 0:
         raise ValueError("Must supply at least one sample to match")
-    if np.any(indexes < 0) or np.any(indexes >= sample_data.num_samples):
+    if np.any(indexes < 0) or np.any(indexes >= variant_data.num_samples):
         raise ValueError("Sample index out of bounds")
     if np.any(indexes[:-1] >= indexes[1:]):
         raise ValueError("Sample indexes must be in increasing order")
@@ -267,7 +267,7 @@ def check_sample_indexes(sample_data, indexes):
 
 
 def infer(
-    sample_data,
+    variant_data,
     *,
     recombination_rate=None,
     mismatch_ratio=None,
@@ -284,12 +284,12 @@ def infer(
     record_provenance=True,
 ):
     """
-    infer(sample_data, *, recombination_rate=None, mismatch_ratio=None,\
+    infer(variant_data, *, recombination_rate=None, mismatch_ratio=None,\
             path_compression=True, exclude_positions=None, post_process=None,\
             num_threads=0)
 
     Runs the full :ref:`inference pipeline <sec_inference>` on the specified
-    :class:`SampleData` instance and returns the inferred
+    :class:`VariantData` instance and returns the inferred
     :class:`tskit.TreeSequence`.  See
     :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
     in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
@@ -301,7 +301,7 @@ def infer(
         :func:`tsinfer.generate_ancestors`, :func:`tsinfer.match_ancestors` and
         :func:`tsinfer.match_samples` separately.
 
-    :param SampleData sample_data: The input :class:`SampleData` instance
+    :param VariantData variant_data: The input :class:`VariantData` instance
         representing the observed data that we wish to make inferences from.
     :param recombination_rate: Either a floating point value giving a constant rate
         :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
@@ -343,7 +343,7 @@ def infer(
             match_samples=True,
         )
         ancestor_data = generate_ancestors(
-            sample_data,
+            variant_data,
             num_threads=num_threads,
             exclude_positions=exclude_positions,
             engine=engine,
@@ -354,7 +354,7 @@ def infer(
         # the ancestor matching phase. See
         # https://github.com/tskit-dev/tsinfer/issues/980
         ancestors_ts = match_ancestors(
-            sample_data,
+            variant_data,
             ancestor_data,
             engine=engine,
             num_threads=num_threads,
@@ -365,7 +365,7 @@ def infer(
             record_provenance=False,
         )
         inferred_ts = match_samples(
-            sample_data,
+            variant_data,
             ancestors_ts,
             engine=engine,
             num_threads=num_threads,
@@ -396,7 +396,7 @@ def infer(
 
 
 def generate_ancestors(
-    sample_data,
+    variant_data,
     *,
     path=None,
     exclude_positions=None,
@@ -410,18 +410,18 @@ def generate_ancestors(
     **kwargs,
 ):
     """
-    generate_ancestors(sample_data, *, path=None, exclude_positions=None,\
+    generate_ancestors(variant_data, *, path=None, exclude_positions=None,\
         num_threads=0, genotype_encoding=None, mmap_temp_dir=None, **kwargs)
 
     Runs the ancestor generation :ref:`algorithm <sec_inference_generate_ancestors>`
-    on the specified :class:`SampleData` instance and returns the resulting
+    on the specified :class:`VariantData` instance and returns the resulting
     :class:`AncestorData` instance. If you wish to store generated ancestors
     persistently on file you must pass the ``path`` keyword argument to this
     function. For example,
 
     .. code-block:: python
 
-        ancestor_data = tsinfer.generate_ancestors(sample_data, path="mydata.ancestors")
+        ancestor_data = tsinfer.generate_ancestors(variant_data, path="mydata.ancestors")
 
     Other keyword arguments are passed to the :class:`AncestorData` constructor,
     which may be used to control the storage properties of the generated file.
@@ -450,9 +450,9 @@ def generate_ancestors(
 
     .. warning:: The ``mmap_temp_dir`` option is a silent no-op on Windows!
 
-    :param SampleData sample_data: The :class:`SampleData` instance that we are
-        genering putative ancestors from.
-    :param str path: The path of the file to store the sample data. If None,
+    :param VariantData variant_data: The :class:`VariantData` instance that we are
+        generating putative ancestors from.
+    :param str path: The path of the file to store the ancestor data. If None,
         the information is stored in memory and not persistent.
     :param array_like exclude_positions: A list of site positions to exclude
         for full inference. Sites with these positions will not be used to generate
@@ -472,12 +472,12 @@ def generate_ancestors(
     :rtype: AncestorData
     """
     with provenance.TimingAndMemory() as timing:
-        sample_data._check_finalised()
-        if np.any(np.isfinite(sample_data.sites_time[:])) and np.any(
-            tskit.is_unknown_time(sample_data.sites_time[:])
+        variant_data._check_finalised()
+        if np.any(np.isfinite(variant_data.sites_time[:])) and np.any(
+            tskit.is_unknown_time(variant_data.sites_time[:])
         ):
             raise ValueError(
-                "Cannot generate ancestors from a sample_data instance that mixes"
+                "Cannot generate ancestors from a variant_data instance that mixes"
                 " user-specified times with times-as-frequencies. To explicitly"
                 " set an undefined time for a site, permanently excluding it"
                 " from inference, set it to np.nan."
@@ -487,7 +487,7 @@ def generate_ancestors(
             # out what the minimum encoding is?
             genotype_encoding = constants.GenotypeEncoding.EIGHT_BIT
         generator = AncestorsGenerator(
-            sample_data,
+            variant_data,
             ancestor_data_path=path,
             ancestor_data_kwargs=kwargs,
             num_threads=num_threads,
@@ -498,7 +498,7 @@ def generate_ancestors(
         )
         generator.add_sites(exclude_positions)
         ancestor_data = generator.run()
-        for timestamp, record in sample_data.provenances():
+        for timestamp, record in variant_data.provenances():
             ancestor_data.add_provenance(timestamp, record)
     if record_provenance:
         ancestor_data.record_provenance("generate_ancestors", timing.metrics.asdict())
@@ -507,7 +507,7 @@ def generate_ancestors(
 
 
 def match_ancestors(
-    sample_data,
+    variant_data,
     ancestor_data,
     *,
     recombination_rate=None,
@@ -525,18 +525,18 @@ def match_ancestors(
     record_provenance=True,
 ):
     """
-    match_ancestors(sample_data, ancestor_data, *, recombination_rate=None,\
+    match_ancestors(variant_data, ancestor_data, *, recombination_rate=None,\
         mismatch_ratio=None, path_compression=True, num_threads=0)
 
     Run the ancestor matching :ref:`algorithm <sec_inference_match_ancestors>`
-    on the specified :class:`SampleData` and :class:`AncestorData` instances,
+    on the specified :class:`VariantData` and :class:`AncestorData` instances,
     returning the resulting :class:`tskit.TreeSequence` representing the
     complete ancestry of the putative ancestors. See
     :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
     in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
     and ``path_compression``.
 
-    :param SampleData sample_data: The :class:`SampleData` instance
+    :param VariantData variant_data: The :class:`VariantData` instance
         representing the input data.
     :param AncestorData ancestor_data: The :class:`AncestorData` instance
         representing the set of ancestral haplotypes for which we are finding
@@ -562,11 +562,11 @@ def match_ancestors(
      """
     with provenance.TimingAndMemory() as timing:
         progress_monitor = _get_progress_monitor(progress_monitor, match_ancestors=True)
-        sample_data._check_finalised()
+        variant_data._check_finalised()
         ancestor_data._check_finalised()
 
         matcher = AncestorMatcher(
-            sample_data,
+            variant_data,
             ancestor_data,
             time_units=time_units,
             recombination_rate=recombination_rate,
@@ -601,7 +601,7 @@ def match_ancestors(
 
 def match_ancestors_batch_init(
     work_dir,
-    sample_data_path,
+    variant_data_path,
     ancestral_state,
     ancestor_data_path,
     min_work_per_job,
@@ -622,7 +622,7 @@ def match_ancestors_batch_init(
     record_provenance=True,
 ):
     """
-    match_ancestors_batch_init(work_dir, sample_data_path, ancestral_state,
+    match_ancestors_batch_init(work_dir, variant_data_path, ancestral_state,
     ancestor_data_path, min_work_per_job, \\*, max_num_partitions=None,
     sample_mask=None, site_mask=None, recombination_rate=None, mismatch_ratio=None,
     path_compression=True)
@@ -640,7 +640,7 @@ def match_ancestors_batch_init(
     ancestor matching.
 
     :param str work_dir: The directory in which to store the working files.
-    :param str sample_data_path: The input dataset in
+    :param str variant_data_path: The input dataset in
         `VCF Zarr <https://github.com/sgkit-dev/vcf-zarr-spec>`_ format.
         Path to the Zarr dataset saved on disk. See :class:`VariantData`.
     :param Union(array, str) ancestral_state: A numpy array of strings specifying
@@ -697,17 +697,17 @@ def match_ancestors_batch_init(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     ancestors = formats.AncestorData.load(ancestor_data_path)
-    sample_data = formats.VariantData(
-        sample_data_path,
+    variant_data = formats.VariantData(
+        variant_data_path,
         ancestral_state=ancestral_state,
         sample_mask=sample_mask,
         site_mask=site_mask,
     )
     ancestors._check_finalised()
-    sample_data._check_finalised()
+    variant_data._check_finalised()
 
     matcher = AncestorMatcher(
-        sample_data,
+        variant_data,
         ancestors,
     )
     ancestor_grouping = []
@@ -751,7 +751,7 @@ def match_ancestors_batch_init(
         ancestor_grouping.append(group)
 
     metadata = {
-        "sample_data_path": str(sample_data_path),
+        "variant_data_path": str(variant_data_path),
         "ancestral_state": ancestral_state,
         "ancestor_data_path": str(ancestor_data_path),
         "sample_mask": sample_mask,
@@ -775,17 +775,17 @@ def match_ancestors_batch_init(
 
 
 def initialize_ancestor_matcher(metadata, ancestors_ts=None, **kwargs):
-    sample_data = formats.VariantData(
-        metadata["sample_data_path"],
+    variant_data = formats.VariantData(
+        metadata["variant_data_path"],
         ancestral_state=metadata["ancestral_state"],
         sample_mask=metadata["sample_mask"],
         site_mask=metadata["site_mask"],
     )
     ancestors = formats.AncestorData.load(metadata["ancestor_data_path"])
-    sample_data._check_finalised()
+    variant_data._check_finalised()
     ancestors._check_finalised()
     return AncestorMatcher(
-        sample_data,
+        variant_data,
         ancestors,
         ancestors_ts=ancestors_ts,
         time_units=metadata["time_units"],
@@ -1010,7 +1010,7 @@ def match_ancestors_batch_finalise(work_dir):
 
 
 def augment_ancestors(
-    sample_data,
+    variant_data,
     ancestors_ts,
     indexes,
     *,
@@ -1028,11 +1028,11 @@ def augment_ancestors(
     record_provenance=True,
 ):
     """
-    augment_ancestors(sample_data, ancestors_ts, indexes, *, recombination_rate=None,\
+    augment_ancestors(variant_data, ancestors_ts, indexes, *, recombination_rate=None,\
         mismatch_ratio=None, path_compression=True, num_threads=0)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
-    on the specified :class:`SampleData` instance and ancestors tree sequence,
+    on the specified :class:`VariantData` instance and ancestors tree sequence,
     for the specified subset of sample indexes, returning the
     :class:`tskit.TreeSequence` instance including these samples. This
     tree sequence can then be used as an ancestors tree sequence for subsequent
@@ -1041,7 +1041,7 @@ def augment_ancestors(
     in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
     and ``path_compression``.
 
-    :param SampleData sample_data: The :class:`SampleData` instance
+    :param VariantData variant_data: The :class:`VariantData` instance
         representing the input data.
     :param tskit.TreeSequence ancestors_ts: The
         :class:`tskit.TreeSequence` instance representing the inferred
@@ -1067,10 +1067,10 @@ def augment_ancestors(
         paths for the specified sample.
     :rtype: tskit.TreeSequence
     """
-    sample_data._check_finalised()
+    variant_data._check_finalised()
     progress_monitor = _get_progress_monitor(progress_monitor, augment_ancestors=True)
     manager = SampleMatcher(
-        sample_data,
+        variant_data,
         ancestors_ts,
         recombination_rate=recombination_rate,
         mismatch_ratio=mismatch_ratio,
@@ -1083,9 +1083,9 @@ def augment_ancestors(
         engine=engine,
         progress_monitor=progress_monitor,
     )
-    sample_indexes = check_sample_indexes(sample_data, indexes)
+    sample_indexes = check_sample_indexes(variant_data, indexes)
     sample_times = np.zeros(
-        len(sample_indexes), dtype=sample_data.individuals_time.dtype
+        len(sample_indexes), dtype=variant_data.individuals_time.dtype
     )
     manager.match_samples(sample_indexes, sample_times)
     ts = manager.get_augmented_ancestors_tree_sequence(sample_indexes)
@@ -1104,7 +1104,7 @@ def augment_ancestors(
 
 @dataclasses.dataclass
 class SampleBatchWorkDescriptor:
-    sample_data_path: str
+    variant_data_path: str
     ancestral_state: str
     sample_mask: np.ndarray
     site_mask: np.ndarray
@@ -1167,7 +1167,7 @@ class SampleBatchWorkDescriptor:
 
 def load_variant_data_and_ancestors_ts(wd: SampleBatchWorkDescriptor):
     variant_data = formats.VariantData(
-        wd.sample_data_path,
+        wd.variant_data_path,
         wd.ancestral_state,
         sample_mask=wd.sample_mask,
         site_mask=wd.site_mask,
@@ -1184,7 +1184,7 @@ def load_variant_data_and_ancestors_ts(wd: SampleBatchWorkDescriptor):
 
 def match_samples_batch_init(
     work_dir,
-    sample_data_path,
+    variant_data_path,
     ancestral_state,
     ancestor_ts_path,
     min_work_per_job,
@@ -1207,7 +1207,7 @@ def match_samples_batch_init(
     record_provenance=True,
 ):
     """
-    match_samples_batch_init(work_dir, sample_data_path, ancestral_state,
+    match_samples_batch_init(work_dir, variant_data_path, ancestral_state,
     ancestor_ts_path, min_work_per_job, \\*,
     sample_mask=None, site_mask=None, recombination_rate=None, mismatch_ratio=None,
     path_compression=True, indexes=None, post_process=None, force_sample_times=False)
@@ -1221,7 +1221,7 @@ def match_samples_batch_init(
     that need to be processed.
 
     :param str work_dir: The directory in which to store the working files.
-    :param str sample_data_path: The input dataset in
+    :param str variant_data_path: The input dataset in
         `VCF Zarr <https://github.com/sgkit-dev/vcf-zarr-spec>`_ format.
         Path to the Zarr dataset saved on disk. See :class:`VariantData`.
     :param Union(array, str) ancestral_state: A numpy array of strings specifying
@@ -1287,7 +1287,7 @@ def match_samples_batch_init(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     wd = SampleBatchWorkDescriptor(
-        sample_data_path=str(sample_data_path),
+        variant_data_path=str(variant_data_path),
         ancestral_state=ancestral_state,
         sample_mask=sample_mask,
         site_mask=site_mask,
@@ -1430,7 +1430,7 @@ def match_samples_batch_finalise(work_dir):
 
 
 def match_samples(
-    sample_data,
+    variant_data,
     ancestors_ts,
     *,
     recombination_rate=None,
@@ -1453,19 +1453,19 @@ def match_samples(
     results=None,
 ):
     """
-    match_samples(sample_data, ancestors_ts, *, recombination_rate=None,\
+    match_samples(variant_data, ancestors_ts, *, recombination_rate=None,\
         mismatch_ratio=None, path_compression=True, post_process=None,\
         indexes=None, force_sample_times=False, num_threads=0)
 
     Runs the sample matching :ref:`algorithm <sec_inference_match_samples>`
-    on the specified :class:`SampleData` instance and ancestors tree sequence,
+    on the specified :class:`VariantData` instance and ancestors tree sequence,
     returning the final :class:`tskit.TreeSequence` instance containing
     the full inferred history for all samples and sites. See
     :ref:`matching ancestors & samples<sec_inference_match_ancestors_and_samples>`
     in the documentation for details of ``recombination_rate``, ``mismatch_ratio``
     and ``path_compression``.
 
-    :param SampleData sample_data: The :class:`SampleData` instance
+    :param VariantData variant_data: The :class:`VariantData` instance
         representing the input data.
     :param tskit.TreeSequence ancestors_ts: The
         :class:`tskit.TreeSequence` instance representing the inferred
@@ -1483,7 +1483,7 @@ def match_samples(
         ``recombination_rate`` is set).
     :param bool path_compression: Whether to merge edges that share identical
         paths (essentially taking advantage of shared recombination breakpoints).
-    :param array_like indexes: An array of indexes into the sample_data file of
+    :param array_like indexes: An array of indexes into the variant_data file of
         the samples to match (in increasing order) or None for all samples.
     :param bool post_process: Whether to run the :func:`post_process` method on the
         the tree sequence which, among other things, removes ancestral material that
@@ -1526,10 +1526,10 @@ def match_samples(
         overlay_non_inference_sites = overlay_non_inference_sites
 
     with provenance.TimingAndMemory() as timing:
-        sample_data._check_finalised()
+        variant_data._check_finalised()
         progress_monitor = _get_progress_monitor(progress_monitor, match_samples=True)
         manager = SampleMatcher(
-            sample_data,
+            variant_data,
             ancestors_ts,
             recombination_rate=recombination_rate,
             mismatch_ratio=mismatch_ratio,
@@ -1542,16 +1542,16 @@ def match_samples(
             engine=engine,
             progress_monitor=progress_monitor,
         )
-        sample_indexes = check_sample_indexes(sample_data, indexes)
+        sample_indexes = check_sample_indexes(variant_data, indexes)
         sample_times = np.zeros(
-            len(sample_indexes), dtype=sample_data.individuals_time.dtype
+            len(sample_indexes), dtype=variant_data.individuals_time.dtype
         )
         if force_sample_times:
-            individuals = sample_data.samples_individual[:][sample_indexes]
+            individuals = variant_data.samples_individual[:][sample_indexes]
             # By construction all samples in an sd file have an
             # individual: but check anyway
             assert np.all(individuals >= 0)
-            sample_times = sample_data.individuals_time[:][individuals]
+            sample_times = variant_data.individuals_time[:][individuals]
 
             # Here we might want to re-order sample_indexes and sample_times
             # so that any historical ones come first, any we bomb out early
@@ -1583,32 +1583,32 @@ def match_samples(
 
 
 def insert_missing_sites(
-    sample_data, tree_sequence, *, sample_id_map=None, progress_monitor=None
+    variant_data, tree_sequence, *, sample_id_map=None, progress_monitor=None
 ):
     """
     Return a new tree sequence containing extra sites that are present in a
-    :class:`SampleData` instance but are missing from a corresponding tree sequence.
+    :class:`VariantData` instance but are missing from a corresponding tree sequence.
     At each newly inserted site, mutations are overlaid parsimoneously, using
     :meth:`tskit.Tree.map_mutations`,
     such that the realised variation at that site corresponds to the allelic
-    distribution seen in the sample_data file. Sites that have mutations overlaid
+    distribution seen in the variant_data file. Sites that have mutations overlaid
     in this way can be identified in the output tree sequence as their
     :ref:`metadata<tskit.sec_metadata_definition>` will contain a key named
     ``inference`` set to ``tsinfer.INFERENCE_PARSIMONY``. Newly inserted sites
     that do not require mutations will have this set to `tsinfer.INFERENCE_NONE`
-    instead. Sites in ``sample_data`` that already exist in the tree sequence are
+    instead. Sites in ``variant_data`` that already exist in the tree sequence are
     left untouched.
 
-    By default, sample 0 in ``sample_data`` is assumed to correspond to the first
+    By default, sample 0 in ``variant_data`` is assumed to correspond to the first
     sample node in the input tree sequence (i.e. ``tree_sequence.samples()[0]``),
     sample 1 to the second sample node, and so on. If this is not the case, a map
-    can be provided, which specifies the sample ids in ``sample_data`` that
+    can be provided, which specifies the sample ids in ``variant_data`` that
     correspond to the sample nodes in the tree sequence. This also allows the use
-    of :class:`SampleData` instances that contain samples in addition to those
+    of :class:`VariantData` instances that contain samples in addition to those
     in the original tree sequence.
 
     .. note::
-        Sample states observed as missing in the input ``sample_data`` need
+        Sample states observed as missing in the input ``variant_data`` need
         not correspond to samples whose nodes are actually "missing" (i.e.
         :ref:`isolated<tskit.sec_data_model_missing_data>`) in the input tree
         sequence. In this case, the allelic state of the sample in the returned
@@ -1620,41 +1620,41 @@ def insert_missing_sites(
         is missing at that site, the site will be created with an ancestral state
         set to the empty string.
 
-    :param SampleData sample_data: The :class:`SampleData` instance
+    :param VariantData variant_data: The :class:`VariantData` instance
         containing some sites that are not in the input tree sequence.
     :param tskit.TreeSequence tree_sequence: The input :class:`tskit.TreeSequence`
-        whose sample nodes correspond to a set of samples in the sample_data.
+        whose sample nodes correspond to a set of samples in the variant_data.
     :param sample_id_map array: An array of length `tree_sequence.num_samples`
-        specifying the indexes of samples in the sample_data file that correspond
+        specifying the indexes of samples in the variant_data file that correspond
         to sample nodes ``0..(num_samples-1)`` in the tree sequence. If None,
-        assume that all the samples in sample_data correspond to the sample nodes
+        assume that all the samples in variant_data correspond to the sample nodes
         in the tree sequence, and are in the same order.
     :return: The input tree sequence with additional sites and mutations.
     :rtype: tskit.TreeSequence
 
     """
-    if sample_data.sequence_length != tree_sequence.sequence_length:
+    if variant_data.sequence_length != tree_sequence.sequence_length:
         raise ValueError(
-            "sample_data and tree_sequence must have the same sequence length"
+            "variant_data and tree_sequence must have the same sequence length"
         )
     if sample_id_map is None:
-        sample_id_map = np.arange(sample_data.num_samples)
+        sample_id_map = np.arange(variant_data.num_samples)
     if len(sample_id_map) != tree_sequence.num_samples:
         raise ValueError(
-            "You must specify the same number of samples in sample_data "
+            "You must specify the same number of samples in variant_data "
             "as in the tree_sequence"
         )
     progress_monitor = _get_progress_monitor(progress_monitor)
     tables = tree_sequence.dump_tables()
     trees = tree_sequence.trees()
     tree = next(trees)
-    positions = sample_data.sites_position[:]
+    positions = variant_data.sites_position[:]
     new_sd_sites = np.where(np.isin(positions, tables.sites.position) == 0)[0]
     schema = tables.sites.metadata_schema.schema
 
     # Create new sites and add the mutations
     progress = progress_monitor.get("ms_extra_sites", len(new_sd_sites))
-    for variant in sample_data.variants(sites=new_sd_sites, recode_ancestral=True):
+    for variant in variant_data.variants(sites=new_sd_sites, recode_ancestral=True):
         site = variant.site
         pos = site.position
         anc_state = site.ancestral_state
@@ -1711,7 +1711,7 @@ class AncestorsGenerator:
 
     def __init__(
         self,
-        sample_data,
+        variant_data,
         ancestor_data_path,
         ancestor_data_kwargs,
         num_threads=0,
@@ -1720,16 +1720,16 @@ class AncestorsGenerator:
         mmap_temp_dir=None,
         progress_monitor=None,
     ):
-        self.sample_data = sample_data
+        self.variant_data = variant_data
         self.ancestor_data_path = ancestor_data_path
         self.ancestor_data_kwargs = ancestor_data_kwargs
         self.progress_monitor = _get_progress_monitor(
             progress_monitor, generate_ancestors=True
         )
-        self.max_sites = sample_data.num_sites
+        self.max_sites = variant_data.num_sites
         self.num_sites = 0
         self.inference_site_ids = []
-        self.num_samples = sample_data.num_samples
+        self.num_samples = variant_data.num_samples
         self.num_threads = num_threads
         self.mmap_temp_file = None
         mmap_fd = -1
@@ -1790,7 +1790,7 @@ class AncestorsGenerator:
         logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
-        for variant in self.sample_data.variants(recode_ancestral=True):
+        for variant in self.variant_data.variants(recode_ancestral=True):
             # If there's missing data the last allele is None
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
 
@@ -1925,8 +1925,8 @@ class AncestorsGenerator:
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         self.ancestor_data = formats.AncestorData(
-            self.sample_data.sites_position[:][self.inference_site_ids],
-            self.sample_data.sequence_length,
+            self.variant_data.sites_position[:][self.inference_site_ids],
+            self.variant_data.sequence_length,
             path=self.ancestor_data_path,
             **self.ancestor_data_kwargs,
         )
@@ -1996,7 +1996,7 @@ class Matcher:
 
     def __init__(
         self,
-        sample_data,
+        variant_data,
         inference_site_position,
         num_threads=1,
         path_compression=True,
@@ -2010,10 +2010,10 @@ class Matcher:
         progress_monitor=None,
         allow_multiallele=False,
     ):
-        self.sample_data = sample_data
+        self.variant_data = variant_data
         self.num_threads = num_threads
         self.path_compression = path_compression
-        self.num_samples = self.sample_data.num_samples
+        self.num_samples = self.variant_data.num_samples
         self.num_sites = len(inference_site_position)
         if self.num_sites == 0:
             logger.warning("No sites used for inference")
@@ -2022,9 +2022,9 @@ class Matcher:
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
 
-        all_sites = self.sample_data.sites_position[:]
+        all_sites = self.variant_data.sites_position[:]
         index = np.searchsorted(all_sites, inference_site_position)
-        num_alleles = sample_data.num_alleles()[index]
+        num_alleles = variant_data.num_alleles()[index]
         self.num_alleles = num_alleles
         if not np.all(all_sites[index] == inference_site_position):
             raise ValueError(
@@ -2036,7 +2036,7 @@ class Matcher:
         # Map of site index to tree sequence position. Bracketing
         # values of 0 and L are used for simplicity.
         self.position_map = np.hstack(
-            [inference_site_position, [sample_data.sequence_length]]
+            [inference_site_position, [variant_data.sequence_length]]
         )
         self.position_map[0] = 0
         self.recombination = np.zeros(self.num_sites)  # TODO: reduce len by 1
@@ -2243,7 +2243,7 @@ class Matcher:
             "ms_full_mutations", len(self.inference_site_id)
         )
         schema = tables.sites.metadata_schema.schema
-        for site in self.sample_data.sites(self.inference_site_id):
+        for site in self.variant_data.sites(self.inference_site_id):
             metadata = _update_site_metadata(site.metadata, constants.INFERENCE_FULL)
             if schema is None:
                 metadata = _encode_raw_metadata(metadata)
@@ -2264,7 +2264,7 @@ class Matcher:
 
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
-        if self.sample_data.sequence_length != tables.sequence_length:
+        if self.variant_data.sequence_length != tables.sequence_length:
             raise ValueError(
                 "Ancestors tree sequence not compatible: sequence length is different to"
                 " sample data file."
@@ -2301,7 +2301,7 @@ class Matcher:
         mutation_site = mutations.site
         site_id = 0
         mutation_id = 0
-        for site in self.sample_data.sites(self.inference_site_id):
+        for site in self.variant_data.sites(self.inference_site_id):
             while (
                 mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
             ):
@@ -2325,9 +2325,9 @@ class Matcher:
 
 class AncestorMatcher(Matcher):
     def __init__(
-        self, sample_data, ancestor_data, ancestors_ts=None, time_units=None, **kwargs
+        self, variant_data, ancestor_data, ancestors_ts=None, time_units=None, **kwargs
     ):
-        super().__init__(sample_data, ancestor_data.sites_position[:], **kwargs)
+        super().__init__(variant_data, ancestor_data.sites_position[:], **kwargs)
         self.ancestor_data = ancestor_data
         if time_units is None:
             time_units = tskit.TIME_UNITS_UNCALIBRATED
@@ -2590,9 +2590,9 @@ class AncestorMatcher(Matcher):
 
 
 class SampleMatcher(Matcher):
-    def __init__(self, sample_data, ancestors_ts, **kwargs):
+    def __init__(self, variant_data, ancestors_ts, **kwargs):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
-        super().__init__(sample_data, self.ancestors_ts_tables.sites.position, **kwargs)
+        super().__init__(variant_data, self.ancestors_ts_tables.sites.position, **kwargs)
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
         # node ID in the tree sequence.
@@ -2621,7 +2621,7 @@ class SampleMatcher(Matcher):
             )
             return result
 
-        sample_haplotypes = self.sample_data.haplotypes(
+        sample_haplotypes = self.variant_data.haplotypes(
             sample_indexes,
             sites=self.inference_site_id,
             recode_ancestral=True,
@@ -2710,34 +2710,34 @@ class SampleMatcher(Matcher):
         tsb = self.tree_sequence_builder
         tables = self.ancestors_ts_tables.copy()
 
-        schema = self.sample_data.metadata_schema
+        schema = self.variant_data.metadata_schema
         tables.metadata_schema = tskit.MetadataSchema(schema)
-        tables.metadata = self.sample_data.metadata
+        tables.metadata = self.variant_data.metadata
 
-        schema = self.sample_data.populations_metadata_schema
+        schema = self.variant_data.populations_metadata_schema
         if schema is not None:
             tables.populations.metadata_schema = tskit.MetadataSchema(schema)
-        for metadata in self.sample_data.populations_metadata[:]:
+        for metadata in self.variant_data.populations_metadata[:]:
             if schema is None:
                 # Use the default json encoding to avoid breaking old code.
                 tables.populations.add_row(_encode_raw_metadata(metadata))
             else:
                 tables.populations.add_row(metadata)
 
-        schema = self.sample_data.individuals_metadata_schema
+        schema = self.variant_data.individuals_metadata_schema
         if schema is not None:
             schema = add_to_schema(
                 schema,
-                "sample_data_time",
-                definition=sample_data_time_metadata_definition,
+                "variant_data_time",
+                definition=variant_data_time_metadata_definition,
             )
             tables.individuals.metadata_schema = tskit.MetadataSchema(schema)
 
         num_ancestral_individuals = len(tables.individuals)
-        for ind in self.sample_data.individuals():
+        for ind in self.variant_data.individuals():
             metadata = ind.metadata
             if ind.time != 0:
-                metadata["sample_data_time"] = ind.time
+                metadata["variant_data_time"] = ind.time
             if schema is None:
                 metadata = _encode_raw_metadata(ind.metadata)
             tables.individuals.add_row(
@@ -2759,9 +2759,9 @@ class SampleMatcher(Matcher):
         tables.nodes.flags = new_flags.astype(np.uint32)
         sample_ids = list(self.sample_id_map.values())
         assert len(tables.nodes) == sample_ids[0]
-        individuals_population = self.sample_data.individuals_population[:]
-        samples_individual = self.sample_data.samples_individual[:]
-        individuals_time = self.sample_data.individuals_time[:]
+        individuals_population = self.variant_data.individuals_population[:]
+        samples_individual = self.variant_data.samples_individual[:]
+        individuals_time = self.variant_data.individuals_time[:]
         for index, sample_id in self.sample_id_map.items():
             individual = samples_individual[index]
             if individuals_time[individual] != 0:
@@ -2806,7 +2806,7 @@ class SampleMatcher(Matcher):
         tables.mutations.clear()
         tables.sort()
 
-        schema = self.sample_data.sites_metadata_schema
+        schema = self.variant_data.sites_metadata_schema
         if schema is not None:
             schema = add_to_schema(
                 schema,
@@ -2833,12 +2833,12 @@ class SampleMatcher(Matcher):
         )
 
         ts = tables.tree_sequence()
-        num_additional_sites = self.sample_data.num_sites - self.num_sites
+        num_additional_sites = self.variant_data.num_sites - self.num_sites
         if overlay_non_inference_sites and num_additional_sites > 0:
             logger.info("Mapping additional sites")
             assert np.array_equal(ts.samples(), list(self.sample_id_map.values()))
             ts = insert_missing_sites(
-                self.sample_data,
+                self.variant_data,
                 ts,
                 sample_id_map=np.array(list(self.sample_id_map.keys())),
                 progress_monitor=self.progress_monitor,
@@ -2858,7 +2858,7 @@ class SampleMatcher(Matcher):
         dict_schema = tables.nodes.metadata_schema.schema
         assert dict_schema is not None
         dict_schema = add_to_schema(
-            dict_schema, "sample_data_id", node_sample_data_id_metadata_definition
+            dict_schema, "variant_data_id", node_variant_data_id_metadata_definition
         )
         tables.nodes.metadata_schema = tskit.MetadataSchema(dict_schema)
 
@@ -2871,7 +2871,7 @@ class SampleMatcher(Matcher):
                 tables.nodes.add_row(
                     flags=constants.NODE_IS_SAMPLE_ANCESTOR,
                     time=times[j],
-                    metadata={"sample_data_id": int(sample_indexes[s])},
+                    metadata={"variant_data_id": int(sample_indexes[s])},
                 )
                 s += 1
             else:
