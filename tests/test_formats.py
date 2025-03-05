@@ -103,6 +103,14 @@ class TestSampleData(DataContainerMixin):
 
     class_to_test = formats.SampleData
 
+    def test_deprecation_warning(self):
+        with pytest.warns(
+            DeprecationWarning,
+            match="SampleData is deprecated and will be removed"
+            "in a future version. Use VariantData instead",
+        ):
+            tsinfer.SampleData()
+
     def verify_data_round_trip(self, ts, input_file):
         def encode_metadata(metadata, schema):
             if schema is None:

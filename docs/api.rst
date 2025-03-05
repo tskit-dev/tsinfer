@@ -13,7 +13,7 @@ File formats
 .. autofunction:: tsinfer.load
 
 +++++++++++
-Sample data
+Variant data
 +++++++++++
 
 .. autoclass:: tsinfer.VariantData
@@ -21,16 +21,6 @@ Sample data
     :inherited-members:
 
 .. autofunction:: tsinfer.add_ancestral_state_array
-
-.. autoclass:: tsinfer.SampleData
-    :members:
-    :inherited-members:
-
-.. todo::
-
-    1. Add documentation for the data attributes in read-mode.
-    2. Define copy mode.
-    3. Provide example of updating inference_sites
 
 +++++++++++++
 Ancestor data

@@ -908,6 +908,10 @@ class SampleData(DataContainer):
     SampleData(sequence_length=0, *, path=None, num_flush_threads=0, \
     compressor=DEFAULT_COMPRESSOR, chunk_size=1024, max_file_size=None)
 
+    .. deprecated:: 0.4.0
+       This class is deprecated and will be removed in a future version.
+       Please use :class:`VariantData` instead.
+
     Class representing input sample data used for inference.
     See sample data file format :ref:`specifications <sec_file_formats_samples>`
     for details on the structure of this file.
@@ -1011,6 +1015,14 @@ class SampleData(DataContainer):
     def __init__(self, sequence_length=0, **kwargs):
 
         super().__init__(**kwargs)
+
+        warnings.warn(
+            "SampleData is deprecated and will be removed in a future version. "
+            "Use VariantData instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["metadata"] = {}
         self.data.attrs[
