@@ -1017,10 +1017,9 @@ class SampleData(DataContainer):
         super().__init__(**kwargs)
 
         warnings.warn(
-            "SampleData is deprecated and will be removed in a future version. "
-            "Use VariantData instead.",
+            "SampleData is deprecated",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=2
         )
 
         self.data.attrs["sequence_length"] = float(sequence_length)
@@ -1395,12 +1394,12 @@ class SampleData(DataContainer):
         specified input file are equal. This compares every attribute except
         the provenance.
 
-        To compare two :class:`SampleData` instances for exact equality of
+        To compare two `SampleData` instances for exact equality of
         all data including provenance data, use ``s1 == s2``.
 
-        :param SampleData other: The other :class:`SampleData` instance to
+        :param SampleData other: The other `SampleData` instance to
             compare with.
-        :return: ``True`` if the data held in this :class:`SampleData`
+        :return: ``True`` if the data held in this `SampleData`
             instance is identical to the date held in the other instance.
         :rtype: bool
         """
@@ -1448,9 +1447,9 @@ class SampleData(DataContainer):
         :param float sequence_length: The sequence length to use for the
             returned object. If None, use the same sequence length as in the
             original sample data file.
-        :param \\**kwargs: Further arguments passed to the :class:`SampleData`
+        :param \\**kwargs: Further arguments passed to the `SampleData`
             constructor.
-        :return: A :class:`.SampleData` object.
+        :return: A `SampleData` object.
         :rtype: SampleData
         """
         if individuals is None:
@@ -1578,9 +1577,9 @@ class SampleData(DataContainer):
             those nodes in the sample data file. This is likely only to be meaningful if
             ``use_sites_time`` is also ``True``. If ``False``, all individuals are set
             to time 0. Defaults to ``False``.
-        :param \\**kwargs: Further arguments passed to the :class:`SampleData`
+        :param \\**kwargs: Further arguments passed to the `SampleData`
             constructor.
-        :return: A :class:`.SampleData` object.
+        :return: A `SampleData` object.
         :rtype: SampleData
         """
 
@@ -1710,7 +1709,7 @@ class SampleData(DataContainer):
     def add_population(self, metadata=None):
         """
         Adds a new :ref:`sec_inference_data_model_population` to this
-        :class:`.SampleData` and returns its ID.
+        `SampleData` and returns its ID.
 
         All calls to this method must be made **before** individuals or sites
         are defined.
@@ -1736,7 +1735,7 @@ class SampleData(DataContainer):
     ):
         """
         Adds a new :ref:`sec_inference_data_model_individual` to this
-        :class:`.SampleData` and returns its ID and those of the resulting additional
+        `SampleData` and returns its ID and those of the resulting additional
         samples. Adding an individual with ploidy ``k`` results in ``k`` new samples
         being added, and each of these samples will be associated with the
         new individual. Each new sample will also be associated with the specified
@@ -1814,7 +1813,7 @@ class SampleData(DataContainer):
         ancestral_allele=None,
     ):
         """
-        Adds a new site to this :class:`.SampleData` and returns its ID.
+        Adds a new site to this `SampleData` and returns its ID.
 
         At a minimum, the new site must specify the ``position`` and
         ``genotypes``. Sites must be added in increasing order of position;
@@ -1840,7 +1839,7 @@ class SampleData(DataContainer):
         array.
 
         :param float position: The floating point position of this site. Must be
-            less than the ``sequence_length`` if provided to the :class:`.SampleData`
+            less than the ``sequence_length`` if provided to the `SampleData`
             constructor. Must be greater than all previously added sites.
         :param arraylike genotypes: An array-like object defining the sample
             genotypes at this site. The array of genotypes corresponds to the
@@ -2049,11 +2048,11 @@ class SampleData(DataContainer):
         4. We add the provenances for this dataset, followed by the provenances
            for the other dataset.
 
-        :param SampleData other: The other :class:`SampleData` instance to
+        :param SampleData other: The other `SampleData` instance to
             to merge.
         :return: A new SampleData instance which contains the merged data
             from the two datasets.
-        :rtype: :class:`SampleData`
+        :rtype: `SampleData`
         """
         self._check_finalised()
         other._check_finalised()
@@ -2994,7 +2993,7 @@ class AncestorData(DataContainer):
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
     of this file.
 
-    See the documentation for :class:`SampleData` for a discussion of the
+    See the documentation for `SampleData` for a discussion of the
     ``max_file_size`` parameter.
 
     :param arraylike position: Integer array of the site positions of the ancestors.
@@ -3290,7 +3289,7 @@ class AncestorData(DataContainer):
             these proxy sample ancestor nodes may have a different genotype from
             their corresponding sample.
 
-        :param SampleData sample_data: The :class:`.SampleData` instance
+        :param SampleData sample_data: The `SampleData` instance
             from which to select the samples used to create extra ancestors.
         :param list(int) sample_ids: A list of sample ids in the ``sample_data``
             instance that will be selected to create the extra ancestors. If
@@ -3715,15 +3714,14 @@ class AncestorData(DataContainer):
 
 def load(path):
     """
-    Loads a tsinfer :class:`.SampleData` or :class:`.AncestorData` file from
-    the specified path. The correct class will be determined by the content
-    of the file. If the file is format not recognised a
+    Loads a tsinfer :class:`.AncestorData` file from
+    the specified path. If the file is format not recognised a
     :class:`.FileFormatError` will be thrown.
 
     :param str path: The path of the file we wish to load.
-    :return: The corresponding :class:`.SampleData` or :class:`.AncestorData`
+    :return: The corresponding :class:`.AncestorData`
         instance opened in read only mode.
-    :rtype: :class:`.AncestorData` or :class:`.SampleData`.
+    :rtype: :class:`.AncestorData`.
     :raises: :class:`.FileFormatError` if the file cannot be read.
     """
     # TODO This is pretty inelegant, but it works. Really we should call the

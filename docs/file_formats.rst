@@ -11,16 +11,6 @@ how to construct and manipulate these files using Python. The
 :ref:`tsinfer list <sec_cli>` command provides a way to print out a
 summary of these files.
 
-.. _sec_file_formats_samples:
-
-************
-Samples File
-************
-
-The samples file is ``tsinfer's`` input format. Data must be converted into
-this format before it can be processed using the :class:`.SampleData` class.
-
-.. todo:: Document the structure of the samples file.
 
 .. _sec_file_formats_ancestors:
 
