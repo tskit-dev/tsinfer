@@ -2,7 +2,7 @@
 # Need to set PYTHONPATH so that we pick up the local tsinfer
 PYPATH=$(shell pwd)/../
 TSINF_VERSION:=$(shell PYTHONPATH=${PYPATH} \
-   python3 -c 'import tsinfer; print(tsinfer.__version__.split("+")[0])')
+   python -c 'import tsinfer; print(tsinfer.__version__.split("+")[0])')
 
 BUILDDIR      = _build
 
