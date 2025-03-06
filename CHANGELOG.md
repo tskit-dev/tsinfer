@@ -1,24 +1,47 @@
 # Changelog
+## [0.4.0] - 2024-04-06
 
-## [0.4.0a3] - ****-**-**
-
-**Features**
-
-- Document that the `zarr-vcf` dataset can be either a path or an in-memory zarr group.
-  (feature introduced in {pr}`966`, documented in {pr}`974`, {user}`hyanwong`)
+Changelog is relative to the last full release, 0.3.3.
 
 **Breaking Changes**
+- tsinfer 0.4.0 infers data from on-disk or in-memory `vcf-zarr` datasets, allowing users to leverage optimized
+  and parallel VCF parsing via the `bio2zarr` package. The `SampleData` file format and class are now deprecated.
 
 - If a mismatch ratio is provided to the `infer` command, it only applies during the
   `match_samples` phase ({issue}`980`, {pr}`981`, {user}`hyanwong`)
 
-- Get the `sequence_length` of the contig associated with the unmasked sites,
-  if contig lengths are provided ({pr}`964`, {user}`hyanwong`, {user}`benjeffery`)
+**Features**
+
+- Add batch ancestor and sample matching APIs for splitting work across many independent jobs.
+  ({pr}`954`, {pr}`917`, {user}`benjeffery`)
+
+**Performance improvements**
+
+- Reduce memory usage when running `match_samples` against large cohorts
+  containing sequences with substantial amounts of error.
+  ({pr}`761`, {user}`jeromekelleher`)
+
+- `truncate_ancestors` no longer requires loading all the ancestors into RAM.
+  ({pr}`811`, {user}`benjeffery`)
+
+- Increase parallelisation of `match_ancestors` by generating parallel groups from
+  their implied dependency graph. ({pr}`828`, {issue}`147`,  {user}`benjeffery`)
+
+- Reduce memory requirements of the `generate_ancestors` function by providing
+  the `genotype_encoding` ({pr}`809`) and `mmap_temp_dir` ({pr}`808`) options
+  ({user}`jeromekelleher`).
+
+**Breaking Changes**
+
+- Removed the `uuid` field from SampleData; equality is now purely based on data
+- If a mismatch ratio is provided to the `infer` command, it only applies during the `match_samples` phase
+- A permissive JSON schema is now set on node table metadata
 
 **Fixes**
 
 - Properly account for "N" as an unknown ancestral state, and ban "" from being
   set as an ancestral state ({pr}`963`, {user}`hyanwong`)
+
 
 ## [0.4.0a2] - 2024-09-06
 
