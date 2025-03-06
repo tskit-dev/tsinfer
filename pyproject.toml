@@ -81,6 +81,5 @@ include-package-data = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
-    'ignore:SampleData',
-    'ignore:data_array.to_zarr'
+    'ignore:SampleData'
 ]

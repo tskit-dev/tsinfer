@@ -68,10 +68,9 @@ for more detailed information.
 In `tsinfer` an individual defines one of the subjects for which we have
 genotype data. Individuals may have arbitrary ploidy levels (i.e. haploid,
 diploid, tetraploid, etc.). Different individuals within a dataset can have
-different ploidy levels. You can add an individual, and specify arbitrary
-{ref}`sec_inference_data_model_metadata` for it, using the
-{meth}`.SampleData.add_individual` method; if you do not do so `tsinfer`
-will create a default set of haploid individuals, one for each sampled genome.
+different ploidy levels. Note that this is equivalent to a "sample" in the
+VCF Zarr input, whereas in tsinfer a "sample" is a single sequence within an
+individual.
 
 The tree sequence that you infer from your data will contain sample nodes
 (i.e. genomes) that are linked to these individuals: the `tskit`
@@ -89,12 +88,6 @@ maternal and paternal chromosome copies. More generally, a ``node`` refers
 to a maternal or paternal chromosome that is either a sample, or an
 ancestor of our samples.
 
-When we add an individual with ploidy `k` using
-{meth}`.SampleData.add_individual`, `k` new samples are also added
-which refer to this new individual. When adding genotype information using the
-{meth}`.SampleData.add_site` method, the user must ensure that the observed
-genotypes are in this same order.
-
 
 (sec_inference_data_model_population)=
 
@@ -103,8 +96,9 @@ genotypes are in this same order.
 A population is some grouping of individuals. Populations principally
 exist to allow us define metadata for groups of individuals (although
 technically, population IDs are associated with samples).
-Populations are added using the {meth}`.SampleData.add_population`
-method.
+Populations are specified by an `individuals_population` array in the
+VCF zarr input, which is an index for each individual to the population
+into an accompanying `populations_metadata` array.
 
 
 (sec_inference_data_model_metadata)=
@@ -121,7 +115,7 @@ with other individuals.
 In `tsinfer`, metadata can be stored by providing a JSON encodable
 mapping. This information is then stored as JSON, and embedded in the
 final tree sequence object and can be recovered using the `tskit`
-APIs.
+APIs. Metadata arrays are read from the VCF zarr input.
 
 
 (sec_inference_import_samples)=
@@ -130,27 +124,12 @@ APIs.
 
 In `tsinfer` we make several passes through the input sample haplotypes
 in order to construct ancestors and to find copying paths for samples. To
-do this efficiently we store the data using the
-[zarr library](http://zarr.readthedocs.io), which provides very fast access to
-large arrays of numerical data compressed using cutting-edge
-[compression methods](http://numcodecs.readthedocs.io). As a result, we
-can store the input sample haplotypes and related metadata in a
-fraction of the size of a compressed VCF and can process it efficiently  (although
-still not as efficently as it is possible to analyse an equivalent tree sequence)
+do this efficiently we use [VCF Zarr](https://github.com/sgkit-dev/vcf-zarr-spec)
+as input. This provides very fast access to genotype data, compressed using cutting-edge
+[compression methods](http://numcodecs.readthedocs.io). The input sample haplotypes and related metadata are a fraction of the size of a compressed VCF and can be processed efficiently.
 
-Rather than require the user to understand the internal structure of this
-file format, we provide a simple {ref}`Python API <sec_api_file_formats>`
-to allow the user to efficiently construct it from their own data.
-An example of how to use this API is given in the {ref}`sec_usage` documentation.
-
-We do not provide an automatic means of importing data from VCF (or any
-other format) intentionally, as we believe that this would be extremely difficult to do.
-As there is no universally accepted way of encoding ancestral state
-information in VCF, in practise the user would most often have to write
-a new VCF file with ancestral state and metadata information in a specific
-form that we would require. Thus, it is more efficient to skip this intermediate
-step and to directly produce a {ref}`format <sec_file_formats_samples>`
-that is both compact and very efficient to process.
+VCF can be converted to VCF Zarr by the (bio2zarr)[https://sgkit-dev.github.io/bio2zarr]
+package. See {ref}`sec_usage` for examples.
 
 
 (sec_inference_generate_ancestors)=

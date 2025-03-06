@@ -858,7 +858,7 @@ class Individual:
     *samples* (i.e. phased genomes). For instance, a diploid individual will have
     two sample genomes. This is deliberately similar to a :class:`tskit.Individual`.
 
-    Individuals are created with :meth:`SampleData.add_individual`. If a tree sequence
+    Individuals are created with `SampleData.add_individual`. If a tree sequence
     is inferred from a sample data file containing individuals, these individuals (and
     the data associated with them) will carry through to the inferred tree sequence.
     """
@@ -913,7 +913,6 @@ class SampleData(DataContainer):
        Please use :class:`VariantData` instead.
 
     Class representing input sample data used for inference.
-    See sample data file format :ref:`specifications <sec_file_formats_samples>`
     for details on the structure of this file.
 
     The most common usage for this class will be to import data from some
@@ -1016,11 +1015,7 @@ class SampleData(DataContainer):
 
         super().__init__(**kwargs)
 
-        warnings.warn(
-            "SampleData is deprecated",
-            DeprecationWarning,
-            stacklevel=2
-        )
+        warnings.warn("SampleData is deprecated", DeprecationWarning, stacklevel=2)
 
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["metadata"] = {}
@@ -1450,7 +1445,7 @@ class SampleData(DataContainer):
         :param \\**kwargs: Further arguments passed to the `SampleData`
             constructor.
         :return: A `SampleData` object.
-        :rtype: SampleData
+        :rtype: `SampleData`
         """
         if individuals is None:
             individuals = np.arange(self.num_individuals)
@@ -1580,7 +1575,7 @@ class SampleData(DataContainer):
         :param \\**kwargs: Further arguments passed to the `SampleData`
             constructor.
         :return: A `SampleData` object.
-        :rtype: SampleData
+        :rtype: `SampleData`
         """
 
         def encode_metadata(metadata, schema):
@@ -2993,8 +2988,16 @@ class AncestorData(DataContainer):
     :ref:`specifications <sec_file_formats_ancestors>` for details on the structure
     of this file.
 
-    See the documentation for `SampleData` for a discussion of the
-    ``max_file_size`` parameter.
+    .. note:: If a ``path`` is specified, the ``max_file_size`` option puts an
+        upper limit on the possible size of the created file. On non-Windows
+        systems, space for this file is not immediately allocated but just
+        "reserved" using sparse file systems. However, on Windows systems
+        the file is allocated immediately, so ``max_file_size`` takes a smaller
+        default value, to avoid allocating very large files for no reason.
+        Users who wish to run large inferences on Windows may therefore need to
+        explictly set an appropriate ``max_file_size``. Note that the
+        ``max_file_size`` is only used while the file is being built: one the
+        file has been finalised, it is shrunk to its minimum size.
 
     :param arraylike position: Integer array of the site positions of the ancestors.
         All values should be >0 and the array should be monotonically increasing.
@@ -3253,16 +3256,15 @@ class AncestorData(DataContainer):
 
     def insert_proxy_samples(
         self,
-        sample_data,
+        variant_data,
         *,
         sample_ids=None,
         epsilon=None,
         allow_mutation=False,
-        require_same_sample_data=True,
         **kwargs,
     ):
         """
-        Take a set of samples from a ``sample_data`` instance and create additional
+        Take a set of samples from a {class}`VariantData` instance and create additional
         "proxy sample ancestors" from them, returning a new :class:`.AncestorData`
         instance including both the current ancestors and the additional ancestors
         at the appropriate time points.
@@ -3289,9 +3291,9 @@ class AncestorData(DataContainer):
             these proxy sample ancestor nodes may have a different genotype from
             their corresponding sample.
 
-        :param SampleData sample_data: The `SampleData` instance
+        :param VariantData variant_data: The `VariantData` instance
             from which to select the samples used to create extra ancestors.
-        :param list(int) sample_ids: A list of sample ids in the ``sample_data``
+        :param list(int) sample_ids: A list of sample ids in the ``variant_data``
             instance that will be selected to create the extra ancestors. If
             ``None`` (default) select all the historical samples, i.e. those
             associated with an :ref:`sec_inference_data_model_individual` whose
@@ -3315,7 +3317,6 @@ class AncestorData(DataContainer):
             (i.e. breaking the infinite sites assumption), allowing them to possess
             derived alleles at sites where there are no pre-existing mutations in
             older ancestors.
-        :param bool require_same_sample_data: **Deprecated** Has no effect.
         :param \\**kwargs: Further arguments passed to the constructor when creating
             the new :class:`AncestorData` instance which will be returned.
 
@@ -3323,16 +3324,16 @@ class AncestorData(DataContainer):
         :rtype: AncestorData
         """
         self._check_finalised()
-        sample_data._check_finalised()
-        if self.sequence_length != sample_data.sequence_length:
-            raise ValueError("sample_data does not have the correct sequence length")
-        used_sites = np.isin(sample_data.sites_position[:], self.sites_position[:])
+        variant_data._check_finalised()
+        if self.sequence_length != variant_data.sequence_length:
+            raise ValueError("variant_data does not have the correct sequence length")
+        used_sites = np.isin(variant_data.sites_position[:], self.sites_position[:])
         if np.sum(used_sites) != self.num_sites:
-            raise ValueError("Genome positions in ancestors missing from sample_data")
+            raise ValueError("Genome positions in ancestors missing from variant_data")
 
         if sample_ids is None:
             sample_ids = []
-            for i in sample_data.individuals():
+            for i in variant_data.individuals():
                 if i.time > 0:
                     sample_ids += i.samples
         # sort by ID and make unique for quick haplotype access
@@ -3340,9 +3341,9 @@ class AncestorData(DataContainer):
 
         sample_times = np.zeros(len(sample_ids), dtype=self.ancestors_time.dtype)
         for i, s in enumerate(sample_ids):
-            sample = sample_data.sample(s)
+            sample = variant_data.sample(s)
             if sample.individual != tskit.NULL:
-                sample_times[i] = sample_data.individual(sample.individual).time
+                sample_times[i] = variant_data.individual(sample.individual).time
 
         if epsilon is not None:
             epsilons = np.atleast_1d(epsilon)
@@ -3376,12 +3377,12 @@ class AncestorData(DataContainer):
         # inefficient to access the haplotypes out of order, so we iterate and cache
         # (caution: the haplotypes list may be quite large in this case)
         haplotypes = [
-            h[1] for h in sample_data.haplotypes(samples=sample_ids, sites=used_sites)
+            h[1] for h in variant_data.haplotypes(samples=sample_ids, sites=used_sites)
         ]
 
         with AncestorData(
-            sample_data.sites_position[:][used_sites],
-            sample_data.sequence_length,
+            variant_data.sites_position[:][used_sites],
+            variant_data.sequence_length,
             **kwargs,
         ) as other:
             mutated_sites = set()  # To check if mutations have ocurred yet
