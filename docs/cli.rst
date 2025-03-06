@@ -25,7 +25,7 @@ form is useful when multiple versions of Python are installed or if the
 The :command:`tsinfer` program has five subcommands: :command:`list` prints a
 summary of the data held in one of tsinfer's :ref:`file formats <sec_file_formats>`;
 :command:`infer` runs the complete :ref:`inference process <sec_inference>` for a given
-input :ref:`samples file <sec_file_formats_samples>`; and
+input VCF Zarr dataset; and
 :command:`generate-ancestors`, :command:`match-ancestors` and
 :command:`match-samples` run the three parts of this inference
 process as separate steps. Running the inference as separate steps like this

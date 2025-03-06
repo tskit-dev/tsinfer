@@ -2592,7 +2592,9 @@ class AncestorMatcher(Matcher):
 class SampleMatcher(Matcher):
     def __init__(self, variant_data, ancestors_ts, **kwargs):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
-        super().__init__(variant_data, self.ancestors_ts_tables.sites.position, **kwargs)
+        super().__init__(
+            variant_data, self.ancestors_ts_tables.sites.position, **kwargs
+        )
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
         # node ID in the tree sequence.

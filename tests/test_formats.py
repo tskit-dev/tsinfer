@@ -2243,10 +2243,10 @@ class TestAncestorData(DataContainerMixin):
         self.verify_data_round_trip(sample_data, ancestors, ancestor_haps)
         sample_data = sample_data.copy()
         with pytest.raises(ValueError, match="not finalised"):
-            ancestors.insert_proxy_samples(sample_data, require_same_sample_data=False)
+            ancestors.insert_proxy_samples(sample_data)
         # Check it does work when finalised
         sample_data.finalise()
-        ancestors.insert_proxy_samples(sample_data, require_same_sample_data=False)
+        ancestors.insert_proxy_samples(sample_data)
 
     def test_insert_proxy_bad_sample_data(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
@@ -2254,11 +2254,11 @@ class TestAncestorData(DataContainerMixin):
         sd_copy, _ = self.get_example_data(10, 10, num_ancestors=40)
         ancestors.insert_proxy_samples(sd_copy)
         # Deprecated flag should change nothing
-        ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+        ancestors.insert_proxy_samples(sd_copy)
         # Unless seq lengths differ
         sd_copy, _ = self.get_example_data(10, sequence_length=11, num_ancestors=40)
         with pytest.raises(ValueError, match="sequence length"):
-            ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+            ancestors.insert_proxy_samples(sd_copy)
 
     def test_insert_proxy_site_changes(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
@@ -2266,11 +2266,11 @@ class TestAncestorData(DataContainerMixin):
         nonsingletons = np.where(np.sum(sample_data.sites_genotypes, axis=1) > 1)[0]
         sd_copy = sample_data.subset(sites=nonsingletons)
         # Should be able to use a sd subset if only non-inference sites are missing
-        ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+        ancestors.insert_proxy_samples(sd_copy)
         # But if we remove a *full inference* site, we should always fail
         sd_copy = sample_data.subset(sites=nonsingletons[1:])
         with pytest.raises(ValueError, match="positions.*missing"):
-            ancestors.insert_proxy_samples(sd_copy, require_same_sample_data=False)
+            ancestors.insert_proxy_samples(sd_copy)
 
     def test_insert_proxy_bad_samples(self):
         sample_data, _ = self.get_example_data(10, 10, 40)

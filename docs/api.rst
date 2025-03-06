@@ -6,19 +6,13 @@ API Documentation
 
 .. _sec_api_file_formats:
 
-************
-File formats
-************
 
-.. autofunction:: tsinfer.load
-
-+++++++++++
+++++++++++++
 Variant data
-+++++++++++
+++++++++++++
 
 .. autoclass:: tsinfer.VariantData
-    :members:
-    :inherited-members:
+
 
 .. autofunction:: tsinfer.add_ancestral_state_array
 
@@ -26,8 +20,9 @@ Variant data
 Ancestor data
 +++++++++++++
 
+.. autofunction:: tsinfer.load
+
 .. autoclass:: tsinfer.AncestorData
-    :members:
     :inherited-members:
 
 .. todo::
