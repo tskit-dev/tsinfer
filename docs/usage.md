@@ -210,7 +210,12 @@ mut_labels = {
 node_labels = {u: u for u in inferred_ts.samples()}
 
 inferred_ts.draw_svg(
-    size=(500, 200), node_labels=node_labels, mutation_labels=mut_labels, y_axis=True)
+    size=(600, 200),
+    canvas_size=(620, 200),
+    node_labels=node_labels,
+    mutation_labels=mut_labels,
+    y_axis=True
+)
 ```
 
 We have inferred 4 trees aong the genome. Note, however, that there are "polytomies" in the
