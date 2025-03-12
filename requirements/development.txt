@@ -6,7 +6,6 @@ six
 tqdm
 humanize
 daiquiri
-dask[array]
 msprime >= 1.0.0
 tskit >= 0.5.3
 lmdb

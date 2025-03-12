@@ -59,7 +59,6 @@ dependencies = [
     "lmdb",
     "sortedcontainers",
     "attrs>=19.2.0",
-    "dask[array]",
     "numba",
     "psutil>=5.9.0",
 ]
