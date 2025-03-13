@@ -139,7 +139,15 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
 def test_variantdata_accessors(tmp_path, in_mem):
     path = None if in_mem else tmp_path
     ts, data = tsutil.make_ts_and_zarr(path, add_optional=True, shuffle_alleles=False)
-    vd = tsinfer.VariantData(data, "variant_ancestral_allele", sites_time="sites_time")
+    vd = tsinfer.VariantData(
+        data,
+        "variant_ancestral_allele",
+        sites_time="sites_time",
+        individuals_time="individuals_time",
+        individuals_location="individuals_location",
+        individuals_population="individuals_population",
+        individuals_flags="individuals_flags",
+    )
     ds = data if in_mem else sgkit.load_dataset(data)
 
     assert vd.format_name == "tsinfer-variant-data"
@@ -234,32 +242,17 @@ def test_variantdata_accessors_defaults(tmp_path, in_mem):
     assert vdata.individuals_metadata == [
         {"variant_data_sample_id": sample_id} for sample_id in ds.sample_id[:]
     ]
-    with pytest.warns(
-        UserWarning, match="`individuals_time` was not found as an array in the dataset"
-    ):
-        for time in vdata.individuals_time:
-            assert tskit.is_unknown_time(time)
-    with pytest.warns(
-        UserWarning,
-        match="`individuals_location` was not found as an array in the dataset",
-    ):
-        assert np.array_equal(
-            vdata.individuals_location, np.array([[]] * ts.num_individuals, dtype=float)
-        )
-    with pytest.warns(
-        UserWarning,
-        match="`individuals_population` was not found as an array in the dataset",
-    ):
-        assert np.array_equal(
-            vdata.individuals_population, np.full(ts.num_individuals, tskit.NULL)
-        )
-    with pytest.warns(
-        UserWarning,
-        match="`individuals_flags` was not found as an array in the dataset",
-    ):
-        assert np.array_equal(
-            vdata.individuals_flags, np.zeros(ts.num_individuals, dtype=int)
-        )
+    for time in vdata.individuals_time:
+        assert tskit.is_unknown_time(time)
+    assert np.array_equal(
+        vdata.individuals_location, np.array([[]] * ts.num_individuals, dtype=float)
+    )
+    assert np.array_equal(
+        vdata.individuals_population, np.full(ts.num_individuals, tskit.NULL)
+    )
+    assert np.array_equal(
+        vdata.individuals_flags, np.zeros(ts.num_individuals, dtype=int)
+    )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
@@ -281,13 +274,82 @@ def test_variantdata_sites_time_array():
     wrong_length_sites_time = np.arange(ts.num_sites + 1)
     with pytest.raises(
         ValueError,
-        match="Sites time array must be the same length as the number of selected sites",
+        match="sites time array must be the same length as the number of selected sites",
     ):
         tsinfer.VariantData(
             data,
             "variant_ancestral_allele",
             sites_time=wrong_length_sites_time,
         )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_variantdata_individuals_parameters_as_strings(tmp_path):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path, add_optional=True)
+    ds = sgkit.load_dataset(zarr_path)
+
+    # Use string names to reference arrays in the zarr dataset
+    vdata = tsinfer.VariantData(
+        zarr_path,
+        "variant_ancestral_allele",
+        individuals_time="individuals_time",
+        individuals_location="individuals_location",
+        individuals_population="individuals_population",
+        individuals_flags="individuals_flags",
+    )
+
+    # Verify the arrays are loaded correctly
+    assert np.array_equal(vdata.individuals_time, ds.individuals_time.values)
+    assert np.array_equal(vdata.individuals_location, ds.individuals_location.values)
+    assert np.array_equal(
+        vdata.individuals_population, ds.individuals_population.values
+    )
+    assert np.array_equal(vdata.individuals_flags, ds.individuals_flags.values)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
+def test_variantdata_individuals_parameters_as_arrays(tmp_path):
+    ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
+
+    # Create custom arrays for individuals parameters
+    custom_time = np.arange(ts.num_individuals, dtype=np.float32) + 100.0
+    custom_location = np.tile(
+        np.array([[42.0, 43.0]], dtype=np.float32), (ts.num_individuals, 1)
+    )
+    custom_population = np.ones(ts.num_individuals, dtype=np.int32) * 5
+    custom_flags = np.ones(ts.num_individuals, dtype=np.int32) * 7
+
+    # Pass arrays directly to VariantData constructor
+    vdata = tsinfer.VariantData(
+        zarr_path,
+        "variant_ancestral_allele",
+        individuals_time=custom_time,
+        individuals_location=custom_location,
+        individuals_population=custom_population,
+        individuals_flags=custom_flags,
+    )
+
+    # Verify the arrays are set correctly
+    assert np.array_equal(vdata.individuals_time, custom_time)
+    assert np.array_equal(vdata.individuals_location, custom_location)
+    assert np.array_equal(vdata.individuals_population, custom_population)
+    assert np.array_equal(vdata.individuals_flags, custom_flags)
+
+    # Verify that the custom arrays are used in inference
+    vdata = tsinfer.VariantData(
+        zarr_path,
+        "variant_ancestral_allele",
+        individuals_time=custom_time,
+        individuals_location=custom_location,
+        individuals_flags=custom_flags,
+    )
+    inf_ts = tsinfer.infer(vdata)
+
+    # Check that individual times are correctly passed to the tree sequence
+    for i, ind in enumerate(inf_ts.individuals()):
+        assert ind.metadata["variant_data_time"] == custom_time[i]
+        assert np.array_equal(ind.location, custom_location[i])
+        assert ind.flags == custom_flags[i]
 
 
 def test_simulate_genotype_call_dataset(tmp_path):
@@ -446,8 +508,8 @@ class TestSgkitMask:
         tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
         with pytest.raises(
             ValueError,
-            match="Site mask array must be the same length as the number of"
-            " unmasked sites",
+            match="site mask array must be the same length as the number of "
+            "unmasked sites",
         ):
             tsinfer.VariantData(
                 zarr_path,
@@ -479,6 +541,10 @@ class TestSgkitMask:
             zarr_path,
             "variant_ancestral_allele",
             sample_mask="samples_mask_69",
+            individuals_time="individuals_time",
+            individuals_location="individuals_location",
+            individuals_population="individuals_population",
+            individuals_flags="individuals_flags",
         )
         assert samples.ploidy == 3
         assert samples.num_individuals == len(sample_list)
@@ -560,14 +626,14 @@ class TestSgkitMask:
         samples.individuals_select
         samples.sites_select
         with pytest.raises(
-            ValueError, match="The sites mask foobar was not found in the dataset."
+            ValueError, match="The site mask array foobar was not found in the dataset."
         ):
             tsinfer.VariantData(
                 zarr_path, "variant_ancestral_allele", site_mask="foobar"
             )
         with pytest.raises(
             ValueError,
-            match="The samples mask foobar2 was not found in the dataset.",
+            match="The samples mask array foobar2 was not found in the dataset.",
         ):
             samples = tsinfer.VariantData(
                 zarr_path,
@@ -610,7 +676,7 @@ class TestSgkitMask:
 
         with pytest.raises(
             ValueError,
-            match="Samples mask array must be the same length as the"
+            match="samples mask array must be the same length as the"
             " number of individuals",
         ):
             tsinfer.VariantData(
@@ -621,8 +687,8 @@ class TestSgkitMask:
 
         with pytest.raises(
             ValueError,
-            match="Site mask array must be the same length as the number of"
-            " unmasked sites",
+            match="site mask array must be the same length as the number of "
+            "unmasked sites",
         ):
             tsinfer.VariantData(
                 zarr_path,
@@ -984,6 +1050,54 @@ class TestVariantDataErrors:
         ):
             tsinfer.VariantData(
                 path, ds["variant_allele"][:, 0].astype(str), sites_time="XX"
+            )
+
+    def test_wrong_individuals_array_length(self, tmp_path):
+        path = tmp_path / "data.zarr"
+        ds = self.simulate_genotype_call_dataset(n_variant=3, n_sample=5, phased=True)
+        sgkit.save_dataset(ds, path)
+
+        # Create arrays with wrong length (too short)
+        wrong_length_time = np.arange(3, dtype=np.float32)
+        wrong_length_location = np.zeros((3, 2), dtype=np.float32)
+        wrong_length_population = np.zeros(3, dtype=np.int32)
+        wrong_length_flags = np.zeros(3, dtype=np.int32)
+
+        # Test each parameter individually
+        with pytest.raises(
+            ValueError, match="individuals time array must be the same length"
+        ):
+            tsinfer.VariantData(
+                path,
+                ds["variant_allele"][:, 0].values.astype(str),
+                individuals_time=wrong_length_time,
+            )
+
+        with pytest.raises(
+            ValueError, match="individuals location array must be the same length"
+        ):
+            tsinfer.VariantData(
+                path,
+                ds["variant_allele"][:, 0].values.astype(str),
+                individuals_location=wrong_length_location,
+            )
+
+        with pytest.raises(
+            ValueError, match="individuals population array must be the same length"
+        ):
+            tsinfer.VariantData(
+                path,
+                ds["variant_allele"][:, 0].values.astype(str),
+                individuals_population=wrong_length_population,
+            )
+
+        with pytest.raises(
+            ValueError, match="individuals flags array must be the same length"
+        ):
+            tsinfer.VariantData(
+                path,
+                ds["variant_allele"][:, 0].values.astype(str),
+                individuals_flags=wrong_length_flags,
             )
 
 
