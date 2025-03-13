@@ -2345,6 +2345,29 @@ class VariantData(SampleData):
         reasonable approximation to the relative order of ancestors used for inference.
         Time values are ignored for sites not used in inference, such as singletons,
         sites with more than two alleles, or sites with an unknown ancestral state.
+    :param Union(array, str) individuals_time: A numpy array of floats specifying
+        the time of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        times. If ``None`` (default), individuals are assumed to have
+        ``tskit.UNKNOWN_TIME``.
+    :param Union(array, str) individuals_location: A numpy array specifying
+        the location of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        locations. If ``None`` (default), individuals are assumed to have empty
+        location arrays.
+    :param Union(array, str) individuals_population: A numpy array of integers specifying
+        the population of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        populations. If ``None`` (default), individuals are assumed to have
+        ``tskit.NULL`` as their population.
+    :param Union(array, str) individuals_flags: A numpy array of integers specifying
+        the flags of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        flags. If ``None`` (default), individuals are assumed to have flags set to 0.
     :param int sequence_length: An integer specifying the resulting `sequence_length`
         attribute of the output tree sequence. If not specified the `contig_length`
         attribute from the undelying zarr store for the contig of the selected variants.
@@ -2363,6 +2386,10 @@ class VariantData(SampleData):
         sample_mask=None,
         site_mask=None,
         sites_time=None,
+        individuals_time=None,
+        individuals_location=None,
+        individuals_population=None,
+        individuals_flags=None,
         sequence_length=None,
     ):
         self._sequence_length = sequence_length
@@ -2385,51 +2412,107 @@ class VariantData(SampleData):
         genotypes_arr = self.data["call_genotype"]
         _, self._num_individuals_before_mask, self.ploidy = genotypes_arr.shape
 
-        if site_mask is None:
-            site_mask = np.full(self.data["variant_position"].shape, False, dtype=bool)
-        elif isinstance(site_mask, np.ndarray):
-            pass
-        else:
-            try:
-                site_mask = self.data[site_mask][:]
-            except KeyError:
+        def process_mask(mask_param, length, param_name):
+            if mask_param is None:
+                return np.full(length, False, dtype=bool)
+            elif not isinstance(mask_param, np.ndarray):
+                try:
+                    mask_param = self.data[mask_param][:]
+                except KeyError:
+                    raise ValueError(
+                        f"The {param_name} {mask_param} was not found in the dataset."
+                    )
+            if mask_param.shape[0] != length:
                 raise ValueError(
-                    f"The sites mask {site_mask} was not found" f" in the dataset."
+                    f"{param_name} must be the same length as the number of "
+                    f"{'unmasked sites' if 'site' in param_name else 'individuals'}"
                 )
-        if site_mask.shape[0] != self.data["variant_position"].shape[0]:
-            raise ValueError(
-                "Site mask array must be the same length as the number of unmasked sites"
-            )
+            return mask_param
 
-        # We negate the mask as it is much easier in numpy to have True=keep
+        def process_array(
+            array_param, mask, default_value, param_name, expected_size, dtype
+        ):
+            if array_param is None:
+                if default_value == []:
+                    return np.array([[] for _ in range(expected_size)], dtype=object)
+                return np.full(expected_size, default_value, dtype=dtype)
+            elif not isinstance(array_param, np.ndarray):
+                try:
+                    array_param = self.data[array_param][:][mask]
+                except KeyError:
+                    raise ValueError(
+                        f"The {param_name} {array_param} was not found in the dataset"
+                    )
+            if array_param.shape[0] != expected_size:
+                raise ValueError(
+                    f"{param_name} must be the same length as the number of "
+                    f"selected {'sites' if 'sites' in param_name else 'individuals'}"
+                )
+            return array_param
+
+        site_mask = process_mask(
+            site_mask, self.data["variant_position"].shape[0], "site mask array"
+        )
+
+        sample_mask = process_mask(
+            sample_mask, self._num_individuals_before_mask, "samples mask array"
+        )
+
         self.sites_select = ~site_mask.astype(bool)
+        self.individuals_select = ~sample_mask.astype(bool)
+        self._num_sites = np.sum(self.sites_select)
 
         if np.sum(self.sites_select) == 0:
             raise ValueError(
-                "All sites have been masked out, at least one value"
+                "All sites have been masked out, at least one value "
                 "must be 'False' in the site mask"
             )
 
-        if sample_mask is None:
-            sample_mask = np.full(self._num_individuals_before_mask, False, dtype=bool)
-        elif isinstance(sample_mask, np.ndarray):
-            pass
-        else:
-            try:
-                # We negate the mask as it is much easier in numpy to have True=keep
-                sample_mask = self.data[sample_mask][:]
-            except KeyError:
-                raise ValueError(
-                    f"The samples mask {sample_mask} was not" f" found in the dataset."
-                )
-        if sample_mask.shape[0] != self._num_individuals_before_mask:
-            raise ValueError(
-                "Samples mask array must be the same length as the number of"
-                " individuals"
-            )
-        self.individuals_select = ~sample_mask.astype(bool)
+        self._individuals_time = process_array(
+            individuals_time,
+            self.individuals_select,
+            tskit.UNKNOWN_TIME,
+            "individuals time array",
+            self.num_individuals,
+            np.float64,
+        )
 
-        self._num_sites = np.sum(self.sites_select)
+        self._individuals_location = process_array(
+            individuals_location,
+            self.individuals_select,
+            [],
+            "individuals location array",
+            self.num_individuals,
+            float,
+        )
+
+        self._individuals_population = process_array(
+            individuals_population,
+            self.individuals_select,
+            tskit.NULL,
+            "individuals population array",
+            self.num_individuals,
+            np.int32,
+        )
+
+        self._individuals_flags = process_array(
+            individuals_flags,
+            self.individuals_select,
+            0,
+            "individuals flags array",
+            self.num_individuals,
+            np.int32,
+        )
+
+        self._sites_time = process_array(
+            sites_time,
+            self.sites_select,
+            tskit.UNKNOWN_TIME,
+            "sites time array",
+            self.num_sites,
+            np.float64,
+        )
+
         assert self.ploidy == self.data["call_genotype"].chunks[2]
         if self.ploidy > 1:
             if "call_genotype_phased" not in self.data:
@@ -2460,23 +2543,6 @@ class VariantData(SampleData):
                 "increasing (i.e. have duplicate or out-of-order values). "
                 "These must be masked out to run tsinfer."
             )
-
-        if sites_time is None:
-            self._sites_time = np.full(self.num_sites, tskit.UNKNOWN_TIME)
-        elif isinstance(sites_time, np.ndarray):
-            if sites_time.shape[0] != self.num_sites:
-                raise ValueError(
-                    "Sites time array must be the same length as the number of selected"
-                    " sites"
-                )
-            self._sites_time = sites_time
-        else:
-            try:
-                self._sites_time = self.data[sites_time][:][self.sites_select]
-            except KeyError:
-                raise ValueError(
-                    f"The sites time array {sites_time} was not found in the dataset"
-                )
 
         if isinstance(ancestral_state, np.ndarray):
             if ancestral_state.shape[0] != self.num_sites:
@@ -2711,19 +2777,6 @@ class VariantData(SampleData):
         return np.sum(self.individuals_select)
 
     @functools.cached_property
-    def individuals_time(self):
-        try:
-            return self.data["individuals_time"][:][self.individuals_select]
-        except KeyError:
-            warnings.warn(
-                "`individuals_time` was not found as an array in the dataset, so "
-                "tskit.UNKNOWN_TIME has been used. It can be apppended to the dataset "
-                "with data_array.to_zarr('path/to/store', append_dim='samples', "
-                "mode='a')"
-            )
-            return np.full(self.num_individuals, tskit.UNKNOWN_TIME)
-
-    @functools.cached_property
     def individuals_metadata_schema(self):
         try:
             return tskit.metadata.parse_metadata_schema(
@@ -2759,41 +2812,21 @@ class VariantData(SampleData):
                 for sample_id in self.data["sample_id"][:][self.individuals_select]
             ]
 
-    @functools.cached_property
+    @property
+    def individuals_time(self):
+        return self._individuals_time
+
+    @property
     def individuals_location(self):
-        try:
-            return self.data["individuals_location"][:][self.individuals_select]
-        except KeyError:
-            warnings.warn(
-                "`individuals_location` was not found as an array in the dataset, "
-                "so [] has been used. It can be apppended to the dataset with "
-                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
-            )
-            return np.array([[]] * self.num_individuals, dtype=float)
+        return self._individuals_location
 
-    @functools.cached_property
+    @property
     def individuals_population(self):
-        try:
-            return self.data["individuals_population"][:][self.individuals_select]
-        except KeyError:
-            warnings.warn(
-                "`individuals_population` was not found as an array in the dataset, "
-                "so tskit.NULL has been used. It can be apppended to the dataset with "
-                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
-            )
-            return np.full((self.num_individuals), tskit.NULL, dtype=np.int32)
+        return self._individuals_population
 
-    @functools.cached_property
+    @property
     def individuals_flags(self):
-        try:
-            return self.data["individuals_flags"][:][self.individuals_select]
-        except KeyError:
-            warnings.warn(
-                "`individuals_flags` was not found as an array in the dataset, so 0 "
-                "has been used. It can be apppended to the dataset with "
-                "data_array.to_zarr('path/to/store', append_dim='samples', mode='a')"
-            )
-            return np.full((self.num_individuals), 0, dtype=np.int32)
+        return self._individuals_flags
 
     @staticmethod
     def _trim_allele_array(allele_array, site_id):
