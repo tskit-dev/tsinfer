@@ -609,6 +609,7 @@ def match_ancestors_batch_init(
     max_num_partitions=None,
     sample_mask=None,
     site_mask=None,
+    sequence_length=None,
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
@@ -667,6 +668,11 @@ def match_ancestors_batch_init(
         sites to mask out (exclude) from the dataset. Alternatively, a string
         can be provided, giving the name of an array in the input dataset which contains
         the site mask. If ``None`` (default), all sites are included.
+    :param int sequence_length: An integer specifying the resulting `sequence_length`
+        attribute of the output tree sequence. If not specified the `contig_length`
+        attribute from the undelying zarr store for the contig of the selected variants.
+        is used. If that is not present then the maximum position plus one of the used
+        variants is used.
     :param recombination_rate: Either a floating point value giving a constant rate
         :math:`\\rho` per unit length of genome, or an :class:`msprime.RateMap`
         object. This is used to calculate the probability of recombination between
@@ -702,6 +708,7 @@ def match_ancestors_batch_init(
         ancestral_state=ancestral_state,
         sample_mask=sample_mask,
         site_mask=site_mask,
+        sequence_length=sequence_length,
     )
     ancestors._check_finalised()
     variant_data._check_finalised()
@@ -1108,6 +1115,12 @@ class SampleBatchWorkDescriptor:
     ancestral_state: str
     sample_mask: np.ndarray
     site_mask: np.ndarray
+    sites_time: np.ndarray
+    individuals_time: np.ndarray
+    individuals_location: np.ndarray
+    individuals_population: np.ndarray
+    individuals_flags: np.ndarray
+    sequence_length: int
     ancestor_ts_path: str
     recombination_rate: float
     mismatch_ratio: float
@@ -1171,6 +1184,12 @@ def load_variant_data_and_ancestors_ts(wd: SampleBatchWorkDescriptor):
         wd.ancestral_state,
         sample_mask=wd.sample_mask,
         site_mask=wd.site_mask,
+        sites_time=wd.sites_time,
+        individuals_time=wd.individuals_time,
+        individuals_location=wd.individuals_location,
+        individuals_population=wd.individuals_population,
+        individuals_flags=wd.individuals_flags,
+        sequence_length=wd.sequence_length,
     )
     variant_data._check_finalised()
     ancestor_ts = tskit.load(wd.ancestor_ts_path)
@@ -1191,6 +1210,12 @@ def match_samples_batch_init(
     *,
     sample_mask=None,
     site_mask=None,
+    sites_time=None,
+    individuals_time=None,
+    individuals_location=None,
+    individuals_population=None,
+    individuals_flags=None,
+    sequence_length=None,
     recombination_rate=None,
     mismatch_ratio=None,
     path_compression=True,
@@ -1248,6 +1273,43 @@ def match_samples_batch_init(
         sites to mask out (exclude) from the dataset. Alternatively, a string can
         be provided, giving the name of an array in the input dataset which
         contains the site mask. If ``None`` (default), all sites are included.
+    :param Union(array, str) sites_time: A numpy array of floats specifying the relative
+        time of occurrence of the mutation to the derived state at each site. This must
+        be of the same length as the number of unmasked sites. Alternatively, a
+        string can be provided, giving the name of an array in the input dataset
+        which contains the site times. If ``None`` (default), the frequency of the
+        derived allele is used as a proxy for the time of occurrence: this is usually a
+        reasonable approximation to the relative order of ancestors used for inference.
+        Time values are ignored for sites not used in inference, such as singletons,
+        sites with more than two alleles, or sites with an unknown ancestral state.
+    :param Union(array, str) individuals_time: A numpy array of floats specifying
+        the time of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        times. If ``None`` (default), individuals are assumed to have
+        ``tskit.UNKNOWN_TIME``.
+    :param Union(array, str) individuals_location: A numpy array specifying
+        the location of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        locations. If ``None`` (default), individuals are assumed to have empty
+        location arrays.
+    :param Union(array, str) individuals_population: A numpy array of integers specifying
+        the population of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        populations. If ``None`` (default), individuals are assumed to have
+        ``tskit.NULL`` as their population.
+    :param Union(array, str) individuals_flags: A numpy array of integers specifying
+        the flags of each individual in the dataset. This must be the same length
+        as the number of unmasked individuals. Alternatively, a string can be provided,
+        giving the name of an array in the input dataset which contains the individual
+        flags. If ``None`` (default), individuals are assumed to have flags set to 0.
+    :param int sequence_length: An integer specifying the resulting `sequence_length`
+        attribute of the output tree sequence. If not specified the `contig_length`
+        attribute from the undelying zarr store for the contig of the selected variants.
+        is used. If that is not present then the maximum position plus one of the used
+        variants is used.
     :param recombination_rate: Either a floating point value giving a constant
         rate :math:`\\rho` per unit length of genome, or an
         :class:`msprime.RateMap` object. This is used to calculate the
@@ -1291,6 +1353,12 @@ def match_samples_batch_init(
         ancestral_state=ancestral_state,
         sample_mask=sample_mask,
         site_mask=site_mask,
+        sites_time=sites_time,
+        individuals_time=individuals_time,
+        individuals_location=individuals_location,
+        individuals_population=individuals_population,
+        individuals_flags=individuals_flags,
+        sequence_length=sequence_length,
         ancestor_ts_path=str(ancestor_ts_path),
         recombination_rate=recombination_rate,
         mismatch_ratio=mismatch_ratio,
@@ -2739,7 +2807,7 @@ class SampleMatcher(Matcher):
         for ind in self.variant_data.individuals():
             metadata = ind.metadata
             if ind.time != 0:
-                metadata["variant_data_time"] = ind.time
+                metadata["variant_data_time"] = float(ind.time)
             if schema is None:
                 metadata = _encode_raw_metadata(ind.metadata)
             tables.individuals.add_row(

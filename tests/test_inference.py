@@ -1636,7 +1636,9 @@ class TestBatchSampleMatching:
         sgkit.save_dataset(
             ds.drop_vars(set(ds.data_vars) - {"individuals_time"}), zarr_path, mode="a"
         )
-        samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
+        samples = tsinfer.VariantData(
+            zarr_path, "variant_ancestral_allele", individuals_time="individuals_time"
+        )
         anc = tsinfer.generate_ancestors(samples, path=str(tmpdir / "ancestors.zarr"))
         anc_ts = tsinfer.match_ancestors(samples, anc)
         anc_ts.dump(tmpdir / "anc.trees")
@@ -1648,6 +1650,7 @@ class TestBatchSampleMatching:
             ancestor_ts_path=tmpdir / "anc.trees",
             min_work_per_job=1e6,
             force_sample_times=True,
+            individuals_time="individuals_time",
         )
         for i in range(wd.num_partitions):
             tsinfer.match_samples_batch_partition(

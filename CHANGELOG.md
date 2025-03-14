@@ -1,4 +1,15 @@
 # Changelog
+
+## [0.4.1] - 2024-04-14
+
+** Changes **
+
+- Optional arrays to `VariantData` (e.g. `individuals_time`) are now configured by kwargs
+  to `VariantData.__init__` rather than requiring a specifically named array in the vcf zarr store.
+  ({pr}`1011`, {issue}`1006`, {user}`benjeffery`)
+
+
+
 ## [0.4.0] - 2024-04-06
 
 Changelog is relative to the last full release, 0.3.3.

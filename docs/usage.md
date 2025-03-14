@@ -550,7 +550,7 @@ Now when we carry out the inference, we get a tree sequence in which the nodes a
 correctly assigned to named populations
 
 ```{code-cell} ipython3
-vdata = tsinfer.VariantData("sparrows.vcz", ancestral_state="variant_AA")
+vdata = tsinfer.VariantData("sparrows.vcz", ancestral_state="variant_AA", individuals_population="individuals_population")
 sparrow_ts = tsinfer.infer(vdata)
 
 for sample_node_id in sparrow_ts.samples():
