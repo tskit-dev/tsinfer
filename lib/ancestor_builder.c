@@ -419,8 +419,9 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
     tsk_id_t last_site = focal_site;
     int64_t l;
     tsk_id_t u;
-    size_t j, ones, zeros, tmp_size, sample_set_size, min_sample_set_size;
+    size_t j, ones, zeros, tmp_size, sample_set_size, min_sample_set_size, derived_count;
     double focal_site_time = self->sites[focal_site].time;
+    double site_time;
     const site_t *restrict sites = self->sites;
     const size_t num_sites = self->num_sites;
     allele_t consensus;
@@ -440,72 +441,77 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
         /* printf("\tl = %d\n", (int) l); */
         ancestor[l] = 0;
         last_site = (tsk_id_t) l;
-        if (sites[l].time > focal_site_time) {
 
-            /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
-            /* for (j = 0; j < sample_set_size; j++) { */
-            /*     printf("%d, ", sample_set[j]); */
-            /* } */
-            /* printf("\n"); */
+        /* printf("\t%d\t%d:", (int) l, (int) sample_set_size); */
+        /* for (j = 0; j < sample_set_size; j++) { */
+        /*     printf("%d, ", sample_set[j]); */
+        /* } */
+        /* printf("\n"); */
 
-            ancestor_builder_get_site_genotypes_subset(
-                self, (tsk_id_t) l, sample_set, sample_set_size, genotypes);
-            ones = 0;
-            zeros = 0;
-            for (j = 0; j < sample_set_size; j++) {
-                switch (genotypes[j]) {
-                    case 0:
-                        zeros++;
-                        break;
-                    case 1:
-                        ones++;
-                        break;
-                }
+        ancestor_builder_get_site_genotypes_subset(
+            self, (tsk_id_t) l, sample_set, sample_set_size, genotypes);
+        ones = 0;
+        zeros = 0;
+        for (j = 0; j < sample_set_size; j++) {
+            switch (genotypes[j]) {
+                case 0:
+                    zeros++;
+                    break;
+                case 1:
+                    ones++;
+                    break;
             }
+        }
+        if (ones >= zeros) {
+            consensus = 1;
+        } else {
+            consensus = 0;
+        }
+        /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
+        /* fflush(stdout); */
+        for (j = 0; j < sample_set_size; j++) {
+            u = sample_set[j];
+            if (disagree[u] && (genotypes[j] != consensus)
+                && (genotypes[j] != TSK_MISSING_DATA)) {
+                /* This sample has disagreed with consensus twice in a row,
+                    * so remove it */
+                /* printf("\t\tremoving %d\n", sample_set[j]); */
+                sample_set[j] = -1;
+            }
+        }
+        
+        site_time = sites[l].time;
+        if (site_time > focal_site_time) {
             if (ones + zeros == 0) {
                 ancestor[l] = TSK_MISSING_DATA;
             } else {
-                if (ones >= zeros) {
-                    consensus = 1;
-                } else {
-                    consensus = 0;
-                }
-                /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
-                /* fflush(stdout); */
-                for (j = 0; j < sample_set_size; j++) {
-                    u = sample_set[j];
-                    if (disagree[u] && (genotypes[j] != consensus)
-                        && (genotypes[j] != TSK_MISSING_DATA)) {
-                        /* This sample has disagreed with consensus twice in a row,
-                         * so remove it */
-                        /* printf("\t\tremoving %d\n", sample_set[j]); */
-                        sample_set[j] = -1;
-                    }
-                }
                 ancestor[l] = consensus;
-                /* For the remaining samples, set the disagree flags based
-                 * on whether they agree with the consensus for this site. */
-                for (j = 0; j < sample_set_size; j++) {
-                    u = sample_set[j];
-                    if (u != -1) {
-                        disagree[u] = ((genotypes[j] != consensus)
-                                       && (genotypes[j] != TSK_MISSING_DATA));
-                    }
-                }
-                /* Repack the sample set */
-                tmp_size = 0;
-                for (j = 0; j < sample_set_size; j++) {
-                    if (sample_set[j] != -1) {
-                        sample_set[tmp_size] = sample_set[j];
-                        tmp_size++;
-                    }
-                }
-                sample_set_size = tmp_size;
-                if (sample_set_size <= min_sample_set_size) {
-                    /* printf("BREAK\n"); */
-                    break;
+            }
+        }
+        /* For the remaining samples, set the disagree flags based
+            * on whether they agree with the consensus for this site. */
+        derived_count = sites[l].derived_count;
+        if ((site_time > focal_site_time) || (derived_count > ones)) {
+            for (j = 0; j < sample_set_size; j++) {
+                u = sample_set[j];
+                if (u != -1) {
+                    disagree[u] = ((genotypes[j] != consensus)
+                                    && (genotypes[j] != TSK_MISSING_DATA));
                 }
             }
+        }
+        /* Repack the sample set */
+        tmp_size = 0;
+        for (j = 0; j < sample_set_size; j++) {
+            if (sample_set[j] != -1) {
+                sample_set[tmp_size] = sample_set[j];
+                tmp_size++;
+            }
+        }
+        sample_set_size = tmp_size;
+        if (sample_set_size <= min_sample_set_size) {
+            /* printf("BREAK\n"); */
+            break;
         }
     }
     *last_site_ret = last_site;
@@ -647,7 +653,7 @@ ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
 }
 
 int WARN_UNUSED
-ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes)
+ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes, tsk_size_t derived_count)
 {
     int ret = 0;
     site_t *site;
@@ -676,6 +682,7 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     pattern_map = &time_map->pattern_map;
     site = &self->sites[site_id];
     site->time = time;
+    site->derived_count = derived_count;
 
     search.encoded_genotypes = encoded_genotypes;
     search.encoded_genotypes_size = self->encoded_genotypes_size;
