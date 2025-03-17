@@ -10,8 +10,8 @@
         "id": "blosc",
         "shuffle": 1
     },
-    "dtype": "|S1",
-    "fill_value": null,
+    "dtype": "|S4",
+    "fill_value": "",
     "filters": null,
     "order": "C",
     "shape": [

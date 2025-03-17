@@ -32,7 +32,7 @@ document. However, for the moment we'll just use a pre-generated dataset:
 
 ```{code-cell} ipython3
 import zarr
-ds = zarr.open("_static/example_data.vcz")
+vcf_zarr = zarr.open("_static/example_data.vcz")
 ```
 
 This is what the genotypes stored in that datafile look like:
@@ -40,26 +40,35 @@ This is what the genotypes stored in that datafile look like:
 ```{code-cell}
 :"tags": ["remove-input"]
 import numpy as np
-assert all(len(np.unique(a)) == len(a) for a in ds['variant_allele']) 
-assert any([np.sum(g) == 1 for g in ds['call_genotype']]) # at least one singleton
-assert any([np.sum(g) == 0 for g in ds['call_genotype']]) # at least one non-variable
+G = vcf_zarr['call_genotype'][:] # read full genotype matrix into memory
+positions = vcf_zarr['variant_position'][:]
+alleles = vcf_zarr['variant_allele'][:]
 
-alleles = ds['variant_allele'][:].astype(str)
-sites = np.arange(ds['call_genotype'].shape[0])
-print(" " * 22, "Site:", " ".join(str(x) for x in range(8)), "\n")
-for sample in range(ds['call_genotype'].shape[1]):
-    for genome in range(ds['call_genotype'].shape[2]):
-        genotypes = ds['call_genotype'][:,sample, genome]
-        print(
-            f"Diploid sample {sample} (genome {genome}):",
-            " ".join(alleles[sites, genotypes])
-        )
+assert any([np.sum(g) == 1 for g in G]) # at least one singleton
+assert any([np.sum(g) == 0 for g in G]) # at least one non-variable
+assert all(len(np.unique(a)) == len(a) for a in vcf_zarr['variant_allele'][:]) 
+
+num_sites, num_samples, ploidy = G.shape
+print("Diploid sample id:", " ".join(f"    {i}      " for i in range(num_samples)))
+print("Genome for sample: ", " ".join(f" {p} {'  ' * p} " for _ in range(num_samples) for p in range(ploidy)))
+print("-" * 54)
+for site_id, pos in enumerate(positions):
+    print(f"      position {pos}:", end="   ")
+    for sample_id in range(num_samples):
+        genotypes = G[site_id, sample_id, :]
+        site_alleles = alleles[site_id].astype(str)
+        print(" ".join(f"{a:<4}" for a in site_alleles[genotypes.flatten()]), end="   ")
+    print()
 ```
+
+:::{note}
+The last site, at position 95, is an indel (insertion or deletion). Indels can be used as long as the indel does not overlap with other variants, only 2 alleles exist, and the ancestral state is known.
+:::
 
 ### VariantData and ancestral alleles
 
 We wish to infer a genealogy that could have given rise to this data set. To run _tsinfer_
-we wrap the .vcz file in a `tsinfer.VariantData` object. This requires an 
+we wrap the `.vcz` file in a {class}`tsinfer.VariantData` object. This requires an 
 *ancestral state* to be specified for each site; there are
 many methods for calculating these: details are outside the scope of this manual, but we
 have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
@@ -71,8 +80,10 @@ in the `variant_AA` field of the .vcz file. It's also possible to provide a nump
 of ancestral alleles, of the same length as the number of selected variants. If you have a string
 of the ancestral states (e.g. from FASTA) the {meth}`add_ancestral_state_array`
 method can be used to convert and save this to the VCF Zarr dataset (under the name
-`ancestral_state`). Note that the positions passed to the method should be
-zero-based, if you have one-based positions you should prepend an "X" to the string.
+`ancestral_state`). Note that this method assumes that the string uses zero-based
+indexing, so that the first letter corresponds to a site at position 0. If,
+as is typical, the first letter in the string denotes the ancestral state of
+the site at position 1 in the .vcz file, you should prepend an "X" to the string.
 Alleles that are not in the list of alleles for their respective site are
 treated as unknown and not used for inference (with a warning given).
 
@@ -84,18 +95,16 @@ import pyfaidx
 vcf_zarr = zarr.open("_static/example_data.vcz")
 
 reader = pyfaidx.Fasta("_static/example_ancestral_state.fa")
-ancestral_string = str(reader["chr1"])
+ancestral_str = str(reader["chr1"])
 # Our positions are zero-based, if they were one-based we would
 # prepend an X here.
-# e.g. ancestral_string = "X" + ancestral_string
+# e.g. ancestral_str = "X" + ancestral_str
 
-# Set the last site to unknown, for demonstration purposes
-ancestral_string = ancestral_string[:-1] + "N"
+# Set the ancestral state at the last known position to "N", for demonstration
+last_pos = vcf_zarr['variant_position'][-1]
+ancestral_str = ancestral_str[:last_pos] + "N" + ancestral_str[(last_pos + 1):]
 
-tsinfer.add_ancestral_state_array(
-        vcf_zarr,
-        ancestral_string,
-) 
+tsinfer.add_ancestral_state_array(vcf_zarr, ancestral_str) 
 vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state="ancestral_state")
 ```
 
@@ -104,9 +113,11 @@ We'll use it to infer a tree sequence on the basis of the sites that vary betwee
 different samples. However, note that certain sites are not used by _tsinfer_ for inferring
 the genealogy (although they are still encoded in the final tree sequence), These are:
 
-* Non-variable (fixed) sites, e.g. site 4 above
-* Singleton sites, where only one genome has the derived allele e.g. site 5 above
-* Sites where the ancestral allele is unknown, e.g. demonstrated by site 7 above
+* Non-variable (fixed) sites, e.g. the site at position 71 above
+* Singleton sites, where only one genome has the derived allele
+  e.g. the site at position 75 above
+* Sites where the ancestral allele is unknown, e.g. demonstrated above when setting the
+  ancestral state of the site at position 95 to `N`.
 * Multialleleic sites, with more than 2 alleles (but see
   [here](https://github.com/tskit-dev/tsinfer/issues/670) for a workaround)
 
@@ -136,10 +147,10 @@ import numpy as np
 
 # mask out any sites not associated with the contig named "chr1"
 # (for demonstration: all sites in this .vcz file are from "chr1" anyway)
-chr1_index = np.where(ds.contig_id[:] == "chr1")[0]
-site_mask = ds.variant_contig[:] != chr1_index
-# also mask out any sites with a position >= 6
-site_mask[ds.variant_position[:] >= 6] = True
+chr1_index = np.where(vcf_zarr.contig_id[:] == "chr1")[0]
+site_mask = vcf_zarr.variant_contig[:] != chr1_index
+# also mask out any sites with a position >= 80
+site_mask[vcf_zarr.variant_position[:] >= 80] = True
 
 smaller_vdata = tsinfer.VariantData(
     "_static/example_data.vcz",
@@ -165,21 +176,25 @@ print(f"Inferred a genetic genealogy for {inferred_ts.num_samples} (haploid) gen
 
 And that's it: we now have a fully functional {class}`tskit.TreeSequence`
 object that we can interrogate in the usual ways. For example, we can look
-at the {meth}`aligned haplotypes<tskit.TreeSequence.alignments>` in the tree sequence:
+at the {meth}`variants<tskit.TreeSequence.variants>` in the tree sequence:
 
 ```{code-cell} ipython3
-print("Sample\tInferred sequence")
-for sample_id, seq in zip(
-    inferred_ts.samples(),
-    inferred_ts.alignments(missing_data_character="."),
-):
-    print(sample_id, seq, sep="\t")
+print("TS sample", "\t".join(str(s) for s in inferred_ts.samples()), sep="\t")
+print("TS individual", "\t".join(str(inferred_ts.node(s).individual) for s in inferred_ts.samples()), sep="\t")
+print("-" * 60)
+print("Pos (anc state)")
+for v in inferred_ts.variants():
+    print(
+        f"{int(v.site.position)}   ({v.site.ancestral_state})",
+        "\t".join(f"{a:<4}" for a in np.array(v.alleles)[v.genotypes]),
+        sep="\t")
 ```
 
-You will notice that the sample sequences generated by this tree sequence are identical
-to the input haplotype data: apart from the imputation of
+Comparing the genotypes of each individual in the inferred tree sequence
+against the equivalent diploid samples in the .vcz file, you can see that they
+are identical. Apart from the imputation of
 {ref}`missing data<sec_inference_data_requirements>`, _tsinfer_ is guaranteed to
-losslessly encode any given input data, regardless of the inferred topology. You can
+losslessly encode any genetic variation data, regardless of the inferred topology. You can
 check this programatically if you want:
 
 ```{code-cell} ipython3
@@ -193,8 +208,8 @@ for v_orig, v_inferred in zip(vdata.variants(), inferred_ts.variants()):
 print("** Genotypes in original dataset and inferred tree sequence are the same **")
 ```
 
-We can examine the inferred genetic genealogy,
-in the form of {ref}`local trees<tutorials:sec_what_is_local_trees>`. _Tsinfer_ has also
+We can examine the inferred genetic genealogy, in the form of
+{ref}`local trees<tutorials:sec_what_is_local_trees>`. _Tsinfer_ has
 placed mutations on the genealogy to explain the observed genetic variation:
 
 ```{code-cell} ipython3
@@ -210,8 +225,8 @@ mut_labels = {
 node_labels = {u: u for u in inferred_ts.samples()}
 
 inferred_ts.draw_svg(
-    size=(600, 200),
-    canvas_size=(620, 200),
+    size=(600, 300),
+    canvas_size=(640, 300),
     node_labels=node_labels,
     mutation_labels=mut_labels,
     y_axis=True
@@ -528,7 +543,7 @@ import numpy as np
 import tskit
 import zarr
 
-ds = zarr.load("sparrows.vcz")
+vcf_zarr = zarr.load("sparrows.vcz")
 
 populations = ("Norway", "France")
 # save the population data in json format
@@ -541,9 +556,9 @@ metadata = [
 zarr.save("sparrows.vcz/populations_metadata", metadata)
 
 # Now assign each diploid sample to a population
-num_individuals = ds["sample_id"].shape[0]
+num_individuals = vcf_zarr["sample_id"].shape[0]
 individuals_population = np.full(num_individuals, tskit.NULL, dtype=np.int32)
-for i, name in enumerate(ds["sample_id"]):
+for i, name in enumerate(vcf_zarr["sample_id"]):
     if name.startswith("FR"):
         individuals_population[i] = populations.index("France")
     else:
