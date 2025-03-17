@@ -134,19 +134,22 @@ class TestAncestorBuilder:
         ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=10)
         for bad_type in ["sdf", {}, None]:
             with pytest.raises(TypeError):
-                ab.add_site(time=bad_type, genotypes=[0, 0])
+                ab.add_site(time=bad_type, genotypes=[0, 0], derived_count=0)
         for bad_genotypes in ["asdf", [[], []], [0, 1, 2]]:
             with pytest.raises(ValueError):
-                ab.add_site(time=0, genotypes=bad_genotypes)
+                ab.add_site(time=0, genotypes=bad_genotypes, derived_count=0)
+        for bad_derived_count in ["asdf", 1.2, [0, 1]]:
+            with pytest.raises(TypeError):
+                ab.add_site(time=0, genotypes=[0, 0], derived_count=bad_derived_count)
 
     def test_add_too_many_sites(self):
         for max_sites in range(10):
             ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=max_sites)
             for _ in range(max_sites):
-                ab.add_site(time=1, genotypes=[0, 1])
+                ab.add_site(time=1, genotypes=[0, 1], derived_count=0)
             for _ in range(2 * max_sites):
                 with pytest.raises(_tsinfer.LibraryError) as record:
-                    ab.add_site(time=1, genotypes=[0, 1])
+                    ab.add_site(time=1, genotypes=[0, 1], derived_count=0)
                 msg = "Cannot add more sites than the specified maximum."
                 assert str(record.value) == msg
 

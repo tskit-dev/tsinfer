@@ -1702,7 +1702,7 @@ class TestBatchSampleMatching:
         ts.tables.assert_equals(ts_batch.tables, ignore_provenance=True)
 
 
-class TestAncestorGeneratorsEquivalant:
+class TestAncestorGeneratorsEquivalent:
     """
     Tests for the ancestor generation process.
     """
@@ -1920,7 +1920,7 @@ class TestBuildAncestors:
             g = np.zeros(2, dtype=np.int8)
             h = np.zeros(1, dtype=np.int8)
             generator = tsinfer.AncestorsGenerator(sample_data, None, {}, engine=engine)
-            generator.ancestor_builder.add_site(1, g)
+            generator.ancestor_builder.add_site(1, g, derived_count=0)
             with pytest.raises(error):
                 generator.ancestor_builder.make_ancestor([0], h)
 
@@ -2725,7 +2725,10 @@ class TestAlgorithmDebugOutput:
         sample_data = self.sample_example(n_samples, n_sites)
         ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
         for variant in sample_data.variants():
-            ancestor_builder.add_site(variant.site.time, variant.genotypes)
+            derived_count = np.sum(variant.genotypes)
+            ancestor_builder.add_site(
+                variant.site.time, variant.genotypes, derived_count
+            )
         with mock.patch("sys.stdout", new=io.StringIO()) as mock_output:
             ancestor_builder.print_state()
             # Simply check some text is output
@@ -3533,16 +3536,16 @@ class PathCompressionMixin:
 
     def test_simulation_with_error(self):
         ts = msprime.simulate(
-            50, mutation_rate=10, random_seed=4, recombination_rate=15
+            50, mutation_rate=10, random_seed=5, recombination_rate=15
         )
-        ts = eval_util.insert_errors(ts, 0.2, seed=32)
+        ts = eval_util.insert_errors(ts, 0.2, seed=33)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_small_random_data(self):
         n = 25
         m = 20
-        G, positions = get_random_data_example(n, m)
+        G, positions = get_random_data_example(n, m, seed=101)
         with tsinfer.SampleData(sequence_length=m) as sample_data:
             for genotypes, position in zip(G, positions):
                 sample_data.add_site(position, genotypes)
@@ -3551,7 +3554,7 @@ class PathCompressionMixin:
     def test_large_random_data(self):
         n = 100
         m = 30
-        G, positions = get_random_data_example(n, m)
+        G, positions = get_random_data_example(n, m, seed=100)
         with tsinfer.SampleData(sequence_length=m) as sample_data:
             for genotypes, position in zip(G, positions):
                 sample_data.add_site(position, genotypes)

@@ -57,6 +57,7 @@ class Site:
 
     id = attr.ib()
     time = attr.ib()
+    derived_count = attr.ib()
 
 
 class AncestorBuilder:
@@ -136,13 +137,13 @@ class AncestorBuilder:
         stop = start + self.encoded_genotypes_size
         self.genotype_store[start:stop] = genotypes
 
-    def add_site(self, time, genotypes):
+    def add_site(self, time, genotypes, derived_count):
         """
         Adds a new site at the specified ID to the builder.
         """
         site_id = len(self.sites)
         self.store_site_genotypes(site_id, genotypes)
-        self.sites.append(Site(site_id, time))
+        self.sites.append(Site(site_id, time, derived_count))
         sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
         # genotypes.tobytes() value) and at the same time, are put into the same ancestor
@@ -202,49 +203,48 @@ class AncestorBuilder:
         return ret
 
     def compute_ancestral_states(self, a, focal_site, sites):
-        """
-        For a given focal site, and set of sites to fill in (usually all the ones
-        leftwards or rightwards), augment the haplotype array a with the inferred sites
-        Together with `make_ancestor`, which calls this function, these describe the main
-        algorithm as implemented in Fig S2 of the preprint, with the buffer.
-
-        At the moment we assume that the derived state is 1. We should alter this so
-        that we allow the derived state to be a different non-zero integer.
-        """
         focal_time = self.sites[focal_site].time
         g = self.get_site_genotypes(focal_site)
-        S = set(np.where(g == 1)[0])
-        # Break when we've lost half of S
-        min_sample_set_size = len(S) // 2
-        remove_buffer = []
+        sample_set = np.where(g == 1)[0]
+        min_sample_set_size = len(sample_set) // 2
         last_site = focal_site
-        # print("Focal site", focal_site, "time", focal_time)
+        disagree = np.zeros(self.num_samples, dtype=bool)
+
         for site_index in sites:
             a[site_index] = 0
             last_site = site_index
-            if self.sites[site_index].time > focal_time:
-                g_l = self.get_site_genotypes(site_index)
-                ones = sum(g_l[u] == 1 for u in S)
-                zeros = sum(g_l[u] == 0 for u in S)
-                # print("pos", site_index, ". Ones:", ones, ". Zeros:", zeros)
+            g_l = self.get_site_genotypes(site_index)
+            ones = sum(g_l[u] == 1 for u in sample_set)
+            zeros = sum(g_l[u] == 0 for u in sample_set)
+            consensus = 1 if ones >= zeros else 0
+            site_time = self.sites[site_index].time
+            derived_count = self.sites[site_index].derived_count
+
+            for j, u in enumerate(sample_set):
+                if (
+                    disagree[u]
+                    and (g_l[u] != consensus)
+                    and (g_l[u] != tskit.MISSING_DATA)
+                ):
+                    sample_set[j] = -1
+
+            if site_time > focal_time:
                 if ones + zeros == 0:
                     a[site_index] = tskit.MISSING_DATA
                 else:
-                    consensus = 1 if ones >= zeros else 0
-                    # print("\tP", site_index, "\t", len(S), ":ones=", ones, consensus)
-                    for u in remove_buffer:
-                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                            # print("\t\tremoving", u)
-                            S.remove(u)
                     a[site_index] = consensus
-                    # print("\t", len(S), remove_buffer, consensus, sep="\t")
-                    if len(S) <= min_sample_set_size:
-                        # print("BREAKING", len(S), min_sample_set_size)
-                        break
-                    remove_buffer.clear()
-                    for u in S:
-                        if g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA:
-                            remove_buffer.append(u)
+
+            if (site_time > focal_time) or (derived_count > ones):
+                for u in sample_set:
+                    if u != -1:
+                        disagree[u] = (
+                            g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA
+                        )
+
+            sample_set = sample_set[sample_set != -1]
+            if len(sample_set) <= min_sample_set_size:
+                break
+
         assert a[last_site] != tskit.MISSING_DATA
         return last_site
 
