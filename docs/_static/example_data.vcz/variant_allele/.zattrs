@@ -1,7 +1,0 @@
-{
-    "_ARRAY_DIMENSIONS": [
-        "variants",
-        "alleles"
-    ],
-    "comment": "The possible alleles for the variant."
-}
