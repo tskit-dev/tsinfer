@@ -137,11 +137,12 @@ class AncestorBuilder:
         stop = start + self.encoded_genotypes_size
         self.genotype_store[start:stop] = genotypes
 
-    def add_site(self, time, genotypes, derived_count):
+    def add_site(self, time, genotypes):
         """
         Adds a new site at the specified ID to the builder.
         """
         site_id = len(self.sites)
+        derived_count = np.sum(genotypes == 1)
         self.store_site_genotypes(site_id, genotypes)
         self.sites.append(Site(site_id, time, derived_count))
         sites_at_fixed_timepoint = self.time_map[time]
@@ -203,6 +204,15 @@ class AncestorBuilder:
         return ret
 
     def compute_ancestral_states(self, a, focal_site, sites):
+        """
+        For a given focal site, and set of sites to fill in (usually all the ones
+        leftwards or rightwards), augment the haplotype array a with the inferred sites
+        Together with `make_ancestor`, which calls this function, these describe the main
+        algorithm as implemented in Fig S2 of the preprint, with the buffer.
+
+        At the moment we assume that the derived state is 1. We should alter this so
+        that we allow the derived state to be a different non-zero integer.
+        """
         focal_time = self.sites[focal_site].time
         g = self.get_site_genotypes(focal_site)
         sample_set = np.where(g == 1)[0]

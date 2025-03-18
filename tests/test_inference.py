@@ -1702,7 +1702,7 @@ class TestBatchSampleMatching:
         ts.tables.assert_equals(ts_batch.tables, ignore_provenance=True)
 
 
-class TestAncestorGeneratorsEquivalent:
+class TestAncestorGeneratorsEquivalant:
     """
     Tests for the ancestor generation process.
     """
@@ -1920,7 +1920,7 @@ class TestBuildAncestors:
             g = np.zeros(2, dtype=np.int8)
             h = np.zeros(1, dtype=np.int8)
             generator = tsinfer.AncestorsGenerator(sample_data, None, {}, engine=engine)
-            generator.ancestor_builder.add_site(1, g, derived_count=0)
+            generator.ancestor_builder.add_site(1, g)
             with pytest.raises(error):
                 generator.ancestor_builder.make_ancestor([0], h)
 
@@ -2725,10 +2725,7 @@ class TestAlgorithmDebugOutput:
         sample_data = self.sample_example(n_samples, n_sites)
         ancestor_builder = tsinfer.algorithm.AncestorBuilder(n_samples, n_sites)
         for variant in sample_data.variants():
-            derived_count = np.sum(variant.genotypes)
-            ancestor_builder.add_site(
-                variant.site.time, variant.genotypes, derived_count
-            )
+            ancestor_builder.add_site(variant.site.time, variant.genotypes)
         with mock.patch("sys.stdout", new=io.StringIO()) as mock_output:
             ancestor_builder.print_state()
             # Simply check some text is output
