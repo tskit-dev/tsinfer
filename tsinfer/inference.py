@@ -1881,9 +1881,7 @@ class AncestorsGenerator:
                 if np.isnan(time):
                     use_site = False  # Site with meaningless time value: skip inference
             if use_site:
-                self.ancestor_builder.add_site(
-                    time, variant.genotypes, int(counts.derived)
-                )
+                self.ancestor_builder.add_site(time, variant.genotypes)
                 inference_site_id.append(site.id)
                 self.num_sites += 1
             progress.update()

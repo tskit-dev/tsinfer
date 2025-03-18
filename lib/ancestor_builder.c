@@ -474,12 +474,12 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
             if (disagree[u] && (genotypes[j] != consensus)
                 && (genotypes[j] != TSK_MISSING_DATA)) {
                 /* This sample has disagreed with consensus twice in a row,
-                    * so remove it */
+                 * so remove it */
                 /* printf("\t\tremoving %d\n", sample_set[j]); */
                 sample_set[j] = -1;
             }
         }
-        
+
         site_time = sites[l].time;
         if (site_time > focal_site_time) {
             if (ones + zeros == 0) {
@@ -489,14 +489,14 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
             }
         }
         /* For the remaining samples, set the disagree flags based
-            * on whether they agree with the consensus for this site. */
+         * on whether they agree with the consensus for this site. */
         derived_count = sites[l].derived_count;
         if ((site_time > focal_site_time) || (derived_count > ones)) {
             for (j = 0; j < sample_set_size; j++) {
                 u = sample_set[j];
                 if (u != -1) {
                     disagree[u] = ((genotypes[j] != consensus)
-                                    && (genotypes[j] != TSK_MISSING_DATA));
+                                   && (genotypes[j] != TSK_MISSING_DATA));
                 }
             }
         }
@@ -653,7 +653,7 @@ ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
 }
 
 int WARN_UNUSED
-ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes, tsk_size_t derived_count)
+ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes)
 {
     int ret = 0;
     site_t *site;
@@ -664,7 +664,15 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     uint8_t *stored_genotypes = NULL;
     avl_tree_t *pattern_map;
     tsk_id_t site_id = (tsk_id_t) self->num_sites;
+    size_t derived_count, j;
     time_map_t *time_map = ancestor_builder_get_time_map(self, time);
+
+    derived_count = 0;
+    for (j = 0; j < (size_t) self->num_samples; j++) {
+        if (genotypes[j] == 1) {
+            derived_count++;
+        }
+    }
 
     if (time_map == NULL) {
         ret = TSI_ERR_NO_MEMORY;
