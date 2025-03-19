@@ -62,7 +62,9 @@ for site_id, pos in enumerate(positions):
 ```
 
 :::{note}
-The last site, at position 95, is an indel (insertion or deletion). Indels can be used as long as the indel does not overlap with other variants, only 2 alleles exist, and the ancestral state is known.
+The last site, at position 95, is an indel (insertion or deletion). Indels can be used
+for inference as long as the indel does not overlap with other variants, only 2
+alleles exist, and the ancestral state is known.
 :::
 
 ### VariantData and ancestral alleles
@@ -203,13 +205,14 @@ inferred_ts.draw_svg(
 )
 ```
 
-We have inferred 4 trees aong the genome. Note, however, that there are "polytomies" in the
+We have inferred 4 trees along the genome. Note that there are "polytomies" in the
 trees, where some nodes have more than two children (e.g. the root node in the first tree).
 This is a common feature of trees inferred by _tsinfer_ and signals that there was not
-sufficient information to resolve the tree at this internal node.
+sufficient information to resolve the tree at this internal node. By default, the ancestry
+in the flanking regions (to the left of the first provided site and the right of the last provided site) is considered {ref}`unknown<tskit:sec_data_model_missing_data>`, and hence not drawn above.
 
 
-Each internal (non-sample) node in this inferred tree represents an ancestral sequence,
+Each internal (non-sample) node in this inferred genealogy represents an ancestral sequence,
 constructed on the basis of shared, derived alleles at one or more of the sites. By
 default, the time of each such node is *not* measured in years or generations, but
 is simply the frequency of the shared derived allele(s) on which the ancestral sequence
