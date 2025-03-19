@@ -1,6 +1,4 @@
-"""
-Script for statistically evaluating various aspects of tsinfer performance.
-"""
+# Script for statistically evaluating various aspects of tsinfer performance.
 import argparse
 import concurrent.futures
 import json

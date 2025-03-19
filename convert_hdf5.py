@@ -1,7 +1,5 @@
-"""
-Simple script to convert input data into HDF5 format so that
-we can feed it into the C development CLI.
-"""
+# Simple script to convert input data into HDF5 format so that
+# we can feed it into the C development CLI.
 import sys
 
 import h5py

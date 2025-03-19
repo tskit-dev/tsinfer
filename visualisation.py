@@ -1,6 +1,4 @@
-"""
-Visualisation of the copying process and ancestor generation using PIL
-"""
+# Visualisation of the copying process and ancestor generation using PIL
 import os
 import sys
 

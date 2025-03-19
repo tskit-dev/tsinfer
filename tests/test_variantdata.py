@@ -584,9 +584,9 @@ class TestSgkitMask:
         # Mask out a random 1/3 of sites
         variant_mask = np.zeros(ts.num_sites, dtype=bool)
         random = np.random.RandomState(42)
-        variant_mask[
-            random.choice(ts.num_sites, ts.num_sites // 3, replace=False)
-        ] = True
+        variant_mask[random.choice(ts.num_sites, ts.num_sites // 3, replace=False)] = (
+            True
+        )
         # Mask out a random 1/3 of samples
         samples_mask = np.zeros(ts.num_individuals, dtype=bool)
         samples_mask[

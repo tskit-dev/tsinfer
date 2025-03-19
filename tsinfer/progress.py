@@ -91,7 +91,7 @@ class ProgressMonitor:
             dynamic_ncols=True,
             smoothing=0.01,
             unit_scale=True,
-            **self.tqdm_kwargs
+            **self.tqdm_kwargs,
         )
         return self.current_instance
 
