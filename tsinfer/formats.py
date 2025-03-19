@@ -1019,9 +1019,9 @@ class SampleData(DataContainer):
 
         self.data.attrs["sequence_length"] = float(sequence_length)
         self.data.attrs["metadata"] = {}
-        self.data.attrs[
-            "metadata_schema"
-        ] = tskit.MetadataSchema.permissive_json().schema
+        self.data.attrs["metadata_schema"] = (
+            tskit.MetadataSchema.permissive_json().schema
+        )
         chunks = (self._chunk_size,)
         populations_group = self.data.create_group("populations")
         metadata = populations_group.create_dataset(
@@ -3615,9 +3615,9 @@ class AncestorData(DataContainer):
                     end_buffer[buffer_pos] = insert_pos_end
                     time_buffer[buffer_pos] = anc.time
                     focal_sites_buffer[buffer_pos] = anc.focal_sites
-                    haplotype_buffer[
-                        insert_pos_start:insert_pos_end, buffer_pos, 0
-                    ] = anc.full_haplotype[insert_pos_start:insert_pos_end]
+                    haplotype_buffer[insert_pos_start:insert_pos_end, buffer_pos, 0] = (
+                        anc.full_haplotype[insert_pos_start:insert_pos_end]
+                    )
                     buffer_pos += 1
                     if buffer_pos == buffer_length:
                         flush_buffers(buffer_length)

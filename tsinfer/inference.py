@@ -2502,9 +2502,11 @@ class AncestorMatcher(Matcher):
                 group,
                 len(ancestor_ids),
                 extra_nodes,
-                sum(result.mean_traceback_size for result in results) / len(results)
-                if len(results) > 0
-                else float("nan"),
+                (
+                    sum(result.mean_traceback_size for result in results) / len(results)
+                    if len(results) > 0
+                    else float("nan")
+                ),
                 self.tree_sequence_builder.num_edges,
             )
         )
