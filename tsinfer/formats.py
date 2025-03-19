@@ -3297,7 +3297,7 @@ class AncestorData(DataContainer):
         **kwargs,
     ):
         """
-        Take a set of samples from a {class}`VariantData` instance and create additional
+        Take a set of samples from a :class:`.VariantData` instance and create additional
         "proxy sample ancestors" from them, returning a new :class:`.AncestorData`
         instance including both the current ancestors and the additional ancestors
         at the appropriate time points.
