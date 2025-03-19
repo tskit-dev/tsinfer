@@ -129,36 +129,6 @@ Sites which are not used for inference will
 still be included in the final tree sequence, with mutations at those sites being placed
 onto branches by {meth}`parsimony<tskit.Tree.map_mutations>`. 
 
-### Masks
-
-It is also possible to *completely* exclude sites and samples, by specifing a boolean
-`site_mask` and/or a `sample_mask` when creating the `VariantData` object. Sites or samples with
-a mask value of `True` will be completely omitted both from inference and the final tree sequence.
-This can be useful, for example, if you wish to select only a subset of the chromosome for
-inference, e.g. to reduce computational load. You can also use it to subset inference to a
-particular contig, if your dataset contains multiple contigs. Note that if a `site_mask` is provided,
-the ancestral states array should only specify alleles for the unmasked sites.
-
-Below, for instance, is an example of including only sites up to position six in the contig
-labelled "chr1" in the `example_data.vcz` file:
-
-```{code-cell}
-import numpy as np
-
-# mask out any sites not associated with the contig named "chr1"
-# (for demonstration: all sites in this .vcz file are from "chr1" anyway)
-chr1_index = np.where(vcf_zarr.contig_id[:] == "chr1")[0]
-site_mask = vcf_zarr.variant_contig[:] != chr1_index
-# also mask out any sites with a position >= 80
-site_mask[vcf_zarr.variant_position[:] >= 80] = True
-
-smaller_vdata = tsinfer.VariantData(
-    "_static/example_data.vcz",
-    ancestral_state="ancestral_state",
-    site_mask=site_mask,
-)
-print(f"The `smaller_vdata` object returns data for only {smaller_vdata.num_sites} sites")
-```
 
 ### Topology inference
 
@@ -256,6 +226,40 @@ statistics to be calulated, you must use additional
 software such as [tsdate](https://tskit.dev/software/tsdate.html): the _tsinfer_
 algorithm is only intended to infer the genetic relationships between the samples
 (i.e. the *topology* of the tree sequence).
+
+### Masks
+
+It is possible to *completely* exclude sites and samples, by specifing a boolean
+`site_mask` and/or a `sample_mask` when creating the `VariantData` object. Sites or samples with
+a mask value of `True` will be completely omitted both from inference and the final tree sequence.
+This can be useful, for example, if you wish to select only a subset of the chromosome for
+inference, e.g. to reduce computational load. You can also use it to subset inference to a
+particular contig, if your dataset contains multiple contigs. Note that if a `site_mask` is provided,
+the ancestral states array should only specify alleles for the unmasked sites.
+
+Below, for instance, is an example of including only sites up to position six in the contig
+labelled "chr1" in the `example_data.vcz` file:
+
+```{code-cell}
+import numpy as np
+import zarr
+
+vcf_zarr = zarr.open("_static/example_data.vcz")
+
+# mask out any sites not associated with the contig named "chr1"
+# (for demonstration: all sites in this .vcz file are from "chr1" anyway)
+chr1_index = np.where(vcf_zarr.contig_id[:] == "chr1")[0]
+site_mask = vcf_zarr.variant_contig[:] != chr1_index
+# also mask out any sites with a position >= 80
+site_mask[vcf_zarr.variant_position[:] >= 80] = True
+
+smaller_vdata = tsinfer.VariantData(
+    "_static/example_data.vcz",
+    ancestral_state="ancestral_state",
+    site_mask=site_mask,
+)
+print(f"The `smaller_vdata` object returns data for only {smaller_vdata.num_sites} sites")
+```
 
 
 (sec_usage_simulation_example)=
