@@ -16,14 +16,14 @@ kernelspec:
 
 (sec_large_scale)=
 
-# Large Scale Inference
+# Large scale inference
 
 Generally, for up to a few thousand samples a single multi-core machine
-can infer a tree seqeunce in a few days. However, tsinfer has been
-successfully used with datasets up to half a million samples, where
-ancestor and sample matching can take several CPU-years.
+can infer a tree sequence in a few days, hours, or even minutes.
+However, _tsinfer_ has been successfully used with datasets up to half a million
+samples, where ancestor and sample matching can take several CPU-years.
 At this scale inference must be scaled across many machines.
-tsinfer provides specific APIs to enable this.
+_Tsinfer_ provides specific APIs to enable this.
 Here we detail considerations and tips for each step of the
 inference process to help you scale up your analysis. A snakemake pipeline
 which implements this parallelisation scheme is available as
@@ -34,8 +34,8 @@ which implements this parallelisation scheme is available as
 ## Data preparation
 
 For large scale inference the data must be in [VCF Zarr](https://github.com/sgkit-dev/vcf-zarr-spec)
-format, read by the {class}`VariantData` class. [bio2zarr](https://github.com/sgkit-dev/bio2zarr)
-is recommended for conversion from VCF. [sgkit](https://github.com/sgkit-dev/sgkit) can then
+format, read by the {class}`VariantData` class. [Bio2zarr](https://github.com/sgkit-dev/bio2zarr)
+is recommended for conversion from VCF, and [sgkit](https://github.com/sgkit-dev/sgkit) can then
 be used to perform initial filtering.
 
 :::{todo}
@@ -45,19 +45,20 @@ An upcoming tutorial will detail conversion from VCF to a VCF Zarr suitable for 
 
 ## Ancestor generation
 
-Ancestor generation is generally the fastest step in inference and is not yet
+Ancestor generation is generally the fastest step in inference. It is not yet
 parallelised out-of-core in tsinfer and must be performed on a single machine.
 However it scales well on machines with
 many cores and hyperthreading via the `num_threads` argument to
 {meth}`generate_ancestors`. The limiting factor is often that the
 entire genotype array for the contig being inferred needs to fit in RAM.
 This is the high-water mark for memory usage in tsinfer.
-Note the `genotype_encoding` argument, setting this to
-{class}`tsinfer.GenotypeEncoding.ONE_BIT` reduces the memory footprint of
-the genotype array by a factor of 8, for a surprisingly small increase in
-runtime. With this encoding, the RAM needed is roughly 
-`num_sites * num_samples * ploidy / 8 bytes.` However this encoding
-only supports biallelic sites, with no missingness.
+
+If your data consists of only biallelic sites, with no missingness,
+the `genotype_encoding` argument can be set to
+{class}`tsinfer.GenotypeEncoding.ONE_BIT` which reduces the memory footprint of
+the genotype array by a factor of 8, such that the RAM needed is roughly 
+`num_sites * num_samples * ploidy / 8 bytes`. This memory optimisation
+results in a surprisingly small increase in runtime.
 
 ## Ancestor matching
 
