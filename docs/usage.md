@@ -23,11 +23,11 @@ kernelspec:
 
 ## Toy example
 
-_Tsinfer_ takes as input a [Zarr](https://zarr.readthedocs.io/) file, with phased variant data encoded in the
-[VCF Zarr](https://github.com/sgkit-dev/vcf-zarr-spec/) (.vcz) format. The standard
-route to create such a file is by conversion from a VCF file, e.g. using
-[vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html) as described later in this
-document. However, for the moment we'll just use a pre-generated dataset:
+_Tsinfer_ takes as input a [Zarr](https://zarr.readthedocs.io/) file, with phased variant 
+data encoded in the [VCF Zarr](https://github.com/sgkit-dev/vcf-zarr-spec/) (.vcz) format.
+For simplicity, we first demonstrate using a pre-generated .vcz file (later, in the
+{ref}`sec_usage_data_example` section, we describe how to create such a file e.g. from
+a VCF using [vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html)).
 
 
 ```{code-cell} ipython3
@@ -35,7 +35,7 @@ import zarr
 vcf_zarr = zarr.open("_static/example_data.vcz")
 ```
 
-This is what the genotypes stored in that datafile look like:
+Here's what the genotypes stored in that datafile look like:
 
 ```{code-cell}
 :"tags": ["remove-input"]
@@ -63,31 +63,64 @@ for site_id, pos in enumerate(positions):
 
 :::{note}
 The last site, at position 95, is an indel (insertion or deletion). Indels can be used
-for inference as long as the indel does not overlap with other variants, only 2
+for inference as long as the indel does not overlap with other variants, only two
 alleles exist, and the ancestral state is known.
 :::
 
-### VariantData and ancestral alleles
+(sec_usage_toy_example_variant_data)=
 
-We wish to infer a genealogy that could have given rise to this data set. To run _tsinfer_
-we wrap the `.vcz` file in a {class}`tsinfer.VariantData` object. This requires an 
-*ancestral state* to be specified for each site; there are
-many methods for calculating these: details are outside the scope of this manual, but we
-have started a [discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
+
+### VariantData
+
+_Tsinfer_ produces a genealogy that could have given rise to the data set above,
+based on the sites that vary between the samples. To provide extra information
+to the algorithm, you must wrap the .vcz file in a lightweight
+{class}`tsinfer.VariantData` object, using syntax like:
+
+```{code} python
+vdata = tsinfer.VariantData("file.vcz", ancestral_state=***, ...)
+```
+
+#### Ancestral states
+
+Importantly, the {class}`~tsinfer.VariantData` object requires an
+*ancestral state* to be provided for each site used in inference.
+There are many methods for determing ancestral states: details are outside
+the scope of this manual, but we have started a
+[discussion topic](https://github.com/tskit-dev/tsinfer/discussions/523)
 on this issue to provide some recommendations.
 
-Sometimes VCF files will contain the
-ancestral state in the "AA" ("ancestral allele") info field, in which case it will be encoded
-in the `variant_AA` field of the .vcz file. It's also possible to provide a numpy array
-of ancestral alleles, of the same length as the number of selected variants. If you have a string
-of the ancestral states (e.g. from FASTA) the {meth}`add_ancestral_state_array`
-method can be used to convert and save this to the VCF Zarr dataset (under the name
-`ancestral_state`). Note that this method assumes that the string uses zero-based
-indexing, so that the first letter corresponds to a site at position 0. If,
-as is typical, the first letter in the string denotes the ancestral state of
-the site at position 1 in the .vcz file, you should prepend an "X" to the string.
-Alleles that are not in the list of alleles for their respective site are
-treated as unknown and not used for inference (with a warning given).
+Ancestral states can be specified in several ways:
+
+* Using an existing array in the .vcz file. Some VCF files already contain an ancestral
+  state, e.g. in the `AA` ("ancestral allele") `info` field. In this case the `variant_AA`
+  field of the .vcz file can be specified, as follows.
+  ```{code}
+  vdata = tsinfer.VariantData("file.vcz", ancestral_state="variant_AA")
+  ```
+  A worked example is shown in the {ref}`real data example<sec_usage_read_vcf_inference>`
+  later on this page.
+* Using a numpy array of ancestral state strings, of the same length as the number
+  of unmasked variants. For example, if you wish to treat the reference ("REF") allele
+  as the ancestral state, you can take advantage of the fact that the .vcz format
+  always stores the zeroth allele as the REF, suggesting the following syntax:
+  ```{code}
+  vcf_zarr = zarr.load("file.vcz")
+  vdata = tsinfer.VariantData("file.vcz", ancestral_state=vcf_zarr["variant_allele"][:, 0])
+  ```
+  A worked example of using an array of strings is provided in the
+  {ref}`simulation example<sec_usage_simulation_example_inference>` later on this page.
+* Using a single string of ancestral states, e.g. from a FASTA file. The string
+  should cover the entire genetic sequence, such that the `i`th character in the
+  string is taken as the ancestral state for an inference site at position `i`. In this
+  case, the {meth}`add_ancestral_state_array` method can be used to extract the states
+  and save them to the VCF Zarr dataset, under the name `ancestral_state`. Note
+  that if, as is common, variant positions in the .vcz file are one-based (starting at 1), rather than zero-based, you should add a padding character at the start of the string.
+  
+
+Below we illustrate the single string method, using a stored FASTA file.
+In this file, the 16th, 44th, 50th, 55th, 71st, 75th, 85th, and 95th characters are
+`G`, `G`, `C`, `T`, `C`, `A`, `T`, and `A` (note that the 85th character, `T`, does not match any of the alleles in the .vcz genotypes for position 85).
 
 ```{code-cell}
 import tsinfer
@@ -98,47 +131,46 @@ vcf_zarr = zarr.open("_static/example_data.vcz")
 
 reader = pyfaidx.Fasta("_static/example_ancestral_state.fa")
 ancestral_str = str(reader["chr1"])
-# Our positions are zero-based, if they were one-based we would
-# prepend an X here.
-# e.g. ancestral_str = "X" + ancestral_str
-
-# Set the ancestral state at the last known position to "N", for demonstration
-last_pos = vcf_zarr['variant_position'][-1]
-ancestral_str = ancestral_str[:last_pos] + "N" + ancestral_str[(last_pos + 1):]
+# We consider positions in the .vcz file to be one-based, so we prepend an X to the string
+ancestral_str = "X" + ancestral_str
 
 tsinfer.add_ancestral_state_array(vcf_zarr, ancestral_str) 
 vdata = tsinfer.VariantData("_static/example_data.vcz", ancestral_state="ancestral_state")
 ```
 
-The {class}`VariantData` object is a lightweight wrapper around the .vcz file.
-We'll use it to infer a tree sequence on the basis of the sites that vary between the
-different samples. However, note that certain sites are not used by _tsinfer_ for inferring
-the genealogy (although they are still encoded in the final tree sequence), These are:
+Because the ancestral state at position 85 does not match any of the
+alleles at that site, a warning has been given that the ancestral state
+will be considered unknown. As a consequence, although it will appear in
+the inferred tree sequence, the site at position 85 will be treated as a
+"noninference" site.
+
+### Inference sites
+
+Certain sites are not used by _tsinfer_ for inferring the genealogy.
+These _noninference_ sites are nevertheless included in the final
+tree sequence, but with their mutations placed by
+{meth}`parsimony<tskit.Tree.map_mutations>`. Such sites include:
 
 * Non-variable (fixed) sites, e.g. the site at position 71 above
 * Singleton sites, where only one genome has the derived allele
   e.g. the site at position 75 above
-* Sites where the ancestral allele is unknown, e.g. demonstrated above when setting the
-  ancestral state of the site at position 95 to `N`.
+* Sites where the ancestral allele is unknown, e.g. site 85 (see above).
 * Multialleleic sites, with more than 2 alleles (but see
   [here](https://github.com/tskit-dev/tsinfer/issues/670) for a workaround)
 
-Additionally, during the inference step, additional sites can be flagged as not for use in
-inference, for example if they are deemed unreliable (this is done
-via the `exclude_positions` parameter).
-
-Sites which are not used for inference will
-still be included in the final tree sequence, with mutations at those sites being placed
-onto branches by {meth}`parsimony<tskit.Tree.map_mutations>`. 
-
+Additional sites can be deliberately flagged as not-for-use in inference,
+for example if their genotypes or ancestral states are deemed unreliable,
+via the `exclude_positions` parameter when running the inference
+step of _tsinfer_.
 
 ### Topology inference
 
-Once we have stored our data in a `.VariantData` object, we can easily infer 
-a {ref}`tree sequence<sec_python_api_trees_and_tree_sequences>` using the Python
-API. Note that each sample in the original .vcz file will correspond to an *individual*
-in the resulting tree sequence. Since these three individuals are diploid, the resulting
-tree sequence will have `ts.num_samples == 6` (i.e. unlike in a .vcz file, a "sample" in
+Once our data is wrapped in a {class}`~tsinfer.VariantData` object, we can infer
+a {ref}`tree sequence<sec_python_api_trees_and_tree_sequences>` e.g. using
+_tsinfer_'s {ref}`Python API<sec_api>`. Note that each sample in the original
+.vcz file will correspond to an *individual* in the resulting tree sequence.
+Since these three individuals are diploid, the resulting
+tree sequence will have `ts.num_samples == 6` (unlike in a .vcz file, a "sample" in
 tskit refers to a haploid genome, not a diploid individual).
 
 ```{code-cell} ipython3
@@ -177,7 +209,7 @@ for v_orig, v_inferred in zip(vdata.variants(), inferred_ts.variants()):
         np.array(v_inferred.alleles)[v_inferred.genotypes]
     ):
         raise ValueError("Genotypes in original dataset and inferred tree seq not equal")
-print("** Genotypes in original dataset and inferred tree sequence are the same **")
+print("** Genotypes in original dataset and inferred ts are identical **")
 ```
 
 We can examine the inferred genetic genealogy, in the form of
@@ -230,11 +262,14 @@ software such as [tsdate](https://tskit.dev/software/tsdate.html): the _tsinfer_
 algorithm is only intended to infer the genetic relationships between the samples
 (i.e. the *topology* of the tree sequence).
 
+(sec_usage_toy_example_masks)=
+
 ### Masks
 
-It is possible to *completely* exclude sites and samples, by specifing a boolean
-`site_mask` and/or a `sample_mask` when creating the `VariantData` object. Sites or samples with
-a mask value of `True` will be completely omitted both from inference and the final tree sequence.
+As well as marking sites as not-for-inference, is possible to *completely* exclude
+sites and samples, by specifing a boolean `site_mask` and/or a `sample_mask` when
+creating the `VariantData` object. Sites or samples with a mask value of `True` will
+be completely omitted both from inference and the final tree sequence.
 This can be useful, for example, if you wish to select only a subset of the chromosome for
 inference, e.g. to reduce computational load. You can also use it to subset inference to a
 particular contig, if your dataset contains multiple contigs. Note that if a `site_mask` is provided,
@@ -392,6 +427,8 @@ In practice this means we can keep such files lying around without taking up too
 
 Once we have our `.vcz` file created, running the inference is straightforward.
 
+(sec_usage_simulation_example_inference)=
+
 ```{code-cell} ipython3
 # Infer & save a ts from the notebook simulation.
 ancestral_states = np.load(f"{name}-AA.npy")
@@ -499,9 +536,9 @@ source and inferred tree sequences.
 
 ## Data example
 
-Inputting real data for inference is similar in principle to the examples above.
+Inputting real data for inference is similar in principle to the previous examples.
 All that is required is a .vcz file, which can be created using
-[vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html) as above
+[vcf2zarr](https://sgkit-dev.github.io/bio2zarr/vcf2zarr/overview.html) as above.
 
 (sec_usage_read_vcf)=
 
@@ -519,9 +556,10 @@ vcf_location = "_static/P_dom_chr24_phased.vcf.gz"
 !python -m bio2zarr vcf2zarr convert --force {vcf_location} sparrows.vcz
 ```
 
-This creates the `sparrows.vcz` datastore, which we open using `tsinfer.VariantData`.
-The original VCF had the ancestral allelic state specified in the `AA` INFO field,
-so we can simply provide the string `"variant_AA"` as the ancestral_state parameter.
+This creates the `sparrows.vcz` datastore, which we open using
+{class}`tsinfer.VariantData`. The original VCF had the ancestral allelic
+state specified in the `AA` INFO field, so we can simply provide the
+string `"variant_AA"` as the ancestral_state parameter.
 
 ```{code-cell} ipython3
 # Do the inference: this VCF has ancestral states in the AA field
@@ -536,7 +574,7 @@ print(
 
 On a modern computer, this should only take a few seconds to run.
 
-### Adding more metadata
+#### Adding more metadata
 
 We can add additional data to the zarr file, which will make it through to the tree sequence.
 For instance, we might want to mark which population each individual comes from.
@@ -573,8 +611,21 @@ for i, name in enumerate(vcf_zarr["sample_id"]):
 zarr.save("sparrows.vcz/individuals_population", individuals_population)
 ```
 
-Now when we carry out the inference, we get a tree sequence in which the nodes are
-correctly assigned to named populations
+(sec_usage_read_vcf_inference)=
+
+### _Tsinfer_ inference
+
+Note that the steps above to generate a .vcz file are not strictly part of
+_tsinfer_. We only invoke _tsinfer_ subsequently, when creating a
+{class}`~tsinfer.VariantData` object. Moreover, _tsinfer_ treats the
+.vcz information as read-only, and does not make a copy of it.
+This means _tsinfer_ is well-suited to using publicly provided, read-only
+.vcz datafiles. Furthermore, {ref}`sec_usage_toy_example_masks` make it easy
+to use subsets of such datafiles, e.g. if they contain multiple chromosomes
+or more samples than are required for your analysis.
+
+As the .vcz file we are now using contains population metadata, `tsinfer` will create
+a tree sequence whose sample nodes are correctly assigned to named populations:
 
 ```{code-cell} ipython3
 vdata = tsinfer.VariantData("sparrows.vcz", ancestral_state="variant_AA", individuals_population="individuals_population")
@@ -599,6 +650,7 @@ To analyse your inferred tree sequence you can use all the analysis functions bu
 the [tskit](https://tskit.dev/tskit/docs/stable/) library. The
 {ref}`tskit tutorial<sec_tutorial_stats>` provides much more detail. Below we just give a
 flavour of the possibilities.
+
 
 To quickly eyeball small datasets, we can draw the entire tree sequence, or
 {meth}`~tskit.Tree.draw` the tree at any particular genomic position. The following
@@ -694,7 +746,6 @@ print(gnn_table)
 # Summarize GNN for all birds from the same country
 print(gnn_table.groupby(level="Country").mean())
 ```
-
 
 From this, it can be seen that the genealogical nearest neighbours of birds in Norway
 tend also to be in Norway, and vice versa for birds from France. In other words, there is
