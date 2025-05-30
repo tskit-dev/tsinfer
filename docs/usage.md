@@ -320,10 +320,9 @@ import sys
 import os
 import subprocess
 
-from Bio import bgzf
-import numpy as np
-
+import bio2zarr.tskit as ts2z
 import msprime
+import numpy as np
 import tsinfer
 
 if getattr(builtins, "__IPYTHON__", False):  # if running IPython: e.g. in a notebook
@@ -343,27 +342,16 @@ ts = msprime.sim_ancestry(
     random_seed=6,
 )
 ts = msprime.sim_mutations(ts, rate=1e-8, random_seed=7)
-ts.dump(name + "-source.trees")
+ts.dump(f"{name}-source.trees")
 print(
     f"Simulated {ts.num_samples} samples over {seq_len/1e6} Mb:",
     f"{ts.num_trees} trees and {ts.num_sites} sites"
 )
 
-# Convert to a zarr file: this should be easier once a tskit2zarr utility is made, see
-# https://github.com/sgkit-dev/bio2zarr/issues/232
-np.save(f"{name}-AA.npy", [s.ancestral_state for s in ts.sites()])
-vcf_name = f"{name}.vcf.gz"
-with bgzf.open(vcf_name, "wt") as f:
-    ts.write_vcf(f)
-subprocess.run(["tabix", vcf_name])
-ret = subprocess.run(
-    [python, "-m", "bio2zarr", "vcf2zarr", "convert", "--force", vcf_name, f"{name}.vcz"],
-    stderr = subprocess.DEVNULL if name == "notebook-simulation" else None,
-)
+ts2z.convert(f"{name}-source.trees", f"{name}.vcz")
 assert os.path.exists(f"{name}.vcz")
 
-if ret.returncode == 0:
-    print(f"Converted to {name}.vcz")
+print(f"Converted to {name}.vcz")
 ```
 
 Here we first run a simulation then we create a vcf file and convert it to .vcz format.
@@ -431,8 +419,8 @@ Once we have our `.vcz` file created, running the inference is straightforward.
 
 ```{code-cell} ipython3
 # Infer & save a ts from the notebook simulation.
-ancestral_states = np.load(f"{name}-AA.npy")
-vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_states)
+vcf_zarr = zarr.load(f"{name}.vcz")
+vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_state=vcf_zarr["variant_allele"][:, 0])
 tsinfer.infer(vdata, progress_monitor=True, num_threads=4).dump(name + ".trees")
 ```
 

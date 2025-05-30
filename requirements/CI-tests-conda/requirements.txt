@@ -7,4 +7,4 @@ daiquiri==3.0.0 # Pinned as conda package not updating
 matplotlib==3.9.4
 seaborn==0.13.2
 colorama==0.4.6
-tskit==0.6.0
+tskit==0.6.4
