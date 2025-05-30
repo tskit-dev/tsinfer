@@ -10,6 +10,6 @@ pytest==8.3.5
 pytest-cov==6.0.0
 seaborn==0.13.2
 sgkit[vcf]==0.9.0
-tskit==0.6.0
+tskit==0.6.4
 tqdm==4.67.1
 twine==6.1.0
