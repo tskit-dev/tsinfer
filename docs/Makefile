@@ -19,3 +19,5 @@ dist:
 clean:
 	rm -fR $(BUILDDIR)
 	rm -rf _static/example_data.vcz/ancestral_state
+	rm -rf notebook-simulation*
+

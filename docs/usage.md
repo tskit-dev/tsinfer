@@ -320,10 +320,8 @@ import sys
 import os
 import subprocess
 
-from Bio import bgzf
-import numpy as np
-
 import msprime
+import numpy as np
 import tsinfer
 
 if getattr(builtins, "__IPYTHON__", False):  # if running IPython: e.g. in a notebook
@@ -350,7 +348,6 @@ print(
     f"{ts.num_trees} trees and {ts.num_sites} sites"
 )
 
-np.save(f"{name}-AA.npy", [s.ancestral_state for s in ts.sites()])
 ret = subprocess.run(
     [python, "-m", "bio2zarr", "tskit2zarr", "convert", "--force", ts_name, f"{name}.vcz"],
     stderr = subprocess.DEVNULL if name == "notebook-simulation" else None,
@@ -426,9 +423,10 @@ Once we have our `.vcz` file created, running the inference is straightforward.
 
 ```{code-cell} ipython3
 # Infer & save a ts from the notebook simulation.
-ancestral_states = np.load(f"{name}-AA.npy")
-vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_states)
-tsinfer.infer(vdata, progress_monitor=True, num_threads=4).dump(name + ".trees")
+vcf_zarr = zarr.load(f"{name}.vcz")  # currently must load the zarr to get ancestral states
+vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_state=vcf_zarr["variant_allele"][:, 0])
+inferred_ts = tsinfer.infer(vdata, progress_monitor=True, num_threads=4)
+inferred_ts.dump(name + ".trees")
 ```
 
 Running the `infer` command runs the full inference pipeline in one go (the individual steps
