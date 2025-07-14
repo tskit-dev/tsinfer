@@ -27,3 +27,4 @@ Bibtex record:
   title = {Inferring whole-genome histories in large population datasets},
   journal = {Nature Genetics}
 }
+```
