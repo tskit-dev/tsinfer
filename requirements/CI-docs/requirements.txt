@@ -5,10 +5,11 @@ humanize==4.12.1
 lmdb==1.6.2
 tqdm==4.67.1
 daiquiri==3.3.0
+tskit==0.6.4
 msprime==1.3.3
 sgkit[vcf]==0.9.0
 ipywidgets==8.1.5
 Bio==1.7.1
-bio2zarr==0.1.4
+bio2zarr==0.1.6
 sphinx-book-theme #Unpinned to allow easy updating.
 pyfaidx==0.8.1.3

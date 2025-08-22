@@ -7,7 +7,8 @@ tqdm
 humanize
 daiquiri
 msprime >= 1.0.0
-tskit >= 0.5.3
+tskit >= 0.6.4
+bio2zarr >= 0.1.6
 lmdb
 pre-commit
 pytest
