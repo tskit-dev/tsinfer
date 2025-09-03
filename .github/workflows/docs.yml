@@ -6,6 +6,7 @@ on:
     branches: [main]
     tags:
       - '*'
+  merge_group:
 
 env:
   COMMIT_EMAIL: ben.jeffery.well+adminbot@gmail.com
