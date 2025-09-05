@@ -17,16 +17,17 @@ jobs:
           name: Install dependencies and set PATH
           command: |
               sudo apt-get update
-              sudo apt-get install libgsl-dev libcap-dev libnuma-dev libcunit1-dev \
-                  libconfig-dev ninja-build valgrind clang python3-pip
+              sudo apt-get install libcap-dev libnuma-dev libcunit1-dev \
+                  libconfig-dev ninja-build valgrind clang 
               # set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
               echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
 
       - run:
-          name: Install development dependencies
+          name: Install test dependencies
           command: |
               pyenv global 3.9
-              pip install -r requirements/CI-tests-complete/requirements.txt --user
+              pip install uv
+              uv pip install --system -r pyproject.toml --extra test
               pyenv rehash
 
       - save_cache:
