@@ -54,7 +54,7 @@ dependencies = [
     "humanize",
     "daiquiri",
     "tskit>=0.5.3",
-    "numcodecs>=0.6",
+    "numcodecs>=0.6,<0.15.1", #Pinned due to https://github.com/zarr-developers/numcodecs/issues/733
     "zarr>=2.2,!=2.11.0,!=2.11.1,!=2.11.2,<3",
     "lmdb",
     "sortedcontainers",
@@ -72,6 +72,77 @@ Changelog = "https://tskit.dev/tsinfer/docs/stable/CHANGELOG.html"
 
 [project.scripts]
 tsinfer = "tsinfer.__main__:main"
+
+[project.optional-dependencies]
+test = [
+    "build==1.2.2.post1",
+    "colorama==0.4.6",
+    "daiquiri==3.2.5.1",
+    "humanize==4.12.1",
+    "lmdb==1.6.2",
+    "matplotlib==3.9.4",
+    "meson==1.7.0",
+    "msprime==1.3.4",
+    "pytest==8.3.5",
+    "pytest-cov==6.0.0",
+    "seaborn==0.13.2",
+    "sgkit[vcf]==0.9.0; sys_platform != 'win32'",
+    "tskit==0.6.0",
+    "tqdm==4.67.1",
+    "twine==6.1.0"
+]
+
+docs = [
+    "jupyter-book==1.0.4.post1",
+    "sphinx-issues==5.0.0",
+    "sphinx-argparse==0.5.2",
+    "humanize==4.12.1",
+    "lmdb==1.6.2",
+    "tqdm==4.67.1",
+    "daiquiri==3.3.0",
+    "msprime==1.3.3",
+    "sgkit[vcf]==0.9.0",
+    "ipywidgets==8.1.5",
+    "Bio==1.7.1",
+    "bio2zarr==0.1.4",
+    "sphinx-book-theme",
+    "pyfaidx==0.8.1.3"
+]
+
+dev = [
+    "attrs",
+    "codecov",
+    "coverage",
+    "flake8",
+    "six",
+    "tqdm",
+    "humanize",
+    "daiquiri",
+    "msprime>=1.0.0",
+    "tskit>=0.5.3",
+    "lmdb",
+    "pre-commit",
+    "pytest",
+    "pytest-coverage",
+    "h5py",
+    "sortedcontainers",
+    "python-prctl; sys_platform == 'linux'",
+    "numa; sys_platform == 'linux'",
+    "sphinx",
+    "sphinx-argparse",
+    "sphinx_rtd_theme",
+    "setuptools>=45",
+    "setuptools_scm",
+    "matplotlib",
+    "seaborn",
+    "colorama",
+    "sgkit[vcf]",
+    "sphinx-book-theme",
+    "jupyter-book",
+    "sphinx-issues",
+    "ipywidgets",
+    "pyfaidx"
+]
 
 [tool.setuptools]
 packages = ["tsinfer"]

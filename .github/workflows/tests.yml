@@ -20,7 +20,6 @@ jobs:
         with:
           python-version: '3.10'
       - name: install clang-format
-        if: steps.clang_format.outputs.cache-hit != 'true'
         run: |
           sudo pip install clang-format==6.0.1
           sudo ln -s /usr/local/bin/clang-format /usr/local/bin/clang-format-6.0
@@ -48,70 +47,39 @@ jobs:
         with:
           submodules: true
 
-      - name: Cache conda and dependancies
-        id: cache
-        uses: actions/cache@v4.2.2
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
         with:
-          path: ${{ env.CONDA }}/envs
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.python}}-conda-v5-${{ hashFiles('requirements/CI-tests-conda/requirements.txt')}}
-
-      - name: Install Miniconda with Mamba
-        uses: conda-incubator/setup-miniconda@v3.1.1
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          activate-environment: anaconda-client-env
           python-version: ${{ matrix.python }}
-          channels: conda-forge
-#          channel-priority: strict
-          auto-update-conda: true
-#          mamba-version: "*"
-#          use-mamba: true
+          version: "0.8.15"
 
-      - name: Fix windows .profile
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
+      - name: Setup venv
         run: |
-          cp ~/.bash_profile ~/.profile
-
-      # Work around weird issues on OSX possibly caused by mixed compilers
-      # https://github.com/tskit-dev/tsinfer/issues/376
-      - name: Install compiler from conda
-        if: steps.cache.outputs.cache-hit != 'true'
-        shell: bash -l {0} #We need a login shell to get conda
-        run: conda install --yes c-compiler
-
-      - name: Install conda deps
-        if: steps.cache.outputs.cache-hit != 'true'
-        shell: bash -l {0} #We need a login shell to get conda
-        run: conda install --yes --file=requirements/CI-tests-conda/requirements.txt
+          uv venv          
 
       - name: Install cyvcf2 #Fails if done via conda due to no windows support.
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.os != 'windows-latest'
+        if: matrix.os != 'windows-latest'
         run: |
-          source ~/.profile
-          conda activate anaconda-client-env
           #Install these by pip so we don't pull in cbgen with conda as it isn't available on 3.12
-          pip install sgkit==0.9.0 cyvcf2==0.31.1 yarl==1.9.4 aiohttp==3.9.5 requests==2.32.3 
+          uv pip install sgkit==0.9.0 cyvcf2==0.31.1 yarl==1.9.4 aiohttp==3.9.5 requests==2.32.3 
 
       - name: Install sgkit only on windows
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest'
         run: |
-          source ~/.profile
-          conda activate anaconda-client-env
-          #Install these by pip so we don't pull in cbgen with conda as it isn't available on 3.12
-          pip install sgkit==0.9.0 
+          uv pip install sgkit==0.9.0 
+
+      - name: Install pip deps
+        run: |
+          uv pip install -r pyproject.toml --extra test
 
       - name: Build module
         run: |
-          source ~/.profile
-          conda activate anaconda-client-env
           # Use numpy2 to build the module
-          pip install "numpy>=2"
-          python setup.py build_ext --inplace
+          uv pip install "numpy>=2"
+          uv run --no-sync python setup.py build_ext --inplace
 
       - name: Run tests
         run: |
-          source ~/.profile
-          conda activate anaconda-client-env
           # Test with numpy<2 for numba
-          pip install "numpy<2"
-          python -m pytest -xv
+          uv pip install "numpy<2"
+          uv run --no-sync python -m pytest -xv
