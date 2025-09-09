@@ -6,7 +6,7 @@ orbs:
 jobs:
   build:
     docker:
-      - image: cimg/python:3.9
+      - image: cimg/python:3.10
     steps:
       - checkout
 
@@ -25,7 +25,7 @@ jobs:
       - run:
           name: Install test dependencies
           command: |
-              pyenv global 3.9
+              pyenv global 3.10
               pip install uv
               uv pip install --system -r pyproject.toml --extra test
               pyenv rehash

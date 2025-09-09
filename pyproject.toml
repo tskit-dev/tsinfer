@@ -18,16 +18,16 @@ authors = [
 ]
 description = "Infer tree sequences from genetic variation data."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "GNU GPLv3+"}
 classifiers = [
     "Programming Language :: C",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Development Status :: 3 - Alpha",
@@ -59,7 +59,7 @@ dependencies = [
     "lmdb",
     "sortedcontainers",
     "attrs>=19.2.0",
-    "numba",
+    "numba>=0.61.0",
     "psutil>=5.9.0",
 ]
 
