@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.2] - 2025-XX-XX
+
+** Changes **
+
+- Drop Python 3.9 support, require Python >= 3.10 ({pr}`1044`, {user}`benjeffery`)
+
 ## [0.4.1] - 2024-04-19
 
 ** Changes **
