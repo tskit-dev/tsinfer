@@ -23,7 +23,7 @@ ts = msprime.sim_ancestry(
 ts = msprime.sim_mutations(ts, rate=1e-8, random_seed=7)
 ts.dump(name + "-source.trees")
 print(
-    f"Simulated {ts.num_samples} samples over {seq_len/1e6} Mb:",
+    f"Simulated {ts.num_samples} samples over {seq_len / 1e6} Mb:",
     f"{ts.num_trees} trees and {ts.num_sites} sites",
 )
 

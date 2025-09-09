@@ -1411,8 +1411,10 @@ class TestBatchAncestorMatching:
             num_groupings,
             2,
         )
-        assert (tmpdir / "work" / f"ancestors_{(num_groupings//2)-1}.trees").exists()
-        assert (tmpdir / "work" / f"ancestors_{num_groupings-1}.trees").exists()
+        assert (
+            tmpdir / "work" / f"ancestors_{(num_groupings // 2) - 1}.trees"
+        ).exists()
+        assert (tmpdir / "work" / f"ancestors_{num_groupings - 1}.trees").exists()
         ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
         ts2 = tsinfer.match_ancestors(samples, ancestors)
         ts.tables.assert_equals(ts2.tables, ignore_provenance=True)

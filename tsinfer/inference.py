@@ -848,7 +848,7 @@ def match_ancestors_batch_groups(
             ancestors_ts = None
         else:
             ancestors_ts = tskit.load(
-                os.path.join(work_dir, f"ancestors_{group_index_start-1}.trees")
+                os.path.join(work_dir, f"ancestors_{group_index_start - 1}.trees")
             )
         matcher = initialize_ancestor_matcher(
             metadata, ancestors_ts, num_threads=num_threads
@@ -859,7 +859,7 @@ def match_ancestors_batch_groups(
                 for group_index in range(group_index_start, group_index_end)
             }
         )
-        path = os.path.join(work_dir, f"ancestors_{group_index_end-1}.trees")
+        path = os.path.join(work_dir, f"ancestors_{group_index_end - 1}.trees")
         logger.info(f"Dumping to {path}")
         ts.dump(path)
     with open(path + ".resources", "w") as f:
@@ -898,7 +898,7 @@ def match_ancestors_batch_group_partition(work_dir, group_index, partition_index
 
     with provenance.TimingAndMemory() as timing:
         ancestors_ts = tskit.load(
-            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+            os.path.join(work_dir, f"ancestors_{group_index - 1}.trees")
         )
         matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
         ancestors_to_match = group["partitions"][partition_index]
@@ -935,7 +935,7 @@ def match_ancestors_batch_group_finalise(work_dir, group_index):
             metadata = json.load(f)
         group = metadata["ancestor_grouping"][group_index]
         ancestors_ts = tskit.load(
-            os.path.join(work_dir, f"ancestors_{group_index-1}.trees")
+            os.path.join(work_dir, f"ancestors_{group_index - 1}.trees")
         )
         matcher = initialize_ancestor_matcher(metadata, ancestors_ts)
         logger.info(
