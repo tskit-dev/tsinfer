@@ -34,6 +34,17 @@ warnings.filterwarnings(
 if sys.version_info[0] < 3:
     raise Exception("Python 3 only")
 
+try:
+    import zarr
+
+    if zarr.__version__ >= "3":
+        raise RuntimeError(
+            f"zarr version {zarr.__version__} is not supported. "
+            "tsinfer requires zarr < 3.0. Please install zarr < 3.0."
+        )
+except ImportError:
+    pass
+
 __version__ = "undefined"
 try:
     from . import _version

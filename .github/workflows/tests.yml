@@ -11,6 +11,34 @@ jobs:
     name: Lint
     uses: tskit-dev/.github/.github/workflows/lint.yml@v2
 
+  zarr-v3-compatibility:
+    name: Test zarr v3 error
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          submodules: true
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          version: "0.8.15"
+
+      - name: Setup venv
+        run: |
+          uv venv
+
+      - name: Install zarr v3 and tsinfer
+        run: |
+          uv pip install -e .
+          uv pip install --upgrade zarr
+
+      - name: Test zarr v3 error
+        run: |
+          uv run --no-sync python -c "import tsinfer" 2>&1 | grep -q "zarr version.*is not supported"
+
   test:
     name: Python
     runs-on: ${{ matrix.os }}
