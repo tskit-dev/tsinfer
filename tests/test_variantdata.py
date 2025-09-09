@@ -875,7 +875,7 @@ def test_ancestral_missing_info(tmp_path, caplog):
     anc_state[15] = "n"
     with caplog.at_level(logging.INFO):
         vdata = tsinfer.VariantData(zarr_path, anc_state)
-    assert f"4 sites ({4/ts.num_sites * 100 :.2f}%) were deliberately " in caplog.text
+    assert f"4 sites ({4 / ts.num_sites * 100 :.2f}%) were deliberately " in caplog.text
     inf_ts = tsinfer.infer(vdata)
     for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
         if i in [0, 11, 12, 15]:
