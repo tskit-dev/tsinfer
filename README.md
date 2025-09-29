@@ -1,11 +1,19 @@
 # tsinfer <img align="right" width="145" height="90" src="https://raw.githubusercontent.com/tskit-dev/tsinfer/main/docs/tsinfer_logo.svg">
 
-[![CircleCI](https://circleci.com/gh/tskit-dev/tsinfer.svg?style=svg)](https://circleci.com/gh/tskit-dev/tsinfer) [![Build Status](https://travis-ci.org/tskit-dev/tsinfer.svg?branch=main)](https://travis-ci.org/tskit-dev/tsinfer) [![Docs Build](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml/badge.svg)](https://tskit.dev/tsinfer/docs/stable/introduction.html) [![codecov](https://codecov.io/gh/tskit-dev/tsinfer/branch/main/graph/badge.svg)](https://codecov.io/gh/tskit-dev/tsinfer)
+[![License](https://img.shields.io/github/license/tskit-dev/tsinfer)](https://github.com/tskit-dev/tsinfer/blob/main/LICENSE) [![PyPI version](https://img.shields.io/pypi/v/tsinfer.svg)](https://pypi.org/project/tsinfer/) [![Supported Python Versions](https://img.shields.io/pypi/pyversions/tsinfer.svg)](https://pypi.org/project/tsinfer/) [![Docs Build](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml/badge.svg)](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml) [![Binary wheels](https://github.com/tskit-dev/tsinfer/actions/workflows/wheels.yml/badge.svg)](https://github.com/tskit-dev/tsinfer/actions/workflows/wheels.yml) [![Tests](https://github.com/tskit-dev/tsinfer/actions/workflows/tests.yml/badge.svg)](https://github.com/tskit-dev/tsinfer/actions/workflows/tests.yml) [![codecov](https://codecov.io/gh/tskit-dev/tsinfer/branch/main/graph/badge.svg)](https://codecov.io/gh/tskit-dev/tsinfer)
 
 
-Infer a tree sequence from genetic variation data
+Infer whole-genome tree sequences from genetic variation data. Tsinfer implements efficient algorithms to reconstruct ancestral haplotypes and recombination breakpoints, producing succinct tree sequences that capture shared ancestry across the genome. It scales to large cohorts and integrates cleanly with the broader tskit ecosystem for downstream statistics and analysis.
 
-The [documentation](https://tskit.dev/tsinfer/docs/latest) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/latest/installation.html).
+The documentation ([stable](https://tskit.dev/tsinfer/docs/stable/) • [latest](https://tskit.dev/tsinfer/docs/latest/)) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/stable/installation.html).
+
+## Installation
+
+```bash
+python -m pip install tsinfer
+# or
+conda install -c conda-forge tsinfer
+```
 
 The initial algorithm, its rationale, and results from testing on simulated and real data are described in the following [Nature Genetics paper](https://doi.org/10.1038/s41588-019-0483-y):
 
