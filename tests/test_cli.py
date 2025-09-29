@@ -134,6 +134,7 @@ class TestCli(unittest.TestCase):
         ts = tsinfer.match_samples(sample_data, ancestors_ts)
         ts.dump(self.output_trees)
         sample_data.close()
+        ancestor_data.close()
 
     # Need to mock out setup_logging here or we spew logging to the console
     # in later tests.
@@ -256,6 +257,7 @@ class TestCommandsExtra(TestCli):
         assert os.path.exists(output_anc)
         ancestors = tsinfer.load(output_anc)
         assert ancestors.num_ancestors > 0
+        ancestors.close()
 
         assert os.path.exists(output_anc_ts)
         anc_ts = tskit.load(output_anc_ts)
@@ -344,6 +346,7 @@ class TestProvenance(TestCli):
         sd = tsinfer.load(self.sample_file)
         self.run_command(["infer", self.sample_file, "-O", output_trees])
         self.verify_ts_provenance(output_trees, sd.num_provenances + 1)
+        sd.close()
 
     @pytest.mark.skip(
         reason="Ancestors not saving provenance:"
@@ -354,6 +357,8 @@ class TestProvenance(TestCli):
         self.run_command(["generate-ancestors", self.sample_file])
         ancestors = tsinfer.load(self.ancestor_file)
         assert ancestors.num_provenances == sd.num_provenances + 1
+        sd.close()
+        ancestors.close()
 
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"
@@ -362,7 +367,8 @@ class TestProvenance(TestCli):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         ancestors_trees = os.path.join(self.tempdir.name, "ancestors.trees")
         self.run_command(["generate-ancestors", self.sample_file])
-        num_provenances_ancestors = tsinfer.load(self.ancestor_file).num_provenances
+        with tsinfer.load(self.ancestor_file) as ancestors_temp:
+            num_provenances_ancestors = ancestors_temp.num_provenances
         self.run_command(["match-ancestors", self.sample_file, "-A", ancestors_trees])
         self.verify_ts_provenance(ancestors_trees, num_provenances_ancestors + 1)
         self.run_command(
@@ -463,6 +469,7 @@ class TestRecombinationAndMismatch(TestCli):
         ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
         sd = tsinfer.load(self.sample_file)
         last_pos = sd.sites_position[-1]
+        sd.close()
         assert last_pos > 2
         with open(ratemap, "w") as map:
             print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)

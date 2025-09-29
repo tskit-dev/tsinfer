@@ -123,11 +123,11 @@ def run_list(args):
     except tskit.FileFormatError:
         pass
     if ts is None:
-        tsinfer_file = tsinfer.load(args.path)
-        if args.storage:
-            print(tsinfer_file.info)
-        else:
-            print(tsinfer_file)
+        with tsinfer.load(args.path) as tsinfer_file:
+            if args.storage:
+                print(tsinfer_file.info)
+            else:
+                print(tsinfer_file)
     else:
         summarise_tree_sequence(ts)
 
@@ -149,8 +149,38 @@ def write_ts(ts, path):
 
 def run_infer(args):
     setup_logging(args)
+    if args.keep_intermediates:
+        # In this mode, subcommands handle opening/closing files
+        run_generate_ancestors(args, usage_summary=False)
+        run_match_ancestors(args, usage_summary=False)
+        run_match_samples(args, usage_summary=False)
+        summarise_usage()
+        return
+
+    # Non-keep-intermediates: operate directly on SampleData and ensure it closes
     try:
-        sample_data = tsinfer.SampleData.load(args.samples)
+        with tsinfer.SampleData.load(args.samples) as sample_data:
+            if args.ancestors is not None:
+                raise ValueError(
+                    "Must specify --keep-intermediates to save an ancestors file"
+                )
+            if args.ancestors_trees is not None:
+                raise ValueError(
+                    "Must specify --keep-intermediates to save an "
+                    "ancestors tree sequence"
+                )
+
+            ts = tsinfer.infer(
+                sample_data,
+                progress_monitor=args.progress,
+                num_threads=args.num_threads,
+                recombination_rate=get_recombination_map(args),
+                mismatch_ratio=args.mismatch_ratio,
+                path_compression=not args.no_path_compression,
+                record_provenance=False,
+            )
+            output_trees = get_output_trees_path(args.output_trees, args.samples)
+            write_ts(ts, output_trees)
     except exceptions.FileFormatError as e:
         # Check if the user has tried to infer a tree sequence, a common basic mistake
         try:
@@ -161,32 +191,6 @@ def run_infer(args):
             "Expecting a sample data file, not a tree sequence (you can create one "
             "via the Python function `tsinfer.SampleData.from_tree_sequence()`)."
         )
-    sample_data = tsinfer.SampleData.load(args.samples)
-    if args.keep_intermediates:
-        run_generate_ancestors(args, usage_summary=False)
-        run_match_ancestors(args, usage_summary=False)
-        run_match_samples(args, usage_summary=False)
-    else:
-        if args.ancestors is not None:
-            raise ValueError(
-                "Must specify --keep-intermediates to save an ancestors file"
-            )
-        if args.ancestors_trees is not None:
-            raise ValueError(
-                "Must specify --keep-intermediates to save an ancestors tree sequence"
-            )
-
-        ts = tsinfer.infer(
-            sample_data,
-            progress_monitor=args.progress,
-            num_threads=args.num_threads,
-            recombination_rate=get_recombination_map(args),
-            mismatch_ratio=args.mismatch_ratio,
-            path_compression=not args.no_path_compression,
-            record_provenance=False,
-        )
-        output_trees = get_output_trees_path(args.output_trees, args.samples)
-        write_ts(ts, output_trees)
     summarise_usage()
 
 
@@ -206,6 +210,7 @@ def run_generate_ancestors(args, usage_summary=True):
     # perf issues - see https://github.com/tskit-dev/tsinfer/issues/743
     if usage_summary:
         summarise_usage()
+    sample_data.close()
 
 
 def run_match_ancestors(args, usage_summary=True):
@@ -228,6 +233,8 @@ def run_match_ancestors(args, usage_summary=True):
     write_ts(ts, ancestors_trees)
     if usage_summary:
         summarise_usage()
+    sample_data.close()
+    ancestor_data.close()
 
 
 def run_augment_ancestors(args, usage_summary=True):
@@ -260,6 +267,7 @@ def run_augment_ancestors(args, usage_summary=True):
     ts.dump(output_path)
     if usage_summary:
         summarise_usage()
+    sample_data.close()
 
 
 def run_match_samples(args, usage_summary=True):
@@ -284,13 +292,14 @@ def run_match_samples(args, usage_summary=True):
     write_ts(ts, output_trees)
     if usage_summary:
         summarise_usage()
+    sample_data.close()
 
 
 def run_verify(args):
     setup_logging(args)
-    samples = tsinfer.SampleData.load(args.samples)
-    ts = tskit.load(args.tree_sequence)
-    tsinfer.verify(samples, ts, progress_monitor=args.progress)
+    with tsinfer.SampleData.load(args.samples) as samples:
+        ts = tskit.load(args.tree_sequence)
+        tsinfer.verify(samples, ts, progress_monitor=args.progress)
     summarise_usage()
 
 

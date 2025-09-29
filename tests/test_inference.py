@@ -601,42 +601,42 @@ class TestTruncateAncestorsRoundTripFromDisk(TestRoundTrip):
         )
         with tempfile.TemporaryDirectory() as d:
             tsinfer.generate_ancestors(sample_data, path=d + "ancestors.tsi")
-            ancestors = tsinfer.AncestorData.load(d + "ancestors.tsi")
-            time = np.sort(ancestors.ancestors_time[:])
-            # Some tests produce an AncestorData file with no ancestors
-            if len(time) > 0:
-                lower_bound = np.min(time)
-                upper_bound = np.max(time)
-                midpoint = np.median(time)
-                params = [
-                    (lower_bound, upper_bound, 0.1),
-                    (lower_bound, upper_bound, 1),
-                    (midpoint, midpoint + (midpoint / 2), 1),
-                ]
-            else:
-                params = [(0.4, 0.6, 1), (0, 1, 10)]
-            for param in params:
-                truncated_ancestors = ancestors.truncate_ancestors(
-                    *param, buffer_length=2
-                )
-                engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
-                for engine in engines:
-                    ancestors_ts = tsinfer.match_ancestors(
-                        sample_data, truncated_ancestors, engine=engine
+            with tsinfer.AncestorData.load(d + "ancestors.tsi") as ancestors:
+                time = np.sort(ancestors.ancestors_time[:])
+                # Some tests produce an AncestorData file with no ancestors
+                if len(time) > 0:
+                    lower_bound = np.min(time)
+                    upper_bound = np.max(time)
+                    midpoint = np.median(time)
+                    params = [
+                        (lower_bound, upper_bound, 0.1),
+                        (lower_bound, upper_bound, 1),
+                        (midpoint, midpoint + (midpoint / 2), 1),
+                    ]
+                else:
+                    params = [(0.4, 0.6, 1), (0, 1, 10)]
+                for param in params:
+                    truncated_ancestors = ancestors.truncate_ancestors(
+                        *param, buffer_length=2
                     )
-                    ts = tsinfer.match_samples(
-                        sample_data,
-                        ancestors_ts,
-                        engine=engine,
-                    )
-                    self.assert_lossless(
-                        ts,
-                        genotypes,
-                        positions,
-                        alleles,
-                        sample_data.sequence_length,
-                        ancestral_alleles,
-                    )
+                    engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
+                    for engine in engines:
+                        ancestors_ts = tsinfer.match_ancestors(
+                            sample_data, truncated_ancestors, engine=engine
+                        )
+                        ts = tsinfer.match_samples(
+                            sample_data,
+                            ancestors_ts,
+                            engine=engine,
+                        )
+                        self.assert_lossless(
+                            ts,
+                            genotypes,
+                            positions,
+                            alleles,
+                            sample_data.sequence_length,
+                            ancestral_alleles,
+                        )
 
 
 class TestSparseAncestorsRoundTrip(TestRoundTrip):
@@ -3758,6 +3758,7 @@ class TestBugExamples:
         ts = tsinfer.infer(sample_data)
         for var, (_, genotypes) in zip(ts.variants(), sample_data.genotypes()):
             assert np.array_equal(var.genotypes, genotypes)
+        sample_data.close()
 
     @pytest.mark.skip("Need to solve https://github.com/tskit-dev/tsinfer/issues/210")
     def test_path_compression_parent_child_small_times(self):

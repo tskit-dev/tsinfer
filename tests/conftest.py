@@ -35,14 +35,84 @@ Fixtures can be parameterised etc. see https://docs.pytest.org/en/stable/fixture
 Note that fixtures have a "scope" for example `ts_fixture` below is only created once
 per test session and re-used for subsequent tests.
 """
+import gc
+import os
+import tempfile
+import time
+import warnings
+
 import msprime
 import numpy as np
+import psutil
 import pytest
 import tskit
 from pytest import fixture
 from tsutil import mark_mutation_times_unknown
 
 import tsinfer
+
+
+@fixture(autouse=True)
+def fail_on_open_files_per_test(request):
+    proc = psutil.Process()
+
+    def snapshot_paths():
+        paths = set()
+        # Regular open files
+        try:
+            for f in proc.open_files():
+                if f.path:
+                    paths.add(os.path.abspath(f.path))
+        except Exception:
+            pass
+        # Memory-mapped files (e.g., mmap, LMDB, tskit mmaps)
+        try:
+            for m in proc.memory_maps():
+                if m.path and os.path.isabs(m.path):
+                    paths.add(os.path.abspath(m.path))
+        except Exception:
+            pass
+        return paths
+
+    # Disable leak detection for tests that intentionally leave files open
+    if request.node.get_closest_marker("allow_open_file_leaks"):
+        yield
+        return
+
+    before = snapshot_paths()
+    yield
+    # Give short grace period for async finalisers/threads and GC
+    gc.collect()
+    after = snapshot_paths()
+    if after:  # Retry a couple of times to reduce flakiness
+        for _ in range(2):
+            time.sleep(0.1)
+            gc.collect()
+            after = snapshot_paths()
+
+    # Restrict to repo and tempdir to avoid system DLLs etc.
+    cwd = os.path.abspath(os.getcwd())
+    tmpdir = os.path.abspath(tempfile.gettempdir())
+
+    def relevant(p):
+        p = os.path.abspath(p)
+        # Ignore common shared library extensions and venv/site-packages
+        lower = p.lower()
+        if lower.endswith((".so", ".pyd", ".dll", ".dylib", ".pyc")):
+            return False
+        if "/site-packages/" in lower or "/dist-packages/" in lower:
+            return False
+        if any(seg in lower for seg in ("/.venv/", "/venv/", "/env/")):
+            return False
+        return p.startswith(cwd) or p.startswith(tmpdir)
+
+    leaked = sorted(p for p in after - before if relevant(p))
+    if leaked:
+        msg = f"Open file handles leaked by {request.node.nodeid}:\n" + "\n".join(
+            f"  - {p}" for p in leaked
+        )
+        warnings.warn(msg, ResourceWarning)
+        pytest.fail(msg)
 
 
 def pytest_addoption(parser):
