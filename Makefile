@@ -1,5 +1,5 @@
 CC?=gcc
-CFLAGS=-std=c99 -g -O3 -march=native -funroll-loops -ffast-math \
+CFLAGS=-std=c11 -g -O3 -march=native -funroll-loops -ffast-math \
        # -ftree-vectorize \
        # -ftree-vectorizer-verbose=6 \
        # -fopt-info-vec-missed
