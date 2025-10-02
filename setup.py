@@ -33,10 +33,12 @@ sources = (
 
 libraries = ["Advapi32"] if IS_WINDOWS else []
 
+extra_compile_args = [] if IS_WINDOWS else ["-std=c11"]
+
 _tsinfer_module = Extension(
     "_tsinfer",
     sources=sources,
-    extra_compile_args=["-std=c99"],
+    extra_compile_args=extra_compile_args,
     libraries=libraries,
     undef_macros=["NDEBUG"],
     include_dirs=includes + [numpy.get_include()],

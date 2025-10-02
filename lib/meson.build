@@ -1,4 +1,4 @@
-project('tsinfer', 'c')
+project('tsinfer', 'c', default_options: ['c_std=c11'])
  
 tskit_proj = subproject('tskit')
 tskit_dep = tskit_proj.get_variable('tskit_dep')
@@ -8,7 +8,7 @@ m_dep = cc.find_library('m', required : false)
 cunit_dep = dependency('cunit')
 
 extra_c_args = [
-    '-std=c99', '-Wall', '-Wextra', '-Werror', '-Wpedantic', '-W',
+    '-Wall', '-Wextra', '-Werror', '-Wpedantic', '-W',
     '-Wmissing-prototypes',  '-Wstrict-prototypes',
     '-Wconversion', '-Wshadow', '-Wpointer-arith', '-Wcast-align',
     '-Wcast-qual', '-Wwrite-strings', '-Wnested-externs',

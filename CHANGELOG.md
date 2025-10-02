@@ -8,7 +8,8 @@
   to `VariantData.__init__` rather than requiring a specifically named array in the vcf zarr store.
   ({pr}`1011`, {issue}`1006`, {user}`benjeffery`)
 
-
+- Building tsinfer now requires C11.
+  ({pr}`1053`, {issue}`1046`, {user}`benjeffery`)
 
 ## [0.4.0] - 2024-04-06
 
