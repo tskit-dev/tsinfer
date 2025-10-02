@@ -31,6 +31,7 @@ import queue
 import sys
 import threading
 import warnings
+import weakref
 from typing import Union  # noqa: F401
 
 import attr
@@ -491,6 +492,9 @@ class DataContainer:
             object_codec=self._metadata_codec,
         )
 
+        # Register a backstop to close the current store if the object leaks
+        self._set_store_finalizer()
+
     def __enter__(self):
         return self
 
@@ -509,6 +513,8 @@ class DataContainer:
         self.data = zarr.open(store=store, mode="r")
         self._check_format()
         self._mode = self.READ_MODE
+        # Refresh finalizer to target the current store
+        self._set_store_finalizer()
 
     def _new_lmdb_store(self, map_size=None):
         if os.path.exists(self.path):
@@ -543,6 +549,8 @@ class DataContainer:
         """
         if self._mode != self.READ_MODE:
             self.finalise()
+        # Detach backstop to avoid double-closing on explicit close
+        self._detach_store_finalizer()
         if self.data.store is not None:
             self.data.store.close()
         self.data = None
@@ -596,6 +604,8 @@ class DataContainer:
         self.data.attrs[FINALISED_KEY] = True
         if self.path is not None:
             store = self.data.store
+            # The store is about to change; detach any backstop on the old store
+            self._detach_store_finalizer()
             store.close()
             logger.debug("Fixing up LMDB file size")
             with lmdb.open(self.path, subdir=False, lock=False, writemap=True) as db:
@@ -610,6 +620,28 @@ class DataContainer:
             # Remove the lock file as we don't need it after this point.
             remove_lmdb_lockfile(self.path)
         self._open_readonly()
+
+    # The tsinfer test suite creates many DataContainer objects,
+    # lots of which are never closed explicitly. On Windows these
+    # files can't be deleted until the file handle is closed, so
+    # CI fails with "no disk space left on device" errors. To avoid
+    # this, we use a finalizer to close the underlying store if
+    # the object is garbage collected without being closed.
+    def _detach_store_finalizer(self):
+        fin = getattr(self, "_gc_close", None)
+        if fin is not None and getattr(fin, "alive", False):
+            fin.detach()
+
+    def _set_store_finalizer(self):
+        # Detach any previous finalizer and attach to current store
+        self._detach_store_finalizer()
+        store = getattr(self, "data", None)
+        if store is not None:
+            store = getattr(self.data, "store", None)
+        if store is not None and hasattr(store, "close"):
+            self._gc_close = weakref.finalize(self, store.close)
+        else:
+            self._gc_close = None
 
     def _check_format(self):
         try:
