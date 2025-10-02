@@ -1274,8 +1274,9 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
+    int weight_by_n = 1;
     static char *kwlist[] = {"tree_sequence_builder", "recombination",
-        "mismatch", "precision", "extended_checks", NULL};
+        "mismatch", "precision", "extended_checks", "weight_by_n", NULL};
     TreeSequenceBuilder *tree_sequence_builder = NULL;
     PyObject *recombination = NULL;
     PyObject *mismatch = NULL;
@@ -1287,10 +1288,10 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 
     self->ancestor_matcher = NULL;
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Iii", kwlist,
                 &TreeSequenceBuilderType, &tree_sequence_builder,
                 &recombination, &mismatch, &precision,
-                &extended_checks)) {
+                &extended_checks, &weight_by_n)) {
         goto out;
     }
     self->tree_sequence_builder = tree_sequence_builder;
@@ -1330,6 +1331,9 @@ AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     }
     if (extended_checks) {
         flags = TSI_EXTENDED_CHECKS;
+    }
+    if (!weight_by_n) {
+        flags |= TSI_DISABLE_WEIGHT_BY_N;
     }
     err = ancestor_matcher_alloc(self->ancestor_matcher,
             self->tree_sequence_builder->tree_sequence_builder,

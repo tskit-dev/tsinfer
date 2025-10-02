@@ -300,10 +300,13 @@ ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     double max_L, p_last, p_no_recomb, p_recomb, p_t, p_e;
     const double rho = self->recombination_rate[site];
     const double mu = self->mismatch_rate[site];
-    const double n = (double) self->tree_sequence_builder->num_match_nodes;
+    double n = 1.0;
     const double num_alleles
         = (double) self->tree_sequence_builder->sites.num_alleles[site];
 
+    if (!(self->flags & TSI_DISABLE_WEIGHT_BY_N)) {
+        n = (double) self->tree_sequence_builder->num_match_nodes;
+    }
     if (state >= num_alleles) {
         ret = TSI_ERR_BAD_HAPLOTYPE_ALLELE;
         goto out;
