@@ -235,7 +235,7 @@ ancestor_builder_free_genotype_mmap(ancestor_builder_t *self)
         munmap(self->mmap_buffer, self->mmap_size);
     }
     /* Try to truncate to zero so we don't flush out all the data */
-    ftruncate(self->mmap_fd, 0);
+    (void) ftruncate(self->mmap_fd, 0);
     return 0;
 }
 #endif
