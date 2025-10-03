@@ -109,6 +109,9 @@ tsi_strerror(int err)
         case TSI_ERR_IO:
             ret = tsk_strerror(TSK_ERR_IO);
             break;
+        case TSI_ERR_BAD_ANCESTRAL_STATE:
+            ret = "Ancestral state must be >= 0 and < num_alleles";
+            break;
     }
     return ret;
 }

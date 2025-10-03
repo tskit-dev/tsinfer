@@ -261,11 +261,11 @@ ancestor_matcher_set_allelic_state(
     ancestor_matcher_t *self, const tsk_id_t site, allele_t *restrict allelic_state)
 {
     mutation_list_node_t *mutation;
+    tree_sequence_builder_t *tsb = self->tree_sequence_builder;
 
-    /* FIXME assuming that 0 is always the ancestral state */
-    allelic_state[0] = 0;
+    allelic_state[0] = tsb->sites.ancestral_state[site];
 
-    for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
+    for (mutation = tsb->sites.mutations[site]; mutation != NULL;
          mutation = mutation->next) {
         allelic_state[mutation->node] = mutation->derived_state;
     }

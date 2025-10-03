@@ -145,6 +145,80 @@ class TestTreeSequenceBuilder:
             with pytest.raises(TypeError):
                 _tsinfer.TreeSequenceBuilder([2], max_edges=bad_type)
 
+    def test_ancestral_state(self):
+        _tsinfer.TreeSequenceBuilder([2, 3])
+
+        # Test valid ancestral_state
+        _tsinfer.TreeSequenceBuilder(
+            [2, 3], ancestral_state=np.array([0, 1], dtype=np.int8)
+        )
+
+        # Test wrong size
+        with pytest.raises(ValueError, match="ancestral_state array wrong size"):
+            _tsinfer.TreeSequenceBuilder(
+                [2, 3], ancestral_state=np.array([0], dtype=np.int8)
+            )
+
+        # Test negative ancestral state
+        with pytest.raises(_tsinfer.LibraryError, match="Ancestral state must be >= 0"):
+            _tsinfer.TreeSequenceBuilder(
+                [2, 3], ancestral_state=np.array([-1, 0], dtype=np.int8)
+            )
+
+        # Test ancestral state >= num_alleles
+        with pytest.raises(_tsinfer.LibraryError, match="Ancestral state must be >= 0"):
+            _tsinfer.TreeSequenceBuilder(
+                [2, 3], ancestral_state=np.array([0, 3], dtype=np.int8)
+            )
+
+    def test_ancestral_state_matching(self):
+        # Build two identical tree structures but with different ancestral states
+        # and verify the allelic states of nodes differ based on ancestral state
+
+        # Tree 1: ancestral state = 0, node n1 has mutation to state 1
+        tsb0 = _tsinfer.TreeSequenceBuilder(
+            [2, 2], ancestral_state=np.array([0, 0], dtype=np.int8)
+        )
+        root0 = tsb0.add_node(time=2)
+        n0 = tsb0.add_node(time=1)
+        tsb0.add_path(child=n0, left=[0], right=[2], parent=[root0])
+        tsb0.add_mutations(node=n0, site=[0, 1], derived_state=[1, 1])
+        tsb0.freeze_indexes()
+
+        # Tree 2: ancestral state = 1, node n1 has mutation to state 0
+        # This creates the mirror image: root has state 1, n1 has state 0
+        tsb1 = _tsinfer.TreeSequenceBuilder(
+            [2, 2], ancestral_state=np.array([1, 1], dtype=np.int8)
+        )
+        root1 = tsb1.add_node(time=2)
+        n1 = tsb1.add_node(time=1)
+        tsb1.add_path(child=n1, left=[0], right=[2], parent=[root1])
+        tsb1.add_mutations(node=n1, site=[0, 1], derived_state=[0, 0])
+        tsb1.freeze_indexes()
+
+        recomb = [0.01, 0.01]
+        mismatch = [0.1, 0.1]
+
+        # In tree 0: root0 has state [0,0], n0 has state [1,1]
+        # In tree 1: root1 has state [1,1], n1 has state [0,0]
+        # Query [0,0] should have different match scores to root vs child
+
+        h_zero = np.array([0, 0], dtype=np.int8)
+        h_one = np.array([1, 1], dtype=np.int8)
+        match = np.zeros(2, dtype=np.int8)
+
+        # In tsb0, root has [0,0] (ancestral), n0 has [1,1] (derived)
+        matcher0 = _tsinfer.AncestorMatcher(tsb0, recomb, mismatch)
+        # Query [1,1] should match n0 better than root
+        _, _, parent_tsb0_one = matcher0.find_path(h_one, 0, 2, match)
+        assert parent_tsb0_one[0] == n0
+
+        # In tsb1, root has [1,1] (ancestral), n1 has [0,0] (derived)
+        matcher1 = _tsinfer.AncestorMatcher(tsb1, recomb, mismatch)
+        # Query [0,0] should match n1 better than root
+        _, _, parent_tsb1_zero = matcher1.find_path(h_zero, 0, 2, match)
+        assert parent_tsb1_zero[0] == n1
+
 
 class TestAncestorBuilder:
     """

@@ -166,12 +166,12 @@ def count_srb_ancestors(flags):
 AlleleCounts = collections.namedtuple("AlleleCounts", "known ancestral derived")
 
 
-def allele_counts(genotypes):
+def allele_counts(genotypes, ancestral_allele=0):
     """
     Return summary counts of the number of different allele types for a genotypes array
     """
     n_known = np.sum(genotypes != tskit.MISSING_DATA)
-    n_ancestral = np.sum(genotypes == 0)
+    n_ancestral = np.sum(genotypes == ancestral_allele)
     return AlleleCounts(
         known=n_known, ancestral=n_ancestral, derived=n_known - n_ancestral
     )
