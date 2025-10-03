@@ -2948,8 +2948,8 @@ class TestPartialAncestorMatching:
             tskit.Edge(8, 12, 1, 4),
             tskit.Edge(4, 8, 1, 5),
             tskit.Edge(0, 4, 1, 6),
-            tskit.Edge(0, 5, 1, 7),
-            tskit.Edge(5, 8, 5, 7),
+            tskit.Edge(0, 4, 1, 7),
+            tskit.Edge(4, 8, 5, 7),
             tskit.Edge(8, 12, 1, 7),
         ]
         self.verify_edges(sample_data, ancestor_data, expected_edges)
@@ -5069,3 +5069,57 @@ def test_unpackbits(a):
     v1 = np.unpackbits(packed, bitorder="little")
     v2 = unpackbits(packed)
     np.testing.assert_array_equal(v1, v2)
+
+
+def test_conflicting_precision_and_likelihood_threshold_match_ancestors(
+    small_sd_anc_fixture,
+):
+    sd, ancestors = small_sd_anc_fixture
+    with pytest.raises(
+        ValueError, match="Cannot specify likelihood_threshold and precision"
+    ):
+        tsinfer.match_ancestors(
+            sd,
+            ancestors,
+            precision=13,
+            likelihood_threshold=1e-6,
+        )
+
+
+def test_conflicting_precision_and_likelihood_threshold_infer(small_sd_fixture):
+    sd = small_sd_fixture
+    with pytest.raises(
+        ValueError, match="Cannot specify likelihood_threshold and precision"
+    ):
+        tsinfer.infer(
+            sd,
+            precision=12,
+            likelihood_threshold=1e-5,
+        )
+
+
+def test_likelihood_threshold_logged_specific_value(caplog, small_sd_anc_fixture):
+    """Test that a specific likelihood threshold value is correctly logged"""
+    sd, ancestors = small_sd_anc_fixture
+    likelihood_threshold = 1e-10
+
+    with caplog.at_level(logging.INFO):
+        tsinfer.match_ancestors(
+            sd, ancestors, likelihood_threshold=likelihood_threshold
+        )
+
+    m = re.search(r"Matching using likelihood_threshold of ([-e\.\d]+)", caplog.text)
+    assert m is not None
+    assert float(m.group(1)) == likelihood_threshold
+
+
+def test_likelihood_threshold_default(caplog, small_sd_anc_fixture):
+    """Test that a specific likelihood threshold value is correctly logged"""
+    sd, ancestors = small_sd_anc_fixture
+
+    with caplog.at_level(logging.INFO):
+        tsinfer.match_ancestors(sd, ancestors)
+
+    m = re.search(r"Matching using likelihood_threshold of ([-e\.\d]+)", caplog.text)
+    assert m is not None
+    assert float(m.group(1)) == 1e-13
