@@ -60,6 +60,17 @@ uint64_PyArray_converter(PyObject *in, PyObject **out)
     return NPY_SUCCEED;
 }
 
+static int
+int8_PyArray_converter(PyObject *in, PyObject **out)
+{
+    PyObject *ret = PyArray_FROMANY(in, NPY_INT8, 1, 1, NPY_ARRAY_IN_ARRAY);
+    if (ret == NULL) {
+        return NPY_FAIL;
+    }
+    *out = ret;
+    return NPY_SUCCEED;
+}
+
 /*===================================================================
  * AncestorBuilder
  *===================================================================
@@ -421,8 +432,10 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
 {
     int ret = -1;
     int err;
-    static char *kwlist[] = {"num_alleles", "max_nodes", "max_edges", NULL};
+    static char *kwlist[] = {"num_alleles", "max_nodes", "max_edges", "ancestral_state", NULL};
     PyArrayObject *num_alleles = NULL;
+    PyArrayObject *ancestral_state = NULL;
+    int8_t *ancestral_state_data = NULL;
     unsigned long max_nodes = 1024;
     unsigned long max_edges = 1024;
     unsigned long num_sites;
@@ -430,13 +443,22 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     int flags = 0;
 
     self->tree_sequence_builder = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|kk", kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|kkO&", kwlist,
             uint64_PyArray_converter, &num_alleles,
-            &max_nodes, &max_edges)) {
+            &max_nodes, &max_edges,
+            int8_PyArray_converter, &ancestral_state)) {
         goto out;
     }
     shape = PyArray_DIMS(num_alleles);
     num_sites = shape[0];
+    if (ancestral_state != NULL) {
+        shape = PyArray_DIMS(ancestral_state);
+        if (shape[0] != (npy_intp) num_sites) {
+            PyErr_SetString(PyExc_ValueError, "ancestral_state array wrong size");
+            goto out;
+        }
+        ancestral_state_data = PyArray_DATA(ancestral_state);
+    }
 
     self->tree_sequence_builder = PyMem_Malloc(sizeof(tree_sequence_builder_t));
     if (self->tree_sequence_builder == NULL) {
@@ -444,7 +466,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
         goto out;
     }
     err = tree_sequence_builder_alloc(self->tree_sequence_builder,
-            num_sites, PyArray_DATA(num_alleles),
+            num_sites, PyArray_DATA(num_alleles), ancestral_state_data,
             max_nodes, max_edges, flags);
     if (err != 0) {
         handle_library_error(err);
@@ -453,6 +475,7 @@ TreeSequenceBuilder_init(TreeSequenceBuilder *self, PyObject *args, PyObject *kw
     ret = 0;
 out:
     Py_XDECREF(num_alleles);
+    Py_XDECREF(ancestral_state);
     return ret;
 }
 
