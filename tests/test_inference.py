@@ -3534,10 +3534,10 @@ class PathCompressionMixin:
         self.verify(sample_data)
 
     def test_simulation_with_error(self):
-        ts = msprime.simulate(
-            50, mutation_rate=10, random_seed=5, recombination_rate=15
-        )
-        ts = eval_util.insert_errors(ts, 0.2, seed=33)
+        # Lower recombination and error rates tend to increase shared breakpoints
+        # and contiguous matches across individuals, which encourages PC nodes.
+        ts = msprime.simulate(60, mutation_rate=10, random_seed=5, recombination_rate=8)
+        ts = eval_util.insert_errors(ts, 0.1, seed=33)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
@@ -4168,7 +4168,7 @@ class TestAugmentedAncestors:
         self.verify(sample_data)
 
     def test_simulation_with_error(self):
-        ts = msprime.simulate(50, mutation_rate=5, random_seed=5, recombination_rate=8)
+        ts = msprime.simulate(100, mutation_rate=5, random_seed=5, recombination_rate=8)
         ts = eval_util.insert_errors(ts, 0.1, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
@@ -4431,18 +4431,24 @@ class TestMismatchAndRecombination:
                 assert v1.site.position == v2.site.position
                 assert np.all(v1.genotypes == v2.genotypes)
 
-            # If we try this with a small precision value we fail.
-            with pytest.raises(_tsinfer.MatchImpossible):
-                tsinfer.match_samples(
-                    sd,
-                    anc_ts,
-                    precision=3,
-                    recombination=r,
-                    mismatch=m,
-                    engine=e,
-                    path_compression=False,
-                    extended_checks=True,
-                )
+            # Historically, using a small precision could cause rounding
+            # issues and failure under zero recombination. We now use a
+            # likelihood threshold; even with a coarse threshold this should
+            # still succeed.
+            ts = tsinfer.match_samples(
+                sd,
+                anc_ts,
+                likelihood_threshold=10**-3,
+                recombination=r,
+                mismatch=m,
+                engine=e,
+                path_compression=False,
+                extended_checks=True,
+            )
+            assert sd.num_sites == ts.num_sites
+            for v1, v2 in zip(sd.variants(), ts.variants()):
+                assert v1.site.position == v2.site.position
+                assert np.all(v1.genotypes == v2.genotypes)
 
     def test_no_ancestor_mismatch_in_basic_infer(self, small_sd_anc_fixture):
         # Check we are not using mismatch in match_ancestors, by

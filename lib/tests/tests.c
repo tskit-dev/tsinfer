@@ -366,7 +366,7 @@ run_random_data(size_t num_samples, size_t num_sites, int seed,
     ret = tree_sequence_builder_alloc(&tsb, num_sites, NULL, 1, 1, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&ancestor_matcher, &tsb, recombination_rates,
-        mismatch_rates, 6, TSI_EXTENDED_CHECKS);
+        mismatch_rates, 1e-6, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     for (j = 0; j < num_sites; j++) {
@@ -554,7 +554,7 @@ test_matching_one_site(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 12, 0);
+        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 1e-12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_find_path(
@@ -644,7 +644,7 @@ test_matching_one_site_many_alleles(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 12, 0);
+        &ancestor_matcher, &tsb, &recombination_rate, &mismatch_rate, 1e-12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     haplotype = 0;
@@ -703,7 +703,7 @@ test_matching_errors(void)
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 12, 0);
+        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 1e-12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_find_path(
         &ancestor_matcher, 0, 2, haplotype, match, &num_edges, &left, &right, &parent);
@@ -713,7 +713,7 @@ test_matching_errors(void)
     haplotype[0] = 0;
     mismatch_rate[0] = 1;
     ret = ancestor_matcher_alloc(
-        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 12, 0);
+        &ancestor_matcher, &tsb, recombination_rate, mismatch_rate, 1e-12, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_find_path(
         &ancestor_matcher, 0, 2, haplotype, match, &num_edges, &left, &right, &parent);
@@ -998,7 +998,7 @@ test_strerror(void)
         CU_ASSERT(strlen(msg) > 0);
     }
     CU_ASSERT_STRING_EQUAL(
-        tsk_strerror(0), "Normal exit condition. This is not an error!");
+        tsi_strerror(0), "Normal exit condition. This is not an error!");
 }
 
 static int
