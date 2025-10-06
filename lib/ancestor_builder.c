@@ -196,8 +196,8 @@ ancestor_builder_print_state(ancestor_builder_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
-    tsk_blkalloc_print_state(&self->main_allocator, out);
-    tsk_blkalloc_print_state(&self->indexing_allocator, out);
+    tsi_blkalloc_print_state(&self->main_allocator, out);
+    tsi_blkalloc_print_state(&self->indexing_allocator, out);
     ancestor_builder_check_state(self);
     return 0;
 }
@@ -280,11 +280,11 @@ ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples, size_t max_
     /* NB: using self->max_sites below is probably overkill: the real number should be
      * the maximum number of focal sites in a single ancestor, usually << max_sites */
     max_size = TSK_MAX(self->max_sites * sizeof(tsk_id_t), max_size);
-    ret = tsk_blkalloc_init(&self->main_allocator, max_size);
+    ret = tsi_blkalloc_init(&self->main_allocator, max_size);
     if (ret != 0) {
         goto out;
     }
-    ret = tsk_blkalloc_init(&self->indexing_allocator, max_size);
+    ret = tsi_blkalloc_init(&self->indexing_allocator, max_size);
     if (ret != 0) {
         goto out;
     }
@@ -320,8 +320,8 @@ ancestor_builder_free(ancestor_builder_t *self)
     tsi_safe_free(self->sites);
     tsi_safe_free(self->descriptors);
     tsk_safe_free(self->genotype_encode_buffer);
-    tsk_blkalloc_free(&self->main_allocator);
-    tsk_blkalloc_free(&self->indexing_allocator);
+    tsi_blkalloc_free(&self->main_allocator);
+    tsi_blkalloc_free(&self->indexing_allocator);
     return 0;
 }
 
@@ -335,8 +335,8 @@ ancestor_builder_get_time_map(ancestor_builder_t *self, double time)
     search.time = time;
     avl_node = avl_search(&self->time_map, &search);
     if (avl_node == NULL) {
-        avl_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(*avl_node));
-        time_map = tsk_blkalloc_get(&self->indexing_allocator, sizeof(*time_map));
+        avl_node = tsi_blkalloc_get(&self->indexing_allocator, sizeof(*avl_node));
+        time_map = tsi_blkalloc_get(&self->indexing_allocator, sizeof(*time_map));
         if (avl_node == NULL || time_map == NULL) {
             goto out;
         }
@@ -642,7 +642,7 @@ ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
     void *p;
 
     if (self->mmap_buffer == NULL) {
-        ret = tsk_blkalloc_get(&self->main_allocator, self->encoded_genotypes_size);
+        ret = tsi_blkalloc_get(&self->main_allocator, self->encoded_genotypes_size);
     } else {
         p = (char *) self->mmap_buffer + self->mmap_offset;
         self->mmap_offset += self->encoded_genotypes_size;
@@ -697,8 +697,8 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     avl_node = avl_search(pattern_map, &search);
     if (avl_node == NULL) {
         stored_genotypes = ancestor_builder_allocate_genotypes(self);
-        avl_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(avl_node_t));
-        map_elem = tsk_blkalloc_get(&self->indexing_allocator, sizeof(pattern_map_t));
+        avl_node = tsi_blkalloc_get(&self->indexing_allocator, sizeof(avl_node_t));
+        map_elem = tsi_blkalloc_get(&self->indexing_allocator, sizeof(pattern_map_t));
         if (stored_genotypes == NULL || avl_node == NULL || map_elem == NULL) {
             ret = TSI_ERR_NO_MEMORY;
             goto out;
@@ -717,7 +717,7 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     map_elem->num_sites++;
     self->sites[site_id].encoded_genotypes = map_elem->encoded_genotypes;
 
-    list_node = tsk_blkalloc_get(&self->indexing_allocator, sizeof(site_list_t));
+    list_node = tsi_blkalloc_get(&self->indexing_allocator, sizeof(site_list_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -794,7 +794,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
             descriptor = self->descriptors + self->num_ancestors;
             self->num_ancestors++;
             descriptor->time = time_map->time;
-            focal_sites = tsk_blkalloc_get(
+            focal_sites = tsi_blkalloc_get(
                 &self->main_allocator, pattern_map->num_sites * sizeof(tsk_id_t));
             if (focal_sites == NULL) {
                 ret = TSI_ERR_NO_MEMORY;
@@ -832,7 +832,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
     /* After we've finalised, free up the large chunks of memory we're no longer using */
     self->time_map.head = NULL;
     self->time_map.tail = NULL;
-    tsk_blkalloc_free(&self->indexing_allocator);
+    tsi_blkalloc_free(&self->indexing_allocator);
     memset(&self->indexing_allocator, 0, sizeof(self->indexing_allocator));
 out:
     tsi_safe_free(consistent_samples);

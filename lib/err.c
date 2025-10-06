@@ -112,3 +112,5 @@ tsi_strerror(int err)
     }
     return ret;
 }
+
+/* shim allocator moved to lib/tsi_blkalloc.c */
