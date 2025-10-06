@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #include "tskit.h"
 #include "err.h"
@@ -47,6 +48,31 @@
 #define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t)(1u << 16))
 
 typedef int8_t allele_t;
+
+/* Temporary shim allocator: copy of tsk_blkalloc with atomic total_size.
+ * Purpose: allow the CPython accessor AncestorMatcher.total_memory to read the
+ * current allocator usage accurately while other threads may be allocating.
+ * Allocation semantics remain identical to tsk_blkalloc; only total_size is
+ * atomic so it can be observed safely from the getter without data races.
+ * See https://github.com/tskit-dev/tsinfer/commit/57f9209d for context. */
+#include "tskit.h"
+#include <stdatomic.h>
+
+typedef struct {
+    size_t chunk_size; /* number of bytes per chunk */
+    size_t top;        /* the offset of the next available byte in the current chunk */
+    size_t current_chunk;      /* the index of the chunk currently being used */
+    _Atomic size_t total_size; /* the total number of bytes allocated + overhead. */
+    size_t total_allocated;    /* the total number of bytes allocated. */
+    size_t num_chunks;         /* the number of memory chunks. */
+    char **mem_chunks;         /* the memory chunks */
+} tsi_blkalloc_t;
+
+extern void tsi_blkalloc_print_state(tsi_blkalloc_t *self, FILE *out);
+extern int tsi_blkalloc_reset(tsi_blkalloc_t *self);
+extern int tsi_blkalloc_init(tsi_blkalloc_t *self, size_t chunk_size);
+extern void *tsi_blkalloc_get(tsi_blkalloc_t *self, size_t size);
+extern void tsi_blkalloc_free(tsi_blkalloc_t *self);
 
 typedef struct {
     tsk_id_t left;
@@ -112,8 +138,9 @@ typedef struct {
     int flags;
     site_t *sites;
     avl_tree_t time_map;
-    tsk_blkalloc_t main_allocator;
-    tsk_blkalloc_t indexing_allocator;
+    /* Thread-safe block allocators for bulk allocations */
+    tsi_blkalloc_t main_allocator;
+    tsi_blkalloc_t indexing_allocator;
     ancestor_descriptor_t *descriptors;
     size_t encoded_genotypes_size;
     size_t decoded_genotypes_size;
@@ -156,7 +183,7 @@ typedef struct {
     size_t num_nodes;
     size_t num_match_nodes;
     size_t num_mutations;
-    tsk_blkalloc_t tsk_blkalloc;
+    tsi_blkalloc_t tsi_blkalloc;
     object_heap_t avl_node_heap;
     object_heap_t edge_heap;
     /* Dynamic edge indexes used for tree generation and path compression. The
@@ -199,7 +226,7 @@ typedef struct {
     tsk_id_t *likelihood_nodes_tmp;
     tsk_id_t *likelihood_nodes;
     node_state_list_t *traceback;
-    tsk_blkalloc_t traceback_allocator;
+    tsi_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
     size_t traceback_block_size;
     size_t traceback_realloc_size;

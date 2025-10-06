@@ -20,6 +20,7 @@ tsi_source_files = [
     "tree_sequence_builder.c",
     "err.c",
     "avl.c",
+    "tsi_blkalloc.c",
 ]
 tsk_source_files = ["core.c"]
 kas_source_files = ["kastore.c"]
