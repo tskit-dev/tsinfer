@@ -21,7 +21,18 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+
+/* No atomics on Windows for now */
+#if defined(_WIN32)
+#define TSI_NO_ATOMICS 1
+#endif
+
+#if !defined(TSI_NO_ATOMICS)
 #include <stdatomic.h>
+#define TSI_ATOMIC(T) _Atomic T
+#else
+#define TSI_ATOMIC(T) T
+#endif
 
 #include "tskit.h"
 #include "err.h"
@@ -49,23 +60,19 @@
 
 typedef int8_t allele_t;
 
-/* Temporary shim allocator: copy of tsk_blkalloc with atomic total_size.
- * Purpose: allow the CPython accessor AncestorMatcher.total_memory to read the
+/* Allow the CPython accessor AncestorMatcher.total_memory to read the
  * current allocator usage accurately while other threads may be allocating.
  * Allocation semantics remain identical to tsk_blkalloc; only total_size is
  * atomic so it can be observed safely from the getter without data races.
  * See https://github.com/tskit-dev/tsinfer/commit/57f9209d for context. */
-#include "tskit.h"
-#include <stdatomic.h>
-
 typedef struct {
     size_t chunk_size; /* number of bytes per chunk */
     size_t top;        /* the offset of the next available byte in the current chunk */
-    size_t current_chunk;      /* the index of the chunk currently being used */
-    _Atomic size_t total_size; /* the total number of bytes allocated + overhead. */
-    size_t total_allocated;    /* the total number of bytes allocated. */
-    size_t num_chunks;         /* the number of memory chunks. */
-    char **mem_chunks;         /* the memory chunks */
+    size_t current_chunk;          /* the index of the chunk currently being used */
+    TSI_ATOMIC(size_t) total_size; /* the total number of bytes allocated + overhead. */
+    size_t total_allocated;        /* the total number of bytes allocated. */
+    size_t num_chunks;             /* the number of memory chunks. */
+    char **mem_chunks;             /* the memory chunks */
 } tsi_blkalloc_t;
 
 extern void tsi_blkalloc_print_state(tsi_blkalloc_t *self, FILE *out);
