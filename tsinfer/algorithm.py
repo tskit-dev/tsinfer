@@ -58,6 +58,7 @@ class Site:
     id = attr.ib()
     time = attr.ib()
     derived_count = attr.ib()
+    breakpoint = attr.ib()
 
 
 class AncestorBuilder:
@@ -137,21 +138,23 @@ class AncestorBuilder:
         stop = start + self.encoded_genotypes_size
         self.genotype_store[start:stop] = genotypes
 
-    def add_site(self, time, genotypes):
+    def add_site(self, time, genotypes, breakpoint):
         """
         Adds a new site at the specified ID to the builder.
         """
         site_id = len(self.sites)
         derived_count = np.sum(genotypes == 1)
-        self.store_site_genotypes(site_id, genotypes)
-        self.sites.append(Site(site_id, time, derived_count))
-        sites_at_fixed_timepoint = self.time_map[time]
-        # Sites with an identical variant distribution (i.e. with the same
-        # genotypes.tobytes() value) and at the same time, are put into the same ancestor
-        # to which we allocate a unique ID (just use the genotypes value)
-        ancestor_uid = tuple(genotypes)
-        # Add each site to the list for this ancestor_uid at this timepoint
-        sites_at_fixed_timepoint[ancestor_uid].append(site_id)
+        self.sites.append(Site(site_id, time, derived_count, breakpoint))
+        if not breakpoint:
+            self.store_site_genotypes(site_id, genotypes)
+            sites_at_fixed_timepoint = self.time_map[time]
+            # Sites with an identical variant distribution (i.e. with the same
+            # genotypes.tobytes() value) and at the same time, are put into the
+            # same ancestor to which we allocate a unique ID (just use the genotypes
+            # value)
+            ancestor_uid = tuple(genotypes)
+            # Add each site to the list for this ancestor_uid at thigs timepoint
+            sites_at_fixed_timepoint[ancestor_uid].append(site_id)
 
     def print_state(self):
         print("Ancestor builder")
@@ -221,6 +224,8 @@ class AncestorBuilder:
         disagree = np.zeros(self.num_samples, dtype=bool)
 
         for site_index in sites:
+            if self.sites[site_index].breakpoint:
+                break
             a[site_index] = 0
             last_site = site_index
             g_l = self.get_site_genotypes(site_index)

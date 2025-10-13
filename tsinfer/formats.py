@@ -3683,6 +3683,7 @@ class AncestorData(DataContainer):
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self.num_sites:
+            print(f"[INFO] {end}, {self.num_sites}")
             raise ValueError("end must be <= num_sites")
         if start >= end:
             raise ValueError("start must be < end")

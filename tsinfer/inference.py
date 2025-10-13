@@ -1792,6 +1792,7 @@ class AncestorsGenerator:
         num_threads=0,
         engine=constants.C_ENGINE,
         genotype_encoding=constants.GenotypeEncoding.EIGHT_BIT,
+        break_position=None,
         mmap_temp_dir=None,
         progress_monitor=None,
     ):
@@ -1807,6 +1808,10 @@ class AncestorsGenerator:
         self.num_samples = variant_data.num_samples
         self.num_threads = num_threads
         self.mmap_temp_file = None
+        if break_position is None:
+            break_position = []
+        self.break_position = break_position
+        self.sites_position = None
         mmap_fd = -1
 
         genotype_matrix_size = self.max_sites * self.num_samples
@@ -1865,6 +1870,11 @@ class AncestorsGenerator:
         logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
+
+        i = 0
+        break_pos = self.break_position
+        zeros = np.zeros(self.num_samples, dtype=np.int8)
+
         for variant in self.variant_data.variants(recode_ancestral=True):
             # If there's missing data the last allele is None
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
@@ -1872,6 +1882,7 @@ class AncestorsGenerator:
             counts = allele_counts(variant.genotypes)
             use_site = False
             site = variant.site
+            last_pos = site.position
             if (
                 site.position not in exclude_positions
                 and num_alleles == 2  # This will ensure that the derived state is "1"
@@ -1888,12 +1899,29 @@ class AncestorsGenerator:
                 if np.isnan(time):
                     use_site = False  # Site with meaningless time value: skip inference
             if use_site:
-                self.ancestor_builder.add_site(time, variant.genotypes)
+                while i < len(break_pos) and break_pos[i] < site.position:
+                    self.ancestor_builder.add_site(
+                        tskit.UNKNOWN_TIME, zeros, breakpoint=True
+                    )
+                    self.num_sites += 1
+
+                self.ancestor_builder.add_site(
+                    time, variant.genotypes, breakpoint=False
+                )
                 inference_site_id.append(site.id)
                 self.num_sites += 1
             progress.update()
         progress.close()
         self.inference_site_ids = inference_site_id
+        print(f"Num sites before breakpoint: {self.num_sites}")
+        # Add breakpoint at end of sequence
+        self.ancestor_builder.add_site(tskit.UNKNOWN_TIME, zeros, breakpoint=True)
+        if break_pos:
+            self.break_position.append(last_pos + 1)
+        else:
+            self.break_position = [last_pos + 1]
+        self.num_sites += 1
+        print(f"Num sites after breakpoint: {self.num_sites}")
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
