@@ -401,6 +401,7 @@ def infer(
 def generate_ancestors(
     variant_data,
     *,
+    add_last_site=False,
     path=None,
     exclude_positions=None,
     num_threads=0,
@@ -495,6 +496,7 @@ def generate_ancestors(
             ancestor_data_kwargs=kwargs,
             num_threads=num_threads,
             engine=engine,
+            add_last_site=add_last_site,
             genotype_encoding=genotype_encoding,
             mmap_temp_dir=mmap_temp_dir,
             progress_monitor=progress_monitor,
@@ -1792,6 +1794,7 @@ class AncestorsGenerator:
         num_threads=0,
         engine=constants.C_ENGINE,
         genotype_encoding=constants.GenotypeEncoding.EIGHT_BIT,
+        add_last_site=False,
         break_position=None,
         mmap_temp_dir=None,
         progress_monitor=None,
@@ -1811,7 +1814,9 @@ class AncestorsGenerator:
         if break_position is None:
             break_position = []
         self.break_position = break_position
+        self.break_mask = np.zeros(self.max_sites, dtype=bool)
         self.sites_position = None
+        self.add_last_site = add_last_site
         mmap_fd = -1
 
         genotype_matrix_size = self.max_sites * self.num_samples
@@ -1873,7 +1878,7 @@ class AncestorsGenerator:
 
         i = 0
         break_pos = self.break_position
-        break_mask = np.zeros(self.max_sites, dtype=bool)
+        break_mask = self.break_mask
         zeros = np.zeros(self.num_samples, dtype=np.int8)
 
         for variant in self.variant_data.variants(recode_ancestral=True):
@@ -1917,12 +1922,15 @@ class AncestorsGenerator:
         self.inference_site_ids = inference_site_id
         # Add breakpoint at end of sequence
         self.ancestor_builder.add_site(tskit.UNKNOWN_TIME, zeros, breakpoint=True)
-        if break_pos:
-            self.break_position.append(last_pos + 1)
+        if self.add_last_site:
+            if break_pos:
+                self.break_position.append(last_pos + 1)
+            else:
+                self.break_position = [last_pos + 1]
+            self.num_sites += 1
+            break_mask = break_mask[: self.num_sites]
         else:
-            self.break_position = [last_pos + 1]
-        self.num_sites += 1
-        break_mask = break_mask[: self.num_sites]
+            break_mask = break_mask[: self.num_sites - 1]
         self.break_mask = break_mask
         logger.info("Finished adding sites")
 
@@ -2040,16 +2048,21 @@ class AncestorsGenerator:
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
-            a = np.zeros(self.num_sites - 1, dtype=np.int8)
             root_time = max(self.timepoint_to_epoch.keys())
             av_timestep = root_time / len(self.timepoint_to_epoch)
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
             # Add an extra ancestor to act as a type of "virtual root" for the matching
             # algorithm: rather an awkward hack, but also allows the ancestor IDs to
             # line up. It's normally removed when processing the final tree sequence.
+            if self.add_last_site:
+                end = self.num_sites - 1
+                a = np.zeros(self.num_sites - 1, dtype=np.int8)
+            else:
+                end = self.num_sites
+                a = np.zeros(self.num_sites, dtype=np.int8)
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites - 1,
+                end=end,
                 time=root_time + av_timestep,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
@@ -2057,7 +2070,7 @@ class AncestorsGenerator:
             # This is the the "ultimate ancestor" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites - 1,
+                end=end,
                 time=root_time,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,

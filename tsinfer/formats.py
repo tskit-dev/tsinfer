@@ -3096,9 +3096,9 @@ class AncestorData(DataContainer):
     def __init__(
         self,
         inf_position,
-        break_position,
-        break_mask,
         sequence_length,
+        break_position=None,
+        break_mask=None,
         chunk_size_sites=None,
         **kwargs,
     ):
@@ -3115,6 +3115,11 @@ class AncestorData(DataContainer):
             raise ValueError("Bad samples file: sequence_length cannot be zero or less")
 
         # We specify fill_value here due to https://github.com/pydata/xarray/issues/7292
+        if np.sum(~break_mask) == 0:
+            add_last_site = False
+        else:
+            add_last_site = True
+        self.add_last_site = add_last_site
         self.create_dataset("sample_start", dtype=np.int32)
         self.create_dataset("sample_end", dtype=np.int32)
         self.create_dataset("sample_time", dtype=np.float64)
@@ -3136,11 +3141,11 @@ class AncestorData(DataContainer):
             dtype=np.float64,
             dimensions=["breakpoints"],
         )
-
-        pos = np.zeros(self.num_sites, dtype=self.sites_position.dtype)
-        pos[self.break_mask] = inf_position
-        pos[~self.break_mask] = break_position
-        self.all_position = pos
+        if add_last_site:
+            pos = np.zeros(self.num_sites, dtype=self.sites_position.dtype)
+            pos[self.break_mask] = inf_position
+            pos[~self.break_mask] = break_position
+            self.all_position = pos
 
         # We have to include a ploidy dimension sgkit compatibility
         a = self.create_dataset(
@@ -3293,7 +3298,9 @@ class AncestorData(DataContainer):
         """
         The number of inference sites used to generate the ancestors
         """
-        return self.sites_position.shape[0] + self.data["break_position"].shape[0]
+        num_inf = self.data["variant_position"].shape[0]
+        num_break = self.data["break_position"].shape[0]
+        return num_inf + num_break
 
     @property
     def sites_position(self):
@@ -3338,7 +3345,12 @@ class AncestorData(DataContainer):
 
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
-        return self.all_position[end] - self.all_position[start]
+
+        if self.add_last_site:
+            return self.all_position[end] - self.all_position[start]
+        else:
+            pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+            return pos[end] - pos[start]
 
     def insert_proxy_samples(
         self,
@@ -3704,7 +3716,6 @@ class AncestorData(DataContainer):
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self.num_sites:
-            print(f"[INFO] {end}, {self.num_sites}")
             raise ValueError("end must be <= num_sites")
         if start >= end:
             raise ValueError("start must be < end")
