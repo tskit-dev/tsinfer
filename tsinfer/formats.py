@@ -3093,7 +3093,15 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
-    def __init__(self, position, sequence_length, chunk_size_sites=None, **kwargs):
+    def __init__(
+        self,
+        inf_position,
+        break_position,
+        break_mask,
+        sequence_length,
+        chunk_size_sites=None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._last_time = 0
         self.inference_sites_set = False
@@ -3111,15 +3119,28 @@ class AncestorData(DataContainer):
         self.create_dataset("sample_end", dtype=np.int32)
         self.create_dataset("sample_time", dtype=np.float64)
         self.create_dataset("sample_focal_sites", dtype="array:i4")
-
+        self.break_mask = break_mask
         self.create_dataset(
             "variant_position",
-            data=position,
-            shape=position.shape,
+            data=inf_position,
+            shape=inf_position.shape,
             chunks=self._chunk_size_sites,
             dtype=np.float64,
             dimensions=["variants"],
         )
+
+        self.create_dataset(
+            "break_position",
+            data=break_position,
+            shape=break_position.shape,
+            dtype=np.float64,
+            dimensions=["breakpoints"],
+        )
+
+        pos = np.zeros(self.num_sites, dtype=self.sites_position.dtype)
+        pos[self.break_mask] = inf_position
+        pos[~self.break_mask] = break_position
+        self.all_position = pos
 
         # We have to include a ploidy dimension sgkit compatibility
         a = self.create_dataset(
@@ -3272,7 +3293,7 @@ class AncestorData(DataContainer):
         """
         The number of inference sites used to generate the ancestors
         """
-        return self.sites_position.shape[0]
+        return self.sites_position.shape[0] + self.data["break_position"].shape[0]
 
     @property
     def sites_position(self):
@@ -3314,10 +3335,10 @@ class AncestorData(DataContainer):
         """
         # Ancestor start and end are half-closed. The last site is assumed
         # to cover the region up to sequence length.
-        pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
-        return pos[end] - pos[start]
+        return self.all_position[end] - self.all_position[start]
 
     def insert_proxy_samples(
         self,

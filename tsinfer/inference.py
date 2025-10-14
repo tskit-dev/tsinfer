@@ -1873,6 +1873,7 @@ class AncestorsGenerator:
 
         i = 0
         break_pos = self.break_position
+        break_mask = np.zeros(self.max_sites, dtype=bool)
         zeros = np.zeros(self.num_samples, dtype=np.int8)
 
         for variant in self.variant_data.variants(recode_ancestral=True):
@@ -1909,11 +1910,11 @@ class AncestorsGenerator:
                     time, variant.genotypes, breakpoint=False
                 )
                 inference_site_id.append(site.id)
+                break_mask[self.num_sites] = True
                 self.num_sites += 1
             progress.update()
         progress.close()
         self.inference_site_ids = inference_site_id
-        print(f"Num sites before breakpoint: {self.num_sites}")
         # Add breakpoint at end of sequence
         self.ancestor_builder.add_site(tskit.UNKNOWN_TIME, zeros, breakpoint=True)
         if break_pos:
@@ -1921,7 +1922,8 @@ class AncestorsGenerator:
         else:
             self.break_position = [last_pos + 1]
         self.num_sites += 1
-        print(f"Num sites after breakpoint: {self.num_sites}")
+        break_mask = break_mask[: self.num_sites]
+        self.break_mask = break_mask
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
@@ -2028,15 +2030,17 @@ class AncestorsGenerator:
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         self.ancestor_data = formats.AncestorData(
-            self.variant_data.sites_position[:][self.inference_site_ids],
-            self.variant_data.sequence_length,
+            inf_position=self.variant_data.sites_position[:][self.inference_site_ids],
+            break_position=np.array(self.break_position, dtype=np.float64),
+            break_mask=self.break_mask,
+            sequence_length=self.variant_data.sequence_length,
             path=self.ancestor_data_path,
             **self.ancestor_data_kwargs,
         )
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
-            a = np.zeros(self.num_sites, dtype=np.int8)
+            a = np.zeros(self.num_sites - 1, dtype=np.int8)
             root_time = max(self.timepoint_to_epoch.keys())
             av_timestep = root_time / len(self.timepoint_to_epoch)
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
@@ -2045,7 +2049,7 @@ class AncestorsGenerator:
             # line up. It's normally removed when processing the final tree sequence.
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time + av_timestep,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
@@ -2053,7 +2057,7 @@ class AncestorsGenerator:
             # This is the the "ultimate ancestor" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
