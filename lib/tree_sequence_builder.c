@@ -423,7 +423,7 @@ tree_sequence_builder_add_mutation(
         ret = TSI_ERR_BAD_MUTATION_SITE;
         goto out;
     }
-    if (derived_state < 0 || derived_state >= (allele_t) self->sites.num_alleles[site]) {
+    if (derived_state < 0) {
         ret = TSI_ERR_BAD_MUTATION_DERIVED_STATE;
         goto out;
     }
