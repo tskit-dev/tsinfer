@@ -6,6 +6,9 @@
 
 - Drop Python 3.9 support, require Python >= 3.10 ({pr}`1044`, {user}`benjeffery`)
 
+- Remove overzealous derived state validation in C API. ({pr}`1059`, {user}`benjeffery`)
+
+
 ## [0.4.1] - 2024-04-19
 
 ** Changes **
