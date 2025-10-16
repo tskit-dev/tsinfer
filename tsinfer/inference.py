@@ -1807,6 +1807,8 @@ class AncestorsGenerator:
         self.num_samples = variant_data.num_samples
         self.num_threads = num_threads
         self.mmap_temp_file = None
+        self.sites_position = None
+        self.terminal_position = None
         mmap_fd = -1
 
         genotype_matrix_size = self.max_sites * self.num_samples
@@ -1865,6 +1867,8 @@ class AncestorsGenerator:
         logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
+        last_position = 0
+
         for variant in self.variant_data.variants(recode_ancestral=True):
             # If there's missing data the last allele is None
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
@@ -1879,6 +1883,7 @@ class AncestorsGenerator:
                 and site.ancestral_state is not None
             ):
                 use_site = True
+                last_position = site.position
                 time = site.time
                 if tskit.is_unknown_time(time):
                     # Non-variable sites have no obvious freq-as-time values
@@ -1888,12 +1893,18 @@ class AncestorsGenerator:
                 if np.isnan(time):
                     use_site = False  # Site with meaningless time value: skip inference
             if use_site:
-                self.ancestor_builder.add_site(time, variant.genotypes)
+                self.ancestor_builder.add_site(time, variant.genotypes, terminal=False)
                 inference_site_id.append(site.id)
                 self.num_sites += 1
             progress.update()
         progress.close()
         self.inference_site_ids = inference_site_id
+        # Add terminal site at end of sequence
+        zeros = np.zeros(self.num_samples, dtype=np.int8)
+        self.ancestor_builder.add_site(tskit.UNKNOWN_TIME, zeros, terminal=True)
+        self.num_sites += 1
+        self.terminal_position = np.array([last_position + 1], dtype=np.float64)
+
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
@@ -2000,15 +2011,18 @@ class AncestorsGenerator:
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         self.ancestor_data = formats.AncestorData(
-            self.variant_data.sites_position[:][self.inference_site_ids],
-            self.variant_data.sequence_length,
+            inference_position=self.variant_data.sites_position[:][
+                self.inference_site_ids
+            ],
+            terminal_position=self.terminal_position,
+            sequence_length=self.variant_data.sequence_length,
             path=self.ancestor_data_path,
             **self.ancestor_data_kwargs,
         )
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
-            a = np.zeros(self.num_sites, dtype=np.int8)
+            a = np.zeros(self.num_sites - 1, dtype=np.int8)
             root_time = max(self.timepoint_to_epoch.keys())
             av_timestep = root_time / len(self.timepoint_to_epoch)
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
@@ -2017,7 +2031,7 @@ class AncestorsGenerator:
             # line up. It's normally removed when processing the final tree sequence.
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time + av_timestep,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
@@ -2025,7 +2039,7 @@ class AncestorsGenerator:
             # This is the the "ultimate ancestor" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
