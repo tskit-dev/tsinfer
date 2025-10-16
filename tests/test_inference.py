@@ -48,6 +48,11 @@ import tsutil
 IS_WINDOWS = sys.platform == "win32"
 
 
+def remove_terminal_artifacts(ts):
+    ext_ts = tsinfer.extend_edges(ts)
+    return tsinfer.delete_terminal_site(ext_ts)
+
+
 def get_random_data_example(num_samples, num_sites, seed=42, num_states=2):
     np.random.seed(seed)
     G = np.random.randint(num_states, size=(num_sites, num_samples)).astype(np.int8)
@@ -217,6 +222,8 @@ class TestRoundTrip:
         ]
         for params in test_params:
             ts = tsinfer.infer(sample_data, **params)
+            if params.get("simplify") is False:
+                ts = remove_terminal_artifacts(ts)
 
             self.assert_lossless(
                 ts,
@@ -493,8 +500,8 @@ class TestSampleMutationsRoundTrip(TestRoundTrip):
         engines = [tsinfer.C_ENGINE, tsinfer.PY_ENGINE]
         for rec, mis_, engine in itertools.product(rho, mis, engines):
             # Set the arrays directly
-            recombination = np.full(max(ancestors_ts.num_sites - 1, 0), rec)
-            mismatch = np.full(ancestors_ts.num_sites, mis_)
+            recombination = np.full(max(ancestors_ts.num_sites - 2, 0), rec)
+            mismatch = np.full(max(ancestors_ts.num_sites - 1, 0), mis_)
             ts = tsinfer.match_samples(
                 sample_data,
                 ancestors_ts,
@@ -778,10 +785,15 @@ class TestNonInferenceSitesRoundTrip:
             for j in range(genotypes.shape[0]):
                 sample_data.add_site(j, genotypes[j])
         exclude_positions = sample_data.sites_position[:][exclude_sites]
-        for simplify in [False, True]:
+        for post_process in [False, True]:
             output_ts = tsinfer.infer(
-                sample_data, simplify=simplify, exclude_positions=exclude_positions
+                sample_data,
+                post_process=post_process,
+                exclude_positions=exclude_positions,
             )
+            if not post_process:
+                output_ts = remove_terminal_artifacts(output_ts)
+
             for tree in output_ts.trees():
                 for site in tree.sites():
                     inf_type = json.loads(site.metadata)["inference_type"]
@@ -799,7 +811,7 @@ class TestNonInferenceSitesRoundTrip:
                         assert len(site.mutations) == 1
                         assert site.mutations[0].node == tree.root
                     assert len(site.mutations) < output_ts.num_samples
-            assert np.array_equal(genotypes, output_ts.genotype_matrix())
+            np.testing.assert_array_equal(genotypes, output_ts.genotype_matrix())
 
     def test_simple_single_tree(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=10)
@@ -1796,7 +1808,7 @@ class TestAncestorGeneratorsEquivalant:
         site_0_anc = site_0_anc[0]
         # Sites 0 and 2 should share the same ancestor
         assert np.all(adp.ancestors_focal_sites[:][site_0_anc] == [0, 2])
-        focal_site_0_haplotype = adp.ancestors_full_haplotype[:, site_0_anc, 0]
+        focal_site_0_haplotype = adp.ancestors_full_haplotype[:-1, site_0_anc, 0]
         # High freq sites with all missing data (e.g. for sites 1 & 3 in the ancestral
         # haplotype focussed on sites 0 & 2) should default to tskit.MISSING_DATA
         expected_hap_focal_site_0 = [1, u, 1, u, 1]
@@ -1951,7 +1963,8 @@ class TestBuildAncestors:
             sample_data.add_site(0.4, [1, 1, 0], time=np.nan)
             sample_data.add_site(0.6, [1, 1, 0])
         ancestors = tsinfer.generate_ancestors(sample_data)
-        assert ancestors.num_sites == 2
+        # Should be 3, since a terminal site is added
+        assert ancestors.num_sites == 3
 
     def get_simulated_example(self, ts):
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
@@ -1971,12 +1984,12 @@ class TestBuildAncestors:
         assert ancestor_data.num_ancestors == start.shape[0]
         assert ancestor_data.num_ancestors == end.shape[0]
         assert ancestor_data.num_ancestors == focal_sites.shape[0]
-        assert set(ancestor_data.sites_position[:]) <= set(position)
+        assert set(ancestor_data.sites_position[:-1]) <= set(position)
         # The first ancestor must be all zeros.
         assert start[0] == 0
-        assert end[0] == ancestor_data.num_sites
+        assert end[0] == ancestor_data.num_sites - 1
         assert list(focal_sites[0]) == []
-        assert np.all(ancestors[:, 0] == 0)
+        assert np.all(ancestors[:-1, 0] == 0)
 
         used_sites = []
         for j in range(ancestor_data.num_ancestors):
@@ -1992,7 +2005,7 @@ class TestBuildAncestors:
             assert times[j] > 0
             if j > 0:
                 assert times[j - 1] >= times[j]
-        assert sorted(used_sites) == list(range(ancestor_data.num_sites))
+        assert sorted(used_sites) == list(range(ancestor_data.num_sites - 1))
 
         # The provenance should be same as in the samples data file, plus an
         # extra row.
@@ -2140,14 +2153,15 @@ class TestAncestorsTreeSequence:
     def verify(self, sample_data, mismatch_ratio=None, recombination_rate=None):
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         for path_compression in [True, False]:
-            ancestors_ts = tsinfer.match_ancestors(
+            raw_ancestors_ts = tsinfer.match_ancestors(
                 sample_data,
                 ancestor_data,
                 path_compression=path_compression,
                 mismatch_ratio=mismatch_ratio,
                 recombination_rate=recombination_rate,
             )
-            tsutil.check_ancestors_ts(ancestors_ts)
+            ancestors_ts = tsinfer.extend_edges(raw_ancestors_ts)
+            tsinfer.check_ancestors_ts(ancestors_ts)
             tables = ancestors_ts.dump_tables()
 
             # Make sure we've computed the mutation parents properly.
@@ -3083,7 +3097,8 @@ class TestSimplify:
 
         # Check that we're calling simplify with the correct arguments.
         with caplog.at_level(logging.WARNING):
-            ts2 = tsinfer.infer(sd, simplify=False).simplify(keep_unary=True)
+            raw_ts2 = tsinfer.infer(sd, simplify=False)
+            ts2 = remove_terminal_artifacts(raw_ts2).simplify(keep_unary=True)
             assert caplog.text.count("deprecated") == 1
             assert ts1.equals(ts2, ignore_provenance=True)
 
@@ -3322,7 +3337,8 @@ class TestPostProcess:
         assert not tsinfer.has_single_edge_over_grand_root(tables.tree_sequence())
 
     def test_virtual_like_root_removed(self, medium_sd_fixture):
-        ts = tsinfer.infer(medium_sd_fixture, post_process=False)
+        raw_ts = tsinfer.infer(medium_sd_fixture, post_process=False)
+        ts = remove_terminal_artifacts(raw_ts)
         ts_simplified = ts.simplify(keep_unary=True)
         assert tsinfer.has_single_edge_over_grand_root(ts)
         ts_post_processed = tsinfer.post_process(ts, split_ultimate=False)
@@ -3331,7 +3347,8 @@ class TestPostProcess:
 
     def test_split_edges_one_tree(self, small_sd_fixture):
         ts = tsinfer.infer(small_sd_fixture, post_process=False)
-        assert ts.num_trees == 1
+        # Extra tree added due to terminal site
+        assert ts.num_trees == 2
         ts = tsinfer.post_process(ts, split_ultimate=False)
         # Check that we don't delete and recreate the oldest node if there's only 1 tree
         tables = ts.dump_tables()
@@ -3386,7 +3403,8 @@ class TestPostProcess:
             assert sd_individual.metadata["id"] == inferred_individual.metadata["id"]
 
     def test_erase_flanks(self, small_sd_fixture):
-        ts1 = tsinfer.infer(small_sd_fixture, post_process=False)
+        raw_ts1 = tsinfer.infer(small_sd_fixture, post_process=False)
+        ts1 = remove_terminal_artifacts(raw_ts1)
         ts2 = tsinfer.post_process(ts1, erase_flanks=False)
         assert ts2.first().num_edges > 0
         assert ts2.last().num_edges > 0
@@ -3917,6 +3935,146 @@ class TestVerify:
         tsinfer.verify(sd, ts_inf)
 
 
+<<<<<<< HEAD
+=======
+class TestExtractAncestors:
+    """
+    Checks whether the extract_ancestors function correctly returns an ancestors
+    tree sequence with the required properties.
+    """
+
+    def verify(self, samples):
+        ancestors = tsinfer.generate_ancestors(samples)
+        # this ancestors TS has positions mapped only to inference sites
+        raw_ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
+        raw_ts = tsinfer.match_samples(
+            samples, raw_ancestors_ts_1, path_compression=False, simplify=False
+        )
+        ancestors_ts_1 = remove_terminal_artifacts(raw_ancestors_ts_1)
+        t1 = ancestors_ts_1.dump_tables()
+
+        ts = remove_terminal_artifacts(raw_ts)
+        t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
+
+        assert len(t2.provenances) == len(t1.provenances) + 2
+        # Population data isn't carried through in ancestors tree sequences
+        # for now.
+        t2.populations.clear()
+
+        t1.assert_equals(t2, ignore_provenance=True, ignore_metadata=True)
+
+        for node in ts.nodes():
+            if node_id_map[node.id] != -1:
+                assert node.time == t1.nodes.time[node_id_map[node.id]]
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=5, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_non_zero_one_mutations(self):
+        ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
+        ts = msprime.mutate(
+            ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15
+        )
+        assert ts.num_mutations > 0
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
+
+
+class TestInsertSrbAncestors:
+    """
+    Tests that the insert_srb_ancestors function behaves as expected.
+    """
+
+    def insert_srb_ancestors(self, samples, ts):
+        srb_index = {}
+        edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
+        last_edge = edges[0]
+        for edge in edges[1:]:
+            condition = (
+                ts.node(edge.child).is_sample()
+                and edge.child == last_edge.child
+                and edge.left == last_edge.right
+            )
+            if condition:
+                key = edge.left, last_edge.parent, edge.parent
+                if key in srb_index:
+                    count, left_bound, right_bound = srb_index[key]
+                    srb_index[key] = (
+                        count + 1,
+                        max(left_bound, last_edge.left),
+                        min(right_bound, edge.right),
+                    )
+                else:
+                    srb_index[key] = 1, last_edge.left, edge.right
+            last_edge = edge
+
+        tables, node_id_map = tsinfer.extract_ancestors(samples, ts)
+        time = tables.nodes.time
+
+        num_extra = 0
+        for k, v in srb_index.items():
+            if v[0] > 1:
+                left, right = v[1:]
+                x, pl, pr = k
+                pl = node_id_map[pl]
+                pr = node_id_map[pr]
+                t = min(time[pl], time[pr]) - 1e-4
+                node = tables.nodes.add_row(flags=tsinfer.NODE_IS_SRB_ANCESTOR, time=t)
+                tables.edges.add_row(left, x, pl, node)
+                tables.edges.add_row(x, right, pr, node)
+                num_extra += 1
+
+        tables.sort()
+        ancestors_ts = tables.tree_sequence()
+        return ancestors_ts
+
+    def verify(self, samples):
+        raw_ts = tsinfer.infer(samples, simplify=False)
+        ts = remove_terminal_artifacts(raw_ts)
+        ancestors_ts_1 = self.insert_srb_ancestors(samples, ts)
+        ancestors_ts_2 = tsinfer.insert_srb_ancestors(samples, ts)
+        t1 = ancestors_ts_1.dump_tables()
+        t2 = ancestors_ts_2.dump_tables()
+        t1.assert_equals(t2, ignore_provenance=True)
+
+        tsinfer.check_ancestors_ts(ancestors_ts_1)
+        ts2 = tsinfer.match_samples(samples, ancestors_ts_1)
+        tsinfer.verify(samples, ts2)
+
+    def test_simple_simulation(self):
+        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=15, random_seed=2)
+        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
+
+    def test_random_data_small_examples(self):
+        np.random.seed(4)
+        num_random_tests = 10
+        for _ in range(num_random_tests):
+            G, positions = get_random_data_example(5, 10)
+            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+                for j in range(G.shape[0]):
+                    samples.add_site(positions[j], G[j])
+            self.verify(samples)
+
+    def test_random_data_large_example(self):
+        np.random.seed(5)
+        G, positions = get_random_data_example(15, 100)
+        with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
+            for j in range(G.shape[0]):
+                samples.add_site(positions[j], G[j])
+        self.verify(samples)
+
+
+>>>>>>> 2f8b2a8 (Add terminal site to ancestors)
 class TestAugmentedAncestors:
     """
     Tests for augmenting an ancestors tree sequence with samples.
@@ -3958,9 +4116,10 @@ class TestAugmentedAncestors:
         assert t1.populations == t2.populations
 
     def verify_example(self, subset, samples, ancestors, path_compression):
-        ancestors_ts = tsinfer.match_ancestors(
+        raw_ancestors_ts = tsinfer.match_ancestors(
             samples, ancestors, path_compression=path_compression
         )
+        ancestors_ts = remove_terminal_artifacts(raw_ancestors_ts)
         augmented_ancestors = tsinfer.augment_ancestors(
             samples, ancestors_ts, subset, path_compression=path_compression
         )
@@ -4108,7 +4267,7 @@ class TestMismatchAndRecombination:
         del_sites = np.isin(sd.sites_position[:], anc.sites_position[1:])
         sd = sd.subset(sites=np.where(np.logical_not(del_sites))[0])
         anc = tsinfer.generate_ancestors(sd)
-        assert anc.num_sites == 1
+        assert anc.num_sites == 2  # includes terminal site
         tsinfer.infer(sd, recombination_rate=0.1)
 
     def test_maximal_mismatch_ancestors(self, small_sd_anc_fixture):
@@ -4117,7 +4276,7 @@ class TestMismatchAndRecombination:
         a mismatch is required (mismatch=1)
         """
         sd, anc = small_sd_anc_fixture
-        num_loci = anc.num_sites
+        num_loci = anc.num_sites - 1
         r = np.full(num_loci - 1, 0.01)
         m = np.full(num_loci, 1)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
@@ -4132,7 +4291,7 @@ class TestMismatchAndRecombination:
 
     def test_zero_recomb_mutation(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
-        num_loci = anc.num_sites
+        num_loci = anc.num_sites - 1
         r = np.full(num_loci - 1, 0)
         m = np.full(num_loci, 0)
         for engine in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
@@ -4152,8 +4311,8 @@ class TestMismatchAndRecombination:
         """
         sd, anc = small_sd_anc_fixture
         num_loci = anc.num_sites
-        r = np.full(num_loci - 1, 0.01)
-        m = np.full(num_loci, 1)
+        r = np.full(num_loci - 2, 0.01)
+        m = np.full(num_loci - 1, 1)
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             anc_ts = tsinfer.match_ancestors(sd, anc, engine=e)
             tsinfer.match_samples(sd, anc_ts, recombination=r, mismatch=m, engine=e)
@@ -4193,7 +4352,7 @@ class TestMismatchAndRecombination:
 
     def test_bad_recombination(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
-        x = np.full(anc.num_sites, 0.1)
+        x = np.full(anc.num_sites - 1, 0.1)
         # Check it normally works: requires array of size 1 less than num_sites
         _ = tsinfer.match_ancestors(sd, anc, mismatch=x, recombination=x[1:])
         for bad in [x, x[2:], []]:
@@ -4228,7 +4387,7 @@ class TestMismatchAndRecombination:
 
     def test_bad_mismatch(self, small_sd_anc_fixture):
         sd, anc = small_sd_anc_fixture
-        x = np.full(anc.num_sites + 1, 0.1)
+        x = np.full(anc.num_sites, 0.1)
         # Check it normally works
         _ = tsinfer.match_ancestors(sd, anc, recombination=x[2:], mismatch=x[1:])
         for bad in [x, x[2:], []]:
@@ -4258,8 +4417,8 @@ class TestMismatchAndRecombination:
         # Need to be sure that mu is large here or the value associated with the
         # root haplotype can become less than precision, and we therefore
         # fail to find a match.
-        m = np.full(anc.num_sites, 1e-2)
-        r = np.full(anc.num_sites - 1, 0)  # Ban recombination
+        m = np.full(anc.num_sites - 1, 1e-2)
+        r = np.full(anc.num_sites - 2, 0)  # Ban recombination
         for e in [tsinfer.PY_ENGINE, tsinfer.C_ENGINE]:
             anc_ts = tsinfer.match_ancestors(
                 sd,
@@ -4597,6 +4756,7 @@ class TestInsertMissingSites:
                 assert metadata["inference_type"] == tsinfer.INFERENCE_PARSIMONY
 
 
+# @pytest.mark.skip("FIXME crashing")
 class TestHistoricalSamples:
     def test_standard_pipeline(self):
         for sample_times in [
@@ -4769,8 +4929,8 @@ class TestDebugOutput:
         r_max = 1e-3
         mm_min = 1e-9
         mm_max = 1e-4
-        recombination = np.linspace(r_min, r_max, num=ancestors.num_sites - 1)
-        mismatch = np.linspace(mm_min, mm_max, num=ancestors.num_sites)
+        recombination = np.linspace(r_min, r_max, num=ancestors.num_sites - 2)
+        mismatch = np.linspace(mm_min, mm_max, num=ancestors.num_sites - 1)
         with caplog.at_level(logging.INFO):
             tsinfer.match_ancestors(
                 small_sd_fixture,
@@ -4823,7 +4983,7 @@ class TestDebugOutput:
             small_sd_fixture,
             exclude_positions=ancestors.sites_position[1:],
         )
-        assert ancestors.num_sites == 1
+        assert ancestors.num_sites == 2
         with caplog.at_level(logging.INFO):
             tsinfer.match_ancestors(small_sd_fixture, ancestors)
             assert "no recombination possible" in caplog.text
@@ -4836,7 +4996,7 @@ class TestDebugOutput:
             small_sd_fixture,
             exclude_positions=ancestors.sites_position,
         )
-        assert ancestors.num_sites == 0
+        assert ancestors.num_sites == 1
         with caplog.at_level(logging.INFO):
             tsinfer.match_ancestors(small_sd_fixture, ancestors)
             assert "no recombination possible" in caplog.text
@@ -4981,3 +5141,50 @@ def test_likelihood_threshold_default(caplog, small_sd_anc_fixture):
     m = re.search(r"Matching using likelihood_threshold of ([-e\.\d]+)", caplog.text)
     assert m is not None
     assert float(m.group(1)) == 1e-13
+
+
+class TestTerminalSites:
+    """Test handling of terminal sites throughout inference."""
+
+    def test_ancestor_matching_multiple_site_error(self, small_sd_fixture):
+        sample_data = small_sd_fixture
+        generator = tsinfer.AncestorsGenerator(sample_data, None, {})
+        generator.add_sites()
+        assert generator.num_sites == len(generator.inference_site_ids) + 1
+        terminal_pos = generator.terminal_position[0]
+        extra_terminal_pos = (
+            terminal_pos + (sample_data.sequence_length - terminal_pos) / 2
+        )
+        generator.terminal_position = np.array(
+            [terminal_pos, extra_terminal_pos], dtype=np.float64
+        )
+
+        ancestor_data = generator.run()
+        ancestor_data.finalise()
+        with pytest.raises(ValueError, match="Multiple terminal sites detected."):
+            tsinfer.match_ancestors(sample_data, ancestor_data)
+
+    def test_extract_multiple_terminal_site_error(self, small_sd_fixture):
+        sample_data = small_sd_fixture
+        ancestor_data = tsinfer.generate_ancestors(sample_data)
+        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
+        last_site = ancestors_ts.site(-1)
+        extra_pos = (
+            last_site.position + (ancestors_ts.sequence_length - last_site.position) / 2
+        )
+        tables = ancestors_ts.dump_tables()
+        tables.sites.add_row(extra_pos, ancestral_state="N", metadata=b"")
+        tables.sort()
+        modified_ancestors_ts = tables.tree_sequence()
+        with pytest.raises(ValueError, match="Multiple terminal sites detected."):
+            tsinfer.extract_terminal_site(modified_ancestors_ts)
+
+    def test_deleting_absent_terminal_site(self, small_ts_fixture):
+        ts = small_ts_fixture
+        mod_ts = tsinfer.delete_terminal_site(ts)
+        assert ts.equals(mod_ts)
+
+    def test_extend_edges_absent_terminal_site(self, small_ts_fixture):
+        ts = small_ts_fixture
+        mod_ts = tsinfer.extend_edges(ts)
+        assert ts.equals(mod_ts)

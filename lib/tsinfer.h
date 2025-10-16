@@ -104,6 +104,7 @@ typedef struct {
     double time;
     uint8_t *encoded_genotypes;
     tsk_size_t derived_count;
+    bool terminal;
 } site_t;
 
 typedef struct {
@@ -252,6 +253,7 @@ int ancestor_builder_free(ancestor_builder_t *self);
 int ancestor_builder_print_state(ancestor_builder_t *self, FILE *out);
 int ancestor_builder_add_site(
     ancestor_builder_t *self, double time, allele_t *genotypes);
+int ancestor_builder_add_terminal_site(ancestor_builder_t *self);
 int ancestor_builder_finalise(ancestor_builder_t *self);
 int ancestor_builder_make_ancestor(const ancestor_builder_t *self,
     size_t num_focal_sites, const tsk_id_t *focal_sites, tsk_id_t *start, tsk_id_t *end,
