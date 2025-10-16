@@ -439,6 +439,9 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
     /*         (int) min_sample_set_size); */
     for (l = focal_site + direction; l >= 0 && l < (int64_t) num_sites; l += direction) {
         /* printf("\tl = %d\n", (int) l); */
+        if (sites[l].terminal) {
+            break;
+        }
         ancestor[l] = 0;
         last_site = (tsk_id_t) l;
 
@@ -691,6 +694,7 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     site = &self->sites[site_id];
     site->time = time;
     site->derived_count = derived_count;
+    site->terminal = false;
 
     search.encoded_genotypes = encoded_genotypes;
     search.encoded_genotypes_size = self->encoded_genotypes_size;
@@ -726,6 +730,27 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     list_node->next = map_elem->sites;
     map_elem->sites = list_node;
 
+out:
+    return ret;
+}
+
+int WARN_UNUSED
+ancestor_builder_add_terminal_site(ancestor_builder_t *self)
+{
+    int ret = 0;
+    site_t *site;
+    tsk_id_t site_id = (tsk_id_t) self->num_sites;
+
+    if (self->num_sites == self->max_sites) {
+        ret = TSI_ERR_TOO_MANY_SITES;
+        goto out;
+    }
+    site = &self->sites[site_id];
+    site->derived_count = 0;
+    site->encoded_genotypes = NULL;
+    site->time = 1;
+    site->terminal = true;
+    self->num_sites++;
 out:
     return ret;
 }

@@ -1158,17 +1158,16 @@ def run_ancestor_quality(args):
     exact_positions = np.append(
         exact_anc.sites_position[:], sample_data.sequence_length
     )
-    estim_positions = np.append(
-        estim_anc.sites_position[:], sample_data.sequence_length
-    )
+    estim_sites_position = estim_anc.sites_position[:-1]
+    estim_positions = np.append(estim_sites_position, sample_data.sequence_length)
     # only include sites which are focal in both exact and estim in the genome-wise masks
     exact_sites_mask = np.isin(exact_anc.sites_position[:], shared_positions)
-    estim_sites_mask = np.isin(estim_anc.sites_position[:], shared_positions)
+    estim_sites_mask = np.isin(estim_sites_position, shared_positions)
     assert np.sum(exact_sites_mask) == np.sum(estim_sites_mask) == len(anc_indices)
 
     # store the data to plot for each focal_site, keyed by position
     freq = {var.site.position: np.sum(var.genotypes) for var in sample_data.variants()}
-    estim_freq = np.array([freq[p] for p in estim_anc.sites_position], dtype=np.int64)
+    estim_freq = np.array([freq[p] for p in estim_sites_position], dtype=np.int64)
     olap_n_sites = {}
     olap_n_should_be_1_higher_freq = {}
     olap_n_should_be_0_higher_freq = {}
@@ -1193,7 +1192,7 @@ def run_ancestor_quality(args):
         if exact_start > estim_start:
             olap_start_exact = exact_anc.ancestors_start[:][exact_index]
             olap_start = exact_positions[olap_start_exact]
-            olap_start_estim = np.searchsorted(estim_anc.sites_position[:], olap_start)
+            olap_start_estim = np.searchsorted(estim_sites_position, olap_start)
         else:
             olap_start_estim = estim_anc.ancestors_start[:][estim_index]
             olap_start = estim_positions[olap_start_estim]
@@ -1205,7 +1204,7 @@ def run_ancestor_quality(args):
         if exact_end < estim_end:
             olap_end_exact = exact_anc.ancestors_end[:][exact_index]
             olap_end = exact_positions[olap_end_exact]
-            olap_end_estim = np.searchsorted(estim_anc.sites_position[:], olap_end)
+            olap_end_estim = np.searchsorted(estim_sites_position, olap_end)
         else:
             olap_end_estim = estim_anc.ancestors_end[:][estim_index]
             olap_end = estim_positions[olap_end_estim]

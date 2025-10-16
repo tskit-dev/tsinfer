@@ -179,6 +179,27 @@ out:
 }
 
 static PyObject *
+AncestorBuilder_add_terminal_site(AncestorBuilder *self)
+{
+    int err;
+    PyObject *ret = NULL;
+    
+    if (AncestorBuilder_check_state(self) != 0) {
+        goto out;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    err = ancestor_builder_add_terminal_site(self->builder);
+    Py_END_ALLOW_THREADS
+    if (err != 0) {
+        handle_library_error(err);
+        goto out;
+    }
+    ret = Py_BuildValue("");
+out:
+    return ret;
+}
+
+static PyObject *
 AncestorBuilder_make_ancestor(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
@@ -353,6 +374,9 @@ static PyMethodDef AncestorBuilder_methods[] = {
     {"add_site", (PyCFunction) AncestorBuilder_add_site,
         METH_VARARGS|METH_KEYWORDS,
         "Adds the specified site to this ancestor builder."},
+    {"add_terminal_site", (PyCFunction) AncestorBuilder_add_terminal_site,
+        METH_NOARGS,
+        "Adds a terminal site to this ancestor builder."},
     {"make_ancestor", (PyCFunction) AncestorBuilder_make_ancestor,
         METH_VARARGS|METH_KEYWORDS,
         "Makes the specified ancestor."},

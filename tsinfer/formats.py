@@ -3093,7 +3093,14 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
-    def __init__(self, position, sequence_length, chunk_size_sites=None, **kwargs):
+    def __init__(
+        self,
+        inference_position,
+        sequence_length,
+        chunk_size_sites=None,
+        terminal_position=None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._last_time = 0
         self.inference_sites_set = False
@@ -3105,20 +3112,28 @@ class AncestorData(DataContainer):
         self.data.attrs["sequence_length"] = sequence_length
         if self.sequence_length <= 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero or less")
-
+        if terminal_position is None:
+            terminal_position = np.array([])
         # We specify fill_value here due to https://github.com/pydata/xarray/issues/7292
         self.create_dataset("sample_start", dtype=np.int32)
         self.create_dataset("sample_end", dtype=np.int32)
         self.create_dataset("sample_time", dtype=np.float64)
         self.create_dataset("sample_focal_sites", dtype="array:i4")
-
+        variant_position = np.concatenate([inference_position, terminal_position])
         self.create_dataset(
             "variant_position",
-            data=position,
-            shape=position.shape,
+            data=variant_position,
+            shape=variant_position.shape,
             chunks=self._chunk_size_sites,
             dtype=np.float64,
             dimensions=["variants"],
+        )
+        self.create_dataset(
+            "terminal_position",
+            data=terminal_position,
+            shape=terminal_position.shape,
+            dtype=np.float64,
+            dimensions=["terminal_sites"],
         )
 
         # We have to include a ploidy dimension sgkit compatibility
@@ -3277,9 +3292,16 @@ class AncestorData(DataContainer):
     @property
     def sites_position(self):
         """
-        The positions of the inference sites used to generate the ancestors
+        The positions of the inference and terminal sites used to generate the ancestors
         """
         return self.data["variant_position"]
+
+    @property
+    def terminal_position(self):
+        """
+        The positions of any terminal sites used to generate the ancestors
+        """
+        return self.data["terminal_position"]
 
     @property
     def ancestors_start(self):
@@ -3312,9 +3334,13 @@ class AncestorData(DataContainer):
         """
         Returns the length of ancestors in physical coordinates.
         """
-        # Ancestor start and end are half-closed. The last site is assumed
-        # to cover the region up to sequence length.
-        pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+        if len(self.terminal_position) == 0:
+            # Ancestor start and end are half-closed. The last site is assumed
+            # to cover the region up to sequence length.
+            pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+        else:
+            # Terminal position takes the place of sequence_length
+            pos = self.sites_position[:]
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
         return pos[end] - pos[start]
@@ -3392,8 +3418,13 @@ class AncestorData(DataContainer):
         variant_data._check_finalised()
         if self.sequence_length != variant_data.sequence_length:
             raise ValueError("variant_data does not have the correct sequence length")
-        used_sites = np.isin(variant_data.sites_position[:], self.sites_position[:])
-        if np.sum(used_sites) != self.num_sites:
+        # Inference sites exclude the optional terminal site
+        if len(self.terminal_position) == 0:
+            inference_sites = self.sites_position[:]
+        else:
+            inference_sites = self.sites_position[:-1]
+        used_sites = np.isin(variant_data.sites_position[:], inference_sites)
+        if np.sum(used_sites) != inference_sites.shape[0]:
             raise ValueError("Genome positions in ancestors missing from variant_data")
 
         if sample_ids is None:
@@ -3448,11 +3479,13 @@ class AncestorData(DataContainer):
         with AncestorData(
             variant_data.sites_position[:][used_sites],
             variant_data.sequence_length,
+            terminal_position=self.terminal_position,
             **kwargs,
         ) as other:
             mutated_sites = set()  # To check if mutations have ocurred yet
             ancestors_iter = self.ancestors()
             ancestor = next(ancestors_iter, None)
+
             for i in reverse_time_sorted_indexes:
                 proxy_time = proxy_times[i]
                 sample_id = sample_ids[i]
@@ -3475,9 +3508,10 @@ class AncestorData(DataContainer):
                 logger.debug(
                     f"Inserting proxy ancestor: sample {sample_id} at time {proxy_time}"
                 )
+                proxy_end = other.num_sites - len(self.terminal_position)
                 other.add_ancestor(
                     start=0,
-                    end=self.num_sites,
+                    end=proxy_end,
                     time=proxy_time,
                     focal_sites=[],
                     haplotype=haplotype,
