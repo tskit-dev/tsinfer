@@ -66,4 +66,3 @@ jobs:
       - name: Test zarr v3 error
         run: |
           uv run --no-sync python -c "import tsinfer" 2>&1 | grep -q "zarr version.*is not supported"
-
