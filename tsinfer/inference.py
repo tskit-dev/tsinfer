@@ -1903,7 +1903,11 @@ class AncestorsGenerator:
         zeros = np.zeros(self.num_samples, dtype=np.int8)
         self.ancestor_builder.add_site(tskit.UNKNOWN_TIME, zeros, terminal=True)
         self.num_sites += 1
-        self.terminal_position = np.array([last_position + 1], dtype=np.float64)
+
+        terminal_position = last_position + 1
+        if terminal_position == self.variant_data.sequence_length:
+            terminal_position -= 0.5
+        self.terminal_position = np.array([terminal_position], dtype=np.float64)
 
         logger.info("Finished adding sites")
 
