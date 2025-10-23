@@ -2086,7 +2086,8 @@ class Matcher:
     def __init__(
         self,
         variant_data,
-        inference_site_position,
+        combined_position,
+        terminal_position,
         num_threads=1,
         path_compression=True,
         recombination_rate=None,
@@ -2104,30 +2105,33 @@ class Matcher:
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.variant_data.num_samples
-        self.num_sites = len(inference_site_position)
-        if self.num_sites == 0:
-            logger.warning("No sites used for inference")
-        num_intervals = max(self.num_sites - 1, 0)
         self.progress_monitor = _get_progress_monitor(progress_monitor)
         self.match_progress = None  # Allocated by subclass
         self.extended_checks = extended_checks
 
+        assert np.isin(terminal_position, combined_position).all()
+        inference_position = np.setdiff1d(
+            combined_position, terminal_position, assume_unique=True
+        )
+        self.num_sites = len(inference_position)
+        if self.num_sites == 0:
+            logger.warning("No sites used for inference")
+        num_intervals = max(self.num_sites - 1, 0)
+
         all_sites = self.variant_data.sites_position[:]
-        index = np.searchsorted(all_sites, inference_site_position)
+        index = np.searchsorted(all_sites, inference_position)
         num_alleles = variant_data.num_alleles()[index]
         self.num_alleles = num_alleles
-        if not np.all(all_sites[index] == inference_site_position):
+        if not np.all(all_sites[index] == inference_position):
             raise ValueError(
                 "Site positions for inference must be a subset of those in "
                 "the sample data file."
             )
         self.inference_site_id = index
 
-        # Map of site index to tree sequence position. Bracketing
-        # values of 0 and L are used for simplicity.
-        self.position_map = np.hstack(
-            [inference_site_position, [variant_data.sequence_length]]
-        )
+        # Map of site index to tree sequence position. Terminal site position
+        # is included is no longer set to sequence_length.
+        self.position_map = combined_position.copy()
         self.position_map[0] = 0
         self.recombination = np.zeros(self.num_sites)  # TODO: reduce len by 1
         self.mismatch = np.zeros(self.num_sites)
@@ -2163,7 +2167,7 @@ class Matcher:
                 )
             else:
                 genetic_dists = self.recombination_rate_to_dist(
-                    recombination_rate, inference_site_position
+                    recombination_rate, inference_position
                 )
                 recombination = self.recombination_dist_to_prob(genetic_dists)
                 if mismatch_ratio is None:
@@ -2356,6 +2360,12 @@ class Matcher:
             progress.update()
         progress.close()
 
+        site_id = tables.sites.add_row(
+            self.terminal_position[0],
+            ancestral_state="N",
+            metadata=b"",
+        )
+
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
         if self.variant_data.sequence_length != tables.sequence_length:
@@ -2421,8 +2431,14 @@ class AncestorMatcher(Matcher):
     def __init__(
         self, variant_data, ancestor_data, ancestors_ts=None, time_units=None, **kwargs
     ):
-        super().__init__(variant_data, ancestor_data.sites_position[:], **kwargs)
+        super().__init__(
+            variant_data,
+            combined_position=ancestor_data.sites_position[:],
+            terminal_position=ancestor_data.terminal_position[:],
+            **kwargs,
+        )
         self.ancestor_data = ancestor_data
+        self.terminal_position = ancestor_data.terminal_position
         if time_units is None:
             time_units = tskit.TIME_UNITS_UNCALIBRATED
         self.time_units = time_units
@@ -2688,8 +2704,18 @@ class AncestorMatcher(Matcher):
 class SampleMatcher(Matcher):
     def __init__(self, variant_data, ancestors_ts, **kwargs):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
+
+        ancestral_state_vals = ancestors_ts.tables.sites.ancestral_state
+        ancestral_state = np.char.decode(ancestral_state_vals.view("S1"), "ascii")
+        terminal_sites = np.where(ancestral_state == "N")[0]
+        terminal_position = ancestors_ts.sites_position[terminal_sites]
+        self.terminal_position = terminal_position
+
         super().__init__(
-            variant_data, self.ancestors_ts_tables.sites.position, **kwargs
+            variant_data,
+            combined_position=self.ancestors_ts_tables.sites.position,
+            terminal_position=terminal_position,
+            **kwargs,
         )
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
