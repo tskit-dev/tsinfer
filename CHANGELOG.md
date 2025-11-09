@@ -1,8 +1,12 @@
 # Changelog
 
-## [0.4.2] - 2025-10-16
+## [0.5.0] - 2025-11-09
 
 ** Changes **
+
+- Internal changes to ancestor generation to improve performace. These change the inferred ancestors
+  and therefore the inferred tree sequence. For details see this [blog post](https://tskit.dev/news/20251109-tsinfer-0.5.0.html).
+  ({pr}`1012`, {user}`duncanMR`)
 
 - Drop Python 3.9 support, require Python >= 3.10 ({pr}`1044`, {user}`benjeffery`)
 
