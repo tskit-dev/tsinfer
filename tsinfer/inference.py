@@ -2333,7 +2333,7 @@ class Matcher:
             extended_checks=self.extended_checks,
         )
 
-    def convert_inference_mutations(self, tables):
+    def convert_inference_mutations(self, tables, insert_terminal=False):
         """
         Convert the mutations stored in the tree sequence builder into the output
         format.
@@ -2363,12 +2363,12 @@ class Matcher:
                 mutation_id += 1
             progress.update()
         progress.close()
-
-        site_id = tables.sites.add_row(
-            self.terminal_position[0],
-            ancestral_state="N",
-            metadata=b"",
-        )
+        if insert_terminal:
+            site_id = tables.sites.add_row(
+                self.terminal_position[0],
+                ancestral_state="N",
+                metadata=b"",
+            )
 
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
@@ -2668,7 +2668,7 @@ class AncestorMatcher(Matcher):
             child=child,
         )
 
-        self.convert_inference_mutations(tables)
+        self.convert_inference_mutations(tables, insert_terminal=True)
 
         logger.debug("Sorting ancestors tree sequence")
         tables.sort()
@@ -2942,7 +2942,7 @@ class SampleMatcher(Matcher):
                 definition=inference_type_metadata_definition,
             )
             tables.sites.metadata_schema = tskit.MetadataSchema(schema)
-        self.convert_inference_mutations(tables)
+        self.convert_inference_mutations(tables, insert_terminal=False)
 
         # FIXME this is a shortcut. We should be computing the mutation parent above
         # during insertion (probably)
@@ -3025,7 +3025,7 @@ class SampleMatcher(Matcher):
 
         tables.sites.clear()
         tables.mutations.clear()
-        self.convert_inference_mutations(tables)
+        self.convert_inference_mutations(tables, insert_terminal=False)
 
         logger.debug("Sorting ancestors tree sequence")
         tables.sort()
