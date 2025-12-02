@@ -136,18 +136,19 @@ static PyObject *
 AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
 {
     int err;
-    static char *kwlist[] = {"time", "genotypes", NULL};
+    static char *kwlist[] = {"time", "genotypes", "terminal", NULL};
     PyObject *ret = NULL;
     double time;
     PyObject *genotypes = NULL;
     PyArrayObject *genotypes_array = NULL;
     npy_intp *shape;
+    int terminal = 0;
 
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dO", kwlist,
-            &time, &genotypes)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "dO|p", kwlist,
+            &time, &genotypes, &terminal)) {
         goto out;
     }
     genotypes_array = (PyArrayObject *) PyArray_FROM_OTF(genotypes, NPY_INT8,
@@ -166,7 +167,7 @@ AncestorBuilder_add_site(AncestorBuilder *self, PyObject *args, PyObject *kwds)
     }
     Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_add_site(self->builder, time,
-            (allele_t *) PyArray_DATA(genotypes_array));
+            (allele_t *) PyArray_DATA(genotypes_array), terminal);
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);

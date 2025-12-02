@@ -3093,7 +3093,14 @@ class AncestorData(DataContainer):
     FORMAT_NAME = "tsinfer-ancestor-data"
     FORMAT_VERSION = (3, 0)
 
-    def __init__(self, position, sequence_length, chunk_size_sites=None, **kwargs):
+    def __init__(
+        self,
+        inference_position,
+        terminal_position,
+        sequence_length,
+        chunk_size_sites=None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._last_time = 0
         self.inference_sites_set = False
@@ -3111,14 +3118,21 @@ class AncestorData(DataContainer):
         self.create_dataset("sample_end", dtype=np.int32)
         self.create_dataset("sample_time", dtype=np.float64)
         self.create_dataset("sample_focal_sites", dtype="array:i4")
-
+        variant_position = np.concatenate([inference_position, terminal_position])
         self.create_dataset(
             "variant_position",
-            data=position,
-            shape=position.shape,
+            data=variant_position,
+            shape=variant_position.shape,
             chunks=self._chunk_size_sites,
             dtype=np.float64,
             dimensions=["variants"],
+        )
+        self.create_dataset(
+            "terminal_position",
+            data=terminal_position,
+            shape=terminal_position.shape,
+            dtype=np.float64,
+            dimensions=["terminal_sites"],
         )
 
         # We have to include a ploidy dimension sgkit compatibility
@@ -3277,9 +3291,16 @@ class AncestorData(DataContainer):
     @property
     def sites_position(self):
         """
-        The positions of the inference sites used to generate the ancestors
+        The positions of the inference and terminal sites used to generate the ancestors
         """
         return self.data["variant_position"]
+
+    @property
+    def terminal_position(self):
+        """
+        The positions of the terminal sites used to generate the ancestors
+        """
+        return self.data["terminal_position"]
 
     @property
     def ancestors_start(self):
@@ -3314,10 +3335,10 @@ class AncestorData(DataContainer):
         """
         # Ancestor start and end are half-closed. The last site is assumed
         # to cover the region up to sequence length.
-        pos = np.hstack([self.sites_position[:], [self.sequence_length]])
+
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
-        return pos[end] - pos[start]
+        return self.sites_position[end] - self.sites_position[start]
 
     def insert_proxy_samples(
         self,
@@ -3683,6 +3704,7 @@ class AncestorData(DataContainer):
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self.num_sites:
+            print(f"[INFO] {end}, {self.num_sites}")
             raise ValueError("end must be <= num_sites")
         if start >= end:
             raise ValueError("start must be < end")
