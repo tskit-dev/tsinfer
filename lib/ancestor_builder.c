@@ -439,6 +439,9 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
     /*         (int) min_sample_set_size); */
     for (l = focal_site + direction; l >= 0 && l < (int64_t) num_sites; l += direction) {
         /* printf("\tl = %d\n", (int) l); */
+        if (sites[l].terminal) {
+            break;
+        }
         ancestor[l] = 0;
         last_site = (tsk_id_t) l;
 
@@ -653,7 +656,8 @@ ancestor_builder_allocate_genotypes(ancestor_builder_t *self)
 }
 
 int WARN_UNUSED
-ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genotypes)
+ancestor_builder_add_site(
+    ancestor_builder_t *self, double time, allele_t *genotypes, bool terminal)
 {
     int ret = 0;
     site_t *site;
@@ -665,21 +669,30 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     avl_tree_t *pattern_map;
     tsk_id_t site_id = (tsk_id_t) self->num_sites;
     size_t derived_count, j;
-    time_map_t *time_map = ancestor_builder_get_time_map(self, time);
+    time_map_t *time_map = NULL;
 
+    if (self->num_sites == self->max_sites) {
+        ret = TSI_ERR_TOO_MANY_SITES;
+        goto out;
+    }
     derived_count = 0;
     for (j = 0; j < (size_t) self->num_samples; j++) {
         if (genotypes[j] == 1) {
             derived_count++;
         }
     }
-
-    if (time_map == NULL) {
-        ret = TSI_ERR_NO_MEMORY;
+    site = &self->sites[site_id];
+    site->time = time;
+    site->derived_count = derived_count;
+    site->terminal = terminal;
+    if (terminal) {
+        site->encoded_genotypes = NULL;
+        self->num_sites++;
         goto out;
     }
-    if (self->num_sites == self->max_sites) {
-        ret = TSI_ERR_TOO_MANY_SITES;
+    time_map = ancestor_builder_get_time_map(self, time);
+    if (time_map == NULL) {
+        ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
     ret = ancestor_builder_encode_genotypes(self, genotypes, encoded_genotypes);
@@ -688,9 +701,6 @@ ancestor_builder_add_site(ancestor_builder_t *self, double time, allele_t *genot
     }
     self->num_sites++;
     pattern_map = &time_map->pattern_map;
-    site = &self->sites[site_id];
-    site->time = time;
-    site->derived_count = derived_count;
 
     search.encoded_genotypes = encoded_genotypes;
     search.encoded_genotypes_size = self->encoded_genotypes_size;
