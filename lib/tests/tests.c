@@ -480,6 +480,8 @@ test_ancestor_builder_errors(void)
     CU_ASSERT_EQUAL_FATAL(ancestor_builder.num_sites, 0);
     ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes_ones);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_TOO_MANY_SITES);
+    ret = ancestor_builder_add_terminal_site(&ancestor_builder);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_TOO_MANY_SITES);
     ancestor_builder_free(&ancestor_builder);
 
     ret = ancestor_builder_alloc(&ancestor_builder, 4, 2, -1, 0);
@@ -528,6 +530,32 @@ test_ancestor_builder_one_site(void)
     CU_ASSERT_EQUAL(start, 0);
     CU_ASSERT_EQUAL(end, 1);
     CU_ASSERT_EQUAL(ancestor[0], 1);
+
+    ancestor_builder_free(&ancestor_builder);
+}
+
+static void
+test_ancestor_builder_terminal_site(void)
+{
+    int ret = 0;
+    ancestor_builder_t ancestor_builder;
+    allele_t genotypes[4] = { 1, 0, 1, 0 };
+    allele_t ancestor[2];
+    tsk_id_t start, end, focal_sites[1];
+
+    ret = ancestor_builder_alloc(&ancestor_builder, 4, 2, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ancestor_builder, 4, genotypes);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_terminal_site(&ancestor_builder);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    focal_sites[0] = 0;
+    ret = ancestor_builder_make_ancestor(
+        &ancestor_builder, 1, focal_sites, &start, &end, ancestor);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(start, 0);
+    CU_ASSERT_EQUAL(end, 1);
 
     ancestor_builder_free(&ancestor_builder);
 }
@@ -1075,6 +1103,7 @@ main(int argc, char **argv)
     CU_TestInfo tests[] = {
         { "test_ancestor_builder_errors", test_ancestor_builder_errors },
         { "test_ancestor_builder_one_site", test_ancestor_builder_one_site },
+        { "test_ancestor_builder_terminal_site", test_ancestor_builder_terminal_site },
         /* TODO more ancestor builder tests */
         { "test_matching_one_site", test_matching_one_site },
         { "test_matching_one_site_many_alleles", test_matching_one_site_many_alleles },

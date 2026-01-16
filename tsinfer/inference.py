@@ -1779,6 +1779,31 @@ def insert_missing_sites(
     return tables.tree_sequence()
 
 
+def generate_terminal_position(variant_data, last_position):
+    """
+    Generates a 1-element array containing a suitable terminal position,
+    which is always less than the sequence length and always greater than any
+    existing site positions in variant_data.
+    """
+
+    def interpolate(sequence_length, last_position):
+        diff = (sequence_length - last_position) / 2
+        return last_position + min(diff, 1)
+
+    sequence_length = variant_data.sequence_length
+    sites_position = variant_data.sites_position
+    if last_position >= sequence_length:
+        raise ValueError(
+            "Last position cannot be equal or greater than sequence length."
+        )
+    terminal_position = interpolate(sequence_length, last_position)
+    while terminal_position in sites_position:
+        # Ensure that terminal position isn't a non-inference site
+        terminal_position = interpolate(sequence_length, terminal_position)
+
+    return np.array([terminal_position], dtype=np.float64)
+
+
 class AncestorsGenerator:
     """
     Manages the process of building ancestors.
@@ -1801,12 +1826,13 @@ class AncestorsGenerator:
         self.progress_monitor = _get_progress_monitor(
             progress_monitor, generate_ancestors=True
         )
-        self.max_sites = variant_data.num_sites
+        self.max_sites = variant_data.num_sites + 1
         self.num_sites = 0
         self.inference_site_ids = []
         self.num_samples = variant_data.num_samples
         self.num_threads = num_threads
         self.mmap_temp_file = None
+        self.terminal_position = None
         mmap_fd = -1
 
         genotype_matrix_size = self.max_sites * self.num_samples
@@ -1865,6 +1891,7 @@ class AncestorsGenerator:
         logger.info(f"Starting addition of {self.max_sites} sites")
         progress = self.progress_monitor.get("ga_add_sites", self.max_sites)
         inference_site_id = []
+        last_position = 0
         for variant in self.variant_data.variants(recode_ancestral=True):
             # If there's missing data the last allele is None
             num_alleles = len(variant.alleles) - int(variant.alleles[-1] is None)
@@ -1879,6 +1906,7 @@ class AncestorsGenerator:
                 and site.ancestral_state is not None
             ):
                 use_site = True
+                last_position = site.position
                 time = site.time
                 if tskit.is_unknown_time(time):
                     # Non-variable sites have no obvious freq-as-time values
@@ -1894,6 +1922,12 @@ class AncestorsGenerator:
             progress.update()
         progress.close()
         self.inference_site_ids = inference_site_id
+        # Add terminal site at end of sequence
+        self.ancestor_builder.add_terminal_site()
+        self.num_sites += 1
+        self.terminal_position = generate_terminal_position(
+            self.variant_data, last_position
+        )
         logger.info("Finished adding sites")
 
     def _run_synchronous(self, progress):
@@ -2000,15 +2034,18 @@ class AncestorsGenerator:
             if t not in self.timepoint_to_epoch:
                 self.timepoint_to_epoch[t] = len(self.timepoint_to_epoch) + 1
         self.ancestor_data = formats.AncestorData(
-            self.variant_data.sites_position[:][self.inference_site_ids],
-            self.variant_data.sequence_length,
+            inference_position=self.variant_data.sites_position[:][
+                self.inference_site_ids
+            ],
+            terminal_position=self.terminal_position,
+            sequence_length=self.variant_data.sequence_length,
             path=self.ancestor_data_path,
             **self.ancestor_data_kwargs,
         )
         if self.num_ancestors > 0:
             logger.info(f"Starting build for {self.num_ancestors} ancestors")
             progress = self.progress_monitor.get("ga_generate", self.num_ancestors)
-            a = np.zeros(self.num_sites, dtype=np.int8)
+            a = np.zeros(self.num_sites - 1, dtype=np.int8)
             root_time = max(self.timepoint_to_epoch.keys())
             av_timestep = root_time / len(self.timepoint_to_epoch)
             root_time += av_timestep  # Add a root a bit older than the oldest ancestor
@@ -2017,7 +2054,7 @@ class AncestorsGenerator:
             # line up. It's normally removed when processing the final tree sequence.
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time + av_timestep,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
@@ -2025,7 +2062,7 @@ class AncestorsGenerator:
             # This is the the "ultimate ancestor" of all zeros
             self.ancestor_data.add_ancestor(
                 start=0,
-                end=self.num_sites,
+                end=self.num_sites - 1,
                 time=root_time,
                 focal_sites=np.array([], dtype=np.int32),
                 haplotype=a,
@@ -2072,7 +2109,8 @@ class Matcher:
     def __init__(
         self,
         variant_data,
-        inference_site_position,
+        inference_position,
+        terminal_position,
         num_threads=1,
         path_compression=True,
         recombination_rate=None,
@@ -2090,7 +2128,7 @@ class Matcher:
         self.num_threads = num_threads
         self.path_compression = path_compression
         self.num_samples = self.variant_data.num_samples
-        self.num_sites = len(inference_site_position)
+        self.num_sites = len(inference_position)
         if self.num_sites == 0:
             logger.warning("No sites used for inference")
         num_intervals = max(self.num_sites - 1, 0)
@@ -2099,21 +2137,19 @@ class Matcher:
         self.extended_checks = extended_checks
 
         all_sites = self.variant_data.sites_position[:]
-        index = np.searchsorted(all_sites, inference_site_position)
+        index = np.searchsorted(all_sites, inference_position)
         num_alleles = variant_data.num_alleles()[index]
         self.num_alleles = num_alleles
-        if not np.all(all_sites[index] == inference_site_position):
+        if not np.all(all_sites[index] == inference_position):
             raise ValueError(
                 "Site positions for inference must be a subset of those in "
                 "the sample data file."
             )
         self.inference_site_id = index
 
-        # Map of site index to tree sequence position. Bracketing
-        # values of 0 and L are used for simplicity.
-        self.position_map = np.hstack(
-            [inference_site_position, [variant_data.sequence_length]]
-        )
+        # Map of site index to tree sequence position, bracketed by values
+        # of 0 and the terminal position (which may be sequence_length).
+        self.position_map = np.hstack([inference_position, terminal_position])
         self.position_map[0] = 0
         self.recombination = np.zeros(self.num_sites)  # TODO: reduce len by 1
         self.mismatch = np.zeros(self.num_sites)
@@ -2149,7 +2185,7 @@ class Matcher:
                 )
             else:
                 genetic_dists = self.recombination_rate_to_dist(
-                    recombination_rate, inference_site_position
+                    recombination_rate, inference_position
                 )
                 recombination = self.recombination_dist_to_prob(genetic_dists)
                 if mismatch_ratio is None:
@@ -2314,7 +2350,7 @@ class Matcher:
     def convert_inference_mutations(self, tables):
         """
         Convert the mutations stored in the tree sequence builder into the output
-        format.
+        format. Adds the terminal site if it is less than sequence length.
         """
         mut_site, node, derived_state, _ = self.tree_sequence_builder.dump_mutations()
         mutation_id = 0
@@ -2341,6 +2377,14 @@ class Matcher:
                 mutation_id += 1
             progress.update()
         progress.close()
+        terminal_pos = self.terminal_position[0]
+        if terminal_pos < self.variant_data.sequence_length:
+            metadata = {} if schema is not None else b""
+            site_id = tables.sites.add_row(
+                terminal_pos,
+                ancestral_state="N",
+                metadata=metadata,
+            )
 
     def restore_tree_sequence_builder(self):
         tables = self.ancestors_ts_tables
@@ -2403,12 +2447,92 @@ class Matcher:
         )
 
 
+def extract_terminal_site(ts):
+    """
+    Extract the terminal site ID from the provided tree sequence.
+    If no terminal site is present, return None.
+    """
+    tables = ts.dump_tables()
+    ancestral_state = np.array(
+        tskit.unpack_strings(
+            tables.sites.ancestral_state,
+            tables.sites.ancestral_state_offset,
+        ),
+        dtype=object,
+    )
+    terminal_sites = np.where(ancestral_state == "N")[0]
+    num_terminal_sites = len(terminal_sites)
+    if num_terminal_sites == 0:
+        return None
+    elif num_terminal_sites == 1:
+        return int(terminal_sites[0])
+    else:
+        raise ValueError("Multiple terminal sites detected.")
+
+
+def extend_edges(ts):
+    """
+    If a terminal site is present, extend edges that end at the terminal site
+    such that they end at the sequence length. Otherwise, return the unchanged
+    tree sequence.
+    """
+    terminal_site = extract_terminal_site(ts)
+    if terminal_site is None:
+        return ts
+    else:
+        terminal_pos = ts.site(terminal_site).position
+        assert terminal_pos < ts.sequence_length
+        edges_right = ts.edges_right.copy()
+        edges_right[edges_right == terminal_pos] = ts.sequence_length
+        tables = ts.dump_tables()
+        tables.edges.right = edges_right
+        tables.sort()
+        return tables.tree_sequence()
+
+
+def delete_terminal_site(ts):
+    """
+    Delete the terminal site if it is present in the provided tree sequence. Otherwise,
+    return the unchanged tree sequence.
+    """
+    terminal_site = extract_terminal_site(ts)
+    if terminal_site is None:
+        return ts
+    else:
+        return ts.delete_sites(terminal_site, record_provenance=False)
+
+
 class AncestorMatcher(Matcher):
     def __init__(
-        self, variant_data, ancestor_data, ancestors_ts=None, time_units=None, **kwargs
+        self,
+        variant_data,
+        ancestor_data,
+        ancestors_ts=None,
+        time_units=None,
+        **kwargs,
     ):
-        super().__init__(variant_data, ancestor_data.sites_position[:], **kwargs)
+        num_terminal_sites = len(ancestor_data.terminal_position)
+        if num_terminal_sites > 1:
+            raise ValueError("Multiple terminal sites detected.")
+        elif num_terminal_sites == 0:
+            inference_position = ancestor_data.sites_position[:]
+            terminal_position = [variant_data.sequence_length]
+        else:
+            # sites_position already has a terminal site included
+            terminal_position = ancestor_data.terminal_position[:]
+            combined_position = ancestor_data.sites_position[:]
+            assert np.isin(terminal_position, combined_position).all()
+            inference_position = np.setdiff1d(
+                combined_position, terminal_position, assume_unique=True
+            )
+        super().__init__(
+            variant_data,
+            inference_position=inference_position,
+            terminal_position=terminal_position,
+            **kwargs,
+        )
         self.ancestor_data = ancestor_data
+        self.terminal_position = terminal_position
         if time_units is None:
             time_units = tskit.TIME_UNITS_UNCALIBRATED
         self.time_units = time_units
@@ -2528,10 +2652,12 @@ class AncestorMatcher(Matcher):
             local_data = threading.local()
             if not hasattr(local_data, "matcher"):
                 local_data.matcher = self.create_matcher_instance()
+            # Ensure that the terminal site is not included in the haplotype
+            haplotype = ancestor.full_haplotype[: self.num_sites]
             result = self.find_path(
                 matcher=local_data.matcher,
                 child_id=ancestor.id,
-                haplotype=ancestor.full_haplotype,
+                haplotype=haplotype,
                 start=ancestor.start,
                 end=ancestor.end,
             )
@@ -2672,10 +2798,30 @@ class AncestorMatcher(Matcher):
 
 
 class SampleMatcher(Matcher):
-    def __init__(self, variant_data, ancestors_ts, **kwargs):
+    def __init__(
+        self,
+        variant_data,
+        ancestors_ts,
+        **kwargs,
+    ):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
+        terminal_site = extract_terminal_site(ancestors_ts)
+        if terminal_site is None:
+            inference_position = ancestors_ts.sites_position[:]
+            terminal_position = [variant_data.sequence_length]
+        else:
+            terminal_position = [ancestors_ts.site(terminal_site).position]
+            combined_position = ancestors_ts.sites_position
+            inference_position = np.setdiff1d(
+                combined_position, terminal_position, assume_unique=True
+            )
+        self.terminal_position = terminal_position
+
         super().__init__(
-            variant_data, self.ancestors_ts_tables.sites.position, **kwargs
+            variant_data,
+            inference_position=inference_position,
+            terminal_position=terminal_position,
+            **kwargs,
         )
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
@@ -3047,6 +3193,7 @@ def post_process(
     # Parameters below deliberately undocumented
     warn_if_unexpected_format=None,
     simplify_only=None,
+    extend_terminal_edges=True,
 ):
     """
     post_process(ts, *, split_ultimate=None, erase_flanks=None)
@@ -3095,6 +3242,10 @@ def post_process(
     if erase_flanks is None:
         erase_flanks = True
 
+    if extend_terminal_edges:
+        ts = extend_edges(ts)
+    # Always remove terminal site
+    ts = delete_terminal_site(ts)
     tables = ts.dump_tables()
 
     if not simplify_only:

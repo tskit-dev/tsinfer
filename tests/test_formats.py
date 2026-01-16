@@ -1949,7 +1949,7 @@ class TestAncestorData(DataContainerMixin):
     def assert_ancestor_full_span(self, ancestor_data, indexes):
         assert np.all(ancestor_data.ancestors_start[:][indexes] == 0)
         assert np.all(
-            ancestor_data.ancestors_end[:][indexes] == ancestor_data.num_sites
+            ancestor_data.ancestors_end[:][indexes] == ancestor_data.num_sites - 1
         )
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
@@ -1978,7 +1978,7 @@ class TestAncestorData(DataContainerMixin):
             assert stored_end[j] == end
             assert stored_time[j] == t
             assert np.array_equal(stored_focal_sites[j], focal_sites)
-            assert np.array_equal(stored_ancestors[:, j], full_haplotype)
+            np.testing.assert_array_equal(stored_ancestors[:, j], full_haplotype)
             assert np.array_equal(ancestors_list[j], haplotype[start:end])
         pos = list(ancestor_data.sites_position[:]) + [ancestor_data.sequence_length]
         for j, anc in enumerate(ancestor_data.ancestors()):
@@ -2335,7 +2335,7 @@ class TestAncestorData(DataContainerMixin):
             inserted = -1
             self.assert_ancestor_full_span(ancestors_extra, [inserted])
             assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:, inserted, 0],
+                ancestors_extra.ancestors_full_haplotype[:-1, inserted, 0],
                 sample_data.sites_genotypes[:, i][used_sites],
             )
 
@@ -2376,7 +2376,7 @@ class TestAncestorData(DataContainerMixin):
         assert ancestors.num_ancestors + 1 == ancestors_extra.num_ancestors
         self.assert_ancestor_full_span(ancestors_extra, [-1])
         assert np.array_equal(
-            ancestors_extra.ancestors_full_haplotype[:, -1, 0], G[:, 9][used_sites]
+            ancestors_extra.ancestors_full_haplotype[:-1, -1, 0], G[:, 9][used_sites]
         )
         assert np.array_equal(
             ancestors_extra.ancestors_time[-1], historical_sample_time + epsilon
@@ -2392,14 +2392,16 @@ class TestAncestorData(DataContainerMixin):
             self.assert_ancestor_full_span(ancestors_extra, inserted)
             # Older sample
             assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:, -2, 0], G[:, 9][used_sites]
+                ancestors_extra.ancestors_full_haplotype[:-1, -2, 0],
+                G[:, 9][used_sites],
             )
             assert np.array_equal(
                 ancestors_extra.ancestors_time[-2], historical_sample_time + epsilon
             )
             # Younger sample
             assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:, -1, 0], G[:, 0][used_sites]
+                ancestors_extra.ancestors_full_haplotype[:-1, -1, 0],
+                G[:, 0][used_sites],
             )
             assert np.array_equal(ancestors_extra.ancestors_time[-1], epsilon)
 
