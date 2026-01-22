@@ -8,10 +8,11 @@
   and therefore the inferred tree sequence. For details see this [blog post](https://tskit.dev/news/20251109-tsinfer-0.5.0.html).
   ({pr}`1012`, {user}`duncanMR`)
 
+- Add support for Python 3.14.
+
 - Drop Python 3.9 support, require Python >= 3.10 ({pr}`1044`, {user}`benjeffery`)
 
 - Remove overzealous derived state validation in C API. ({pr}`1059`, {user}`benjeffery`)
-
 
 ## [0.4.1] - 2024-04-19
 
