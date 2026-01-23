@@ -138,7 +138,7 @@ dev = [
     "colorama",
     "sgkit[vcf]",
     "sphinx-book-theme",
-    "jupyter-book",
+    "jupyter-book<2",
     "sphinx-issues",
     "ipywidgets",
     "pyfaidx"
