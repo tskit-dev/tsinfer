@@ -11,6 +11,12 @@ jobs:
     name: Lint
     uses: tskit-dev/.github/.github/workflows/lint.yml@v2
 
+  packaging:
+    name: Python packaging
+    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v4
+    with:
+     cli-test-cmd: tsinfer --help
+
   zarr-v3-compatibility:
     name: Test zarr v3 error
     runs-on: ubuntu-latest
@@ -69,17 +75,17 @@ jobs:
 
       - name: Setup venv
         run: |
-          uv venv          
+          uv venv
 
       - name: Install cyvcf2 #Fails if done via conda due to no windows support.
         if: matrix.os != 'windows-latest'
         run: |
-          uv pip install sgkit==0.9.0 cyvcf2==0.31.3 yarl==1.9.4 aiohttp==3.9.5 requests==2.32.3 
+          uv pip install sgkit==0.9.0 cyvcf2==0.31.3 yarl==1.9.4 aiohttp==3.9.5 requests==2.32.3
 
       - name: Install sgkit only on windows
         if: matrix.os == 'windows-latest'
         run: |
-          uv pip install sgkit==0.9.0 
+          uv pip install sgkit==0.9.0
 
       - name: Install pip deps
         run: |
