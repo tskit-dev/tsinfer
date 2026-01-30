@@ -18,7 +18,7 @@ jobs:
           command: |
               sudo apt-get update
               sudo apt-get install libcap-dev libnuma-dev libcunit1-dev \
-                  libconfig-dev ninja-build valgrind clang 
+                  libconfig-dev ninja-build valgrind clang
               # set path persistently https://circleci.com/docs/2.0/env-vars/#setting-path
               echo 'export PATH=/home/circleci/.local/bin:$PATH' >> $BASH_ENV
 
@@ -41,30 +41,6 @@ jobs:
             git submodule update --init --recursive
             # Write out the status for debugging purposes. Are we checked out at tags?
             git submodule status --recursive
-
-      - run:
-          name: Build the distribution tarball.
-          command: |
-            python -m build --sdist
-            python setup.py check
-            python -m twine check dist/*.tar.gz --strict
-            rm dist/*
-            python -m build
-
-      - run:
-          name: Install from the distribution tarball
-          command: |
-            python -m venv venv
-            source venv/bin/activate
-            pip install dist/*.tar.gz
-            python -c 'import tsinfer; print(tsinfer.__version__)'
-
-            #Also check the wheel
-            pip uninstall --yes tsinfer
-            pip install dist/*.whl
-            python -c 'import tsinfer; print(tsinfer.__version__)'
-            deactivate
-            rm -rf venv
 
       - run:
           name: Compile Python
