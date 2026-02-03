@@ -626,6 +626,9 @@ class TestCheckAncestorsTs:
         tables.sites.add_row(position=0.5, ancestral_state="0")
         tables.mutations.add_row(site=0, node=0, derived_state="1")
         tables.mutations.add_row(site=0, node=1, derived_state="0")
+        tables.sort()
+        tables.build_index()
+        tables.compute_mutation_parents()
         tsinfer.check_ancestors_ts(tables.tree_sequence())
 
     def test_msprime_output(self, small_ts_fixture):
