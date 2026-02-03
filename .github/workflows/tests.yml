@@ -87,7 +87,7 @@ jobs:
 
       - name: Install numpy for build
         run: |
-          uv pip install "numpy>=2"
+          uv pip install "numpy>=2" numba
 
       - name: Build module
         run: |

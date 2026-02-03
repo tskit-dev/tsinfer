@@ -90,7 +90,8 @@ def test_sgkit_dataset_roundtrip(tmp_path):
         ts.num_samples == inf_ts.num_samples == ds.sizes["samples"] * ds.sizes["ploidy"]
     )
     assert ts.num_sites == inf_ts.num_sites == ds.sizes["variants"]
-    assert ts.sequence_length == inf_ts.sequence_length == ds.attrs["contig_lengths"][0]
+
+    assert ts.sequence_length == inf_ts.sequence_length == ds["contig_length"]
     for (
         v,
         inf_v,
@@ -207,8 +208,8 @@ def test_variantdata_accessors(tmp_path, in_mem):
         ),
     )
 
-    # Need to shuffle for the ancestral allele test
-    ts, data = tsutil.make_ts_and_zarr(path, add_optional=True)
+    # Shuffle for the ancestral allele test + use alternative prefix to avoid file clash
+    ts, data = tsutil.make_ts_and_zarr(path, add_optional=True, prefix="shuffled")
     vd = tsinfer.VariantData(data, "variant_ancestral_allele")
     for i in range(ts.num_sites):
         assert (

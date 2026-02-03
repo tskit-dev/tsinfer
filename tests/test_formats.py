@@ -1882,7 +1882,7 @@ class TestMinSiteTimes:
         # Because this is a haploid tree sequence we can use the
         # individual and sample IDs interchangably.
         assert np.all(
-            np.in1d(
+            np.isin(
                 time_bound_individuals_only, np.concatenate([[0], individual_times])
             )
         )
