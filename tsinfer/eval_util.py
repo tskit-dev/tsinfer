@@ -84,6 +84,9 @@ def insert_errors(ts, probability, seed=None):
                         parent=parent,
                         derived_state=derived_state,
                     )
+    tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
     return tables.tree_sequence()
 
 
