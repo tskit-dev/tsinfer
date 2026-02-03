@@ -48,12 +48,12 @@ keywords = [
     "tsinfer",
 ]
 dependencies = [
-    "numpy>=1.23.5",
+    "numpy>=2",
     "six",
     "tqdm",
     "humanize",
     "daiquiri",
-    "tskit>=0.5.3",
+    "tskit>=1.0.0",
     "numcodecs>=0.6,<0.15.1", #Pinned due to https://github.com/zarr-developers/numcodecs/issues/733
     "zarr>=2.2,!=2.11.0,!=2.11.1,!=2.11.2,<3",
     "lmdb",
@@ -61,6 +61,7 @@ dependencies = [
     "attrs>=19.2.0",
     "numba>=0.61.0",
     "psutil>=5.9.0",
+    "bio2zarr>=0.1.7",
 ]
 
 [project.urls]
@@ -86,8 +87,9 @@ test = [
     "pytest==8.3.5",
     "pytest-cov==6.0.0",
     "seaborn==0.13.2",
-    "sgkit[vcf]==0.9.0; sys_platform != 'win32'",
-    "tskit==0.6.0",
+    "sgkit==0.10.0",
+    "bio2zarr==0.1.7",
+    "tskit==1.0.0",
     "tqdm==4.67.1",
     "twine==6.1.0"
 ]
@@ -101,10 +103,9 @@ docs = [
     "tqdm==4.67.1",
     "daiquiri==3.3.0",
     "msprime==1.3.3",
-    "sgkit[vcf]==0.9.0",
     "ipywidgets==8.1.5",
     "Bio==1.7.1",
-    "bio2zarr==0.1.4",
+    "bio2zarr[vcf]==0.1.7",
     "sphinx-book-theme",
     "pyfaidx==0.8.1.3"
 ]

@@ -222,24 +222,32 @@ def add_attribute_to_dataset(name, contents, zarr_path):
     sgkit.save_dataset(ds, zarr_path, mode="a")
 
 
-def make_ts_and_zarr(path=None, add_optional=False, shuffle_alleles=True):
+def make_ts_and_zarr(
+    path=None, prefix="data", add_optional=False, shuffle_alleles=True
+):
     if path is None:
         in_mem_copy = zarr.group()
         with tempfile.TemporaryDirectory() as path:
             ts, zarr_path = _make_ts_and_zarr(
-                Path(path), add_optional=add_optional, shuffle_alleles=shuffle_alleles
+                Path(path),
+                prefix=prefix,
+                add_optional=add_optional,
+                shuffle_alleles=shuffle_alleles,
             )
             # For testing only, return an in-memory copy of the dataset we just made
             zarr.convenience.copy_all(zarr.open(zarr_path), in_mem_copy)
         return ts, in_mem_copy
     else:
         return _make_ts_and_zarr(
-            path, add_optional=add_optional, shuffle_alleles=shuffle_alleles
+            Path(path),
+            prefix=prefix,
+            add_optional=add_optional,
+            shuffle_alleles=shuffle_alleles,
         )
 
 
-def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
-    import sgkit.io.vcf
+def _make_ts_and_zarr(path, prefix, add_optional=False, shuffle_alleles=True):
+    import bio2zarr.tskit as ts2z
 
     ts = msprime.sim_ancestry(
         samples=100,
@@ -272,25 +280,17 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
 
     ts = tables.tree_sequence()
 
-    # For simplicity, we would like go directly from the tree sequence to the sgkit
-    # dataset, but for testing it is desirable to have sgkit code write as much of the
-    # data as possible.
-    with open(path / "data.vcf", "w") as f:
-        ts.write_vcf(f, allow_position_zero=True)
-    sgkit.io.vcf.vcf_to_zarr(
-        path / "data.vcf",
-        path / "data.zarr",
-        chunk_length=10,
-        chunk_width=12,
-        ploidy=3,
-        max_alt_alleles=4,  # tests tsinfer's ability to handle empty string alleles
-    )
+    ts_path = path / f"{prefix}.trees"
+    zarr_path = path / f"{prefix}.zarr"
+    ts.dump(ts_path)
+
+    ts2z.convert(ts_path, zarr_path)
 
     ancestral_allele = [site.ancestral_state for site in ts.sites()]
     add_array_to_dataset(
         "variant_ancestral_allele",
         ancestral_allele,
-        path / "data.zarr",
+        zarr_path,
         dims=["variants"],
     )
 
@@ -305,7 +305,7 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
         # Tskit will always put the ancestral allele in the REF field, which will then
         # be the zeroth allele in the zarr file.  We need to shuffle the alleles around
         # to make sure that we test ancestral allele handling.
-        ds = sgkit.load_dataset(path / "data.zarr")
+        ds = sgkit.load_dataset(zarr_path)
         site_alleles = ds["variant_allele"].values
         assert np.all(ds.variant_allele.values[:, 0] == ancestral_allele)
         num_alleles = [len([a for a in alleles if a != ""]) for alleles in site_alleles]
@@ -334,7 +334,7 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
         )
         sgkit.save_dataset(
             ds.drop_vars(set(ds.data_vars) - {"call_genotype", "variant_allele"}),
-            path / "data.zarr",
+            zarr_path,
             mode="a",
         )
 
@@ -349,46 +349,46 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
                     for i in range(ts.num_sites)
                 ]
             ),
-            path / "data.zarr",
+            zarr_path,
             ["variants"],
         )
         add_array_to_dataset(
             "sites_time",
             np.arange(ts.num_sites) / ts.num_sites,
-            path / "data.zarr",
+            zarr_path,
             ["variants"],
         )
         add_attribute_to_dataset(
             "sites_metadata_schema",
             repr(tables.sites.metadata_schema),
-            path / "data.zarr",
+            zarr_path,
         )
         add_attribute_to_dataset(
             "metadata_schema",
             repr(tables.metadata_schema),
-            path / "data.zarr",
+            zarr_path,
         )
         add_attribute_to_dataset(
             "metadata",
             tables.metadata_bytes.decode(),
-            path / "data.zarr",
+            zarr_path,
         )
         add_array_to_dataset(
             "provenances_timestamp",
             ["2021-01-01T00:00:00", "2021-01-02T00:00:00"],
-            path / "data.zarr",
+            zarr_path,
             ["provenances"],
         )
         add_array_to_dataset(
             "provenances_record",
             ['{"foo": 1}', '{"foo": 2}'],
-            path / "data.zarr",
+            zarr_path,
             ["provenances"],
         )
         add_attribute_to_dataset(
             "populations_metadata_schema",
             repr(tables.populations.metadata_schema),
-            path / "data.zarr",
+            zarr_path,
         )
         populations_md = tables.populations.metadata
         populations_md_offset = tables.populations.metadata_offset
@@ -402,13 +402,13 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
                     for i in range(ts.num_populations)
                 ]
             ),
-            path / "data.zarr",
+            zarr_path,
             ["populations"],
         )
         add_array_to_dataset(
             "individuals_time",
             np.arange(ts.num_individuals, dtype=np.float32),
-            path / "data.zarr",
+            zarr_path,
             ["samples"],
         )
         indiv_md = tables.individuals.metadata
@@ -421,19 +421,19 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
                     for i in range(ts.num_individuals)
                 ],
             ),
-            path / "data.zarr",
+            zarr_path,
             ["samples"],
         )
         add_array_to_dataset(
             "individuals_location",
             np.tile(np.array([["0", "1"]], dtype="float32"), (ts.num_individuals, 1)),
-            path / "data.zarr",
+            zarr_path,
             ["samples", "coordinates"],
         )
         add_array_to_dataset(
             "individuals_population",
             np.zeros(ts.num_individuals, dtype="int32"),
-            path / "data.zarr",
+            zarr_path,
             ["samples"],
         )
         add_array_to_dataset(
@@ -441,17 +441,17 @@ def _make_ts_and_zarr(path, add_optional=False, shuffle_alleles=True):
             np.random.RandomState(42).randint(
                 0, 2_000_000, ts.num_individuals, dtype="int32"
             ),
-            path / "data.zarr",
+            zarr_path,
             ["samples"],
         )
         add_attribute_to_dataset(
             "individuals_metadata_schema",
             repr(tables.individuals.metadata_schema),
-            path / "data.zarr",
+            zarr_path,
         )
-        ds = sgkit.load_dataset(path / "data.zarr")
+        ds = sgkit.load_dataset(zarr_path)
 
-    return ts, path / "data.zarr"
+    return ts, zarr_path
 
 
 def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
