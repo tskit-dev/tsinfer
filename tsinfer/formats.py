@@ -2424,7 +2424,6 @@ class VariantData(SampleData):
         individuals_flags=None,
         sequence_length=None,
     ):
-        self._sequence_length = sequence_length
         self._contig_index = None
         self._contig_id = None
         try:
@@ -2493,6 +2492,9 @@ class VariantData(SampleData):
         self.sites_select = ~site_mask.astype(bool)
         self.individuals_select = ~sample_mask.astype(bool)
         self._num_sites = np.sum(self.sites_select)
+
+        if len(self.sites_select) == 0:
+            raise ValueError("No sites exist")
 
         if np.sum(self.sites_select) == 0:
             raise ValueError(
@@ -2646,6 +2648,158 @@ class VariantData(SampleData):
         )
         logger.info(
             f"Number of individuals after applying mask: {self.num_individuals}"
+        )
+        if sequence_length is not None:
+            if sequence_length <= self.sites_position[-1]:
+                raise ValueError(
+                    "`sequence_length` cannot be less than or equal to the maximum "
+                    "unmasked variant position"
+                )
+        self._sequence_length = sequence_length
+
+    @classmethod
+    def from_arrays(
+        cls,
+        variant_matrix_phased,
+        variant_position,
+        variant_allele,
+        ancestral_state,
+        *,
+        sample_id=None,
+        site_mask=None,
+        sample_mask=None,
+        **kwargs,
+    ):
+        """
+        Create a basic in-memory VariantData instance directly from array data.
+        Mainly useful for small test datasets. Larger datasets, or ones that require
+        metadata to be included, should use e.g. bio2zarr
+        to create a zarr datastore containing the required data and call
+        VariantData(path_to_zarr)
+
+        .. note::
+            If a ``site_mask`` or ``sample_mask`` is provided, this does not
+            require changing the size of the ``variant_position``, ``variant_allele``
+            or `sample_id` arrays. Which must always match the dimensions of the
+            ``variant_matrix_phased`` array. However, if sites are masked out, this
+            *does* require changing the ``ancestral_state`` array to match the number of
+            unmasked sites (and similarly for other arrays passed as kwargs).
+
+        :param array variant_matrix_phased: a 3D array of variants X samples x ploidy,
+            giving an index into the allele array for each corresponding variant. Values
+            must be coercable into 8-bit (np.int8) integers. Data for all samples is
+            assumed to be phased. This corresponds to the ``call_genotype`` array in the
+            VCF Zarr specification (e.g. missing data can be coded as -1).
+        :param array variant_position: a 1D array of variant positions, of the same
+            length as the first dimension of ``variant_matrix_phased``.
+        :param array variant_allele: a 2D string array of variants x max_num_alleles at a
+            site. The length of the first dimension must match the first dimension of the
+            ``variant_matrix_phased`` array. The second dimension must be at least as
+            long as the maximum allele index in the `variant_matrix_phased` array (i.e.
+            each allele list for a variant must be the same length; this can be ensured
+            by padding the list with `""`).
+        :param array ancestral_state: A numpy array of strings specifying
+            the ancestral states (alleles) used in inference. For unknown ancestral
+            alleles, any character which is not in the allele list can be used.
+            This must be the same length as the number of *unmasked* variants in
+            ``variant_matrix_phased`` (see note above).
+        :param array sample_id: a 1D string array of sample names, of length of the
+            total number of n-ploid samples in ``variant_matrix_phased`` (i.e. the
+            second dimension of ``variant_matrix_phased``).
+            If None, each individual n-ploid sample will be
+            allocated an ID corresponding to its sample index in the *unmasked*
+            ``variant_matrix_phased`` array (i.e. "0", "1", "2", .. etc.)
+        :param array site_mask: A numpy array of booleans of length specifying which
+            sites to mask out (exclude) from the dataset.
+        :param array sample_mask: A numpy array of booleans of length specifying which
+            samples to mask out (exclude) from the dataset.
+        :param \\**kwargs: Further arguments passed to the VariantData constructor.
+            In particular you may wish to specify `sequence_length`. Arrays for
+            ``sites_time``, ``individuals_time`` etc. can also be provided.
+        """
+        call_genotype = np.array(variant_matrix_phased, dtype=np.int8)
+        if call_genotype.ndim != 3:
+            raise ValueError("`variant_matrix_phased` must be a 3D array")
+
+        num_variants, num_samples, ploidy = call_genotype.shape
+        if ploidy == 0:
+            raise ValueError("Ploidy must be greater than zero")
+        variant_position = np.asarray(variant_position, dtype=np.float64)
+        if variant_position.shape != (num_variants,):
+            raise ValueError(
+                "`variant_position` must be a 1D array of the same length as "
+                "the number of variants in variant_matrix_phased"
+            )
+
+        variant_allele = np.asarray(variant_allele, dtype="U")  # make unicode for zarr
+        if variant_allele.ndim != 2 or variant_allele.shape[0] != num_variants:
+            raise ValueError(
+                "`variant_allele` must be a 2D array with the same number of rows as "
+                "variants in `variant_matrix_phased`"
+            )
+
+        if sample_id is None:
+            sample_id = np.arange(call_genotype.shape[1]).astype(str)
+        sample_id = np.asarray(sample_id, dtype="U")
+        if sample_id.shape != (num_samples,):
+            raise ValueError(
+                "`sample_id` must be a 1D array of the same length as the total "
+                "number of samples in `variant_matrix_phased`"
+            )
+
+        if site_mask is None:
+            site_keep = slice(None)
+        else:
+            if site_mask.shape != (num_variants,):
+                raise ValueError(
+                    "`site_mask` must be a 1D array of the same length as the total "
+                    "number of variants in `variant_matrix_phased`"
+                )
+            site_keep = np.logical_not(site_mask)  # turn into an inclusion mask
+            num_variants = np.sum(site_keep)
+
+        if sample_mask is None:
+            sample_keep = slice(None)
+        else:
+            if sample_mask.shape != (num_samples,):
+                raise ValueError(
+                    "`sample_mask` must be a 1D array of the same length as the "
+                    "total number of samples in `variant_matrix_phased`"
+                )
+            sample_keep = np.logical_not(sample_mask)  # turn into an inclusion mask
+            num_samples = np.sum(sample_keep)
+
+        # Further tests must take into account the masked num_samples & num_variants
+
+        max_alleles = np.max(call_genotype[site_keep, sample_keep, :], initial=-1) + 1
+        if variant_allele.shape[1] < max_alleles:
+            raise ValueError(
+                "`variant_allele` must have the same number of columns as the maximum "
+                "value in the unmasked variant_matrix_phased plus one"
+            )
+
+        ancestral_state = np.asarray(ancestral_state, dtype="U")
+        if ancestral_state.shape != (num_variants,):
+            raise ValueError(
+                "`ancestral_state` must be a 1D array of the same length as the "
+                "number of unmasked variants in `variant_matrix_phased`"
+            )
+
+        store = zarr.storage.MemoryStore()
+        root = zarr.group(store=store, overwrite=True)
+        root.create_dataset("variant_position", data=variant_position)
+        root.create_dataset("call_genotype", data=call_genotype)
+        root.create_dataset(  # Assume all phased
+            "call_genotype_phased", data=np.ones(call_genotype.shape[:2], dtype=bool)
+        )
+        root.create_dataset("variant_allele", data=variant_allele)
+        root.create_dataset("sample_id", data=sample_id)
+        return cls(
+            root,
+            ancestral_state,
+            site_mask=site_mask,
+            sample_mask=sample_mask,
+            **kwargs,
         )
 
     @functools.cached_property
