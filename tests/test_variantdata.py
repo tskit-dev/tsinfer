@@ -1128,3 +1128,204 @@ class TestAddAncestralStateArray:
             else:
                 allele_idx = -1
             assert vdata.sites_ancestral_allele[i] == allele_idx
+
+
+class TestFromArrays:
+    def demo_data(self):
+        # returns pos, data, alleles, ancestral
+        return [
+            list(data)
+            for data in zip(
+                *[
+                    (3, [[0, 1], [0, 0], [0, 0]], ["A", "T", ""], "A"),
+                    (10, [[0, 1], [1, 1], [0, 0]], ["C", "A", ""], "C"),
+                    (13, [[0, 1], [1, 0], [0, 0]], ["G", "C", ""], "C"),
+                    (19, [[0, 0], [0, 1], [1, 0]], ["A", "C", ""], "A"),
+                    (20, [[0, 1], [2, 0], [0, 0]], ["T", "G", "C"], "T"),
+                ]
+            )
+        ]
+
+    def test_simple_from_arrays(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        vdata = tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral)
+        assert vdata.num_individuals == 3
+        assert vdata.num_sites == 5
+        inf_ts = tsinfer.infer(vdata)
+        assert inf_ts.num_samples == 6
+        assert inf_ts.num_individuals == 3
+        assert inf_ts.num_sites == 5
+        assert np.all(inf_ts.sites_position == pos)
+
+    def test_named_from_arrays(self):
+        # When we pass sample_id names, they should be stored in the individuals metadata
+        pos, G, alleles, ancestral = self.demo_data()
+        sample_id = ["sample1", "sample2", "sample3"]
+        vdata = tsinfer.VariantData.from_arrays(
+            G, pos, alleles, ancestral, sample_id=sample_id
+        )
+        assert vdata.num_individuals == 3
+        inf_ts = tsinfer.infer(vdata)
+        assert inf_ts.num_individuals == 3
+        for name, ind in zip(sample_id, inf_ts.individuals()):
+            assert ind.metadata["variant_data_sample_id"] == name
+
+    def test_bad_variant_matrix(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        G = np.array(G)
+        with pytest.raises(ValueError, match="must be a 3D array"):
+            tsinfer.VariantData.from_arrays([G], pos, alleles, ancestral)
+        with pytest.raises(ValueError, match="must be a 3D array"):
+            tsinfer.VariantData.from_arrays(G[:, :, 0], pos, alleles, ancestral)
+
+    def test_empty(self):
+        # Test with ploidy=1 but no sites
+        pos, G, alleles, ancestral = [], np.empty((0, 0, 1)), np.empty((0, 0)), []
+        with pytest.raises(ValueError, match="No sites exist"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral)
+
+    def test_zero_ploidy(self):
+        pos, G, alleles, ancestral = [], [[[]]], np.empty((0, 0)), []
+        with pytest.raises(ValueError, match="Ploidy must be greater than zero"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral)
+
+    def test_from_arrays_ancestral_missing_warning(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        ancestral[0] = "-"
+        with pytest.warns(UserWarning, match=r"ancestral allele.+not found[\s\S]+'-'"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral)
+
+    def test_sequence_length(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        vdata = tsinfer.VariantData.from_arrays(
+            G, pos, alleles, ancestral, sequence_length=50
+        )
+        assert vdata.sequence_length == 50
+
+    def test_bad_sequence_length(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        with pytest.raises(ValueError, match="`sequence_length` cannot be less"):
+            tsinfer.VariantData.from_arrays(
+                G, pos, alleles, ancestral, sequence_length=10
+            )
+
+    @pytest.mark.parametrize("pos", [[[3, 10, 13, 19, 20]], [3, 10, 13, 19]])
+    def test_bad_position(self, pos):
+        _, G, alleles, ancestral = self.demo_data()
+        with pytest.raises(ValueError, match="`variant_position` must be a 1D array"):
+            tsinfer.VariantData.from_arrays(G, [pos], alleles, ancestral)
+
+    def test_unordered_position(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        pos[-1] = 5  # out of order
+        with pytest.raises(ValueError, match="out-of-order values"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral)
+
+    def test_bad_dim_alleles(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        with pytest.raises(ValueError, match="`variant_allele` must be a 2D array"):
+            tsinfer.VariantData.from_arrays(G, pos, [alleles], ancestral)
+
+    def test_bad_alleles(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        alleles = np.array(alleles)
+        with pytest.raises(ValueError, match="same number of rows as variants"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles[1:, :], ancestral)
+
+    def test_bad_num_alleles(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        alleles = np.array(alleles)
+        with pytest.raises(ValueError, match="same number of columns"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles[:, 1:], ancestral)
+
+    def test_bad_ancestral_state_length(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        ancestral = np.array(ancestral)
+        with pytest.raises(ValueError, match="`ancestral_state` must be a 1D array"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, [ancestral])
+        with pytest.raises(ValueError, match="`ancestral_state` must be a 1D array"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral[1:])
+
+    @pytest.mark.parametrize("sid", [["A"], []])
+    def test_bad_sample_id(self, sid):
+        pos, G, alleles, ancestral = self.demo_data()
+        print(sid)
+        with pytest.raises(ValueError, match="`sample_id` must be a 1D array"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral, sample_id=sid)
+
+    def test_sample_mask(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        G = np.array(G)
+        mask = np.array([False, False, True])
+        keep = np.logical_not(mask)
+        alleles = np.array(alleles)
+        vdata = tsinfer.VariantData.from_arrays(
+            G, pos, alleles, ancestral, sample_mask=mask
+        )
+        assert vdata.num_individuals == 2
+        inf_ts = tsinfer.infer(vdata)
+        assert inf_ts.num_individuals == 2
+        for v, p, allele_arr in zip(inf_ts.variants(), pos, alleles):
+            expected_idx = G[v.site.id, keep, :].flatten()
+            assert v.site.position == p
+            assert np.array_equal(v.states(), allele_arr[expected_idx])
+
+    def test_site_mask(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        G = np.array(G)
+        mask = np.array([False, False, True, False, False])
+        keep = np.logical_not(mask)
+        pos = np.array(pos)
+        alleles = np.array(alleles)
+        ancestral = np.array(ancestral)
+        vdata = tsinfer.VariantData.from_arrays(
+            G, pos, alleles, ancestral[keep], site_mask=mask
+        )
+        assert vdata.num_individuals == 3
+        inf_ts = tsinfer.infer(vdata)
+        used_sites = np.where(keep)[0]
+        for v, p, allele_arr in zip(inf_ts.variants(), pos[keep], alleles[keep]):
+            expected_idx = G[used_sites[v.site.id], :, :].flatten()
+            assert v.site.position == p
+            assert np.array_equal(v.states(), allele_arr[expected_idx])
+
+    def test_bad_site_mask_length(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        mask = np.array([False, True, False])  # wrong length
+        with pytest.raises(ValueError, match="length as the total number of variants"):
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral, site_mask=mask)
+
+    def test_bad_sample_mask_length(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        mask = np.array([False, True, True, False, True])  # wrong length
+        with pytest.raises(ValueError, match="length as the total number of samples"):
+            tsinfer.VariantData.from_arrays(
+                G, pos, alleles, ancestral, sample_mask=mask
+            )
+
+    def test_bad_ancestral_state_masked(self):
+        pos, G, alleles, ancestral = self.demo_data()
+        mask = np.array([False, False, True, False, False])
+        with pytest.raises(ValueError, match="`ancestral_state` must be a 1D array"):
+            # Need to provide ancestral states of the same length as *unmasked* sites
+            tsinfer.VariantData.from_arrays(G, pos, alleles, ancestral, site_mask=mask)
+
+    def test_round_trip_ts(self):
+        ts = msprime.sim_ancestry(10, sequence_length=1000, random_seed=123)
+        ts = msprime.sim_mutations(ts, rate=1e-2, random_seed=123)
+        samples = ts.individuals_nodes
+        G = []
+        alleles = []
+        for v in ts.variants():
+            G.append(v.genotypes[samples])
+            alleles.append(v.alleles + ("",) * (4 - len(v.alleles)))  # pad to 4 alleles
+
+        vdata = tsinfer.VariantData.from_arrays(
+            G,
+            ts.sites_position,
+            alleles,
+            np.array(ts.sites_ancestral_state, dtype="U1"),
+        )
+        inf_ts = tsinfer.infer(vdata)
+        for v1, v2 in zip(inf_ts.variants(), ts.variants()):
+            assert np.array_equal(v1.states(), v2.states())
