@@ -449,7 +449,6 @@ def _make_ts_and_zarr(path, prefix, add_optional=False, shuffle_alleles=True):
             repr(tables.individuals.metadata_schema),
             zarr_path,
         )
-        ds = sgkit.load_dataset(zarr_path)
 
     return ts, zarr_path
 
