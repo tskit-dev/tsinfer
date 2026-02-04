@@ -3919,7 +3919,7 @@ class TestVerify:
         tsinfer.verify(sd, ts_inf)
 
     def test_alternative_allele_encodings(self):
-        ts = msprime.sim_ancestry(3, ploidy=1, sequence_length=10, random_seed=123)
+        ts = tskit.Tree.generate_balanced(3, span=10).tree_sequence
         ts = msprime.sim_mutations(ts, rate=0.2, random_seed=1)
         sd = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         ts_inf = tsinfer.infer(sd)
