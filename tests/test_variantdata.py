@@ -75,7 +75,6 @@ def ts_to_dataset(ts, chunks=None, samples=None, contigs=None):
     return ds
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_dataset_roundtrip(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
@@ -106,7 +105,6 @@ def test_sgkit_dataset_roundtrip(tmp_path):
     assert inf_ts.num_edges > 200
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_sgkit_individual_metadata_not_clobbered(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     # Load the zarr to add metadata for testing
@@ -135,7 +133,6 @@ def test_sgkit_individual_metadata_not_clobbered(tmp_path):
             assert ts_ind.metadata["variant_data_sample_id"] == "foobar"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 @pytest.mark.parametrize("in_mem", [True, False])
 def test_variantdata_accessors(tmp_path, in_mem):
     path = None if in_mem else tmp_path
@@ -218,7 +215,6 @@ def test_variantdata_accessors(tmp_path, in_mem):
         )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 @pytest.mark.parametrize("in_mem", [True, False])
 def test_variantdata_accessors_defaults(tmp_path, in_mem):
     path = None if in_mem else tmp_path
@@ -256,7 +252,6 @@ def test_variantdata_accessors_defaults(tmp_path, in_mem):
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_variantdata_sites_time_default():
     ts, data = tsutil.make_ts_and_zarr()
     vdata = tsinfer.VariantData(data, "variant_ancestral_allele")
@@ -266,7 +261,6 @@ def test_variantdata_sites_time_default():
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_variantdata_sites_time_array():
     ts, data = tsutil.make_ts_and_zarr()
     sites_time = np.arange(ts.num_sites)
@@ -284,7 +278,6 @@ def test_variantdata_sites_time_array():
         )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_variantdata_individuals_parameters_as_strings(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path, add_optional=True)
     ds = sgkit.load_dataset(zarr_path)
@@ -308,7 +301,6 @@ def test_variantdata_individuals_parameters_as_strings(tmp_path):
     assert np.array_equal(vdata.individuals_flags, ds.individuals_flags.values)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on windows")
 def test_variantdata_individuals_parameters_as_arrays(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
 
@@ -778,7 +770,6 @@ class TestSgkitMask:
         )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_sgkit_ancestral_allele_same_ancestors(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ts_sampledata = tsinfer.SampleData.from_tree_sequence(ts)
@@ -812,7 +803,6 @@ def test_missing_ancestral_allele(tmp_path):
         tsinfer.VariantData(str(zarr_path) + ".tmp", "variant_ancestral_allele")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_deliberate_ancestral_missingness(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
@@ -839,7 +829,6 @@ def test_deliberate_ancestral_missingness(tmp_path):
             assert inf_var.site.ancestral_state == var.site.ancestral_state
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_ancestral_missing_warning(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
@@ -865,7 +854,6 @@ def test_ancestral_missing_warning(tmp_path):
             assert inf_var.site.ancestral_state == var.site.ancestral_state
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="No cyvcf2 on Windows")
 def test_ancestral_missing_info(tmp_path, caplog):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     ds = sgkit.load_dataset(zarr_path)
