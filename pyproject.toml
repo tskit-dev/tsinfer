@@ -19,7 +19,7 @@ authors = [
 description = "Infer tree sequences from genetic variation data."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "GNU GPLv3+"}
+license = "GPL-3.0-or-later"
 classifiers = [
     "Programming Language :: C",
     "Programming Language :: Python",
@@ -29,7 +29,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Development Status :: 3 - Alpha",
     "Environment :: Other Environment",
     "Intended Audience :: Science/Research",
