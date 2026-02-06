@@ -2649,13 +2649,12 @@ class VariantData(SampleData):
         logger.info(
             f"Number of individuals after applying mask: {self.num_individuals}"
         )
-        if sequence_length is not None:
-            if sequence_length <= self.sites_position[-1]:
-                raise ValueError(
-                    "`sequence_length` cannot be less than or equal to the maximum "
-                    "unmasked variant position"
-                )
         self._sequence_length = sequence_length
+        if self.sequence_length <= self.sites_position[-1]:
+            raise ValueError(
+                "`sequence_length` cannot be less than or equal to the maximum "
+                "unmasked variant position"
+            )
 
     @classmethod
     def from_arrays(
