@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-XX-XX
+
+- Add support for Python 3.14.
+
+- Require tskit >= 1.0
+
 ## [0.5.0] - 2025-11-09
 
 ** Changes **
@@ -7,8 +13,6 @@
 - Internal changes to ancestor generation to improve performace. These change the inferred ancestors
   and therefore the inferred tree sequence. For details see this [blog post](https://tskit.dev/news/20251109-tsinfer-0.5.0.html).
   ({pr}`1012`, {user}`duncanMR`)
-
-- Add support for Python 3.14.
 
 - Drop Python 3.9 support, require Python >= 3.10 ({pr}`1044`, {user}`benjeffery`)
 
@@ -77,7 +81,7 @@ Changelog is relative to the last full release, 0.3.3.
 
 - Add batch ancestor and sample matching APIs for splitting work across many independent jobs.
   ({pr}`954`, {pr}`917`, {user}`benjeffery`)
-  
+
 
 ## [0.4.0a1] - 2024-07-26
 
@@ -85,7 +89,7 @@ Alpha release of tsinfer 0.4.0
 
 **Features**
 
-- `tsinfer` now supports inferring data from an `vcf-zarr` dataset. This allows users 
+- `tsinfer` now supports inferring data from an `vcf-zarr` dataset. This allows users
   to infer from VCFs via the optimised and parallel VCF parsing in `bio2zarr`.
 - The `VariantData` class can be used to load the vcf-data and be used for inference.
 - `vcf-zarr` `sample_ids` are inserted into individual metadata as `variant_data_sample_id`
@@ -132,7 +136,7 @@ Alpha release of tsinfer 0.4.0
   - tsinfer now requires Python 3.9 or later
 
 ## [0.3.1] - 2023-04-19
- 
+
 - Bug fix release for a bad dependency specification.
 
 
