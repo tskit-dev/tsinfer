@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020 University of Oxford
+# Copyright (C) 2020-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -24,8 +24,8 @@ import tempfile
 from pathlib import Path
 
 import msprime
+import numcodecs
 import numpy as np
-import sgkit
 import tskit
 import xarray as xr
 import zarr
@@ -210,16 +210,56 @@ def example_schema(default):
     )
 
 
+# Partial copy of the sgkit load_dataset function.
+def load_dataset(store):
+    ds = xr.open_zarr(store, concat_characters=False)
+    return ds
+
+
+# Partial copy of the sgkit save_dataset function.
+def save_dataset(ds, store, auto_rechunk=False, **kwargs):
+
+    for v in ds:
+        # Workaround for https://github.com/pydata/xarray/issues/4380
+        ds[v].encoding.pop("chunks", None)
+
+        # Remove VLenUTF8 from filters to avoid double encoding error
+        # https://github.com/pydata/xarray/issues/3476
+        filters = ds[v].encoding.get("filters", None)
+        var_len_str_codec = numcodecs.VLenUTF8()
+        if filters is not None and var_len_str_codec in filters:
+            filters = list(filters)
+            filters.remove(var_len_str_codec)
+            ds[v].encoding["filters"] = filters
+
+    if auto_rechunk:
+        # This logic for checking if rechunking is necessary is
+        # taken from xarray/backends/zarr.py#L109.
+        # We can't try to save and catch the error as by that
+        # point the zarr store is non-empty.
+        if any(len(set(chunks[:-1])) > 1 for chunks in ds.chunks.values()) or any(
+            (chunks[0] < chunks[-1]) for chunks in ds.chunks.values()
+        ):
+            # Here we use the max chunk size as the target chunk size as for
+            # the commonest case of subsetting an existing dataset, this will
+            # be closest to the original intended chunk size.
+            ds = ds.chunk(
+                chunks={dim: max(chunks) for dim, chunks in ds.chunks.items()}
+            )
+
+    ds.to_zarr(store, **kwargs)
+
+
 def add_array_to_dataset(name, array, zarr_path, dims=None):
-    ds = sgkit.load_dataset(zarr_path)
+    ds = load_dataset(zarr_path)
     ds.update({name: xr.DataArray(data=array, dims=dims, name=name)})
-    sgkit.save_dataset(ds.drop_vars(set(ds.data_vars) - {name}), zarr_path, mode="a")
+    save_dataset(ds.drop_vars(set(ds.data_vars) - {name}), zarr_path, mode="a")
 
 
 def add_attribute_to_dataset(name, contents, zarr_path):
-    ds = sgkit.load_dataset(zarr_path)
+    ds = load_dataset(zarr_path)
     ds.attrs[name] = contents
-    sgkit.save_dataset(ds, zarr_path, mode="a")
+    save_dataset(ds, zarr_path, mode="a")
 
 
 def make_ts_and_zarr(
@@ -305,7 +345,7 @@ def _make_ts_and_zarr(path, prefix, add_optional=False, shuffle_alleles=True):
         # Tskit will always put the ancestral allele in the REF field, which will then
         # be the zeroth allele in the zarr file.  We need to shuffle the alleles around
         # to make sure that we test ancestral allele handling.
-        ds = sgkit.load_dataset(zarr_path)
+        ds = load_dataset(zarr_path)
         site_alleles = ds["variant_allele"].values
         assert np.all(ds.variant_allele.values[:, 0] == ancestral_allele)
         num_alleles = [len([a for a in alleles if a != ""]) for alleles in site_alleles]
@@ -332,7 +372,7 @@ def _make_ts_and_zarr(path, prefix, add_optional=False, shuffle_alleles=True):
         ds["call_genotype"] = xr.DataArray(
             genotypes, dims=["variants", "samples", "ploidy"]
         )
-        sgkit.save_dataset(
+        save_dataset(
             ds.drop_vars(set(ds.data_vars) - {"call_genotype", "variant_allele"}),
             zarr_path,
             mode="a",
@@ -455,7 +495,7 @@ def _make_ts_and_zarr(path, prefix, add_optional=False, shuffle_alleles=True):
 
 def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
     ts, zarr_path = make_ts_and_zarr(tmp_path)
-    ds = sgkit.load_dataset(zarr_path)
+    ds = load_dataset(zarr_path)
     random = np.random.RandomState(42)
     # Mask out a random 1/3 of sites
     variant_mask = np.zeros(ts.num_sites, dtype=bool)
@@ -473,10 +513,10 @@ def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
         "samples_mask_foobar", samples_mask, zarr_path, dims=["samples"]
     )
 
-    # Create a new sgkit dataset with the subset baked in
+    # Create a new dataset with the subset baked in
     mat_ds = ds.isel(variants=~variant_mask, samples=~samples_mask)
     mat_ds = mat_ds.unify_chunks()
-    sgkit.save_dataset(mat_ds, tmpdir / "subset.zarr", auto_rechunk=True)
+    save_dataset(mat_ds, tmpdir / "subset.zarr", auto_rechunk=True)
 
     mat_sd = tsinfer.VariantData(tmpdir / "subset.zarr", "variant_ancestral_allele")
     mask_sd = tsinfer.VariantData(

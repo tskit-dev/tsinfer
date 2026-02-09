@@ -35,7 +35,6 @@ import unittest.mock as mock
 import msprime
 import numpy as np
 import pytest
-import sgkit
 import tskit
 import tsutil
 import xarray as xr
@@ -1626,7 +1625,7 @@ class TestBatchSampleMatching:
 
     def test_force_sample_times(self, tmp_path, tmpdir):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
-        ds = sgkit.load_dataset(zarr_path)
+        ds = tsutil.load_dataset(zarr_path)
         array = [0.0001] * ts.num_individuals
         ds.update(
             {
@@ -1635,7 +1634,7 @@ class TestBatchSampleMatching:
                 )
             }
         )
-        sgkit.save_dataset(
+        tsutil.save_dataset(
             ds.drop_vars(set(ds.data_vars) - {"individuals_time"}), zarr_path, mode="a"
         )
         samples = tsinfer.VariantData(
