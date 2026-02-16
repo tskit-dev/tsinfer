@@ -21,6 +21,8 @@
  * Unit tests for the low-level tsinfer API.
  */
 
+#define _XOPEN_SOURCE 600 /* needed for fileno */
+
 #include "tsinfer.h"
 #include "tskit.h"
 
