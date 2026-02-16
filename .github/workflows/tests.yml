@@ -9,13 +9,23 @@ on:
 jobs:
   pre-commit:
     name: Lint
-    uses: tskit-dev/.github/.github/workflows/lint.yml@v2
+    uses: tskit-dev/.github/.github/workflows/lint.yml@v8
 
   packaging:
     name: Python packaging
-    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v4
+    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v8
     with:
      cli-test-cmd: tsinfer --help
+
+  test-c:
+    name: C tests
+    uses: tskit-dev/.github/.github/workflows/c-tests.yml@v8
+    with:
+      library-directory: lib
+
+  test-python-c:
+    name: Python-C tests
+    uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v8
 
   zarr-v3-compatibility:
     name: Test zarr v3 error
