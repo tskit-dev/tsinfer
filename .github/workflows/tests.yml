@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: [ 3.11, 3.14 ]
+        python: [ 3.11, 3.13 ]
         os:  [ macos-latest, ubuntu-24.04, windows-latest ]
     defaults:
       run:
@@ -73,18 +73,19 @@ jobs:
           python-version: ${{ matrix.python }}
           version: "0.8.15"
 
-      - name: Setup venv
-        run: |
-          uv venv
-
-      - name: Install pip deps
-        run: |
-          uv pip install -r pyproject.toml --extra test
+      - name: Install Python dependencies
+        run: uv sync --locked --group test
 
       - name: Build module
-        run: |
-          uv run --no-sync python setup.py build_ext --inplace
+        run: uv run python setup.py build_ext --inplace
 
       - name: Run tests
-        run: |
-          uv run --no-sync python -m pytest -xv
+        run: uv run pytest -xv --cov=tsinfer --cov-report=xml --cov-branch -n2
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5.4.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: python
+          fail_ci_if_error: true
+

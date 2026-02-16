@@ -72,7 +72,7 @@ Changelog = "https://tskit.dev/tsinfer/docs/stable/CHANGELOG.html"
 [project.scripts]
 tsinfer = "tsinfer.__main__:main"
 
-[project.optional-dependencies]
+[dependency-groups]
 test = [
     "colorama",
     "daiquiri",
@@ -82,6 +82,7 @@ test = [
     "msprime",
     "pytest",
     "pytest-cov",
+    "pytest-xdist",
     "bio2zarr[tskit]",
     "setuptools",
     "tskit",
@@ -121,8 +122,9 @@ dev = [
     "pytest",
     "pytest-coverage",
     "sortedcontainers",
-    "python-prctl; sys_platform == 'linux'",
-    "numa; sys_platform == 'linux'",
+    # Dropping these for now to get CI working
+    # "python-prctl; sys_platform == 'linux'",
+    # "numa; sys_platform == 'linux'",
     "sphinx",
     "sphinx-argparse",
     "sphinx_rtd_theme",

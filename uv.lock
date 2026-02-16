@@ -652,6 +652,15 @@ wheels = [
 ]
 
 [[package]]
+name = "execnet"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz", hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl", hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1639,12 +1648,6 @@ wheels = [
 ]
 
 [[package]]
-name = "numa"
-version = "1.4.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/5a/ca5835b4baa23422784d96e21948fc360a840f4dfcb9ff009bbaaaa0a5ab/numa-1.4.6.tar.gz", hash = "sha256:8c58e41af2fbcc8260a16f7d0d36a302974c650bc0cb0cc8d0ccf440f6e05d9e", size = 40833, upload-time = "2019-11-05T10:50:41.53Z" }
-
-[[package]]
 name = "numba"
 version = "0.63.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2217,6 +2220,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-xdist"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -2236,12 +2252,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/29/bf/eca6a3d43db1dae70
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/e5/fecf13f06e5e5f67e8837d777d1bc43fac0ed2b77a676804df5c34744727/python_json_logger-4.0.0-py3-none-any.whl", hash = "sha256:af09c9daf6a813aa4cc7180395f50f2a9e5fa056034c9953aec92e381c5ba1e2", size = 15548, upload-time = "2025-10-06T04:15:17.553Z" },
 ]
-
-[[package]]
-name = "python-prctl"
-version = "1.8.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c0/99/be5393cfe9c16376b4f515d90a68b11f1840143ac1890e9008bc176cf6a6/python-prctl-1.8.1.tar.gz", hash = "sha256:b4ca9a25a7d4f1ace4fffd1f3a2e64ef5208fe05f929f3edd5e27081ca7e67ce", size = 28033, upload-time = "2020-11-02T19:30:25.257Z" }
 
 [[package]]
 name = "pyyaml"
@@ -3022,7 +3032,7 @@ dependencies = [
     { name = "zarr" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "attrs" },
     { name = "codecov" },
@@ -3036,12 +3046,10 @@ dev = [
     { name = "lmdb" },
     { name = "matplotlib" },
     { name = "msprime" },
-    { name = "numa", marker = "sys_platform == 'linux'" },
     { name = "pre-commit" },
     { name = "pyfaidx" },
     { name = "pytest" },
     { name = "pytest-coverage" },
-    { name = "python-prctl", marker = "sys_platform == 'linux'" },
     { name = "seaborn" },
     { name = "setuptools" },
     { name = "setuptools-scm" },
@@ -3079,6 +3087,7 @@ test = [
     { name = "msprime" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pytest-xdist" },
     { name = "setuptools" },
     { name = "tqdm" },
     { name = "tskit" },
@@ -3088,76 +3097,82 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "attrs" },
-    { name = "attrs", marker = "extra == 'dev'" },
     { name = "bio2zarr", specifier = ">=0.1.7" },
-    { name = "bio2zarr", extras = ["tskit"], marker = "extra == 'docs'" },
-    { name = "bio2zarr", extras = ["tskit"], marker = "extra == 'test'" },
-    { name = "bio2zarr", extras = ["vcf"], marker = "extra == 'docs'" },
-    { name = "codecov", marker = "extra == 'dev'" },
-    { name = "colorama", marker = "extra == 'dev'" },
-    { name = "colorama", marker = "extra == 'test'" },
-    { name = "coverage", marker = "extra == 'dev'" },
     { name = "daiquiri" },
-    { name = "daiquiri", marker = "extra == 'dev'" },
-    { name = "daiquiri", marker = "extra == 'docs'" },
-    { name = "daiquiri", marker = "extra == 'test'" },
-    { name = "flake8", marker = "extra == 'dev'" },
     { name = "humanize" },
-    { name = "humanize", marker = "extra == 'dev'" },
-    { name = "humanize", marker = "extra == 'docs'" },
-    { name = "humanize", marker = "extra == 'test'" },
-    { name = "ipywidgets", marker = "extra == 'dev'" },
-    { name = "ipywidgets", marker = "extra == 'docs'" },
-    { name = "jupyter-book", marker = "extra == 'dev'", specifier = "<2" },
-    { name = "jupyter-book", marker = "extra == 'docs'", specifier = "<2" },
     { name = "lmdb" },
-    { name = "lmdb", marker = "extra == 'dev'" },
-    { name = "lmdb", marker = "extra == 'docs'" },
-    { name = "lmdb", marker = "extra == 'test'" },
-    { name = "matplotlib", marker = "extra == 'dev'" },
-    { name = "meson", marker = "extra == 'test'" },
-    { name = "msprime", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "msprime", marker = "extra == 'docs'" },
-    { name = "msprime", marker = "extra == 'test'" },
-    { name = "numa", marker = "sys_platform == 'linux' and extra == 'dev'" },
     { name = "numba" },
     { name = "numpy", specifier = ">=2" },
-    { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "psutil" },
-    { name = "pyfaidx", marker = "extra == 'dev'" },
-    { name = "pyfaidx", marker = "extra == 'docs'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-cov", marker = "extra == 'test'" },
-    { name = "pytest-coverage", marker = "extra == 'dev'" },
-    { name = "python-prctl", marker = "sys_platform == 'linux' and extra == 'dev'" },
-    { name = "seaborn", marker = "extra == 'dev'" },
-    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=45" },
-    { name = "setuptools", marker = "extra == 'test'" },
-    { name = "setuptools-scm", marker = "extra == 'dev'" },
     { name = "six" },
-    { name = "six", marker = "extra == 'dev'" },
     { name = "sortedcontainers" },
-    { name = "sortedcontainers", marker = "extra == 'dev'" },
-    { name = "sphinx", marker = "extra == 'dev'" },
-    { name = "sphinx-argparse", marker = "extra == 'dev'" },
-    { name = "sphinx-argparse", marker = "extra == 'docs'" },
-    { name = "sphinx-book-theme", marker = "extra == 'dev'" },
-    { name = "sphinx-book-theme", marker = "extra == 'docs'" },
-    { name = "sphinx-issues", marker = "extra == 'dev'" },
-    { name = "sphinx-issues", marker = "extra == 'docs'" },
-    { name = "sphinx-rtd-theme", marker = "extra == 'dev'" },
     { name = "tqdm" },
-    { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "tqdm", marker = "extra == 'docs'" },
-    { name = "tqdm", marker = "extra == 'test'" },
     { name = "tskit", specifier = ">=1.0.0" },
-    { name = "tskit", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "tskit", marker = "extra == 'test'" },
-    { name = "xarray", marker = "extra == 'test'" },
     { name = "zarr", specifier = "<3" },
 ]
-provides-extras = ["test", "docs", "dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "attrs" },
+    { name = "codecov" },
+    { name = "colorama" },
+    { name = "coverage" },
+    { name = "daiquiri" },
+    { name = "flake8" },
+    { name = "humanize" },
+    { name = "ipywidgets" },
+    { name = "jupyter-book", specifier = "<2" },
+    { name = "lmdb" },
+    { name = "matplotlib" },
+    { name = "msprime", specifier = ">=1.0.0" },
+    { name = "pre-commit" },
+    { name = "pyfaidx" },
+    { name = "pytest" },
+    { name = "pytest-coverage" },
+    { name = "seaborn" },
+    { name = "setuptools", specifier = ">=45" },
+    { name = "setuptools-scm" },
+    { name = "six" },
+    { name = "sortedcontainers" },
+    { name = "sphinx" },
+    { name = "sphinx-argparse" },
+    { name = "sphinx-book-theme" },
+    { name = "sphinx-issues" },
+    { name = "sphinx-rtd-theme" },
+    { name = "tqdm" },
+    { name = "tskit", specifier = ">=1.0.0" },
+]
+docs = [
+    { name = "bio2zarr", extras = ["tskit"] },
+    { name = "bio2zarr", extras = ["vcf"] },
+    { name = "daiquiri" },
+    { name = "humanize" },
+    { name = "ipywidgets" },
+    { name = "jupyter-book", specifier = "<2" },
+    { name = "lmdb" },
+    { name = "msprime" },
+    { name = "pyfaidx" },
+    { name = "sphinx-argparse" },
+    { name = "sphinx-book-theme" },
+    { name = "sphinx-issues" },
+    { name = "tqdm" },
+]
+test = [
+    { name = "bio2zarr", extras = ["tskit"] },
+    { name = "colorama" },
+    { name = "daiquiri" },
+    { name = "humanize" },
+    { name = "lmdb" },
+    { name = "meson" },
+    { name = "msprime" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "setuptools" },
+    { name = "tqdm" },
+    { name = "tskit" },
+    { name = "xarray" },
+]
 
 [[package]]
 name = "tskit"
