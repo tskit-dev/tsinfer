@@ -104,7 +104,8 @@ docs = [
     "humanize",
     "msprime",
     "ipywidgets",
-    "bio2zarr[tskit]",
+    "pyfaidx",
+    "bio2zarr[tskit,vcf]",
 ]
 
 lint = [
