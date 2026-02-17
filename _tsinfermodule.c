@@ -1544,7 +1544,7 @@ AncestorMatcher_get_total_memory(AncestorMatcher *self, void *closure)
 #if defined(TSI_NO_ATOMICS)
     /* Without atomics, return an obviously wrong value */
      val = (unsigned long) PY_SSIZE_T_MAX;
-#else    
+#else
      val = ancestor_matcher_get_total_memory(self->ancestor_matcher);
 #endif
     ret = Py_BuildValue("k", val);
