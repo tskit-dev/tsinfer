@@ -3,7 +3,7 @@
 
 title: Tsinfer manual
 author: Tskit Developers
-copyright: "2018"
+copyright: "2026"
 only_build_toc_files: true
 logo: tsinfer_logo.svg
 favicon: favicon.ico
@@ -42,7 +42,7 @@ sphinx:
         pygments_dark_style: monokai
         navigation_with_keys: false
         logo:
-          text: "Version __TSINFER_VERSION__"
+          text: "Version __PKG_VERSION__"
       pygments_style: monokai
       myst_enable_extensions:
       - colon_fence
