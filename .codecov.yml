@@ -1,0 +1,24 @@
+ignore:
+  - "lib/tests/"
+  - "lib/avl.c"
+  - "lib/subprojects/**/*"
+
+comment:
+  layout: "header, diff, flags, components"  # show component info in the PR comment
+
+component_management:
+  individual_components:
+    - component_id: python_code
+      name: Python API
+      paths:
+        - tsinfer/*.py
+
+    - component_id: python_c_code
+      name: Python C interface
+      paths:
+        - _tsinfermodule.c
+
+    - component_id: c_code
+      name: C library
+      paths:
+        - lib
