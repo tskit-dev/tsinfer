@@ -818,7 +818,7 @@ ancestor_builder_finalise(ancestor_builder_t *self)
                         focal_sites[j + 1], consistent_samples, num_consistent_samples,
                         genotypes)) {
                     p = focal_sites + j + 1;
-                    descriptor->num_focal_sites = (size_t)(p - descriptor->focal_sites);
+                    descriptor->num_focal_sites = (size_t) (p - descriptor->focal_sites);
                     descriptor = self->descriptors + self->num_ancestors;
                     self->num_ancestors++;
                     descriptor->time = time_map->time;
