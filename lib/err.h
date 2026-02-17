@@ -31,15 +31,15 @@
 // clang-format on
 
 #ifdef __GNUC__
-#define WARN_UNUSED __attribute__((warn_unused_result))
+#define WARN_UNUSED    __attribute__((warn_unused_result))
 #define unlikely(expr) __builtin_expect(!!(expr), 0)
-#define likely(expr) __builtin_expect(!!(expr), 1)
+#define likely(expr)   __builtin_expect(!!(expr), 1)
 #else
 /* On windows we don't do any perf related stuff */
 #define WARN_UNUSED
 #define restrict
 #define unlikely(expr) (expr)
-#define likely(expr) (expr)
+#define likely(expr)   (expr)
 #endif
 
 const char *tsi_strerror(int err);

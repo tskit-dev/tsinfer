@@ -429,7 +429,7 @@ tree_sequence_builder_add_mutation(
     }
     /* Make sure there are no other mutations on this node */
     for (list_node = self->sites.mutations[site]; list_node != NULL;
-         list_node = list_node->next) {
+        list_node = list_node->next) {
         if (list_node->node == node) {
             ret = TSI_ERR_BAD_MUTATION_DUPLICATE_NODE;
             goto out;
