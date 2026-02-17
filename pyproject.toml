@@ -62,6 +62,12 @@ dependencies = [
     "bio2zarr>=0.1.7",
 ]
 
+# TODO add these as pypi extra installs. We'd need to install
+# libnuma on the test build to support this.
+# https://github.com/tskit-dev/tsinfer/issues/1085
+# "python-prctl; sys_platform == 'linux'",
+# "numa; sys_platform == 'linux'",
+
 [project.urls]
 Homepage = "https://tskit.dev/tsinfer"
 Documentation = "https://tskit.dev/tsinfer/docs/stable"
@@ -122,9 +128,6 @@ dev = [
     "pytest",
     "pytest-coverage",
     "sortedcontainers",
-    # Dropping these for now to get CI working
-    # "python-prctl; sys_platform == 'linux'",
-    # "numa; sys_platform == 'linux'",
     "sphinx",
     "sphinx-argparse",
     "sphinx_rtd_theme",
