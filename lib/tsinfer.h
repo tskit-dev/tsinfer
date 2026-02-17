@@ -56,7 +56,7 @@
 
 #define TSI_GENOTYPE_ENCODING_ONE_BIT 1
 
-#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t)(1u << 16))
+#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t) (1u << 16))
 
 typedef int8_t allele_t;
 

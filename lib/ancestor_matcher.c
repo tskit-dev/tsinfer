@@ -988,9 +988,9 @@ ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t en
     }
     /* Reset some memory for the next call */
     memset(
-        self->traceback + start, 0, ((size_t)(end - start)) * sizeof(*self->traceback));
+        self->traceback + start, 0, ((size_t) (end - start)) * sizeof(*self->traceback));
     memset(self->max_likelihood_node + start, 0xff,
-        ((size_t)(end - start)) * sizeof(*self->max_likelihood_node));
+        ((size_t) (end - start)) * sizeof(*self->max_likelihood_node));
 
     *left_output = self->output.left;
     *right_output = self->output.right;
