@@ -19,10 +19,12 @@ jobs:
     uses: tskit-dev/.github/.github/workflows/c-tests.yml@v8
     with:
       library-directory: lib
+    secrets: inherit
 
   test-python-c:
     name: Python-C tests
     uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v8
+    secrets: inherit
 
   zarr-v3-compatibility:
     name: Test zarr v3 error
