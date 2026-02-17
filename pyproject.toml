@@ -137,7 +137,8 @@ dev = [
     "jupyter-book<2",
     "sphinx-issues",
     "ipywidgets",
-    "pyfaidx"
+    "pyfaidx",
+    "clang-format==21.1.8",
 ]
 
 [tool.setuptools]

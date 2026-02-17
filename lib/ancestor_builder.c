@@ -22,7 +22,7 @@
 #if defined(_WIN32)
 #else
 /* Needed for ftruncate */
-#define _XOPEN_SOURCE 700
+#define _XOPEN_SOURCE  700
 #define MMAP_GENOTYPES 1
 #endif
 

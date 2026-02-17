@@ -266,7 +266,7 @@ ancestor_matcher_set_allelic_state(
     allelic_state[0] = tsb->sites.ancestral_state[site];
 
     for (mutation = tsb->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         allelic_state[mutation->node] = mutation->derived_state;
     }
 }
@@ -280,7 +280,7 @@ ancestor_matcher_unset_allelic_state(
 
     allelic_state[0] = NULL_NODE;
     for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         allelic_state[mutation->node] = TSK_NULL;
     }
 }
@@ -457,7 +457,7 @@ ancestor_matcher_update_site_state(ancestor_matcher_t *self, const tsk_id_t site
         ancestor_matcher_check_state(self);
     }
     for (mutation = self->tree_sequence_builder->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         /* Insert a new L-value for the mutation node if needed */
         if (L[mutation->node] == NULL_LIKELIHOOD) {
             u = mutation->node;

@@ -44,14 +44,14 @@
 
 /* NULL_LIKELIHOOD represents a compressed path and NONZERO_ROOT_LIKELIHOOD
  * marks a node that is not in the current tree. */
-#define NULL_LIKELIHOOD (-1)
+#define NULL_LIKELIHOOD         (-1)
 #define NONZERO_ROOT_LIKELIHOOD (-2)
 
-#define NULL_NODE (-1)
+#define NULL_NODE   (-1)
 #define CACHE_UNSET (-1)
 
-#define TSI_COMPRESS_PATH 1
-#define TSI_EXTENDED_CHECKS 2
+#define TSI_COMPRESS_PATH       1
+#define TSI_EXTENDED_CHECKS     2
 #define TSI_DISABLE_WEIGHT_BY_N 4
 
 #define TSI_GENOTYPE_ENCODING_ONE_BIT 1
