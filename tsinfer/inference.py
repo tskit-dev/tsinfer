@@ -21,6 +21,7 @@ Central module for high-level inference. The actual implementation of
 of the core tasks like ancestor generation and matching are delegated
 to other modules.
 """
+
 import collections
 import copy
 import dataclasses
@@ -2205,9 +2206,7 @@ class Matcher:
                 f"median={np.median(mismatch):.5g}; "
                 f"mean={np.mean(mismatch):.5g}"
             )
-        logger.info(
-            f"Matching using likelihood_threshold of {likelihood_threshold:.5g}"
-        )
+        logger.info(f"Matching using likelihood_threshold of {likelihood_threshold:.5g}")
 
         self.engine = engine
         if engine == constants.C_ENGINE:
@@ -2256,8 +2255,7 @@ class Matcher:
         )
 
         logger.debug(
-            "Matched node {}; "
-            "num_edges={} tb_size={:.2f} match_mem={}".format(
+            "Matched node {}; num_edges={} tb_size={:.2f} match_mem={}".format(
                 child_id,
                 left.shape[0],
                 matcher.mean_traceback_size,
@@ -2382,9 +2380,7 @@ class Matcher:
         site_id = 0
         mutation_id = 0
         for site in self.variant_data.sites(self.inference_site_id):
-            while (
-                mutation_id < len(mutations) and mutation_site[mutation_id] == site_id
-            ):
+            while mutation_id < len(mutations) and mutation_site[mutation_id] == site_id:
                 allele = mutations[mutation_id].derived_state
                 derived_state[mutation_id] = site.reorder_alleles().index(allele)
                 mutation_id += 1
@@ -2674,9 +2670,7 @@ class AncestorMatcher(Matcher):
 class SampleMatcher(Matcher):
     def __init__(self, variant_data, ancestors_ts, **kwargs):
         self.ancestors_ts_tables = ancestors_ts.dump_tables()
-        super().__init__(
-            variant_data, self.ancestors_ts_tables.sites.position, **kwargs
-        )
+        super().__init__(variant_data, self.ancestors_ts_tables.sites.position, **kwargs)
         self.restore_tree_sequence_builder()
         # Map from input sample indexes (IDs in the SampleData file) to the
         # node ID in the tree sequence.

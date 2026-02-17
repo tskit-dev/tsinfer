@@ -19,6 +19,7 @@
 """
 Collection of constants used in tsinfer. We also make use of constants defined in tskit.
 """
+
 import enum
 
 import numpy as np

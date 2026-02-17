@@ -25,6 +25,7 @@ it is a useful development and debugging tool, and so any
 updates made to the low-level C engine should be made here
 first.
 """
+
 import collections
 
 import attr
@@ -129,7 +130,7 @@ class AncestorBuilder:
 
     def store_site_genotypes(self, site_id, genotypes):
         if self.genotype_encoding == constants.GenotypeEncoding.ONE_BIT:
-            assert np.all(genotypes >= 0) and np.all(genotypes <= 1)
+            assert np.all((genotypes >= 0) & (genotypes <= 1))
             genotypes = np.packbits(genotypes, bitorder="little")
         else:
             assert np.all(genotypes <= 127)
@@ -429,9 +430,7 @@ class TreeSequenceBuilder:
             prev = edge
         self.check_state()
 
-    def add_path(
-        self, child, left, right, parent, compress=True, extended_checks=False
-    ):
+    def add_path(self, child, left, right, parent, compress=True, extended_checks=False):
         assert self.path[child] is None
         prev = None
         head = None

@@ -19,6 +19,7 @@
 """
 Tests for the ancestor handling code.
 """
+
 import itertools
 
 import numpy as np
@@ -285,9 +286,7 @@ class TestGroupAncestorsLinesweep:
         children_data = np.array(
             [1, 0], dtype=np.int32
         )  # Node 0 has child 1, node 1 has child 0
-        children_indices = np.array(
-            [0, 1, 2], dtype=np.int32
-        )  # Each node has one child
+        children_indices = np.array([0, 1, 2], dtype=np.int32)  # Each node has one child
         incoming_edge_count = np.array(
             [1, 1], dtype=np.int32
         )  # Each node has one incoming edge

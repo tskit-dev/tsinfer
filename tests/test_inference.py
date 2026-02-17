@@ -19,6 +19,7 @@
 """
 Tests for the inference code.
 """
+
 import io
 import itertools
 import json
@@ -36,7 +37,6 @@ import msprime
 import numpy as np
 import pytest
 import tskit
-import tsutil
 import xarray as xr
 from tskit import MetadataSchema
 
@@ -44,6 +44,7 @@ import _tsinfer
 import tsinfer
 import tsinfer.eval_util as eval_util
 import tsinfer.provenance as provenance
+import tsutil
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -1088,9 +1089,7 @@ class TestMetadataRoundTrip:
         output_ts = tsinfer.infer(sd)
         for variant in output_ts.variants():
             site = variant.site
-            decoded_metadata = (
-                site.metadata if use_schema else json.loads(site.metadata)
-            )
+            decoded_metadata = site.metadata if use_schema else json.loads(site.metadata)
             assert "inference_type" in decoded_metadata
             value = decoded_metadata.pop("inference_type")
             # Only singletons should be parsimony sites in this simple case
@@ -1410,9 +1409,7 @@ class TestBatchAncestorMatching:
             num_groupings,
             2,
         )
-        assert (
-            tmpdir / "work" / f"ancestors_{(num_groupings // 2) - 1}.trees"
-        ).exists()
+        assert (tmpdir / "work" / f"ancestors_{(num_groupings // 2) - 1}.trees").exists()
         assert (tmpdir / "work" / f"ancestors_{num_groupings - 1}.trees").exists()
         ts = tsinfer.match_ancestors_batch_finalise(tmpdir / "work")
         ts2 = tsinfer.match_ancestors(samples, ancestors)
@@ -1747,7 +1744,8 @@ class TestAncestorGeneratorsEquivalant:
         ts = msprime.simulate(
             20, length=1, recombination_rate=0, mutation_rate=1, random_seed=1
         )
-        assert ts.num_sites > 0 and ts.num_sites < 50
+        assert ts.num_sites > 0
+        assert ts.num_sites < 50
         self.verify_tree_sequence(ts, encoding)
 
     @pytest.mark.parametrize("encoding", tsinfer.GenotypeEncoding)
@@ -1756,7 +1754,8 @@ class TestAncestorGeneratorsEquivalant:
             20, length=1, recombination_rate=1, mutation_rate=1, random_seed=1
         )
         assert ts.num_trees > 1
-        assert ts.num_sites > 0 and ts.num_sites < 50
+        assert ts.num_sites > 0
+        assert ts.num_sites < 50
         self.verify_tree_sequence(ts, encoding)
 
     @pytest.mark.parametrize("encoding", tsinfer.GenotypeEncoding)
@@ -1852,9 +1851,7 @@ class TestGeneratedAncestors:
             assert ancestor_data.num_sites == ancestors_ts.num_sites
             assert ancestor_data.num_ancestors == ancestors_ts.num_samples
             assert np.array_equal(ancestors_ts.genotype_matrix(), A)
-            inferred_ts = tsinfer.match_samples(
-                sample_data, ancestors_ts, engine=engine
-            )
+            inferred_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
             assert np.array_equal(inferred_ts.genotype_matrix(), ts.genotype_matrix())
 
     def test_no_recombination(self):
@@ -1866,7 +1863,8 @@ class TestGeneratedAncestors:
             random_seed=1,
             model="smc_prime",
         )
-        assert ts.num_sites > 0 and ts.num_sites < 50
+        assert ts.num_sites > 0
+        assert ts.num_sites < 50
         self.verify_inserted_ancestors(ts)
 
     def test_small_sample_high_recombination(self):
@@ -1878,7 +1876,9 @@ class TestGeneratedAncestors:
             random_seed=1,
             model="smc_prime",
         )
-        assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
+        assert ts.num_sites > 0
+        assert ts.num_sites < 50
+        assert ts.num_trees > 3
         self.verify_inserted_ancestors(ts)
 
     def test_high_recombination(self):
@@ -1890,7 +1890,9 @@ class TestGeneratedAncestors:
             random_seed=1,
             model="smc_prime",
         )
-        assert ts.num_sites > 0 and ts.num_sites < 50 and ts.num_trees > 3
+        assert ts.num_sites > 0
+        assert ts.num_sites < 50
+        assert ts.num_trees > 3
         self.verify_inserted_ancestors(ts)
 
 
@@ -2154,9 +2156,7 @@ class TestAncestorsTreeSequence:
             assert np.array_equal(
                 ancestors_ts.tables.mutations.parent, tables.mutations.parent
             )
-            assert np.array_equal(
-                tables.sites.position, ancestor_data.sites_position[:]
-            )
+            assert np.array_equal(tables.sites.position, ancestor_data.sites_position[:])
 
             assert ancestors_ts.num_samples == ancestor_data.num_ancestors
             H = ancestors_ts.genotype_matrix().T
@@ -2179,7 +2179,7 @@ class TestAncestorsTreeSequence:
             for n in ancestors_ts.nodes():
                 md = n.metadata
                 if tsinfer.is_pc_ancestor(n.flags):
-                    assert not ("ancestor_data_id" in md)
+                    assert "ancestor_data_id" not in md
                 else:
                     assert "ancestor_data_id" in md
                     assert ancestors_time[md["ancestor_data_id"]] == n.time
@@ -2195,9 +2195,7 @@ class TestAncestorsTreeSequence:
         self.verify(sample_data, mismatch_ratio=0.01, recombination_rate=1e-3)
 
     def test_recombination(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
-        )
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
         self.verify(sample_data)
         self.verify(sample_data, recombination_rate=1e-9)
@@ -2277,18 +2275,14 @@ class TestAncestorsTreeSequenceFlags:
                 assert np.all(flags[non_samples] == source_flags[non_samples])
 
     def test_no_flags_changes(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
-        )
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
         self.verify(samples, ancestors_ts)
 
     def test_append_nodes(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
-        )
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
@@ -2331,18 +2325,14 @@ class TestAncestorsTreeSequenceIndividuals:
                 assert node.is_sample()
 
     def test_zero_individuals(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
-        )
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         samples = tsinfer.SampleData.from_tree_sequence(ts)
         ancestors = tsinfer.generate_ancestors(samples)
         ancestors_ts = tsinfer.match_ancestors(samples, ancestors)
         self.verify(samples, ancestors_ts)
 
     def test_diploid_individuals(self):
-        ts = msprime.simulate(
-            10, mutation_rate=2, recombination_rate=2, random_seed=233
-        )
+        ts = msprime.simulate(10, mutation_rate=2, recombination_rate=2, random_seed=233)
         tables = ts.dump_tables()
         for j in range(ts.num_samples // 2):
             tables.individuals.add_row(flags=j, location=[j, j], metadata=b"X" * j)
@@ -2507,7 +2497,7 @@ class TestMatchSamples:
                 assert ts1.simplify(samples).equals(ts2, ignore_provenance=True)
 
     @pytest.mark.parametrize(
-        "bad_indexes, match",
+        ("bad_indexes", "match"),
         [
             ([], "at least one"),
             ([-1, 0], "bounds"),
@@ -3314,9 +3304,7 @@ class TestPostProcess:
             small_ts_fixture.samples() == np.arange(small_ts_fixture.num_samples)
         )
         with caplog.at_level(logging.WARNING):
-            ts_postprocessed = tsinfer.post_process(
-                small_ts_fixture, erase_flanks=False
-            )
+            ts_postprocessed = tsinfer.post_process(small_ts_fixture, erase_flanks=False)
             assert caplog.text.count("virtual-root-like") == 0
         with caplog.at_level(logging.WARNING):
             ts_postprocessed = tsinfer.post_process(
@@ -4570,7 +4558,8 @@ class TestMissingDataImputed:
             [
                 [u, 1, 1, 1, 0],  # Site 0
                 [1, 1, u, 0, 0],  # Site 1
-            ], dtype=np.int8
+            ],
+            dtype=np.int8,
             # fmt: on
         )
         expected = sites_by_samples.copy()
@@ -5109,9 +5098,7 @@ def test_likelihood_threshold_logged_specific_value(caplog, small_sd_anc_fixture
     likelihood_threshold = 1e-10
 
     with caplog.at_level(logging.INFO):
-        tsinfer.match_ancestors(
-            sd, ancestors, likelihood_threshold=likelihood_threshold
-        )
+        tsinfer.match_ancestors(sd, ancestors, likelihood_threshold=likelihood_threshold)
 
     m = re.search(r"Matching using likelihood_threshold of ([-e\.\d]+)", caplog.text)
     assert m is not None

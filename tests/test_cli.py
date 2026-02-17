@@ -19,6 +19,7 @@
 """
 Tests for the tsinfer CLI.
 """
+
 import io
 import json
 import os.path
@@ -44,13 +45,10 @@ def capture_output(func, *args, **kwargs):
     Runs the specified function and arguments, and returns the
     tuple (stdout, stderr) as strings.
     """
-    buffer_class = io.BytesIO
-    if sys.version_info[0] == 3:
-        buffer_class = io.StringIO
     stdout = sys.stdout
-    sys.stdout = buffer_class()
+    sys.stdout = io.StringIO()
     stderr = sys.stderr
-    sys.stderr = buffer_class()
+    sys.stderr = io.StringIO()
 
     try:
         func(*args, **kwargs)
@@ -111,9 +109,7 @@ class TestCli(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
         self.sample_file = str(pathlib.Path(self.tempdir.name, "input-data.samples"))
-        self.ancestor_file = str(
-            pathlib.Path(self.tempdir.name, "input-data.ancestors")
-        )
+        self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
         self.ancestor_trees = str(
             pathlib.Path(self.tempdir.name, "input-data.ancestors.trees")
         )
@@ -168,23 +164,15 @@ class TestCommandsDefaults(TestCli):
     def test_infer_from_ts(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.assertRaisesRegex(
-            exceptions.FileFormatError,
-            "from_tree_sequence",
-            self.run_command,
-            ["infer", output_trees],
-        )
+        with pytest.raises(exceptions.FileFormatError, match="from_tree_sequence"):
+            self.run_command(["infer", output_trees])
 
     def test_infer_bad_file(self):
         output_trees = os.path.join(self.tempdir.name, "output.trees")
         with open(output_trees, "w") as bad_file:
             bad_file.write("xxx")
-        self.assertRaisesRegex(
-            exceptions.FileFormatError,
-            "Unknown file format",
-            self.run_command,
-            ["infer", output_trees],
-        )
+        with pytest.raises(exceptions.FileFormatError, match="Unknown file format"):
+            self.run_command(["infer", output_trees])
 
     @pytest.mark.skipif(
         sys.platform == "win32", reason="windows simultaneous file permissions issue"

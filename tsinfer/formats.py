@@ -19,6 +19,7 @@
 """
 Manage tsinfer's various file formats.
 """
+
 import collections
 import collections.abc as abc
 import datetime
@@ -46,7 +47,6 @@ from tskit import MISSING_DATA
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
 import tsinfer.threads as threads
-
 
 logger = logging.getLogger(__name__)
 
@@ -379,8 +379,7 @@ def merge_variants(sd1, sd2):
                 or var1.site.metadata != var2.site.metadata
             ):
                 raise ValueError(
-                    "Merged sites must have the same ancestral_state, "
-                    "time and metadata"
+                    "Merged sites must have the same ancestral_state, time and metadata"
                 )
             # If there is missing data the last allele is always None
             missing_data = False
@@ -714,8 +713,7 @@ class DataContainer:
         """
         if self._mode not in (self.BUILD_MODE, self.EDIT_MODE):
             raise ValueError(
-                "Invalid operation: cannot add provenances unless in BUILD "
-                "or EDIT mode"
+                "Invalid operation: cannot add provenances unless in BUILD or EDIT mode"
             )
         n = self.num_provenances
         self.provenances_timestamp.resize(n + 1)
@@ -1377,9 +1375,7 @@ class SampleData(DataContainer):
         return (
             self.num_populations == other.num_populations
             # Need to take a different approach with np object arrays.
-            and np_obj_equal(
-                self.populations_metadata[:], other.populations_metadata[:]
-            )
+            and np_obj_equal(self.populations_metadata[:], other.populations_metadata[:])
         )
 
     def individuals_equal(self, other):
@@ -1392,12 +1388,8 @@ class SampleData(DataContainer):
             and np.array_equal(
                 self.individuals_population[:], other.individuals_population[:]
             )
-            and np_obj_equal(
-                self.individuals_metadata[:], other.individuals_metadata[:]
-            )
-            and np_obj_equal(
-                self.individuals_location[:], other.individuals_location[:]
-            )
+            and np_obj_equal(self.individuals_metadata[:], other.individuals_metadata[:])
+            and np_obj_equal(self.individuals_location[:], other.individuals_location[:])
         )
 
     def samples_equal(self, other):
@@ -2612,13 +2604,13 @@ class VariantData(SampleData):
             ]
             if tot == deliberately_unknown:
                 logging.info(
-                    f"{tot} sites ({frac_bad * 100 :.2f}%) were deliberately marked as "
+                    f"{tot} sites ({frac_bad * 100:.2f}%) were deliberately marked as "
                     "of unknown ancestral state. They will not be used for inference"
                 )
             else:
                 warnings.warn(
                     "An ancestral allele was not found in the variant_allele array for "
-                    + f"the {tot} sites ({frac_bad * 100 :.2f}%) listed below. "
+                    + f"the {tot} sites ({frac_bad * 100:.2f}%) listed below. "
                     + "They will be treated as of unknown ancestral state:\n "
                     + "\n ".join(summarise_unknown)
                 )
@@ -2644,9 +2636,7 @@ class VariantData(SampleData):
             f"Sites chunks used: {len(self.sites_used_chunks)} - "
             f"of {self.z_sites_select.cdata_shape[0]}"
         )
-        logger.info(
-            f"Number of individuals after applying mask: {self.num_individuals}"
-        )
+        logger.info(f"Number of individuals after applying mask: {self.num_individuals}")
 
     @functools.cached_property
     def format_name(self):
@@ -3677,9 +3667,7 @@ class AncestorData(DataContainer):
         """
         self._check_build_mode()
         haplotype = tskit.util.safe_np_int_cast(haplotype, dtype=np.int8, copy=True)
-        focal_sites = tskit.util.safe_np_int_cast(
-            focal_sites, dtype=np.int32, copy=True
-        )
+        focal_sites = tskit.util.safe_np_int_cast(focal_sites, dtype=np.int32, copy=True)
         if start < 0:
             raise ValueError("Start must be >= 0")
         if end > self.num_sites:
@@ -3814,9 +3802,7 @@ def load(path):
     return tsinfer_file
 
 
-def add_ancestral_state_array(
-    zarr_group, fasta_string, *, array_name="ancestral_state"
-):
+def add_ancestral_state_array(zarr_group, fasta_string, *, array_name="ancestral_state"):
     """
     Add an ancestral state array to a zarr group from a string of nucleotides
     representing the ancestral sequence.
@@ -3836,9 +3822,7 @@ def add_ancestral_state_array(
     positions = zarr_group["variant_position"][:]
 
     if len(positions) == 0:
-        raise ValueError(
-            "The variant_position array must contain at least one position"
-        )
+        raise ValueError("The variant_position array must contain at least one position")
 
     if len(fasta_string) < max(positions):
         raise ValueError(

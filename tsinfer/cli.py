@@ -19,6 +19,7 @@
 """
 Command line interfaces to tsinfer.
 """
+
 import argparse
 import json
 import logging
@@ -31,17 +32,16 @@ try:
 except ImportError:
     resource = None  # resource.getrusage absent on windows, so skip outputting max mem
 
-import daiquiri
-
-import tskit
-import humanize
 import time
+
+import daiquiri
+import humanize
 import numpy as np
+import tskit
 
 import tsinfer
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
-
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,7 @@ def summarise_usage():
         max_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         if sys.platform != "darwin":
             max_mem *= 1024  # Linux and other OSs (e.g. freeBSD) report maxrss in kb
-        maxmem_str = "; max memory={}".format(
-            humanize.naturalsize(max_mem, binary=True)
-        )
+        maxmem_str = "; max memory={}".format(humanize.naturalsize(max_mem, binary=True))
     logger.info(f"wall time = {wall_time}")
     logger.info(f"rusage: user={user_time}; sys={sys_time:.2f}s" + maxmem_str)
 

@@ -19,6 +19,7 @@
 """
 A progress monitor class for tsinfer
 """
+
 from tqdm.auto import tqdm
 
 

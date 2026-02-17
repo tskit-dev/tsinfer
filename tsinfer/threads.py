@@ -19,13 +19,13 @@
 """
 Utilities for handling threads.
 """
+
 import _thread
 import concurrent.futures
 import heapq
 import logging
 import threading
 import traceback
-
 
 # prctl is an optional extra; it allows us assign meaninful names to threads
 # for debugging.
@@ -55,7 +55,7 @@ def threaded_map(func, args, num_workers):
         futures = set()
         next_index = 0
         for i, arg in enumerate(args):
-            # +1 so that we're not waiting for the args generator to produce the next arg
+            # +1 so we're not waiting for the args generator to produce the next arg
             while len(futures) >= num_workers + 1:
                 # If there are too many in-progress tasks, wait for one to complete
                 done, futures = concurrent.futures.wait(
