@@ -1,5 +1,3 @@
-
-
 #/bin/bash
 
 # Jupyter-build doesn't have an option to automatically show the 
@@ -8,7 +6,7 @@
 
 REPORTDIR=_build/html/reports
 
-jupyter-book build -nW --keep-going .
+uv run --project=.. --only-group docs jupyter-book build . -vnW --keep-going
 RETVAL=$?
 if [ $RETVAL -ne 0 ]; then
     if [ -e $REPORTDIR ]; then
