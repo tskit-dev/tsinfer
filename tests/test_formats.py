@@ -19,6 +19,7 @@
 """
 Tests for the data files.
 """
+
 import datetime
 import itertools
 import json
@@ -34,13 +35,13 @@ import numcodecs.blosc as blosc
 import numpy as np
 import pytest
 import tskit
-import tsutil
 import zarr
 from tskit import MetadataSchema
 
 import tsinfer
 import tsinfer.exceptions as exceptions
 import tsinfer.formats as formats
+import tsutil
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -125,9 +126,7 @@ class TestSampleData(DataContainerMixin):
         # For testing, depend on the sample nodes being sorted by individual
         schema = ts.tables.individuals.metadata_schema.schema
         input_file.individuals_metadata_schema = schema
-        for i, group in itertools.groupby(
-            ts.samples(), lambda n: ts.node(n).individual
-        ):
+        for i, group in itertools.groupby(ts.samples(), lambda n: ts.node(n).individual):
             nodes = [ts.node(nd) for nd in group]
             if i == tskit.NULL:
                 for node in nodes:
@@ -203,9 +202,7 @@ class TestSampleData(DataContainerMixin):
                 for n in individual.nodes:
                     assert ts.node(n).time == sample_time[individual.id]
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_defaults_with_path(self):
         ts = tsutil.get_example_ts(10)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -1000,9 +997,7 @@ class TestSampleData(DataContainerMixin):
         for tree in ts.trees():
             pos = tree.interval[0]
             if pos not in positions:
-                site_id = t.sites.add_row(
-                    position=pos, ancestral_state="0", metadata={}
-                )
+                site_id = t.sites.add_row(position=pos, ancestral_state="0", metadata={})
                 t.mutations.add_row(site=site_id, node=tree.root, derived_state="1")
                 positions.add(pos)
         assert len(positions) > ts.num_sites
@@ -1138,9 +1133,7 @@ class TestSampleData(DataContainerMixin):
         with pytest.raises(ValueError):
             set_value(data, [1.0])
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_overwrite_partial(self):
         # Check that we can correctly overwrite partially written and
         # unfinalised files. See
@@ -1280,8 +1273,15 @@ class TestSampleData(DataContainerMixin):
                 copy.data.attrs[tsinfer.FORMAT_VERSION_KEY] = 100, 0
 
     @pytest.mark.parametrize(
-        "position, genotypes, alleles, ancestral_allele, expected_ancestral_state, "
-        "expected_recode_alleles, expected_genotypes",
+        (
+            "position",
+            "genotypes",
+            "alleles",
+            "ancestral_allele",
+            "expected_ancestral_state",
+            "expected_recode_alleles",
+            "expected_genotypes",
+        ),
         [
             (0, [0, 0, 1, 2], ["A", "B", "C"], 2, "C", ("C", "A", "B"), [1, 1, 2, 0]),
             (
@@ -1383,9 +1383,7 @@ class TestSampleDataMetadataSchemas:
         example_schema["properties"]["xyz"] = {"type": "string"}
 
         with formats.SampleData() as sample_data:
-            assert (
-                sample_data.metadata_schema == MetadataSchema.permissive_json().schema
-            )
+            assert sample_data.metadata_schema == MetadataSchema.permissive_json().schema
             sample_data.metadata_schema = example_schema
             assert sample_data.metadata_schema == example_schema
             sample_data.add_site(0, [0, 0])
@@ -1492,9 +1490,7 @@ class TestSampleDataSubset:
                 subset_var = next(subset_variants)
                 assert subset_var.site.id == j
                 assert source_var.site.position == subset_var.site.position
-                assert (
-                    source_var.site.ancestral_state == subset_var.site.ancestral_state
-                )
+                assert source_var.site.ancestral_state == subset_var.site.ancestral_state
                 assert source_var.site.metadata == subset_var.site.metadata
                 assert source_var.site.alleles == subset_var.site.alleles
                 assert np.array_equal(
@@ -1587,9 +1583,7 @@ class TestSampleDataSubset:
         with pytest.raises(ValueError):
             sd1.subset(sites=[0, 0])
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_file_kwargs(self):
         # Make sure we pass kwards on to the SampleData constructor as
         # required.
@@ -1842,9 +1836,7 @@ class TestSampleDataMerge:
         self.verify(sd1, sd2)
         self.verify(sd2, sd1)
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_file_kwargs(self):
         # Make sure we pass kwards on to the SampleData constructor as
         # required.
@@ -1882,9 +1874,7 @@ class TestMinSiteTimes:
         # Because this is a haploid tree sequence we can use the
         # individual and sample IDs interchangably.
         assert np.all(
-            np.isin(
-                time_bound_individuals_only, np.concatenate([[0], individual_times])
-            )
+            np.isin(time_bound_individuals_only, np.concatenate([[0], individual_times]))
         )
         G1 = ts.genotype_matrix()
         older_derived = G1[:, 3] == 1
@@ -1948,9 +1938,7 @@ class TestAncestorData(DataContainerMixin):
 
     def assert_ancestor_full_span(self, ancestor_data, indexes):
         assert np.all(ancestor_data.ancestors_start[:][indexes] == 0)
-        assert np.all(
-            ancestor_data.ancestors_end[:][indexes] == ancestor_data.num_sites
-        )
+        assert np.all(ancestor_data.ancestors_end[:][indexes] == ancestor_data.num_sites)
 
     def verify_data_round_trip(self, sample_data, ancestor_data, ancestors):
         for i, (start, end, t, focal_sites, haplotype) in enumerate(ancestors):
@@ -2002,9 +1990,7 @@ class TestAncestorData(DataContainerMixin):
         for _, array in ancestor_data.arrays():
             assert array.compressor == formats.DEFAULT_COMPRESSOR
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_defaults_with_path(self):
         sample_data, ancestors = self.get_example_data(10, 10, 40)
         with tempfile.TemporaryDirectory(prefix="tsinf_format_test") as tempdir:
@@ -2250,9 +2236,7 @@ class TestAncestorData(DataContainerMixin):
         for i, new_ancestor in enumerate(ancestor_data.ancestors()):
             assert new_ancestor == ancestor_data.ancestor(i)
 
-    @pytest.mark.skipif(
-        IS_WINDOWS, reason="windows simultaneous file permissions issue"
-    )
+    @pytest.mark.skipif(IS_WINDOWS, reason="windows simultaneous file permissions issue")
     def test_zero_sequence_length(self):
         # Mangle a sample data file to force a zero sequence length.
         ts = msprime.simulate(10, mutation_rate=2, random_seed=5)
@@ -2328,9 +2312,7 @@ class TestAncestorData(DataContainerMixin):
         ancestors = tsinfer.generate_ancestors(sample_data)
         used_sites = np.isin(sample_data.sites_position[:], ancestors.sites_position[:])
         for i in (0, 6, 9):
-            ancestors_extra = ancestors.insert_proxy_samples(
-                sample_data, sample_ids=[i]
-            )
+            ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=[i])
             assert ancestors.num_ancestors + 1 == ancestors_extra.num_ancestors
             inserted = -1
             self.assert_ancestor_full_span(ancestors_extra, [inserted])
@@ -2496,9 +2478,7 @@ class TestAncestorData(DataContainerMixin):
                 assert orig_anc.end >= trunc_anc.end
                 assert np.array_equal(
                     orig_anc.haplotype[
-                        trunc_anc.start
-                        - orig_anc.start : trunc_anc.end
-                        - orig_anc.start
+                        trunc_anc.start - orig_anc.start : trunc_anc.end - orig_anc.start
                     ],
                     trunc_anc.haplotype,
                 )

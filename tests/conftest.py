@@ -35,14 +35,14 @@ Fixtures can be parameterised etc. see https://docs.pytest.org/en/stable/fixture
 Note that fixtures have a "scope" for example `ts_fixture` below is only created once
 per test session and re-used for subsequent tests.
 """
+
 import msprime
 import numpy as np
 import pytest
 import tskit
-from pytest import fixture
-from tsutil import mark_mutation_times_unknown
 
 import tsinfer
+from tsutil import mark_mutation_times_unknown
 
 
 def pytest_addoption(parser):
@@ -83,7 +83,7 @@ def assign_individual_ids(ts):
     return tables.tree_sequence()
 
 
-@fixture(scope="session")
+@pytest.fixture(scope="session")
 def small_ts_fixture():
     """
     A simple 1-tree sequence with at least 2 inference sites
@@ -96,7 +96,7 @@ def small_ts_fixture():
     return mark_mutation_times_unknown(ts)
 
 
-@fixture(scope="session")
+@pytest.fixture(scope="session")
 def small_sd_fixture(small_ts_fixture):
     """
     A sample data instance from the small 1-tree sequence
@@ -104,7 +104,7 @@ def small_sd_fixture(small_ts_fixture):
     return tsinfer.SampleData.from_tree_sequence(small_ts_fixture)
 
 
-@fixture(scope="session")
+@pytest.fixture(scope="session")
 def small_sd_anc_fixture(small_ts_fixture):
     """
     A sample data and an ancestors instance from the small 1-tree sequence
@@ -113,7 +113,7 @@ def small_sd_anc_fixture(small_ts_fixture):
     return sd, tsinfer.generate_ancestors(sd)
 
 
-@fixture(scope="session")
+@pytest.fixture(scope="session")
 def medium_ts_fixture():
     """
     A medium sized tree sequence with a good number of trees and inference mutations
@@ -130,11 +130,9 @@ def medium_ts_fixture():
     return mark_mutation_times_unknown(ts)
 
 
-@fixture(scope="session")
+@pytest.fixture(scope="session")
 def medium_sd_fixture(medium_ts_fixture):
     """
     A sample data instance from the medium-sized tree sequence
     """
-    return tsinfer.SampleData.from_tree_sequence(
-        medium_ts_fixture, use_sites_time=False
-    )
+    return tsinfer.SampleData.from_tree_sequence(medium_ts_fixture, use_sites_time=False)

@@ -19,7 +19,7 @@
 """
 Tree sequence inference.
 """
-import sys
+
 import warnings
 
 # tsinfer #957. This warning pops up as a result of using fast-math. It bascially means
@@ -30,9 +30,6 @@ warnings.filterwarnings(
     "type is zero",
 )
 
-
-if sys.version_info[0] < 3:
-    raise Exception("Python 3 only")
 
 try:
     import zarr

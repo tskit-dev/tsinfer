@@ -19,6 +19,7 @@
 """
 Extra utility functions used in several test files
 """
+
 import json
 import tempfile
 from pathlib import Path
@@ -243,9 +244,7 @@ def save_dataset(ds, store, auto_rechunk=False, **kwargs):
             # Here we use the max chunk size as the target chunk size as for
             # the commonest case of subsetting an existing dataset, this will
             # be closest to the original intended chunk size.
-            ds = ds.chunk(
-                chunks={dim: max(chunks) for dim, chunks in ds.chunks.items()}
-            )
+            ds = ds.chunk(chunks={dim: max(chunks) for dim, chunks in ds.chunks.items()})
 
     ds.to_zarr(store, **kwargs)
 
@@ -262,9 +261,7 @@ def add_attribute_to_dataset(name, contents, zarr_path):
     save_dataset(ds, zarr_path, mode="a")
 
 
-def make_ts_and_zarr(
-    path=None, prefix="data", add_optional=False, shuffle_alleles=True
-):
+def make_ts_and_zarr(path=None, prefix="data", add_optional=False, shuffle_alleles=True):
     if path is None:
         in_mem_copy = zarr.group()
         with tempfile.TemporaryDirectory() as path:

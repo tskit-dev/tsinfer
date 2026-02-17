@@ -19,13 +19,13 @@
 """
 Integrity tests for the low-level module.
 """
+
 import sys
 
 import numpy as np
 import pytest
 
 import _tsinfer
-
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -117,7 +117,8 @@ class TestAncestorMatcher:
         left_w, right_w, parent_w = m_weight.find_path(h, 0, 4, match)
         assert len(parent_w) == 1
         assert parent_w[0] == n1
-        assert left_w[0] == 0 and right_w[0] == 4
+        assert left_w[0] == 0
+        assert right_w[0] == 4
 
         # Weighting by n disabled (n=1): expect recombination at boundary 3
         m_no_weight = _tsinfer.AncestorMatcher(tsb, recomb, mismatch, weight_by_n=0)

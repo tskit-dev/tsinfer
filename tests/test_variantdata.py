@@ -19,6 +19,7 @@
 """
 Tests for the data files.
 """
+
 import json
 import logging
 import sys
@@ -30,10 +31,10 @@ import numcodecs
 import numpy as np
 import pytest
 import tskit
-import tsutil
 import zarr
 
 import tsinfer
+import tsutil
 from tsinfer import formats
 
 
@@ -150,17 +151,13 @@ def test_variantdata_accessors(tmp_path, in_mem):
     )
     assert vd.metadata_schema == tsutil.example_schema("example").schema
     assert vd.metadata == ts.tables.metadata
-    assert (
-        vd.populations_metadata_schema == ts.tables.populations.metadata_schema.schema
-    )
+    assert vd.populations_metadata_schema == ts.tables.populations.metadata_schema.schema
     assert vd.populations_metadata == [pop.metadata for pop in ts.populations()]
     assert vd.num_individuals == ts.num_individuals
     assert np.array_equal(
         vd.individuals_time, np.arange(ts.num_individuals, dtype=np.float32)
     )
-    assert (
-        vd.individuals_metadata_schema == ts.tables.individuals.metadata_schema.schema
-    )
+    assert vd.individuals_metadata_schema == ts.tables.individuals.metadata_schema.schema
     assert vd.individuals_metadata == [
         {"variant_data_sample_id": sample_id, **ind.metadata}
         for ind, sample_id in zip(ts.individuals(), ds.sample_id[:])
@@ -230,9 +227,8 @@ def test_variantdata_sites_time_default():
     ts, data = tsutil.make_ts_and_zarr()
     vdata = tsinfer.VariantData(data, "variant_ancestral_allele")
 
-    assert (
-        np.all(np.isnan(vdata.sites_time)) and vdata.sites_time.size == vdata.num_sites
-    )
+    assert np.all(np.isnan(vdata.sites_time))
+    assert vdata.sites_time.size == vdata.num_sites
 
 
 def test_variantdata_sites_time_array():
@@ -269,9 +265,7 @@ def test_variantdata_individuals_parameters_as_strings(tmp_path):
     # Verify the arrays are loaded correctly
     assert np.array_equal(vdata.individuals_time, ds.individuals_time.values)
     assert np.array_equal(vdata.individuals_location, ds.individuals_location.values)
-    assert np.array_equal(
-        vdata.individuals_population, ds.individuals_population.values
-    )
+    assert np.array_equal(vdata.individuals_population, ds.individuals_population.values)
     assert np.array_equal(vdata.individuals_flags, ds.individuals_flags.values)
 
 
@@ -394,9 +388,7 @@ class TestMultiContig:
             vdata = tsinfer.VariantData(tmp_path, "variant_ancestral_allele")
         root = zarr.open(tmp_path)
         mask = root["variant_contig"][:] == (1 if contig_id == "chr1" else 0)
-        vdata = tsinfer.VariantData(
-            tmp_path, "variant_ancestral_allele", site_mask=mask
-        )
+        vdata = tsinfer.VariantData(tmp_path, "variant_ancestral_allele", site_mask=mask)
         assert np.all(tree_seqs[contig_id].sites_position == vdata.sites_position)
         assert vdata.contig_id == contig_id
         assert vdata._contig_index == (0 if contig_id == "chr1" else 1)
@@ -421,9 +413,7 @@ class TestMultiContig:
         del root["variant_contig"]
         mask = np.ones(ts1.num_sites + ts2.num_sites)
         mask[0] = False
-        vdata = tsinfer.VariantData(
-            tmp_path, "variant_ancestral_allele", site_mask=mask
-        )
+        vdata = tsinfer.VariantData(tmp_path, "variant_ancestral_allele", site_mask=mask)
         assert vdata.sequence_length == ts1.sites_position[0] + 1
         assert vdata.contig_id is None
         assert vdata._contig_index is None
@@ -588,8 +578,8 @@ class TestSgkitMask:
     def test_sgkit_missing_masks(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
         samples = tsinfer.VariantData(zarr_path, "variant_ancestral_allele")
-        samples.individuals_select
-        samples.sites_select
+        _ = samples.individuals_select
+        _ = samples.sites_select
         with pytest.raises(
             ValueError, match="The site mask array foobar was not found in the dataset."
         ):
@@ -605,7 +595,7 @@ class TestSgkitMask:
                 "variant_ancestral_allele",
                 sample_mask="foobar2",
             )
-            samples.individuals_select
+            _ = samples.individuals_select
 
     def test_variantdata_default_masks(self, tmp_path):
         ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
@@ -686,9 +676,7 @@ class TestSgkitMask:
         haplotypes = list(mask_sd.haplotypes())
         haplotypes_subset = list(mat_sd.haplotypes())
         assert len(haplotypes) == len(haplotypes_subset)
-        for (id, haplo), (id_subset, haplo_subset) in zip(
-            haplotypes, haplotypes_subset
-        ):
+        for (id, haplo), (id_subset, haplo_subset) in zip(haplotypes, haplotypes_subset):
             assert id == id_subset
             assert np.array_equal(haplo, haplo_subset)
 
@@ -836,7 +824,7 @@ def test_ancestral_missing_info(tmp_path, caplog):
     anc_state[15] = "n"
     with caplog.at_level(logging.INFO):
         vdata = tsinfer.VariantData(zarr_path, anc_state)
-    assert f"4 sites ({4 / ts.num_sites * 100 :.2f}%) were deliberately " in caplog.text
+    assert f"4 sites ({4 / ts.num_sites * 100:.2f}%) were deliberately " in caplog.text
     inf_ts = tsinfer.infer(vdata)
     for i, (inf_var, var) in enumerate(zip(inf_ts.variants(), ts.variants())):
         if i in [0, 11, 12, 15]:

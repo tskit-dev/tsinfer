@@ -212,9 +212,7 @@ def dump_provenance(ts):
 
 def build_profile_inputs(n, num_megabases):
     L = num_megabases * 10**6
-    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(
-        n, num_megabases
-    )
+    input_file = "tmp__NOBACKUP__/profile-n={}-m={}.input.trees".format(n, num_megabases)
     if os.path.exists(input_file):
         ts = msprime.load(input_file)
     else:
@@ -275,8 +273,9 @@ def copy_1kg():
 
 
 def tutorial_samples():
-    import tqdm
     import msprime
+    import tqdm
+
     import tsinfer
 
     ts = msprime.simulate(
@@ -310,7 +309,6 @@ def run_build():
 
 
 if __name__ == "__main__":
-
     # run_build()
 
     # np.set_printoptions(linewidth=20000)

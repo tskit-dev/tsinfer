@@ -18,6 +18,7 @@
 """
 Tools for evaluating the algorithm.
 """
+
 import bisect
 import collections
 import json
@@ -54,9 +55,7 @@ def insert_errors(ts, probability, seed=None):
         for site in tree.sites():
             assert len(site.mutations) == 1
             mutation_node = site.mutations[0].node
-            tables.mutations.add_row(
-                site=site.id, node=mutation_node, derived_state="1"
-            )
+            tables.mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
             for sample in samples:
                 # We disallow any fixations. There are two possibilities:
                 # (1) We have a singleton and the sample

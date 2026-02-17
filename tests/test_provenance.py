@@ -19,6 +19,7 @@
 """
 Tests for the provenance stored in the output tree sequences.
 """
+
 import json
 import math
 import time
@@ -125,24 +126,18 @@ class TestIncludeProvenance:
         assert ts.num_provenances == small_sd_fixture.num_provenances
 
     def test_no_provenance_generate_ancestors(self, small_sd_fixture):
-        ancestors = tsinfer.generate_ancestors(
-            small_sd_fixture, record_provenance=False
-        )
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture, record_provenance=False)
         assert ancestors.num_provenances == small_sd_fixture.num_provenances
 
     def test_no_provenance_match_ancestors(self, small_sd_fixture):
-        ancestors = tsinfer.generate_ancestors(
-            small_sd_fixture, record_provenance=False
-        )
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture, record_provenance=False)
         anc_ts = tsinfer.match_ancestors(
             small_sd_fixture, ancestors, record_provenance=False
         )
         assert anc_ts.num_provenances == small_sd_fixture.num_provenances
 
     def test_no_provenance_match_samples(self, small_sd_fixture):
-        ancestors = tsinfer.generate_ancestors(
-            small_sd_fixture, record_provenance=False
-        )
+        ancestors = tsinfer.generate_ancestors(small_sd_fixture, record_provenance=False)
         anc_ts = tsinfer.match_ancestors(
             small_sd_fixture, ancestors, record_provenance=False
         )
