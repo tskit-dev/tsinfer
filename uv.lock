@@ -2635,6 +2635,11 @@ docs = [
     { name = "sphinx-book-theme" },
     { name = "sphinx-issues" },
 ]
+lint = [
+    { name = "clang-format" },
+    { name = "pre-commit" },
+    { name = "pre-commit-uv" },
+]
 test = [
     { name = "bio2zarr", extra = ["tskit"] },
     { name = "colorama" },
@@ -2703,6 +2708,11 @@ docs = [
     { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
     { name = "sphinx-issues" },
+]
+lint = [
+    { name = "clang-format", specifier = "==21.1.8" },
+    { name = "pre-commit" },
+    { name = "pre-commit-uv" },
 ]
 test = [
     { name = "bio2zarr", extras = ["tskit"] },
