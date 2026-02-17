@@ -1,0 +1,24 @@
+name: Reusable Lint Workflow
+
+jobs:
+  pre-commit:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.12.1
+        with:
+          access_token: ${{ github.token }}
+
+      - uses: actions/checkout@v4.2.2
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: 3.11
+          version: "0.8.15"
+
+      - name: Install Python dependencies
+        run: uv sync --locked --group lint
+
+      - uses: pre-commit/action@v3.0.1
