@@ -110,8 +110,7 @@ docs = [
 
 lint = [
     "clang-format==21.1.8",
-    "pre-commit",
-    "pre-commit-uv"
+    "prek",
 ]
 
 dev = [
@@ -135,8 +134,7 @@ dev = [
     "ipywidgets",
     "pyfaidx",
     "clang-format==21.1.8",
-    "pre-commit",
-    "pre-commit-uv",
+    "prek",
 ]
 
 [tool.setuptools]
