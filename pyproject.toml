@@ -142,6 +142,8 @@ dev = [
     "ipywidgets",
     "pyfaidx",
     "clang-format==21.1.8",
+    "pre-commit",
+    "pre-commit-uv",
 ]
 
 [tool.setuptools]
