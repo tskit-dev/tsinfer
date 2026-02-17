@@ -8,6 +8,10 @@ repos:
       - id: check-case-conflict
       - id: check-yaml
       - id: check-toml
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.10.3
+    hooks:
+      - id: uv-lock
   - repo: https://github.com/benjeffery/pre-commit-clang-format
     rev: '1.0'
     hooks:
