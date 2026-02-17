@@ -1,5 +1,8 @@
 name: Reusable Lint Workflow
 
+on:
+  pull_request:
+
 jobs:
   pre-commit:
     name: Lint
