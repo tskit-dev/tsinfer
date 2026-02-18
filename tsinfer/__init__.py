@@ -52,7 +52,6 @@ except ImportError:
 
 from .inference import *  # NOQA
 from .formats import *  # NOQA
-from .eval_util import *  # NOQA
 from .exceptions import *  # NOQA
 from .constants import *  # NOQA
 from .cli import get_cli_parser  # NOQA

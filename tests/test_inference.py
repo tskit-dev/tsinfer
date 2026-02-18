@@ -42,7 +42,6 @@ from tskit import MetadataSchema
 
 import _tsinfer
 import tsinfer
-import tsinfer.eval_util as eval_util
 import tsinfer.provenance as provenance
 import tsutil
 
@@ -1828,7 +1827,7 @@ class TestGeneratedAncestors:
         ancestor_data = tsinfer.AncestorData(
             sample_data.sites_position, sample_data.sequence_length
         )
-        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        tsutil.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
 
         A = np.full(
@@ -1847,7 +1846,7 @@ class TestGeneratedAncestors:
             ancestors_ts = tsinfer.match_ancestors(
                 sample_data, ancestor_data, engine=engine
             )
-            tsinfer.check_ancestors_ts(ancestors_ts)
+            tsutil.check_ancestors_ts(ancestors_ts)
             assert ancestor_data.num_sites == ancestors_ts.num_sites
             assert ancestor_data.num_ancestors == ancestors_ts.num_samples
             assert np.array_equal(ancestors_ts.genotype_matrix(), A)
@@ -2148,7 +2147,7 @@ class TestAncestorsTreeSequence:
                 mismatch_ratio=mismatch_ratio,
                 recombination_rate=recombination_rate,
             )
-            tsinfer.check_ancestors_ts(ancestors_ts)
+            tsutil.check_ancestors_ts(ancestors_ts)
             tables = ancestors_ts.dump_tables()
 
             # Make sure we've computed the mutation parents properly.
@@ -2350,7 +2349,7 @@ class TestAncestorsTreeSequenceIndividuals:
                 samples.add_individual(ploidy=2, location=[100 * j], metadata={"X": j})
             for var in ts.variants():
                 samples.add_site(var.site.position, var.genotypes)
-        ancestors_ts = eval_util.make_ancestors_ts(ts)
+        ancestors_ts = tsutil.make_ancestors_ts(ts)
         self.verify(samples, ancestors_ts)
 
 
@@ -2486,7 +2485,7 @@ class TestMatchSamples:
             10, sequence_length=1e4, recombination_rate=2e-4, random_seed=233
         )
         ts = msprime.sim_mutations(ts, rate=2e-4, random_seed=233)
-        for tree_seq in [ts, eval_util.strip_singletons(ts)]:
+        for tree_seq in [ts, tsutil.strip_singletons(ts)]:
             sd = tsinfer.SampleData.from_tree_sequence(tree_seq, use_sites_time=False)
             ts1 = tsinfer.infer(sd)
             ancestors = tsinfer.generate_ancestors(sd)
@@ -2565,7 +2564,7 @@ class AlgorithmsExactlyEqualMixin:
         ancestor_data = tsinfer.AncestorData(
             sample_data.sites_position, sample_data.sequence_length
         )
-        tsinfer.build_simulated_ancestors(sample_data, ancestor_data, ts)
+        tsutil.build_simulated_ancestors(sample_data, ancestor_data, ts)
         ancestor_data.finalise()
         ancestors_ts = tsinfer.match_ancestors(
             sample_data,
@@ -2612,7 +2611,7 @@ class AlgorithmsExactlyEqualMixin:
     def test_single_tree(self):
         for seed in range(10):
             ts = msprime.simulate(10, random_seed=seed + 1)
-            ts = tsinfer.insert_perfect_mutations(ts)
+            ts = tsutil.insert_perfect_mutations(ts)
             self.verify(ts)
 
     def test_three_samples(self):
@@ -2620,7 +2619,7 @@ class AlgorithmsExactlyEqualMixin:
             ts = msprime.simulate(
                 3, recombination_rate=1, random_seed=seed + 1, model="smc_prime"
             )
-            ts = tsinfer.insert_perfect_mutations(ts)
+            ts = tsutil.insert_perfect_mutations(ts)
             self.verify(ts)
 
     def test_four_samples(self):
@@ -2632,7 +2631,7 @@ class AlgorithmsExactlyEqualMixin:
                 length=10,
                 model="smc_prime",
             )
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
+            ts = tsutil.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     def test_five_samples(self):
@@ -2644,7 +2643,7 @@ class AlgorithmsExactlyEqualMixin:
                 length=10,
                 model="smc_prime",
             )
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
+            ts = tsutil.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     def test_ten_samples(self):
@@ -2656,7 +2655,7 @@ class AlgorithmsExactlyEqualMixin:
                 length=10,
                 model="smc_prime",
             )
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
+            ts = tsutil.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
     @pytest.mark.slow
@@ -2669,7 +2668,7 @@ class AlgorithmsExactlyEqualMixin:
                 length=10,
                 model="smc_prime",
             )
-            ts = tsinfer.insert_perfect_mutations(ts, delta=1 / 8192)
+            ts = tsutil.insert_perfect_mutations(ts, delta=1 / 8192)
             self.verify(ts)
 
 
@@ -3440,11 +3439,11 @@ class TestMatchSiteSubsets:
 
     def verify(self, sample_data, position_subset):
         full_ts = tsinfer.infer(sample_data)
-        subset_ts = eval_util.subset_sites(full_ts, position_subset)
+        subset_ts = tsutil.subset_sites(full_ts, position_subset)
         ancestor_data = tsinfer.generate_ancestors(sample_data)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         subset_ancestors_ts = tsinfer.minimise(
-            eval_util.subset_sites(ancestors_ts, position_subset)
+            tsutil.subset_sites(ancestors_ts, position_subset)
         )
         subset_ancestors_ts = subset_ancestors_ts.simplify()
         subset_sample_data = tsinfer.SampleData.from_tree_sequence(subset_ts)
@@ -3524,7 +3523,7 @@ class PathCompressionMixin:
         # Lower recombination and error rates tend to increase shared breakpoints
         # and contiguous matches across individuals, which encourages PC nodes.
         ts = msprime.simulate(60, mutation_rate=10, random_seed=5, recombination_rate=8)
-        ts = eval_util.insert_errors(ts, 0.1, seed=33)
+        ts = tsutil.insert_errors(ts, 0.1, seed=33)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
@@ -3918,139 +3917,6 @@ class TestVerify:
         tsinfer.verify(sd, ts_inf)
 
 
-class TestExtractAncestors:
-    """
-    Checks whether the extract_ancestors function correctly returns an ancestors
-    tree sequence with the required properties.
-    """
-
-    def verify(self, samples):
-        ancestors = tsinfer.generate_ancestors(samples)
-        # this ancestors TS has positions mapped only to inference sites
-        ancestors_ts_1 = tsinfer.match_ancestors(samples, ancestors)
-        ts = tsinfer.match_samples(
-            samples, ancestors_ts_1, path_compression=False, simplify=False
-        )
-        t1 = ancestors_ts_1.dump_tables()
-
-        t2, node_id_map = tsinfer.extract_ancestors(samples, ts)
-        assert len(t2.provenances) == len(t1.provenances) + 2
-        # Population data isn't carried through in ancestors tree sequences
-        # for now.
-        t2.populations.clear()
-
-        t1.assert_equals(t2, ignore_provenance=True, ignore_metadata=True)
-
-        for node in ts.nodes():
-            if node_id_map[node.id] != -1:
-                assert node.time == t1.nodes.time[node_id_map[node.id]]
-
-    def test_simple_simulation(self):
-        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=5, random_seed=2)
-        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
-
-    def test_non_zero_one_mutations(self):
-        ts = msprime.simulate(10, recombination_rate=5, random_seed=2)
-        ts = msprime.mutate(
-            ts, rate=2, model=msprime.InfiniteSites(msprime.NUCLEOTIDES), random_seed=15
-        )
-        assert ts.num_mutations > 0
-        self.verify(tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False))
-
-    def test_random_data_small_examples(self):
-        np.random.seed(4)
-        num_random_tests = 10
-        for _ in range(num_random_tests):
-            G, positions = get_random_data_example(5, 10)
-            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
-                for j in range(G.shape[0]):
-                    samples.add_site(positions[j], G[j])
-            self.verify(samples)
-
-
-class TestInsertSrbAncestors:
-    """
-    Tests that the insert_srb_ancestors function behaves as expected.
-    """
-
-    def insert_srb_ancestors(self, samples, ts):
-        srb_index = {}
-        edges = sorted(ts.edges(), key=lambda e: (e.child, e.left))
-        last_edge = edges[0]
-        for edge in edges[1:]:
-            condition = (
-                ts.node(edge.child).is_sample()
-                and edge.child == last_edge.child
-                and edge.left == last_edge.right
-            )
-            if condition:
-                key = edge.left, last_edge.parent, edge.parent
-                if key in srb_index:
-                    count, left_bound, right_bound = srb_index[key]
-                    srb_index[key] = (
-                        count + 1,
-                        max(left_bound, last_edge.left),
-                        min(right_bound, edge.right),
-                    )
-                else:
-                    srb_index[key] = 1, last_edge.left, edge.right
-            last_edge = edge
-
-        tables, node_id_map = tsinfer.extract_ancestors(samples, ts)
-        time = tables.nodes.time
-
-        num_extra = 0
-        for k, v in srb_index.items():
-            if v[0] > 1:
-                left, right = v[1:]
-                x, pl, pr = k
-                pl = node_id_map[pl]
-                pr = node_id_map[pr]
-                t = min(time[pl], time[pr]) - 1e-4
-                node = tables.nodes.add_row(flags=tsinfer.NODE_IS_SRB_ANCESTOR, time=t)
-                tables.edges.add_row(left, x, pl, node)
-                tables.edges.add_row(x, right, pr, node)
-                num_extra += 1
-
-        tables.sort()
-        ancestors_ts = tables.tree_sequence()
-        return ancestors_ts
-
-    def verify(self, samples):
-        ts = tsinfer.infer(samples, simplify=False)
-        ancestors_ts_1 = self.insert_srb_ancestors(samples, ts)
-        ancestors_ts_2 = tsinfer.insert_srb_ancestors(samples, ts)
-        t1 = ancestors_ts_1.dump_tables()
-        t2 = ancestors_ts_2.dump_tables()
-        t1.assert_equals(t2, ignore_provenance=True)
-
-        tsinfer.check_ancestors_ts(ancestors_ts_1)
-        ts2 = tsinfer.match_samples(samples, ancestors_ts_1)
-        tsinfer.verify(samples, ts2)
-
-    def test_simple_simulation(self):
-        ts = msprime.simulate(10, mutation_rate=5, recombination_rate=15, random_seed=2)
-        self.verify(tsinfer.SampleData.from_tree_sequence(ts))
-
-    def test_random_data_small_examples(self):
-        np.random.seed(4)
-        num_random_tests = 10
-        for _ in range(num_random_tests):
-            G, positions = get_random_data_example(5, 10)
-            with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
-                for j in range(G.shape[0]):
-                    samples.add_site(positions[j], G[j])
-            self.verify(samples)
-
-    def test_random_data_large_example(self):
-        np.random.seed(5)
-        G, positions = get_random_data_example(15, 100)
-        with tsinfer.SampleData(sequence_length=G.shape[0]) as samples:
-            for j in range(G.shape[0]):
-                samples.add_site(positions[j], G[j])
-        self.verify(samples)
-
-
 class TestAugmentedAncestors:
     """
     Tests for augmenting an ancestors tree sequence with samples.
@@ -4156,19 +4022,19 @@ class TestAugmentedAncestors:
 
     def test_simulation_with_error(self):
         ts = msprime.simulate(100, mutation_rate=5, random_seed=5, recombination_rate=8)
-        ts = eval_util.insert_errors(ts, 0.1, seed=32)
+        ts = tsutil.insert_errors(ts, 0.1, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_intermediate_simulation_with_error(self):
         ts = msprime.simulate(10, mutation_rate=5, random_seed=78, recombination_rate=8)
-        ts = eval_util.insert_errors(ts, 0.1, seed=32)
+        ts = tsutil.insert_errors(ts, 0.1, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
     def test_small_simulation_with_error(self):
         ts = msprime.simulate(5, mutation_rate=5, random_seed=5, recombination_rate=8)
-        ts = eval_util.insert_errors(ts, 0.1, seed=32)
+        ts = tsutil.insert_errors(ts, 0.1, seed=32)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts, use_sites_time=False)
         self.verify(sample_data)
 
