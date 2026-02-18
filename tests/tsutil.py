@@ -20,7 +20,10 @@
 Extra utility functions used in several test files
 """
 
+import bisect
+import collections
 import json
+import random
 import tempfile
 from pathlib import Path
 
@@ -32,6 +35,7 @@ import xarray as xr
 import zarr
 
 import tsinfer
+import tsinfer.inference as inference
 
 
 def mark_mutation_times_unknown(ts):
@@ -523,3 +527,391 @@ def make_materialized_and_masked_sampledata(tmp_path, tmpdir):
         sample_mask="samples_mask_foobar",
     )
     return mat_sd, mask_sd, samples_mask, variant_mask
+
+
+def insert_errors(ts, probability, seed=None):
+    """
+    Each site has a probability p of generating an error. Errors
+    are imposed by choosing a sample and inverting its state with
+    a back/recurrent mutation as necessary. Errors resulting in
+    fixation of either allele are rejected.
+
+    NOTE: this hasn't been verified and may not have the desired
+    statistical properties!
+    """
+    tables = ts.dump_tables()
+    rng = random.Random(seed)
+    tables.mutations.clear()
+    samples = ts.samples()
+    for tree in ts.trees():
+        for site in tree.sites():
+            assert len(site.mutations) == 1
+            mutation_node = site.mutations[0].node
+            tables.mutations.add_row(site=site.id, node=mutation_node, derived_state="1")
+            for sample in samples:
+                # We disallow any fixations. There are two possibilities:
+                # (1) We have a singleton and the sample
+                # we choose is the mutation node; (2) we have a (n-1)-ton
+                # and the sample we choose is on the other root branch.
+                if mutation_node == sample:
+                    continue
+                if {mutation_node, sample} == set(tree.children(tree.root)):
+                    continue
+                # If the input probability is very high we can still get fixations
+                # though by placing a mutation over every sample.
+                if rng.random() < probability:
+                    # If sample is a descendent of the mutation node we
+                    # change the state to 0, otherwise change state to 1.
+                    u = sample
+                    while u != mutation_node and u != tskit.NULL:
+                        u = tree.parent(u)
+                    derived_state = str(int(u == tskit.NULL))
+                    parent = tskit.NULL
+                    if u == tskit.NULL:
+                        parent = len(tables.mutations) - 1
+                    tables.mutations.add_row(
+                        site=site.id,
+                        node=sample,
+                        parent=parent,
+                        derived_state=derived_state,
+                    )
+    tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
+    return tables.tree_sequence()
+
+
+def make_ancestors_ts(ts, remove_leaves=False):
+    """
+    Return a tree sequence suitable for use as an ancestors tree sequence from the
+    specified source tree sequence. If remove_leaves is True, remove any nodes that
+    are at time zero.
+
+    We generally assume that this is a standard tree sequence, as output by
+    msprime.simulate. We remove populations, as normally ancestors tree sequences
+    do not have populations defined.
+    """
+    # Get the non-singleton sites and those with > 1 mutation
+    remove_sites = []
+    for tree in ts.trees():
+        for site in tree.sites():
+            if len(site.mutations) != 1:
+                remove_sites.append(site.id)
+            else:
+                if tree.num_samples(site.mutations[0].node) < 2:
+                    remove_sites.append(site.id)
+
+    reduced = ts.delete_sites(remove_sites)
+    minimised = inference.minimise(reduced)
+
+    tables = minimised.dump_tables()
+    # Rewrite the nodes so that 0 is one older than all the other nodes.
+    nodes = tables.nodes.copy()
+    tables.populations.clear()
+    tables.nodes.clear()
+    tables.nodes.add_row(flags=1, time=np.max(nodes.time) + 2)
+    tables.nodes.append_columns(
+        flags=np.ones_like(nodes.flags),  # Everything is a sample
+        time=nodes.time + 1,  # Make sure that all times are > 0
+        individual=nodes.individual,
+        metadata=nodes.metadata,
+        metadata_offset=nodes.metadata_offset,
+    )
+    # Add one to all node references to account for this.
+    tables.edges.set_columns(
+        left=tables.edges.left,
+        right=tables.edges.right,
+        parent=tables.edges.parent + 1,
+        child=tables.edges.child + 1,
+    )
+    tables.mutations.node += 1
+    # We could also set the time to UNKNOWN_TIME, this is a bit easier.
+    tables.mutations.time += 1
+
+    trees = minimised.trees()
+    tree = next(trees)
+    left = 0
+    # To simplify things a bit we assume that there's one root. This can
+    # violated if we've got no sites at the end of the sequence and get
+    # n roots instead.
+    root = tree.root
+    for tree in trees:
+        if tree.root != root:
+            tables.edges.add_row(left, tree.interval[0], 0, root + 1)
+            root = tree.root
+            left = tree.interval[0]
+    tables.edges.add_row(left, ts.sequence_length, 0, root + 1)
+    tables.sort()
+    if remove_leaves:
+        # Assume that all leaves are at time 1.
+        samples = np.where(tables.nodes.time != 1)[0].astype(np.int32)
+        tables.simplify(samples=samples)
+    new_ts = tables.tree_sequence()
+    return new_ts
+
+
+def strip_singletons(ts):
+    """
+    Returns a copy of the specified tree sequence with singletons removed.
+    """
+    tables = ts.dump_tables()
+    tables.sites.clear()
+    tables.mutations.clear()
+    for variant in ts.variants():
+        if np.sum(variant.genotypes) > 1:
+            site_id = tables.sites.add_row(
+                position=variant.site.position,
+                ancestral_state=variant.site.ancestral_state,
+                metadata=variant.site.metadata,
+            )
+            assert len(variant.site.mutations) >= 1
+            mutation = variant.site.mutations[0]
+            parent_id = tables.mutations.add_row(
+                site=site_id,
+                node=mutation.node,
+                derived_state=mutation.derived_state,
+                metadata=mutation.metadata,
+            )
+            for error in variant.site.mutations[1:]:
+                parent = -1
+                if error.parent != -1:
+                    parent = parent_id
+                tables.mutations.add_row(
+                    site=site_id,
+                    node=error.node,
+                    derived_state=error.derived_state,
+                    parent=parent,
+                    metadata=error.metadata,
+                )
+    return tables.tree_sequence()
+
+
+def subset_sites(ts, position, **kwargs):
+    """
+    Return a copy of the specified tree sequence with sites reduced to those
+    with positions in the specified list.
+    """
+    to_delete = np.where(np.logical_not(np.isin(ts.sites_position, position)))[0]
+    return ts.delete_sites(to_delete, **kwargs)
+
+
+def insert_perfect_mutations(ts, delta=None):
+    """
+    Returns a copy of the specified tree sequence where the left and right
+    coordinates of all edgesets are marked by mutations. This *should* be sufficient
+    information to recover the tree sequence exactly.
+
+    This has to be fudged slightly because we cannot have two sites with
+    precisely the same coordinates. We work around this by having sites at
+    some very small delta from the correct location.
+    """
+    tables = ts.dump_tables()
+    tables.sites.clear()
+    tables.mutations.clear()
+
+    num_children = np.zeros(ts.num_nodes, dtype=int)
+    parent = np.zeros(ts.num_nodes, dtype=int) - 1
+
+    current_delta = 0
+    if delta is not None:
+        current_delta = delta
+
+    for (left, right), edges_out, edges_in in ts.edge_diffs():
+        last_num_children = list(num_children)
+        children_in = set()
+        children_out = set()
+        parents_in = set()
+        parents_out = set()
+        for e in edges_out:
+            # print("out:", e)
+            parent[e.child] = -1
+            num_children[e.parent] -= 1
+            children_out.add(e.child)
+            parents_out.add(e.parent)
+        for e in edges_in:
+            # print("in:", e)
+            parent[e.child] = e.parent
+            num_children[e.parent] += 1
+            children_in.add(e.child)
+            parents_in.add(e.parent)
+        root = 0
+        while parent[root] != -1:
+            root = parent[root]
+        # If we have more than 4 edges in the diff, or we have a 2 edge diff
+        # that is not a root change this must be a multiple recombination.
+        if len(edges_out) > 4 or (len(edges_out) == 2 and root not in parents_in):
+            raise ValueError("Multiple recombination detected")
+        # We use the value of delta from the previous iteration
+        x = left - current_delta
+        for u in list(children_out - children_in) + list(children_in & children_out):
+            if last_num_children[u] > 0:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+                x -= current_delta
+
+        # Now update delta for this interval.
+        if delta is None:
+            max_nodes = 2 * (len(children_out) + len(children_in)) + len(parents_in) + 1
+            current_delta = (right - left) / max_nodes
+        x = left
+        for c in list(children_in - children_out) + list(children_in & children_out):
+            if num_children[c] > 0:
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=c, derived_state="1")
+                x += current_delta
+
+        # It seems wrong that we have to mark every parent, since a few of these
+        # will already have been marked out by the children.
+        for u in parents_in:
+            if parent[u] != -1:
+                # print("marking in parent", u, "at", x)
+                site_id = tables.sites.add_row(position=x, ancestral_state="0")
+                tables.mutations.add_row(site=site_id, node=u, derived_state="1")
+                x += current_delta
+    tables.sort()
+    return tables.tree_sequence()
+
+
+def build_simulated_ancestors(sample_data, ancestor_data, ts, time_chunking=False):
+    # Any non-smc tree sequences are rejected.
+    assert_smc(ts)
+    assert ancestor_data.num_sites > 0
+    A = get_ancestral_haplotypes(ts)
+    # This is all nodes, but we only want the non samples. We also reverse
+    # the order to make it forwards time.
+    A = A[ts.num_samples :][::-1]
+
+    # get_ancestor_descriptors ensures that the ultimate ancestor is included.
+    ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
+    N = len(ancestors)
+    if time_chunking:
+        time = np.zeros(N)
+        intersect_mask = np.zeros(A.shape[1], dtype=int)
+        t = 0
+        for j in range(N):
+            if np.any(intersect_mask[start[j] : end[j]] == 1):
+                t += 1
+                intersect_mask[:] = 0
+            intersect_mask[start[j] : end[j]] = 1
+            time[j] = t
+    else:
+        time = np.arange(N)
+    time = -1 * (time - time[-1]) + 1
+    for a, s, e, focal, t in zip(ancestors, start, end, focal_sites, time):
+        assert np.all(a[:s] == tskit.MISSING_DATA)
+        assert np.all(a[s:e] != tskit.MISSING_DATA)
+        assert np.all(a[e:] == tskit.MISSING_DATA)
+        assert all(s <= site < e for site in focal)
+        ancestor_data.add_ancestor(
+            start=s,
+            end=e,
+            time=t,
+            focal_sites=np.array(focal, dtype=np.int32),
+            haplotype=a[s:e],
+        )
+
+
+def assert_smc(ts):
+    """
+    Check if the specified tree sequence fulfils SMC requirements. This
+    means that we cannot have any discontinuous parent segments.
+    """
+    parent_intervals = collections.defaultdict(list)
+    for es in ts.edgesets():
+        parent_intervals[es.parent].append((es.left, es.right))
+    for intervals in parent_intervals.values():
+        if len(intervals) > 0:
+            intervals.sort()
+            for j in range(1, len(intervals)):
+                if intervals[j - 1][1] != intervals[j][0]:
+                    raise ValueError("Only SMC simulations are supported")
+
+
+def get_ancestral_haplotypes(ts):
+    """
+    Returns a numpy array of the haplotypes of the ancestors in the
+    specified tree sequence.
+    """
+    tables = ts.dump_tables()
+    nodes = tables.nodes
+    flags = nodes.flags[:]
+    flags[:] = 1
+    nodes.set_columns(time=nodes.time, flags=flags)
+
+    sites = tables.sites.position
+    tsp = tables.tree_sequence()
+    B = tsp.genotype_matrix().T
+
+    A = np.full((ts.num_nodes, ts.num_sites), tskit.MISSING_DATA, dtype=np.int8)
+    for edge in ts.edges():
+        start = bisect.bisect_left(sites, edge.left)
+        end = bisect.bisect_right(sites, edge.right)
+        if sites[end - 1] == edge.right:
+            end -= 1
+        A[edge.parent, start:end] = B[edge.parent, start:end]
+    A[: ts.num_samples] = B[: ts.num_samples]
+    return A
+
+
+def get_ancestor_descriptors(A):
+    """
+    Given an array of ancestral haplotypes A in forwards time-order (i.e.,
+    so that A[0] == 0), return the descriptors for each ancestor within
+    this set and remove any ancestors that do not have any novel mutations.
+    Returns the list of ancestors, the start and end site indexes for
+    each ancestor, and the list of focal sites for each one.
+
+    This assumes that the input is SMC safe, and will return incorrect
+    results on ancestors that contain trapped genetic material.
+    """
+    L = A.shape[1]
+    ancestors = [np.zeros(L, dtype=np.int8)]
+    focal_sites = [[]]
+    start = [0]
+    end = [L]
+    # ancestors = []
+    # focal_sites = []
+    # start = []
+    # end = []
+    mask = np.ones(L)
+    for a in A:
+        masked = np.logical_and(a == 1, mask).astype(int)
+        new_sites = np.where(masked)[0]
+        mask[new_sites] = 0
+        segment = np.where(a != tskit.MISSING_DATA)[0]
+        # Skip any ancestors that are entirely unknown
+        if segment.shape[0] > 0:
+            s = segment[0]
+            e = segment[-1] + 1
+            assert np.all(a[s:e] != tskit.MISSING_DATA)
+            assert np.all(a[:s] == tskit.MISSING_DATA)
+            assert np.all(a[e:] == tskit.MISSING_DATA)
+            ancestors.append(a)
+            focal_sites.append(new_sites)
+            start.append(s)
+            end.append(e)
+    return np.array(ancestors, dtype=np.int8), start, end, focal_sites
+
+
+def check_ancestors_ts(ts):
+    """
+    Checks if the specified tree sequence has the required properties for an
+    ancestors tree sequence.
+    """
+    # An empty tree sequence is always fine.
+    if ts.num_nodes == 0:
+        return
+    tables = ts.tables
+    if np.any(tables.nodes.time <= 0):
+        raise ValueError("All nodes must have time > 0")
+
+    for tree in ts.trees():
+        # 0 must always be a root and have at least one child.
+        if tree.parent(0) != tskit.NULL:
+            raise ValueError("0 is not a root: non null parent")
+        if tree.left_child(0) == tskit.NULL:
+            raise ValueError("0 must have at least one child")
+        for root in tree.roots:
+            if root != 0:
+                if tree.left_child(root) != tskit.NULL:
+                    raise ValueError("All non empty subtrees must inherit from 0")
