@@ -1086,6 +1086,10 @@ TreeSequenceBuilder_freeze_indexes(TreeSequenceBuilder *self)
     int err;
     PyObject *ret = NULL;
 
+    if (TreeSequenceBuilder_check_state(self) != 0) {
+        goto out;
+    }
+
     err = tree_sequence_builder_freeze_indexes(self->tree_sequence_builder);
     if (err != 0) {
         handle_library_error(err);

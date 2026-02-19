@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2020 University of Oxford
+# Copyright (C) 2018-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -20,6 +20,7 @@
 Integrity tests for the low-level module.
 """
 
+import inspect
 import sys
 
 import numpy as np
@@ -172,6 +173,22 @@ class TestTreeSequenceBuilder:
                 [2, 3], ancestral_state=np.array([0, 3], dtype=np.int8)
             )
 
+    def test_add_path_errors(self):
+        # Tree 1: ancestral state = 0, node n1 has mutation to state 1
+        tsb = _tsinfer.TreeSequenceBuilder(
+            [2, 2], ancestral_state=np.array([0, 0], dtype=np.int8)
+        )
+        with pytest.raises(TypeError):
+            tsb.add_path()
+        with pytest.raises(TypeError):
+            tsb.add_path(child="bad", left=[0], right=[2], parent=[0])
+        with pytest.raises(ValueError, match="bad"):
+            tsb.add_path(child=0, left="bad", right=[2], parent=[0])
+        with pytest.raises(ValueError, match="bad"):
+            tsb.add_path(child=0, left=[0], right=["bad"], parent=[0])
+        with pytest.raises(ValueError, match="bad"):
+            tsb.add_path(child=0, left=[0], right=[2], parent=["bad"])
+
     def test_ancestral_state_matching(self):
         # Build two identical tree structures but with different ancestral states
         # and verify the allelic states of nodes differ based on ancestral state
@@ -269,4 +286,66 @@ class TestAncestorBuilder:
                 msg = "Cannot add more sites than the specified maximum."
                 assert str(record.value) == msg
 
-    # TODO need tester methods for the remaining methonds in the class.
+    def test_make_ancestor(self):
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=2)
+        ab.add_site(time=1, genotypes=[0, 1])
+        ab.add_site(time=2, genotypes=[1, 0])
+        for _, focal_sites in ab.ancestor_descriptors():
+            a = np.zeros(2, dtype=np.int8)
+            start, end = ab.make_ancestor(focal_sites, a)
+            assert start == 0
+            assert end == 2
+            assert np.all(a >= 0)
+
+    def test_getters(self):
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=2)
+        ab.add_site(time=1, genotypes=[0, 1])
+        ab.add_site(time=2, genotypes=[1, 0])
+        A = list(ab.ancestor_descriptors())
+        assert ab.num_sites == 2
+        assert ab.num_ancestors == len(A)
+        assert ab.mem_size > 0
+
+    def test_make_ancestor_errors(self):
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=1)
+        ab.add_site(time=1, genotypes=[0, 1])
+        a = np.zeros(1, dtype=np.int8)
+        with pytest.raises(TypeError):
+            ab.make_ancestor()
+        with pytest.raises(ValueError, match="num_focal_sites must > 0"):
+            ab.make_ancestor([], a)
+        with pytest.raises(ValueError, match="x"):
+            ab.make_ancestor(["x"], a)
+        with pytest.raises(ValueError, match="Dim != 1"):
+            ab.make_ancestor([[0, 1]], a)
+        with pytest.raises(TypeError, match="Cannot cast"):
+            ab.make_ancestor([0], np.array(["type"]))
+        with pytest.raises(ValueError, match="wrong size"):
+            ab.make_ancestor([0], np.zeros(100, dtype=np.int8))
+
+
+def test_uninitialised():
+    for _, cls in inspect.getmembers(_tsinfer):
+        if (
+            isinstance(cls, type)
+            and not issubclass(cls, Exception)
+            and not issubclass(cls, tuple)
+        ):
+            methods = []
+            attributes = []
+            for name, value in inspect.getmembers(cls):
+                if not name.startswith("__"):
+                    if inspect.isdatadescriptor(value):
+                        attributes.append(name)
+                    else:
+                        methods.append(name)
+            uninitialised = cls.__new__(cls)
+            for attr in attributes:
+                with pytest.raises((SystemError, ValueError)):
+                    getattr(uninitialised, attr)
+                with pytest.raises((SystemError, ValueError, AttributeError)):
+                    setattr(uninitialised, attr, None)
+            for method_name in methods:
+                method = getattr(uninitialised, method_name)
+                with pytest.raises((SystemError, ValueError)):
+                    method()
