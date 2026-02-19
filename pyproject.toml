@@ -48,7 +48,6 @@ keywords = [
 ]
 dependencies = [
     "numpy>=2",
-    "six",
     "tqdm",
     "humanize",
     "daiquiri",
@@ -56,10 +55,8 @@ dependencies = [
     "zarr<3",
     "lmdb",
     "sortedcontainers",
-    "attrs",
     "numba",
     "psutil",
-    "bio2zarr>=0.1.7",
 ]
 
 # TODO add these as pypi extra installs. We'd need to install
@@ -80,63 +77,36 @@ tsinfer = "tsinfer.__main__:main"
 
 [dependency-groups]
 test = [
-    "colorama",
-    "humanize",
-    "lmdb",
-    "meson",
+    "setuptools",
+    "bio2zarr[tskit]",
     "msprime",
     "pytest",
     "pytest-cov",
     "pytest-xdist",
-    "bio2zarr[tskit]",
-    "setuptools",
-    "tskit",
-    "tqdm",
     "xarray",
 ]
 
 docs = [
+    "bio2zarr[tskit,vcf]",
+    "humanize",
+    "ipywidgets",
     "jupyter-book<2",
-    "sphinx-issues",
+    "msprime",
+    "pyfaidx",
     "sphinx-argparse",
     "sphinx-book-theme",
-    "humanize",
-    "msprime",
-    "ipywidgets",
-    "pyfaidx",
-    "bio2zarr[tskit,vcf]",
+    "sphinx-issues",
 ]
 
 lint = [
     "clang-format==21.1.8",
     "prek",
-    "ruff",
 ]
 
 dev = [
-    "attrs",
-    "flake8",
-    "tqdm",
-    "humanize",
-    "pytest-xdist",
-    "msprime>=1.0.0",
-    "tskit>=1.0.0",
-    "lmdb",
-    "pytest",
-    "pytest-coverage",
-    "sortedcontainers",
-    "sphinx",
-    "sphinx-argparse",
-    "sphinx_rtd_theme",
-    "sphinx-book-theme",
-    "jupyter-book<2",
-    "sphinx-issues",
-    "ipywidgets",
-    "pyfaidx",
-    "clang-format==21.1.8",
-    "prek",
-    "ruff",
-    "xarray",
+    {include-group = "docs"},
+    {include-group = "lint"},
+    {include-group = "test"},
 ]
 
 [tool.setuptools]
