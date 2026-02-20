@@ -98,9 +98,11 @@ docs = [
     "sphinx-issues",
 ]
 
+# Fully pin lint requirements for determinism. 
 lint = [
     "clang-format==21.1.8",
-    "prek",
+    "ruff==0.15.1",
+    "prek==0.3.3",
 ]
 
 dev = [
