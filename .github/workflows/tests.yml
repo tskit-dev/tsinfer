@@ -26,6 +26,19 @@ jobs:
     uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@main
     secrets: inherit
 
+  test:
+    name: Python
+    uses: tskit-dev/.github/.github/workflows/python-tests.yml@main
+    with:
+      os: ${{ matrix.os }}
+      python-version: ${{ matrix.python }}
+      coverage-directory: tsinfer
+    secrets: inherit
+    strategy:
+      matrix:
+        python: [ 3.11, 3.13 ]
+        os:  [ macos-latest, ubuntu-24.04, windows-latest ]
+
   zarr-v3-compatibility:
     name: Test zarr v3 error
     runs-on: ubuntu-latest
@@ -53,45 +66,4 @@ jobs:
       - name: Test zarr v3 error
         run: |
           uv run --no-sync python -c "import tsinfer" 2>&1 | grep -q "zarr version.*is not supported"
-
-  test:
-    name: Python
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python: [ 3.11, 3.13 ]
-        os:  [ macos-latest, ubuntu-24.04, windows-latest ]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
-
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-        with:
-          submodules: true
-
-      - name: Install uv and set the python version
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: ${{ matrix.python }}
-          version: "0.8.15"
-
-      - name: Install Python dependencies
-        run: uv sync --locked --group test --no-default-groups
-
-      - name: Run tests
-        run: uv run --no-default-groups pytest --cov=tsinfer --cov-report=xml --cov-branch -n2
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5.4.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: python
-          fail_ci_if_error: true
 
