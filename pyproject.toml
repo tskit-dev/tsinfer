@@ -105,6 +105,15 @@ lint = [
     "prek==0.3.3",
 ]
 
+packaging = [
+  "twine",
+  "validate-pyproject[all]"
+]
+
+wheels = [
+  "cibuildwheel",
+]
+
 dev = [
     {include-group = "docs"},
     {include-group = "lint"},
@@ -159,3 +168,15 @@ known-third-party = [
   "xarray",
   "zarr"
 ]
+
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp313-*", "cp314"]
+build-frontend = "build"
+build-verbosity = 1
+test-command = [
+  "python -c \"import _tsinfer\"",
+  "tsinfer --help",
+]
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
