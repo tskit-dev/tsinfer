@@ -9,6 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 write_to = "tsinfer/_version.py"
+local_scheme = "no-local-version"
 
 [project]
 name = "tsinfer"
@@ -105,6 +106,15 @@ lint = [
     "prek==0.3.3",
 ]
 
+packaging = [
+  "twine",
+  "validate-pyproject[all]"
+]
+
+wheels = [
+  "cibuildwheel",
+]
+
 dev = [
     {include-group = "docs"},
     {include-group = "lint"},
@@ -158,4 +168,20 @@ known-third-party = [
   "setuptools",
   "xarray",
   "zarr"
+]
+
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp313-*"]
+build-frontend = "build"
+build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+skip = ["*musllinux*"]
+
+# We can only install reasonably on linux because of numba.
+# FIXME: https://github.com/tskit-dev/tsinfer/issues/1097
+test-command = [
+  "python -c \"import _tsinfer\"",
+  "tsinfer --help",
 ]
