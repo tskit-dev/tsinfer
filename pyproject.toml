@@ -176,6 +176,7 @@ build-verbosity = 1
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]
+skip = ["*musllinux*"]
 test-command = [
   "python -c \"import _tsinfer\"",
   "tsinfer --help",
