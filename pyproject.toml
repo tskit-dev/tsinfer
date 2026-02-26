@@ -170,7 +170,7 @@ known-third-party = [
 ]
 
 [tool.cibuildwheel]
-build = ["cp311-*", "cp312-*", "cp313-*", "cp314-*"]
+build = ["cp311-*", "cp312-*", "cp313-*"]
 build-frontend = "build"
 build-verbosity = 1
 test-command = [
