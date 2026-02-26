@@ -173,14 +173,10 @@ known-third-party = [
 build = ["cp311-*", "cp312-*", "cp313-*"]
 build-frontend = "build"
 build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
 test-command = [
   "python -c \"import _tsinfer\"",
   "tsinfer --help",
 ]
-
-[tool.cibuildwheel.linux]
-archs = ["x86_64"]
-
-[[tool.cibuildwheel.overrides]]
-select = "*-macosx_x86_64"
-test-command = ""
