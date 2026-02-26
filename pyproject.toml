@@ -182,5 +182,5 @@ test-command = [
 archs = ["x86_64"]
 
 [[tool.cibuildwheel.overrides]]
-select = "cp311-macosx_x86_64"
+select = "*-macosx_x86_64"
 test-command = ""
