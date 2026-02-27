@@ -119,7 +119,25 @@ dev = [
     {include-group = "docs"},
     {include-group = "lint"},
     {include-group = "test"},
+    {include-group = "packaging"},
 ]
+
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp313-*", "cp314-*"]
+test-command = [
+    "python -c \"import _tsinfer\"",
+    "tsinfer --help",
+]
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+skip = ["*musllinux*"]
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
 
 [tool.setuptools]
 packages = ["tsinfer"]
