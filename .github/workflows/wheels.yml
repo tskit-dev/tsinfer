@@ -13,7 +13,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     environment: release
-    needs: [ 'build-wheels' ]
+    needs: [build-wheels]
     permissions:
       id-token: write
     steps:
@@ -27,13 +27,13 @@ jobs:
       - name: Show artifacts
         run: ls -lah dist
 
-      - name: Publish distribution to Test PyPI
+      - name: Publish to TestPyPI
         if: github.event_name == 'push' && github.ref_name == 'test-publish'
         uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           repository-url: https://test.pypi.org/legacy/
           verbose: true
 
-      - name: Publish distribution to Production PyPI
+      - name: Publish to PyPI
         if: github.event_name == 'release'
         uses: pypa/gh-action-pypi-publish@v1.13.0
