@@ -2883,6 +2883,8 @@ dev = [
     { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
     { name = "sphinx-issues" },
+    { name = "twine" },
+    { name = "validate-pyproject", extra = ["all"] },
     { name = "xarray" },
 ]
 docs = [
@@ -2951,6 +2953,8 @@ dev = [
     { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
     { name = "sphinx-issues" },
+    { name = "twine" },
+    { name = "validate-pyproject", extras = ["all"] },
     { name = "xarray" },
 ]
 docs = [
