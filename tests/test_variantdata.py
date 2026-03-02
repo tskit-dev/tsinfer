@@ -25,13 +25,17 @@ import logging
 import sys
 import warnings
 
-import bio2zarr.tskit as ts2z
 import msprime
 import numcodecs
 import numpy as np
 import pytest
 import tskit
 import zarr
+
+ts2z = pytest.importorskip(
+    "bio2zarr.tskit",
+    reason="bio2zarr.tskit is not available with this dependency resolution",
+)
 
 import tsinfer
 import tsutil

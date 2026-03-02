@@ -2245,7 +2245,7 @@ class TestAncestorData(DataContainerMixin):
             with tsinfer.SampleData(path=filename) as sample_data:
                 for var in ts.variants():
                     sample_data.add_site(var.site.position, var.genotypes)
-            store = zarr.LMDBStore(filename, subdir=False)
+            store = formats._lmdb_store(filename, subdir=False)
             data = zarr.open(store=store, mode="w+")
             data.attrs["sequence_length"] = 0
             store.close()
@@ -2686,16 +2686,14 @@ class BufferedItemWriterMixin:
     def test_json_object_array(self):
         for chunks in [2, 5, 10, 100]:
             n = 10
-            z = zarr.empty(
-                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,)
-            )
+            z = zarr.empty(n, dtype="str", chunks=(chunks,))
             for j in range(n):
-                z[j] = {str(k): k for k in range(j)}
+                z[j] = json.dumps({str(k): k for k in range(j)}, sort_keys=True)
             self.filter_warnings_verify_round_trip({"z": z})
 
     def test_empty_string_list(self):
-        z = zarr.empty(1, dtype=object, object_codec=numcodecs.JSON(), chunks=(2,))
-        z[0] = ["", ""]
+        z = zarr.empty(1, dtype="str", chunks=(2,))
+        z[0] = json.dumps(["", ""])
         self.filter_warnings_verify_round_trip({"z": z})
 
     def test_mixed_chunk_sizes(self):
