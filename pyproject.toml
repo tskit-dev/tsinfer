@@ -53,7 +53,7 @@ dependencies = [
     "humanize",
     "daiquiri",
     "tskit>=1.0.0",
-    "zarr<3",
+    "zarr>=3.1",
     "lmdb",
     "sortedcontainers",
     "numba",
