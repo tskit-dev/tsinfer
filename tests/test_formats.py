@@ -2246,7 +2246,7 @@ class TestAncestorData(DataContainerMixin):
                 for var in ts.variants():
                     sample_data.add_site(var.site.position, var.genotypes)
             store = formats._lmdb_store(filename, subdir=False)
-            data = zarr.open(store=store, mode="w+")
+            data = zarr.open(store=store, mode="r+")
             data.attrs["sequence_length"] = 0
             store.close()
             sample_data = tsinfer.load(filename)
@@ -2671,16 +2671,16 @@ class BufferedItemWriterMixin:
 
     def test_ragged_array_int32(self):
         n = 10
-        z = zarr.empty(n, dtype="array:i4")
+        z = zarr.empty(n, dtype="str")
         for j in range(n):
-            z[j] = np.arange(j)
+            z[j] = json.dumps(np.arange(j).tolist())
         self.filter_warnings_verify_round_trip({"z": z})
 
     def test_square_object_array_int32(self):
         n = 10
-        z = zarr.empty(n, dtype="array:i4")
+        z = zarr.empty(n, dtype="str")
         for j in range(n):
-            z[j] = np.arange(n)
+            z[j] = json.dumps(np.arange(n).tolist())
         self.filter_warnings_verify_round_trip({"z": z})
 
     def test_json_object_array(self):
