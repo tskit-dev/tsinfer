@@ -56,7 +56,7 @@ for site_id, pos in enumerate(positions):
     print(f"      position {pos}:", end="   ")
     for sample_id in range(num_samples):
         genotypes = G[site_id, sample_id, :]
-        site_alleles = alleles[site_id].astype(str)
+        site_alleles = alleles[site_id]
         print(" ".join(f"{a:<4}" for a in site_alleles[genotypes.flatten()]), end="   ")
     print()
 ```
@@ -105,7 +105,7 @@ Ancestral states can be specified in several ways:
   as the ancestral state, you can take advantage of the fact that the .vcz format
   always stores the zeroth allele as the REF, suggesting the following syntax:
   ```{code}
-  vcf_zarr = zarr.load("file.vcz")
+  vcf_zarr = zarr.open("file.vcz")
   vdata = tsinfer.VariantData("file.vcz", ancestral_state=vcf_zarr["variant_allele"][:, 0])
   ```
   A worked example of using an array of strings is provided in the
@@ -286,10 +286,10 @@ vcf_zarr = zarr.open("_static/example_data.vcz")
 
 # mask out any sites not associated with the contig named "chr1"
 # (for demonstration: all sites in this .vcz file are from "chr1" anyway)
-chr1_index = np.where(vcf_zarr.contig_id[:] == "chr1")[0]
-site_mask = vcf_zarr.variant_contig[:] != chr1_index
+chr1_index = np.where(vcf_zarr["contig_id"][:] == "chr1")[0]
+site_mask = vcf_zarr["variant_contig"][:] != chr1_index
 # also mask out any sites with a position >= 80
-site_mask[vcf_zarr.variant_position[:] >= 80] = True
+site_mask[vcf_zarr["variant_position"][:] >= 80] = True
 
 smaller_vdata = tsinfer.VariantData(
     "_static/example_data.vcz",
@@ -423,7 +423,7 @@ Once we have our `.vcz` file created, running the inference is straightforward.
 
 ```{code-cell} ipython3
 # Infer & save a ts from the notebook simulation.
-vcf_zarr = zarr.load(f"{name}.vcz")  # currently must load the zarr to get ancestral states
+vcf_zarr = zarr.open(f"{name}.vcz")
 vdata = tsinfer.VariantData(f"{name}.vcz", ancestral_state=vcf_zarr["variant_allele"][:, 0])
 inferred_ts = tsinfer.infer(vdata, progress_monitor=True, num_threads=4)
 inferred_ts.dump(name + ".trees")
@@ -581,27 +581,44 @@ import numpy as np
 import tskit
 import zarr
 
-vcf_zarr = zarr.load("sparrows.vcz")
+vcf_zarr = zarr.open("sparrows.vcz")
 
 populations = ("Norway", "France")
-# save the population data in json format
-schema = json.dumps(tskit.MetadataSchema.permissive_json().schema).encode()
-zarr.save("sparrows.vcz/populations_metadata_schema", schema)
-metadata = [
-    json.dumps({"name": pop, "description": "The country from which this sample comes"}).encode()
-    for pop in populations
-]
-zarr.save("sparrows.vcz/populations_metadata", metadata)
+# Save the population metadata schema in the Zarr root attributes.
+vcf_zarr.attrs["populations_metadata_schema"] = json.dumps(tskit.MetadataSchema.permissive_json().schema)
+metadata = np.array(
+    [
+        json.dumps({"name": pop, "description": "The country from which this sample comes"}).encode()
+        for pop in populations
+    ]
+)
+if "populations_metadata" in vcf_zarr:
+    del vcf_zarr["populations_metadata"]
+vcf_zarr.create_dataset(
+    "populations_metadata",
+    data=metadata,
+    shape=metadata.shape,
+    chunks=metadata.shape,
+    dtype=metadata.dtype,
+)
 
 # Now assign each diploid sample to a population
 num_individuals = vcf_zarr["sample_id"].shape[0]
 individuals_population = np.full(num_individuals, tskit.NULL, dtype=np.int32)
-for i, name in enumerate(vcf_zarr["sample_id"]):
-    if name.startswith("FR"):
+for i, name in enumerate(vcf_zarr["sample_id"][:]):
+    if str(name).startswith("FR"):
         individuals_population[i] = populations.index("France")
     else:
         individuals_population[i] = populations.index("Norway")
-zarr.save("sparrows.vcz/individuals_population", individuals_population)
+if "individuals_population" in vcf_zarr:
+    del vcf_zarr["individuals_population"]
+vcf_zarr.create_dataset(
+    "individuals_population",
+    data=individuals_population,
+    shape=individuals_population.shape,
+    chunks=individuals_population.shape,
+    dtype=individuals_population.dtype,
+)
 ```
 
 (sec_usage_read_vcf_inference)=

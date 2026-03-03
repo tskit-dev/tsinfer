@@ -25,7 +25,6 @@ import logging
 import sys
 import warnings
 
-import bio2zarr.tskit as ts2z
 import msprime
 import numcodecs
 import numpy as np

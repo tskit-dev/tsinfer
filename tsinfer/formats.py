@@ -47,6 +47,7 @@ from tskit import MISSING_DATA
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
 import tsinfer.threads as threads
+from tsinfer.lmdb_store import LMDBStore as CustomLMDBStore
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ logger = logging.getLogger(__name__)
 FORMAT_NAME_KEY = "format_name"
 FORMAT_VERSION_KEY = "format_version"
 FINALISED_KEY = "finalised"
+ZARR_FORMAT = 2
 
 # We use the zstd compressor because it allows for compression of buffers
 # bigger than 2GB, which can occur in a larger instances.
@@ -65,6 +67,153 @@ DEFAULT_COMPRESSOR = numcodecs.Zstd()
 # map_size of 1GiB to avoid filling up disk space. On other platforms where
 # sparse files are supported, we default to 1TiB.
 DEFAULT_MAX_FILE_SIZE = 2**30 if sys.platform == "win32" else 2**40
+
+
+def _json_encode(value):
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _unwrap_scalar(value):
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        return _unwrap_scalar(value[()])
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _json_decode(value):
+    value = _unwrap_scalar(value)
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode()
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _encode_alleles(alleles):
+    norm = []
+    for allele in alleles:
+        if isinstance(allele, bytes):
+            norm.append(allele.decode())
+        else:
+            norm.append(allele)
+    return _json_encode(norm)
+
+
+def _decode_alleles(encoded):
+    decoded = _json_decode(encoded)
+    if isinstance(decoded, tuple):
+        return decoded
+    if isinstance(decoded, str):
+        return (decoded,)
+    return tuple(decoded)
+
+
+class _DecodedArrayView:
+    def __init__(self, array, decoder):
+        self._array = array
+        self._decoder = decoder
+
+    def __getattr__(self, name):
+        return getattr(self._array, name)
+
+    def __len__(self):
+        return len(self._array)
+
+    def __iter__(self):
+        for value in self._array:
+            yield self._decoder(value)
+
+    def __getitem__(self, key):
+        value = self._array[key]
+        if np.isscalar(value):
+            return self._decoder(value)
+        if isinstance(value, np.ndarray):
+            if value.ndim == 0:
+                return self._decoder(value[()])
+            decoded = np.empty(value.shape, dtype=object)
+            for idx in np.ndindex(value.shape):
+                decoded[idx] = self._decoder(value[idx])
+            return decoded
+        return value
+
+    def __setitem__(self, key, value):
+        self._array[key] = value
+
+
+def _JsonArrayView(array):
+    return _DecodedArrayView(array, _json_decode)
+
+
+def _StringArrayView(array):
+    return _DecodedArrayView(array, _unwrap_scalar)
+
+
+class _ScalarArrayView:
+    def __init__(self, array):
+        self._array = array
+
+    def __getattr__(self, name):
+        return getattr(self._array, name)
+
+    def __len__(self):
+        return len(self._array)
+
+    def __iter__(self):
+        for value in self._array:
+            yield _unwrap_scalar(value)
+
+    def __getitem__(self, key):
+        value = self._array[key]
+        if isinstance(value, np.ndarray) and value.ndim == 0:
+            return _unwrap_scalar(value[()])
+        return value
+
+    def __setitem__(self, key, value):
+        self._array[key] = value
+
+
+def _lmdb_store(*args, **kwargs):
+    return CustomLMDBStore(*args, **kwargs)
+
+
+def _open_group(store=None, mode="r", *, zarr_format=None):
+    kwargs = {"store": store, "mode": mode}
+    if zarr_format is not None:
+        kwargs["zarr_format"] = zarr_format
+    return zarr.open_group(**kwargs)
+
+
+def _group(store=None, *, zarr_format=None):
+    kwargs = {"store": store}
+    if zarr_format is not None:
+        kwargs["zarr_format"] = zarr_format
+    return zarr.group(**kwargs)
+
+
+def _copy_all(source, dest):
+    def copy_group(src_group, dst_group):
+        for key, value in src_group.attrs.items():
+            dst_group.attrs[key] = value
+        for name, obj in src_group.members():
+            if isinstance(obj, zarr.Group):
+                child = dst_group.create_group(name)
+                copy_group(obj, child)
+            elif isinstance(obj, zarr.Array):
+                compressor = getattr(obj, "compressor", None)
+                dst_array = dst_group.create_dataset(
+                    name,
+                    shape=obj.shape,
+                    chunks=obj.chunks,
+                    dtype=obj.dtype,
+                    compressor=compressor,
+                    fill_value=getattr(obj, "fill_value", None),
+                )
+                dst_array[:] = obj[:]
+                for k, v in obj.attrs.items():
+                    dst_array.attrs[k] = v
+
+    return copy_group(source, dest)
 
 
 def np_obj_equal(np_obj_array1, np_obj_array2):
@@ -101,7 +250,7 @@ def open_lmbd_readonly(path):
     except OSError as e:
         raise exceptions.FileFormatError(str(e)) from e
     try:
-        store = zarr.LMDBStore(
+        store = _lmdb_store(
             path, map_size=map_size, readonly=True, subdir=False, lock=False
         )
     except lmdb.InvalidError as e:
@@ -154,7 +303,7 @@ class BufferedItemWriter:
             shape[chunked_dimension] = self.chunk_size
             for j in range(self.num_buffers):
                 self.buffers[key][j] = np.empty_like(np_array)
-                self.buffers[key][j].resize(*shape)
+                self.buffers[key][j].resize(shape)
                 # We need to initialise the buffers for the arrays where only the extent
                 # of the ancestor is written
                 if key == "full_haplotype":
@@ -164,7 +313,7 @@ class BufferedItemWriter:
 
             # Make sure the destination array is zero sized at the start.
             shape[chunked_dimension] = 0
-            array.resize(*shape)
+            array.resize(shape)
 
         self.start_offset = [0 for _ in range(self.num_buffers)]
         self.num_buffered_items = [0 for _ in range(self.num_buffers)]
@@ -208,7 +357,7 @@ class BufferedItemWriter:
                     shape = list(array.shape)
                     chunked_dimension = 1 if "full_haplotype" in key else 0
                     shape[chunked_dimension] = self.current_size
-                    array.resize(*shape)
+                    array.resize(shape)
         for key, array in self.arrays.items():
             if "full_haplotype" in key:
                 buffered = self.buffers[key][write_buffer][:, :n]
@@ -463,12 +612,14 @@ class DataContainer:
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
         self._metadata_codec = numcodecs.JSON()
+        if compressor is False:
+            compressor = None
         self._compressor = compressor
-        self.data = zarr.group()
+        self.data = _group(zarr_format=ZARR_FORMAT)
         self.path = path
         if path is not None:
             store = self._new_lmdb_store(max_file_size)
-            self.data = zarr.open_group(store=store, mode="w")
+            self.data = _open_group(store=store, mode="w", zarr_format=ZARR_FORMAT)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
 
@@ -479,16 +630,14 @@ class DataContainer:
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
         provenances_group.create_dataset(
             "record",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
 
         # Register a backstop to close the current store if the object leaks
@@ -509,7 +658,10 @@ class DataContainer:
         else:
             # This happens when we finalise an in-memory container.
             store = self.data.store
-        self.data = zarr.open(store=store, mode="r")
+        try:
+            self.data = _open_group(store=store, mode="r")
+        except lmdb.Error as e:
+            raise exceptions.FileFormatError(str(e)) from e
         self._check_format()
         self._mode = self.READ_MODE
         # Refresh finalizer to target the current store
@@ -526,7 +678,7 @@ class DataContainer:
             map_size = int(map_size)
             if map_size <= 0:
                 raise ValueError("max_file_size must be > 0")
-        return zarr.LMDBStore(self.path, subdir=False, map_size=map_size)
+        return _lmdb_store(self.path, subdir=False, map_size=map_size)
 
     @classmethod
     def load(cls, path):
@@ -573,7 +725,7 @@ class DataContainer:
             # Have to work around a fairly weird bug in zarr where if we
             # try to use copy_store on an in-memory array we end up
             # overwriting the original values.
-            other.data = zarr.group()
+            other.data = _group(zarr_format=ZARR_FORMAT)
             with warnings.catch_warnings():
                 # Another workaround: if we don't absorb warnings here
                 # we get "FutureWarning: missing object_codec for object array;
@@ -581,13 +733,15 @@ class DataContainer:
                 # Zarr call it seems easiest to just ignore for now and deal with
                 # the ValueError if/when it happens
                 warnings.simplefilter("ignore")
-                zarr.copy_all(source=self.data, dest=other.data)
+                _copy_all(source=self.data, dest=other.data)
             for key, value in self.data.attrs.items():
                 other.data.attrs[key] = value
         else:
             store = other._new_lmdb_store(max_file_size)
-            zarr.copy_store(self.data.store, store)
-            other.data = zarr.group(store)
+            other.data = _open_group(store=store, mode="w", zarr_format=ZARR_FORMAT)
+            _copy_all(source=self.data, dest=other.data)
+            for key, value in self.data.attrs.items():
+                other.data.attrs[key] = value
         other.data.attrs[FINALISED_KEY] = False
         other._mode = self.EDIT_MODE
         return other
@@ -716,10 +870,10 @@ class DataContainer:
                 "Invalid operation: cannot add provenances unless in BUILD or EDIT mode"
             )
         n = self.num_provenances
-        self.provenances_timestamp.resize(n + 1)
-        self.provenances_record.resize(n + 1)
+        self.provenances_timestamp.resize((n + 1,))
+        self.provenances_record.resize((n + 1,))
         self.provenances_timestamp[n] = timestamp
-        self.provenances_record[n] = record
+        self.provenances_record[n] = _json_encode(record)
 
     def record_provenance(self, command=None, resources=None, **kwargs):
         """
@@ -741,8 +895,8 @@ class DataContainer:
                 "Invalid operation: cannot clear provenances unless in BUILD "
                 "or EDIT mode"
             )
-        self.provenances_timestamp.resize(0)
-        self.provenances_record.resize(0)
+        self.provenances_timestamp.resize((0,))
+        self.provenances_record.resize((0,))
 
     @property
     def format_name(self):
@@ -765,11 +919,11 @@ class DataContainer:
 
     @property
     def provenances_timestamp(self):
-        return self.data["provenances/timestamp"]
+        return _StringArrayView(self.data["provenances/timestamp"])
 
     @property
     def provenances_record(self):
-        return self.data["provenances/record"]
+        return _JsonArrayView(self.data["provenances/record"])
 
     def _format_str(self, values):
         """
@@ -807,11 +961,15 @@ class DataContainer:
         """
         ret = []
 
-        def visitor(name, obj):
-            if isinstance(obj, zarr.Array):
-                ret.append((name, obj))
+        def visit(group, prefix=""):
+            for name, obj in group.members():
+                path = f"{prefix}/{name}" if prefix else name
+                if isinstance(obj, zarr.Array):
+                    ret.append((path, obj))
+                elif isinstance(obj, zarr.Group):
+                    visit(obj, path)
 
-        self.data.visititems(visitor)
+        visit(self.data)
         return ret
 
     @property
@@ -833,7 +991,7 @@ class DataContainer:
         timestamp = self.provenances_timestamp[:]
         record = self.provenances_record[:]
         for j in range(self.num_provenances):
-            yield timestamp[j], record[j]
+            yield timestamp[j], _json_decode(record[j])
 
 
 @attr.s
@@ -1059,8 +1217,7 @@ class SampleData(DataContainer):
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
         populations_group.attrs["metadata_schema"] = None
         self._populations_writer = BufferedItemWriter(
@@ -1074,15 +1231,14 @@ class SampleData(DataContainer):
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
         location = individuals_group.create_dataset(
             "location",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype="array:f8",
+            dtype="str",
         )
         time = individuals_group.create_dataset(
             "time",
@@ -1157,8 +1313,7 @@ class SampleData(DataContainer):
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
         sites_group.create_dataset(
             "ancestral_allele",
@@ -1172,8 +1327,7 @@ class SampleData(DataContainer):
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype="str",
         )
 
         self._last_position = 0
@@ -1265,15 +1419,15 @@ class SampleData(DataContainer):
 
     @property
     def populations_metadata(self):
-        return self.data["populations/metadata"]
+        return _JsonArrayView(self.data["populations/metadata"])
 
     @property
     def individuals_metadata(self):
-        return self.data["individuals/metadata"]
+        return _JsonArrayView(self.data["individuals/metadata"])
 
     @property
     def individuals_location(self):
-        return self.data["individuals/location"]
+        return _JsonArrayView(self.data["individuals/location"])
 
     @property
     def individuals_time(self):
@@ -1301,7 +1455,7 @@ class SampleData(DataContainer):
 
     @property
     def sites_position(self):
-        return self.data["sites/position"]
+        return _ScalarArrayView(self.data["sites/position"])
 
     @property
     def sites_time(self):
@@ -1310,7 +1464,12 @@ class SampleData(DataContainer):
     @sites_time.setter
     def sites_time(self, value):
         self._check_edit_mode()
-        self.data["sites/time"][:] = np.asarray(value, dtype=np.float64)
+        value = np.asarray(value, dtype=np.float64)
+        if value.shape != self.sites_time.shape:
+            raise ValueError(
+                "sites_time must have shape equal to the current number of sites"
+            )
+        self.data["sites/time"][:] = value
 
     @property
     def sites_alleles(self):
@@ -1318,7 +1477,7 @@ class SampleData(DataContainer):
         The alleles list for each site, in the order given when adding sites. If
         missing data is present, the last allelic state will be ``None``.
         """
-        return self.data["sites/alleles"]
+        return _JsonArrayView(self.data["sites/alleles"])
 
     @property
     def sites_ancestral_allele(self):
@@ -1336,7 +1495,7 @@ class SampleData(DataContainer):
 
     @property
     def sites_metadata(self):
-        return self.data["sites/metadata"]
+        return _JsonArrayView(self.data["sites/metadata"])
 
     def __str__(self):
         values = [
@@ -1712,7 +1871,7 @@ class SampleData(DataContainer):
     def _alloc_site_writer(self):
         if self.num_samples < 1:
             raise ValueError("Must have at least 1 sample")
-        self.sites_genotypes.resize(0, self.num_samples)
+        self.sites_genotypes.resize((0, self.num_samples))
         arrays = {
             "position": self.sites_position,
             "genotypes": self.sites_genotypes,
@@ -1741,7 +1900,9 @@ class SampleData(DataContainer):
         self._check_build_mode()
         if self._build_state != self.ADDING_POPULATIONS:
             raise ValueError("Cannot add populations after adding samples or sites")
-        return self._populations_writer.add(metadata=self._check_metadata(metadata))
+        return self._populations_writer.add(
+            metadata=_json_encode(self._check_metadata(metadata))
+        )
 
     def add_individual(
         self,
@@ -1807,8 +1968,8 @@ class SampleData(DataContainer):
         if flags is None:
             flags = 0
         individual_id = self._individuals_writer.add(
-            metadata=self._check_metadata(metadata),
-            location=location,
+            metadata=_json_encode(self._check_metadata(metadata)),
+            location=_json_encode(location.tolist()),
             time=time,
             population=population,
             flags=flags,
@@ -1959,8 +2120,8 @@ class SampleData(DataContainer):
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
-            metadata=self._check_metadata(metadata),
-            alleles=alleles,
+            metadata=_json_encode(self._check_metadata(metadata)),
+            alleles=_encode_alleles(alleles),
             time=time,
             ancestral_allele=ancestral_allele,
         )
@@ -1998,7 +2159,7 @@ class SampleData(DataContainer):
         for other in additional_samples:
             for name, arr in self.arrays():
                 if name.startswith("sites/"):
-                    arr.append(other.data[name])
+                    arr.append(other.data[name][:])
 
     def finalise(self):
         if self._mode == self.BUILD_MODE:
@@ -2124,12 +2285,13 @@ class SampleData(DataContainer):
             ids = np.arange(0, self.num_sites, dtype=int)
         for j in ids:
             anc_idx = ancestral_allele_array[j]
+            alleles = _decode_alleles(alleles_array[j])
             site = Site(
                 id=j,
                 position=position_array[j],
                 ancestral_allele=anc_idx,
-                alleles=tuple(alleles_array[j]),
-                metadata=metadata_array[j],
+                alleles=alleles,
+                metadata=_json_decode(metadata_array[j]),
                 time=time_array[j],
             )
             yield site
@@ -2149,6 +2311,7 @@ class SampleData(DataContainer):
             sites = np.arange(self.num_sites)
         num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
         for j, alleles in enumerate(self.sites_alleles):
+            alleles = _decode_alleles(alleles)
             # Filter out empty alleles (generated by, for example sgkit)
             num_alleles[j] = len(
                 [allele for allele in alleles if allele != b"" and allele != ""]
@@ -2269,8 +2432,8 @@ class SampleData(DataContainer):
         # we can compare individuals using ==
         return Individual(
             id_,
-            location=list(self.individuals_location[id_]),
-            metadata=self.individuals_metadata[id_],
+            location=_json_decode(self.individuals_location[id_]),
+            metadata=_json_decode(self.individuals_metadata[id_]),
             time=self.individuals_time[id_],
             population=self.individuals_population[id_],
             samples=list(samples),
@@ -2292,8 +2455,8 @@ class SampleData(DataContainer):
         for j, (location, metadata, time, population, flags) in enumerate(iterator):
             yield Individual(
                 j,
-                location=list(location),
-                metadata=metadata,
+                location=_json_decode(location),
+                metadata=_json_decode(metadata),
                 time=time,
                 population=population,
                 samples=individual_samples[j],
@@ -2315,13 +2478,13 @@ class SampleData(DataContainer):
 
     def population(self, id_):
         # TODO document
-        return Population(id_, metadata=self.populations_metadata[id_])
+        return Population(id_, metadata=_json_decode(self.populations_metadata[id_]))
 
     def populations(self):
         # TODO document
         iterator = self.populations_metadata[:]
         for j, metadata in enumerate(iterator):
-            yield Population(j, metadata=metadata)
+            yield Population(j, metadata=_json_decode(metadata))
 
 
 class VariantData(SampleData):
@@ -2431,7 +2594,7 @@ class VariantData(SampleData):
                 )
         except AttributeError:
             self.path = path_or_zarr
-            self.data = zarr.open(path_or_zarr, mode="r")
+            self.data = _open_group(store=path_or_zarr, mode="r")
 
         genotypes_arr = self.data["call_genotype"]
         _, self._num_individuals_before_mask, self.ploidy = genotypes_arr.shape
@@ -2458,7 +2621,8 @@ class VariantData(SampleData):
         ):
             if array_param is None:
                 if default_value == []:
-                    return np.array([[] for _ in range(expected_size)], dtype=object)
+                    # Default locations are empty float vectors per individual.
+                    return np.empty((expected_size, 0), dtype=float)
                 return np.full(expected_size, default_value, dtype=dtype)
             elif not isinstance(array_param, np.ndarray):
                 try:
@@ -2547,13 +2711,13 @@ class VariantData(SampleData):
                 )
 
         if "variant_contig" in self.data:
-            used_contigs = self.data.variant_contig[:][self.sites_select]
+            used_contigs = self.data["variant_contig"][:][self.sites_select]
             self._contig_index = used_contigs[0]
-            self._contig_id = self.data.contig_id[self._contig_index]
+            self._contig_id = self.data["contig_id"][self._contig_index]
 
             if np.any(used_contigs != self._contig_index):
                 contig_names = ", ".join(
-                    f'"{self.data.contig_id[c]}"' for c in np.unique(used_contigs)
+                    f'"{self.data["contig_id"][c]}"' for c in np.unique(used_contigs)
                 )
                 raise ValueError(
                     f"Sites belong to multiple contigs ({contig_names}). "
@@ -2582,7 +2746,7 @@ class VariantData(SampleData):
                     f"The ancestral state array {ancestral_state} was not"
                     f" found in the dataset."
                 )
-        ancestral_state = ancestral_state.astype(str)
+        ancestral_state = ancestral_state.astype(object)
         if np.any(ancestral_state == ""):
             raise ValueError("Ancestral state array cannot contain empty strings")
 
@@ -2661,7 +2825,7 @@ class VariantData(SampleData):
         if self._sequence_length is not None:
             return self._sequence_length
         if self._contig_index is not None and "contig_length" in self.data:
-            return self.data.contig_length[self._contig_index]
+            return self.data["contig_length"][self._contig_index]
         return int(np.max(self.sites_position)) + 1
 
     @property
@@ -2712,7 +2876,8 @@ class VariantData(SampleData):
 
     @functools.cached_property
     def sites_alleles(self):
-        return self.data["variant_allele"][:][self.sites_select].astype(str)
+        arr = self.data["variant_allele"][:][self.sites_select]
+        return arr.astype(object)
 
     @property
     def sites_ancestral_allele(self):
@@ -3085,6 +3250,7 @@ class AncestorData(DataContainer):
 
     def __init__(self, position, sequence_length, chunk_size_sites=None, **kwargs):
         super().__init__(**kwargs)
+        position = np.asarray(position)
         self._last_time = 0
         self.inference_sites_set = False
         if chunk_size_sites is None:
@@ -3092,7 +3258,7 @@ class AncestorData(DataContainer):
         else:
             self._chunk_size_sites = chunk_size_sites
 
-        self.data.attrs["sequence_length"] = sequence_length
+        self.data.attrs["sequence_length"] = float(sequence_length)
         if self.sequence_length <= 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero or less")
 
@@ -3100,7 +3266,7 @@ class AncestorData(DataContainer):
         self.create_dataset("sample_start", dtype=np.int32)
         self.create_dataset("sample_end", dtype=np.int32)
         self.create_dataset("sample_time", dtype=np.float64)
-        self.create_dataset("sample_focal_sites", dtype="array:i4")
+        self.create_dataset("sample_focal_sites", dtype="str")
 
         self.create_dataset(
             "variant_position",
@@ -3269,7 +3435,7 @@ class AncestorData(DataContainer):
         """
         The positions of the inference sites used to generate the ancestors
         """
-        return self.data["variant_position"]
+        return _ScalarArrayView(self.data["variant_position"])
 
     @property
     def ancestors_start(self):
@@ -3285,7 +3451,7 @@ class AncestorData(DataContainer):
 
     @property
     def ancestors_focal_sites(self):
-        return self.data["sample_focal_sites"]
+        return _JsonArrayView(self.data["sample_focal_sites"])
 
     @property
     def ancestors_full_haplotype(self):
@@ -3574,9 +3740,7 @@ class AncestorData(DataContainer):
         start_buffer = np.zeros(buffer_length, dtype=self.ancestors_start.dtype)
         end_buffer = np.zeros(buffer_length, dtype=self.ancestors_end.dtype)
         time_buffer = np.zeros(buffer_length, dtype=self.ancestors_time.dtype)
-        focal_sites_buffer = np.zeros(
-            buffer_length, dtype=self.ancestors_focal_sites.dtype
-        )
+        focal_sites_buffer = np.empty(buffer_length, dtype=self.ancestors_focal_sites.dtype)
         haplotype_buffer = np.full(
             (self.ancestors_full_haplotype.shape[0], buffer_length, 1),
             tskit.MISSING_DATA,
@@ -3636,7 +3800,7 @@ class AncestorData(DataContainer):
                     start_buffer[buffer_pos] = insert_pos_start
                     end_buffer[buffer_pos] = insert_pos_end
                     time_buffer[buffer_pos] = anc.time
-                    focal_sites_buffer[buffer_pos] = anc.focal_sites
+                    focal_sites_buffer[buffer_pos] = _json_encode(anc.focal_sites.tolist())
                     haplotype_buffer[insert_pos_start:insert_pos_end, buffer_pos, 0] = (
                         anc.full_haplotype[insert_pos_start:insert_pos_end]
                     )
@@ -3687,7 +3851,7 @@ class AncestorData(DataContainer):
             start=start,
             end=end,
             time=time,
-            focal_sites=focal_sites,
+            focal_sites=_json_encode(focal_sites.tolist()),
             haplotype=haplotype,
         )
 
@@ -3713,11 +3877,15 @@ class AncestorData(DataContainer):
             del self.data["sample_id"]
         except KeyError:
             pass
+        sample_ids = np.array(
+            [f"tsinf_anc_{i}" for i in range(self.ancestors_start.shape[0])], dtype="str"
+        )
         self.create_dataset(
             "sample_id",
-            data=[f"tsinf_anc_{i}" for i in range(len(self.ancestors_start))],
-            shape=(len(self.ancestors_start),),
+            data=sample_ids,
+            shape=sample_ids.shape,
             chunks=self.ancestors_start.chunks,
+            dtype="str",
             compressor=self.ancestors_start.compressor,
         )
         super().finalise()
@@ -3737,7 +3905,7 @@ class AncestorData(DataContainer):
             start=self.ancestors_start[id_],
             end=self.ancestors_end[id_],
             time=self.ancestors_time[id_],
-            focal_sites=self.ancestors_focal_sites[id_],
+            focal_sites=np.array(_json_decode(self.ancestors_focal_sites[id_]), dtype=np.int32),
             full_haplotype=self.ancestors_full_haplotype[:, id_, 0],
         )
 
@@ -3760,7 +3928,7 @@ class AncestorData(DataContainer):
                 start=start[j],
                 end=end[j],
                 time=time[j],
-                focal_sites=focal_sites[j],
+                focal_sites=np.array(_json_decode(focal_sites[j]), dtype=np.int32),
                 # [0] to remove ploidy dimension
                 full_haplotype=h[:, 0],
             )
