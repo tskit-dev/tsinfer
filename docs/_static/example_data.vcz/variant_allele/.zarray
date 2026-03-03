@@ -1,22 +1,27 @@
 {
-    "chunks": [
-        8,
-        2
-    ],
-    "compressor": {
-        "blocksize": 0,
-        "clevel": 5,
-        "cname": "lz4",
-        "id": "blosc",
-        "shuffle": 1
-    },
-    "dtype": "|S4",
-    "fill_value": "",
-    "filters": null,
-    "order": "C",
-    "shape": [
-        8,
-        2
-    ],
-    "zarr_format": 2
+  "shape": [
+    8,
+    2
+  ],
+  "chunks": [
+    8,
+    2
+  ],
+  "dtype": "|O",
+  "fill_value": "",
+  "order": "C",
+  "filters": [
+    {
+      "id": "vlen-utf8"
+    }
+  ],
+  "dimension_separator": ".",
+  "compressor": {
+    "id": "blosc",
+    "cname": "lz4",
+    "clevel": 5,
+    "shuffle": 1,
+    "blocksize": 0
+  },
+  "zarr_format": 2
 }

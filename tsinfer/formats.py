@@ -2621,7 +2621,8 @@ class VariantData(SampleData):
         ):
             if array_param is None:
                 if default_value == []:
-                    return np.array([[] for _ in range(expected_size)], dtype=object)
+                    # Default locations are empty float vectors per individual.
+                    return np.empty((expected_size, 0), dtype=float)
                 return np.full(expected_size, default_value, dtype=dtype)
             elif not isinstance(array_param, np.ndarray):
                 try:
@@ -2710,13 +2711,13 @@ class VariantData(SampleData):
                 )
 
         if "variant_contig" in self.data:
-            used_contigs = self.data.variant_contig[:][self.sites_select]
+            used_contigs = self.data["variant_contig"][:][self.sites_select]
             self._contig_index = used_contigs[0]
-            self._contig_id = self.data.contig_id[self._contig_index]
+            self._contig_id = self.data["contig_id"][self._contig_index]
 
             if np.any(used_contigs != self._contig_index):
                 contig_names = ", ".join(
-                    f'"{self.data.contig_id[c]}"' for c in np.unique(used_contigs)
+                    f'"{self.data["contig_id"][c]}"' for c in np.unique(used_contigs)
                 )
                 raise ValueError(
                     f"Sites belong to multiple contigs ({contig_names}). "
@@ -2745,7 +2746,7 @@ class VariantData(SampleData):
                     f"The ancestral state array {ancestral_state} was not"
                     f" found in the dataset."
                 )
-        ancestral_state = ancestral_state.astype(str)
+        ancestral_state = ancestral_state.astype(object)
         if np.any(ancestral_state == ""):
             raise ValueError("Ancestral state array cannot contain empty strings")
 
@@ -2824,7 +2825,7 @@ class VariantData(SampleData):
         if self._sequence_length is not None:
             return self._sequence_length
         if self._contig_index is not None and "contig_length" in self.data:
-            return self.data.contig_length[self._contig_index]
+            return self.data["contig_length"][self._contig_index]
         return int(np.max(self.sites_position)) + 1
 
     @property
@@ -2875,7 +2876,8 @@ class VariantData(SampleData):
 
     @functools.cached_property
     def sites_alleles(self):
-        return self.data["variant_allele"][:][self.sites_select].astype(str)
+        arr = self.data["variant_allele"][:][self.sites_select]
+        return arr.astype(object)
 
     @property
     def sites_ancestral_allele(self):
@@ -3256,7 +3258,7 @@ class AncestorData(DataContainer):
         else:
             self._chunk_size_sites = chunk_size_sites
 
-        self.data.attrs["sequence_length"] = sequence_length
+        self.data.attrs["sequence_length"] = float(sequence_length)
         if self.sequence_length <= 0:
             raise ValueError("Bad samples file: sequence_length cannot be zero or less")
 
