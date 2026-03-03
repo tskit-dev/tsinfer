@@ -32,11 +32,6 @@ import pytest
 import tskit
 import zarr
 
-ts2z = pytest.importorskip(
-    "bio2zarr.tskit",
-    reason="bio2zarr.tskit is not available with this dependency resolution",
-)
-
 import tsinfer
 import tsutil
 from tsinfer import formats
