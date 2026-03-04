@@ -30,7 +30,6 @@ import warnings
 
 import lmdb
 import msprime
-import numcodecs
 import numcodecs.blosc as blosc
 import numpy as np
 import pytest
@@ -2245,8 +2244,10 @@ class TestAncestorData(DataContainerMixin):
             with tsinfer.SampleData(path=filename) as sample_data:
                 for var in ts.variants():
                     sample_data.add_site(var.site.position, var.genotypes)
-            store = zarr.LMDBStore(filename, subdir=False)
-            data = zarr.open(store=store, mode="w+")
+            from tsinfer._lmdb_store import LMDBStore
+
+            store = LMDBStore(filename, subdir=False)
+            data = zarr.open(store=store, mode="r+")
             data.attrs["sequence_length"] = 0
             store.close()
             sample_data = tsinfer.load(filename)
@@ -2572,7 +2573,7 @@ class BufferedItemWriterMixin:
         dest = {}
         num_rows = -1
         for key, array in source.items():
-            dest[key] = zarr.empty_like(array)
+            dest[key] = zarr.empty_like(array, zarr_format=2)
             if num_rows == -1:
                 num_rows = array.shape[0]
             assert num_rows == array.shape[0]
@@ -2585,24 +2586,17 @@ class BufferedItemWriterMixin:
 
         for key, source_array in source.items():
             dest_array = dest[key]
-            if source_array.dtype.str == "|O":
-                # Object arrays have to be treated differently.
-                assert source_array.shape == dest_array.shape
-                for a, b in zip(source_array, dest_array):
-                    if isinstance(a, np.ndarray):
-                        assert np.array_equal(a, b)
-                    else:
-                        assert a == b
-            else:
-                assert np.array_equal(source_array[:], dest_array[:])
+            assert np.array_equal(source_array[:], dest_array[:])
             assert source_array.chunks == dest_array.chunks
         return dest
 
     def test_one_array(self):
-        self.verify_round_trip({"a": zarr.ones(10)})
+        self.verify_round_trip({"a": zarr.ones(10, zarr_format=2)})
 
     def test_two_arrays(self):
-        self.verify_round_trip({"a": zarr.ones(10), "b": zarr.zeros(10)})
+        self.verify_round_trip(
+            {"a": zarr.ones(10, zarr_format=2), "b": zarr.zeros(10, zarr_format=2)}
+        )
 
     def verify_dtypes(self, chunk_size=None):
         n = 100
@@ -2610,7 +2604,9 @@ class BufferedItemWriterMixin:
             chunk_size = 100
         dtypes = [np.int8, np.uint8, np.int32, np.uint32, np.float64, np.float32]
         source = {
-            str(dtype): zarr.array(np.arange(n, dtype=dtype), chunks=(chunk_size,))
+            str(dtype): zarr.array(
+                np.arange(n, dtype=dtype), chunks=(chunk_size,), zarr_format=2
+            )
             for dtype in dtypes
         }
         dest = self.verify_round_trip(source)
@@ -2634,72 +2630,72 @@ class BufferedItemWriterMixin:
         self.verify_dtypes(10000)
 
     def test_2d_array(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)))
+        a = zarr.array(np.arange(100).reshape((10, 10)), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_1_1(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 1))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 1), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_1_2(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 2))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 2), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_2_1(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 2))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 2), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_1_100(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 100))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(1, 100), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_100_1(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(100, 1))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(100, 1), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_2d_array_chunk_size_10_10(self):
-        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(5, 10))
+        a = zarr.array(np.arange(100).reshape((10, 10)), chunks=(5, 10), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_3d_array(self):
-        a = zarr.array(np.arange(27).reshape((3, 3, 3)))
+        a = zarr.array(np.arange(27).reshape((3, 3, 3)), zarr_format=2)
         self.verify_round_trip({"a": a})
 
     def test_3d_array_chunks_size_1_1_1(self):
-        a = zarr.array(np.arange(27).reshape((3, 3, 3)), chunks=(1, 1, 1))
+        a = zarr.array(
+            np.arange(27).reshape((3, 3, 3)), chunks=(1, 1, 1), zarr_format=2
+        )
         self.verify_round_trip({"a": a})
 
-    def test_ragged_array_int32(self):
+    def test_json_encoded_string_array(self):
+        # Replaces old dtype="array:i4" test: tsinfer now JSON-encodes ragged
+        # int arrays as variable-length strings.
         n = 10
-        z = zarr.empty(n, dtype="array:i4")
+        z = zarr.empty(n, dtype=str, zarr_format=2)
         for j in range(n):
-            z[j] = np.arange(j)
-        self.filter_warnings_verify_round_trip({"z": z})
+            z[j] = json.dumps(list(range(j)))
+        self.verify_round_trip({"z": z})
 
-    def test_square_object_array_int32(self):
-        n = 10
-        z = zarr.empty(n, dtype="array:i4")
-        for j in range(n):
-            z[j] = np.arange(n)
-        self.filter_warnings_verify_round_trip({"z": z})
-
-    def test_json_object_array(self):
+    def test_json_encoded_dict_array(self):
+        # Replaces old dtype=object/object_codec=JSON() test: tsinfer now
+        # JSON-encodes metadata dicts as variable-length strings.
         for chunks in [2, 5, 10, 100]:
             n = 10
-            z = zarr.empty(
-                n, dtype=object, object_codec=numcodecs.JSON(), chunks=(chunks,)
-            )
+            z = zarr.empty(n, dtype=str, chunks=(chunks,), zarr_format=2)
             for j in range(n):
-                z[j] = {str(k): k for k in range(j)}
-            self.filter_warnings_verify_round_trip({"z": z})
+                z[j] = json.dumps({str(k): k for k in range(j)})
+            self.verify_round_trip({"z": z})
 
     def test_empty_string_list(self):
-        z = zarr.empty(1, dtype=object, object_codec=numcodecs.JSON(), chunks=(2,))
-        z[0] = ["", ""]
-        self.filter_warnings_verify_round_trip({"z": z})
+        z = zarr.empty(1, dtype=str, chunks=(2,), zarr_format=2)
+        z[0] = json.dumps(["", ""])
+        self.verify_round_trip({"z": z})
 
     def test_mixed_chunk_sizes(self):
-        source = {"a": zarr.zeros(10, chunks=(1,)), "b": zarr.zeros(10, chunks=(2,))}
+        source = {
+            "a": zarr.zeros(10, chunks=(1,), zarr_format=2),
+            "b": zarr.zeros(10, chunks=(2,), zarr_format=2),
+        }
         with pytest.raises(ValueError):
             formats.BufferedItemWriter(source)
 

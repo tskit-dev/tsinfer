@@ -34,10 +34,10 @@ warnings.filterwarnings(
 try:
     import zarr
 
-    if zarr.__version__ >= "3":
+    if zarr.__version__ >= "4":
         raise RuntimeError(
             f"zarr version {zarr.__version__} is not supported. "
-            "tsinfer requires zarr < 3.0. Please install zarr < 3.0."
+            "tsinfer requires zarr >= 3, < 4. Please install zarr >= 3, < 4."
         )
 except ImportError:
     pass
