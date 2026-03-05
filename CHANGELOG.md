@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.2] - 2026-XX-XX
+
+In development
+
 ## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0
