@@ -1,8 +1,6 @@
 # Changelog
 
-## [0.5.1] - 2026-XX-XX
-
-- Add support for Python 3.14.
+## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0
 
