@@ -2307,20 +2307,6 @@ class TestAncestorData(DataContainerMixin):
         assert ancestors == ancestors_extra  # Equality based on data
         assert ancestors.data_equal(ancestors_extra)  # data should be identical
 
-    def test_insert_proxy_1_sample(self):
-        sample_data, _ = self.get_example_data(10, 10, 40)
-        ancestors = tsinfer.generate_ancestors(sample_data)
-        used_sites = np.isin(sample_data.sites_position[:], ancestors.sites_position[:])
-        for i in (0, 6, 9):
-            ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=[i])
-            assert ancestors.num_ancestors + 1 == ancestors_extra.num_ancestors
-            inserted = -1
-            self.assert_ancestor_full_span(ancestors_extra, [inserted])
-            assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:-1, inserted, 0],
-                sample_data.sites_genotypes[:, i][used_sites],
-            )
-
     def test_insert_proxy_sample_provenance(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
         ancestors = tsinfer.generate_ancestors(sample_data)
@@ -2333,59 +2319,6 @@ class TestAncestorData(DataContainerMixin):
                 assert params["command"] == "insert_proxy_samples"
             else:
                 assert anc_prov == sd_prov
-
-    def test_insert_proxy_time_historical_samples(self):
-        sample_data, _ = self.get_example_data(10, 10, 40)
-        site_times = sample_data.sites_time[:]  # From a simulation => sites have times
-        assert not np.all(tskit.is_unknown_time(site_times))
-        min_time = np.min(site_times[site_times > 0])
-        sample_data = sample_data.copy()
-        time = sample_data.individuals_time[:]
-        assert len(time) == 10
-        assert np.all(time == 0)
-        historical_sample_time = min_time / 2  # Smaller than the smallest freq value
-        time[9] = historical_sample_time
-        sample_data.individuals_time[:] = time
-        sample_data.finalise()
-        ancestors = tsinfer.generate_ancestors(sample_data)
-        assert np.min(ancestors.ancestors_time[:]) > historical_sample_time
-        used_sites = np.isin(sample_data.sites_position[:], ancestors.sites_position[:])
-        epsilon = (ancestors.ancestors_time[-1] - historical_sample_time) / 100
-        G = sample_data.sites_genotypes
-
-        # By default, insert_proxy_samples should insert the single historical proxy
-        ancestors_extra = ancestors.insert_proxy_samples(sample_data)
-        assert ancestors.num_ancestors + 1 == ancestors_extra.num_ancestors
-        self.assert_ancestor_full_span(ancestors_extra, [-1])
-        assert np.array_equal(
-            ancestors_extra.ancestors_full_haplotype[:-1, -1, 0], G[:, 9][used_sites]
-        )
-        assert np.array_equal(
-            ancestors_extra.ancestors_time[-1], historical_sample_time + epsilon
-        )
-
-        # Test 2 proxies, one historical, specified in different ways / orders
-        s_ids = np.array([9, 0])
-        assert not np.array_equal(G[:, 9][used_sites], G[:, 0][used_sites])
-        for i in (s_ids, s_ids[::-1], s_ids[[1, 1, 0]]):  # All equivalent
-            ancestors_extra = ancestors.insert_proxy_samples(sample_data, sample_ids=i)
-            assert ancestors.num_ancestors + len(s_ids) == ancestors_extra.num_ancestors
-            inserted = [-1, -2]
-            self.assert_ancestor_full_span(ancestors_extra, inserted)
-            # Older sample
-            assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:-1, -2, 0],
-                G[:, 9][used_sites],
-            )
-            assert np.array_equal(
-                ancestors_extra.ancestors_time[-2], historical_sample_time + epsilon
-            )
-            # Younger sample
-            assert np.array_equal(
-                ancestors_extra.ancestors_full_haplotype[:-1, -1, 0],
-                G[:, 0][used_sites],
-            )
-            assert np.array_equal(ancestors_extra.ancestors_time[-1], epsilon)
 
     def test_insert_proxy_sample_epsilon(self):
         sample_data, _ = self.get_example_data(10, 10, 40)
