@@ -226,3 +226,134 @@ def sample_vcz(request):
 ```
 
 Named corner cases are written as individual tests so their intent is clear.
+
+## Distributed inference
+
+This section is not required for the MVP but must be fully supported in v1.0.
+
+### Parallelism characteristics of the pipeline
+
+- **`infer_ancestors`** — single job.
+- **`match_ancestors`** — has a two-level structure. Ancestors are grouped by
+  time into *groups* (collections of one or more epochs). Groups must be
+  processed strictly in order, since each group's matching depends on the tree
+  sequence produced by all previous groups. Within a large group, ancestors are
+  subdivided into *partitions* that can be matched independently in parallel.
+  Small groups are never partitioned. The number of partitions in a group is
+  determined by `min_work_per_job`: ancestors are greedily bin-packed into
+  partitions so that each partition has approximately `min_work_per_job`
+  genotypes of work.
+- **`match_samples`** — embarrassingly parallel. Samples are partitioned into
+  independent batches, each matched against the same fixed `ancestors_ts`.
+  Partition count is again controlled by `min_work_per_job`.
+- **`post_process`** — single job.
+
+### Configuration
+
+The `[distributed]` section of the config file controls batch granularity:
+
+```toml
+[distributed]
+work_dir = "inference_work"    # directory for intermediate state
+min_work_per_job = 1_000_000  # genotypes per job, controls partition count
+max_num_partitions = 1000      # upper bound on partitions per group
+```
+
+All intermediate files are written under `work_dir`. A `metadata.json` file
+written by each init command records the full job structure (group count,
+partition counts per group, parameters) so that subsequent commands and
+workflow managers can determine what jobs need to be run.
+
+### CLI — match_ancestors
+
+```
+# 1. Initialise: creates work_dir and writes metadata.json
+tsinfer match-ancestors-init config.toml
+
+# 2a. For small groups (no partitioning): run one or more groups in a single job
+tsinfer match-ancestors-group config.toml GROUP_START GROUP_END
+
+# 2b. For large groups: run each partition independently (parallel)
+tsinfer match-ancestors-partition config.toml GROUP_INDEX PARTITION_INDEX
+
+# 3. Finalise each large group after all its partitions complete
+tsinfer match-ancestors-finalise-group config.toml GROUP_INDEX
+
+# 4. Finalise the full match_ancestors step once all groups are done
+tsinfer match-ancestors-finalise config.toml
+```
+
+Steps 2a and 2b are not mutually exclusive. Small groups that require no
+partitioning are run with `match-ancestors-group`; large groups that are
+partitioned use `match-ancestors-partition` followed by
+`match-ancestors-finalise-group`. The workflow manager determines which
+command applies for each group by reading `metadata.json`.
+
+### CLI — match_samples
+
+```
+# 1. Initialise: creates work_dir, computes partitions, writes metadata.json
+tsinfer match-samples-init config.toml
+
+# 2. Match each partition independently (fully parallel)
+tsinfer match-samples-partition config.toml PARTITION_INDEX
+
+# 3. Merge all partitions into the final tree sequence
+tsinfer match-samples-finalise config.toml
+```
+
+### Snakemake integration
+
+The init commands are natural Snakemake checkpoints: they run first, write
+`metadata.json`, and the downstream rules read it to determine how many jobs
+to submit. A sketch of the Snakemake rules for `match_samples`:
+
+```python
+checkpoint match_samples_init:
+    input:  "ancestors.trees"
+    output: "inference_work/samples/metadata.json"
+    shell:  "tsinfer match-samples-init config.toml"
+
+def sample_partitions(wildcards):
+    meta = json.load(checkpoints.match_samples_init.get().output[0])
+    n = meta["num_partitions"]
+    return expand("inference_work/samples/partition_{i}.pkl", i=range(n))
+
+rule match_samples_partition:
+    input:  "inference_work/samples/metadata.json"
+    output: "inference_work/samples/partition_{i}.pkl"
+    shell:  "tsinfer match-samples-partition config.toml {wildcards.i}"
+
+rule match_samples_finalise:
+    input:  sample_partitions
+    output: "final.trees"
+    shell:  "tsinfer match-samples-finalise config.toml"
+```
+
+The `match_ancestors` Snakemake rules follow the same checkpoint pattern but
+also encode the sequential dependency between groups.
+
+### Python API
+
+The batch functions are available directly for programmatic use:
+
+```python
+cfg = tsinfer.Config.from_toml("inference.toml")
+
+# match_ancestors
+meta = tsinfer.match_ancestors_init(cfg)
+for group_index, group in enumerate(meta["ancestor_grouping"]):
+    if group["partitions"] is None:
+        tsinfer.match_ancestors_group(cfg, group_index, group_index + 1)
+    else:
+        for partition_index in range(len(group["partitions"])):
+            tsinfer.match_ancestors_partition(cfg, group_index, partition_index)
+        tsinfer.match_ancestors_finalise_group(cfg, group_index)
+ancestors_ts = tsinfer.match_ancestors_finalise(cfg)
+
+# match_samples
+meta = tsinfer.match_samples_init(cfg)
+for partition_index in range(meta["num_partitions"]):
+    tsinfer.match_samples_partition(cfg, partition_index)
+ts = tsinfer.match_samples_finalise(cfg)
+```
