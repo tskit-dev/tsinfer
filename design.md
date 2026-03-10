@@ -75,11 +75,16 @@ and out-of-band scripting with Python is regarded as an anti-pattern.
 
 The fundamental input unit is a **source** — a named, configured view over a
 VCZ store. A source specifies the store path (local or remote) and how to
-resolve each metadata array. Metadata can come from a field within the store
-itself, from a field in a separate annotation VCZ (joined by `variant_position`
-or `sample_id`), or as a scalar constant. This makes fully remote, read-only
+resolve per-source metadata arrays: `site_mask`, `sample_mask`, and
+`sample_time`. Metadata can come from a field within the store itself, from a
+field in a separate annotation VCZ (joined by `variant_position` or
+`sample_id`), or as a scalar constant. This makes fully remote, read-only
 stores first-class inputs: none of the metadata needs to live in the remote
 store itself.
+
+Ancestral state is a property of variant positions, not of cohorts. It is
+specified once as a top-level `[ancestral_state]` section and applies to all
+sources. See the configuration file section.
 
 tsinfer inference always operates on a single contig. After applying all site
 masks, the remaining inference positions across all sources in a step must
@@ -87,10 +92,9 @@ belong to a single contig; this is checked at runtime.
 
 ```toml
 [[source]]
-name = "ukb"
-path = "s3://bucket/ukb-chr20.vcz"          # remote, read-only
-ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
-site_mask       = {path = "annotations.vcz", field = "variant_filter"}
+name      = "ukb"
+path      = "s3://bucket/ukb-chr20.vcz"     # remote, read-only
+site_mask = {path = "annotations.vcz", field = "variant_filter"}
 # sample_mask and sample_time can also be specified here
 ```
 
@@ -99,18 +103,18 @@ string:
 
 ```toml
 [[source]]
-name            = "local"
-path            = "samples.vcz"
-ancestral_state = "variant_ancestral_allele"
-site_mask       = "variant_filter"
+name      = "local"
+path      = "samples.vcz"
+site_mask = "variant_filter"
 ```
 
-Metadata resolution rules:
+Metadata resolution rules (applying to `site_mask`, `sample_mask`,
+`sample_time`):
 
 - **String** — field name within the source store itself
 - **`{path, field}`** — field from a separate VCZ, joined by `variant_position`
   (site arrays) or `sample_id` (sample arrays). Missing entries get fill values:
-  no ancestral state → site excluded; no mask → site included; no time → time=0
+  no mask → site/sample included; no time → time=0
 - **Scalar** — constant applied to all sites or samples
 
 ### Use cases
@@ -131,7 +135,6 @@ individuals just like modern samples.
 name        = "ancient"
 path        = "ancient_dna.vcz"
 sample_time = "sample_age_generations"
-ancestral_state = "variant_ancestral_allele"
 ```
 
 **Known pedigree.** Parents or grandparents with known relationships can be
@@ -145,7 +148,6 @@ for the next, younger group.
 name        = "parents"
 path        = "parents.vcz"
 sample_time = 1          # scalar: all samples in this source at time=1
-ancestral_state = "variant_ancestral_allele"
 ```
 
 ### Configuration file
@@ -154,11 +156,14 @@ A single TOML file describes the entire pipeline. The standard case — a single
 cohort, with ancestor VCZ written to disk, then samples matched against it:
 
 ```toml
+[ancestral_state]
+path  = "annotations.vcz"        # VCZ containing the ancestral allele array
+field = "variant_ancestral_allele"
+
 [[source]]
-name            = "cohort"
-path            = "samples.vcz"
-ancestral_state = "variant_ancestral_allele"
-site_mask       = "variant_filter"
+name      = "cohort"
+path      = "samples.vcz"
+site_mask = "variant_filter"
 
 [ancestors]
 path           = "ancestors.vcz"
@@ -200,7 +205,6 @@ algorithm handles the ordering automatically:
 name        = "ancient"
 path        = "ancient.vcz"
 sample_time = "sample_age_generations"
-ancestral_state = "variant_ancestral_allele"
 
 [[match]]
 name               = "samples"
@@ -218,11 +222,11 @@ correct times.
 **Multi-source (Phase 2).** When `[ancestors]` lists multiple sources,
 `infer_ancestors` operates on the union of their inference sites. Genotypes
 at sites absent from a source are treated as missing for that source's samples.
-A site is included in inference only if it passes the mask in at least one
-source and has a consistent ancestral state across all sources that have it.
-When a `[[match]]` step lists multiple sources, the combined genotype data is
-presented to the matching engine as a single virtual dataset; sources need not
-have the same samples.
+A site is included in inference only if it passes the site mask in at least one
+source; ancestral state comes from the single top-level `[ancestral_state]`
+and is not resolved per-source. When a `[[match]]` step lists multiple sources, the
+combined genotype data is presented to the matching engine as a single virtual
+dataset; sources need not have the same samples.
 
 All paths are resolved relative to the config file's location. A `reference_ts`
 of `null` or omitted means start from a trivial root tree sequence.
@@ -247,14 +251,12 @@ tsinfer.match(cfg, "ancestors", recombination_rate=2e-8)
 The `Config` class can also be constructed directly:
 
 ```python
-cohort = tsinfer.Source("samples.vcz",
-                        ancestral_state="variant_ancestral_allele",
-                        site_mask="variant_filter")
-ancient = tsinfer.Source("ancient.vcz",
-                         sample_time="sample_age_generations",
-                         ancestral_state="variant_ancestral_allele")
+cohort = tsinfer.Source("samples.vcz", site_mask="variant_filter")
+ancient = tsinfer.Source("ancient.vcz", sample_time="sample_age_generations")
 
 cfg = tsinfer.Config(
+    ancestral_state=tsinfer.AncestralState("annotations.vcz",
+                                           "variant_ancestral_allele"),
     sources={"cohort": cohort, "ancient": ancient},
     ancestors=tsinfer.AncestorsConfig(
         path="ancestors.vcz", sources=["cohort"], max_gap_length=500_000),
