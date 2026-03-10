@@ -53,18 +53,10 @@ dependencies = [
     "humanize",
     "daiquiri",
     "tskit>=1.0.0",
-    "zarr<3",
-    "lmdb",
-    "sortedcontainers",
-    "numba",
-    "psutil",
+    "zarr>=3",
+    "bio2zarr",
+    "click",
 ]
-
-# TODO add these as pypi extra installs. We'd need to install
-# libnuma on the test build to support this.
-# https://github.com/tskit-dev/tsinfer/issues/1085
-# "python-prctl; sys_platform == 'linux'",
-# "numa; sys_platform == 'linux'",
 
 [project.urls]
 Homepage = "https://tskit.dev/tsinfer"
@@ -128,9 +120,6 @@ include-package-data = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = [
-    'ignore:SampleData'
-]
 
 [tool.ruff]
 # Assume Python 3.11
@@ -160,7 +149,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["_tsinfer", "tsutil"]
+known-first-party = ["_tsinfer"]
 known-third-party = [
   "msprime",
   "numpy",
@@ -180,8 +169,6 @@ build-verbosity = 1
 archs = ["x86_64"]
 skip = ["*musllinux*"]
 
-# We can only install reasonably on linux because of numba.
-# FIXME: https://github.com/tskit-dev/tsinfer/issues/1097
 test-command = [
   "python -c \"import _tsinfer\"",
   "tsinfer --help",
