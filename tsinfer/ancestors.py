@@ -337,6 +337,19 @@ def infer_ancestors(
     # Sort by descending time (oldest first), stable for equal times
     ancestors.sort(key=lambda x: -x["time"])
 
+    # Prepend the virtual root (time=1.0, all-ancestral haplotype)
+    virtual_hap = np.zeros(n_inf, dtype=np.int8)
+    ancestors.insert(
+        0,
+        {
+            "time": 1.0,
+            "haplotype": virtual_hap,
+            "start_pos": int(inf_positions_arr[0]),
+            "end_pos": int(inf_positions_arr[-1]),
+            "focal_positions": np.array([], dtype=np.int32),
+        },
+    )
+
     n_anc = len(ancestors)
 
     # --- 6. Assemble output arrays ---
@@ -349,6 +362,7 @@ def infer_ancestors(
     end_positions = np.array([a["end_pos"] for a in ancestors], dtype=np.int32)
 
     max_focal = max(len(a["focal_positions"]) for a in ancestors) if ancestors else 1
+    max_focal = max(max_focal, 1)  # at least 1 column (padded with -2)
     focal_positions = np.full((n_anc, max_focal), -2, dtype=np.int32)
     for j, anc in enumerate(ancestors):
         fp = anc["focal_positions"]
