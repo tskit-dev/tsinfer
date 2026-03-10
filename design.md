@@ -106,9 +106,16 @@ def extend_ts(
 ) -> tskit.TreeSequence: ...
 ```
 
+`make_root_ts` copies `sequence_intervals` from the ancestor VCZ array
+into the tree sequence's top-level metadata. All downstream steps — including
+`match samples` and `post_process` — read `sequence_intervals` from the tree
+sequence metadata, so neither needs to re-open the ancestor VCZ.
+
 `extend_ts` adds the new nodes, inserts their edges (with optional path
-compression), and records mutations. The returned tree sequence becomes the
-reference panel for the next group.
+compression), and records mutations. Edges are clipped at gap boundaries using
+`sequence_intervals` from the tree sequence metadata before insertion, so no
+edge in the output tree sequence ever spans a gap. The returned tree sequence
+becomes the reference panel for the next group.
 
 ### The match loop
 
@@ -124,7 +131,10 @@ def match(dataset_vcz, reference_ts, recombination_rate, mismatch_ratio,
     times = dataset_vcz.get("sample_time", default=0)
     groups = compute_groups(dataset_vcz, times)  # linesweep or single group
 
-    current_ts = reference_ts or make_root_ts(sequence_length, positions)
+    current_ts = reference_ts or make_root_ts(
+        sequence_length, positions,
+        sequence_intervals=dataset_vcz["sequence_intervals"][:],
+    )
 
     for group_index, haplotype_ids in enumerate(groups):
         haplotypes, start_idx, end_idx = get_haplotypes(dataset_vcz, haplotype_ids)
@@ -188,6 +198,7 @@ during `infer_ancestors`.
 | `sample_start_position` | `(n_ancestors,)` | `int32` | Genomic position of the first non-missing site for each ancestor |
 | `sample_end_position` | `(n_ancestors,)` | `int32` | Genomic position of the last non-missing site for each ancestor |
 | `sample_focal_positions` | `(n_ancestors, max_focal_positions)` | `int32` | Positions of focal sites for each ancestor; padded with -2 |
+| `sequence_intervals` | `(n_intervals, 2)` | `int32` | `[start, end)` genomic coordinate pairs for regions containing inference sites |
 
 ### Ancestor haplotypes
 
@@ -210,6 +221,32 @@ focal sites. Most ancestors have a single focal site; the `max_focal_positions`
 dimension accommodates the minority with more. Unused slots are padded with
 `-2` following standard VCZ conventions. Focal site values are genomic
 positions, consistent with `variant_position`.
+
+### Gap intervals
+
+Long genomic regions with no inference sites are recorded as a standard Zarr
+array in the ancestor store:
+
+| Array | Shape | Dtype | Description |
+|---|---|---|---|
+| `sequence_intervals` | `(n_intervals, 2)` | `int32` | `[start, end)` genomic coordinate pairs for regions containing inference sites |
+
+`sequence_intervals` covers the regions that contain inference sites — its
+complement (within `[0, sequence_length)`) is gaps. It is computed at
+`infer_ancestors` time from the union of inference site positions across all
+sources, using the `min_gap_length` threshold from `[ancestors]` in the config.
+
+Ancestors are clipped to the interval containing their focal site before being
+written to the store. Any sites in `call_genotype` that fall outside the
+ancestor's interval are set to missing (`-1`), and `sample_start_position` /
+`sample_end_position` are clamped to interval boundaries. This is a pure Python
+transformation on the output arrays; no changes to the C ancestor-building code
+are required.
+
+`sequence_intervals` is transferred to the tree sequence metadata when the root
+tree sequence is auto-created at the start of the ancestor matching phase (see
+the matching engine section). All downstream steps read it from there — neither
+`match samples` nor `post_process` needs to re-open the ancestor VCZ.
 
 ### Relationship to the samples VCZ
 
@@ -371,8 +408,9 @@ ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
 site_mask       = {path = "annotations.vcz", field = "variant_filter"}
 
 [ancestors]
-path    = "ancestors.vcz"
-sources = ["ukb", "hgdp"]   # infer ancestors from union of sites across both sources
+path           = "ancestors.vcz"
+sources        = ["ukb", "hgdp"]   # infer ancestors from union of sites across both sources
+min_gap_length = 500_000           # genomic regions longer than this with no inference sites become breaks
 
 [[match]]
 name         = "ancestors"
@@ -393,6 +431,7 @@ mismatch_ratio     = 1.0
 [post_process]
 split_ultimate = true
 erase_flanks   = true
+# gap intervals are read from the tree sequence metadata; no extra config needed
 ```
 
 **Multi-source ancestor generation.** When `[ancestors]` lists multiple sources,
