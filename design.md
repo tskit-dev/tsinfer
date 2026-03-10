@@ -106,8 +106,8 @@ def extend_ts(
 ) -> tskit.TreeSequence: ...
 ```
 
-`make_root_ts` copies `sequence_intervals` from the ancestor VCZ array
-into the tree sequence's top-level metadata. All downstream steps — including
+`make_root_ts` copies `sequence_intervals` from the ancestor VCZ array into
+the tree sequence's top-level metadata. All downstream steps — including
 `match samples` and `post_process` — read `sequence_intervals` from the tree
 sequence metadata, so neither needs to re-open the ancestor VCZ.
 
@@ -192,7 +192,7 @@ during `infer_ancestors`.
 |---|---|---|---|
 | `call_genotype` | `(n_sites, n_ancestors, 1)` | `int8` | Genotype calls: 0 = ancestral, 1 = derived, -1 = missing |
 | `variant_position` | `(n_sites,)` | `int32` | Genomic position of each inference site |
-| `variant_alleles` | `(n_sites, n_alleles)` | `str` | ancestral and derived alleles carried through from the samples VCZ |
+| `variant_alleles` | `(n_sites, n_alleles)` | `str` | Ancestral and derived alleles carried through from the samples VCZ |
 | `sample_id` | `(n_ancestors,)` | `str` | Ancestor identifiers, e.g. `ancestor_0`, `ancestor_1` |
 | `sample_time` | `(n_ancestors,)` | `float64` | Ancestor time, used to define epoch ordering during matching |
 | `sample_start_position` | `(n_ancestors,)` | `int32` | Genomic position of the first non-missing site for each ancestor |
@@ -205,13 +205,14 @@ during `infer_ancestors`.
 Each ancestor spans a contiguous range of inference sites. Outside that range,
 the state of the ancestor is unknown; these flanking positions are encoded as
 missing (`-1`) in `call_genotype`. Within the span, each site takes the value 0
-(ancestral allele) or 1 (derived allele). The genomic extent of each ancestor is also recorded explicitly in
-`sample_start_position` and `sample_end_position`. These values are derivable
-from the missing data pattern in `call_genotype`, but `call_genotype` is chunked
-along the sites axis, so deriving them would require reading the entire genotype
-array. The grouping algorithm needs start and end for all ancestors
-simultaneously before matching begins, so storing them as small 1D arrays avoids
-what could otherwise be a full scan of gigabytes of genotype data.
+(ancestral allele) or 1 (derived allele). The genomic extent of each ancestor
+is recorded explicitly in `sample_start_position` and `sample_end_position`.
+These values are derivable from the missing data pattern in `call_genotype`,
+but `call_genotype` is chunked along the sites axis, so deriving them would
+require reading the entire genotype array. The grouping algorithm needs start
+and end for all ancestors simultaneously before matching begins, so storing
+them as small 1D arrays avoids what could otherwise be a full scan of gigabytes
+of genotype data.
 
 ### Focal sites
 
@@ -224,17 +225,12 @@ positions, consistent with `variant_position`.
 
 ### Gap intervals
 
-Long genomic regions with no inference sites are recorded as a standard Zarr
-array in the ancestor store:
-
-| Array | Shape | Dtype | Description |
-|---|---|---|---|
-| `sequence_intervals` | `(n_intervals, 2)` | `int32` | `[start, end)` genomic coordinate pairs for regions containing inference sites |
-
-`sequence_intervals` covers the regions that contain inference sites — its
-complement (within `[0, sequence_length)`) is gaps. It is computed at
-`infer_ancestors` time from the union of inference site positions across all
-sources, using the `min_gap_length` threshold from `[ancestors]` in the config.
+Long genomic regions with no inference sites are recorded in `sequence_intervals`,
+which lists the `[start, end)` genomic coordinate pairs for the regions that
+contain inference sites. Its complement within `[0, sequence_length)` is the
+set of gaps. `sequence_intervals` is computed at `infer_ancestors` time from
+the union of inference site positions across all sources, using the
+`min_gap_length` threshold from `[ancestors]` in the config.
 
 Ancestors are clipped to the interval containing their focal site before being
 written to the store. Any sites in `call_genotype` that fall outside the
@@ -352,6 +348,11 @@ or `sample_id`), or as a constant value. This makes fully remote, read-only
 stores first-class inputs: none of the metadata needs to live in the remote
 store itself.
 
+tsinfer inference always operates on a single contig. After applying all site
+masks, the remaining inference positions across all sources in a step must
+belong to a single contig; this is checked at runtime and an error is raised if
+positions span multiple contigs.
+
 ```toml
 [[source]]
 name = "ukb"
@@ -431,7 +432,6 @@ mismatch_ratio     = 1.0
 [post_process]
 split_ultimate = true
 erase_flanks   = true
-# gap intervals are read from the tree sequence metadata; no extra config needed
 ```
 
 **Multi-source ancestor generation.** When `[ancestors]` lists multiple sources,
@@ -543,6 +543,7 @@ def make_ancestor_vcz(
     alleles,            # (n_sites, n_alleles) str
     times,              # (n_ancestors,) float
     focal_positions,    # (n_ancestors, max_focal_positions) int; -2 padded
+    sequence_intervals, # (n_intervals, 2) int
 ) -> zarr.Group:        # backed by MemoryStore
 ```
 
