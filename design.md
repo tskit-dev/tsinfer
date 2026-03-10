@@ -14,14 +14,15 @@ with existing file formats and APIs is not a goal.
 - **VCZ ancestor data.** `infer_ancestors` writes the ancestor VCZ format
   defined in this document. Drop `AncestorData` and the legacy tsinfer-specific
   ancestor format.
-- **Simplified API.** Four functions: `infer_ancestors`, `match_ancestors`,
-  `match_samples`, `post_process`. Drop the monolithic `infer` wrapper and the
-  `generate_ancestors` alias.
-- **Explicit `post_process`.** Remove the `post_process=True` default from
-  `match_samples`. Post-processing is always a separate, explicit call.
+- **Simplified API.** Three functions: `infer_ancestors`, `match`, `post_process`.
+  The distinction between `match_ancestors` and `match_samples` is dropped —
+  both are instances of matching a VCZ dataset against a reference tree sequence.
+  Drop the monolithic `infer` wrapper and the `generate_ancestors` alias.
+- **Explicit `post_process`.** Post-processing is always a separate, explicit
+  call; there is no implicit post-processing step.
 - **Config file and CLI.** A TOML config file drives the pipeline. The CLI
-  exposes `infer-ancestors`, `match-ancestors`, `match-samples`, `post-process`,
-  and `run` (all steps in sequence).
+  exposes `infer-ancestors`, `match`, `post-process`, and `run` (all steps in
+  sequence).
 - **C engine only.** The Python engine is removed from production code. It moves
   to the test suite, where it is used only for validating `infer_ancestors`
   output.
@@ -31,8 +32,8 @@ with existing file formats and APIs is not a goal.
 
 ### Out of scope (post-MVP)
 
-- **Distributed inference.** The batch CLI commands (`match-ancestors-init`,
-  `match-samples-partition`, etc.) and Snakemake integration are fully specified
+- **Distributed inference.** The batch CLI commands (`match-init`,
+  `match-partition`, etc.) and Snakemake integration are fully specified
   in this document but not implemented in the MVP. Single-machine threading via
   `--threads` is sufficient for the MVP.
 - **External HMM engine.** Integration with `tsls` as a pluggable matcher is
@@ -109,31 +110,37 @@ def extend_ts(
 compression), and records mutations. The returned tree sequence becomes the
 reference panel for the next group.
 
-### match_ancestors loop
+### The match loop
+
+Both ancestor matching and sample matching use the same loop. The only
+difference is that ancestor VCZ datasets have `sample_time` defined (giving
+non-zero times that drive epoch ordering), while sample VCZ datasets have no
+`sample_time` (defaulting to time=0, so all haplotypes fall in a single group):
 
 ```python
-current_ts = make_root_ts(sequence_length, inference_positions)
+def match(dataset_vcz, reference_ts, recombination_rate, mismatch_ratio,
+          path_compression=True):
+    positions = dataset_vcz["variant_position"][:]
+    times = dataset_vcz.get("sample_time", default=0)
+    groups = compute_groups(dataset_vcz, times)  # linesweep or single group
 
-for group_index, ancestor_ids in enumerate(groups):
-    haplotypes, start_idx, end_idx = get_ancestor_haplotypes(ancestor_vcz, ancestor_ids)
-    matcher = Matcher(current_ts, positions, recombination_rate, mismatch_ratio)
-    results = matcher.match(haplotypes, start_idx, end_idx)
-    times = ancestor_vcz["sample_time"].oindex[ancestor_ids]
-    current_ts = extend_ts(current_ts, times, results, path_compression)
+    current_ts = reference_ts or make_root_ts(sequence_length, positions)
 
-ancestors_ts = current_ts
+    for group_index, haplotype_ids in enumerate(groups):
+        haplotypes, start_idx, end_idx = get_haplotypes(dataset_vcz, haplotype_ids)
+        matcher = Matcher(current_ts, positions, recombination_rate, mismatch_ratio)
+        results = matcher.match(haplotypes, start_idx, end_idx)
+        current_ts = extend_ts(current_ts, times[haplotype_ids], results,
+                               path_compression)
+
+    return current_ts
 ```
 
-### match_samples
-
-Sample matching is a single call with no looping:
-
-```python
-haplotypes, start_idx, end_idx = get_sample_haplotypes(sample_vcz)
-matcher = Matcher(ancestors_ts, positions, recombination_rate, mismatch_ratio)
-results = matcher.match(haplotypes, start_idx, end_idx)
-ts = extend_ts(ancestors_ts, sample_times, results, path_compression)
-```
+When `sample_time` is absent, `times` is all zeros, `compute_groups` returns a
+single group containing all haplotypes, and the loop executes once — equivalent
+to the former `match_samples` behaviour. When `sample_time` is present, the
+linesweep grouping applies — equivalent to the former `match_ancestors`
+behaviour. No code branching is needed.
 
 ### MVP implementation
 
@@ -230,10 +237,12 @@ tsinfer <command> config.toml [flags]
 | Command | Reads | Writes | Notes |
 |---|---|---|---|
 | `infer-ancestors` | `data.samples` (VCZ) | `ancestors.path` (VCZ) | Builds ancestor haplotypes |
-| `match-ancestors` | samples VCZ, ancestors VCZ | `output.ancestors_ts` | Single-machine matching |
-| `match-samples` | samples VCZ, ancestors `.trees` | `output.samples_ts` | Single-machine matching |
-| `post-process` | samples `.trees` | `output.samples_ts` (overwrite) | Simplify, erase flanks |
-| `run` | samples VCZ | `output.samples_ts` | Runs all four steps in sequence |
+| `match NAME` | dataset VCZ, reference `.trees` | output `.trees` | Matches one `[[match]]` step by name |
+| `post-process` | `.trees` | `.trees` (overwrite) | Simplify, erase flanks |
+| `run` | samples VCZ | final `.trees` | Runs all steps in sequence |
+
+`match NAME` executes the `[[match]]` entry whose `name` field matches. Steps
+are also addressable by zero-based index (`match 0`, `match 1`).
 
 Each command exits with code 0 on success and non-zero on failure. Errors are
 written to stderr; no output is written to stdout except by `config show`.
@@ -263,20 +272,17 @@ recording exactly what parameters were used.
 
 ### Distributed pipeline commands
 
-When `[distributed]` is present in the config, the following commands replace
-`match-ancestors` and `match-samples`. See the distributed inference section
-for full details.
+When `[distributed]` is present in the config, each `match` step can be
+decomposed into init / group / partition / finalise commands. The step is
+identified by name or index, the same as the single-machine `match` command.
+See the distributed inference section for full details.
 
 ```
-tsinfer match-ancestors-init           config.toml
-tsinfer match-ancestors-group          config.toml GROUP_START GROUP_END
-tsinfer match-ancestors-partition      config.toml GROUP_INDEX PARTITION_INDEX
-tsinfer match-ancestors-finalise-group config.toml GROUP_INDEX
-tsinfer match-ancestors-finalise       config.toml
-
-tsinfer match-samples-init             config.toml
-tsinfer match-samples-partition        config.toml PARTITION_INDEX
-tsinfer match-samples-finalise         config.toml
+tsinfer match-init           config.toml NAME
+tsinfer match-group          config.toml NAME GROUP_START GROUP_END
+tsinfer match-partition      config.toml NAME GROUP_INDEX PARTITION_INDEX
+tsinfer match-finalise-group config.toml NAME GROUP_INDEX
+tsinfer match-finalise       config.toml NAME
 ```
 
 ### Logging
@@ -310,47 +316,55 @@ samples = "path/to/samples.vcz"
 ancestral_state = "variant_ancestral_allele"  # field name in the samples VCZ
 site_mask = "variant_filter"                  # optional boolean field in samples VCZ
 sample_mask = "sample_mask"                   # optional boolean field in samples VCZ
-sites_time = "variant_time"                   # optional field overriding inferred times
 
 [ancestors]
 path = "ancestors.vcz"
 
-[match]
+[[match]]
+name = "ancestors"
+dataset = "ancestors.vcz"
+reference_ts = null              # null or omitted: start from a trivial root tree sequence
+output = "ancestors.trees"
 recombination_rate = 1e-8
 mismatch_ratio = 1.0
 path_compression = true
+# sample_time is present in ancestors.vcz → linesweep grouping is used
 
-[output]
-ancestors_ts = "ancestors.trees"
-samples_ts = "final.trees"
+[[match]]
+name = "samples"
+dataset = "path/to/samples.vcz"
+reference_ts = "ancestors.trees"
+output = "final.trees"
+recombination_rate = 1e-8
+mismatch_ratio = 1.0
+path_compression = true
+# no sample_time in samples VCZ → all haplotypes assumed time=0, single group
 
 [post_process]
 split_ultimate = true
 erase_flanks = true
 ```
 
-All paths are resolved relative to the config file's location. The
-`[data]` section is shared across all pipeline steps. Step-specific sections
-(`[ancestors]`, `[match]`, `[output]`, `[post_process]`) supply the parameters
-for each stage.
+All paths are resolved relative to the config file's location. The `[data]`
+and `[ancestors]` sections are shared inputs. Each `[[match]]` entry fully
+specifies one matching step: the dataset to match, the tree sequence to match
+against, the output path, and the HMM parameters. Steps are executed in the
+order they appear. The `reference_ts` of each step is typically the `output`
+of the previous step, but this is not required — a pre-existing tree sequence
+from outside the pipeline can be used.
 
 ### CLI
 
-The CLI exposes one command per pipeline step, plus a convenience command that
-runs all steps in sequence:
-
 ```
-tsinfer infer-ancestors  config.toml
-tsinfer match-ancestors  config.toml
-tsinfer match-samples    config.toml
-tsinfer post-process     config.toml
+tsinfer infer-ancestors config.toml
+tsinfer match           config.toml ancestors   # or: match config.toml 0
+tsinfer match           config.toml samples     # or: match config.toml 1
+tsinfer post-process    config.toml
 
-tsinfer run              config.toml   # runs all four steps
+tsinfer run             config.toml             # all steps in sequence
 ```
 
-Runtime options that are not part of the reproducible configuration (parallelism,
-verbosity, whether to overwrite existing outputs) are passed as CLI flags rather
-than in the config file:
+Runtime options are passed as CLI flags:
 
 ```
 tsinfer run config.toml --threads 8 --force --verbose
@@ -358,37 +372,34 @@ tsinfer run config.toml --threads 8 --force --verbose
 
 ### Python API
 
-Each pipeline step has a corresponding Python function. Functions accept a
-`Config` object as their primary argument, which can be loaded from a TOML
-file or constructed programmatically:
-
 ```python
 cfg = tsinfer.Config.from_toml("inference.toml")
 
 tsinfer.infer_ancestors(cfg)
-ancestors_ts = tsinfer.match_ancestors(cfg)
-ts = tsinfer.match_samples(cfg, ancestors_ts)
+ancestors_ts = tsinfer.match(cfg, "ancestors")
+ts = tsinfer.match(cfg, "samples")
 final_ts = tsinfer.post_process(ts)
 ```
 
-Individual parameters can be overridden by passing keyword arguments, which
-take precedence over values in the config:
+Individual parameters can be overridden by keyword argument:
 
 ```python
-cfg = tsinfer.Config.from_toml("inference.toml")
-ancestors_ts = tsinfer.match_ancestors(cfg, recombination_rate=2e-8)
+ts = tsinfer.match(cfg, "ancestors", recombination_rate=2e-8)
 ```
 
-The `Config` class can also be constructed directly without a TOML file for
-fully programmatic use:
+The `Config` class can also be constructed directly without a TOML file:
 
 ```python
 cfg = tsinfer.Config(
     samples="samples.vcz",
     ancestral_state="variant_ancestral_allele",
     ancestors="ancestors.vcz",
-    recombination_rate=1e-8,
-    ...
+    match=[
+        dict(name="ancestors", dataset="ancestors.vcz", reference_ts=None,
+             output="ancestors.trees", recombination_rate=1e-8),
+        dict(name="samples", dataset="samples.vcz", reference_ts="ancestors.trees",
+             output="final.trees", recombination_rate=1e-8),
+    ],
 )
 ```
 
@@ -545,96 +556,80 @@ written by each init command records the full job structure (group count,
 partition counts per group, parameters) so that subsequent commands and
 workflow managers can determine what jobs need to be run.
 
-### CLI — match_ancestors
+### CLI
+
+All distributed commands take a step name (or index) to identify which
+`[[match]]` entry to operate on. The commands are otherwise the same
+regardless of whether the step is matching ancestors or samples — the
+grouping algorithm handles both cases (see ancestor grouping section).
 
 ```
-# 1. Initialise: creates work_dir and writes metadata.json
-tsinfer match-ancestors-init config.toml
+# 1. Initialise: creates work_dir/NAME/, writes metadata.json
+tsinfer match-init           config.toml NAME
 
-# 2a. For small groups (no partitioning): run one or more groups in a single job
-tsinfer match-ancestors-group config.toml GROUP_START GROUP_END
+# 2a. Small groups (no partitioning): run one or more groups in a single job
+tsinfer match-group          config.toml NAME GROUP_START GROUP_END
 
-# 2b. For large groups: run each partition independently (parallel)
-tsinfer match-ancestors-partition config.toml GROUP_INDEX PARTITION_INDEX
+# 2b. Large groups: run each partition independently (parallel)
+tsinfer match-partition      config.toml NAME GROUP_INDEX PARTITION_INDEX
 
-# 3. Finalise each large group after all its partitions complete
-tsinfer match-ancestors-finalise-group config.toml GROUP_INDEX
+# 3. Finalise a large group once all its partitions are complete
+tsinfer match-finalise-group config.toml NAME GROUP_INDEX
 
-# 4. Finalise the full match_ancestors step once all groups are done
-tsinfer match-ancestors-finalise config.toml
+# 4. Finalise the step once all groups are done; writes the output .trees file
+tsinfer match-finalise       config.toml NAME
 ```
 
-Steps 2a and 2b are not mutually exclusive. Small groups that require no
-partitioning are run with `match-ancestors-group`; large groups that are
-partitioned use `match-ancestors-partition` followed by
-`match-ancestors-finalise-group`. The workflow manager determines which
-command applies for each group by reading `metadata.json`.
-
-### CLI — match_samples
-
-```
-# 1. Initialise: creates work_dir, computes partitions, writes metadata.json
-tsinfer match-samples-init config.toml
-
-# 2. Match each partition independently (fully parallel)
-tsinfer match-samples-partition config.toml PARTITION_INDEX
-
-# 3. Merge all partitions into the final tree sequence
-tsinfer match-samples-finalise config.toml
-```
+Steps 2a and 2b are not mutually exclusive. The workflow manager reads
+`metadata.json` to determine which command applies to each group.
 
 ### Snakemake integration
 
-The init commands are natural Snakemake checkpoints: they run first, write
-`metadata.json`, and the downstream rules read it to determine how many jobs
-to submit. A sketch of the Snakemake rules for `match_samples`:
-
 ```python
-checkpoint match_samples_init:
-    input:  "ancestors.trees"
-    output: "inference_work/samples/metadata.json"
-    shell:  "tsinfer match-samples-init config.toml"
+checkpoint match_init:
+    input:  lambda wc: get_reference_ts(wc.name)   # output of previous step
+    output: "inference_work/{name}/metadata.json"
+    shell:  "tsinfer match-init config.toml {wildcards.name}"
 
-def sample_partitions(wildcards):
-    meta = json.load(checkpoints.match_samples_init.get().output[0])
-    n = meta["num_partitions"]
-    return expand("inference_work/samples/partition_{i}.pkl", i=range(n))
+def match_partitions(wildcards):
+    meta = json.load(checkpoints.match_init.get(name=wildcards.name).output[0])
+    groups = meta["ancestor_grouping"]
+    partitions = []
+    for g, group in enumerate(groups):
+        if group["partitions"]:
+            partitions += expand(
+                "inference_work/{name}/group_{g}/partition_{p}.pkl",
+                name=wildcards.name, g=g, p=range(len(group["partitions"]))
+            )
+    return partitions
 
-rule match_samples_partition:
-    input:  "inference_work/samples/metadata.json"
-    output: "inference_work/samples/partition_{i}.pkl"
-    shell:  "tsinfer match-samples-partition config.toml {wildcards.i}"
+rule match_partition:
+    input:  "inference_work/{name}/metadata.json"
+    output: "inference_work/{name}/group_{g}/partition_{p}.pkl"
+    shell:  "tsinfer match-partition config.toml {wildcards.name} {wildcards.g} {wildcards.p}"
 
-rule match_samples_finalise:
-    input:  sample_partitions
-    output: "final.trees"
-    shell:  "tsinfer match-samples-finalise config.toml"
+rule match_finalise:
+    input:  match_partitions
+    output: lambda wc: get_output_path(wc.name)    # from config
+    shell:  "tsinfer match-finalise config.toml {wildcards.name}"
 ```
 
-The `match_ancestors` Snakemake rules follow the same checkpoint pattern but
-also encode the sequential dependency between groups.
+The same rules handle both the `ancestors` and `samples` match steps because
+the commands are identical — only the step name differs.
 
 ### Python API
-
-The batch functions are available directly for programmatic use:
 
 ```python
 cfg = tsinfer.Config.from_toml("inference.toml")
 
-# match_ancestors
-meta = tsinfer.match_ancestors_init(cfg)
-for group_index, group in enumerate(meta["ancestor_grouping"]):
-    if group["partitions"] is None:
-        tsinfer.match_ancestors_group(cfg, group_index, group_index + 1)
-    else:
-        for partition_index in range(len(group["partitions"])):
-            tsinfer.match_ancestors_partition(cfg, group_index, partition_index)
-        tsinfer.match_ancestors_finalise_group(cfg, group_index)
-ancestors_ts = tsinfer.match_ancestors_finalise(cfg)
-
-# match_samples
-meta = tsinfer.match_samples_init(cfg)
-for partition_index in range(meta["num_partitions"]):
-    tsinfer.match_samples_partition(cfg, partition_index)
-ts = tsinfer.match_samples_finalise(cfg)
+for name in ["ancestors", "samples"]:
+    meta = tsinfer.match_init(cfg, name)
+    for group_index, group in enumerate(meta["ancestor_grouping"]):
+        if group["partitions"] is None:
+            tsinfer.match_group(cfg, name, group_index, group_index + 1)
+        else:
+            for partition_index in range(len(group["partitions"])):
+                tsinfer.match_partition(cfg, name, group_index, partition_index)
+            tsinfer.match_finalise_group(cfg, name, group_index)
+    tsinfer.match_finalise(cfg, name)
 ```
