@@ -152,12 +152,20 @@ sample_time = 1          # scalar: all samples in this source at time=1
 
 ### Configuration file
 
-A single TOML file describes the entire pipeline. The standard case — a single
-cohort, with ancestor VCZ written to disk, then samples matched against it:
+A single TOML file describes the entire pipeline. There is one `[match]`
+section that lists all sources — the ancestor VCZ and all sample sources —
+together. The grouping algorithm reads `sample_time` from each source and
+assembles all haplotypes into an ordered sequence of groups automatically.
+
+The ancestor VCZ is auto-identified as the source whose path matches
+`[ancestors].path`. Haplotypes from it do not produce individuals; haplotypes
+from all other sources do. No explicit `create_individuals` flag is needed.
+
+Standard case — a single cohort with modern samples only:
 
 ```toml
 [ancestral_state]
-path  = "annotations.vcz"        # VCZ containing the ancestral allele array
+path  = "annotations.vcz"
 field = "variant_ancestral_allele"
 
 [[source]]
@@ -170,19 +178,8 @@ path           = "ancestors.vcz"
 sources        = ["cohort"]
 max_gap_length = 500_000
 
-[[match]]
-name               = "ancestors"
-sources            = ["ancestors"]
-reference_ts       = null
-output             = "ancestors.trees"
-create_individuals = false
-recombination_rate = 1e-8
-mismatch_ratio     = 1.0
-
-[[match]]
-name               = "samples"
-sources            = ["cohort"]
-reference_ts       = "ancestors.trees"
+[match]
+sources            = ["ancestors", "cohort"]
 output             = "final.trees"
 recombination_rate = 1e-8
 mismatch_ratio     = 1.0
@@ -196,9 +193,9 @@ split_ultimate = true
 erase_flanks   = true
 ```
 
-**Adding ancient samples.** To include ancient DNA alongside modern samples,
-add the ancient source and list it in the samples match step. The grouping
-algorithm handles the ordering automatically:
+**Adding ancient samples.** Add the ancient source and include it in
+`[match].sources`. Ancient haplotypes are interleaved with generated ancestors
+by time — no other changes needed:
 
 ```toml
 [[source]]
@@ -206,30 +203,42 @@ name        = "ancient"
 path        = "ancient.vcz"
 sample_time = "sample_age_generations"
 
-[[match]]
-name               = "samples"
-sources            = ["cohort", "ancient"]   # ancient haplotypes ordered before modern
-reference_ts       = "ancestors.trees"
+[match]
+sources            = ["ancestors", "cohort", "ancient"]
 output             = "final.trees"
 recombination_rate = 1e-8
 mismatch_ratio     = 1.0
 ```
 
-No other changes are needed. The ancient samples are matched before time=0
-samples, produce individuals, and appear in the output tree sequence with their
-correct times.
+**Note that HMM parameters are out of scope for development phase 1, and that these
+will need to be set on a per-source basis.**
+
+The grouping algorithm places ancient haplotypes between any generated ancestor
+groups older than them and the modern samples at time=0. They produce
+individuals and appear in the output with their correct times.
+
+**Starting from an existing reference tree sequence.** The optional
+`reference_ts` skips building from inferred ancestors and matches against an
+existing `.trees` file instead:
+
+```toml
+[match]
+sources            = ["cohort"]
+reference_ts       = "published_reference.trees"
+output             = "final.trees"
+recombination_rate = 1e-8
+mismatch_ratio     = 1.0
+```
 
 **Multi-source (Phase 2).** When `[ancestors]` lists multiple sources,
 `infer_ancestors` operates on the union of their inference sites. Genotypes
 at sites absent from a source are treated as missing for that source's samples.
 A site is included in inference only if it passes the site mask in at least one
-source; ancestral state comes from the single top-level `[ancestral_state]`
-and is not resolved per-source. When a `[[match]]` step lists multiple sources, the
-combined genotype data is presented to the matching engine as a single virtual
-dataset; sources need not have the same samples.
+source; ancestral state comes from `[ancestral_state]` and is not resolved
+per-source. When `[match]` lists multiple sample sources, the combined genotype
+data is presented as a single virtual dataset.
 
-All paths are resolved relative to the config file's location. A `reference_ts`
-of `null` or omitted means start from a trivial root tree sequence.
+All paths are resolved relative to the config file's location.
 
 ### Python API
 
@@ -237,15 +246,14 @@ of `null` or omitted means start from a trivial root tree sequence.
 cfg = tsinfer.Config.from_toml("inference.toml")
 
 tsinfer.infer_ancestors(cfg)
-tsinfer.match(cfg, "ancestors")
-tsinfer.match(cfg, "samples")
+tsinfer.match(cfg)
 tsinfer.post_process(cfg)
 ```
 
 Individual parameters can be overridden by keyword argument:
 
 ```python
-tsinfer.match(cfg, "ancestors", recombination_rate=2e-8)
+tsinfer.match(cfg, recombination_rate=2e-8)
 ```
 
 The `Config` class can also be constructed directly:
@@ -260,15 +268,11 @@ cfg = tsinfer.Config(
     sources={"cohort": cohort, "ancient": ancient},
     ancestors=tsinfer.AncestorsConfig(
         path="ancestors.vcz", sources=["cohort"], max_gap_length=500_000),
-    match=[
-        tsinfer.MatchConfig(name="ancestors", sources=["ancestors"],
-                            reference_ts=None, output="ancestors.trees",
-                            create_individuals=False,
-                            recombination_rate=1e-8),
-        tsinfer.MatchConfig(name="samples", sources=["cohort", "ancient"],
-                            reference_ts="ancestors.trees", output="final.trees",
-                            recombination_rate=1e-8),
-    ],
+    match=tsinfer.MatchConfig(
+        sources=["ancestors", "cohort", "ancient"],
+        output="final.trees",
+        recombination_rate=1e-8,
+    ),
     individual_metadata=tsinfer.IndividualMetadataConfig(
         fields={"sample_id": "sample_id", "sex": "sample_sex"},
         population="sample_population",
@@ -445,64 +449,73 @@ the reference panel for the next group.
 
 ### The match loop
 
-All match steps — whether matching generated ancestors, modern samples, ancient
-samples, or pedigree samples — use the same loop. The only variation is in how
-haplotypes are grouped before matching begins.
+There is a single match step that handles all haplotypes from all sources —
+generated ancestors, modern samples, ancient samples, pedigree members —
+in one unified loop. The grouping algorithm reads `sample_time` from every
+source and assembles all haplotypes into an ordered sequence of groups.
 
 ```python
-def match(step_config, sources, reference_ts):
-    positions, all_haplotypes, all_times, node_metadata = collect_haplotypes(sources)
+def match(cfg, reference_ts=None):
+    ancestor_path = cfg.ancestors.path
+    positions, all_haplotypes, all_times, is_ancestor, node_metadata = \
+        collect_haplotypes(cfg.sources, ancestor_path)
 
-    if not step_config.create_individuals:
-        # Ancestor step: linesweep grouping accounts for genomic overlap
-        groups = linesweep_groups(sources)
-    else:
-        # Sample step (modern, ancient, or pedigree): group strictly by time.
-        # All haplotypes at the same time form one group; time=0 is last.
-        groups = time_ordered_groups(all_times)
+    groups = compute_groups(all_haplotypes, all_times, is_ancestor)
 
     current_ts = reference_ts or make_root_ts(
         sequence_length, positions,
-        sequence_intervals=sources[0]["sequence_intervals"][:],
+        sequence_intervals=load_sequence_intervals(ancestor_path),
     )
 
     for haplotype_ids in groups:
         matcher = Matcher(current_ts, positions,
-                          step_config.recombination_rate,
-                          step_config.mismatch_ratio)
+                          cfg.match.recombination_rate,
+                          cfg.match.mismatch_ratio)
         results = matcher.match(all_haplotypes[haplotype_ids])
         current_ts = extend_ts(
             current_ts,
             node_times=all_times[haplotype_ids],
             results=results,
             node_metadata=[node_metadata[i] for i in haplotype_ids],
-            create_individuals=step_config.create_individuals,
-            path_compression=step_config.path_compression,
+            create_individuals=~is_ancestor[haplotype_ids],
+            path_compression=cfg.match.path_compression,
         )
 
     return current_ts
 ```
 
-**Linesweep grouping (ancestor step).** Generated ancestors have complex
-within-epoch overlap patterns. The full linesweep algorithm (see distributed
-inference section) builds a dependency graph and topologically sorts ancestors
-into groups. This is only correct and necessary for the ancestor VCZ; applying
-it to real sample haplotypes would be unnecessary overhead.
+**`compute_groups`.** The algorithm receives all haplotypes with their times
+and an `is_ancestor` flag per haplotype. It produces a single ordered list of
+groups covering all haplotypes, interleaving ancestor and sample haplotypes by
+time:
 
-**Time-ordered grouping (sample step).** For real sample haplotypes —
-including ancient DNA and pedigree members — simple time ordering is sufficient.
-Haplotypes with identical times form a group; groups are processed from oldest
-to youngest, with time=0 forming the final group. No linesweep is needed
-because real samples do not have the same within-epoch overlap constraints as
-generated ancestors.
+1. Collect all unique time values across all sources, sort descending (oldest first).
+2. For each time slice:
+   - Ancestor haplotypes at this time (if any): apply the linesweep algorithm
+     using `sample_start_position` / `sample_end_position` from the ancestor
+     VCZ. This may produce multiple groups from a single time epoch.
+   - Sample haplotypes at this time (if any): form a single group.
+   - Ancestor groups are placed before the sample group at the same time
+     (both are at the same time so the ordering between them is arbitrary, but
+     ancestors first ensures they are available as targets for any same-time
+     real samples — though in practice real samples and generated ancestors at
+     exactly the same time value is unlikely).
+3. The result is a flat ordered list of groups from oldest to youngest.
 
-**Ancient and pedigree samples.** Adding sources with `sample_time > 0` to a
-samples match step requires no special handling. The time-ordered grouping
-automatically places ancient haplotypes before modern samples. They copy from
-whatever is already in the reference tree sequence (which already contains all
-generated ancestors), then become part of the panel for younger groups. They
-produce individuals and appear in the output tree sequence with their correct
-times.
+The first group always contains only the virtual root ancestor and is handled
+separately.
+
+**Individual creation per haplotype.** `extend_ts` receives `create_individuals`
+as a boolean array, one entry per haplotype in the group. Ancestor haplotypes
+(`is_ancestor = True`) get `False`; all others get `True`. This allows a single
+group to contain both ancestor haplotypes (no individual) and real sample
+haplotypes (with individual) if they happen to share a time value, though this
+is not expected in normal use.
+
+**Ancient and pedigree samples** require no special configuration. Adding a
+source with `sample_time` set causes its haplotypes to appear at the correct
+position in the group sequence, copying from whatever is already in the tree
+sequence at their time and then becoming part of the panel for younger groups.
 
 ### MVP implementation
 
