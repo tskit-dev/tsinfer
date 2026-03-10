@@ -394,22 +394,25 @@ class TestInferAncestorsVsPythonOracle:
             inf_times.append(dc / n_hap)
 
         if not inf_sites:
-            assert anc["call_genotype"].shape[1] == 0
+            # Only the virtual root (index 0) should be present
+            assert anc["call_genotype"].shape[1] == 1
             return
 
         oracle_results = _oracle_ancestors(np.stack(inf_sites), np.array(inf_times))
 
-        # Compare number of ancestors
+        # The output includes the virtual root at index 0 (time=1.0, all zeros).
+        # Skip it when comparing against the oracle which does not include it.
         c_n_anc = anc["call_genotype"].shape[1]
-        assert c_n_anc == len(oracle_results), (
-            f"C engine produced {c_n_anc} ancestors, oracle produced "
-            f"{len(oracle_results)}"
+        assert c_n_anc == len(oracle_results) + 1, (
+            f"C engine produced {c_n_anc} ancestors (incl. virtual root), oracle "
+            f"produced {len(oracle_results)}"
         )
 
         # Compare haplotypes: sort both by canonical key (haplotype tuple) to be
-        # order-independent within groups that share the same time
+        # order-independent within groups that share the same time.
+        # Skip column 0 (virtual root).
         gt_c = _anc_genotypes(anc)
-        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(c_n_anc))
+        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(1, c_n_anc))
         oracle_haplotypes = sorted(hap.tolist() for _, _, hap in oracle_results)
         assert c_haplotypes == oracle_haplotypes, (
             f"Ancestor haplotypes differ.\n"
@@ -479,11 +482,15 @@ class TestInferAncestorsScenarios:
             _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"], seq_len=1000),
             _cfg(),
         )
-        assert anc["call_genotype"].shape == (1, 1, 1)
-        assert int(anc["call_genotype"][0, 0, 0]) == 1
+        # Index 0 is the virtual root (time=1.0, all zeros).
+        # Index 1 is the real ancestor.
+        assert anc["call_genotype"].shape == (1, 2, 1)
+        assert int(anc["call_genotype"][0, 0, 0]) == 0  # virtual root: all-ancestral
+        assert int(anc["call_genotype"][0, 1, 0]) == 1  # real ancestor: derived
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
-        np.testing.assert_array_equal(anc["sample_start_position"][:], [100])
-        np.testing.assert_array_equal(anc["sample_end_position"][:], [100])
+        # The real ancestor (index 1) spans the single site
+        np.testing.assert_array_equal(anc["sample_start_position"][1:], [100])
+        np.testing.assert_array_equal(anc["sample_end_position"][1:], [100])
 
     def test_all_fixed_ancestral_returns_empty(self):
         anc = infer_ancestors(
@@ -532,9 +539,9 @@ class TestInferAncestorsScenarios:
         )
         src = Source(path=gt, name="test", sample_mask="sample_mask")
         anc_masked = infer_ancestors(src, _cfg())
-        # With mask, derived_count=1 out of 2 remaining haplotypes → time=0.5
-        assert anc_masked["call_genotype"].shape[1] >= 1
-        np.testing.assert_almost_equal(float(anc_masked["sample_time"][0]), 0.5)
+        # Virtual root at index 0 (time=1.0), real ancestor at index 1 (time=0.5)
+        assert anc_masked["call_genotype"].shape[1] >= 2
+        np.testing.assert_almost_equal(float(anc_masked["sample_time"][1]), 0.5)
 
     def test_gap_splits_ancestor_span(self):
         # Two groups of sites separated by a large gap
@@ -551,9 +558,10 @@ class TestInferAncestorsScenarios:
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 2
 
-        # Ancestor with focal in interval 0 must have -1 at sites in interval 1
+        # Ancestor with focal in interval 0 must have -1 at sites in interval 1.
+        # Skip index 0 (virtual root) which spans the full sequence.
         gt_out = _anc_genotypes(anc)
-        for j in range(gt_out.shape[1]):
+        for j in range(1, gt_out.shape[1]):
             start = int(anc["sample_start_position"][j])
             end = int(anc["sample_end_position"][j])
             # start and end must lie within the same interval
@@ -596,7 +604,8 @@ class TestInferAncestorsScenarios:
         )
         anc = infer_ancestors(gt, _cfg())
         # non_missing = 3, derived = 1 → valid inference site
-        assert anc["call_genotype"].shape[1] == 1
+        # Index 0 is the virtual root; index 1 is the real ancestor.
+        assert anc["call_genotype"].shape[1] == 2
 
     def test_no_gap_single_interval(self):
         gt = _haploid_store(
