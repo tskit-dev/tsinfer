@@ -27,19 +27,18 @@ Sample VCZ format
 -----------------
 Follows the bio2zarr VCF Zarr convention:
 
-  call_genotype        (n_sites, n_samples, ploidy)  int8
-  call_genotype_mask   (n_sites, n_samples, ploidy)  bool  -- True where missing
-  variant_position     (n_sites,)                    int32
-  variant_allele       (n_sites, n_alleles)           str
-  variant_contig       (n_sites,)                    int8  -- index into contig_id
-  variant_ancestral_allele (n_sites,)                str   -- ancestral allele string
-  contig_id            (n_contigs,)                  str
-  contig_length        (n_contigs,)                  int64
-  sample_id            (n_samples,)                  str
+  call_genotype            (n_sites, n_samples, ploidy)  int8; -1 = missing
+  variant_position         (n_sites,)                    int32
+  variant_allele           (n_sites, n_alleles)           str
+  variant_contig           (n_sites,)                    int8  -- index into contig_id
+  variant_ancestral_allele (n_sites,)                    str
+  contig_id                (n_contigs,)                  str
+  contig_length            (n_contigs,)                  int64
+  sample_id                (n_samples,)                  str
 
 Any extra kwargs are stored as additional arrays under their keyword name.
-A genotype value of -1 is treated as missing and sets the corresponding
-call_genotype_mask entry to True.
+Missing genotypes are encoded as -1 in call_genotype; call_genotype_mask is
+not used.
 
 Ancestor VCZ format
 -------------------
@@ -128,8 +127,6 @@ def make_sample_vcz(
 
     # Genotypes and mask
     root.create_array("call_genotype", data=genotypes)
-    mask = genotypes == -1
-    root.create_array("call_genotype_mask", data=mask)
 
     # Site arrays
     root.create_array("variant_position", data=positions)

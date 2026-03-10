@@ -63,7 +63,6 @@ class TestMakeSampleVcz:
         vcz = _minimal_sample_vcz()
         required = {
             "call_genotype",
-            "call_genotype_mask",
             "variant_position",
             "variant_allele",
             "variant_ancestral_allele",
@@ -84,17 +83,11 @@ class TestMakeSampleVcz:
         vcz = _minimal_sample_vcz()
         np.testing.assert_array_equal(vcz["call_genotype"][:], _GT_DIPLOID)
 
-    def test_call_genotype_mask_no_missing(self):
-        vcz = _minimal_sample_vcz()
-        assert not vcz["call_genotype_mask"][:].any()
-
-    def test_call_genotype_mask_with_missing(self):
+    def test_missing_encoded_as_minus_one(self):
         gt = np.array([[[-1, 1], [0, 0]]], dtype=np.int8)
         vcz = make_sample_vcz(gt, [100], [["A", "T"]], ["A"], 1000)
-        mask = vcz["call_genotype_mask"][:]
-        assert mask[0, 0, 0]  # first sample, first allele: missing
-        assert not mask[0, 0, 1]
-        assert not mask[0, 1, :].any()
+        assert vcz["call_genotype"][0, 0, 0] == -1
+        assert "call_genotype_mask" not in vcz
 
     def test_variant_position(self):
         vcz = _minimal_sample_vcz()
