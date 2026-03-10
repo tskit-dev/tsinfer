@@ -305,53 +305,119 @@ inference pipeline can be re-run or resumed from any step without re-specifying
 arguments. The Python API is a secondary interface, intended mainly to support
 the CLI implementation and programmatic use in scripts and notebooks.
 
-### Configuration file
+### Data sources
 
-A single TOML file describes the entire pipeline for a given dataset. An
-example:
+The fundamental input unit is a **source** — a named, configured view over a
+VCZ store. A source specifies the store path (local or remote) and how to
+resolve each metadata array. Metadata can come from a field within the store
+itself, from a field in a separate annotation VCZ (joined by `variant_position`
+or `sample_id`), or as a constant value. This makes fully remote, read-only
+stores first-class inputs: none of the metadata needs to live in the remote
+store itself.
 
 ```toml
-[data]
-samples = "path/to/samples.vcz"
-ancestral_state = "variant_ancestral_allele"  # field name in the samples VCZ
-site_mask = "variant_filter"                  # optional boolean field in samples VCZ
-sample_mask = "sample_mask"                   # optional boolean field in samples VCZ
+[[source]]
+name = "ukb"
+path = "s3://bucket/ukb-chr20.vcz"          # remote, read-only
+ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
+site_mask       = {path = "annotations.vcz", field = "variant_filter"}
+# sample_mask, sample_time can also be specified here
+
+[[source]]
+name = "hgdp"
+path = "gs://bucket/hgdp-chr20.vcz"         # different remote store
+ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
+site_mask       = {path = "annotations.vcz", field = "variant_filter"}
+sample_time     = {path = "hgdp_metadata.vcz", field = "sample_time"}
+```
+
+For the common case where all metadata lives in the store, the field name is
+given directly as a string:
+
+```toml
+[[source]]
+name = "local"
+path = "samples.vcz"
+ancestral_state = "variant_ancestral_allele"
+site_mask       = "variant_filter"
+```
+
+Metadata resolution rules:
+- **String** — field name within the source store itself
+- **`{path, field}`** — field from a separate VCZ, joined to the source by
+  `variant_position` (for site arrays) or `sample_id` (for sample arrays).
+  Sites or samples absent from the annotation file receive a fill value
+  (missing ancestral state → site excluded; missing mask → site included;
+  missing time → time=0)
+- **Scalar** — constant applied to all sites or samples
+
+### Configuration file
+
+A single TOML file describes the entire pipeline. Sources are declared in
+`[[source]]` entries and referenced by name in `[ancestors]` and `[[match]]`
+sections. The standard two-step pipeline for two remote cohorts:
+
+```toml
+[[source]]
+name = "ukb"
+path = "s3://bucket/ukb-chr20.vcz"
+ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
+site_mask       = {path = "annotations.vcz", field = "variant_filter"}
+
+[[source]]
+name = "hgdp"
+path = "gs://bucket/hgdp-chr20.vcz"
+ancestral_state = {path = "annotations.vcz", field = "variant_ancestral_allele"}
+site_mask       = {path = "annotations.vcz", field = "variant_filter"}
 
 [ancestors]
-path = "ancestors.vcz"
+path    = "ancestors.vcz"
+sources = ["ukb", "hgdp"]   # infer ancestors from union of sites across both sources
 
 [[match]]
-name = "ancestors"
-dataset = "ancestors.vcz"
-reference_ts = null              # null or omitted: start from a trivial root tree sequence
-output = "ancestors.trees"
+name         = "ancestors"
+sources      = ["ancestors"]  # ancestors.vcz is itself treated as a source
+reference_ts = null
+output       = "ancestors.trees"
 recombination_rate = 1e-8
-mismatch_ratio = 1.0
-path_compression = true
-# sample_time is present in ancestors.vcz → linesweep grouping is used
+mismatch_ratio     = 1.0
 
 [[match]]
-name = "samples"
-dataset = "path/to/samples.vcz"
+name         = "samples"
+sources      = ["ukb", "hgdp"]   # match both cohorts simultaneously
 reference_ts = "ancestors.trees"
-output = "final.trees"
+output       = "final.trees"
 recombination_rate = 1e-8
-mismatch_ratio = 1.0
-path_compression = true
-# no sample_time in samples VCZ → all haplotypes assumed time=0, single group
+mismatch_ratio     = 1.0
 
 [post_process]
 split_ultimate = true
-erase_flanks = true
+erase_flanks   = true
 ```
 
-All paths are resolved relative to the config file's location. The `[data]`
-and `[ancestors]` sections are shared inputs. Each `[[match]]` entry fully
-specifies one matching step: the dataset to match, the tree sequence to match
-against, the output path, and the HMM parameters. Steps are executed in the
-order they appear. The `reference_ts` of each step is typically the `output`
-of the previous step, but this is not required — a pre-existing tree sequence
-from outside the pipeline can be used.
+**Multi-source ancestor generation.** When `[ancestors]` lists multiple sources,
+`infer_ancestors` operates on the union of their inference sites (by genomic
+position). Genotypes at sites absent from a source are treated as missing for
+that source's samples. Ancestral state and site mask are resolved per-source;
+a site is included in inference only if it passes the mask in at least one
+source and has a consistent ancestral state across all sources that have it.
+
+**Multi-source matching.** When a `[[match]]` step lists multiple sources, the
+combined genotype data across all sources is presented to the matching engine
+as a single virtual dataset. Ancestors that span sites from multiple sources
+are matched correctly because the engine sees a unified view of all genotypes
+at all inference sites. Sources need not have the same samples — the combined
+sample set is the union. Genotypes are missing for samples from a source that
+does not cover a given site.
+
+**Source ordering.** Within a multi-source step, source order matters only for
+tie-breaking (e.g. when a site exists in multiple sources with conflicting
+allele encodings). Positions are always the authoritative join key.
+
+All paths are resolved relative to the config file's location. A `reference_ts`
+of `null` or omitted means start from a trivial root tree sequence. A
+`reference_ts` value may be a path to any `.trees` file — it need not be
+produced by a previous step in the same config.
 
 ### CLI
 
@@ -390,15 +456,25 @@ ts = tsinfer.match(cfg, "ancestors", recombination_rate=2e-8)
 The `Config` class can also be constructed directly without a TOML file:
 
 ```python
+ukb  = tsinfer.Source("s3://bucket/ukb-chr20.vcz",
+                      ancestral_state=tsinfer.FromVCZ("annotations.vcz",
+                                                      "variant_ancestral_allele"),
+                      site_mask=tsinfer.FromVCZ("annotations.vcz", "variant_filter"))
+hgdp = tsinfer.Source("gs://bucket/hgdp-chr20.vcz",
+                      ancestral_state=tsinfer.FromVCZ("annotations.vcz",
+                                                      "variant_ancestral_allele"),
+                      site_mask=tsinfer.FromVCZ("annotations.vcz", "variant_filter"))
+
 cfg = tsinfer.Config(
-    samples="samples.vcz",
-    ancestral_state="variant_ancestral_allele",
-    ancestors="ancestors.vcz",
+    sources={"ukb": ukb, "hgdp": hgdp},
+    ancestors=tsinfer.AncestorsConfig(path="ancestors.vcz", sources=["ukb", "hgdp"]),
     match=[
-        dict(name="ancestors", dataset="ancestors.vcz", reference_ts=None,
-             output="ancestors.trees", recombination_rate=1e-8),
-        dict(name="samples", dataset="samples.vcz", reference_ts="ancestors.trees",
-             output="final.trees", recombination_rate=1e-8),
+        tsinfer.MatchConfig(name="ancestors", sources=["ancestors"],
+                            reference_ts=None, output="ancestors.trees",
+                            recombination_rate=1e-8),
+        tsinfer.MatchConfig(name="samples", sources=["ukb", "hgdp"],
+                            reference_ts="ancestors.trees", output="final.trees",
+                            recombination_rate=1e-8),
     ],
 )
 ```
