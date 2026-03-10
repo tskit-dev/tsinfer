@@ -1,6 +1,19 @@
 # tsinfer v1.0 design
 
-## MVP
+## Update phasing
+
+- Phase 1 is structural, getting the various data sources working an generalised
+  in the correct way. The exact names of parameters and so on is not critical,
+  the important goal is to establish the new shape of the codebase.
+  Multi-source support and semantics are not in scope, but the basic structural
+  elements of the configuration and code should make this possible as later
+  extension.
+- Phase 2 is parameter refinement and consolidation,
+  moving to the final ways of parametrising the
+  various parts of the inference process and consolidating aspects of the codebase
+  that can be externalised or simplified.
+
+## Phase 1 MVP
 
 The MVP delivers end-to-end inference — equivalent to the current `tsinfer.infer` —
 on the new architecture, running on a single machine. Backwards compatibility
@@ -36,10 +49,11 @@ with existing file formats and APIs is not a goal.
   `match-partition`, etc.) and Snakemake integration are fully specified
   in this document but not implemented in the MVP. Single-machine threading via
   `--threads` is sufficient for the MVP.
-- **External HMM engine.** Integration with `tsls` as a pluggable matcher is
-  deferred. The existing C matching engine is retained unchanged.
-- **Full Python engine removal.** The Python engine remains in the test suite
-  for the MVP; complete removal is deferred.
+- **HMM parameters.** The HMM needs to be reparameterised. For the initial MVP
+  we keep current HMM parameters as-is, with the understanding that they will
+  be fully updated in due course.
+- **External HMM engine.** Replacing existing built-in HMM engine with external
+  one is deferred. The existing C matching engine is retained unchanged.
 
 ## Matching engine
 
@@ -59,6 +73,10 @@ in the existing code:
   transformation on a tree sequence rather than as internal engine state.
 
 ```python
+
+# Note: Prelimary design - a list of structs storable as JSON may be preferable
+# for debugging.
+
 @dataclass
 class MatchResult:
     path_left:       np.ndarray  # (n_edges,) int32 — left breakpoints (site indices)
@@ -81,15 +99,14 @@ class Matcher:
     def match(
         self,
         haplotypes: np.ndarray,      # (n_haplotypes, n_sites) int8
-        start_index: np.ndarray,     # (n_haplotypes,) first active site per haplotype
-        end_index: np.ndarray,       # (n_haplotypes,) last active site per haplotype
     ) -> list[MatchResult]: ...
 ```
 
-`start_index` and `end_index` are derived from the missing data pattern in
-the ancestor VCZ (or for samples, cover all sites). They tell the HMM the
-active range for each haplotype, replacing the role that the stored
-`sample_start_position`/`sample_end_position` serve in the grouping step.
+The `start` and `end` of matching for a haplotype are derived from the
+its missing data pattern. Tsinfer will scan the flanks to determine where
+matching should start. This is technically redundant as we already know
+these values from the infer-ancestors step and stored values, but
+is cheap to compute and simplifies the code.
 
 Results are plain data objects with no dependency on the engine internals, so
 they can be serialised to disk for the distributed case.
@@ -107,14 +124,12 @@ def extend_ts(
 ```
 
 `make_root_ts` copies `sequence_intervals` from the ancestor VCZ array into
-the tree sequence's top-level metadata. All downstream steps — including
-`match samples` and `post_process` — read `sequence_intervals` from the tree
-sequence metadata, so neither needs to re-open the ancestor VCZ.
+the tree sequence's top-level metadata. Downstream steps that require this
+(in particular `post_process`) read `sequence_intervals` from the tree
+sequence metadata, so do not need to re-open the ancestor VCZ.
 
 `extend_ts` adds the new nodes, inserts their edges (with optional path
-compression), and records mutations. Edges are clipped at gap boundaries using
-`sequence_intervals` from the tree sequence metadata before insertion, so no
-edge in the output tree sequence ever spans a gap. The returned tree sequence
+compression), and records mutations. The returned tree sequence
 becomes the reference panel for the next group.
 
 ### The match loop
@@ -128,7 +143,7 @@ non-zero times that drive epoch ordering), while sample VCZ datasets have no
 def match(dataset_vcz, reference_ts, recombination_rate, mismatch_ratio,
           path_compression=True):
     positions = dataset_vcz["variant_position"][:]
-    times = dataset_vcz.get("sample_time", default=0)
+    times = dataset_vcz.get("sample_time", default=0) # pseudocode
     groups = compute_groups(dataset_vcz, times)  # linesweep or single group
 
     current_ts = reference_ts or make_root_ts(
@@ -160,23 +175,17 @@ has a `restore_tree_sequence_builder` function that reconstructs the internal
 batch workflow when resuming from an intermediate result. The MVP `Matcher`
 uses exactly this mechanism: on construction it calls
 `restore_tree_sequence_builder(ts)` to initialise the C engine, then delegates
-`match()` to the existing `_tsinfer.AncestorMatcher`. The `MatchResult`
-objects and `extend_ts` are thin wrappers over the existing `add_path` and
-`add_mutations` calls on the `TreeSequenceBuilder`.
+`match()` to the existing `_tsinfer.AncestorMatcher`. No state is maintained
+between groups, and a fresh Matcher class is instantiated for each
+intermediate tree sequence.
 
 This means the MVP requires no changes to the C extension and no algorithmic
 changes — only the Python-level structure changes.
 
-### Future: pluggable engines
+### Future: external HMM matching engine
 
-Any alternative implementation (e.g. `tsls`) that satisfies the `Matcher`
-interface can be dropped in without changes to the pipeline. The config file
-would gain an `engine` key:
-
-```toml
-[match]
-engine = "tsls"   # or "tsinfer" (default)
-```
+The future plan is to delegate HMM matching to an external package. That is
+phase 2 of the tskit 1.0 upgrade process.
 
 ## Ancestor data format
 
@@ -217,8 +226,7 @@ of genotype data.
 ### Focal sites
 
 Focal sites are the inference sites at which a particular ancestor was
-generated. An ancestor is defined by carrying the derived allele at all of its
-focal sites. Most ancestors have a single focal site; the `max_focal_positions`
+generated. Most ancestors have a single focal site; the `max_focal_positions`
 dimension accommodates the minority with more. Unused slots are padded with
 `-2` following standard VCZ conventions. Focal site values are genomic
 positions, consistent with `variant_position`.
@@ -230,10 +238,12 @@ which lists the `[start, end)` genomic coordinate pairs for the regions that
 contain inference sites. Its complement within `[0, sequence_length)` is the
 set of gaps. `sequence_intervals` is computed at `infer_ancestors` time from
 the union of inference site positions across all sources, using the
-`min_gap_length` threshold from `[ancestors]` in the config.
+`max_gap_length` threshold from `[ancestors]` in the config. (This parametrisation
+is crude, and will likely be refined in phase 2.)
 
-Ancestors are clipped to the interval containing their focal site before being
-written to the store. Any sites in `call_genotype` that fall outside the
+Ancestors are clipped to the interval containing their focal site(s) before being
+written to the store. Focal sites that are grouped together that span intervals
+are split per interval. Any sites in `call_genotype` that fall outside the
 ancestor's interval are set to missing (`-1`), and `sample_start_position` /
 `sample_end_position` are clamped to interval boundaries. This is a pure Python
 transformation on the output arrays; no changes to the C ancestor-building code
@@ -271,7 +281,7 @@ tsinfer <command> config.toml [flags]
 |---|---|---|---|
 | `infer-ancestors` | `data.samples` (VCZ) | `ancestors.path` (VCZ) | Builds ancestor haplotypes |
 | `match NAME` | dataset VCZ, reference `.trees` | output `.trees` | Matches one `[[match]]` step by name |
-| `post-process` | `.trees` | `.trees` (overwrite) | Simplify, erase flanks |
+| `post-process` | `.trees` | `.trees` (overwrite) | Simplify, erase gaps |
 | `run` | samples VCZ | final `.trees` | Runs all steps in sequence |
 
 `match NAME` executes the `[[match]]` entry whose `name` field matches. Steps
@@ -389,6 +399,52 @@ Metadata resolution rules:
   missing time → time=0)
 - **Scalar** — constant applied to all sites or samples
 
+### Individual metadata
+
+The final tree sequence represents samples as tskit individuals, each with one
+or more nodes depending on ploidy. Ancestors are internal nodes only — they are
+not flagged as samples and have no individuals associated with them.
+
+**Ancestor nodes.** When a `[[match]]` step operates on a source with
+`sample_time` present (the ancestor VCZ), the matched haplotypes are added as
+internal nodes with times drawn from `sample_time`. These nodes are not flagged
+as samples and no individuals are created. This is the default when `sample_time`
+is present in the source; it can be overridden explicitly with
+`create_individuals = true` if needed.
+
+**Sample nodes.** When a `[[match]]` step operates on sources without
+`sample_time`, haplotypes are added as sample-flagged leaf nodes at time 0.
+Nodes are grouped into individuals according to the ploidy encoded in the VCZ
+`call_genotype` array (shape `(n_sites, n_samples, ploidy)`). Individual
+metadata is populated from sample-dimensioned VCZ arrays as declared in
+`[individual_metadata]`.
+
+**`[individual_metadata]`** declares the individual metadata schema and maps
+tskit field names to VCZ array names:
+
+```toml
+[individual_metadata]
+fields     = {sample_id = "sample_id", sex = "sample_sex"}
+population = "sample_population"
+```
+
+`fields` is a mapping from tskit individual metadata field name to the name of
+a sample-dimensioned array in the source VCZ. The tskit `MetadataSchema` for
+individuals is derived automatically from the VCZ array dtypes (string →
+`{"type": "string"}`, integer → `{"type": "integer"}`, etc.) and stored in the
+output tree sequence. JSON metadata only is supported during inference - conversion
+to more efficient struct-based tskit metadata can be performed afterwards during
+postprocessing.
+
+`population`, if specified, maps a VCZ array to tskit populations. The unique
+values found in the array are used to create population entries in the tree
+sequence, and each individual is assigned to its population by index. If omitted,
+all individuals are assigned to a single unnamed population.
+
+With multiple sources in a `[[match]]` step, fields are resolved per source.
+For a sample present in multiple sources, the first source that provides a
+value for a given field wins.
+
 ### Configuration file
 
 A single TOML file describes the entire pipeline. Sources are declared in
@@ -411,23 +467,29 @@ site_mask       = {path = "annotations.vcz", field = "variant_filter"}
 [ancestors]
 path           = "ancestors.vcz"
 sources        = ["ukb", "hgdp"]   # infer ancestors from union of sites across both sources
-min_gap_length = 500_000           # genomic regions longer than this with no inference sites become breaks
+max_gap_length = 500_000           # genomic regions longer than this with no inference sites become breaks
 
 [[match]]
-name         = "ancestors"
-sources      = ["ancestors"]  # ancestors.vcz is itself treated as a source
-reference_ts = null
-output       = "ancestors.trees"
+name               = "ancestors"
+sources            = ["ancestors"]  # ancestors.vcz is itself treated as a source
+reference_ts       = null
+output             = "ancestors.trees"
+create_individuals = false          # ancestors are internal nodes only
 recombination_rate = 1e-8
 mismatch_ratio     = 1.0
 
 [[match]]
-name         = "samples"
-sources      = ["ukb", "hgdp"]   # match both cohorts simultaneously
-reference_ts = "ancestors.trees"
-output       = "final.trees"
+name               = "samples"
+sources            = ["ukb", "hgdp"]   # match both cohorts simultaneously
+reference_ts       = "ancestors.trees"
+output             = "final.trees"
+create_individuals = true              # default; creates individuals with metadata
 recombination_rate = 1e-8
 mismatch_ratio     = 1.0
+
+[individual_metadata]
+fields     = {sample_id = "sample_id", sex = "sample_sex"}
+population = "sample_population"
 
 [post_process]
 split_ultimate = true
@@ -510,11 +572,17 @@ cfg = tsinfer.Config(
     match=[
         tsinfer.MatchConfig(name="ancestors", sources=["ancestors"],
                             reference_ts=None, output="ancestors.trees",
+                            create_individuals=False,
                             recombination_rate=1e-8),
         tsinfer.MatchConfig(name="samples", sources=["ukb", "hgdp"],
                             reference_ts="ancestors.trees", output="final.trees",
+                            create_individuals=True,
                             recombination_rate=1e-8),
     ],
+    individual_metadata=tsinfer.IndividualMetadataConfig(
+        fields={"sample_id": "sample_id", "sex": "sample_sex"},
+        population="sample_population",
+    ),
 )
 ```
 
