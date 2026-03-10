@@ -2834,12 +2834,20 @@ class SampleMatcher(Matcher):
             logger.info(
                 f"{time_.time()}Thread {threading.get_ident()} starting haplotype {j}"
             )
+            start = 0
+            end = len(haplotype)
+            if haplotype[0] == tskit.MISSING_DATA:
+                # could have missing flank at start
+                start = np.where(haplotype != tskit.MISSING_DATA)[0][0]
+            if haplotype[-1] == tskit.MISSING_DATA:
+                # could have missing flank at end
+                end = np.where(haplotype != tskit.MISSING_DATA)[0][-1] + 1
             result = self.find_path(
                 matcher=local_data.matcher,
                 child_id=self.sample_id_map[j],
                 haplotype=haplotype,
-                start=0,
-                end=self.num_sites,
+                start=start,
+                end=end,
             )
             self.match_progress.update()
             logger.info(
