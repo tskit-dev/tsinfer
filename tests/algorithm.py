@@ -27,14 +27,31 @@ first.
 """
 
 import collections
+import enum
 
 import attr
 import numpy as np
-import sortedcontainers
-import tsinfer.constants as constants
 import tskit
 
 import _tsinfer
+
+try:
+    import sortedcontainers
+except ImportError:
+    sortedcontainers = None  # Only needed for TreeSequenceBuilder
+
+
+class _GenotypeEncoding(enum.IntEnum):
+    EIGHT_BIT = 0
+    ONE_BIT = 1
+
+
+class _Constants:
+    GenotypeEncoding = _GenotypeEncoding
+    NODE_IS_PC_ANCESTOR = 1 << 16
+
+
+constants = _Constants()
 
 
 @attr.s
