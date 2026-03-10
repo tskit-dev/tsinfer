@@ -222,7 +222,7 @@ class TestRoundTrip:
         ]
         for params in test_params:
             ts = tsinfer.infer(sample_data, **params)
-            if params.get("simplify") is False:
+            if params.get("simplify") is False:  # None is also possible
                 ts = remove_terminal_artifacts(ts)
 
             self.assert_lossless(

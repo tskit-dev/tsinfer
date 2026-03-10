@@ -185,9 +185,7 @@ AncestorBuilder_add_terminal_site(AncestorBuilder *self)
     if (AncestorBuilder_check_state(self) != 0) {
         goto out;
     }
-    Py_BEGIN_ALLOW_THREADS
     err = ancestor_builder_add_terminal_site(self->builder);
-    Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -369,19 +367,15 @@ static PyGetSetDef AncestorBuilder_getsetters[] = {
 };
 
 static PyMethodDef AncestorBuilder_methods[] = {
-    {"add_site", (PyCFunction) AncestorBuilder_add_site,
-        METH_VARARGS|METH_KEYWORDS,
-        "Adds the specified site to this ancestor builder."},
-    {"add_terminal_site", (PyCFunction) AncestorBuilder_add_terminal_site,
-        METH_NOARGS,
-        "Adds a terminal site to this ancestor builder."},
-    {"make_ancestor", (PyCFunction) AncestorBuilder_make_ancestor,
-        METH_VARARGS|METH_KEYWORDS,
-        "Makes the specified ancestor."},
-    {"ancestor_descriptors", (PyCFunction) AncestorBuilder_ancestor_descriptors,
-        METH_NOARGS,
-        "Returns a list of ancestor (frequency, focal_sites) tuples."},
-    {NULL}  /* Sentinel */
+    { "add_site", (PyCFunction) AncestorBuilder_add_site, METH_VARARGS | METH_KEYWORDS,
+        "Adds the specified site to this ancestor builder." },
+    { "add_terminal_site", (PyCFunction) AncestorBuilder_add_terminal_site, METH_NOARGS,
+        "Adds a terminal site to this ancestor builder." },
+    { "make_ancestor", (PyCFunction) AncestorBuilder_make_ancestor,
+        METH_VARARGS | METH_KEYWORDS, "Makes the specified ancestor." },
+    { "ancestor_descriptors", (PyCFunction) AncestorBuilder_ancestor_descriptors,
+        METH_NOARGS, "Returns a list of ancestor (frequency, focal_sites) tuples." },
+    { NULL } /* Sentinel */
 };
 
 static PyTypeObject AncestorBuilderType = {
