@@ -23,6 +23,10 @@ All helpers return in-memory zarr Groups (zarr v2 format) so tests require no
 filesystem access. String arrays use zarr's VariableLengthUTF8 dtype to match
 the convention used by bio2zarr.
 
+Array dimension names (``_ARRAY_DIMENSIONS`` attrs) are set on every array so
+that vcztools can interpret the stores as valid VCZ. ``vcz_to_vcf`` converts an
+in-memory group to VCF text by calling vcztools internals directly.
+
 Sample VCZ format
 -----------------
 Follows the bio2zarr VCF Zarr convention:
@@ -57,6 +61,8 @@ Follows the format defined in design.md:
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
@@ -70,12 +76,22 @@ def _open_memory_group() -> zarr.Group:
     return zarr.open_group(store, mode="w", zarr_format=_ZARR_FORMAT)
 
 
-def _str_array(group: zarr.Group, name: str, data: np.ndarray) -> zarr.Array:
-    """Create a variable-length string array from a numpy array of strings."""
+def _arr(group: zarr.Group, name: str, data: np.ndarray, dims: list[str]) -> zarr.Array:
+    """Create a numeric array and set its _ARRAY_DIMENSIONS attribute."""
+    a = group.create_array(name, data=data)
+    a.attrs["_ARRAY_DIMENSIONS"] = dims
+    return a
+
+
+def _str_array(
+    group: zarr.Group, name: str, data: np.ndarray, dims: list[str]
+) -> zarr.Array:
+    """Create a variable-length string array and set its _ARRAY_DIMENSIONS attribute."""
     data = np.asarray(data)
-    arr = group.create_array(name, shape=data.shape, dtype=_VLEN_STR)
-    arr[:] = data
-    return arr
+    a = group.create_array(name, shape=data.shape, dtype=_VLEN_STR)
+    a[:] = data
+    a.attrs["_ARRAY_DIMENSIONS"] = dims
+    return a
 
 
 def make_sample_vcz(
@@ -112,6 +128,8 @@ def make_sample_vcz(
     **kwargs:
         Additional arrays to store verbatim (e.g. ``site_mask=…``,
         ``sample_time=…``). Each is written as a zarr array under its keyword name.
+        Dimension names are inferred from shape: first axis matching n_sites gets
+        ``"variants"``; first axis matching n_samples gets ``"samples"``.
     """
     genotypes = np.asarray(genotypes, dtype=np.int8)
     positions = np.asarray(positions, dtype=np.int32)
@@ -125,29 +143,34 @@ def make_sample_vcz(
 
     root = _open_memory_group()
 
-    # Genotypes and mask
-    root.create_array("call_genotype", data=genotypes)
+    _arr(root, "call_genotype", genotypes, ["variants", "samples", "ploidy"])
+    _arr(root, "variant_position", positions, ["variants"])
+    _arr(root, "variant_contig", np.zeros(n_sites, dtype=np.int8), ["variants"])
+    _str_array(root, "variant_allele", alleles, ["variants", "alleles"])
+    _str_array(root, "variant_ancestral_allele", ancestral_state, ["variants"])
+    _str_array(root, "contig_id", np.array([contig_id]), ["contigs"])
+    _arr(
+        root,
+        "contig_length",
+        np.array([sequence_length], dtype=np.int64),
+        ["contigs"],
+    )
+    _str_array(root, "sample_id", sample_ids, ["samples"])
 
-    # Site arrays
-    root.create_array("variant_position", data=positions)
-    root.create_array("variant_contig", data=np.zeros(n_sites, dtype=np.int8))
-    _str_array(root, "variant_allele", alleles)
-    _str_array(root, "variant_ancestral_allele", ancestral_state)
-
-    # Contig arrays
-    _str_array(root, "contig_id", np.array([contig_id]))
-    root.create_array("contig_length", data=np.array([sequence_length], dtype=np.int64))
-
-    # Sample arrays
-    _str_array(root, "sample_id", sample_ids)
-
-    # Extra arrays
     for name, value in kwargs.items():
         arr = np.asarray(value)
-        if arr.dtype.kind in ("U", "S", "O"):
-            _str_array(root, name, arr)
+        # Infer leading dimension name from shape
+        if arr.shape and arr.shape[0] == n_sites:
+            leading = ["variants"]
+        elif arr.shape and arr.shape[0] == n_samples:
+            leading = ["samples"]
         else:
-            root.create_array(name, data=arr)
+            leading = ["unknown"]
+        dims = leading + [f"dim_{i}" for i in range(1, arr.ndim)]
+        if arr.dtype.kind in ("U", "S", "O"):
+            _str_array(root, name, arr, dims)
+        else:
+            _arr(root, name, arr, dims)
 
     return root
 
@@ -215,17 +238,58 @@ def make_ancestor_vcz(
 
     root = _open_memory_group()
 
-    root.create_array("call_genotype", data=genotypes)
-    root.create_array("variant_position", data=positions)
-    _str_array(root, "variant_allele", alleles)
-    _str_array(root, "sample_id", sample_ids)
-    root.create_array("sample_time", data=times)
-    root.create_array("sample_start_position", data=start_positions)
-    root.create_array("sample_end_position", data=end_positions)
-    root.create_array("sample_focal_positions", data=focal_positions)
-    root.create_array("sequence_intervals", data=sequence_intervals)
+    _arr(root, "call_genotype", genotypes, ["variants", "samples", "ploidy"])
+    _arr(root, "variant_position", positions, ["variants"])
+    _str_array(root, "variant_allele", alleles, ["variants", "alleles"])
+    _str_array(root, "sample_id", sample_ids, ["samples"])
+    _arr(root, "sample_time", times, ["samples"])
+    _arr(root, "sample_start_position", start_positions, ["samples"])
+    _arr(root, "sample_end_position", end_positions, ["samples"])
+    _arr(root, "sample_focal_positions", focal_positions, ["samples", "focal_alleles"])
+    _arr(root, "sequence_intervals", sequence_intervals, ["intervals", "coords"])
 
     return root
+
+
+def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
+    """
+    Convert an in-memory VCZ group to VCF text using vcztools internals.
+
+    Returns the full VCF as a string. ``no_version`` suppresses the
+    ``##bcftools_view`` header line for deterministic output in tests.
+    """
+    from vcztools import retrieval
+    from vcztools.samples import parse_samples
+    from vcztools.utils import _as_fixed_length_string
+    from vcztools.vcf_writer import (
+        _generate_header,
+        c_chunk_to_vcf,
+        get_filter_ids,
+    )
+
+    all_samples = root["sample_id"][:]
+    sample_ids, samples_selection = parse_samples(None, all_samples)
+
+    header = _generate_header(root, sample_ids, no_version=no_version)
+
+    contigs = _as_fixed_length_string(root["contig_id"][:])
+    filters = get_filter_ids(root)
+
+    body = io.StringIO()
+    for chunk_data in retrieval.variant_chunk_iter(
+        root, samples_selection=samples_selection
+    ):
+        c_chunk_to_vcf(
+            chunk_data,
+            samples_selection,
+            contigs,
+            filters,
+            body,
+            drop_genotypes=False,
+            no_update=None,
+        )
+
+    return header + body.getvalue()
 
 
 def ts_to_sample_vcz(
