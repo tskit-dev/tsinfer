@@ -21,8 +21,10 @@ Validate that make_sample_vcz and ts_to_sample_vcz produce correct VCZ by
 converting to VCF text via vcztools and comparing against expected output.
 """
 
+import bio2zarr.tskit as bzt
 import msprime
 import numpy as np
+import zarr
 from helpers import make_sample_vcz, ts_to_sample_vcz, vcz_to_vcf
 
 
@@ -222,3 +224,99 @@ class TestTsToSampleVczVcf:
         chrom_line = next(line for line in vcf.splitlines() if line.startswith("#CHROM"))
         sample_cols = chrom_line.split("\t")[9:]
         assert len(sample_cols) == ts.num_individuals
+
+
+# ---------------------------------------------------------------------------
+# bio2zarr equivalence
+# ---------------------------------------------------------------------------
+
+
+class TestTsToSampleVczMatchesBio2zarr:
+    """
+    Verify that ts_to_sample_vcz produces the same core arrays as bio2zarr's
+    tskit convert. bio2zarr is written to a temporary directory; we compare
+    against the in-memory group from ts_to_sample_vcz.
+
+    Arrays compared: call_genotype, variant_position, variant_allele,
+    sample_id, contig_id, contig_length, variant_contig.
+
+    Arrays intentionally not compared: call_genotype_mask, call_genotype_phased,
+    region_index, variant_length (all bio2zarr-specific extras we don't produce).
+    """
+
+    def _sim(self, n=3, seq_len=5_000, seed=42):
+        ts = msprime.sim_ancestry(
+            n, sequence_length=seq_len, recombination_rate=1e-4, random_seed=seed
+        )
+        return msprime.sim_mutations(ts, rate=1e-3, random_seed=seed)
+
+    def test_call_genotype(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(ours["call_genotype"][:], ref["call_genotype"][:])
+
+    def test_variant_position(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(
+            ours["variant_position"][:], ref["variant_position"][:]
+        )
+
+    def test_variant_allele(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        # Both should have the same shape and values; empty strings pad unused alleles
+        assert ours["variant_allele"].shape == ref["variant_allele"].shape
+        np.testing.assert_array_equal(
+            ours["variant_allele"][:], ref["variant_allele"][:]
+        )
+
+    def test_sample_id(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(ours["sample_id"][:], ref["sample_id"][:])
+
+    def test_contig_id(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(ours["contig_id"][:], ref["contig_id"][:])
+
+    def test_contig_length(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(ours["contig_length"][:], ref["contig_length"][:])
+
+    def test_variant_contig(self, tmp_path):
+        ts = self._sim()
+        bzt.convert(ts, tmp_path / "ref.vcz")
+        ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
+        ours = ts_to_sample_vcz(ts)
+        np.testing.assert_array_equal(
+            ours["variant_contig"][:], ref["variant_contig"][:]
+        )
+
+    def test_multiple_seeds(self, tmp_path):
+        """Spot-check genotypes across several random tree sequences."""
+        for seed in [1, 7, 13, 99]:
+            ts = self._sim(seed=seed)
+            vcz_path = tmp_path / f"ref_{seed}.vcz"
+            bzt.convert(ts, vcz_path)
+            ref = zarr.open(str(vcz_path), mode="r")
+            ours = ts_to_sample_vcz(ts)
+            np.testing.assert_array_equal(
+                ours["call_genotype"][:],
+                ref["call_genotype"][:],
+                err_msg=f"call_genotype mismatch for seed={seed}",
+            )

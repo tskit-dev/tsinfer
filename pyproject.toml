@@ -121,6 +121,10 @@ include-package-data = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::zarr.errors.ZarrDeprecationWarning",
+    "ignore::zarr.errors.ZarrUserWarning",
+]
 
 [tool.ruff]
 # Assume Python 3.11
