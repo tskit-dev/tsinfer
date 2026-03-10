@@ -27,7 +27,6 @@ import warnings
 
 import bio2zarr.tskit as ts2z
 import msprime
-import numcodecs
 import numpy as np
 import pytest
 import tskit
@@ -83,13 +82,16 @@ def test_sgkit_dataset_roundtrip(tmp_path):
 def test_sgkit_individual_metadata_not_clobbered(tmp_path):
     ts, zarr_path = tsutil.make_ts_and_zarr(tmp_path)
     # Load the zarr to add metadata for testing
-    zarr_root = zarr.open(zarr_path)
+    zarr_root = zarr.open(zarr_path, mode="r+")
     empty_obj = json.dumps({}).encode()
-    indiv_metadata = np.array([empty_obj] * ts.num_individuals, dtype=object)
+    indiv_metadata = [empty_obj] * ts.num_individuals
     indiv_metadata[42] = json.dumps({"variant_data_sample_id": "foobar"}).encode()
-    zarr_root.create_dataset(
-        "individuals_metadata", data=indiv_metadata, object_codec=numcodecs.VLenBytes()
+    arr = zarr_root.create_array(
+        "individuals_metadata",
+        shape=(len(indiv_metadata),),
+        dtype=bytes,
     )
+    arr[:] = indiv_metadata
     zarr_root.attrs["individuals_metadata_schema"] = repr(
         tskit.MetadataSchema.permissive_json()
     )
@@ -856,8 +858,10 @@ class TestVariantDataErrors:
         return ds
 
     def test_bad_zarr_spec(self):
-        ds = zarr.group()
-        ds["call_genotype"] = zarr.array(np.zeros(10, dtype=np.int8))
+        ds = zarr.group(zarr_format=2)
+        ds["call_genotype"] = zarr.array(
+            np.zeros(10, dtype=np.int8), zarr_format=2
+        )
         with pytest.raises(
             ValueError, match="Expecting a VCF Zarr object with 3D call_genotype array"
         ):
@@ -1041,9 +1045,18 @@ class TestVariantDataErrors:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="File permission errors on Windows")
 class TestAddAncestralStateArray:
+    @staticmethod
+    def _make_store(tmp_path, positions):
+        store = zarr.group(store=str(tmp_path / "test.zarr"), zarr_format=2)
+        pos = np.asarray(positions, dtype=np.float64)
+        arr = store.create_array(
+            "variant_position", shape=pos.shape, dtype=np.float64, zarr_format=2
+        )
+        arr[:] = pos
+        return store
+
     def test_add_ancestral_state_array(self, tmp_path):
-        store = zarr.group(store=str(tmp_path / "test.zarr"))
-        store.create_dataset("variant_position", data=[10, 20, 30, 40, 50])
+        store = self._make_store(tmp_path, [10, 20, 30, 40, 50])
         array = formats.add_ancestral_state_array(store, "A" * 60)
 
         assert "ancestral_state" in store
@@ -1055,21 +1068,19 @@ class TestAddAncestralStateArray:
         assert "custom_ancestral" in store
 
     def test_mixed_case_and_different_nucleotides(self, tmp_path):
-        store = zarr.group(store=str(tmp_path / "test.zarr"))
-        store.create_dataset("variant_position", data=[10, 20, 30, 40, 50])
+        store = self._make_store(tmp_path, [10, 20, 30, 40, 50])
         array = formats.add_ancestral_state_array(
             store, "A" * 10 + "c" + "G" * 9 + "t" + "C" * 9 + "a" + "T" * 19 + "g"
         )
         np.testing.assert_array_equal(array[:], np.array(["C", "T", "A", "T", "G"]))
 
     def test_error_no_variant_position(self, tmp_path):
-        store = zarr.group(store=str(tmp_path / "test.zarr"))
+        store = zarr.group(store=str(tmp_path / "test.zarr"), zarr_format=2)
         with pytest.raises(ValueError, match="must contain a 'variant_position' array"):
             formats.add_ancestral_state_array(store, "A")
 
     def test_error_fasta_too_short(self, tmp_path):
-        store = zarr.group(store=str(tmp_path / "test.zarr"))
-        store.create_dataset("variant_position", data=[10, 20, 100])
+        store = self._make_store(tmp_path, [10, 20, 100])
         fasta_string = "A" * 50  # Only 50 bases, not enough for position 100
         with pytest.raises(
             ValueError, match="length of the fasta string must be at least"
@@ -1077,8 +1088,7 @@ class TestAddAncestralStateArray:
             formats.add_ancestral_state_array(store, fasta_string)
 
     def test_empty_positions_array(self, tmp_path):
-        store = zarr.group(store=str(tmp_path / "test.zarr"))
-        store.create_dataset("variant_position", data=[])
+        store = self._make_store(tmp_path, [])
         with pytest.raises(
             ValueError,
             match="variant_position array must contain at least one position",

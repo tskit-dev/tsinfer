@@ -38,7 +38,7 @@ from typing import Union  # noqa: F401
 import attr
 import humanize
 import lmdb
-import numcodecs
+import numcodecs  # noqa: F401 — kept for DEFAULT_COMPRESSOR and callers
 import numpy as np
 import tskit
 import zarr
@@ -47,6 +47,7 @@ from tskit import MISSING_DATA
 import tsinfer.exceptions as exceptions
 import tsinfer.provenance as provenance
 import tsinfer.threads as threads
+from tsinfer._lmdb_store import LMDBStore
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +102,7 @@ def open_lmbd_readonly(path):
     except OSError as e:
         raise exceptions.FileFormatError(str(e)) from e
     try:
-        store = zarr.LMDBStore(
-            path, map_size=map_size, readonly=True, subdir=False, lock=False
-        )
+        store = LMDBStore(path, map_size=map_size, readonly=True, subdir=False, lock=False)
     except lmdb.InvalidError as e:
         raise exceptions.FileFormatError(f"Unknown file format:{str(e)}") from e
     except lmdb.Error as e:
@@ -164,7 +163,8 @@ class BufferedItemWriter:
 
             # Make sure the destination array is zero sized at the start.
             shape[chunked_dimension] = 0
-            array.resize(*shape)
+            # zarr v3: resize() takes a shape tuple, not *args
+            array.resize(tuple(shape))
 
         self.start_offset = [0 for _ in range(self.num_buffers)]
         self.num_buffered_items = [0 for _ in range(self.num_buffers)]
@@ -208,7 +208,8 @@ class BufferedItemWriter:
                     shape = list(array.shape)
                     chunked_dimension = 1 if "full_haplotype" in key else 0
                     shape[chunked_dimension] = self.current_size
-                    array.resize(*shape)
+                    # zarr v3: resize() takes a shape tuple, not *args
+                    array.resize(tuple(shape))
         for key, array in self.arrays.items():
             if "full_haplotype" in key:
                 buffered = self.buffers[key][write_buffer][:, :n]
@@ -436,6 +437,37 @@ def merge_variants(sd1, sd2):
         var2 = next(var2_iter, None)
 
 
+def _copy_zarr_group(src, dst):
+    """
+    Recursively copy all arrays and groups from *src* into *dst*.
+
+    Replaces zarr.copy_all() and zarr.copy_store() which were removed / not
+    yet ported in zarr v3.  Works with zarr format v2 stores.
+    """
+    for key, value in src.attrs.items():
+        dst.attrs[key] = value
+    for name in src:
+        item = src[name]
+        if isinstance(item, zarr.Array):
+            # Recreate the array in dst with the same dtype, chunks, and
+            # compressor, then copy the data chunk-by-chunk.
+            arr = dst.create_array(
+                name,
+                shape=item.shape,
+                chunks=item.chunks,
+                dtype=item.dtype,
+                compressor=item.compressors[0] if item.compressors else None,
+                fill_value=item.fill_value,
+            )
+            if item.size > 0:
+                arr[:] = item[:]
+            for key, value in item.attrs.items():
+                arr.attrs[key] = value
+        elif isinstance(item, zarr.Group):
+            sub = dst.require_group(name)
+            _copy_zarr_group(item, sub)
+
+
 class DataContainer:
     """
     Superclass of objects used to represent a collection of related
@@ -462,33 +494,36 @@ class DataContainer:
         self._mode = self.BUILD_MODE
         self._num_flush_threads = num_flush_threads
         self._chunk_size = max(1, chunk_size)
-        self._metadata_codec = numcodecs.JSON()
         self._compressor = compressor
-        self.data = zarr.group()
+        self.data = zarr.group(zarr_format=2)
         self.path = path
         if path is not None:
             store = self._new_lmdb_store(max_file_size)
-            self.data = zarr.open_group(store=store, mode="w")
+            self.data = zarr.open_group(store=store, mode="w", zarr_format=2)
         self.data.attrs[FORMAT_NAME_KEY] = self.FORMAT_NAME
         self.data.attrs[FORMAT_VERSION_KEY] = self.FORMAT_VERSION
 
         chunks = self._chunk_size
-        provenances_group = self.data.create_group("provenances")
-        provenances_group.create_dataset(
+        provenances_group = self.data.require_group("provenances")
+        # ON-DISK COMPATIBILITY: zarr v3 does not support dtype=object arrays.
+        # Timestamps are stored as plain strings (unchanged behaviour).
+        # Records are stored as JSON strings; callers must json.dumps() on write
+        # and json.loads() on read.  This changes the on-disk encoding relative
+        # to zarr v2 (which used numcodecs.JSON as an object_codec); format
+        # versions are bumped in each DataContainer subclass accordingly.
+        provenances_group.create_array(
             "timestamp",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
-        provenances_group.create_dataset(
+        provenances_group.create_array(
             "record",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
 
         # Register a backstop to close the current store if the object leaks
@@ -509,6 +544,7 @@ class DataContainer:
         else:
             # This happens when we finalise an in-memory container.
             store = self.data.store
+        # zarr v3: auto-detects format from existing metadata (.zgroup for v2)
         self.data = zarr.open(store=store, mode="r")
         self._check_format()
         self._mode = self.READ_MODE
@@ -526,7 +562,7 @@ class DataContainer:
             map_size = int(map_size)
             if map_size <= 0:
                 raise ValueError("max_file_size must be > 0")
-        return zarr.LMDBStore(self.path, subdir=False, map_size=map_size)
+        return LMDBStore(self.path, subdir=False, map_size=map_size)
 
     @classmethod
     def load(cls, path):
@@ -570,24 +606,11 @@ class DataContainer:
         other = cls.__new__(cls)
         other.path = path
         if path is None:
-            # Have to work around a fairly weird bug in zarr where if we
-            # try to use copy_store on an in-memory array we end up
-            # overwriting the original values.
-            other.data = zarr.group()
-            with warnings.catch_warnings():
-                # Another workaround: if we don't absorb warnings here
-                # we get "FutureWarning: missing object_codec for object array;
-                # this will raise a ValueError in v3." Since this is an internal
-                # Zarr call it seems easiest to just ignore for now and deal with
-                # the ValueError if/when it happens
-                warnings.simplefilter("ignore")
-                zarr.copy_all(source=self.data, dest=other.data)
-            for key, value in self.data.attrs.items():
-                other.data.attrs[key] = value
+            other.data = zarr.group(zarr_format=2)
         else:
             store = other._new_lmdb_store(max_file_size)
-            zarr.copy_store(self.data.store, store)
-            other.data = zarr.group(store)
+            other.data = zarr.open_group(store=store, mode="w", zarr_format=2)
+        _copy_zarr_group(self.data, other.data)
         other.data.attrs[FINALISED_KEY] = False
         other._mode = self.EDIT_MODE
         return other
@@ -605,17 +628,16 @@ class DataContainer:
             store = self.data.store
             # The store is about to change; detach any backstop on the old store
             self._detach_store_finalizer()
-            store.close()
             logger.debug("Fixing up LMDB file size")
-            with lmdb.open(self.path, subdir=False, lock=False, writemap=True) as db:
-                # LMDB maps a very large amount of space by default. While this
-                # doesn't do any harm, it's annoying because we can't use ls to
-                # see the file sizes and the amount of RAM we're mapping can
-                # look like it's very large. So, we fix this up so that the
-                # map size is equal to the number of pages in use.
-                num_pages = db.info()["last_pgno"]
-                page_size = db.stat()["psize"]
-                db.set_mapsize(num_pages * page_size)
+            # LMDB maps a very large amount of space by default. While this
+            # doesn't do any harm, it's annoying because we can't use ls to
+            # see the file sizes and the amount of RAM we're mapping can
+            # look like it's very large. So, we fix this up so that the
+            # map size is equal to the number of pages in use.
+            num_pages = store.info()["last_pgno"]
+            page_size = store.stat()["psize"]
+            store.set_mapsize(num_pages * page_size)
+            store.close()
             # Remove the lock file as we don't need it after this point.
             remove_lmdb_lockfile(self.path)
         self._open_readonly()
@@ -716,10 +738,11 @@ class DataContainer:
                 "Invalid operation: cannot add provenances unless in BUILD or EDIT mode"
             )
         n = self.num_provenances
-        self.provenances_timestamp.resize(n + 1)
-        self.provenances_record.resize(n + 1)
+        self.provenances_timestamp.resize((n + 1,))
+        self.provenances_record.resize((n + 1,))
         self.provenances_timestamp[n] = timestamp
-        self.provenances_record[n] = record
+        # ON-DISK COMPATIBILITY: records are stored as JSON strings (zarr v3).
+        self.provenances_record[n] = json.dumps(record)
 
     def record_provenance(self, command=None, resources=None, **kwargs):
         """
@@ -741,8 +764,8 @@ class DataContainer:
                 "Invalid operation: cannot clear provenances unless in BUILD "
                 "or EDIT mode"
             )
-        self.provenances_timestamp.resize(0)
-        self.provenances_record.resize(0)
+        self.provenances_timestamp.resize((0,))
+        self.provenances_record.resize((0,))
 
     @property
     def format_name(self):
@@ -819,10 +842,11 @@ class DataContainer:
         """
         Returns a string containing the zarr info for each array.
         """
-        s = str(self.data.info)
+        # zarr v3: array.info was removed; use repr() instead
+        s = repr(self.data)
         for _, array in self.arrays():
             s += ("-" * 80) + "\n"
-            s += str(array.info)
+            s += repr(array)
         return s
 
     def provenances(self):
@@ -833,7 +857,9 @@ class DataContainer:
         timestamp = self.provenances_timestamp[:]
         record = self.provenances_record[:]
         for j in range(self.num_provenances):
-            yield timestamp[j], record[j]
+            # ON-DISK COMPATIBILITY: records are stored as JSON strings in zarr
+            # v3; decode them back to Python objects on read.
+            yield timestamp[j], json.loads(record[j])
 
 
 @attr.s
@@ -1034,7 +1060,11 @@ class SampleData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-sample-data"
-    FORMAT_VERSION = (5, 1)
+    # ON-DISK COMPATIBILITY: bumped from (5, 1) to (6, 0) because zarr v3
+    # cannot store dtype=object arrays; all object/ragged arrays are now stored
+    # as JSON-encoded variable-length strings (dtype=str / VariableLengthUTF8).
+    # Files written with FORMAT_VERSION < (6, 0) cannot be read by this code.
+    FORMAT_VERSION = (6, 0)
 
     # State machine for handling automatic addition of samples.
     ADDING_POPULATIONS = 0
@@ -1053,52 +1083,55 @@ class SampleData(DataContainer):
             tskit.MetadataSchema.permissive_json().schema
         )
         chunks = (self._chunk_size,)
-        populations_group = self.data.create_group("populations")
-        metadata = populations_group.create_dataset(
+        populations_group = self.data.require_group("populations")
+        # ON-DISK COMPATIBILITY: dtype=object with JSON object_codec → dtype=str
+        # (VariableLengthUTF8).  Callers must json.dumps() on write and
+        # json.loads() on read.  See FORMAT_VERSION comment above.
+        metadata = populations_group.create_array(
             "metadata",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
         populations_group.attrs["metadata_schema"] = None
         self._populations_writer = BufferedItemWriter(
             {"metadata": metadata}, num_threads=self._num_flush_threads
         )
 
-        individuals_group = self.data.create_group("individuals")
+        individuals_group = self.data.require_group("individuals")
         individuals_group.attrs["metadata_schema"] = None
-        metadata = individuals_group.create_dataset(
+        metadata = individuals_group.create_array(
             "metadata",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
-        location = individuals_group.create_dataset(
+        # ON-DISK COMPATIBILITY: dtype="array:f8" (ragged float array) →
+        # dtype=str with JSON-encoded list.  Each element is json.dumps(list).
+        location = individuals_group.create_array(
             "location",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype="array:f8",
+            dtype=str,
         )
-        time = individuals_group.create_dataset(
+        time = individuals_group.create_array(
             "time",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.float64,
         )
-        population = individuals_group.create_dataset(
+        population = individuals_group.create_array(
             "population",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.int32,
         )
-        flags = individuals_group.create_dataset(
+        flags = individuals_group.create_array(
             "flags",
             shape=(0,),
             chunks=chunks,
@@ -1116,8 +1149,8 @@ class SampleData(DataContainer):
             num_threads=self._num_flush_threads,
         )
 
-        samples_group = self.data.create_group("samples")
-        individual = samples_group.create_dataset(
+        samples_group = self.data.require_group("samples")
+        individual = samples_group.create_array(
             "individual",
             shape=(0,),
             chunks=chunks,
@@ -1129,51 +1162,51 @@ class SampleData(DataContainer):
             num_threads=self._num_flush_threads,
         )
 
-        sites_group = self.data.create_group("sites")
+        sites_group = self.data.require_group("sites")
         sites_group.attrs["metadata_schema"] = None
-        sites_group.create_dataset(
+        sites_group.create_array(
             "position",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.float64,
         )
-        sites_group.create_dataset(
+        sites_group.create_array(
             "time",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.float64,
         )
-        sites_group.create_dataset(
+        sites_group.create_array(
             "genotypes",
             shape=(0, 0),
             chunks=(self._chunk_size, self._chunk_size),
             compressor=self._compressor,
             dtype=np.int8,
         )
-        sites_group.create_dataset(
+        # ON-DISK COMPATIBILITY: dtype=object with JSON object_codec → dtype=str
+        # Alleles lists (possibly containing None) are stored as JSON strings.
+        sites_group.create_array(
             "alleles",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
-        sites_group.create_dataset(
+        sites_group.create_array(
             "ancestral_allele",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
             dtype=np.int8,
         )
-        sites_group.create_dataset(
+        sites_group.create_array(
             "metadata",
             shape=(0,),
             chunks=chunks,
             compressor=self._compressor,
-            dtype=object,
-            object_codec=self._metadata_codec,
+            dtype=str,
         )
 
         self._last_position = 0
@@ -1712,7 +1745,8 @@ class SampleData(DataContainer):
     def _alloc_site_writer(self):
         if self.num_samples < 1:
             raise ValueError("Must have at least 1 sample")
-        self.sites_genotypes.resize(0, self.num_samples)
+        # zarr v3: resize() takes a shape tuple
+        self.sites_genotypes.resize((0, self.num_samples))
         arrays = {
             "position": self.sites_position,
             "genotypes": self.sites_genotypes,
@@ -1741,7 +1775,10 @@ class SampleData(DataContainer):
         self._check_build_mode()
         if self._build_state != self.ADDING_POPULATIONS:
             raise ValueError("Cannot add populations after adding samples or sites")
-        return self._populations_writer.add(metadata=self._check_metadata(metadata))
+        # ON-DISK COMPATIBILITY: metadata stored as JSON string (zarr v3)
+        return self._populations_writer.add(
+            metadata=json.dumps(self._check_metadata(metadata))
+        )
 
     def add_individual(
         self,
@@ -1806,9 +1843,11 @@ class SampleData(DataContainer):
         location = np.array(location, dtype=np.float64)
         if flags is None:
             flags = 0
+        # ON-DISK COMPATIBILITY: metadata and location stored as JSON strings.
+        # location (numpy float64 array) is JSON-encoded as a list of floats.
         individual_id = self._individuals_writer.add(
-            metadata=self._check_metadata(metadata),
-            location=location,
+            metadata=json.dumps(self._check_metadata(metadata)),
+            location=json.dumps(location.tolist()),
             time=time,
             population=population,
             flags=flags,
@@ -1956,11 +1995,13 @@ class SampleData(DataContainer):
             )
         if time is None:
             time = tskit.UNKNOWN_TIME
+        # ON-DISK COMPATIBILITY: metadata and alleles stored as JSON strings.
+        # alleles is a list (possibly containing None) → JSON array.
         site_id = self._sites_writer.add(
             position=position,
             genotypes=genotypes,
-            metadata=self._check_metadata(metadata),
-            alleles=alleles,
+            metadata=json.dumps(self._check_metadata(metadata)),
+            alleles=json.dumps(list(alleles)),
             time=time,
             ancestral_allele=ancestral_allele,
         )
@@ -2116,8 +2157,9 @@ class SampleData(DataContainer):
         be a list of integer site IDs.
         """
         position_array = self.sites_position[:]
-        alleles_array = self.sites_alleles[:]
-        metadata_array = self.sites_metadata[:]
+        # ON-DISK COMPATIBILITY: alleles and metadata are JSON strings
+        alleles_raw = self.sites_alleles[:]
+        metadata_raw = self.sites_metadata[:]
         time_array = self.sites_time[:]
         ancestral_allele_array = self.sites_ancestral_allele[:]
         if ids is None:
@@ -2128,8 +2170,8 @@ class SampleData(DataContainer):
                 id=j,
                 position=position_array[j],
                 ancestral_allele=anc_idx,
-                alleles=tuple(alleles_array[j]),
-                metadata=metadata_array[j],
+                alleles=tuple(json.loads(alleles_raw[j])),
+                metadata=json.loads(metadata_raw[j]),
                 time=time_array[j],
             )
             yield site
@@ -2148,7 +2190,10 @@ class SampleData(DataContainer):
         if sites is None:
             sites = np.arange(self.num_sites)
         num_alleles = np.zeros(self.num_sites, dtype=np.uint32)
-        for j, alleles in enumerate(self.sites_alleles):
+        # ON-DISK COMPATIBILITY: alleles are JSON strings; decode each one.
+        # Iterate over bulk read so elements are Python str, not 0-d numpy arrays.
+        for j, alleles_json in enumerate(self.sites_alleles[:]):
+            alleles = json.loads(alleles_json)
             # Filter out empty alleles (generated by, for example sgkit)
             num_alleles[j] = len(
                 [allele for allele in alleles if allele != b"" and allele != ""]
@@ -2267,10 +2312,11 @@ class SampleData(DataContainer):
         samples = np.where(self.samples_individual[:] == id_)[0]
         # Make sure the numpy arrays are converted to lists so that
         # we can compare individuals using ==
+        # ON-DISK COMPATIBILITY: location and metadata are JSON strings
         return Individual(
             id_,
-            location=list(self.individuals_location[id_]),
-            metadata=self.individuals_metadata[id_],
+            location=json.loads(self.individuals_location[id_]),
+            metadata=json.loads(self.individuals_metadata[id_]),
             time=self.individuals_time[id_],
             population=self.individuals_population[id_],
             samples=list(samples),
@@ -2282,6 +2328,7 @@ class SampleData(DataContainer):
         for sample_id, individual_id in enumerate(self.samples_individual[:]):
             individual_samples[individual_id].append(sample_id)
         # TODO document
+        # ON-DISK COMPATIBILITY: location and metadata are JSON strings
         iterator = zip(
             self.individuals_location[:],
             self.individuals_metadata[:],
@@ -2292,8 +2339,8 @@ class SampleData(DataContainer):
         for j, (location, metadata, time, population, flags) in enumerate(iterator):
             yield Individual(
                 j,
-                location=list(location),
-                metadata=metadata,
+                location=json.loads(location),
+                metadata=json.loads(metadata),
                 time=time,
                 population=population,
                 samples=individual_samples[j],
@@ -2315,13 +2362,15 @@ class SampleData(DataContainer):
 
     def population(self, id_):
         # TODO document
-        return Population(id_, metadata=self.populations_metadata[id_])
+        # ON-DISK COMPATIBILITY: metadata is a JSON string
+        return Population(id_, metadata=json.loads(self.populations_metadata[id_]))
 
     def populations(self):
         # TODO document
+        # ON-DISK COMPATIBILITY: metadata is a JSON string
         iterator = self.populations_metadata[:]
         for j, metadata in enumerate(iterator):
-            yield Population(j, metadata=metadata)
+            yield Population(j, metadata=json.loads(metadata))
 
 
 class VariantData(SampleData):
@@ -2623,7 +2672,10 @@ class VariantData(SampleData):
 
         # Create zarr arrays for convenience when iterating over chunks
         self.z_sites_select = zarr.array(
-            self.sites_select, chunks=self.data["call_genotype"].chunks[0], dtype=bool
+            self.sites_select,
+            chunks=self.data["call_genotype"].chunks[0],
+            dtype=bool,
+            zarr_format=2,
         )
         # Find the first chunk from the left and right that contains an unmasked site
         self.sites_used_chunks = []
@@ -2773,7 +2825,7 @@ class VariantData(SampleData):
     @functools.cached_property
     def num_populations(self):
         try:
-            return len(self.data["populations_metadata"])
+            return self.data["populations_metadata"].shape[0]
         except KeyError:
             return 0
 
@@ -2814,10 +2866,10 @@ class VariantData(SampleData):
         # however we silently don't overwrite if the key exists
         if "individuals_metadata" in self.data:
             assert (
-                len(self.data["individuals_metadata"])
+                self.data["individuals_metadata"].shape[0]
                 == self._num_individuals_before_mask
             )
-            assert self._num_individuals_before_mask == len(self.data["sample_id"])
+            assert self._num_individuals_before_mask == self.data["sample_id"].shape[0]
             md_list = []
             for sample_id, r in zip(
                 self.data["sample_id"][:][self.individuals_select],
@@ -2950,6 +3002,7 @@ class VariantData(SampleData):
             self.individuals_select.shape,
             chunks=self.data["call_genotype"].chunks[1],
             dtype=bool,
+            zarr_format=2,
         )
         ind_select[
             ind_indexes[
@@ -3081,7 +3134,11 @@ class AncestorData(DataContainer):
     """
 
     FORMAT_NAME = "tsinfer-ancestor-data"
-    FORMAT_VERSION = (3, 0)
+    # ON-DISK COMPATIBILITY: bumped from (3, 0) to (4, 0) because zarr v3
+    # cannot store dtype="array:i4" (ragged int32) arrays; sample_focal_sites
+    # is now stored as JSON-encoded variable-length strings (dtype=str).
+    # Files written with FORMAT_VERSION < (4, 0) cannot be read by this code.
+    FORMAT_VERSION = (4, 0)
 
     def __init__(
         self,
@@ -3168,16 +3225,28 @@ class AncestorData(DataContainer):
         if dimensions is None:
             dimensions = ["samples"]
 
-        ds = self.data.create_dataset(
+        # ON-DISK COMPATIBILITY: zarr v3 does not support ragged array dtypes.
+        # "array:i4" (ragged int32) is replaced with str (JSON-encoded list).
+        if dtype == "array:i4":
+            dtype = str
+
+        # Normalise data to numpy so zarr v3 can accept it.  If dtype is still
+        # unknown, infer from the data array.
+        if data is not None:
+            data = np.asarray(data)
+            if dtype is None:
+                dtype = data.dtype
+
+        ds = self.data.create_array(
             name,
-            data=data,
             shape=shape,
             chunks=chunks,
             dtype=dtype,
             compressor=compressor,
-            fill_value=None,
         )
         ds.attrs["_ARRAY_DIMENSIONS"] = dimensions
+        if data is not None:
+            ds[:] = data
         return ds
 
     def _alloc_ancestor_writer(self):
@@ -3250,8 +3319,13 @@ class AncestorData(DataContainer):
         fc_self = self.ancestors_focal_sites[:]
         fc_other = other.ancestors_focal_sites[:]
         assert len(fc_self) == len(fc_other)
+        # ON-DISK COMPATIBILITY: focal_sites are JSON-encoded strings; decode
+        # to int32 arrays for element-wise comparison.
         for sites_self, sites_other in zip(fc_self, fc_other):
-            np.testing.assert_array_equal(sites_self, sites_other)
+            np.testing.assert_array_equal(
+                np.array(json.loads(sites_self), dtype=np.int32),
+                np.array(json.loads(sites_other), dtype=np.int32),
+            )
         haps_self = self.ancestors_full_haplotype[:]
         haps_other = other.ancestors_full_haplotype[:]
         for hap_self, hap_other in zip(haps_self, haps_other):
@@ -3608,9 +3682,9 @@ class AncestorData(DataContainer):
         start_buffer = np.zeros(buffer_length, dtype=self.ancestors_start.dtype)
         end_buffer = np.zeros(buffer_length, dtype=self.ancestors_end.dtype)
         time_buffer = np.zeros(buffer_length, dtype=self.ancestors_time.dtype)
-        focal_sites_buffer = np.zeros(
-            buffer_length, dtype=self.ancestors_focal_sites.dtype
-        )
+        # ON-DISK COMPATIBILITY: focal_sites are JSON strings; use object array
+        # to buffer them and write back as strings via set_orthogonal_selection.
+        focal_sites_buffer = np.empty(buffer_length, dtype=object)
         haplotype_buffer = np.full(
             (self.ancestors_full_haplotype.shape[0], buffer_length, 1),
             tskit.MISSING_DATA,
@@ -3670,7 +3744,10 @@ class AncestorData(DataContainer):
                     start_buffer[buffer_pos] = insert_pos_start
                     end_buffer[buffer_pos] = insert_pos_end
                     time_buffer[buffer_pos] = anc.time
-                    focal_sites_buffer[buffer_pos] = anc.focal_sites
+                    # ON-DISK COMPATIBILITY: encode focal_sites as JSON string
+                    focal_sites_buffer[buffer_pos] = json.dumps(
+                        anc.focal_sites.tolist()
+                    )
                     haplotype_buffer[insert_pos_start:insert_pos_end, buffer_pos, 0] = (
                         anc.full_haplotype[insert_pos_start:insert_pos_end]
                     )
@@ -3717,11 +3794,12 @@ class AncestorData(DataContainer):
         if self._last_time != 0 and time > self._last_time:
             raise ValueError("older ancestors must be added before younger ones")
         self._last_time = time
+        # ON-DISK COMPATIBILITY: focal_sites stored as JSON string (zarr v3).
         return self.ancestor_writer.add(
             start=start,
             end=end,
             time=time,
-            focal_sites=focal_sites,
+            focal_sites=json.dumps(focal_sites.tolist()),
             haplotype=haplotype,
         )
 
@@ -3739,7 +3817,7 @@ class AncestorData(DataContainer):
             shape=(self.num_sites, 2),
             chunks=(self.sites_position.chunks[0], 2),
             dtype="U1",
-            compressor=self.sites_position.compressor,
+            compressor=self.sites_position.compressors[0],
             dimensions=["variants", "alleles"],
         )
 
@@ -3749,10 +3827,10 @@ class AncestorData(DataContainer):
             pass
         self.create_dataset(
             "sample_id",
-            data=[f"tsinf_anc_{i}" for i in range(len(self.ancestors_start))],
-            shape=(len(self.ancestors_start),),
+            data=[f"tsinf_anc_{i}" for i in range(self.ancestors_start.shape[0])],
+            shape=(self.ancestors_start.shape[0],),
             chunks=self.ancestors_start.chunks,
-            compressor=self.ancestors_start.compressor,
+            compressor=self.ancestors_start.compressors[0],
         )
         super().finalise()
 
@@ -3766,12 +3844,15 @@ class AncestorData(DataContainer):
 
         :rtype: `Ancestor`
         """
+        # ON-DISK COMPATIBILITY: focal_sites is a JSON string in zarr v3.
         return Ancestor(
             id=id_,
             start=self.ancestors_start[id_],
             end=self.ancestors_end[id_],
             time=self.ancestors_time[id_],
-            focal_sites=self.ancestors_focal_sites[id_],
+            focal_sites=np.array(
+                json.loads(self.ancestors_focal_sites[id_]), dtype=np.int32
+            ),
             full_haplotype=self.ancestors_full_haplotype[:, id_, 0],
         )
 
@@ -3784,7 +3865,8 @@ class AncestorData(DataContainer):
         start = self.ancestors_start[:]
         end = self.ancestors_end[:]
         time = self.ancestors_time[:]
-        focal_sites = self.ancestors_focal_sites[:]
+        # ON-DISK COMPATIBILITY: focal_sites are JSON-encoded strings in zarr v3.
+        focal_sites_json = self.ancestors_focal_sites[:]
         haplotypes = chunk_iterator(self.ancestors_full_haplotype, indexes, dimension=1)
         if indexes is None:
             indexes = range(len(time))
@@ -3794,7 +3876,7 @@ class AncestorData(DataContainer):
                 start=start[j],
                 end=end[j],
                 time=time[j],
-                focal_sites=focal_sites[j],
+                focal_sites=np.array(json.loads(focal_sites_json[j]), dtype=np.int32),
                 # [0] to remove ploidy dimension
                 full_haplotype=h[:, 0],
             )
@@ -3870,13 +3952,13 @@ def add_ancestral_state_array(zarr_group, fasta_string, *, array_name="ancestral
 
     # Create the ancestral state array in the zarr group with the
     # same chunking as positions
-    ancestral_array = zarr_group.create_dataset(
+    ancestral_array = zarr_group.create_array(
         array_name,
-        data=ancestral_states_upper,
         shape=ancestral_states_upper.shape,
         chunks=zarr_group["variant_position"].chunks,
         dtype="U1",
     )
+    ancestral_array[:] = ancestral_states_upper
 
     # Add dimension attribute for compatibility with xarray/sgkit
     ancestral_array.attrs["_ARRAY_DIMENSIONS"] = ["variants"]
