@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -20,28 +20,6 @@
 Tree sequence inference.
 """
 
-import warnings
-
-# tsinfer #957. This warning pops up as a result of using fast-math. It bascially means
-# that tiny tiny values are being rounded to zero, which should be fine for our purposes.
-warnings.filterwarnings(
-    "ignore",
-    message="The value of the smallest subnormal for <class 'numpy.float64'> "
-    "type is zero",
-)
-
-
-try:
-    import zarr
-
-    if zarr.__version__ >= "3":
-        raise RuntimeError(
-            f"zarr version {zarr.__version__} is not supported. "
-            "tsinfer requires zarr < 3.0. Please install zarr < 3.0."
-        )
-except ImportError:
-    pass
-
 __version__ = "undefined"
 try:
     from . import _version
@@ -49,9 +27,3 @@ try:
     __version__ = _version.version
 except ImportError:
     pass
-
-from .inference import *  # NOQA
-from .formats import *  # NOQA
-from .exceptions import *  # NOQA
-from .constants import *  # NOQA
-from .cli import get_cli_parser  # NOQA
