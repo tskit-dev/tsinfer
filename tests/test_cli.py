@@ -87,6 +87,7 @@ recombination_rate = 1e-4
 def _write_run_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"):
     """Write a TOML config for the run command (no ancestors path needed)."""
     output_path = _toml_path(os.path.join(tmp_dir, output_name))
+    ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
     sample_path = _toml_path(sample_path)
     config_content = f"""\
 [[source]]
@@ -94,7 +95,7 @@ name = "test"
 path = "{sample_path}"
 
 [ancestors]
-path = "unused"
+path = "{ancestors_path}"
 sources = ["test"]
 
 [match]
