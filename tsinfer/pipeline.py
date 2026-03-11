@@ -228,6 +228,108 @@ def _order_haplotypes(times, is_ancestor):
     return order
 
 
+def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, ploidy):
+    """
+    Build individual metadata and population assignments from config.
+
+    Returns (ind_metadata_list, pop_indices, pop_names) where:
+    - ind_metadata_list: list of dicts, one per individual
+    - pop_indices: list of population indices, one per individual (or None)
+    - pop_names: list of unique population names (or None)
+    """
+    ind_meta_cfg = cfg.individual_metadata
+    n_individuals = len(individual_sample_indices)
+
+    if n_individuals == 0:
+        return None, None, None
+
+    ind_metadata_list = []
+    pop_indices = None
+    pop_names = None
+
+    # For each individual, find its source and sample index
+    for ind_idx in range(n_individuals):
+        hap_idx = individual_sample_indices[ind_idx]
+        hap_meta = node_metadata[hap_idx]
+        ind_md = {}
+
+        if hap_meta:
+            source_name = hap_meta.get("source", "")
+            sample_id = hap_meta.get("sample_id", "")
+
+            if ind_meta_cfg and ind_meta_cfg.fields:
+                # Look up fields from VCZ store
+                if source_name and source_name in cfg.sources:
+                    source = cfg.sources[source_name]
+                    store = vcz_mod.open_store(source.path)
+
+                    raw_ids = store["sample_id"][:]
+                    sample_ids = [str(x) for x in raw_ids.tolist()]
+                    try:
+                        sample_idx = sample_ids.index(sample_id)
+                    except ValueError:
+                        sample_idx = -1
+
+                    if sample_idx >= 0:
+                        for field_name, array_name in ind_meta_cfg.fields.items():
+                            if array_name in store:
+                                val = store[array_name][sample_idx]
+                                # Convert numpy types to Python types
+                                if hasattr(val, "item"):
+                                    val = val.item()
+                                elif hasattr(val, "tolist"):
+                                    val = val.tolist()
+                                ind_md[field_name] = val
+
+        ind_metadata_list.append(ind_md)
+
+    # Build populations if configured
+    if ind_meta_cfg and ind_meta_cfg.population:
+        pop_values = []
+        for ind_idx in range(n_individuals):
+            hap_idx = individual_sample_indices[ind_idx]
+            hap_meta = node_metadata[hap_idx]
+            pop_val = None
+
+            if hap_meta:
+                source_name = hap_meta.get("source", "")
+                sample_id = hap_meta.get("sample_id", "")
+                if source_name and source_name in cfg.sources:
+                    source = cfg.sources[source_name]
+                    store = vcz_mod.open_store(source.path)
+                    pop_field = ind_meta_cfg.population
+
+                    if pop_field in store:
+                        raw_ids = store["sample_id"][:]
+                        sample_ids = [str(x) for x in raw_ids.tolist()]
+                        try:
+                            sample_idx = sample_ids.index(sample_id)
+                        except ValueError:
+                            sample_idx = -1
+                        if sample_idx >= 0:
+                            val = store[pop_field][sample_idx]
+                            if hasattr(val, "item"):
+                                val = val.item()
+                            elif hasattr(val, "tolist"):
+                                val = val.tolist()
+                            pop_val = str(val)
+
+            pop_values.append(pop_val)
+
+        # Build unique population list
+        unique_pops = []
+        for v in pop_values:
+            if v is not None and v not in unique_pops:
+                unique_pops.append(v)
+
+        if unique_pops:
+            pop_names = unique_pops
+            pop_lookup = {name: i for i, name in enumerate(pop_names)}
+            pop_indices = [pop_lookup.get(v, -1) for v in pop_values]
+
+    return ind_metadata_list, pop_indices, pop_names
+
+
 def match(
     cfg: Config,
     reference_ts: tskit.TreeSequence | None = None,
@@ -283,9 +385,11 @@ def match(
         else:
             seen_times[t] = 0
 
-    # Track individual creation
+    # Track individual creation and ordered node metadata
     individual_groups = []
     current_ind_nodes = []
+    ordered_node_metadata = []  # one per TSB node, in TSB insertion order
+    individual_sample_indices = []  # haplotype indices for first node of each individual
 
     for step, idx in enumerate(order):
         hap = all_haplotypes[idx]
@@ -294,6 +398,7 @@ def match(
         if step == 0:
             # Virtual root — add directly with no matching
             tsb.add_node(time)
+            ordered_node_metadata.append(None)
         else:
             # Freeze, create matcher, match, then add
             tsb.freeze_indexes()
@@ -326,6 +431,7 @@ def match(
             mutation_state = hap_arr[mutation_sites].astype(np.int8)
 
             node_id = tsb.add_node(time)
+            ordered_node_metadata.append(node_metadata[idx])
 
             if len(left) > 0:
                 tsb.add_path(
@@ -346,6 +452,8 @@ def match(
         # Track individuals
         if bool(create_individuals[idx]):
             current_ind_nodes.append(tsb.num_nodes - 1)
+            if len(current_ind_nodes) == 1:
+                individual_sample_indices.append(idx)
             if len(current_ind_nodes) == ploidy:
                 individual_groups.append(current_ind_nodes)
                 current_ind_nodes = []
@@ -353,6 +461,11 @@ def match(
     # Handle any remaining partial individual
     if current_ind_nodes:
         individual_groups.append(current_ind_nodes)
+
+    # Build individual metadata and populations
+    ind_metadata_list, pop_indices, pop_names = _build_individual_metadata(
+        cfg, node_metadata, individual_sample_indices, ploidy
+    )
 
     # Convert TSB to tree sequence
     ts = _ts_from_tsb(
@@ -362,6 +475,10 @@ def match(
         seq_len,
         metadata,
         individual_groups if individual_groups else None,
+        node_metadata=ordered_node_metadata if any(ordered_node_metadata) else None,
+        individual_metadata=ind_metadata_list if ind_metadata_list else None,
+        populations=pop_indices if pop_indices else None,
+        population_names=pop_names if pop_names else None,
     )
 
     return ts
