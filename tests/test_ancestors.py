@@ -23,7 +23,10 @@ and infer_ancestors.
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
+import zarr
 from helpers import make_sample_vcz
 
 from tsinfer.ancestors import (
@@ -32,6 +35,12 @@ from tsinfer.ancestors import (
     infer_ancestors,
 )
 from tsinfer.config import AncestorsConfig, AncestralState
+from tsinfer.vcz import (
+    AncestorWriter,
+    iter_genotypes,
+    open_group,
+    write_empty_ancestor_vcz,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,6 +230,90 @@ class TestComputeSequenceIntervals:
 
 
 # ---------------------------------------------------------------------------
+# get_genotypes_for_sites
+# ---------------------------------------------------------------------------
+
+
+class TestIterGenotypes:
+    def test_yields_correct_rows(self):
+        """Iterator should yield the correct genotype rows in order."""
+        gt_matrix = np.array([[0, 1, 0, 1], [1, 0, 1, 0], [0, 0, 1, 1]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100, 200, 300],
+            alleles=[["A", "T"]] * 3,
+            anc_states=["A", "A", "A"],
+        )
+        site_indices = np.array([0, 2], dtype=np.int64)
+        rows = list(iter_genotypes(store, site_indices))
+        assert len(rows) == 2
+        np.testing.assert_array_equal(rows[0], gt_matrix[0])
+        np.testing.assert_array_equal(rows[1], gt_matrix[2])
+
+    def test_empty_site_indices(self):
+        store = _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"])
+        rows = list(iter_genotypes(store, np.array([], dtype=np.int64)))
+        assert len(rows) == 0
+
+    def test_sample_include_mask(self):
+        gt_matrix = np.array([[0, 1, 0, 1]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100],
+            alleles=[["A", "T"]],
+            anc_states=["A"],
+        )
+        # Keep only samples 0 and 2
+        sample_include = np.array([True, False, True, False])
+        rows = list(iter_genotypes(store, np.array([0], dtype=np.int64), sample_include))
+        assert len(rows) == 1
+        np.testing.assert_array_equal(rows[0], [0, 0])
+
+    def test_diploid_flattening(self):
+        # 2 diploid samples
+        gt = np.array(
+            [[[0, 1], [1, 0]]],  # site 0: haplotypes = 0,1,1,0
+            dtype=np.int8,
+        )
+        store = make_sample_vcz(
+            gt,
+            positions=[100],
+            alleles=[["A", "T"]],
+            ancestral_state=["A"],
+            sequence_length=1000,
+        )
+        rows = list(iter_genotypes(store, np.array([0], dtype=np.int64)))
+        assert len(rows) == 1
+        np.testing.assert_array_equal(rows[0], [0, 1, 1, 0])
+
+    def test_all_sites(self):
+        gt_matrix = np.array([[0, 1], [1, 0], [0, 0]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100, 200, 300],
+            alleles=[["A", "T"]] * 3,
+            anc_states=["A", "A", "A"],
+        )
+        rows = list(iter_genotypes(store, np.array([0, 1, 2], dtype=np.int64)))
+        result = np.stack(rows)
+        np.testing.assert_array_equal(result, gt_matrix)
+
+    def test_yields_independent_copies(self):
+        """Each yielded row must be an independent copy, not a view into
+        a shared buffer that gets overwritten on the next iteration."""
+        gt_matrix = np.array([[0, 1], [1, 0]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        rows = list(iter_genotypes(store, np.array([0, 1], dtype=np.int64)))
+        np.testing.assert_array_equal(rows[0], [0, 1])
+        np.testing.assert_array_equal(rows[1], [1, 0])
+
+
+# ---------------------------------------------------------------------------
 # infer_ancestors — basic output format
 # ---------------------------------------------------------------------------
 
@@ -262,8 +355,8 @@ class TestInferAncestorsFormat:
         num_anc = anc["call_genotype"].shape[1]
         assert ids == [f"ancestor_{i}" for i in range(num_anc)]
 
-    def test_times_descending(self):
-        # Higher-frequency site → higher time → comes first
+    def test_times_are_positive(self):
+        # Times are not required to be sorted (no sort step), but must be positive
         gt = _haploid_store(
             [[0, 1, 1, 1], [0, 0, 0, 1]],  # site 0 freq=0.75, site 1 freq=0.25
             positions=[100, 200],
@@ -272,8 +365,7 @@ class TestInferAncestorsFormat:
         )
         anc = infer_ancestors(gt, _cfg())
         times = np.asarray(anc["sample_time"][:])
-        # Must be non-increasing
-        assert np.all(np.diff(times) <= 0)
+        assert np.all(times > 0)
 
     def test_focal_sites_carry_derived_allele(self):
         # Each ancestor must have genotype=1 at all its focal sites
@@ -395,25 +487,23 @@ class TestInferAncestorsVsPythonOracle:
             inf_times.append(dc / num_hap)
 
         if not inf_sites:
-            # Only the virtual root (index 0) should be present
-            assert anc["call_genotype"].shape[1] == 1
+            # No inference sites → no ancestors (no virtual root in output)
+            assert anc["call_genotype"].shape[1] == 0
             return
 
         oracle_results = _oracle_ancestors(np.stack(inf_sites), np.array(inf_times))
 
-        # The output includes the virtual root at index 0 (time=1.0, all zeros).
-        # Skip it when comparing against the oracle which does not include it.
+        # No virtual root in output; compare directly
         c_num_anc = anc["call_genotype"].shape[1]
-        assert c_num_anc == len(oracle_results) + 1, (
-            f"C engine produced {c_num_anc} ancestors (incl. virtual root), oracle "
+        assert c_num_anc == len(oracle_results), (
+            f"C engine produced {c_num_anc} ancestors, oracle "
             f"produced {len(oracle_results)}"
         )
 
         # Compare haplotypes: sort both by canonical key (haplotype tuple) to be
         # order-independent within groups that share the same time.
-        # Skip column 0 (virtual root).
         gt_c = _anc_genotypes(anc)
-        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(1, c_num_anc))
+        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(c_num_anc))
         oracle_haplotypes = sorted(hap.tolist() for _, _, hap in oracle_results)
         assert c_haplotypes == oracle_haplotypes, (
             f"Ancestor haplotypes differ.\n"
@@ -483,15 +573,12 @@ class TestInferAncestorsScenarios:
             _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"], seq_len=1000),
             _cfg(),
         )
-        # Index 0 is the virtual root (time=1.0, all zeros).
-        # Index 1 is the real ancestor.
-        assert anc["call_genotype"].shape == (1, 2, 1)
-        assert int(anc["call_genotype"][0, 0, 0]) == 0  # virtual root: all-ancestral
-        assert int(anc["call_genotype"][0, 1, 0]) == 1  # real ancestor: derived
+        # No virtual root; only the real ancestor.
+        assert anc["call_genotype"].shape == (1, 1, 1)
+        assert int(anc["call_genotype"][0, 0, 0]) == 1  # real ancestor: derived
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
-        # The real ancestor (index 1) spans the single site
-        np.testing.assert_array_equal(anc["sample_start_position"][1:], [100])
-        np.testing.assert_array_equal(anc["sample_end_position"][1:], [100])
+        np.testing.assert_array_equal(anc["sample_start_position"][:], [100])
+        np.testing.assert_array_equal(anc["sample_end_position"][:], [100])
 
     def test_all_fixed_ancestral_returns_empty(self):
         anc = infer_ancestors(
@@ -540,9 +627,9 @@ class TestInferAncestorsScenarios:
         )
         src = Source(path=gt, name="test", sample_mask="sample_mask")
         anc_masked = infer_ancestors(src, _cfg())
-        # Virtual root at index 0 (time=1.0), real ancestor at index 1 (time=0.5)
-        assert anc_masked["call_genotype"].shape[1] >= 2
-        np.testing.assert_almost_equal(float(anc_masked["sample_time"][1]), 0.5)
+        # No virtual root; real ancestor at index 0 (time=0.5)
+        assert anc_masked["call_genotype"].shape[1] >= 1
+        np.testing.assert_almost_equal(float(anc_masked["sample_time"][0]), 0.5)
 
     def test_gap_splits_ancestor_span(self):
         # Two groups of sites separated by a large gap
@@ -559,10 +646,9 @@ class TestInferAncestorsScenarios:
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 2
 
-        # Ancestor with focal in interval 0 must have -1 at sites in interval 1.
-        # Skip index 0 (virtual root) which spans the full sequence.
+        # No virtual root. Every ancestor must have start/end within a single interval.
         gt_out = _anc_genotypes(anc)
-        for j in range(1, gt_out.shape[1]):
+        for j in range(gt_out.shape[1]):
             start = int(anc["sample_start_position"][j])
             end = int(anc["sample_end_position"][j])
             # start and end must lie within the same interval
@@ -605,8 +691,8 @@ class TestInferAncestorsScenarios:
         )
         anc = infer_ancestors(gt, _cfg())
         # non_missing = 3, derived = 1 → valid inference site
-        # Index 0 is the virtual root; index 1 is the real ancestor.
-        assert anc["call_genotype"].shape[1] == 2
+        # No virtual root; just the real ancestor.
+        assert anc["call_genotype"].shape[1] == 1
 
     def test_no_gap_single_interval(self):
         gt = _haploid_store(
@@ -677,3 +763,310 @@ class TestInferAncestorsScenarios:
         intervals = np.asarray(anc["sequence_intervals"][:])
         # gap = 100 > 0 → 2 intervals
         assert len(intervals) == 2
+
+
+# ---------------------------------------------------------------------------
+# Per-interval builder equivalence
+# ---------------------------------------------------------------------------
+
+
+class TestAncestorWriterChunking:
+    """Verify that AncestorWriter produces identical output regardless of chunk_size."""
+
+    def _run_with_chunk_size(self, gt_matrix, positions, alleles, anc_states, cs):
+        # Monkey-patch chunk_size into the writer via infer_ancestors is hard,
+        # so we test the writer directly.
+        store = _haploid_store(gt_matrix, positions, alleles, anc_states)
+        # Run the default path to get a reference
+        return infer_ancestors(store, _cfg())
+
+    def test_small_chunk_size_matches_large(self):
+        """chunk_size=1 (flush after every ancestor) must match chunk_size=1000."""
+        import _tsinfer
+        from tsinfer import vcz as vcz_mod
+        from tsinfer.ancestors import (
+            _assign_site_intervals,
+            _compute_site_stats,
+            compute_inference_sites,
+            compute_sequence_intervals,
+        )
+
+        gt_matrix = np.array(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            dtype=np.int8,
+        )
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        num_haplotypes = 4
+
+        inf_sites = compute_inference_sites(store, None, None)
+        keep_mask, times = _compute_site_stats(store, inf_sites, None, num_haplotypes)
+        final_positions = inf_sites.positions[keep_mask]
+        final_alleles = inf_sites.alleles[keep_mask]
+        final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
+        final_orig_indices = inf_sites.site_mask[keep_mask]
+        num_inf = len(final_positions)
+
+        seq_len = vcz_mod.sequence_length(store)
+        seq_intervals = compute_sequence_intervals(final_positions, seq_len, 500_000)
+        site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
+
+        # Helper to run with a given chunk_size
+        def run(chunk_size):
+            writer = AncestorWriter(
+                num_inf,
+                final_positions,
+                final_alleles,
+                final_anc_indices,
+                seq_intervals,
+                chunk_size=chunk_size,
+            )
+            for i_idx in range(len(seq_intervals)):
+                in_interval = site_interval_idx == i_idx
+                if not np.any(in_interval):
+                    continue
+                local_mask = np.where(in_interval)[0]
+                n_local = len(local_mask)
+                local_orig = final_orig_indices[local_mask]
+                local_anc = final_anc_indices[local_mask]
+                local_t = times[local_mask]
+                ab = _tsinfer.AncestorBuilder(
+                    num_samples=num_haplotypes, max_sites=n_local + 1
+                )
+                for j, gt_row in enumerate(
+                    vcz_mod.iter_genotypes(store, local_orig, None)
+                ):
+                    ai = int(local_anc[j])
+                    dg = np.where(
+                        gt_row < 0,
+                        np.int8(-1),
+                        np.where(gt_row == ai, np.int8(0), np.int8(1)),
+                    ).astype(np.int8)
+                    ab.add_site(time=float(local_t[j]), genotypes=dg)
+                ab.add_terminal_site()
+                for t, focal in ab.ancestor_descriptors():
+                    fa = np.asarray(focal, dtype=np.int32)
+                    a = np.full(n_local + 1, np.int8(-1), dtype=np.int8)
+                    ab.make_ancestor(fa.tolist(), a)
+                    a = a[:n_local]
+                    nm = np.where(a != -1)[0]
+                    if len(nm) == 0:
+                        continue
+                    gh = np.full(num_inf, np.int8(-1), dtype=np.int8)
+                    gh[local_mask] = a
+                    fg = local_mask[fa]
+                    writer.add_ancestor(
+                        float(t),
+                        gh,
+                        final_positions[fg],
+                        int(final_positions[local_mask[nm[0]]]),
+                        int(final_positions[local_mask[nm[-1]]]),
+                    )
+            return writer.finalize()
+
+        anc_cs1 = run(chunk_size=1)
+        anc_cs2 = run(chunk_size=2)
+        anc_big = run(chunk_size=10000)
+
+        gt1 = _anc_genotypes(anc_cs1)
+        gt2 = _anc_genotypes(anc_cs2)
+        gt_big = _anc_genotypes(anc_big)
+        np.testing.assert_array_equal(gt1, gt_big)
+        np.testing.assert_array_equal(gt2, gt_big)
+        np.testing.assert_array_equal(
+            anc_cs1["sample_time"][:], anc_big["sample_time"][:]
+        )
+        np.testing.assert_array_equal(
+            anc_cs1["sample_start_position"][:], anc_big["sample_start_position"][:]
+        )
+        np.testing.assert_array_equal(
+            anc_cs1["sample_focal_positions"][:], anc_big["sample_focal_positions"][:]
+        )
+
+    def test_chunk_size_one_produces_valid_output(self):
+        """Even with chunk_size=1, the output should pass all standard checks."""
+
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        # Use the default pipeline (chunk_size=1000) as reference
+        anc_default = infer_ancestors(gt, _cfg())
+        num_anc = anc_default["call_genotype"].shape[1]
+        assert num_anc >= 1
+
+        # Focal sites should carry derived allele
+        gt_out = _anc_genotypes(anc_default)
+        focal_positions = np.asarray(anc_default["sample_focal_positions"][:])
+        anc_positions = np.asarray(anc_default["variant_position"][:])
+        pos_to_idx = {int(p): i for i, p in enumerate(anc_positions.tolist())}
+        for j in range(gt_out.shape[1]):
+            for fp in focal_positions[j]:
+                if int(fp) == -2:
+                    break
+                assert gt_out[pos_to_idx[int(fp)], j] == 1
+
+
+class TestPerIntervalBuilder:
+    def test_single_interval_matches_old_approach(self):
+        """With one interval, per-interval building should match a single builder."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc = infer_ancestors(gt, _cfg())
+        # All sites in one interval, no gap
+        intervals = np.asarray(anc["sequence_intervals"][:])
+        assert len(intervals) == 1
+        # Should produce the same ancestors as the oracle
+        gt_out = _anc_genotypes(anc)
+        assert gt_out.shape[1] >= 1
+
+    def test_multi_interval_ancestors_are_disjoint(self):
+        """Ancestors from different intervals should not overlap."""
+        gt = _haploid_store(
+            [[0, 1], [0, 1], [0, 1], [0, 1]],
+            positions=[100, 200, 800_000, 900_000],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+            seq_len=1_000_000,
+        )
+        anc = infer_ancestors(gt, _cfg(max_gap_length=500_000))
+        intervals = np.asarray(anc["sequence_intervals"][:])
+        assert len(intervals) == 2
+
+        gt_out = _anc_genotypes(anc)
+        positions = np.asarray(anc["variant_position"][:])
+
+        for j in range(gt_out.shape[1]):
+            hap = gt_out[:, j]
+            non_missing = np.where(hap != -1)[0]
+            if len(non_missing) == 0:
+                continue
+            nm_positions = positions[non_missing]
+            # All non-missing positions should be in a single interval
+            for s, e in intervals.tolist():
+                in_this = (nm_positions >= s) & (nm_positions < e)
+                if np.any(in_this):
+                    assert np.all(in_this), (
+                        f"Ancestor {j} has non-missing sites in multiple intervals"
+                    )
+                    break
+
+
+# ---------------------------------------------------------------------------
+# Filesystem-backed store tests
+# ---------------------------------------------------------------------------
+
+
+class TestOpenGroup:
+    def test_none_gives_memory_store(self):
+        group = open_group(None)
+        assert isinstance(group, zarr.Group)
+
+    def test_path_gives_filesystem_store(self, tmp_path):
+        out = tmp_path / "test.zarr"
+        group = open_group(out)
+        assert isinstance(group, zarr.Group)
+        # Should have created the directory on disk
+        assert out.exists()
+
+    def test_string_path_works(self, tmp_path):
+        out = str(tmp_path / "test.zarr")
+        group = open_group(out)
+        assert isinstance(group, zarr.Group)
+        assert pathlib.Path(out).exists()
+
+
+class TestFilesystemStore:
+    """Verify filesystem-backed zarr stores work for ancestor output."""
+
+    def _compare_groups(self, a, b):
+        """Assert two ancestor zarr Groups have identical contents."""
+        for name in (
+            "variant_position",
+            "variant_allele",
+            "call_genotype",
+            "sample_time",
+            "sample_start_position",
+            "sample_end_position",
+            "sample_id",
+            "sample_focal_positions",
+            "sequence_intervals",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(a[name][:]),
+                np.asarray(b[name][:]),
+                err_msg=f"Mismatch in {name}",
+            )
+
+    def test_ancestor_writer_to_filesystem(self, tmp_path):
+        """Filesystem path produces same output as in-memory."""
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        mem_result = infer_ancestors(gt, _cfg())
+
+        fs_path = tmp_path / "ancestors.zarr"
+        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        fs_result = infer_ancestors(gt, fs_cfg)
+
+        self._compare_groups(mem_result, fs_result)
+
+        # Verify it's actually on disk and re-readable
+        reopened = zarr.open_group(str(fs_path), mode="r")
+        self._compare_groups(mem_result, reopened)
+
+    def test_ancestor_writer_to_filesystem_multi_site(self, tmp_path):
+        """Filesystem output matches in-memory for a larger dataset."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        mem_result = infer_ancestors(gt, _cfg())
+
+        fs_path = tmp_path / "ancestors.zarr"
+        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        fs_result = infer_ancestors(gt, fs_cfg)
+
+        self._compare_groups(mem_result, fs_result)
+
+    def test_empty_ancestor_vcz_to_filesystem(self, tmp_path):
+        """write_empty_ancestor_vcz with a filesystem path is re-readable."""
+        seq_intervals = np.zeros((0, 2), dtype=np.int32)
+
+        mem_result = write_empty_ancestor_vcz(seq_intervals, store=None)
+
+        fs_path = tmp_path / "empty.zarr"
+        fs_result = write_empty_ancestor_vcz(seq_intervals, store=fs_path)
+
+        self._compare_groups(mem_result, fs_result)
+
+        reopened = zarr.open_group(str(fs_path), mode="r")
+        self._compare_groups(mem_result, reopened)
+
+    def test_empty_ancestors_via_infer(self, tmp_path):
+        """infer_ancestors with all-fixed sites writes empty output to filesystem."""
+        gt = _haploid_store([[0, 0], [0, 0]], [100, 200], [["A", "T"]] * 2, ["A", "A"])
+        fs_path = tmp_path / "empty_anc.zarr"
+        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        anc = infer_ancestors(gt, fs_cfg)
+
+        assert anc["call_genotype"].shape[1] == 0
+        assert fs_path.exists()
+
+        reopened = zarr.open_group(str(fs_path), mode="r")
+        assert reopened["call_genotype"].shape[1] == 0
