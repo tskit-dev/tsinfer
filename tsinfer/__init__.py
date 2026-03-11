@@ -27,3 +27,15 @@ try:
     __version__ = _version.version
 except ImportError:
     pass
+
+from .ancestors import infer_ancestors  # noqa: F401
+from .config import (  # noqa: F401
+    AncestorsConfig,
+    AncestralState,
+    Config,
+    IndividualMetadataConfig,
+    MatchConfig,
+    PostProcessConfig,
+    Source,
+)
+from .pipeline import match, post_process, run  # noqa: F401
