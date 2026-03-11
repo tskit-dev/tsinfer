@@ -275,6 +275,8 @@ def infer_ancestors(
         final_anc_indices,
         seq_intervals,
         store=cfg.path,
+        samples_chunk_size=cfg.samples_chunk_size,
+        variants_chunk_size=cfg.variants_chunk_size,
     )
 
     for i_idx in range(len(seq_intervals)):

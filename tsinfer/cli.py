@@ -39,6 +39,7 @@ from pathlib import Path
 
 import click
 import tskit
+import zarr
 
 from .config import Config
 
@@ -299,10 +300,26 @@ def _validate_paths(cfg: Config) -> list[str]:
                     f"{src.sample_time['path']}"
                 )
 
-    if cfg.ancestors is not None and cfg.ancestors.path is not None:
-        p = Path(str(cfg.ancestors.path))
-        if not p.exists():
-            errors.append(f"Ancestors path does not exist: {cfg.ancestors.path}")
+    # ancestors.path is an output — don't check it for existence.
+    # But do check that ancestral state info is available for ancestor sources.
+    if cfg.ancestors is not None and cfg.ancestral_state is None:
+        for src_name in cfg.ancestors.sources:
+            src = cfg.sources.get(src_name)
+            if src is None:
+                errors.append(f"Ancestors references unknown source: '{src_name}'")
+                continue
+            p = Path(str(src.path))
+            if p.exists():
+                try:
+                    store = zarr.open(str(p), mode="r")
+                    if "variant_ancestral_allele" not in store:
+                        errors.append(
+                            f"Source '{src_name}' has no "
+                            f"'variant_ancestral_allele' array and no "
+                            f"[ancestral_state] section is configured"
+                        )
+                except Exception:
+                    pass  # path existence errors are reported above
 
     if cfg.match.reference_ts is not None:
         p = Path(str(cfg.match.reference_ts))

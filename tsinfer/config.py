@@ -107,6 +107,8 @@ class AncestorsConfig:
     path: str | Path
     sources: list[str]
     max_gap_length: int = 500_000
+    samples_chunk_size: int = 1000
+    variants_chunk_size: int = 1000
 
 
 @dataclass
@@ -229,6 +231,8 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
             path=_resolve_path(entry["path"], base),
             sources=list(entry["sources"]),
             max_gap_length=int(entry.get("max_gap_length", 500_000)),
+            samples_chunk_size=int(entry.get("samples_chunk_size", 1000)),
+            variants_chunk_size=int(entry.get("variants_chunk_size", 1000)),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e

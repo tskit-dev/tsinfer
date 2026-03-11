@@ -331,8 +331,10 @@ class AncestorWriter:
         Site-dimensioned data written once at init.
     store : str, Path, or None
         Backing store — ``None`` for in-memory, or a filesystem path.
-    chunk_size : int
+    samples_chunk_size : int
         Number of ancestors to buffer before flushing to zarr.
+    variants_chunk_size : int
+        Chunk size along the variants axis for ``call_genotype``.
     """
 
     def __init__(
@@ -343,10 +345,11 @@ class AncestorWriter:
         anc_indices,
         seq_intervals,
         store=None,
-        chunk_size=1000,
+        samples_chunk_size=1000,
+        variants_chunk_size=1000,
     ):
         self._num_sites = num_sites
-        self._chunk_size = chunk_size
+        self._chunk_size = samples_chunk_size
         self._buffer = []
         self._focal_positions_acc = []
         self._num_flushed = 0
@@ -375,7 +378,7 @@ class AncestorWriter:
             "call_genotype",
             shape=(num_sites, 0, 1),
             dtype=np.int8,
-            chunks=(num_sites, chunk_size, 1),
+            chunks=(variants_chunk_size, samples_chunk_size, 1),
         )
         gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
 
@@ -385,7 +388,7 @@ class AncestorWriter:
                 name,
                 shape=(0,),
                 dtype=dt,
-                chunks=(chunk_size,),
+                chunks=(samples_chunk_size,),
             )
             a.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
 

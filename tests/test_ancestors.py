@@ -36,7 +36,6 @@ from tsinfer.ancestors import (
 )
 from tsinfer.config import AncestorsConfig, AncestralState
 from tsinfer.vcz import (
-    AncestorWriter,
     iter_genotypes,
     open_group,
     write_empty_ancestor_vcz,
@@ -47,8 +46,14 @@ from tsinfer.vcz import (
 # ---------------------------------------------------------------------------
 
 
-def _cfg(max_gap_length=500_000):
-    return AncestorsConfig(path=None, sources=["src"], max_gap_length=max_gap_length)
+def _cfg(max_gap_length=500_000, samples_chunk_size=1000, variants_chunk_size=1000):
+    return AncestorsConfig(
+        path=None,
+        sources=["src"],
+        max_gap_length=max_gap_length,
+        samples_chunk_size=samples_chunk_size,
+        variants_chunk_size=variants_chunk_size,
+    )
 
 
 def _haploid_store(gt_matrix, positions, alleles, anc_states, seq_len=None, **kwargs):
@@ -771,140 +776,80 @@ class TestInferAncestorsScenarios:
 
 
 class TestAncestorWriterChunking:
-    """Verify that AncestorWriter produces identical output regardless of chunk_size."""
+    """Verify infer_ancestors output is identical regardless of chunk sizes."""
 
-    def _run_with_chunk_size(self, gt_matrix, positions, alleles, anc_states, cs):
-        # Monkey-patch chunk_size into the writer via infer_ancestors is hard,
-        # so we test the writer directly.
-        store = _haploid_store(gt_matrix, positions, alleles, anc_states)
-        # Run the default path to get a reference
-        return infer_ancestors(store, _cfg())
+    _STORE = None
+    _GT_MATRIX = np.array(
+        [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+        dtype=np.int8,
+    )
 
-    def test_small_chunk_size_matches_large(self):
-        """chunk_size=1 (flush after every ancestor) must match chunk_size=1000."""
-        import _tsinfer
-        from tsinfer import vcz as vcz_mod
-        from tsinfer.ancestors import (
-            _assign_site_intervals,
-            _compute_site_stats,
-            compute_inference_sites,
-            compute_sequence_intervals,
-        )
-
-        gt_matrix = np.array(
-            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
-            dtype=np.int8,
-        )
-        store = _haploid_store(
-            gt_matrix,
+    @staticmethod
+    def _make_store():
+        return _haploid_store(
+            TestAncestorWriterChunking._GT_MATRIX,
             positions=[100, 200, 300, 400],
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        num_haplotypes = 4
 
-        inf_sites = compute_inference_sites(store, None, None)
-        keep_mask, times = _compute_site_stats(store, inf_sites, None, num_haplotypes)
-        final_positions = inf_sites.positions[keep_mask]
-        final_alleles = inf_sites.alleles[keep_mask]
-        final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
-        final_orig_indices = inf_sites.site_mask[keep_mask]
-        num_inf = len(final_positions)
+    @staticmethod
+    def _compare_ancestors(a, b):
+        np.testing.assert_array_equal(_anc_genotypes(a), _anc_genotypes(b))
+        for name in (
+            "sample_time",
+            "sample_start_position",
+            "sample_focal_positions",
+        ):
+            np.testing.assert_array_equal(a[name][:], b[name][:])
 
-        seq_len = vcz_mod.sequence_length(store)
-        seq_intervals = compute_sequence_intervals(final_positions, seq_len, 500_000)
-        site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
+    def test_samples_chunk_size_one_matches_default(self):
+        store = self._make_store()
+        anc_default = infer_ancestors(store, _cfg())
+        anc_cs1 = infer_ancestors(store, _cfg(samples_chunk_size=1))
+        self._compare_ancestors(anc_default, anc_cs1)
 
-        # Helper to run with a given chunk_size
-        def run(chunk_size):
-            writer = AncestorWriter(
-                num_inf,
-                final_positions,
-                final_alleles,
-                final_anc_indices,
-                seq_intervals,
-                chunk_size=chunk_size,
-            )
-            for i_idx in range(len(seq_intervals)):
-                in_interval = site_interval_idx == i_idx
-                if not np.any(in_interval):
-                    continue
-                local_mask = np.where(in_interval)[0]
-                n_local = len(local_mask)
-                local_orig = final_orig_indices[local_mask]
-                local_anc = final_anc_indices[local_mask]
-                local_t = times[local_mask]
-                ab = _tsinfer.AncestorBuilder(
-                    num_samples=num_haplotypes, max_sites=n_local + 1
-                )
-                for j, gt_row in enumerate(
-                    vcz_mod.iter_genotypes(store, local_orig, None)
-                ):
-                    ai = int(local_anc[j])
-                    dg = np.where(
-                        gt_row < 0,
-                        np.int8(-1),
-                        np.where(gt_row == ai, np.int8(0), np.int8(1)),
-                    ).astype(np.int8)
-                    ab.add_site(time=float(local_t[j]), genotypes=dg)
-                ab.add_terminal_site()
-                for t, focal in ab.ancestor_descriptors():
-                    fa = np.asarray(focal, dtype=np.int32)
-                    a = np.full(n_local + 1, np.int8(-1), dtype=np.int8)
-                    ab.make_ancestor(fa.tolist(), a)
-                    a = a[:n_local]
-                    nm = np.where(a != -1)[0]
-                    if len(nm) == 0:
-                        continue
-                    gh = np.full(num_inf, np.int8(-1), dtype=np.int8)
-                    gh[local_mask] = a
-                    fg = local_mask[fa]
-                    writer.add_ancestor(
-                        float(t),
-                        gh,
-                        final_positions[fg],
-                        int(final_positions[local_mask[nm[0]]]),
-                        int(final_positions[local_mask[nm[-1]]]),
-                    )
-            return writer.finalize()
+    def test_samples_chunk_size_two_matches_default(self):
+        store = self._make_store()
+        anc_default = infer_ancestors(store, _cfg())
+        anc_cs2 = infer_ancestors(store, _cfg(samples_chunk_size=2))
+        self._compare_ancestors(anc_default, anc_cs2)
 
-        anc_cs1 = run(chunk_size=1)
-        anc_cs2 = run(chunk_size=2)
-        anc_big = run(chunk_size=10000)
+    def test_variants_chunk_size_one_matches_default(self):
+        store = self._make_store()
+        anc_default = infer_ancestors(store, _cfg())
+        anc_vcs1 = infer_ancestors(store, _cfg(variants_chunk_size=1))
+        self._compare_ancestors(anc_default, anc_vcs1)
 
-        gt1 = _anc_genotypes(anc_cs1)
-        gt2 = _anc_genotypes(anc_cs2)
-        gt_big = _anc_genotypes(anc_big)
-        np.testing.assert_array_equal(gt1, gt_big)
-        np.testing.assert_array_equal(gt2, gt_big)
-        np.testing.assert_array_equal(
-            anc_cs1["sample_time"][:], anc_big["sample_time"][:]
+    def test_variants_chunk_size_two_matches_default(self):
+        store = self._make_store()
+        anc_default = infer_ancestors(store, _cfg())
+        anc_vcs2 = infer_ancestors(store, _cfg(variants_chunk_size=2))
+        self._compare_ancestors(anc_default, anc_vcs2)
+
+    def test_both_chunk_sizes_small(self):
+        store = self._make_store()
+        anc_default = infer_ancestors(store, _cfg())
+        anc_small = infer_ancestors(
+            store, _cfg(samples_chunk_size=1, variants_chunk_size=1)
         )
-        np.testing.assert_array_equal(
-            anc_cs1["sample_start_position"][:], anc_big["sample_start_position"][:]
-        )
-        np.testing.assert_array_equal(
-            anc_cs1["sample_focal_positions"][:], anc_big["sample_focal_positions"][:]
-        )
+        self._compare_ancestors(anc_default, anc_small)
 
     def test_chunk_size_one_produces_valid_output(self):
-        """Even with chunk_size=1, the output should pass all standard checks."""
-
+        """Even with samples_chunk_size=1, focal sites carry derived allele."""
         gt = _haploid_store(
             [[0, 1, 0, 1], [0, 0, 1, 1]],
             positions=[100, 200],
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        # Use the default pipeline (chunk_size=1000) as reference
-        anc_default = infer_ancestors(gt, _cfg())
-        num_anc = anc_default["call_genotype"].shape[1]
+        anc = infer_ancestors(gt, _cfg(samples_chunk_size=1))
+        num_anc = anc["call_genotype"].shape[1]
         assert num_anc >= 1
 
-        # Focal sites should carry derived allele
-        gt_out = _anc_genotypes(anc_default)
-        focal_positions = np.asarray(anc_default["sample_focal_positions"][:])
-        anc_positions = np.asarray(anc_default["variant_position"][:])
+        gt_out = _anc_genotypes(anc)
+        focal_positions = np.asarray(anc["sample_focal_positions"][:])
+        anc_positions = np.asarray(anc["variant_position"][:])
         pos_to_idx = {int(p): i for i, p in enumerate(anc_positions.tolist())}
         for j in range(gt_out.shape[1]):
             for fp in focal_positions[j]:
