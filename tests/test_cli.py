@@ -54,10 +54,16 @@ def _write_sample_vcz_to_disk(tmp_dir: str) -> str:
     return vcz_path
 
 
+def _toml_path(path: str) -> str:
+    """Convert a filesystem path to a TOML-safe string (forward slashes)."""
+    return path.replace("\\", "/")
+
+
 def _write_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"):
     """Write a minimal TOML config and return its path."""
-    output_path = os.path.join(tmp_dir, output_name)
-    ancestors_path = os.path.join(tmp_dir, "ancestors.vcz")
+    output_path = _toml_path(os.path.join(tmp_dir, output_name))
+    ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+    sample_path = _toml_path(sample_path)
     config_content = f"""\
 [[source]]
 name = "test"
@@ -80,7 +86,8 @@ recombination_rate = 1e-4
 
 def _write_run_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"):
     """Write a TOML config for the run command (no ancestors path needed)."""
-    output_path = os.path.join(tmp_dir, output_name)
+    output_path = _toml_path(os.path.join(tmp_dir, output_name))
+    sample_path = _toml_path(sample_path)
     config_content = f"""\
 [[source]]
 name = "test"
