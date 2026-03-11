@@ -6,6 +6,7 @@ on:
     tags:
       - '*'
   merge_group:
-jobs:
-  Docs:
-    uses: tskit-dev/.github/.github/workflows/docs.yml@v15
+# Disabled until major code changes completed.
+# jobs:
+#   Docs:
+#     uses: tskit-dev/.github/.github/workflows/docs.yml@v15
