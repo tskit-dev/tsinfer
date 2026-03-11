@@ -167,6 +167,118 @@ class Config:
                 "or [match].reference_ts"
             )
 
+    def format(self) -> str:
+        """Return the resolved config as a human-readable string."""
+        lines = []
+        for name, src in self.sources.items():
+            lines.append(f"[source.{name}]")
+            lines.append(f"  path = {src.path}")
+            if src.site_mask is not None:
+                lines.append(f"  site_mask = {src.site_mask}")
+            if src.sample_mask is not None:
+                lines.append(f"  sample_mask = {src.sample_mask}")
+            if src.sample_time is not None:
+                lines.append(f"  sample_time = {src.sample_time}")
+            lines.append("")
+
+        if self.ancestral_state is not None:
+            lines.append("[ancestral_state]")
+            lines.append(f"  path = {self.ancestral_state.path}")
+            lines.append(f"  field = {self.ancestral_state.field}")
+            lines.append("")
+
+        if self.ancestors is not None:
+            lines.append("[ancestors]")
+            lines.append(f"  path = {self.ancestors.path}")
+            lines.append(f"  sources = {self.ancestors.sources}")
+            lines.append(f"  max_gap_length = {self.ancestors.max_gap_length}")
+            lines.append("")
+
+        lines.append("[match]")
+        lines.append(f"  sources = {self.match.sources}")
+        lines.append(f"  output = {self.match.output}")
+        lines.append(f"  recombination_rate = {self.match.recombination_rate}")
+        lines.append(f"  mismatch_ratio = {self.match.mismatch_ratio}")
+        lines.append(f"  path_compression = {self.match.path_compression}")
+        lines.append(f"  num_threads = {self.match.num_threads}")
+        if self.match.reference_ts is not None:
+            lines.append(f"  reference_ts = {self.match.reference_ts}")
+        lines.append("")
+
+        if self.post_process is not None:
+            lines.append("[post_process]")
+            lines.append(f"  split_ultimate = {self.post_process.split_ultimate}")
+            lines.append(f"  erase_flanks = {self.post_process.erase_flanks}")
+            lines.append("")
+
+        if self.individual_metadata is not None:
+            lines.append("[individual_metadata]")
+            lines.append(f"  fields = {self.individual_metadata.fields}")
+            if self.individual_metadata.population is not None:
+                lines.append(f"  population = {self.individual_metadata.population}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def validate(self) -> list[str]:
+        """Check that all input paths exist. Return list of error strings."""
+        import zarr
+
+        errors = []
+
+        for name, src in self.sources.items():
+            if src.path is not None:
+                p = Path(str(src.path))
+                if not p.exists():
+                    errors.append(f"Source '{name}' path does not exist: {src.path}")
+            for field_name in ("site_mask", "sample_mask", "sample_time"):
+                spec = getattr(src, field_name)
+                if isinstance(spec, dict) and "path" in spec:
+                    if not Path(str(spec["path"])).exists():
+                        errors.append(
+                            f"Source '{name}' {field_name} path does not "
+                            f"exist: {spec['path']}"
+                        )
+
+        # ancestors.path is an output — don't check for existence.
+        # But check that ancestral state info is available.
+        if self.ancestors is not None and self.ancestral_state is None:
+            for src_name in self.ancestors.sources:
+                src = self.sources.get(src_name)
+                if src is None:
+                    errors.append(f"Ancestors references unknown source: '{src_name}'")
+                    continue
+                if src.path is None:
+                    continue
+                p = Path(str(src.path))
+                if p.exists():
+                    try:
+                        store = zarr.open(str(p), mode="r")
+                        if "variant_ancestral_allele" not in store:
+                            errors.append(
+                                f"Source '{src_name}' has no "
+                                f"'variant_ancestral_allele' array and no "
+                                f"[ancestral_state] section is configured"
+                            )
+                    except Exception:
+                        pass  # path existence errors reported above
+
+        if self.match.reference_ts is not None:
+            p = Path(str(self.match.reference_ts))
+            if not p.exists():
+                errors.append(
+                    f"Match reference_ts path does not exist: {self.match.reference_ts}"
+                )
+
+        if self.ancestral_state is not None:
+            p = Path(str(self.ancestral_state.path))
+            if not p.exists():
+                errors.append(
+                    f"Ancestral state path does not exist: {self.ancestral_state.path}"
+                )
+
+        return errors
+
     @classmethod
     def from_toml(cls, path: str | Path) -> Config:
         """Load and parse a TOML config file; paths resolve relative to its location."""

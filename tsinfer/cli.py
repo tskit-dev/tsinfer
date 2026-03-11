@@ -39,7 +39,6 @@ from pathlib import Path
 
 import click
 import tskit
-import zarr
 
 from .config import Config
 
@@ -201,7 +200,7 @@ def config_group():
 def config_show(config):
     """Print the resolved config with defaults filled in."""
     cfg = Config.from_toml(config)
-    _print_resolved_config(cfg)
+    click.echo(cfg.format())
 
 
 @config_group.command("check")
@@ -209,130 +208,9 @@ def config_show(config):
 def config_check(config):
     """Validate the config and verify all input paths exist."""
     cfg = Config.from_toml(config)
-    errors = _validate_paths(cfg)
+    errors = cfg.validate()
     if errors:
         for err in errors:
             click.echo(f"ERROR: {err}", err=True)
         raise SystemExit(1)
     click.echo("Config OK", err=True)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _print_resolved_config(cfg: Config) -> None:
-    """Print the resolved config as human-readable text to stdout."""
-    for name, src in cfg.sources.items():
-        click.echo(f"[source.{name}]")
-        click.echo(f"  path = {src.path}")
-        if src.site_mask is not None:
-            click.echo(f"  site_mask = {src.site_mask}")
-        if src.sample_mask is not None:
-            click.echo(f"  sample_mask = {src.sample_mask}")
-        if src.sample_time is not None:
-            click.echo(f"  sample_time = {src.sample_time}")
-        click.echo()
-
-    if cfg.ancestral_state is not None:
-        click.echo("[ancestral_state]")
-        click.echo(f"  path = {cfg.ancestral_state.path}")
-        click.echo(f"  field = {cfg.ancestral_state.field}")
-        click.echo()
-
-    if cfg.ancestors is not None:
-        click.echo("[ancestors]")
-        click.echo(f"  path = {cfg.ancestors.path}")
-        click.echo(f"  sources = {cfg.ancestors.sources}")
-        click.echo(f"  max_gap_length = {cfg.ancestors.max_gap_length}")
-        click.echo()
-
-    click.echo("[match]")
-    click.echo(f"  sources = {cfg.match.sources}")
-    click.echo(f"  output = {cfg.match.output}")
-    click.echo(f"  recombination_rate = {cfg.match.recombination_rate}")
-    click.echo(f"  mismatch_ratio = {cfg.match.mismatch_ratio}")
-    click.echo(f"  path_compression = {cfg.match.path_compression}")
-    click.echo(f"  num_threads = {cfg.match.num_threads}")
-    if cfg.match.reference_ts is not None:
-        click.echo(f"  reference_ts = {cfg.match.reference_ts}")
-    click.echo()
-
-    if cfg.post_process is not None:
-        click.echo("[post_process]")
-        click.echo(f"  split_ultimate = {cfg.post_process.split_ultimate}")
-        click.echo(f"  erase_flanks = {cfg.post_process.erase_flanks}")
-        click.echo()
-
-    if cfg.individual_metadata is not None:
-        click.echo("[individual_metadata]")
-        click.echo(f"  fields = {cfg.individual_metadata.fields}")
-        if cfg.individual_metadata.population is not None:
-            click.echo(f"  population = {cfg.individual_metadata.population}")
-        click.echo()
-
-
-def _validate_paths(cfg: Config) -> list[str]:
-    """Check that all input paths in the config exist. Return list of errors."""
-    errors = []
-
-    for name, src in cfg.sources.items():
-        p = Path(str(src.path))
-        if not p.exists():
-            errors.append(f"Source '{name}' path does not exist: {src.path}")
-        if isinstance(src.site_mask, dict) and "path" in src.site_mask:
-            if not Path(str(src.site_mask["path"])).exists():
-                errors.append(
-                    f"Source '{name}' site_mask path does not exist: "
-                    f"{src.site_mask['path']}"
-                )
-        if isinstance(src.sample_mask, dict) and "path" in src.sample_mask:
-            if not Path(str(src.sample_mask["path"])).exists():
-                errors.append(
-                    f"Source '{name}' sample_mask path does not exist: "
-                    f"{src.sample_mask['path']}"
-                )
-        if isinstance(src.sample_time, dict) and "path" in src.sample_time:
-            if not Path(str(src.sample_time["path"])).exists():
-                errors.append(
-                    f"Source '{name}' sample_time path does not exist: "
-                    f"{src.sample_time['path']}"
-                )
-
-    # ancestors.path is an output — don't check it for existence.
-    # But do check that ancestral state info is available for ancestor sources.
-    if cfg.ancestors is not None and cfg.ancestral_state is None:
-        for src_name in cfg.ancestors.sources:
-            src = cfg.sources.get(src_name)
-            if src is None:
-                errors.append(f"Ancestors references unknown source: '{src_name}'")
-                continue
-            p = Path(str(src.path))
-            if p.exists():
-                try:
-                    store = zarr.open(str(p), mode="r")
-                    if "variant_ancestral_allele" not in store:
-                        errors.append(
-                            f"Source '{src_name}' has no "
-                            f"'variant_ancestral_allele' array and no "
-                            f"[ancestral_state] section is configured"
-                        )
-                except Exception:
-                    pass  # path existence errors are reported above
-
-    if cfg.match.reference_ts is not None:
-        p = Path(str(cfg.match.reference_ts))
-        if not p.exists():
-            errors.append(
-                f"Match reference_ts path does not exist: {cfg.match.reference_ts}"
-            )
-
-    if cfg.ancestral_state is not None:
-        p = Path(str(cfg.ancestral_state.path))
-        if not p.exists():
-            errors.append(
-                f"Ancestral state path does not exist: {cfg.ancestral_state.path}"
-            )
-
-    return errors
