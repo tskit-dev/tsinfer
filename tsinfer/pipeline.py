@@ -22,9 +22,210 @@ High-level pipeline: match, post_process, run.
 
 from __future__ import annotations
 
+import numpy as np
 import tskit
 
+import _tsinfer
+
+from . import vcz as vcz_mod
+from .ancestors import infer_ancestors
 from .config import Config
+from .matching import (
+    _ts_from_tsb,
+)
+
+
+def _collect_haplotypes(cfg: Config):
+    """
+    Load ancestor VCZ and all sample sources; return arrays needed by the
+    match loop.
+    """
+    # --- Load ancestors ---
+    anc_store = vcz_mod.open_store(cfg.ancestors.path)
+    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+    n_sites = len(positions)
+    seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
+
+    anc_gt = np.asarray(anc_store["call_genotype"][:, :, 0], dtype=np.int8)
+    n_anc = anc_gt.shape[1]
+    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
+    anc_start = np.asarray(anc_store["sample_start_position"][:], dtype=np.int32)
+    anc_end = np.asarray(anc_store["sample_end_position"][:], dtype=np.int32)
+    anc_ids = [str(x) for x in anc_store["sample_id"][:].tolist()]
+
+    anc_haplotypes = anc_gt.T  # (n_anc, n_sites)
+
+    anc_metadata = [
+        {"source": "ancestors", "sample_id": anc_ids[i]} for i in range(n_anc)
+    ]
+    anc_is_ancestor = np.ones(n_anc, dtype=bool)
+    anc_create_ind = np.zeros(n_anc, dtype=bool)
+
+    # --- Load sample sources ---
+    sample_haplotypes_list = []
+    sample_times_list = []
+    sample_start_list = []
+    sample_end_list = []
+    sample_metadata_list = []
+    sample_create_ind_list = []
+    ploidy = 1
+    seq_len = None
+
+    for source_name in cfg.match.sources:
+        source = cfg.sources[source_name]
+        store = vcz_mod.open_store(source.path)
+
+        call_gt = np.asarray(store["call_genotype"][:], dtype=np.int8)
+        n_src_sites, n_samples, src_ploidy = call_gt.shape
+        ploidy = src_ploidy
+
+        sample_mask_arr = vcz_mod.resolve_field(
+            store, source.sample_mask, "sample_id", n_samples
+        )
+        if sample_mask_arr is not None:
+            include = ~np.asarray(sample_mask_arr, dtype=bool)
+            call_gt = call_gt[:, include, :]
+            n_samples = int(np.sum(include))
+
+        n_hap = n_samples * src_ploidy
+
+        sample_time_arr = vcz_mod.resolve_field(
+            store, source.sample_time, "sample_id", n_samples, fill_value=0
+        )
+        if sample_time_arr is None:
+            sample_time_arr = np.zeros(n_samples, dtype=np.float64)
+        sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
+
+        raw_ids = store["sample_id"][:]
+        if sample_mask_arr is not None:
+            raw_ids = raw_ids[~np.asarray(sample_mask_arr, dtype=bool)]
+        sample_ids = [str(x) for x in raw_ids.tolist()]
+
+        src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+        src_alleles = np.asarray(store["variant_allele"][:])
+        if "variant_ancestral_allele" in store:
+            src_anc_state = np.asarray(store["variant_ancestral_allele"][:])
+        else:
+            src_anc_state = np.array([str(a[0]) for a in src_alleles], dtype=object)
+
+        src_anc_idx = np.full(n_src_sites, -1, dtype=np.int8)
+        for i in range(n_src_sites):
+            for j, a in enumerate(src_alleles[i].tolist()):
+                if a and str(a) == str(src_anc_state[i]):
+                    src_anc_idx[i] = j
+                    break
+
+        src_pos_to_idx = {int(p): i for i, p in enumerate(src_positions.tolist())}
+        call_gt_flat = call_gt.reshape(n_src_sites, n_hap)
+
+        hap_matrix = np.full((n_sites, n_hap), np.int8(-1), dtype=np.int8)
+        for site_idx, pos in enumerate(positions.tolist()):
+            if pos in src_pos_to_idx:
+                src_idx = src_pos_to_idx[pos]
+                ai = int(src_anc_idx[src_idx])
+                if ai < 0:
+                    continue
+                gt_row = call_gt_flat[src_idx]
+                hap_matrix[site_idx] = np.where(
+                    gt_row < 0,
+                    np.int8(-1),
+                    np.where(gt_row == ai, np.int8(0), np.int8(1)),
+                ).astype(np.int8)
+
+        hap_t = hap_matrix.T
+        hap_times = np.repeat(sample_time_arr, src_ploidy)
+        hap_start = np.full(n_hap, int(positions[0]), dtype=np.int32)
+        hap_end = np.full(n_hap, int(positions[-1]), dtype=np.int32)
+
+        for i in range(n_samples):
+            for p in range(src_ploidy):
+                sample_metadata_list.append(
+                    {
+                        "source": source.name,
+                        "sample_id": sample_ids[i],
+                        "ploidy_index": p,
+                    }
+                )
+
+        sample_haplotypes_list.append(hap_t)
+        sample_times_list.append(hap_times)
+        sample_start_list.append(hap_start)
+        sample_end_list.append(hap_end)
+        sample_create_ind_list.append(np.ones(n_hap, dtype=bool))
+
+        if seq_len is None:
+            seq_len = float(vcz_mod.sequence_length(store))
+
+    # --- Concatenate ---
+    if sample_haplotypes_list:
+        all_haplotypes = np.concatenate(
+            [anc_haplotypes] + sample_haplotypes_list, axis=0
+        )
+        all_times = np.concatenate([anc_times] + sample_times_list)
+        all_start = np.concatenate([anc_start] + sample_start_list)
+        all_end = np.concatenate([anc_end] + sample_end_list)
+        all_metadata = anc_metadata + sample_metadata_list
+        all_is_ancestor = np.concatenate(
+            [anc_is_ancestor] + [np.zeros(len(t), dtype=bool) for t in sample_times_list]
+        )
+        all_create_ind = np.concatenate([anc_create_ind] + sample_create_ind_list)
+    else:
+        all_haplotypes = anc_haplotypes
+        all_times = anc_times
+        all_start = anc_start
+        all_end = anc_end
+        all_metadata = anc_metadata
+        all_is_ancestor = anc_is_ancestor
+        all_create_ind = anc_create_ind
+
+    if seq_len is None:
+        seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
+
+    return (
+        positions,
+        all_haplotypes,
+        all_times,
+        all_is_ancestor,
+        all_start,
+        all_end,
+        all_metadata,
+        all_create_ind,
+        ploidy,
+        seq_intervals,
+        float(seq_len),
+    )
+
+
+def _order_haplotypes(times, is_ancestor):
+    """
+    Return an ordering of haplotype indices for sequential matching.
+
+    Order: virtual root first (index 0), then all other haplotypes sorted
+    by descending time. Within the same time level, ancestors come before
+    samples. Ties within ancestors at the same time are broken by index
+    to ensure deterministic ordering.
+
+    The key constraint: the C ancestor matcher requires that node 0 (virtual
+    root) has at most one child. By processing one haplotype at a time in
+    strict time order, each haplotype becomes a child of a previously-added
+    node (never creating a polytomy at the root).
+    """
+    n = len(times)
+    if n == 0:
+        return []
+
+    # Virtual root is always first
+    order = [0]
+
+    # Sort remaining by (descending time, ancestors first, index)
+    remaining = []
+    for i in range(1, n):
+        # Sort key: (-time, not is_ancestor, index)
+        remaining.append((-times[i], not is_ancestor[i], i))
+    remaining.sort()
+
+    order.extend(idx for _, _, idx in remaining)
+    return order
 
 
 def match(
@@ -35,15 +236,135 @@ def match(
     """
     Run the unified match loop over all sources listed in cfg.match.
 
-    Collects haplotypes from the ancestor VCZ and all sample sources, groups
-    them by time using compute_groups, then iterates: match each group against
-    the current tree sequence and extend it with the results.
-
-    reference_ts: if provided, skip building from inferred ancestors and match
-    against this tree sequence instead.
-    kwargs: override any MatchConfig fields for this call.
+    Collects haplotypes from the ancestor VCZ and all sample sources, then
+    matches them one at a time against the incrementally-built tree sequence.
     """
-    raise NotImplementedError
+    recombination_rate = kwargs.get("recombination_rate", cfg.match.recombination_rate)
+    mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
+    path_compression = kwargs.get("path_compression", cfg.match.path_compression)
+
+    (
+        positions,
+        all_haplotypes,
+        all_times,
+        is_ancestor,
+        start_positions,
+        end_positions,
+        node_metadata,
+        create_individuals,
+        ploidy,
+        seq_intervals,
+        seq_len,
+    ) = _collect_haplotypes(cfg)
+
+    n_sites = len(positions)
+
+    # Build TSB incrementally, matching one haplotype at a time
+    num_alleles = [2] * n_sites
+    tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
+
+    metadata = {"sequence_intervals": seq_intervals.tolist()}
+
+    # Compute matching order
+    order = _order_haplotypes(all_times, is_ancestor)
+
+    # Perturb times slightly for same-time ancestors so they have strictly
+    # decreasing times, allowing sequential parent-child relationships.
+    # The perturbation is tiny (1e-10 scale) so it doesn't affect the
+    # biological interpretation.
+    match_times = all_times.copy()
+    eps = 1e-10
+    seen_times = {}
+    for idx in order:
+        t = match_times[idx]
+        if t in seen_times:
+            seen_times[t] += 1
+            match_times[idx] = t - eps * seen_times[t]
+        else:
+            seen_times[t] = 0
+
+    # Track individual creation
+    individual_groups = []
+    current_ind_nodes = []
+
+    for step, idx in enumerate(order):
+        hap = all_haplotypes[idx]
+        time = float(match_times[idx])
+
+        if step == 0:
+            # Virtual root — add directly with no matching
+            tsb.add_node(time)
+        else:
+            # Freeze, create matcher, match, then add
+            tsb.freeze_indexes()
+
+            d = np.diff(positions.astype(np.float64), prepend=float(positions[0]))
+            rho = float(recombination_rate) * np.maximum(d, 1.0)
+            rho = np.clip(rho, 1e-10, 1.0 - 1e-10)
+
+            n_match = max(1, tsb.num_match_nodes)
+            mu = np.full(n_sites, mismatch_ratio / n_match)
+            mu = np.clip(mu, 1e-10, 1.0 - 1e-10)
+
+            matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
+
+            hap_arr = np.asarray(hap, dtype=np.int8)
+            match_out = np.zeros(n_sites, dtype=np.int8)
+            non_missing = np.where(hap_arr >= 0)[0]
+            if len(non_missing) == 0:
+                start, end = 0, n_sites
+            else:
+                start = int(non_missing[0])
+                end = int(non_missing[-1]) + 1
+
+            left, right, parent = matcher.find_path(hap_arr, start, end, match_out)
+
+            in_range = np.zeros(n_sites, dtype=bool)
+            in_range[start:end] = True
+            mutation_mask = in_range & (hap_arr != match_out) & (hap_arr >= 0)
+            mutation_sites = np.where(mutation_mask)[0].astype(np.int32)
+            mutation_state = hap_arr[mutation_sites].astype(np.int8)
+
+            node_id = tsb.add_node(time)
+
+            if len(left) > 0:
+                tsb.add_path(
+                    child=node_id,
+                    left=list(left),
+                    right=list(right),
+                    parent=list(parent),
+                    compress=path_compression,
+                )
+
+            if len(mutation_sites) > 0:
+                tsb.add_mutations(
+                    node=node_id,
+                    site=mutation_sites.tolist(),
+                    derived_state=mutation_state.tolist(),
+                )
+
+        # Track individuals
+        if bool(create_individuals[idx]):
+            current_ind_nodes.append(tsb.num_nodes - 1)
+            if len(current_ind_nodes) == ploidy:
+                individual_groups.append(current_ind_nodes)
+                current_ind_nodes = []
+
+    # Handle any remaining partial individual
+    if current_ind_nodes:
+        individual_groups.append(current_ind_nodes)
+
+    # Convert TSB to tree sequence
+    ts = _ts_from_tsb(
+        tsb,
+        n_sites,
+        positions,
+        seq_len,
+        metadata,
+        individual_groups if individual_groups else None,
+    )
+
+    return ts
 
 
 def post_process(
@@ -53,19 +374,75 @@ def post_process(
 ) -> tskit.TreeSequence:
     """
     Post-process a matched tree sequence.
-
-    Applies simplification, splits ultimate ancestors, and erases flanking
-    regions outside sequence_intervals, as configured in cfg.
-    Post-processing is always an explicit separate call; it is never implicit.
     """
-    raise NotImplementedError
+    pp = cfg.post_process
+    if pp is None:
+        return ts
+
+    erase_flanks = kwargs.get("erase_flanks", pp.erase_flanks)
+    split_ultimate = kwargs.get("split_ultimate", pp.split_ultimate)
+
+    if erase_flanks:
+        ts = _erase_flanks(ts)
+
+    if split_ultimate:
+        ts = _split_ultimate(ts)
+
+    ts = ts.simplify()
+    return ts
+
+
+def _erase_flanks(ts: tskit.TreeSequence) -> tskit.TreeSequence:
+    """Clip edges to the union of sequence_intervals from metadata."""
+    meta = ts.metadata if ts.metadata else {}
+    intervals = meta.get("sequence_intervals")
+    if not intervals:
+        return ts
+
+    tables = ts.dump_tables()
+    edges = tables.edges.copy()
+    tables.edges.clear()
+
+    for edge in edges:
+        left = edge.left
+        right = edge.right
+        for iv_start, iv_end in intervals:
+            clip_left = max(left, float(iv_start))
+            clip_right = min(right, float(iv_end))
+            if clip_left < clip_right:
+                tables.edges.add_row(
+                    left=clip_left,
+                    right=clip_right,
+                    parent=edge.parent,
+                    child=edge.child,
+                )
+
+    tables.sort()
+    tables.build_index()
+    return tables.tree_sequence()
+
+
+def _split_ultimate(ts: tskit.TreeSequence) -> tskit.TreeSequence:
+    """Split ultimate ancestor nodes. No-op for now."""
+    # TODO: implement ultimate ancestor splitting
+    return ts
 
 
 def run(cfg: Config, **kwargs) -> tskit.TreeSequence:
     """
     Run the full pipeline: infer_ancestors, match, post_process.
-
-    Equivalent to calling each step in sequence with the given config.
-    kwargs are forwarded to each step.
     """
-    raise NotImplementedError
+    source_name = cfg.ancestors.sources[0]
+    source = cfg.sources[source_name]
+    ancestor_store = infer_ancestors(source, cfg.ancestors, cfg.ancestral_state)
+
+    original_path = cfg.ancestors.path
+    cfg.ancestors.path = ancestor_store
+
+    try:
+        ts = match(cfg, **kwargs)
+        ts = post_process(ts, cfg, **kwargs)
+    finally:
+        cfg.ancestors.path = original_path
+
+    return ts

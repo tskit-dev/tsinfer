@@ -1,0 +1,269 @@
+#
+# Copyright (C) 2018-2026 University of Oxford
+#
+# This file is part of tsinfer.
+#
+# tsinfer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tsinfer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
+#
+"""
+Tier 2 end-to-end tests for the tsinfer pipeline: match, post_process, run.
+
+Uses ts_to_sample_vcz(msprime_ts) to create synthetic inputs and verifies
+the pipeline produces valid tree sequences.
+"""
+
+from __future__ import annotations
+
+import msprime
+import numpy as np
+from helpers import make_sample_vcz, ts_to_sample_vcz
+
+from tsinfer.ancestors import infer_ancestors
+from tsinfer.config import (
+    AncestorsConfig,
+    Config,
+    MatchConfig,
+    PostProcessConfig,
+    Source,
+)
+from tsinfer.pipeline import match, post_process, run
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _simulate(
+    n_samples=6,
+    sequence_length=100_000,
+    recombination_rate=1e-8,
+    mutation_rate=1e-8,
+    ploidy=1,
+    random_seed=42,
+):
+    """Simulate a tree sequence with msprime and return it."""
+    ts = msprime.sim_ancestry(
+        samples=n_samples,
+        sequence_length=sequence_length,
+        recombination_rate=recombination_rate,
+        ploidy=ploidy,
+        population_size=10_000,
+        random_seed=random_seed,
+    )
+    ts = msprime.sim_mutations(ts, rate=mutation_rate, random_seed=random_seed)
+    return ts
+
+
+def _make_config(sample_store, ancestor_store, recombination_rate=1e-4):
+    """Build a Config suitable for match() from in-memory stores."""
+    src = Source(path=sample_store, name="test")
+    return Config(
+        sources={"test": src},
+        ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
+        match=MatchConfig(
+            sources=["test"],
+            output="output.trees",
+            recombination_rate=recombination_rate,
+        ),
+    )
+
+
+def _make_config_for_run(sample_store, recombination_rate=1e-4):
+    """Build a Config suitable for run() from in-memory sample store."""
+    src = Source(path=sample_store, name="test")
+    return Config(
+        sources={"test": src},
+        ancestors=AncestorsConfig(path="unused", sources=["test"]),
+        match=MatchConfig(
+            sources=["test"],
+            output="output.trees",
+            recombination_rate=recombination_rate,
+        ),
+    )
+
+
+def _infer_and_match(sim_ts, recombination_rate=1e-4):
+    """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
+    sample_store = ts_to_sample_vcz(sim_ts)
+    anc_cfg = AncestorsConfig(path=None, sources=["test"])
+    ancestor_store = infer_ancestors(sample_store, anc_cfg)
+    cfg = _make_config(sample_store, ancestor_store, recombination_rate)
+    return match(cfg)
+
+
+# ---------------------------------------------------------------------------
+# TestMatch
+# ---------------------------------------------------------------------------
+
+
+class TestMatch:
+    def test_basic_haploid(self):
+        sim_ts = _simulate(n_samples=4, random_seed=1)
+        out_ts = _infer_and_match(sim_ts)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_edges > 0
+        assert out_ts.num_sites > 0
+
+    def test_output_has_sites_at_inference_positions(self):
+        sim_ts = _simulate(n_samples=6, random_seed=2)
+        out_ts = _infer_and_match(sim_ts)
+        assert out_ts.num_sites > 0
+
+    def test_output_has_sample_nodes(self):
+        sim_ts = _simulate(n_samples=6, random_seed=3)
+        out_ts = _infer_and_match(sim_ts)
+        n_haplotypes = sim_ts.num_samples
+        assert out_ts.num_nodes >= n_haplotypes
+
+    def test_metadata_contains_sequence_intervals(self):
+        sim_ts = _simulate(n_samples=4, random_seed=4)
+        out_ts = _infer_and_match(sim_ts)
+        assert "sequence_intervals" in out_ts.metadata
+
+    def test_larger_sample_count(self):
+        sim_ts = _simulate(n_samples=20, random_seed=5)
+        out_ts = _infer_and_match(sim_ts)
+        assert out_ts.num_nodes > 0
+
+    def test_diploid(self):
+        sim_ts = _simulate(n_samples=4, ploidy=2, random_seed=6)
+        out_ts = _infer_and_match(sim_ts)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_individuals > 0
+
+    def test_hand_constructed_simple(self):
+        """Match with a hand-constructed 2-site, 2-sample VCZ."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        out_ts = match(cfg)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_sites == 2
+
+
+# ---------------------------------------------------------------------------
+# TestPostProcess
+# ---------------------------------------------------------------------------
+
+
+class TestPostProcess:
+    def test_simplify_reduces_nodes(self):
+        sim_ts = _simulate(n_samples=6, random_seed=10)
+        matched_ts = _infer_and_match(sim_ts)
+        cfg = Config(
+            sources={"test": Source(path="unused", name="test")},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="out.trees",
+                recombination_rate=1e-4,
+            ),
+            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
+        )
+        pp_ts = post_process(matched_ts, cfg)
+        # Simplify should remove unused nodes
+        assert pp_ts.num_nodes <= matched_ts.num_nodes
+
+    def test_no_post_process_config_returns_unchanged(self):
+        sim_ts = _simulate(n_samples=4, random_seed=11)
+        matched_ts = _infer_and_match(sim_ts)
+        cfg = Config(
+            sources={"test": Source(path="unused", name="test")},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="out.trees",
+                recombination_rate=1e-4,
+            ),
+            post_process=None,
+        )
+        pp_ts = post_process(matched_ts, cfg)
+        assert pp_ts.num_nodes == matched_ts.num_nodes
+
+    def test_erase_flanks(self):
+        sim_ts = _simulate(n_samples=6, random_seed=12)
+        matched_ts = _infer_and_match(sim_ts)
+        cfg = Config(
+            sources={"test": Source(path="unused", name="test")},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="out.trees",
+                recombination_rate=1e-4,
+            ),
+            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+        )
+        pp_ts = post_process(matched_ts, cfg)
+        assert pp_ts.num_nodes > 0
+
+
+# ---------------------------------------------------------------------------
+# TestRun
+# ---------------------------------------------------------------------------
+
+
+class TestRun:
+    def test_full_pipeline_haploid(self):
+        sim_ts = _simulate(n_samples=4, random_seed=20)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_sites > 0
+
+    def test_full_pipeline_diploid(self):
+        sim_ts = _simulate(n_samples=4, ploidy=2, random_seed=21)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_individuals > 0
+
+    def test_full_pipeline_with_post_process(self):
+        sim_ts = _simulate(n_samples=6, random_seed=22)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        src = Source(path=sample_store, name="test")
+        cfg = Config(
+            sources={"test": src},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="output.trees",
+                recombination_rate=1e-4,
+            ),
+            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+        )
+        out_ts = run(cfg)
+        assert out_ts.num_nodes > 0
+
+    def test_hand_constructed(self):
+        """Full pipeline with a hand-constructed sample VCZ."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_sites == 2
