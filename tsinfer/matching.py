@@ -84,8 +84,24 @@ def _ts_from_tsb(
     sequence_length: float,
     metadata: dict,
     individuals: list[list[int]] | None = None,
+    node_metadata: list[dict] | None = None,
+    individual_metadata: list[dict] | None = None,
+    populations: list[int] | None = None,
+    population_names: list[str] | None = None,
 ) -> tskit.TreeSequence:
-    """Convert a _tsinfer.TreeSequenceBuilder to a tskit.TreeSequence."""
+    """Convert a _tsinfer.TreeSequenceBuilder to a tskit.TreeSequence.
+
+    Parameters
+    ----------
+    node_metadata:
+        Per-node metadata dicts, one per node in TSB order.
+    individual_metadata:
+        Per-individual metadata dicts, one per individual group.
+    populations:
+        Per-individual population index, one per individual group.
+    population_names:
+        Unique population names; used to create population table rows.
+    """
     tables = tskit.TableCollection(sequence_length=float(sequence_length))
     if metadata:
         tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
@@ -94,15 +110,48 @@ def _ts_from_tsb(
     for pos in positions:
         tables.sites.add_row(position=float(pos), ancestral_state="0")
 
+    # Create populations if specified
+    if population_names:
+        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        for pop_name in population_names:
+            tables.populations.add_row(metadata={"name": pop_name})
+
+    # Set up node metadata schema if we have node metadata
+    if node_metadata:
+        tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+
     flags, times = tsb.dump_nodes()
-    for t, fl in zip(times, flags):
-        tables.nodes.add_row(time=float(t), flags=int(fl))
+    for i, (t, fl) in enumerate(zip(times, flags)):
+        md = node_metadata[i] if node_metadata and i < len(node_metadata) else None
+        if md is not None:
+            tables.nodes.add_row(time=float(t), flags=int(fl), metadata=md)
+        else:
+            tables.nodes.add_row(time=float(t), flags=int(fl))
 
     if individuals:
-        for ind_nodes in individuals:
-            ind_id = tables.individuals.add_row()
+        if individual_metadata:
+            tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        for ind_idx, ind_nodes in enumerate(individuals):
+            ind_md = (
+                individual_metadata[ind_idx]
+                if individual_metadata and ind_idx < len(individual_metadata)
+                else None
+            )
+            pop_id = (
+                populations[ind_idx]
+                if populations and ind_idx < len(populations)
+                else -1
+            )
+            if ind_md is not None:
+                ind_id = tables.individuals.add_row(metadata=ind_md)
+            else:
+                ind_id = tables.individuals.add_row()
             for node_id in ind_nodes:
-                tables.nodes[node_id] = tables.nodes[node_id].replace(individual=ind_id)
+                row = tables.nodes[node_id]
+                tables.nodes[node_id] = row.replace(
+                    individual=ind_id,
+                    population=pop_id if pop_id >= 0 else -1,
+                )
 
     pos_arr = positions.astype(np.float64)
     el, er, ep, ec = tsb.dump_edges()

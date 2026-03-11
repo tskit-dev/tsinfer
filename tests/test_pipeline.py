@@ -33,6 +33,7 @@ from tsinfer.ancestors import infer_ancestors
 from tsinfer.config import (
     AncestorsConfig,
     Config,
+    IndividualMetadataConfig,
     MatchConfig,
     PostProcessConfig,
     Source,
@@ -267,3 +268,147 @@ class TestRun:
         out_ts = run(cfg)
         assert out_ts.num_nodes > 0
         assert out_ts.num_sites == 2
+
+
+# ---------------------------------------------------------------------------
+# TestNodeMetadata
+# ---------------------------------------------------------------------------
+
+
+class TestNodeMetadata:
+    def test_nodes_have_metadata(self):
+        """Nodes should have metadata with source and sample_id."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        # At least some nodes should have metadata
+        has_metadata = False
+        for node in out_ts.nodes():
+            if node.metadata:
+                has_metadata = True
+                break
+        assert has_metadata
+
+    def test_ancestor_nodes_have_source(self):
+        """Ancestor nodes should have source='ancestors'."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        ancestor_found = False
+        for node in out_ts.nodes():
+            if node.metadata and node.metadata.get("source") == "ancestors":
+                ancestor_found = True
+                assert "sample_id" in node.metadata
+                break
+        assert ancestor_found
+
+    def test_sample_nodes_have_ploidy_index(self):
+        """Sample nodes should have ploidy_index in metadata."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        sample_found = False
+        for node in out_ts.nodes():
+            md = node.metadata
+            if md and md.get("source") == "test":
+                sample_found = True
+                assert "ploidy_index" in md
+                assert "sample_id" in md
+                break
+        assert sample_found
+
+
+# ---------------------------------------------------------------------------
+# TestIndividualMetadata
+# ---------------------------------------------------------------------------
+
+
+class TestIndividualMetadata:
+    def test_individual_metadata_fields(self):
+        """Individual metadata should contain fields from config."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        src = Source(path=sample_store, name="test")
+        cfg = Config(
+            sources={"test": src},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="output.trees",
+                recombination_rate=1e-4,
+            ),
+            individual_metadata=IndividualMetadataConfig(
+                fields={"sample_id": "sample_id"},
+            ),
+        )
+        out_ts = run(cfg)
+        assert out_ts.num_individuals > 0
+        for ind in out_ts.individuals():
+            if ind.metadata:
+                assert "sample_id" in ind.metadata
+
+    def test_population_assignment(self):
+        """Individuals should be assigned to populations from config."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+            sample_population=np.array(["pop_A", "pop_B"]),
+        )
+        src = Source(path=sample_store, name="test")
+        cfg = Config(
+            sources={"test": src},
+            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            match=MatchConfig(
+                sources=["test"],
+                output="output.trees",
+                recombination_rate=1e-4,
+            ),
+            individual_metadata=IndividualMetadataConfig(
+                population="sample_population",
+            ),
+        )
+        out_ts = run(cfg)
+        assert out_ts.num_populations > 0
+        # Check population metadata
+        pop_names = [pop.metadata.get("name") for pop in out_ts.populations()]
+        assert "pop_A" in pop_names or "pop_B" in pop_names
+
+    def test_no_individual_metadata_config(self):
+        """Without individual_metadata config, no individual metadata is set."""
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg)
+        # No individual metadata config → no individual metadata schema
+        assert out_ts.num_populations == 0
