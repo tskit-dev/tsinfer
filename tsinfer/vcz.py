@@ -244,10 +244,13 @@ def iter_variants(
             yield {name: chunk_data[name][i] for name in chunk_data}
 
 
-def iter_genotypes(store, positions, sample_include=None):
+def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None):
     """
-    Yield ``(num_haplotypes,)`` int8 genotype rows for the requested
+    Yield ``(num_haplotypes,)`` int8 derived-genotype rows for the requested
     positions, one row per position in the order given.
+
+    Each yielded row is remapped so that the ancestral allele becomes 0,
+    any other allele becomes 1, and missing values become -1.
 
     Positions are mapped to row indices via ``variant_position``.  Reads
     ``call_genotype`` chunk-by-chunk so that at most one zarr chunk is in
@@ -261,6 +264,9 @@ def iter_genotypes(store, positions, sample_include=None):
     positions : array-like of int
         Genomic positions to retrieve (must be non-decreasing and present
         in ``variant_position``).
+    ancestral_allele_index : array-like of int
+        Per-site index into the allele list identifying the ancestral
+        allele.  Must be the same length as *positions*.
     sample_include : array-like of bool or None
         Boolean mask (length ``num_samples``) where True means keep this
         sample.  ``None`` keeps all samples.
@@ -268,10 +274,11 @@ def iter_genotypes(store, positions, sample_include=None):
     Yields
     ------
     np.ndarray
-        ``(num_haplotypes,)`` int8 array — one flattened genotype row per
-        requested position.
+        ``(num_haplotypes,)`` int8 array where 0 = ancestral, 1 = derived,
+        -1 = missing.
     """
     positions = np.asarray(positions, dtype=np.int32)
+    ancestral_allele_index = np.asarray(ancestral_allele_index, dtype=np.int8)
 
     if len(positions) == 0:
         return
@@ -312,7 +319,13 @@ def iter_genotypes(store, positions, sample_include=None):
         chunk_start = cid * chunk_size
         while i < n and int(site_indices[i]) // chunk_size == cid:
             local = int(site_indices[i]) - chunk_start
-            yield cached_flat[local].copy()
+            raw = cached_flat[local]
+            anc_idx = ancestral_allele_index[i]
+            is_missing = raw < 0
+            is_ancestral = raw == anc_idx
+            yield np.where(
+                is_missing, np.int8(-1), np.where(is_ancestral, np.int8(0), np.int8(1))
+            ).astype(np.int8)
             i += 1
 
 
