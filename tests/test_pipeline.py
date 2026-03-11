@@ -412,3 +412,58 @@ class TestIndividualMetadata:
         out_ts = run(cfg)
         # No individual metadata config → no individual metadata schema
         assert out_ts.num_populations == 0
+
+
+# ---------------------------------------------------------------------------
+# Logging and progress
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineLogging:
+    def test_run_logs_key_messages(self, caplog):
+        """Key INFO messages from run()."""
+        import logging
+
+        sim_ts = _simulate(num_samples=4, random_seed=30)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        cfg = _make_config_for_run(sample_store)
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            run(cfg)
+
+        messages = caplog.text
+        assert "Starting full pipeline" in messages
+        assert "Pipeline complete" in messages
+
+    def test_match_logs_haplotype_count(self, caplog):
+        """match() logs haplotype and site counts."""
+        import logging
+
+        sim_ts = _simulate(num_samples=4, random_seed=31)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        with caplog.at_level(logging.INFO, logger="tsinfer.pipeline"):
+            match(cfg)
+
+        assert "Match:" in caplog.text
+
+
+class TestPipelineProgress:
+    def test_run_with_progress(self):
+        """run(progress=True) does not crash."""
+        sim_ts = _simulate(num_samples=4, random_seed=32)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        cfg = _make_config_for_run(sample_store)
+        out_ts = run(cfg, progress=True)
+        assert out_ts.num_nodes > 0
+
+    def test_match_with_progress(self):
+        """match(progress=True) does not crash."""
+        sim_ts = _simulate(num_samples=4, random_seed=33)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        out_ts = match(cfg, progress=True)
+        assert out_ts.num_nodes > 0

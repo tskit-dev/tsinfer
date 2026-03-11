@@ -1015,3 +1015,53 @@ class TestFilesystemStore:
 
         reopened = zarr.open_group(str(fs_path), mode="r")
         assert reopened["call_genotype"].shape[1] == 0
+
+
+# ---------------------------------------------------------------------------
+# Logging and progress
+# ---------------------------------------------------------------------------
+
+
+class TestLogging:
+    def test_infer_ancestors_logs_key_messages(self, caplog):
+        """Key INFO messages are emitted during ancestor inference."""
+        import logging
+
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            infer_ancestors(gt, _cfg())
+
+        messages = caplog.text
+        assert "Starting ancestor inference" in messages
+        assert "Inference sites identified" in messages
+        assert "Pass 1" in messages
+        assert "Ancestor inference complete" in messages
+
+
+class TestProgress:
+    def test_progress_does_not_crash(self):
+        """progress=True runs without error."""
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        anc = infer_ancestors(gt, _cfg(), progress=True)
+        assert anc["call_genotype"].shape[1] >= 1
+
+    def test_progress_false_by_default(self):
+        """Default progress=False works normally."""
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        anc = infer_ancestors(gt, _cfg())
+        assert anc["call_genotype"].shape[1] >= 1

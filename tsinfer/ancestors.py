@@ -22,6 +22,7 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -31,6 +32,8 @@ import _tsinfer
 
 from . import vcz as vcz_mod
 from .config import AncestorsConfig, AncestralState, Source
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,7 +64,9 @@ def _assign_site_intervals(positions, intervals):
     return result
 
 
-def _compute_site_stats(store, inf_sites, sample_include, num_haplotypes):
+def _compute_site_stats(
+    store, inf_sites, sample_include, num_haplotypes, progress=False
+):
     """
     Pass 1: iterate over inference-site genotypes, compute derived genotype
     stats for each site, filter out fixed/all-missing.
@@ -76,9 +81,15 @@ def _compute_site_stats(store, inf_sites, sample_include, num_haplotypes):
     keep_mask = np.zeros(num_inf_sites, dtype=bool)
     times_list = []
 
-    for i, gt_row in enumerate(
-        vcz_mod.iter_genotypes(store, inf_sites.site_mask, sample_include)
-    ):
+    site_iter = vcz_mod.iter_genotypes(store, inf_sites.site_mask, sample_include)
+    if progress:
+        import tqdm
+
+        site_iter = tqdm.tqdm(
+            site_iter, total=num_inf_sites, desc="Pass 1: site stats", unit="sites"
+        )
+
+    for i, gt_row in enumerate(site_iter):
         anc_idx = int(anc_indices[i])
 
         is_missing = gt_row < 0
@@ -198,6 +209,7 @@ def infer_ancestors(
     source: Source | zarr.Group,
     cfg: AncestorsConfig,
     ancestral_state: AncestralState | None = None,
+    progress: bool = False,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from a samples VCZ store.
@@ -209,6 +221,8 @@ def infer_ancestors(
     No virtual root is inserted; that is the responsibility of the match step.
     Ancestors are not sorted by time.
     """
+    logger.info("Starting ancestor inference")
+
     # --- 1. Open store and resolve masks ---
     if isinstance(source, zarr.Group):
         store = source
@@ -232,6 +246,13 @@ def infer_ancestors(
         sample_include = None
         num_samples_used = num_samples
     num_haplotypes = num_samples_used * ploidy
+    logger.info(
+        "Store: %d sites, %d samples, ploidy %d (%d haplotypes)",
+        num_total_sites,
+        num_samples_used,
+        ploidy,
+        num_haplotypes,
+    )
 
     site_mask_arr = vcz_mod.resolve_field(
         store, site_mask_spec, "variant_position", num_total_sites
@@ -239,10 +260,12 @@ def infer_ancestors(
 
     # --- 2. Compute inference sites ---
     inf_sites = compute_inference_sites(store, site_mask_arr, ancestral_state)
+    logger.info("Inference sites identified: %d", len(inf_sites.positions))
 
     # --- 3. Pass 1: compute site stats ---
+    logger.info("Pass 1: computing site stats")
     keep_mask, times = _compute_site_stats(
-        store, inf_sites, sample_include, num_haplotypes
+        store, inf_sites, sample_include, num_haplotypes, progress=progress
     )
 
     final_positions = inf_sites.positions[keep_mask]
@@ -251,6 +274,9 @@ def infer_ancestors(
     final_orig_indices = inf_sites.site_mask[keep_mask]
 
     num_inf = len(final_positions)
+    logger.info(
+        "Pass 1 complete: %d sites kept (of %d)", num_inf, len(inf_sites.positions)
+    )
 
     if num_inf == 0:
         seq_len = vcz_mod.sequence_length(store)
@@ -265,7 +291,14 @@ def infer_ancestors(
         final_positions, seq_len, cfg.max_gap_length
     )
 
+    logger.info(
+        "Sequence intervals: %d (max_gap_length=%d)",
+        len(seq_intervals),
+        cfg.max_gap_length,
+    )
+
     # --- 5. Pass 2: per-interval ancestor building ---
+    logger.info("Pass 2: building ancestors per interval")
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
     writer = vcz_mod.AncestorWriter(
@@ -279,7 +312,15 @@ def infer_ancestors(
         variants_chunk_size=cfg.variants_chunk_size,
     )
 
-    for i_idx in range(len(seq_intervals)):
+    interval_range = range(len(seq_intervals))
+    if progress:
+        import tqdm
+
+        interval_range = tqdm.tqdm(
+            interval_range, desc="Pass 2: intervals", unit="intervals"
+        )
+
+    for i_idx in interval_range:
         in_interval = site_interval_idx == i_idx
         if not np.any(in_interval):
             continue
@@ -308,8 +349,15 @@ def infer_ancestors(
             ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
         ab.add_terminal_site()
 
+        logger.info("Interval %d: %d sites, generating ancestors", i_idx, n_local)
+        ancestor_descriptors = list(ab.ancestor_descriptors())
+        if progress:
+            ancestor_descriptors = tqdm.tqdm(
+                ancestor_descriptors, desc="Interval ancestors", unit="haps"
+            )
+
         # Generate ancestors for this interval
-        for time, focal_sites in ab.ancestor_descriptors():
+        for time, focal_sites in ancestor_descriptors:
             focal_arr = np.asarray(focal_sites, dtype=np.int32)
             a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
             ab.make_ancestor(focal_arr.tolist(), a)
@@ -330,4 +378,10 @@ def infer_ancestors(
 
             writer.add_ancestor(float(time), global_hap, focal_pos, start_pos, end_pos)
 
-    return writer.finalize()
+    result = writer.finalize()
+    logger.info(
+        "Ancestor inference complete: %d ancestors across %d sites",
+        result["call_genotype"].shape[1],
+        num_inf,
+    )
+    return result
