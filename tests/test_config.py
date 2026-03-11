@@ -87,18 +87,24 @@ class TestSourceConstruction:
         s = Source(path="samples.vcz", name="cohort")
         assert s.name == "cohort"
         assert str(s.path) == "samples.vcz"
-        assert s.site_mask is None
-        assert s.sample_mask is None
+        assert s.include is None
+        assert s.exclude is None
+        assert s.samples is None
+        assert s.regions is None
+        assert s.targets is None
         assert s.sample_time is None
 
-    def test_site_mask_string(self):
-        s = Source(path="s.vcz", name="s", site_mask="variant_filter")
-        assert s.site_mask == "variant_filter"
+    def test_include_expression(self):
+        s = Source(path="s.vcz", name="s", include="QUAL > 30")
+        assert s.include == "QUAL > 30"
 
-    def test_site_mask_dict(self):
-        spec = {"path": "ann.vcz", "field": "filter"}
-        s = Source(path="s.vcz", name="s", site_mask=spec)
-        assert s.site_mask == spec
+    def test_exclude_expression(self):
+        s = Source(path="s.vcz", name="s", exclude="AC == 0")
+        assert s.exclude == "AC == 0"
+
+    def test_samples_string(self):
+        s = Source(path="s.vcz", name="s", samples="^sample_2")
+        assert s.samples == "^sample_2"
 
     def test_sample_time_scalar(self):
         s = Source(path="s.vcz", name="ancient", sample_time=1.5)
@@ -228,9 +234,9 @@ path  = "annotations.vcz"
 field = "variant_ancestral_allele"
 
 [[source]]
-name      = "cohort"
-path      = "samples.vcz"
-site_mask = "variant_filter"
+name    = "cohort"
+path    = "samples.vcz"
+include = "QUAL > 20"
 
 [ancestors]
 path           = "ancestors.vcz"
@@ -261,7 +267,7 @@ class TestFromTomlStandard:
     def test_sources(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert "cohort" in cfg.sources
-        assert cfg.sources["cohort"].site_mask == "variant_filter"
+        assert cfg.sources["cohort"].include == "QUAL > 20"
 
     def test_ancestral_state(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
@@ -367,12 +373,12 @@ reference_ts       = "ref.trees"
 
 
 class TestFieldSpecs:
-    def test_site_mask_string(self, tmp_path):
+    def test_include_expression(self, tmp_path):
         toml = """\
 [[source]]
-name      = "cohort"
-path      = "samples.vcz"
-site_mask = "variant_filter"
+name    = "cohort"
+path    = "samples.vcz"
+include = "QUAL > 30"
 
 [ancestors]
 path    = "ancestors.vcz"
@@ -384,14 +390,14 @@ output             = "out.trees"
 recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.sources["cohort"].site_mask == "variant_filter"
+        assert cfg.sources["cohort"].include == "QUAL > 30"
 
-    def test_site_mask_dict(self, tmp_path):
+    def test_exclude_expression(self, tmp_path):
         toml = """\
 [[source]]
-name      = "cohort"
-path      = "samples.vcz"
-site_mask = {path = "ann.vcz", field = "variant_filter"}
+name    = "cohort"
+path    = "samples.vcz"
+exclude = "AC == 0"
 
 [ancestors]
 path    = "ancestors.vcz"
@@ -403,10 +409,26 @@ output             = "out.trees"
 recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        spec = cfg.sources["cohort"].site_mask
-        assert isinstance(spec, dict)
-        assert spec["field"] == "variant_filter"
-        assert spec["path"] == tmp_path / "ann.vcz"
+        assert cfg.sources["cohort"].exclude == "AC == 0"
+
+    def test_samples_string(self, tmp_path):
+        toml = """\
+[[source]]
+name    = "cohort"
+path    = "samples.vcz"
+samples = "^sample_2,sample_3"
+
+[ancestors]
+path    = "ancestors.vcz"
+sources = ["cohort"]
+
+[match]
+sources            = ["ancestors", "cohort"]
+output             = "out.trees"
+recombination_rate = 1e-8
+"""
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.sources["cohort"].samples == "^sample_2,sample_3"
 
     def test_sample_time_scalar(self, tmp_path):
         toml = """\
@@ -664,15 +686,17 @@ class TestConfigFormat:
                 "s": Source(
                     path="s.vcz",
                     name="s",
-                    site_mask="mask",
-                    sample_mask="smask",
+                    include="QUAL > 30",
+                    exclude="AC == 0",
+                    samples="sample_0,sample_1",
                     sample_time=1.5,
                 ),
             },
         )
         text = cfg.format()
-        assert "site_mask = mask" in text
-        assert "sample_mask = smask" in text
+        assert "include = QUAL > 30" in text
+        assert "exclude = AC == 0" in text
+        assert "samples = sample_0,sample_1" in text
         assert "sample_time = 1.5" in text
 
     def test_no_optional_sections(self):
@@ -792,17 +816,17 @@ class TestConfigValidate:
         errors = cfg.validate()
         assert not any("variant_ancestral_allele" in e for e in errors)
 
-    def test_missing_field_spec_path(self, tmp_path):
-        """Error when a dict field spec references a nonexistent path."""
+    def test_missing_sample_time_path(self, tmp_path):
+        """Error when sample_time dict spec references nonexistent path."""
         vcz_path = _write_sample_vcz(tmp_path)
         cfg = Config(
             sources={
                 "test": Source(
                     path=vcz_path,
                     name="test",
-                    site_mask={
+                    sample_time={
                         "path": str(tmp_path / "missing.vcz"),
-                        "field": "mask",
+                        "field": "time",
                     },
                 )
             },
@@ -810,7 +834,7 @@ class TestConfigValidate:
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
-        assert any("site_mask" in e and "does not exist" in e for e in errors)
+        assert any("sample_time" in e and "does not exist" in e for e in errors)
 
     def test_missing_reference_ts(self):
         cfg = Config(

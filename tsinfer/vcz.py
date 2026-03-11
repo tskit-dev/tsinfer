@@ -27,8 +27,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 
 ``resolve_field``
     Map a field specification (string, {path,field} dict, scalar, or None)
-    to a numpy array.  Used to resolve per-source metadata like site_mask,
-    sample_mask, and sample_time.
+    to a numpy array.  Used to resolve per-source metadata like sample_time.
 
 ``sequence_length``
     Read the contig length from a VCZ store (``contig_length[0]``).
@@ -189,6 +188,60 @@ def _resolve_joined_field(
 # ---------------------------------------------------------------------------
 # Convenience accessors
 # ---------------------------------------------------------------------------
+
+
+def resolve_samples_selection(
+    store: zarr.Group,
+    samples: str | None,
+) -> np.ndarray | None:
+    """
+    Convert a bcftools-style samples string to a selection index array.
+
+    Returns None if samples is None (keep all samples).
+    """
+    if samples is None:
+        return None
+    from vcztools.samples import parse_samples
+
+    _, selection = parse_samples(samples, store["sample_id"][:])
+    return selection
+
+
+def iter_variants(
+    store: zarr.Group,
+    *,
+    fields: list[str] | None = None,
+    include: str | None = None,
+    exclude: str | None = None,
+    samples_selection: np.ndarray | None = None,
+    regions: str | None = None,
+    targets: str | None = None,
+):
+    """
+    Yield per-variant dicts from a VCZ store, with optional filtering.
+
+    Delegates to ``vcztools.retrieval.variant_chunk_iter`` for chunked
+    reading with bcftools-style include/exclude expressions, sample
+    selection, and region/target filtering.
+
+    Each yielded dict maps zarr array names to per-variant values
+    (variants dimension removed).
+    """
+    from vcztools.retrieval import variant_chunk_iter
+
+    for chunk_data in variant_chunk_iter(
+        store,
+        fields=fields,
+        include=include,
+        exclude=exclude,
+        samples_selection=samples_selection,
+        regions=regions,
+        targets=targets,
+    ):
+        first_field = next(iter(chunk_data.values()))
+        num_variants = len(first_field)
+        for i in range(num_variants):
+            yield {name: chunk_data[name][i] for name in chunk_data}
 
 
 def iter_genotypes(store, site_indices, sample_include=None):

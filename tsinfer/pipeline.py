@@ -123,26 +123,28 @@ def _collect_haplotypes(cfg: Config):
         num_src_sites, num_samples, src_ploidy = call_gt.shape
         ploidy = src_ploidy
 
-        sample_mask_arr = vcz_mod.resolve_field(
-            store, source.sample_mask, "sample_id", num_samples
-        )
-        if sample_mask_arr is not None:
-            include = ~np.asarray(sample_mask_arr, dtype=bool)
-            call_gt = call_gt[:, include, :]
-            num_samples = int(np.sum(include))
+        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
+        if samples_selection is not None:
+            call_gt = call_gt[:, samples_selection, :]
+            num_samples = len(samples_selection)
 
         num_hap = num_samples * src_ploidy
 
+        # Load sample_time, then filter to selected samples
+        all_num_samples = store["call_genotype"].shape[1]
         sample_time_arr = vcz_mod.resolve_field(
-            store, source.sample_time, "sample_id", num_samples, fill_value=0
+            store, source.sample_time, "sample_id", all_num_samples, fill_value=0
         )
         if sample_time_arr is None:
             sample_time_arr = np.zeros(num_samples, dtype=np.float64)
-        sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
+        else:
+            sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
+            if samples_selection is not None:
+                sample_time_arr = sample_time_arr[samples_selection]
 
         raw_ids = store["sample_id"][:]
-        if sample_mask_arr is not None:
-            raw_ids = raw_ids[~np.asarray(sample_mask_arr, dtype=bool)]
+        if samples_selection is not None:
+            raw_ids = raw_ids[samples_selection]
         sample_ids = [str(x) for x in raw_ids.tolist()]
 
         src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)

@@ -122,12 +122,12 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, None, None)
+        result = compute_inference_sites(store, None)
         np.testing.assert_array_equal(result.positions, [10, 20, 30])
         np.testing.assert_array_equal(result.ancestral_allele_index, [0, 0, 0])
-        np.testing.assert_array_equal(result.site_mask, [0, 1, 2])
+        np.testing.assert_array_equal(result.global_indices, [0, 1, 2])
 
-    def test_site_mask_excludes(self):
+    def test_include_excludes_sites(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
         store = make_sample_vcz(
             gt,
@@ -135,10 +135,20 @@ class TestComputeInferenceSites:
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
-            site_mask=np.array([False, True, False]),
         )
-        mask = np.asarray(store["site_mask"][:])
-        result = compute_inference_sites(store, mask, None)
+        result = compute_inference_sites(store, None, include="POS >= 20")
+        np.testing.assert_array_equal(result.positions, [20, 30])
+
+    def test_exclude_excludes_sites(self):
+        gt = np.zeros((3, 2, 1), dtype=np.int8)
+        store = make_sample_vcz(
+            gt,
+            positions=[10, 20, 30],
+            alleles=[["A", "T"]] * 3,
+            ancestral_state=["A", "A", "A"],
+            sequence_length=100,
+        )
+        result = compute_inference_sites(store, None, exclude="POS == 20")
         np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_missing_ancestral_state_excludes(self):
@@ -151,7 +161,7 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "X", "A"],  # X not in alleles[1]
             sequence_length=100,
         )
-        result = compute_inference_sites(store, None, None)
+        result = compute_inference_sites(store, None)
         np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_ancestral_allele_index_not_always_zero(self):
@@ -164,7 +174,7 @@ class TestComputeInferenceSites:
             ancestral_state=["A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, None, None)
+        result = compute_inference_sites(store, None)
         assert result.ancestral_allele_index[0] == 1
 
     def test_external_ancestral_state(self):
@@ -187,7 +197,7 @@ class TestComputeInferenceSites:
             sequence_length=100,
         )
         anc_cfg = AncestralState(path=ann, field="variant_ancestral_allele")
-        result = compute_inference_sites(store, None, anc_cfg)
+        result = compute_inference_sites(store, anc_cfg)
         # Only positions 10 and 30 are annotated
         np.testing.assert_array_equal(result.positions, [10, 30])
 
@@ -599,7 +609,7 @@ class TestInferAncestorsScenarios:
         )
         assert anc["call_genotype"].shape[1] == 0
 
-    def test_site_mask_excludes_sites(self):
+    def test_include_excludes_sites(self):
         from tsinfer.config import Source
 
         gt = _haploid_store(
@@ -607,34 +617,31 @@ class TestInferAncestorsScenarios:
             positions=[100, 200, 300],
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
-            site_mask=np.array([False, True, False]),
         )
-        # site_mask must be specified via Source; raw zarr.Group ignores store fields
-        src = Source(path=gt, name="test", site_mask="site_mask")
+        src = Source(path=gt, name="test", exclude="POS == 200")
         anc = infer_ancestors(src, _cfg())
         positions = np.asarray(anc["variant_position"][:])
         assert 200 not in positions.tolist()
         np.testing.assert_array_equal(positions, [100, 300])
 
-    def test_sample_mask_excludes_samples(self):
+    def test_samples_excludes_samples(self):
         from tsinfer.config import Source
 
-        # 4 samples: mask out samples 2 and 3
-        # Without mask, site has derived_count=2 (samples 1,2)
-        # With mask on samples 2,3: site has derived_count=1 (sample 1 only)
+        # 4 samples: keep only samples 0 and 1
+        # Without filter, site has derived_count=2 (samples 1,2)
+        # With only samples 0,1: site has derived_count=1 (sample 1 only)
         gt = make_sample_vcz(
             np.array([[[0], [1], [1], [0]]], dtype=np.int8),
             positions=[100],
             alleles=[["A", "T"]],
             ancestral_state=["A"],
             sequence_length=1000,
-            sample_mask=np.array([False, False, True, True]),
         )
-        src = Source(path=gt, name="test", sample_mask="sample_mask")
-        anc_masked = infer_ancestors(src, _cfg())
+        src = Source(path=gt, name="test", samples="sample_0,sample_1")
+        anc = infer_ancestors(src, _cfg())
         # No virtual root; real ancestor at index 0 (time=0.5)
-        assert anc_masked["call_genotype"].shape[1] >= 1
-        np.testing.assert_almost_equal(float(anc_masked["sample_time"][0]), 0.5)
+        assert anc["call_genotype"].shape[1] >= 1
+        np.testing.assert_almost_equal(float(anc["sample_time"][0]), 0.5)
 
     def test_gap_splits_ancestor_span(self):
         # Two groups of sites separated by a large gap

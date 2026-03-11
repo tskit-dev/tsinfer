@@ -74,17 +74,21 @@ class Source:
     """
     A named, configured view over a VCZ store.
 
-    Metadata field specs (site_mask, sample_mask, sample_time) can be:
-      - str:        field name within the source store
-      - dict:       {"path": ..., "field": ...} from a separate VCZ
-      - int/float:  scalar constant applied to all sites or samples
-      - None:       not specified
+    Variant filtering uses bcftools-style expressions (delegated to vcztools):
+      include/exclude:  e.g. ``"QUAL > 30"``, ``"TYPE='snp'"``
+      samples:          e.g. ``"sample_0,sample_1"`` or ``"^sample_2"``
+      regions/targets:  e.g. ``"chr20:1000-50000"``
+
+    sample_time is metadata (not filtering) and uses a FieldSpec.
     """
 
     path: str | Path
     name: str = ""
-    site_mask: FieldSpec = None
-    sample_mask: FieldSpec = None
+    include: str | None = None
+    exclude: str | None = None
+    samples: str | None = None
+    regions: str | None = None
+    targets: str | None = None
     sample_time: FieldSpec = None
 
     def __post_init__(self):
@@ -173,10 +177,16 @@ class Config:
         for name, src in self.sources.items():
             lines.append(f"[source.{name}]")
             lines.append(f"  path = {src.path}")
-            if src.site_mask is not None:
-                lines.append(f"  site_mask = {src.site_mask}")
-            if src.sample_mask is not None:
-                lines.append(f"  sample_mask = {src.sample_mask}")
+            if src.include is not None:
+                lines.append(f"  include = {src.include}")
+            if src.exclude is not None:
+                lines.append(f"  exclude = {src.exclude}")
+            if src.samples is not None:
+                lines.append(f"  samples = {src.samples}")
+            if src.regions is not None:
+                lines.append(f"  regions = {src.regions}")
+            if src.targets is not None:
+                lines.append(f"  targets = {src.targets}")
             if src.sample_time is not None:
                 lines.append(f"  sample_time = {src.sample_time}")
             lines.append("")
@@ -231,14 +241,12 @@ class Config:
                 p = Path(str(src.path))
                 if not p.exists():
                     errors.append(f"Source '{name}' path does not exist: {src.path}")
-            for field_name in ("site_mask", "sample_mask", "sample_time"):
-                spec = getattr(src, field_name)
-                if isinstance(spec, dict) and "path" in spec:
-                    if not Path(str(spec["path"])).exists():
-                        errors.append(
-                            f"Source '{name}' {field_name} path does not "
-                            f"exist: {spec['path']}"
-                        )
+            if isinstance(src.sample_time, dict) and "path" in src.sample_time:
+                if not Path(str(src.sample_time["path"])).exists():
+                    errors.append(
+                        f"Source '{name}' sample_time path does not "
+                        f"exist: {src.sample_time['path']}"
+                    )
 
         # ancestors.path is an output — don't check for existence.
         # But check that ancestral state info is available.
@@ -311,8 +319,11 @@ def _parse_sources(raw: dict, base: Path) -> dict[str, Source]:
         src = Source(
             path=_resolve_path(raw_path, base),
             name=name,
-            site_mask=_resolve_field_spec(entry.get("site_mask"), base),
-            sample_mask=_resolve_field_spec(entry.get("sample_mask"), base),
+            include=entry.get("include"),
+            exclude=entry.get("exclude"),
+            samples=entry.get("samples"),
+            regions=entry.get("regions"),
+            targets=entry.get("targets"),
             sample_time=_resolve_field_spec(entry.get("sample_time"), base),
         )
         if name in sources:

@@ -126,8 +126,8 @@ def make_sample_vcz(
     sample_ids:
         String array of shape (num_samples,). Defaults to ``sample_0``, ``sample_1``, …
     **kwargs:
-        Additional arrays to store verbatim (e.g. ``site_mask=…``,
-        ``sample_time=…``). Each is written as a zarr array under its keyword name.
+        Additional arrays to store verbatim (e.g. ``sample_time=…``).
+        Each is written as a zarr array under its keyword name.
         Dimension names are inferred from shape: first axis matching num_sites gets
         ``"variants"``; first axis matching num_samples gets ``"samples"``.
     """
