@@ -125,7 +125,6 @@ class TestComputeInferenceSites:
         result = compute_inference_sites(store, None)
         np.testing.assert_array_equal(result.positions, [10, 20, 30])
         np.testing.assert_array_equal(result.ancestral_allele_index, [0, 0, 0])
-        np.testing.assert_array_equal(result.global_indices, [0, 1, 2])
 
     def test_include_excludes_sites(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
@@ -259,15 +258,14 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        site_indices = np.array([0, 2], dtype=np.int64)
-        rows = list(iter_genotypes(store, site_indices))
+        rows = list(iter_genotypes(store, np.array([100, 300], dtype=np.int32)))
         assert len(rows) == 2
         np.testing.assert_array_equal(rows[0], gt_matrix[0])
         np.testing.assert_array_equal(rows[1], gt_matrix[2])
 
-    def test_empty_site_indices(self):
+    def test_empty_positions(self):
         store = _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"])
-        rows = list(iter_genotypes(store, np.array([], dtype=np.int64)))
+        rows = list(iter_genotypes(store, np.array([], dtype=np.int32)))
         assert len(rows) == 0
 
     def test_sample_include_mask(self):
@@ -280,7 +278,9 @@ class TestIterGenotypes:
         )
         # Keep only samples 0 and 2
         sample_include = np.array([True, False, True, False])
-        rows = list(iter_genotypes(store, np.array([0], dtype=np.int64), sample_include))
+        rows = list(
+            iter_genotypes(store, np.array([100], dtype=np.int32), sample_include)
+        )
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 0])
 
@@ -297,7 +297,7 @@ class TestIterGenotypes:
             ancestral_state=["A"],
             sequence_length=1000,
         )
-        rows = list(iter_genotypes(store, np.array([0], dtype=np.int64)))
+        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32)))
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 1, 1, 0])
 
@@ -309,7 +309,7 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        rows = list(iter_genotypes(store, np.array([0, 1, 2], dtype=np.int64)))
+        rows = list(iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32)))
         result = np.stack(rows)
         np.testing.assert_array_equal(result, gt_matrix)
 
@@ -323,7 +323,7 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        rows = list(iter_genotypes(store, np.array([0, 1], dtype=np.int64)))
+        rows = list(iter_genotypes(store, np.array([100, 200], dtype=np.int32)))
         np.testing.assert_array_equal(rows[0], [0, 1])
         np.testing.assert_array_equal(rows[1], [1, 0])
 
