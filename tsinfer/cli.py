@@ -116,7 +116,7 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
     source_name = cfg.ancestors.sources[0]
     source = cfg.sources[source_name]
     logger.info("Inferring ancestors from source '%s'", source_name)
-    infer_ancestors(source, cfg.ancestors, cfg.ancestral_state)
+    infer_ancestors(source, cfg.ancestors, cfg.ancestral_state, progress=progress)
     logger.info("Ancestor inference complete")
 
 
@@ -175,7 +175,7 @@ def run_cmd(config, threads, force, progress, verbose):
     from .pipeline import run as pipeline_run
 
     logger.info("Running full pipeline")
-    ts = pipeline_run(cfg)
+    ts = pipeline_run(cfg, progress=progress)
     ts.dump(str(cfg.match.output))
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",

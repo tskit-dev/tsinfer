@@ -22,12 +22,15 @@ Matching engine: Matcher, grouping algorithm, and tree sequence extension.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
 import tskit
 
 import _tsinfer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

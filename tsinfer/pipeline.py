@@ -22,6 +22,7 @@ High-level pipeline: match, post_process, run.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,6 +36,8 @@ from .config import Config
 from .matching import (
     _ts_from_tsb,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -380,6 +383,7 @@ def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, pl
 def match(
     cfg: Config,
     reference_ts: tskit.TreeSequence | None = None,
+    progress: bool = False,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -392,6 +396,7 @@ def match(
     mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
+    logger.info("Collecting haplotypes")
     hap_data = _collect_haplotypes(cfg)
 
     positions = hap_data.positions
@@ -411,6 +416,13 @@ def match(
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
 
     metadata = {"sequence_intervals": seq_intervals.tolist()}
+
+    logger.info(
+        "Match: %d haplotypes, %d sites, seq_len=%.0f",
+        len(all_haplotypes),
+        num_sites,
+        seq_len,
+    )
 
     # Compute matching order
     order = _order_haplotypes(all_times, is_ancestor)
@@ -436,7 +448,15 @@ def match(
     ordered_node_metadata = []  # one per TSB node, in TSB insertion order
     individual_sample_indices = []  # haplotype indices for first node of each individual
 
-    for step, idx in enumerate(order):
+    match_iter = enumerate(order)
+    if progress:
+        import tqdm
+
+        match_iter = tqdm.tqdm(
+            match_iter, total=len(order), desc="Matching", unit="haplotypes"
+        )
+
+    for step, idx in match_iter:
         hap = all_haplotypes[idx]
         time = float(match_times[idx])
 
@@ -510,6 +530,12 @@ def match(
     # Build individual metadata and populations
     ind_result = _build_individual_metadata(
         cfg, node_metadata, individual_sample_indices, ploidy
+    )
+
+    logger.info(
+        "Match complete: %d nodes, %d individuals",
+        tsb.num_nodes,
+        len(individual_groups),
     )
 
     # Convert TSB to tree sequence
@@ -596,21 +622,30 @@ def _split_ultimate(ts: tskit.TreeSequence) -> tskit.TreeSequence:
     return ts
 
 
-def run(cfg: Config, **kwargs) -> tskit.TreeSequence:
+def run(cfg: Config, progress: bool = False, **kwargs) -> tskit.TreeSequence:
     """
     Run the full pipeline: infer_ancestors, match, post_process.
     """
+    logger.info("Starting full pipeline")
     source_name = cfg.ancestors.sources[0]
     source = cfg.sources[source_name]
-    ancestor_store = infer_ancestors(source, cfg.ancestors, cfg.ancestral_state)
+    ancestor_store = infer_ancestors(
+        source, cfg.ancestors, cfg.ancestral_state, progress=progress
+    )
 
     original_path = cfg.ancestors.path
     cfg.ancestors.path = ancestor_store
 
     try:
-        ts = match(cfg, **kwargs)
+        ts = match(cfg, progress=progress, **kwargs)
         ts = post_process(ts, cfg, **kwargs)
     finally:
         cfg.ancestors.path = original_path
 
+    logger.info(
+        "Pipeline complete: %d nodes, %d edges, %d sites",
+        ts.num_nodes,
+        ts.num_edges,
+        ts.num_sites,
+    )
     return ts

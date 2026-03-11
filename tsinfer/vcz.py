@@ -42,12 +42,15 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
+
+logger = logging.getLogger(__name__)
 
 _VLEN_STR = VariableLengthUTF8()
 _ZARR_FORMAT = 2
