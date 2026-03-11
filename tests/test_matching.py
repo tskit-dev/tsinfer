@@ -22,10 +22,11 @@ Tests for tsinfer.matching: make_root_ts, compute_groups, Matcher, extend_ts.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import tskit
 
-import _tsinfer
 from tsinfer.matching import (
     Matcher,
     MatchResult,
@@ -45,71 +46,36 @@ def _make_simple_ts(positions, sequence_length, node_times, haplotypes):
     virtual root (node 0, time=1.0) via edges spanning all sites, with
     mutations where the haplotype has value 1.
 
-    positions: (n_sites,) int array
+    positions: (num_sites,) int array
     node_times: (n_nodes,) float array (excluding root)
-    haplotypes: (n_nodes, n_sites) int8 array
+    haplotypes: (n_nodes, num_sites) int8 array
     """
-    n_sites = len(positions)
-    num_alleles = [2] * n_sites
-
-    tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
-
-    # Add root node (time=1.0)
-    root_id = tsb.add_node(1.0)
-    assert root_id == 0
-
-    # Add haplotype nodes and edges from root
-    node_ids = []
-    for time, hap in zip(node_times, haplotypes):
-        node_id = tsb.add_node(float(time))
-        node_ids.append(node_id)
-        # Edge spanning all sites
-        tsb.add_path(
-            child=node_id,
-            left=[0],
-            right=[n_sites],
-            parent=[root_id],
-            compress=False,
-        )
-        # Mutations where hap == 1
-        mut_sites = np.where(np.asarray(hap) == 1)[0].tolist()
-        if mut_sites:
-            tsb.add_mutations(
-                node=node_id,
-                site=mut_sites,
-                derived_state=[1] * len(mut_sites),
-            )
-
     tables = tskit.TableCollection(sequence_length=float(sequence_length))
     tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.metadata = {}
-
     for pos in positions:
         tables.sites.add_row(position=float(pos), ancestral_state="0")
-
-    flags_arr, times_arr = tsb.dump_nodes()
-    for t, fl in zip(times_arr, flags_arr):
-        tables.nodes.add_row(time=float(t), flags=int(fl))
-
-    el, er, ep, ec = tsb.dump_edges()
-    pos_arr = np.asarray(positions, dtype=np.float64)
-    for le, re, pe, ce in zip(el, er, ep, ec):
-        lc = float(pos_arr[le])
-        rc = float(pos_arr[re]) if re < n_sites else float(sequence_length)
-        tables.edges.add_row(left=lc, right=rc, parent=int(pe), child=int(ce))
-
-    alleles = ["0", "1"]
-    ms, mn, md, mp = tsb.dump_mutations()
-    for s, n, d, par in zip(ms, mn, md, mp):
-        tables.mutations.add_row(
-            site=int(s), node=int(n), derived_state=alleles[int(d)], parent=int(par)
+    # node 0 = virtual root
+    tables.nodes.add_row(time=1.0, flags=0)
+    for time, hap in zip(node_times, haplotypes):
+        node_id = tables.nodes.add_row(time=float(time), flags=0)
+        # single edge spanning full sequence
+        tables.edges.add_row(
+            left=float(positions[0]),
+            right=float(sequence_length),
+            parent=0,
+            child=node_id,
         )
-
+        # mutations where hap == 1
+        for site_idx in np.where(np.asarray(hap) == 1)[0]:
+            tables.mutations.add_row(site=int(site_idx), node=node_id, derived_state="1")
     tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
     return tables.tree_sequence()
 
 
-def _dummy_result(n_sites):
+def _dummy_result(num_sites):
     """A MatchResult with no edges or mutations."""
     return MatchResult(
         path_left=np.array([], dtype=np.int32),
@@ -143,8 +109,7 @@ class TestMakeRootTs:
         intervals = np.array([[5, 101]], dtype=np.int32)
         ts = make_root_ts(200.0, positions, intervals)
         assert ts.num_sites == 4
-        site_positions = [int(s.position) for s in ts.sites()]
-        assert site_positions == [5, 15, 25, 100]
+        np.testing.assert_array_equal(ts.tables.sites.position, [5, 15, 25, 100])
 
     def test_sequence_intervals_in_metadata(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
@@ -159,7 +124,7 @@ class TestMakeRootTs:
         intervals = np.array([[42, 43]], dtype=np.int32)
         ts = make_root_ts(100.0, positions, intervals)
         assert ts.num_sites == 1
-        assert int(list(ts.sites())[0].position) == 42
+        np.testing.assert_array_equal(ts.tables.sites.position, [42])
 
     def test_no_edges(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
@@ -183,6 +148,14 @@ class TestMakeRootTs:
 # ---------------------------------------------------------------------------
 # TestComputeGroups
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _GroupInputs:
+    times: np.ndarray
+    is_ancestor: np.ndarray
+    start_positions: np.ndarray
+    end_positions: np.ndarray
 
 
 class TestComputeGroups:
@@ -211,7 +184,12 @@ class TestComputeGroups:
             ends = np.ones(n, dtype=np.int32) * 100
         else:
             ends = np.asarray(ends, dtype=np.int32)
-        return times, is_ancestor, starts, ends
+        return _GroupInputs(
+            times=times,
+            is_ancestor=is_ancestor,
+            start_positions=starts,
+            end_positions=ends,
+        )
 
     # -------------------------------------------------------------------
     # Basic ordering (no interval effects)
@@ -219,23 +197,27 @@ class TestComputeGroups:
 
     def test_virtual_root_alone(self):
         # Only virtual root
-        times, is_anc, sp, ep = self._make_inputs([1.0], [True])
-        groups = compute_groups(times, is_anc, sp, ep)
+        gi = self._make_inputs([1.0], [True])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert len(groups) == 1
         assert list(groups[0]) == [0]
 
     def test_virtual_root_is_group_zero(self):
         # Virtual root always first
-        times, is_anc, sp, ep = self._make_inputs([1.0, 0.5, 0.3], [True, True, True])
-        groups = compute_groups(times, is_anc, sp, ep)
+        gi = self._make_inputs([1.0, 0.5, 0.3], [True, True, True])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
 
     def test_multiple_ancestor_time_levels_ordering(self):
         # Root + ancestors at 0.8, 0.5, 0.3 — should be in descending order
-        times, is_anc, sp, ep = self._make_inputs(
-            [1.0, 0.8, 0.5, 0.3], [True, True, True, True]
+        gi = self._make_inputs([1.0, 0.8, 0.5, 0.3], [True, True, True, True])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
         )
-        groups = compute_groups(times, is_anc, sp, ep)
         assert len(groups) == 4
         assert list(groups[0]) == [0]
         assert list(groups[1]) == [1]  # time 0.8
@@ -244,18 +226,20 @@ class TestComputeGroups:
 
     def test_samples_only_modern(self):
         # Root + 3 modern samples (time=0)
-        times, is_anc, sp, ep = self._make_inputs(
-            [1.0, 0.0, 0.0, 0.0], [True, False, False, False]
+        gi = self._make_inputs([1.0, 0.0, 0.0, 0.0], [True, False, False, False])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
         )
-        groups = compute_groups(times, is_anc, sp, ep)
         assert len(groups) == 2
         assert list(groups[0]) == [0]
         assert set(groups[1]) == {1, 2, 3}
 
     def test_ancient_samples_before_modern(self):
         # Root + ancient sample (time=0.5) + modern sample (time=0)
-        times, is_anc, sp, ep = self._make_inputs([1.0, 0.5, 0.0], [True, False, False])
-        groups = compute_groups(times, is_anc, sp, ep)
+        gi = self._make_inputs([1.0, 0.5, 0.0], [True, False, False])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert len(groups) == 3
         assert list(groups[0]) == [0]
         assert list(groups[1]) == [1]  # ancient sample first
@@ -263,8 +247,10 @@ class TestComputeGroups:
 
     def test_ancestors_before_samples_at_same_time(self):
         # Root + ancestor at t=0.5 + sample at t=0.5
-        times, is_anc, sp, ep = self._make_inputs([1.0, 0.5, 0.5], [True, True, False])
-        groups = compute_groups(times, is_anc, sp, ep)
+        gi = self._make_inputs([1.0, 0.5, 0.5], [True, True, False])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         # Should have: root, then ancestor, then sample (even at same time)
         assert len(groups) == 3
         assert list(groups[0]) == [0]
@@ -273,10 +259,12 @@ class TestComputeGroups:
 
     def test_mixed_ordering(self):
         # Root, ancestors at 0.9 and 0.4, samples at 0.4 and 0.0
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.9, 0.4, 0.4, 0.0], [True, True, True, False, False]
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         # All ancestors have default intervals [0, 100] → overlapping → separate groups
         # group 0: root
         # group 1: ancestor at t=0.9
@@ -291,8 +279,10 @@ class TestComputeGroups:
         assert list(groups[4]) == [4]
 
     def test_returns_int32_arrays(self):
-        times, is_anc, sp, ep = self._make_inputs([1.0, 0.5], [True, True])
-        groups = compute_groups(times, is_anc, sp, ep)
+        gi = self._make_inputs([1.0, 0.5], [True, True])
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         for g in groups:
             assert g.dtype == np.int32
 
@@ -310,13 +300,15 @@ class TestComputeGroups:
         idx 2 (t=0.5): |================================|
                         0                              100
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 0],
             ends=[100, 100, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         # Root alone, then two separate ancestor groups
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
@@ -335,13 +327,15 @@ class TestComputeGroups:
         idx 2 (t=0.5):                    |=============|
                         0        30      60           100
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 60],
             ends=[100, 30, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         # Both ancestors should be in the same group
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
@@ -361,13 +355,15 @@ class TestComputeGroups:
         (the interval is [start, end), so 50 is not in the first interval).
         → can share ONE group.
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 50],
             ends=[100, 50, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
         assert len(t05_groups) == 1
@@ -385,13 +381,15 @@ class TestComputeGroups:
         start=0,end=50 and start=49,end=100: overlap at position 49.
         → SEPARATE groups.
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 49],
             ends=[100, 50, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
         assert len(t05_groups) == 2
@@ -406,13 +404,15 @@ class TestComputeGroups:
         idx 3 (t=0.5):                       |==========|
                         0      20 30      50 60       100
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5, 0.5],
             [True, True, True, True],
             starts=[0, 0, 30, 60],
             ends=[100, 20, 50, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
         assert len(t05_groups) == 1
@@ -433,13 +433,15 @@ class TestComputeGroups:
         → 1 and 3 can share a group; 2 must be separate.
         → Two groups: {1, 3} and {2}.
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5, 0.5],
             [True, True, True, True],
             starts=[0, 0, 25, 50],
             ends=[100, 35, 55, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
         # Should be exactly 2 groups
@@ -462,13 +464,15 @@ class TestComputeGroups:
 
         All three overlap each other → each needs its own group.
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5, 0.5],
             [True, True, True, True],
             starts=[0, 0, 10, 20],
             ends=[100, 80, 90, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
         assert len(t05_groups) == 3
@@ -489,13 +493,15 @@ class TestComputeGroups:
         At t=0.8: {1,2} are disjoint → one group.
         At t=0.5: {3,4} are disjoint → one group.
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.8, 0.8, 0.5, 0.5],
             [True, True, True, True, True],
             starts=[0, 0, 60, 0, 60],
             ends=[100, 30, 100, 30, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         assert len(groups) == 3  # root + t=0.8 group + t=0.5 group
         assert set(groups[1]) == {1, 2}  # t=0.8 disjoint
@@ -511,13 +517,15 @@ class TestComputeGroups:
         idx 2 (sample t=0): |================================|
                              0                              100
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.0, 0.0],
             [True, False, False],
             starts=[0, 0, 0],
             ends=[100, 100, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         # Samples always in one group, even with overlapping intervals
         sample_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
@@ -532,13 +540,15 @@ class TestComputeGroups:
         idx 1 (t=0.5): |================================|
                         0                              100
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5],
             [True, True],
             starts=[0, 0],
             ends=[100, 100],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert len(groups) == 2
         assert list(groups[0]) == [0]
         assert list(groups[1]) == [1]
@@ -554,13 +564,15 @@ class TestComputeGroups:
 
         → SEPARATE groups (2 is inside 1).
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 20],
             ends=[100, 100, 60],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
         assert len(t05_groups) == 2
@@ -577,13 +589,15 @@ class TestComputeGroups:
 
         → can share a group (zero-length interval can't overlap).
         """
-        times, is_anc, sp, ep = self._make_inputs(
+        gi = self._make_inputs(
             [1.0, 0.5, 0.5],
             [True, True, True],
             starts=[0, 0, 50],
             ends=[100, 100, 50],
         )
-        groups = compute_groups(times, is_anc, sp, ep)
+        groups = compute_groups(
+            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
+        )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
         assert len(t05_groups) == 1
@@ -601,7 +615,7 @@ class TestMatcher:
     def setup_method(self):
         self.positions = np.array([10, 20, 30], dtype=np.int32)
         self.seq_len = 100.0
-        self.n_sites = 3
+        self.num_sites = 3
 
     def _make_ts_with_root_only(self):
         """Empty tree sequence (just sites, no nodes)."""
@@ -724,11 +738,11 @@ class TestExtendTs:
     def _root_ts(self):
         return make_root_ts(self.seq_len, self.positions, self.intervals)
 
-    def _simple_match_result(self, parent_id, n_sites):
+    def _simple_match_result(self, parent_id, num_sites):
         """A MatchResult that copies from parent_id across all sites."""
         return MatchResult(
             path_left=np.array([0], dtype=np.int32),
-            path_right=np.array([n_sites], dtype=np.int32),
+            path_right=np.array([num_sites], dtype=np.int32),
             path_parent=np.array([parent_id], dtype=np.int32),
             mutation_sites=np.array([], dtype=np.int32),
             mutation_state=np.array([], dtype=np.int8),
@@ -885,8 +899,7 @@ class TestExtendTs:
             create_individuals=np.array([False]),
         )
         assert ts2.num_sites == len(self.positions)
-        site_positions = [int(s.position) for s in ts2.sites()]
-        assert site_positions == self.positions.tolist()
+        np.testing.assert_array_equal(ts2.tables.sites.position, self.positions)
 
     def test_multiple_individuals_ploidy2(self):
         ts = self._root_ts()
@@ -923,7 +936,7 @@ class TestMatcherExtendCycle:
         self.positions = np.array([10, 20, 30, 40, 50], dtype=np.int32)
         self.seq_len = 100.0
         self.intervals = np.array([[10, 51]], dtype=np.int32)
-        self.n_sites = 5
+        self.num_sites = 5
 
     def _build_root_ts_with_virtual_root(self):
         """Create a root TS and add the virtual root node (time=1.0)."""

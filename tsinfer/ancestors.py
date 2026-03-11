@@ -22,6 +22,8 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
@@ -33,6 +35,14 @@ from .config import AncestorsConfig, AncestralState, Source
 
 _VLEN_STR = VariableLengthUTF8()
 _ZARR_FORMAT = 2
+
+
+@dataclass
+class InferenceSites:
+    positions: np.ndarray
+    alleles: np.ndarray
+    ancestral_allele_index: np.ndarray
+    site_mask: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -85,17 +95,12 @@ def compute_inference_sites(
     ancestral_state: AncestralState | None,
 ):
     """
-    Return (positions, alleles, anc_indices, site_indices) for sites that pass
-    the mask and have a valid ancestral allele.
-
-    positions:    (n_inf,) int32  — genomic position of each inference site
-    alleles:      (n_inf, n_alleles) str — allele strings at each inference site
-    anc_indices:  (n_inf,) int8  — index of ancestral allele in alleles
-    site_indices: (n_inf,) int32 — index into the original store arrays
+    Return an InferenceSites dataclass for sites that pass the mask and have
+    a valid ancestral allele.
     """
     positions = np.asarray(store["variant_position"][:], dtype=np.int32)
     alleles = np.asarray(store["variant_allele"][:])
-    n_sites = len(positions)
+    num_sites = len(positions)
 
     if ancestral_state is not None:
         ann_store = vcz_mod.open_store(ancestral_state.path)
@@ -111,25 +116,25 @@ def compute_inference_sites(
         anc_str = np.asarray(store["variant_ancestral_allele"][:])
 
     # Find ancestral allele index at each site (-1 if not found)
-    anc_index = np.full(n_sites, -1, dtype=np.int8)
-    for i in range(n_sites):
+    anc_index = np.full(num_sites, -1, dtype=np.int8)
+    for i in range(num_sites):
         for j, a in enumerate(alleles[i].tolist()):
             if a and a == str(anc_str[i]):
                 anc_index[i] = j
                 break
 
     # Build inclusion mask
-    include = np.ones(n_sites, dtype=bool)
+    include = np.ones(num_sites, dtype=bool)
     if site_mask_arr is not None:
         include &= ~np.asarray(site_mask_arr, dtype=bool)
     include &= anc_index >= 0
 
     sel = np.where(include)[0]
-    return (
-        positions[sel],
-        alleles[sel],
-        anc_index[sel],
-        sel.astype(np.int32),
+    return InferenceSites(
+        positions=positions[sel],
+        alleles=alleles[sel],
+        ancestral_allele_index=anc_index[sel],
+        site_mask=sel.astype(np.int32),
     )
 
 
@@ -194,32 +199,34 @@ def infer_ancestors(
         sample_mask_spec = source.sample_mask
 
     call_gt = np.asarray(store["call_genotype"][:], dtype=np.int8)
-    n_total_sites, n_samples, ploidy = call_gt.shape
+    num_total_sites, num_samples, ploidy = call_gt.shape
 
     # Resolve sample_mask
     sample_mask_arr = vcz_mod.resolve_field(
-        store, sample_mask_spec, "sample_id", n_samples
+        store, sample_mask_spec, "sample_id", num_samples
     )
     if sample_mask_arr is not None:
         include_samples = ~np.asarray(sample_mask_arr, dtype=bool)
         call_gt = call_gt[:, include_samples, :]
-        n_samples_used = int(np.sum(include_samples))
+        num_samples_used = int(np.sum(include_samples))
     else:
-        n_samples_used = n_samples
-    n_haplotypes = n_samples_used * ploidy
+        num_samples_used = num_samples
+    num_haplotypes = num_samples_used * ploidy
 
-    # Flatten ploidy axis: (n_sites, n_haplotypes)
-    call_gt_flat = call_gt.reshape(n_total_sites, n_haplotypes)
+    # Flatten ploidy axis: (num_sites, num_haplotypes)
+    call_gt_flat = call_gt.reshape(num_total_sites, num_haplotypes)
 
     # Resolve site_mask
     site_mask_arr = vcz_mod.resolve_field(
-        store, site_mask_spec, "variant_position", n_total_sites
+        store, site_mask_spec, "variant_position", num_total_sites
     )
 
     # --- 2. Compute inference sites ---
-    inf_positions, inf_alleles, anc_indices, orig_site_indices = compute_inference_sites(
-        store, site_mask_arr, ancestral_state
-    )
+    inf_sites = compute_inference_sites(store, site_mask_arr, ancestral_state)
+    inf_positions = inf_sites.positions
+    inf_alleles = inf_sites.alleles
+    anc_indices = inf_sites.ancestral_allele_index
+    orig_site_indices = inf_sites.site_mask
 
     # --- 3. Compute sequence intervals ---
     seq_len = vcz_mod.sequence_length(store)
@@ -229,9 +236,9 @@ def infer_ancestors(
 
     # --- 4. Build derived genotypes and feed to AncestorBuilder ---
     # We first compute derived genotypes for all candidate inference sites,
-    # then skip any that turn out to be fixed (derived_count == 0 or == n_haplotypes).
+    # then skip any that turn out to be fixed (derived_count == 0 or == num_haplotypes).
 
-    inf_derived_gts = []  # list of (n_haplotypes,) int8 arrays
+    inf_derived_gts = []  # list of (num_haplotypes,) int8 arrays
     inf_times = []
     final_positions = []
     final_alleles_list = []
@@ -242,7 +249,7 @@ def infer_ancestors(
         zip(inf_positions.tolist(), anc_indices.tolist())
     ):
         orig_idx = int(orig_site_indices[i])
-        gt_row = call_gt_flat[orig_idx]  # (n_haplotypes,)
+        gt_row = call_gt_flat[orig_idx]  # (num_haplotypes,)
         # 0 = ancestral, 1 = derived, -1 = missing
         derived_gt = np.where(
             gt_row < 0, np.int8(-1), np.where(gt_row == anc_idx, np.int8(0), np.int8(1))
@@ -254,7 +261,7 @@ def infer_ancestors(
             # Fixed or all-missing: not an inference site
             continue
 
-        time = derived_count / n_haplotypes
+        time = derived_count / num_haplotypes
         inf_derived_gts.append(derived_gt)
         inf_times.append(time)
         final_positions.append(pos)
@@ -262,9 +269,9 @@ def infer_ancestors(
         final_anc_indices.append(int(anc_idx))
         final_orig_indices.append(orig_idx)
 
-    n_inf = len(final_positions)
+    num_inf = len(final_positions)
 
-    if n_inf == 0:
+    if num_inf == 0:
         # No inference sites — return an empty ancestor store
         return _write_ancestor_vcz(
             genotypes=np.zeros((0, 0, 1), dtype=np.int8),
@@ -284,9 +291,9 @@ def infer_ancestors(
         inf_positions_arr, seq_len, cfg.max_gap_length
     )
 
-    # Build AncestorBuilder (n_inf + 1 for the terminal sentinel site)
-    n_ab_sites = n_inf + 1  # includes terminal
-    ab = _tsinfer.AncestorBuilder(num_samples=n_haplotypes, max_sites=n_ab_sites)
+    # Build AncestorBuilder (num_inf + 1 for the terminal sentinel site)
+    n_ab_sites = num_inf + 1  # includes terminal
+    ab = _tsinfer.AncestorBuilder(num_samples=num_haplotypes, max_sites=n_ab_sites)
     for time, derived_gt in zip(inf_times, inf_derived_gts):
         ab.add_site(time=time, genotypes=derived_gt)
     ab.add_terminal_site()
@@ -308,8 +315,8 @@ def infer_ancestors(
             # AncestorBuilder requires a buffer of length ab.num_sites
             a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
             ab.make_ancestor(sub_focal.tolist(), a)
-            # Trim the terminal sentinel slot; keep only the n_inf inference sites
-            a = a[:n_inf]
+            # Trim the terminal sentinel slot; keep only the num_inf inference sites
+            a = a[:num_inf]
 
             # Clip: zero out sites outside the focal interval
             i_start, i_end = int(seq_intervals[i_idx, 0]), int(seq_intervals[i_idx, 1])
@@ -338,7 +345,7 @@ def infer_ancestors(
     ancestors.sort(key=lambda x: -x["time"])
 
     # Prepend the virtual root (time=1.0, all-ancestral haplotype)
-    virtual_hap = np.zeros(n_inf, dtype=np.int8)
+    virtual_hap = np.zeros(num_inf, dtype=np.int8)
     ancestors.insert(
         0,
         {
@@ -350,10 +357,10 @@ def infer_ancestors(
         },
     )
 
-    n_anc = len(ancestors)
+    num_anc = len(ancestors)
 
     # --- 6. Assemble output arrays ---
-    genotypes = np.full((n_inf, n_anc, 1), np.int8(-1), dtype=np.int8)
+    genotypes = np.full((num_inf, num_anc, 1), np.int8(-1), dtype=np.int8)
     for j, anc in enumerate(ancestors):
         genotypes[:, j, 0] = anc["haplotype"]
 
@@ -363,15 +370,15 @@ def infer_ancestors(
 
     max_focal = max(len(a["focal_positions"]) for a in ancestors) if ancestors else 1
     max_focal = max(max_focal, 1)  # at least 1 column (padded with -2)
-    focal_positions = np.full((n_anc, max_focal), -2, dtype=np.int32)
+    focal_positions = np.full((num_anc, max_focal), -2, dtype=np.int32)
     for j, anc in enumerate(ancestors):
         fp = anc["focal_positions"]
         focal_positions[j, : len(fp)] = fp
 
     # Build output alleles: [ancestral, primary_derived] per site
-    out_alleles = np.empty((n_inf, 2), dtype=object)
+    out_alleles = np.empty((num_inf, 2), dtype=object)
     out_alleles[:] = ""
-    for i in range(n_inf):
+    for i in range(num_inf):
         site_alleles = final_alleles_list[i].tolist()
         anc_idx = final_anc_indices[i]
         out_alleles[i, 0] = str(site_alleles[anc_idx])
@@ -404,17 +411,19 @@ def _write_ancestor_vcz(
     seq_intervals,
 ):
     """Write ancestor data to an in-memory zarr Group and return it."""
-    n_sites = len(positions)
-    n_anc = genotypes.shape[1] if n_sites > 0 else 0
+    num_sites = len(positions)
+    num_anc = genotypes.shape[1] if num_sites > 0 else 0
 
-    sample_ids = np.array([f"ancestor_{i}" for i in range(n_anc)])
+    sample_ids = np.array([f"ancestor_{i}" for i in range(num_anc)])
 
     root = _open_memory_group()
 
-    if n_sites > 0 and n_anc > 0:
+    if num_sites > 0 and num_anc > 0:
         _arr(root, "call_genotype", genotypes, ["variants", "samples", "ploidy"])
     else:
-        g = root.create_array("call_genotype", shape=(n_sites, n_anc, 1), dtype=np.int8)
+        g = root.create_array(
+            "call_genotype", shape=(num_sites, num_anc, 1), dtype=np.int8
+        )
         g.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
 
     _arr(root, "variant_position", positions, ["variants"])

@@ -31,14 +31,14 @@ Sample VCZ format
 -----------------
 Follows the bio2zarr VCF Zarr convention:
 
-  call_genotype            (n_sites, n_samples, ploidy)  int8; -1 = missing
-  variant_position         (n_sites,)                    int32
-  variant_allele           (n_sites, n_alleles)           str
-  variant_contig           (n_sites,)                    int8  -- index into contig_id
-  variant_ancestral_allele (n_sites,)                    str
+  call_genotype            (num_sites, num_samples, ploidy)  int8; -1 = missing
+  variant_position         (num_sites,)                    int32
+  variant_allele           (num_sites, n_alleles)           str
+  variant_contig           (num_sites,)                    int8  -- index into contig_id
+  variant_ancestral_allele (num_sites,)                    str
   contig_id                (n_contigs,)                  str
   contig_length            (n_contigs,)                  int64
-  sample_id                (n_samples,)                  str
+  sample_id                (num_samples,)                  str
 
 Any extra kwargs are stored as additional arrays under their keyword name.
 Missing genotypes are encoded as -1 in call_genotype; call_genotype_mask is
@@ -48,14 +48,14 @@ Ancestor VCZ format
 -------------------
 Follows the format defined in design.md:
 
-  call_genotype          (n_sites, n_ancestors, 1)            int8
-  variant_position       (n_sites,)                           int32
-  variant_allele         (n_sites, n_alleles)                 str
-  sample_id              (n_ancestors,)                       str
-  sample_time            (n_ancestors,)                       float64
-  sample_start_position  (n_ancestors,)                       int32
-  sample_end_position    (n_ancestors,)                       int32
-  sample_focal_positions (n_ancestors, max_focal_positions)   int32
+  call_genotype          (num_sites, num_ancestors, 1)            int8
+  variant_position       (num_sites,)                           int32
+  variant_allele         (num_sites, n_alleles)                 str
+  sample_id              (num_ancestors,)                       str
+  sample_time            (num_ancestors,)                       float64
+  sample_start_position  (num_ancestors,)                       int32
+  sample_end_position    (num_ancestors,)                       int32
+  sample_focal_positions (num_ancestors, max_focal_positions)   int32
   sequence_intervals     (n_intervals, 2)                     int32
 """
 
@@ -110,42 +110,42 @@ def make_sample_vcz(
     Parameters
     ----------
     genotypes:
-        Integer array of shape (n_sites, n_samples, ploidy). Use -1 for missing.
+        Integer array of shape (num_sites, num_samples, ploidy). Use -1 for missing.
     positions:
-        Integer array of shape (n_sites,) giving genomic positions.
+        Integer array of shape (num_sites,) giving genomic positions.
     alleles:
-        String array of shape (n_sites, n_alleles). Allele 0 should be the
+        String array of shape (num_sites, n_alleles). Allele 0 should be the
         reference allele; ancestral allele is specified separately.
     ancestral_state:
-        String array of shape (n_sites,). The ancestral allele at each site.
+        String array of shape (num_sites,). The ancestral allele at each site.
         Stored as ``variant_ancestral_allele``.
     sequence_length:
         Length of the contig in base pairs.
     contig_id:
         Name of the single contig (default ``"1"``).
     sample_ids:
-        String array of shape (n_samples,). Defaults to ``sample_0``, ``sample_1``, …
+        String array of shape (num_samples,). Defaults to ``sample_0``, ``sample_1``, …
     **kwargs:
         Additional arrays to store verbatim (e.g. ``site_mask=…``,
         ``sample_time=…``). Each is written as a zarr array under its keyword name.
-        Dimension names are inferred from shape: first axis matching n_sites gets
-        ``"variants"``; first axis matching n_samples gets ``"samples"``.
+        Dimension names are inferred from shape: first axis matching num_sites gets
+        ``"variants"``; first axis matching num_samples gets ``"samples"``.
     """
     genotypes = np.asarray(genotypes, dtype=np.int8)
     positions = np.asarray(positions, dtype=np.int32)
     alleles = np.asarray(alleles)
     ancestral_state = np.asarray(ancestral_state)
 
-    n_sites, n_samples, ploidy = genotypes.shape
+    num_sites, num_samples, ploidy = genotypes.shape
 
     if sample_ids is None:
-        sample_ids = np.array([f"sample_{i}" for i in range(n_samples)])
+        sample_ids = np.array([f"sample_{i}" for i in range(num_samples)])
 
     root = _open_memory_group()
 
     _arr(root, "call_genotype", genotypes, ["variants", "samples", "ploidy"])
     _arr(root, "variant_position", positions, ["variants"])
-    _arr(root, "variant_contig", np.zeros(n_sites, dtype=np.int8), ["variants"])
+    _arr(root, "variant_contig", np.zeros(num_sites, dtype=np.int8), ["variants"])
     _str_array(root, "variant_allele", alleles, ["variants", "alleles"])
     _str_array(root, "variant_ancestral_allele", ancestral_state, ["variants"])
     _str_array(root, "contig_id", np.array([contig_id]), ["contigs"])
@@ -160,9 +160,9 @@ def make_sample_vcz(
     for name, value in kwargs.items():
         arr = np.asarray(value)
         # Infer leading dimension name from shape
-        if arr.shape and arr.shape[0] == n_sites:
+        if arr.shape and arr.shape[0] == num_sites:
             leading = ["variants"]
-        elif arr.shape and arr.shape[0] == n_samples:
+        elif arr.shape and arr.shape[0] == num_samples:
             leading = ["samples"]
         else:
             leading = ["unknown"]
@@ -190,23 +190,23 @@ def make_ancestor_vcz(
     Parameters
     ----------
     genotypes:
-        Integer array of shape (n_sites, n_ancestors, 1). Use -1 for missing
+        Integer array of shape (num_sites, num_ancestors, 1). Use -1 for missing
         flanks; 0 for ancestral, 1 for derived within the ancestor's span.
     positions:
-        Integer array of shape (n_sites,) — inference site positions.
+        Integer array of shape (num_sites,) — inference site positions.
     alleles:
-        String array of shape (n_sites, n_alleles). Allele 0 is ancestral,
+        String array of shape (num_sites, n_alleles). Allele 0 is ancestral,
         allele 1 is derived.
     times:
-        Float array of shape (n_ancestors,). Drives epoch ordering (older = larger).
+        Float array of shape (num_ancestors,). Drives epoch ordering (older = larger).
     focal_positions:
-        Integer array of shape (n_ancestors, max_focal_positions). Genomic
+        Integer array of shape (num_ancestors, max_focal_positions). Genomic
         positions of focal sites. Unused slots padded with -2.
     sequence_intervals:
         Integer array of shape (n_intervals, 2) giving [start, end) coordinate
         pairs for regions containing inference sites.
     sample_ids:
-        String array of shape (n_ancestors,). Defaults to
+        String array of shape (num_ancestors,). Defaults to
         ``ancestor_0``, ``ancestor_1``, …
     """
     genotypes = np.asarray(genotypes, dtype=np.int8)
@@ -216,16 +216,16 @@ def make_ancestor_vcz(
     focal_positions = np.asarray(focal_positions, dtype=np.int32)
     sequence_intervals = np.asarray(sequence_intervals, dtype=np.int32)
 
-    n_sites, n_ancestors, _ = genotypes.shape
+    num_sites, num_ancestors, _ = genotypes.shape
 
     if sample_ids is None:
-        sample_ids = np.array([f"ancestor_{i}" for i in range(n_ancestors)])
+        sample_ids = np.array([f"ancestor_{i}" for i in range(num_ancestors)])
 
     # Derive start/end positions from missing data pattern in genotypes.
     # Within an ancestor's span, values are 0 or 1; flanks are -1.
-    start_positions = np.empty(n_ancestors, dtype=np.int32)
-    end_positions = np.empty(n_ancestors, dtype=np.int32)
-    for i in range(n_ancestors):
+    start_positions = np.empty(num_ancestors, dtype=np.int32)
+    end_positions = np.empty(num_ancestors, dtype=np.int32)
+    for i in range(num_ancestors):
         hap = genotypes[:, i, 0]
         non_missing = np.where(hap != -1)[0]
         if len(non_missing) == 0:
@@ -320,29 +320,29 @@ def ts_to_sample_vcz(
     # Determine ploidy and sample layout
     if ts.num_individuals > 0:
         ploidy = len(list(ts.individuals())[0].nodes)
-        n_samples = ts.num_individuals
+        num_samples = ts.num_individuals
         sample_nodes = np.array(
             [node for ind in ts.individuals() for node in ind.nodes], dtype=np.int32
         )
         sample_ids = np.array(
-            [f"tsk_{i}" for i in range(n_samples)],
+            [f"tsk_{i}" for i in range(num_samples)],
         )
     else:
         ploidy = 1
-        n_samples = ts.num_samples
+        num_samples = ts.num_samples
         sample_nodes = np.array(ts.samples(), dtype=np.int32)
-        sample_ids = np.array([f"tsk_{i}" for i in range(n_samples)])
+        sample_ids = np.array([f"tsk_{i}" for i in range(num_samples)])
 
-    n_sites = ts.num_sites
+    num_sites = ts.num_sites
 
     # Collect variants
-    positions = np.empty(n_sites, dtype=np.int32)
+    positions = np.empty(num_sites, dtype=np.int32)
     # Determine max alleles across all sites
     max_alleles = max(len(v.alleles) for v in ts.variants())
-    all_alleles = np.empty((n_sites, max_alleles), dtype=object)
+    all_alleles = np.empty((num_sites, max_alleles), dtype=object)
     all_alleles[:] = ""
-    anc_state = np.empty(n_sites, dtype=object)
-    genotypes = np.empty((n_sites, n_samples, ploidy), dtype=np.int8)
+    anc_state = np.empty(num_sites, dtype=object)
+    genotypes = np.empty((num_sites, num_samples, ploidy), dtype=np.int8)
 
     for s_idx, variant in enumerate(ts.variants(samples=sample_nodes)):
         positions[s_idx] = int(variant.site.position)
@@ -356,9 +356,9 @@ def ts_to_sample_vcz(
         else:
             anc_state[s_idx] = site_alleles[0]
 
-        # Reshape flat haplotype genotypes to (n_samples, ploidy)
-        gt_flat = variant.genotypes  # (n_samples * ploidy,)
-        genotypes[s_idx] = gt_flat.reshape(n_samples, ploidy)
+        # Reshape flat haplotype genotypes to (num_samples, ploidy)
+        gt_flat = variant.genotypes  # (num_samples * ploidy,)
+        genotypes[s_idx] = gt_flat.reshape(num_samples, ploidy)
 
     sequence_length = int(ts.sequence_length)
     if contig_id is None:

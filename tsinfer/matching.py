@@ -41,9 +41,9 @@ class MatchResult:
     mutation_state: np.ndarray  # (n_mutations,) int8  — derived allele index
 
 
-def _tsb_from_ts(ts: tskit.TreeSequence, n_sites: int, positions: np.ndarray):
+def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
     """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence."""
-    num_alleles = [2] * n_sites
+    num_alleles = [2] * num_sites
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
 
     if ts.num_nodes > 0:
@@ -59,7 +59,7 @@ def _tsb_from_ts(ts: tskit.TreeSequence, n_sites: int, positions: np.ndarray):
         er = np.where(
             edges.right < seq_len,
             np.searchsorted(pos_arr, edges.right),
-            n_sites,
+            num_sites,
         ).astype(np.int32)
         ep = edges.parent.astype(np.int32)
         ec = edges.child.astype(np.int32)
@@ -79,7 +79,7 @@ def _tsb_from_ts(ts: tskit.TreeSequence, n_sites: int, positions: np.ndarray):
 
 def _ts_from_tsb(
     tsb,
-    n_sites: int,
+    num_sites: int,
     positions: np.ndarray,
     sequence_length: float,
     metadata: dict,
@@ -103,7 +103,7 @@ def _ts_from_tsb(
         Unique population names; used to create population table rows.
     """
     tables = tskit.TableCollection(sequence_length=float(sequence_length))
-    if metadata:
+    if metadata is not None:
         tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
         tables.metadata = metadata
 
@@ -111,35 +111,39 @@ def _ts_from_tsb(
         tables.sites.add_row(position=float(pos), ancestral_state="0")
 
     # Create populations if specified
-    if population_names:
+    if population_names is not None:
         tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
         for pop_name in population_names:
             tables.populations.add_row(metadata={"name": pop_name})
 
     # Set up node metadata schema if we have node metadata
-    if node_metadata:
+    if node_metadata is not None:
         tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
 
     flags, times = tsb.dump_nodes()
     for i, (t, fl) in enumerate(zip(times, flags)):
-        md = node_metadata[i] if node_metadata and i < len(node_metadata) else None
+        md = (
+            node_metadata[i]
+            if node_metadata is not None and i < len(node_metadata)
+            else None
+        )
         if md is not None:
             tables.nodes.add_row(time=float(t), flags=int(fl), metadata=md)
         else:
             tables.nodes.add_row(time=float(t), flags=int(fl))
 
-    if individuals:
-        if individual_metadata:
+    if individuals is not None:
+        if individual_metadata is not None:
             tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
         for ind_idx, ind_nodes in enumerate(individuals):
             ind_md = (
                 individual_metadata[ind_idx]
-                if individual_metadata and ind_idx < len(individual_metadata)
+                if individual_metadata is not None and ind_idx < len(individual_metadata)
                 else None
             )
             pop_id = (
                 populations[ind_idx]
-                if populations and ind_idx < len(populations)
+                if populations is not None and ind_idx < len(populations)
                 else -1
             )
             if ind_md is not None:
@@ -157,7 +161,7 @@ def _ts_from_tsb(
     el, er, ep, ec = tsb.dump_edges()
     for le, re, pe, ce in zip(el, er, ep, ec):
         left_coord = float(pos_arr[le])
-        right_coord = float(pos_arr[re]) if re < n_sites else float(sequence_length)
+        right_coord = float(pos_arr[re]) if re < num_sites else float(sequence_length)
         tables.edges.add_row(
             left=left_coord, right=right_coord, parent=int(pe), child=int(ce)
         )
@@ -281,7 +285,7 @@ def _split_by_overlap(
 
 def make_root_ts(
     sequence_length: float,
-    positions: np.ndarray,  # (n_sites,) int32
+    positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
 ) -> tskit.TreeSequence:
     """
@@ -312,17 +316,17 @@ class Matcher:
     def __init__(
         self,
         ts: tskit.TreeSequence,
-        positions: np.ndarray,  # (n_sites,) int32 — inference site positions
+        positions: np.ndarray,  # (num_sites,) int32 — inference site positions
         recombination_rate,  # float or msprime.RateMap
         mismatch_ratio: float = 1.0,
         path_compression: bool = True,
         num_threads: int = 1,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
-        self._n_sites = len(positions)
+        self._num_sites = len(positions)
         self._path_compression = path_compression
 
-        tsb = _tsb_from_ts(ts, self._n_sites, self._positions)
+        tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
 
         d = np.diff(
             self._positions.astype(np.float64), prepend=float(self._positions[0])
@@ -330,36 +334,36 @@ class Matcher:
         rho = float(recombination_rate) * np.maximum(d, 1.0)
         rho = np.clip(rho, 1e-10, 1.0 - 1e-10)
 
-        n_match = max(1, tsb.num_match_nodes)
-        mu = np.full(self._n_sites, mismatch_ratio / n_match)
+        num_match = max(1, tsb.num_match_nodes)
+        mu = np.full(self._num_sites, mismatch_ratio / num_match)
         mu = np.clip(mu, 1e-10, 1.0 - 1e-10)
 
         self._matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
-        self._n_sites_val = self._n_sites
+        self._num_sites_val = self._num_sites
 
     def match(
         self,
-        haplotypes: np.ndarray,  # (n_haplotypes, n_sites) int8
+        haplotypes: np.ndarray,  # (n_haplotypes, num_sites) int8
     ) -> list[MatchResult]:
         """
         Run the HMM for each haplotype. Active range per haplotype is derived from
         its missing data pattern (first and last non-missing site).
         """
-        n_sites = self._n_sites_val
+        num_sites = self._num_sites_val
         results = []
         for h in haplotypes:
             h = np.asarray(h, dtype=np.int8)
-            match_out = np.zeros(n_sites, dtype=np.int8)
+            match_out = np.zeros(num_sites, dtype=np.int8)
             non_missing = np.where(h >= 0)[0]
             if len(non_missing) == 0:
-                start, end = 0, n_sites
+                start, end = 0, num_sites
             else:
                 start = int(non_missing[0])
                 end = int(non_missing[-1]) + 1
 
             left, right, parent = self._matcher.find_path(h, start, end, match_out)
 
-            in_range = np.zeros(n_sites, dtype=bool)
+            in_range = np.zeros(num_sites, dtype=bool)
             in_range[start:end] = True
             mutation_mask = in_range & (h != match_out) & (h >= 0)
             mutation_sites = np.where(mutation_mask)[0].astype(np.int32)
@@ -396,12 +400,12 @@ def extend_ts(
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
     """
-    positions = np.array([s.position for s in ts.sites()])
-    n_sites = ts.num_sites
+    positions = ts.tables.sites.position
+    num_sites = ts.num_sites
     seq_len = ts.sequence_length
-    meta = dict(ts.metadata) if ts.metadata else {}
+    meta = dict(ts.metadata) if ts.metadata is not None else {}
 
-    tsb = _tsb_from_ts(ts, n_sites, positions)
+    tsb = _tsb_from_ts(ts, num_sites, positions)
 
     new_node_ids = []
     for time, result in zip(node_times, results):
@@ -436,5 +440,10 @@ def extend_ts(
             i += 1
 
     return _ts_from_tsb(
-        tsb, n_sites, positions, seq_len, meta, individuals if individuals else None
+        tsb,
+        num_sites,
+        positions,
+        seq_len,
+        meta,
+        individuals if len(individuals) > 0 else None,
     )

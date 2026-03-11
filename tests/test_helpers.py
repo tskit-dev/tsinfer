@@ -76,7 +76,7 @@ class TestMakeSampleVcz:
     def test_call_genotype_shape_and_dtype(self):
         vcz = _minimal_sample_vcz()
         arr = vcz["call_genotype"]
-        assert arr.shape == (2, 2, 2)  # (n_sites, n_samples, ploidy)
+        assert arr.shape == (2, 2, 2)  # (num_sites, n_samples, ploidy)
         assert arr.dtype == np.int8
 
     def test_call_genotype_values(self):
@@ -283,9 +283,9 @@ class TestTsToSampleVcz:
     def test_call_genotype_shape_diploid(self):
         ts = _sim_ts(n=4)
         vcz = ts_to_sample_vcz(ts)
-        n_sites = ts.num_sites
-        n_individuals = ts.num_individuals
-        assert vcz["call_genotype"].shape == (n_sites, n_individuals, 2)
+        num_sites = ts.num_sites
+        num_individuals = ts.num_individuals
+        assert vcz["call_genotype"].shape == (num_sites, num_individuals, 2)
 
     def test_positions_match_ts(self):
         ts = _sim_ts()
@@ -334,6 +334,6 @@ class TestTsToSampleVcz:
         vcz = ts_to_sample_vcz(ts)
         gt = vcz["call_genotype"][:]
         for s_idx, variant in enumerate(ts.variants()):
-            # tskit gives flat haplotypes; reshape to (n_individuals, ploidy)
+            # tskit gives flat haplotypes; reshape to (num_individuals, ploidy)
             expected = variant.genotypes.reshape(ts.num_individuals, 2)
             np.testing.assert_array_equal(gt[s_idx], expected)

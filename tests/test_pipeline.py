@@ -46,7 +46,7 @@ from tsinfer.pipeline import match, post_process, run
 
 
 def _simulate(
-    n_samples=6,
+    num_samples=6,
     sequence_length=100_000,
     recombination_rate=1e-8,
     mutation_rate=1e-8,
@@ -55,7 +55,7 @@ def _simulate(
 ):
     """Simulate a tree sequence with msprime and return it."""
     ts = msprime.sim_ancestry(
-        samples=n_samples,
+        samples=num_samples,
         sequence_length=sequence_length,
         recombination_rate=recombination_rate,
         ploidy=ploidy,
@@ -110,35 +110,35 @@ def _infer_and_match(sim_ts, recombination_rate=1e-4):
 
 class TestMatch:
     def test_basic_haploid(self):
-        sim_ts = _simulate(n_samples=4, random_seed=1)
+        sim_ts = _simulate(num_samples=4, random_seed=1)
         out_ts = _infer_and_match(sim_ts)
         assert out_ts.num_nodes > 0
         assert out_ts.num_edges > 0
         assert out_ts.num_sites > 0
 
     def test_output_has_sites_at_inference_positions(self):
-        sim_ts = _simulate(n_samples=6, random_seed=2)
+        sim_ts = _simulate(num_samples=6, random_seed=2)
         out_ts = _infer_and_match(sim_ts)
         assert out_ts.num_sites > 0
 
     def test_output_has_sample_nodes(self):
-        sim_ts = _simulate(n_samples=6, random_seed=3)
+        sim_ts = _simulate(num_samples=6, random_seed=3)
         out_ts = _infer_and_match(sim_ts)
-        n_haplotypes = sim_ts.num_samples
-        assert out_ts.num_nodes >= n_haplotypes
+        num_haplotypes = sim_ts.num_samples
+        assert out_ts.num_nodes >= num_haplotypes
 
     def test_metadata_contains_sequence_intervals(self):
-        sim_ts = _simulate(n_samples=4, random_seed=4)
+        sim_ts = _simulate(num_samples=4, random_seed=4)
         out_ts = _infer_and_match(sim_ts)
         assert "sequence_intervals" in out_ts.metadata
 
     def test_larger_sample_count(self):
-        sim_ts = _simulate(n_samples=20, random_seed=5)
+        sim_ts = _simulate(num_samples=20, random_seed=5)
         out_ts = _infer_and_match(sim_ts)
         assert out_ts.num_nodes > 0
 
     def test_diploid(self):
-        sim_ts = _simulate(n_samples=4, ploidy=2, random_seed=6)
+        sim_ts = _simulate(num_samples=4, ploidy=2, random_seed=6)
         out_ts = _infer_and_match(sim_ts)
         assert out_ts.num_nodes > 0
         assert out_ts.num_individuals > 0
@@ -167,7 +167,7 @@ class TestMatch:
 
 class TestPostProcess:
     def test_simplify_reduces_nodes(self):
-        sim_ts = _simulate(n_samples=6, random_seed=10)
+        sim_ts = _simulate(num_samples=6, random_seed=10)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
             sources={"test": Source(path="unused", name="test")},
@@ -184,7 +184,7 @@ class TestPostProcess:
         assert pp_ts.num_nodes <= matched_ts.num_nodes
 
     def test_no_post_process_config_returns_unchanged(self):
-        sim_ts = _simulate(n_samples=4, random_seed=11)
+        sim_ts = _simulate(num_samples=4, random_seed=11)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
             sources={"test": Source(path="unused", name="test")},
@@ -200,7 +200,7 @@ class TestPostProcess:
         assert pp_ts.num_nodes == matched_ts.num_nodes
 
     def test_erase_flanks(self):
-        sim_ts = _simulate(n_samples=6, random_seed=12)
+        sim_ts = _simulate(num_samples=6, random_seed=12)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
             sources={"test": Source(path="unused", name="test")},
@@ -223,7 +223,7 @@ class TestPostProcess:
 
 class TestRun:
     def test_full_pipeline_haploid(self):
-        sim_ts = _simulate(n_samples=4, random_seed=20)
+        sim_ts = _simulate(num_samples=4, random_seed=20)
         sample_store = ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
         out_ts = run(cfg)
@@ -231,7 +231,7 @@ class TestRun:
         assert out_ts.num_sites > 0
 
     def test_full_pipeline_diploid(self):
-        sim_ts = _simulate(n_samples=4, ploidy=2, random_seed=21)
+        sim_ts = _simulate(num_samples=4, ploidy=2, random_seed=21)
         sample_store = ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
         out_ts = run(cfg)
@@ -239,7 +239,7 @@ class TestRun:
         assert out_ts.num_individuals > 0
 
     def test_full_pipeline_with_post_process(self):
-        sim_ts = _simulate(n_samples=6, random_seed=22)
+        sim_ts = _simulate(num_samples=6, random_seed=22)
         sample_store = ts_to_sample_vcz(sim_ts)
         src = Source(path=sample_store, name="test")
         cfg = Config(

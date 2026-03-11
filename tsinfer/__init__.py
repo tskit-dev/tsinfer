@@ -28,7 +28,7 @@ try:
 except ImportError:
     pass
 
-from .ancestors import infer_ancestors  # noqa: F401
+from .ancestors import InferenceSites, infer_ancestors  # noqa: F401
 from .config import (  # noqa: F401
     AncestorsConfig,
     AncestralState,
