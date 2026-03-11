@@ -249,8 +249,8 @@ class TestComputeSequenceIntervals:
 
 
 class TestIterGenotypes:
-    def test_yields_correct_rows(self):
-        """Iterator should yield the correct genotype rows in order."""
+    def test_yields_derived_genotypes(self):
+        """Iterator should yield derived genotype rows (0=ancestral, 1=derived)."""
         gt_matrix = np.array([[0, 1, 0, 1], [1, 0, 1, 0], [0, 0, 1, 1]], dtype=np.int8)
         store = _haploid_store(
             gt_matrix,
@@ -258,14 +258,34 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        rows = list(iter_genotypes(store, np.array([100, 300], dtype=np.int32)))
+        anc_idx = np.array([0, 0], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100, 300], dtype=np.int32), anc_idx))
         assert len(rows) == 2
-        np.testing.assert_array_equal(rows[0], gt_matrix[0])
-        np.testing.assert_array_equal(rows[1], gt_matrix[2])
+        # ancestral is allele 0, so derived genotypes match raw genotypes
+        np.testing.assert_array_equal(rows[0], [0, 1, 0, 1])
+        np.testing.assert_array_equal(rows[1], [0, 0, 1, 1])
+
+    def test_ancestral_not_zero(self):
+        """When ancestral allele is not allele 0, genotypes are remapped."""
+        # alleles = [T, A] with ancestral = A (index 1)
+        # raw genotype 0 means T (derived), 1 means A (ancestral)
+        gt_matrix = np.array([[0, 1, 0, 1]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100],
+            alleles=[["T", "A"]],
+            anc_states=["A"],
+        )
+        anc_idx = np.array([1], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        assert len(rows) == 1
+        # raw 0→derived(1), raw 1→ancestral(0)
+        np.testing.assert_array_equal(rows[0], [1, 0, 1, 0])
 
     def test_empty_positions(self):
         store = _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"])
-        rows = list(iter_genotypes(store, np.array([], dtype=np.int32)))
+        anc_idx = np.array([], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([], dtype=np.int32), anc_idx))
         assert len(rows) == 0
 
     def test_sample_include_mask(self):
@@ -278,8 +298,11 @@ class TestIterGenotypes:
         )
         # Keep only samples 0 and 2
         sample_include = np.array([True, False, True, False])
+        anc_idx = np.array([0], dtype=np.int8)
         rows = list(
-            iter_genotypes(store, np.array([100], dtype=np.int32), sample_include)
+            iter_genotypes(
+                store, np.array([100], dtype=np.int32), anc_idx, sample_include
+            )
         )
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 0])
@@ -297,7 +320,8 @@ class TestIterGenotypes:
             ancestral_state=["A"],
             sequence_length=1000,
         )
-        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32)))
+        anc_idx = np.array([0], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 1, 1, 0])
 
@@ -309,7 +333,10 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        rows = list(iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32)))
+        anc_idx = np.array([0, 0, 0], dtype=np.int8)
+        rows = list(
+            iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
+        )
         result = np.stack(rows)
         np.testing.assert_array_equal(result, gt_matrix)
 
@@ -323,9 +350,62 @@ class TestIterGenotypes:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        rows = list(iter_genotypes(store, np.array([100, 200], dtype=np.int32)))
+        anc_idx = np.array([0, 0], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100, 200], dtype=np.int32), anc_idx))
         np.testing.assert_array_equal(rows[0], [0, 1])
         np.testing.assert_array_equal(rows[1], [1, 0])
+
+    def test_missing_values(self):
+        """Missing values (-1) in raw genotypes should remain -1."""
+        gt_matrix = np.array([[0, -1, 1, -1]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100],
+            alleles=[["A", "T"]],
+            anc_states=["A"],
+        )
+        anc_idx = np.array([0], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        np.testing.assert_array_equal(rows[0], [0, -1, 1, -1])
+
+    def test_mixed_ancestral_indices(self):
+        """Multiple sites with different ancestral allele indices."""
+        # Site 0: alleles=['A','T'], ancestral='A' (idx 0) — raw 0→anc, 1→der
+        # Site 1: alleles=['T','A'], ancestral='A' (idx 1) — raw 0→der, 1→anc
+        # Site 2: alleles=['A','T'], ancestral='A' (idx 0) — raw 0→anc, 1→der
+        gt_matrix = np.array([[0, 1, 0, 1], [0, 1, 0, 1], [1, 0, 1, 0]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100, 200, 300],
+            alleles=[["A", "T"], ["T", "A"], ["A", "T"]],
+            anc_states=["A", "A", "A"],
+        )
+        anc_idx = np.array([0, 1, 0], dtype=np.int8)
+        rows = list(
+            iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
+        )
+        # Site 0: 0→0, 1→1, 0→0, 1→1
+        np.testing.assert_array_equal(rows[0], [0, 1, 0, 1])
+        # Site 1: 0→1, 1→0, 0→1, 1→0 (flipped because ancestral is at index 1)
+        np.testing.assert_array_equal(rows[1], [1, 0, 1, 0])
+        # Site 2: 1→1, 0→0, 1→1, 0→0
+        np.testing.assert_array_equal(rows[2], [1, 0, 1, 0])
+
+    def test_ancestral_not_zero_with_missing(self):
+        """Non-zero ancestral index combined with missing values."""
+        # alleles=['T','A'], ancestral='A' (idx 1)
+        # raw: 0=T(derived), 1=A(ancestral), -1=missing
+        gt_matrix = np.array([[0, -1, 1, 0]], dtype=np.int8)
+        store = _haploid_store(
+            gt_matrix,
+            positions=[100],
+            alleles=[["T", "A"]],
+            anc_states=["A"],
+        )
+        anc_idx = np.array([1], dtype=np.int8)
+        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        # raw 0→derived(1), raw -1→missing(-1), raw 1→ancestral(0), raw 0→derived(1)
+        np.testing.assert_array_equal(rows[0], [1, -1, 0, 1])
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +656,29 @@ class TestInferAncestorsVsPythonOracle:
             anc_states=["A"],
         )
 
+    def test_mixed_ancestral_indices_multi_site(self):
+        # Site 0: alleles=['A','T'], anc='A' (idx 0), raw 0→anc, 1→der
+        # Site 1: alleles=['T','A'], anc='A' (idx 1), raw 0→der, 1→anc
+        # Site 2: alleles=['G','C'], anc='C' (idx 1), raw 0→der, 1→anc
+        # Effective derived genotypes:
+        #   site 0: [0,1,0,1], site 1: [1,0,1,0], site 2: [1,1,0,0]
+        self._check(
+            [[0, 1, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200, 300],
+            alleles=[["A", "T"], ["T", "A"], ["G", "C"]],
+            anc_states=["A", "A", "C"],
+        )
+
+    def test_all_sites_ancestral_at_index_1(self):
+        # Every site has ancestral at allele index 1
+        # raw genotype 1 = ancestral, raw genotype 0 = derived
+        self._check(
+            [[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0]],
+            positions=[100, 200, 300],
+            alleles=[["T", "A"], ["G", "C"], ["T", "A"]],
+            anc_states=["A", "C", "A"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # infer_ancestors — named scenarios from the design
@@ -594,6 +697,51 @@ class TestInferAncestorsScenarios:
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
         np.testing.assert_array_equal(anc["sample_start_position"][:], [100])
         np.testing.assert_array_equal(anc["sample_end_position"][:], [100])
+
+    def test_single_site_ancestral_at_index_1(self):
+        # alleles=['T','A'], ancestral='A' (idx 1)
+        # raw genotype 1 = ancestral, raw genotype 0 = derived
+        anc = infer_ancestors(
+            _haploid_store([[1, 0]], [100], [["T", "A"]], ["A"], seq_len=1000),
+            _cfg(),
+        )
+        assert anc["call_genotype"].shape == (1, 1, 1)
+        assert int(anc["call_genotype"][0, 0, 0]) == 1  # derived
+        # Output allele 0 should be ancestral 'A'
+        assert str(anc["variant_allele"][0, 0]) == "A"
+
+    def test_mixed_ancestral_indices(self):
+        # Site 0: alleles=['A','T'], anc='A' (idx 0)
+        # Site 1: alleles=['T','A'], anc='A' (idx 1)
+        # Raw genotypes: site 0 = [0,1], site 1 = [0,1]
+        # Derived:       site 0 = [0,1], site 1 = [1,0] (flipped)
+        anc = infer_ancestors(
+            _haploid_store(
+                [[0, 1], [0, 1]],
+                [100, 200],
+                [["A", "T"], ["T", "A"]],
+                ["A", "A"],
+            ),
+            _cfg(),
+        )
+        assert anc["call_genotype"].shape[1] >= 1
+        # Both output sites should have ancestral 'A' as allele 0
+        alleles = np.asarray(anc["variant_allele"][:])
+        for i in range(len(alleles)):
+            assert str(alleles[i, 0]) == "A"
+
+    def test_all_fixed_ancestral_at_index_1_returns_empty(self):
+        # All samples carry the ancestral allele (at index 1) → no derived → empty
+        anc = infer_ancestors(
+            _haploid_store(
+                [[1, 1], [1, 1]],
+                [100, 200],
+                [["T", "A"], ["G", "C"]],
+                ["A", "C"],
+            ),
+            _cfg(),
+        )
+        assert anc["call_genotype"].shape[1] == 0
 
     def test_all_fixed_ancestral_returns_empty(self):
         anc = infer_ancestors(

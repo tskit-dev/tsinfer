@@ -74,13 +74,14 @@ def _compute_site_stats(
     - keep_mask: boolean array of length len(inf_sites.positions)
     - times: float64 array of length sum(keep_mask)
     """
-    anc_indices = inf_sites.ancestral_allele_index
     num_inf_sites = len(inf_sites.positions)
 
     keep_mask = np.zeros(num_inf_sites, dtype=bool)
     times_list = []
 
-    site_iter = vcz_mod.iter_genotypes(store, inf_sites.positions, sample_include)
+    site_iter = vcz_mod.iter_genotypes(
+        store, inf_sites.positions, inf_sites.ancestral_allele_index, sample_include
+    )
     if progress:
         import tqdm
 
@@ -88,17 +89,7 @@ def _compute_site_stats(
             site_iter, total=num_inf_sites, desc="Pass 1: site stats", unit="sites"
         )
 
-    for i, gt_row in enumerate(site_iter):
-        anc_idx = int(anc_indices[i])
-
-        is_missing = gt_row < 0
-        is_ancestral = gt_row == anc_idx
-        derived_gt = np.where(
-            is_missing,
-            np.int8(-1),
-            np.where(is_ancestral, np.int8(0), np.int8(1)),
-        ).astype(np.int8)
-
+    for i, derived_gt in enumerate(site_iter):
         derived_count = int(np.sum(derived_gt == 1))
         n_non_missing = int(np.sum(derived_gt >= 0))
 
@@ -370,17 +361,11 @@ def infer_ancestors(
         n_ab_sites = n_local + 1  # +1 for terminal
         ab = _tsinfer.AncestorBuilder(num_samples=num_haplotypes, max_sites=n_ab_sites)
 
-        for j, gt_row in enumerate(
-            vcz_mod.iter_genotypes(store, local_positions, sample_include)
+        for j, derived_gt in enumerate(
+            vcz_mod.iter_genotypes(
+                store, local_positions, local_anc_indices, sample_include
+            )
         ):
-            anc_idx = int(local_anc_indices[j])
-            is_missing = gt_row < 0
-            is_ancestral = gt_row == anc_idx
-            derived_gt = np.where(
-                is_missing,
-                np.int8(-1),
-                np.where(is_ancestral, np.int8(0), np.int8(1)),
-            ).astype(np.int8)
             ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
         ab.add_terminal_site()
 
