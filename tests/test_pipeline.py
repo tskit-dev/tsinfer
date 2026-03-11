@@ -85,7 +85,7 @@ def _make_config_for_run(sample_store, recombination_rate=1e-4):
     src = Source(path=sample_store, name="test")
     return Config(
         sources={"test": src},
-        ancestors=AncestorsConfig(path="unused", sources=["test"]),
+        ancestors=AncestorsConfig(path=None, sources=["test"]),
         match=MatchConfig(
             sources=["test"],
             output="output.trees",
@@ -170,8 +170,8 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=6, random_seed=10)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path="unused", name="test")},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            sources={"test": Source(path=None, name="test")},
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
@@ -187,8 +187,8 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=4, random_seed=11)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path="unused", name="test")},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            sources={"test": Source(path=None, name="test")},
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
@@ -203,8 +203,8 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=6, random_seed=12)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path="unused", name="test")},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            sources={"test": Source(path=None, name="test")},
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
@@ -244,7 +244,7 @@ class TestRun:
         src = Source(path=sample_store, name="test")
         cfg = Config(
             sources={"test": src},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
@@ -354,7 +354,7 @@ class TestIndividualMetadata:
         src = Source(path=sample_store, name="test")
         cfg = Config(
             sources={"test": src},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
@@ -383,7 +383,7 @@ class TestIndividualMetadata:
         src = Source(path=sample_store, name="test")
         cfg = Config(
             sources={"test": src},
-            ancestors=AncestorsConfig(path="unused", sources=["test"]),
+            ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
