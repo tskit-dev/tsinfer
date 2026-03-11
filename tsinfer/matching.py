@@ -184,16 +184,20 @@ def compute_groups(
     """
     Return an ordered list of haplotype-index arrays, oldest group first.
 
-    - Index 0 (virtual root, is_ancestor=True with time=1.0) is always returned alone
-      as groups[0].
-    - Remaining ancestors (is_ancestor=True) are grouped by unique time values (same
-      time → same group), ordered by descending time.
-    - Sample haplotypes (is_ancestor=False) are grouped strictly by time, ordered by
-      descending time (oldest ancient samples first, modern at time=0 last).
+    - Index 0 (virtual root) is always returned alone as groups[0].
+    - Remaining haplotypes are ordered by descending time.
     - At the same time, ancestor groups come before sample groups.
+    - Same-time ancestors are split into sub-groups such that no two
+      ancestors in the same sub-group have overlapping intervals
+      [start_positions[i], end_positions[i]).  Ancestors with disjoint
+      intervals can be matched together safely.
+    - Sample haplotypes are always grouped together by time (no interval
+      splitting), because samples are never used as copying parents.
     """
     times = np.asarray(times, dtype=np.float64)
     is_ancestor = np.asarray(is_ancestor, dtype=bool)
+    start_positions = np.asarray(start_positions, dtype=np.int32)
+    end_positions = np.asarray(end_positions, dtype=np.int32)
 
     # Group 0: virtual root is always index 0
     groups = [np.array([0], dtype=np.int32)]
@@ -212,20 +216,67 @@ def compute_groups(
         all_times_set.update(times[sample_indices].tolist())
 
     for t in sorted(all_times_set, reverse=True):
-        # Ancestors at this time (if any)
+        # Ancestors at this time — split by interval overlap
         if len(anc_indices) > 0:
             anc_at_t = anc_indices[np.isclose(times[anc_indices], t)]
-        else:
-            anc_at_t = np.array([], dtype=np.int32)
-        if len(anc_at_t) > 0:
-            groups.append(anc_at_t.astype(np.int32))
-        # Samples at this time (if any)
+            if len(anc_at_t) > 0:
+                sub_groups = _split_by_overlap(anc_at_t, start_positions, end_positions)
+                groups.extend(sub_groups)
+
+        # Samples at this time — always one group (no interval splitting)
         if len(sample_indices) > 0:
             samp_at_t = sample_indices[np.isclose(times[sample_indices], t)]
             if len(samp_at_t) > 0:
                 groups.append(samp_at_t.astype(np.int32))
 
     return groups
+
+
+def _intervals_overlap(s1: int, e1: int, s2: int, e2: int) -> bool:
+    """Check if half-open intervals [s1, e1) and [s2, e2) overlap."""
+    # Empty intervals can't overlap
+    if s1 >= e1 or s2 >= e2:
+        return False
+    return s1 < e2 and s2 < e1
+
+
+def _split_by_overlap(
+    indices: np.ndarray,
+    start_positions: np.ndarray,
+    end_positions: np.ndarray,
+) -> list[np.ndarray]:
+    """
+    Split ancestor indices into sub-groups where no two members overlap.
+
+    Uses a naive greedy algorithm: for each ancestor, try to place it into
+    an existing sub-group.  It fits if it doesn't overlap with any member
+    already in that sub-group.  If it doesn't fit anywhere, start a new
+    sub-group.
+
+    This is O(n^2) in the number of same-time ancestors — fine for the
+    first pass.
+    """
+    sub_groups: list[list[int]] = []
+
+    for idx in indices:
+        s = int(start_positions[idx])
+        e = int(end_positions[idx])
+
+        placed = False
+        for sg in sub_groups:
+            # Check overlap with every member already in this sub-group
+            if not any(
+                _intervals_overlap(s, e, int(start_positions[j]), int(end_positions[j]))
+                for j in sg
+            ):
+                sg.append(int(idx))
+                placed = True
+                break
+
+        if not placed:
+            sub_groups.append([int(idx)])
+
+    return [np.array(sg, dtype=np.int32) for sg in sub_groups]
 
 
 def make_root_ts(

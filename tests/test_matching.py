@@ -186,13 +186,36 @@ class TestMakeRootTs:
 
 
 class TestComputeGroups:
-    def _make_inputs(self, times, is_ancestor):
+    """
+    Tests for compute_groups, which partitions haplotypes into ordered groups
+    for sequential matching.
+
+    Rules:
+    1. Index 0 (virtual root) is always alone in groups[0].
+    2. Remaining haplotypes are ordered by descending time.
+    3. At the same time, ancestor groups come before sample groups.
+    4. Same-time ancestors with NON-OVERLAPPING intervals can share a group.
+    5. Same-time ancestors with OVERLAPPING intervals must be in separate groups.
+    6. Samples are always grouped together by time (no interval splitting).
+    """
+
+    def _make_inputs(self, times, is_ancestor, starts=None, ends=None):
         times = np.asarray(times, dtype=np.float64)
         is_ancestor = np.asarray(is_ancestor, dtype=bool)
         n = len(times)
-        start_pos = np.zeros(n, dtype=np.int32)
-        end_pos = np.ones(n, dtype=np.int32) * 100
-        return times, is_ancestor, start_pos, end_pos
+        if starts is None:
+            starts = np.zeros(n, dtype=np.int32)
+        else:
+            starts = np.asarray(starts, dtype=np.int32)
+        if ends is None:
+            ends = np.ones(n, dtype=np.int32) * 100
+        else:
+            ends = np.asarray(ends, dtype=np.int32)
+        return times, is_ancestor, starts, ends
+
+    # -------------------------------------------------------------------
+    # Basic ordering (no interval effects)
+    # -------------------------------------------------------------------
 
     def test_virtual_root_alone(self):
         # Only virtual root
@@ -206,14 +229,6 @@ class TestComputeGroups:
         times, is_anc, sp, ep = self._make_inputs([1.0, 0.5, 0.3], [True, True, True])
         groups = compute_groups(times, is_anc, sp, ep)
         assert list(groups[0]) == [0]
-
-    def test_single_ancestor_time_level(self):
-        # Root + 2 ancestors at same time
-        times, is_anc, sp, ep = self._make_inputs([1.0, 0.5, 0.5], [True, True, True])
-        groups = compute_groups(times, is_anc, sp, ep)
-        assert len(groups) == 2
-        assert list(groups[0]) == [0]
-        assert set(groups[1]) == {1, 2}
 
     def test_multiple_ancestor_time_levels_ordering(self):
         # Root + ancestors at 0.8, 0.5, 0.3 — should be in descending order
@@ -262,7 +277,7 @@ class TestComputeGroups:
             [1.0, 0.9, 0.4, 0.4, 0.0], [True, True, True, False, False]
         )
         groups = compute_groups(times, is_anc, sp, ep)
-        # groups: [0], [1], [2], [3], [4]
+        # All ancestors have default intervals [0, 100] → overlapping → separate groups
         # group 0: root
         # group 1: ancestor at t=0.9
         # group 2: ancestor at t=0.4
@@ -280,6 +295,299 @@ class TestComputeGroups:
         groups = compute_groups(times, is_anc, sp, ep)
         for g in groups:
             assert g.dtype == np.int32
+
+    # -------------------------------------------------------------------
+    # Interval-based grouping for same-time ancestors
+    # -------------------------------------------------------------------
+
+    def test_two_same_time_ancestors_overlapping(self):
+        """
+        Two ancestors at time 0.5, both spanning the full range → overlap
+        → must be in SEPARATE groups.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |================================|
+        idx 2 (t=0.5): |================================|
+                        0                              100
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 0],
+            ends=[100, 100, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        # Root alone, then two separate ancestor groups
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 2
+        assert set(t05_groups[0]) | set(t05_groups[1]) == {1, 2}
+        assert len(t05_groups[0]) == 1
+        assert len(t05_groups[1]) == 1
+
+    def test_two_same_time_ancestors_disjoint(self):
+        """
+        Two ancestors at time 0.5 with disjoint intervals → no overlap
+        → can share ONE group.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |==========|
+        idx 2 (t=0.5):                    |=============|
+                        0        30      60           100
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 60],
+            ends=[100, 30, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        # Both ancestors should be in the same group
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
+
+    def test_two_same_time_ancestors_adjacent(self):
+        """
+        Two ancestors at time 0.5, intervals touching at boundary (no overlap).
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |===============|
+        idx 2 (t=0.5):                 |================|
+                        0             50               100
+
+        start=0,end=50 and start=50,end=100: these do NOT overlap
+        (the interval is [start, end), so 50 is not in the first interval).
+        → can share ONE group.
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 50],
+            ends=[100, 50, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
+
+    def test_two_same_time_ancestors_one_site_overlap(self):
+        """
+        Two ancestors at time 0.5, intervals overlapping by one unit.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |================|
+        idx 2 (t=0.5):                |=================|
+                        0            49 50             100
+
+        start=0,end=50 and start=49,end=100: overlap at position 49.
+        → SEPARATE groups.
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 49],
+            ends=[100, 50, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 2
+
+    def test_three_same_time_ancestors_all_disjoint(self):
+        """
+        Three ancestors at time 0.5, all disjoint → one group.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |=======|
+        idx 2 (t=0.5):           |========|
+        idx 3 (t=0.5):                       |==========|
+                        0      20 30      50 60       100
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5, 0.5],
+            [True, True, True, True],
+            starts=[0, 0, 30, 60],
+            ends=[100, 20, 50, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2, 3}
+
+    def test_three_same_time_ancestors_chain_overlap(self):
+        """
+        Three ancestors at time 0.5 with chain overlap: A overlaps B,
+        B overlaps C, but A does not overlap C.
+
+        idx 0 (root):  |==================================|
+        idx 1 (t=0.5): |==============|
+        idx 2 (t=0.5):          |==============|
+        idx 3 (t=0.5):                    |===============|
+                        0       25  35   50  55         100
+
+        Overlaps: 1↔2 (25..35), 2↔3 (50..55). No overlap 1↔3.
+        → 1 and 3 can share a group; 2 must be separate.
+        → Two groups: {1, 3} and {2}.
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5, 0.5],
+            [True, True, True, True],
+            starts=[0, 0, 25, 50],
+            ends=[100, 35, 55, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
+        # Should be exactly 2 groups
+        assert len(t05_groups) == 2
+        group_sets = [set(g) for g in t05_groups]
+        # {1,3} can share (non-overlapping); {2} must be alone
+        assert {2} in group_sets
+        other = [s for s in group_sets if s != {2}][0]
+        assert other == {1, 3}
+
+    def test_three_same_time_ancestors_all_overlapping(self):
+        """
+        Three ancestors at time 0.5, all pairwise overlapping → three groups.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |======================|
+        idx 2 (t=0.5):      |======================|
+        idx 3 (t=0.5):           |======================|
+                        0   10  20                 80  90 100
+
+        All three overlap each other → each needs its own group.
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5, 0.5],
+            [True, True, True, True],
+            starts=[0, 0, 10, 20],
+            ends=[100, 80, 90, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
+        assert len(t05_groups) == 3
+        for g in t05_groups:
+            assert len(g) == 1
+
+    def test_same_time_ancestors_at_multiple_time_levels(self):
+        """
+        Two time levels (0.8 and 0.5), each with two disjoint ancestors.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.8): |==========|
+        idx 2 (t=0.8):                    |=============|
+        idx 3 (t=0.5): |==========|
+        idx 4 (t=0.5):                    |=============|
+                        0        30      60           100
+
+        At t=0.8: {1,2} are disjoint → one group.
+        At t=0.5: {3,4} are disjoint → one group.
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.8, 0.8, 0.5, 0.5],
+            [True, True, True, True, True],
+            starts=[0, 0, 60, 0, 60],
+            ends=[100, 30, 100, 30, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        assert len(groups) == 3  # root + t=0.8 group + t=0.5 group
+        assert set(groups[1]) == {1, 2}  # t=0.8 disjoint
+        assert set(groups[2]) == {3, 4}  # t=0.5 disjoint
+
+    def test_samples_ignore_intervals(self):
+        """
+        Samples are always grouped together by time, regardless of intervals.
+        Only ancestors get interval-based splitting.
+
+        idx 0 (root):      |================================|
+        idx 1 (sample t=0): |================================|
+        idx 2 (sample t=0): |================================|
+                             0                              100
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.0, 0.0],
+            [True, False, False],
+            starts=[0, 0, 0],
+            ends=[100, 100, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        # Samples always in one group, even with overlapping intervals
+        sample_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(sample_groups) == 1
+        assert set(sample_groups[0]) == {1, 2}
+
+    def test_single_ancestor_no_splitting_needed(self):
+        """
+        A single ancestor at a time level needs no splitting.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |================================|
+                        0                              100
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5],
+            [True, True],
+            starts=[0, 0],
+            ends=[100, 100],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert len(groups) == 2
+        assert list(groups[0]) == [0]
+        assert list(groups[1]) == [1]
+
+    def test_nested_intervals_overlap(self):
+        """
+        One ancestor's interval is fully contained within the other → overlap.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |================================|
+        idx 2 (t=0.5):          |===========|
+                        0      20          60          100
+
+        → SEPARATE groups (2 is inside 1).
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 20],
+            ends=[100, 100, 60],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 2
+
+    def test_empty_interval_ancestor(self):
+        """
+        An ancestor with start == end (zero-length interval) doesn't overlap
+        with anything.
+
+        idx 0 (root):  |================================|
+        idx 1 (t=0.5): |================================|
+        idx 2 (t=0.5): (empty, start=50, end=50)
+                        0                              100
+
+        → can share a group (zero-length interval can't overlap).
+        """
+        times, is_anc, sp, ep = self._make_inputs(
+            [1.0, 0.5, 0.5],
+            [True, True, True],
+            starts=[0, 0, 50],
+            ends=[100, 100, 50],
+        )
+        groups = compute_groups(times, is_anc, sp, ep)
+        assert list(groups[0]) == [0]
+        t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
 
 
 # ---------------------------------------------------------------------------
