@@ -79,11 +79,28 @@ def _collect_haplotypes(cfg: Config):
 
     anc_haplotypes = anc_gt.T  # (num_anc, num_sites)
 
-    anc_metadata = [
+    # Prepend the virtual root (all-ancestral haplotype, time=1.0).
+    # The ancestor VCZ no longer contains it; it is a matching concern.
+    virtual_hap = np.zeros((1, num_sites), dtype=np.int8)
+    if num_sites > 0:
+        virtual_start = np.array([int(positions[0])], dtype=np.int32)
+        virtual_end = np.array([int(positions[-1])], dtype=np.int32)
+    else:
+        virtual_start = np.zeros(1, dtype=np.int32)
+        virtual_end = np.zeros(1, dtype=np.int32)
+
+    anc_haplotypes = np.concatenate([virtual_hap, anc_haplotypes], axis=0)
+    anc_times = np.concatenate([np.array([1.0], dtype=np.float64), anc_times])
+    anc_start = np.concatenate([virtual_start, anc_start])
+    anc_end = np.concatenate([virtual_end, anc_end])
+
+    total_anc = num_anc + 1  # including virtual root
+    anc_metadata = [{"source": "ancestors", "sample_id": "virtual_root"}]
+    anc_metadata.extend(
         {"source": "ancestors", "sample_id": anc_ids[i]} for i in range(num_anc)
-    ]
-    anc_is_ancestor = np.ones(num_anc, dtype=bool)
-    anc_create_ind = np.zeros(num_anc, dtype=bool)
+    )
+    anc_is_ancestor = np.ones(total_anc, dtype=bool)
+    anc_create_ind = np.zeros(total_anc, dtype=bool)
 
     # --- Load sample sources ---
     sample_haplotypes_list = []
