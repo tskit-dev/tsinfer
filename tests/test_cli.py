@@ -163,9 +163,6 @@ class TestConfigCheck:
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            # Create ancestors.vcz so path check passes
-            ancestors_path = os.path.join(tmp_dir, "ancestors.vcz")
-            os.makedirs(ancestors_path, exist_ok=True)
             config_path = _write_config(tmp_dir, sample_path)
             result = runner.invoke(main, ["config", "check", config_path])
             assert result.exit_code == 0, result.output
@@ -194,6 +191,88 @@ recombination_rate = 1e-4
             result = runner.invoke(main, ["config", "check", config_path])
             assert result.exit_code != 0
             assert "does not exist" in result.output
+
+    def test_check_ancestors_path_not_required_to_exist(self):
+        """ancestors.path is an output; it should not need to exist."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_config(tmp_dir, sample_path)
+            # ancestors.vcz does not exist on disk — should still pass
+            result = runner.invoke(main, ["config", "check", config_path])
+            assert result.exit_code == 0, result.output
+
+    def test_check_missing_ancestral_state(self):
+        """Error when source lacks variant_ancestral_allele and no [ancestral_state]."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create a VCZ without variant_ancestral_allele
+            store = make_sample_vcz(
+                genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+                positions=np.array([100, 200], dtype=np.int32),
+                alleles=np.array([["A", "T"], ["A", "T"]]),
+                ancestral_state=np.array(["A", "A"]),
+                sequence_length=1000,
+            )
+            vcz_path = os.path.join(tmp_dir, "no_anc.vcz")
+            zarr.save(vcz_path, **{k: store[k][:] for k in store})
+            # Remove the ancestral allele array
+            on_disk = zarr.open(vcz_path, mode="r+")
+            del on_disk["variant_ancestral_allele"]
+
+            sample_path = _toml_path(vcz_path)
+            anc_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            out_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_path}"
+
+[ancestors]
+path = "{anc_path}"
+sources = ["test"]
+
+[match]
+sources = ["test"]
+output = "{out_path}"
+recombination_rate = 1e-4
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+            result = runner.invoke(main, ["config", "check", config_path])
+            assert result.exit_code != 0
+            assert "variant_ancestral_allele" in result.output
+            assert "ancestral_state" in result.output
+
+    def test_check_unknown_ancestor_source(self):
+        """Error when ancestors.sources references a name not in [[source]]."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            sample_path_toml = _toml_path(sample_path)
+            out_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            anc_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_path_toml}"
+
+[ancestors]
+path = "{anc_path}"
+sources = ["nonexistent"]
+
+[match]
+sources = ["test"]
+output = "{out_path}"
+recombination_rate = 1e-4
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+            result = runner.invoke(main, ["config", "check", config_path])
+            assert result.exit_code != 0
+            assert "unknown source" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
