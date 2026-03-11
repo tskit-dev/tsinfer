@@ -43,9 +43,9 @@ def _cfg(max_gap_length=500_000):
 
 
 def _haploid_store(gt_matrix, positions, alleles, anc_states, seq_len=None, **kwargs):
-    """gt_matrix shape: (n_sites, n_samples) → wrapped to (n_sites, n_samples, 1)."""
+    """Wrap gt_matrix (num_sites, num_samples) to (num_sites, num_samples, 1)."""
     gt_matrix = np.asarray(gt_matrix, dtype=np.int8)
-    n_sites, n_samples = gt_matrix.shape
+    num_sites, num_samples = gt_matrix.shape
     gt = gt_matrix[:, :, np.newaxis]
     if seq_len is None:
         seq_len = max(positions) + 1000
@@ -60,8 +60,9 @@ def _oracle_ancestors(gt_matrix, times):
 
     Parameters
     ----------
-    gt_matrix: (n_sites, n_haplotypes) int8 — derived genotypes (0=anc, 1=der, -1=miss)
-    times: (n_sites,) float — time for each site
+    gt_matrix: (num_sites, num_haplotypes) int8 — derived genotypes
+              (0=anc, 1=der, -1=miss)
+    times: (num_sites,) float — time for each site
 
     Returns list of (time, focal_site_indices, haplotype_array) tuples, sorted by
     descending time, in the same order as _tsinfer.AncestorBuilder.
@@ -71,17 +72,17 @@ def _oracle_ancestors(gt_matrix, times):
     sys.path.insert(0, "tests")
     import algorithm as alg
 
-    n_sites, n_haplotypes = gt_matrix.shape
-    ab = alg.AncestorBuilder(num_samples=n_haplotypes, max_sites=n_sites + 1)
-    for i in range(n_sites):
+    num_sites, num_haplotypes = gt_matrix.shape
+    ab = alg.AncestorBuilder(num_samples=num_haplotypes, max_sites=num_sites + 1)
+    for i in range(num_sites):
         ab.add_site(time=times[i], genotypes=gt_matrix[i])
     ab.add_terminal_site()
 
     result = []
     for t, focal in ab.ancestor_descriptors():
-        a = np.full(n_sites + 1, -1, dtype=np.int8)
+        a = np.full(num_sites + 1, -1, dtype=np.int8)
         ab.make_ancestor(focal, a)
-        a = a[:n_sites]
+        a = a[:num_sites]
         result.append((t, list(focal), a.copy()))
     result.sort(key=lambda x: -x[0])
     return result
@@ -107,10 +108,10 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        pos, alleles, anc_idx, site_idx = compute_inference_sites(store, None, None)
-        np.testing.assert_array_equal(pos, [10, 20, 30])
-        np.testing.assert_array_equal(anc_idx, [0, 0, 0])
-        np.testing.assert_array_equal(site_idx, [0, 1, 2])
+        result = compute_inference_sites(store, None, None)
+        np.testing.assert_array_equal(result.positions, [10, 20, 30])
+        np.testing.assert_array_equal(result.ancestral_allele_index, [0, 0, 0])
+        np.testing.assert_array_equal(result.site_mask, [0, 1, 2])
 
     def test_site_mask_excludes(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
@@ -123,8 +124,8 @@ class TestComputeInferenceSites:
             site_mask=np.array([False, True, False]),
         )
         mask = np.asarray(store["site_mask"][:])
-        pos, _, _, _ = compute_inference_sites(store, mask, None)
-        np.testing.assert_array_equal(pos, [10, 30])
+        result = compute_inference_sites(store, mask, None)
+        np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_missing_ancestral_state_excludes(self):
         # Site 1 has ancestral state not in alleles → excluded
@@ -136,8 +137,8 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "X", "A"],  # X not in alleles[1]
             sequence_length=100,
         )
-        pos, _, _, _ = compute_inference_sites(store, None, None)
-        np.testing.assert_array_equal(pos, [10, 30])
+        result = compute_inference_sites(store, None, None)
+        np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_ancestral_allele_index_not_always_zero(self):
         # Site 0: alleles=['T','A'], ancestral='A' → anc_idx=1
@@ -149,8 +150,8 @@ class TestComputeInferenceSites:
             ancestral_state=["A"],
             sequence_length=100,
         )
-        _, _, anc_idx, _ = compute_inference_sites(store, None, None)
-        assert anc_idx[0] == 1
+        result = compute_inference_sites(store, None, None)
+        assert result.ancestral_allele_index[0] == 1
 
     def test_external_ancestral_state(self):
         # AncestralState annotation from a separate sample VCZ (used as annotation)
@@ -172,9 +173,9 @@ class TestComputeInferenceSites:
             sequence_length=100,
         )
         anc_cfg = AncestralState(path=ann, field="variant_ancestral_allele")
-        pos, _, _, _ = compute_inference_sites(store, None, anc_cfg)
+        result = compute_inference_sites(store, None, anc_cfg)
         # Only positions 10 and 30 are annotated
-        np.testing.assert_array_equal(pos, [10, 30])
+        np.testing.assert_array_equal(result.positions, [10, 30])
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +245,10 @@ class TestInferAncestorsFormat:
             anc_states=["A", "A"],
         )
         anc = infer_ancestors(gt, _cfg())
-        n_sites, n_anc, ploidy = anc["call_genotype"].shape
-        assert n_sites == 2
+        num_sites, num_anc, ploidy = anc["call_genotype"].shape
+        assert num_sites == 2
         assert ploidy == 1
-        assert n_anc >= 1
+        assert num_anc >= 1
 
     def test_sample_ids_are_ancestor_N(self):
         gt = _haploid_store(
@@ -258,8 +259,8 @@ class TestInferAncestorsFormat:
         )
         anc = infer_ancestors(gt, _cfg())
         ids = [str(x) for x in anc["sample_id"][:].tolist()]
-        n_anc = anc["call_genotype"].shape[1]
-        assert ids == [f"ancestor_{i}" for i in range(n_anc)]
+        num_anc = anc["call_genotype"].shape[1]
+        assert ids == [f"ancestor_{i}" for i in range(num_anc)]
 
     def test_times_descending(self):
         # Higher-frequency site → higher time → comes first
@@ -374,7 +375,7 @@ class TestInferAncestorsVsPythonOracle:
                     break
 
         # Filter to actual inference sites (non-fixed)
-        n_hap = gt_matrix.shape[1]
+        num_hap = gt_matrix.shape[1]
         inf_sites = []
         inf_times = []
         for i in range(len(positions)):
@@ -391,7 +392,7 @@ class TestInferAncestorsVsPythonOracle:
             if nm == 0 or dc == 0 or dc == nm:
                 continue
             inf_sites.append(derived_gt)
-            inf_times.append(dc / n_hap)
+            inf_times.append(dc / num_hap)
 
         if not inf_sites:
             # Only the virtual root (index 0) should be present
@@ -402,9 +403,9 @@ class TestInferAncestorsVsPythonOracle:
 
         # The output includes the virtual root at index 0 (time=1.0, all zeros).
         # Skip it when comparing against the oracle which does not include it.
-        c_n_anc = anc["call_genotype"].shape[1]
-        assert c_n_anc == len(oracle_results) + 1, (
-            f"C engine produced {c_n_anc} ancestors (incl. virtual root), oracle "
+        c_num_anc = anc["call_genotype"].shape[1]
+        assert c_num_anc == len(oracle_results) + 1, (
+            f"C engine produced {c_num_anc} ancestors (incl. virtual root), oracle "
             f"produced {len(oracle_results)}"
         )
 
@@ -412,7 +413,7 @@ class TestInferAncestorsVsPythonOracle:
         # order-independent within groups that share the same time.
         # Skip column 0 (virtual root).
         gt_c = _anc_genotypes(anc)
-        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(1, c_n_anc))
+        c_haplotypes = sorted(gt_c[:, j].tolist() for j in range(1, c_num_anc))
         oracle_haplotypes = sorted(hap.tolist() for _, _, hap in oracle_results)
         assert c_haplotypes == oracle_haplotypes, (
             f"Ancestor haplotypes differ.\n"
@@ -574,7 +575,7 @@ class TestInferAncestorsScenarios:
 
     def test_diploid_input(self):
         # 2 diploid samples (4 haplotypes), ploidy=2
-        # Genotype shape (n_sites, n_samples, 2)
+        # Genotype shape (num_sites, num_samples, 2)
         gt = np.array(
             [
                 [[0, 0], [0, 1]],  # site 0: haplotypes 0,1,2,3 = 0,0,0,1
@@ -629,10 +630,10 @@ class TestInferAncestorsScenarios:
             anc_states=["A", "A"],
         )
         anc = infer_ancestors(gt, _cfg())
-        n_anc = anc["call_genotype"].shape[1]
+        num_anc = anc["call_genotype"].shape[1]
         focal_pos = np.asarray(anc["sample_focal_positions"][:])
         # Find the ancestor with 2 focal sites (no -2 in row)
-        has_multi_focal = any(np.sum(focal_pos[j] != -2) >= 2 for j in range(n_anc))
+        has_multi_focal = any(np.sum(focal_pos[j] != -2) >= 2 for j in range(num_anc))
         assert has_multi_focal
 
     def test_source_object_input(self):
