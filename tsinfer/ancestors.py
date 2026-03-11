@@ -106,6 +106,7 @@ def compute_inference_sites(
         ann_store = vcz_mod.open_store(ancestral_state.path)
         ann_positions = np.asarray(ann_store["variant_position"][:])
         ann_values = np.asarray(ann_store[ancestral_state.field][:])
+        # NOTE: potential perf bottleneck.
         ann_lookup = {
             int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
         }
@@ -119,6 +120,7 @@ def compute_inference_sites(
     anc_index = np.full(num_sites, -1, dtype=np.int8)
     for i in range(num_sites):
         for j, a in enumerate(alleles[i].tolist()):
+            # NOTE: not clear what `if a` is covering here, be more explicit.
             if a and a == str(anc_str[i]):
                 anc_index[i] = j
                 break
@@ -198,6 +200,8 @@ def infer_ancestors(
         site_mask_spec = source.site_mask
         sample_mask_spec = source.sample_mask
 
+    # NOTE: this is a perf bottleneck. The GT array is too large to load
+    # fully into memory. We will need chunk-aware iteration over the sites.
     call_gt = np.asarray(store["call_genotype"][:], dtype=np.int8)
     num_total_sites, num_samples, ploidy = call_gt.shape
 
@@ -220,6 +224,8 @@ def infer_ancestors(
     site_mask_arr = vcz_mod.resolve_field(
         store, site_mask_spec, "variant_position", num_total_sites
     )
+    # NOTE: we pass the site mask and the sample mask to the VCZ aware iteration
+    # function, because we can use this to avoid loading chunks we don't need.
 
     # --- 2. Compute inference sites ---
     inf_sites = compute_inference_sites(store, site_mask_arr, ancestral_state)
@@ -251,6 +257,7 @@ def infer_ancestors(
         orig_idx = int(orig_site_indices[i])
         gt_row = call_gt_flat[orig_idx]  # (num_haplotypes,)
         # 0 = ancestral, 1 = derived, -1 = missing
+        # NOTE: this line is opaque - split into two statements.
         derived_gt = np.where(
             gt_row < 0, np.int8(-1), np.where(gt_row == anc_idx, np.int8(0), np.int8(1))
         ).astype(np.int8)
@@ -341,9 +348,12 @@ def infer_ancestors(
                 }
             )
 
+    # NOTE don't sort any more, we need to be robust to times being mixed up arbitrarily.
     # Sort by descending time (oldest first), stable for equal times
     ancestors.sort(key=lambda x: -x["time"])
 
+    # NOTE: don't add this virtual all-zeros ancestor, we need to adjust for this
+    # elsewhere.
     # Prepend the virtual root (time=1.0, all-ancestral haplotype)
     virtual_hap = np.zeros(num_inf, dtype=np.int8)
     ancestors.insert(
