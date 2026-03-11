@@ -244,21 +244,23 @@ def iter_variants(
             yield {name: chunk_data[name][i] for name in chunk_data}
 
 
-def iter_genotypes(store, site_indices, sample_include=None):
+def iter_genotypes(store, positions, sample_include=None):
     """
-    Yield ``(num_haplotypes,)`` int8 genotype rows for the requested site
-    indices, one row per index in the order given.
+    Yield ``(num_haplotypes,)`` int8 genotype rows for the requested
+    positions, one row per position in the order given.
 
-    Reads ``call_genotype`` chunk-by-chunk so that at most one zarr chunk
-    is in memory at a time.  Sample selection and ploidy flattening are
-    applied transparently.
+    Positions are mapped to row indices via ``variant_position``.  Reads
+    ``call_genotype`` chunk-by-chunk so that at most one zarr chunk is in
+    memory at a time.  Sample selection and ploidy flattening are applied
+    transparently.
 
     Parameters
     ----------
     store : zarr.Group
-        VCZ store containing ``call_genotype``.
-    site_indices : array-like of int
-        Global row indices into ``call_genotype`` (must be non-decreasing).
+        VCZ store containing ``call_genotype`` and ``variant_position``.
+    positions : array-like of int
+        Genomic positions to retrieve (must be non-decreasing and present
+        in ``variant_position``).
     sample_include : array-like of bool or None
         Boolean mask (length ``num_samples``) where True means keep this
         sample.  ``None`` keeps all samples.
@@ -267,17 +269,21 @@ def iter_genotypes(store, site_indices, sample_include=None):
     ------
     np.ndarray
         ``(num_haplotypes,)`` int8 array — one flattened genotype row per
-        requested site index.
+        requested position.
     """
-    call_gt = store["call_genotype"]
-    site_indices = np.asarray(site_indices, dtype=np.int64)
+    positions = np.asarray(positions, dtype=np.int32)
 
-    if len(site_indices) == 0:
+    if len(positions) == 0:
         return
+
+    # Map positions to row indices
+    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+    site_indices = np.searchsorted(all_positions, positions).astype(np.int64)
 
     if sample_include is not None:
         sample_include = np.asarray(sample_include, dtype=bool)
 
+    call_gt = store["call_genotype"]
     try:
         chunk_size = call_gt.chunks[0]
     except (AttributeError, TypeError, IndexError):

@@ -41,7 +41,6 @@ class InferenceSites:
     positions: np.ndarray
     alleles: np.ndarray
     ancestral_allele_index: np.ndarray
-    global_indices: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +75,12 @@ def _compute_site_stats(
     - times: float64 array of length sum(keep_mask)
     """
     anc_indices = inf_sites.ancestral_allele_index
-    num_inf_sites = len(inf_sites.global_indices)
+    num_inf_sites = len(inf_sites.positions)
 
     keep_mask = np.zeros(num_inf_sites, dtype=bool)
     times_list = []
 
-    site_iter = vcz_mod.iter_genotypes(store, inf_sites.global_indices, sample_include)
+    site_iter = vcz_mod.iter_genotypes(store, inf_sites.positions, sample_include)
     if progress:
         import tqdm
 
@@ -138,8 +137,6 @@ def compute_inference_sites(
     Variant filtering (include/exclude/regions/targets) is delegated to
     vcztools via ``iter_variants``.
     """
-    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-
     # Build external ancestral state lookup if configured
     ann_lookup = None
     if ancestral_state is not None:
@@ -158,10 +155,6 @@ def compute_inference_sites(
     pos_list = []
     allele_list = []
     anc_idx_list = []
-    global_idx_list = []
-
-    # Map filtered positions to global row indices
-    pos_to_global = {int(p): i for i, p in enumerate(all_positions.tolist())}
 
     for variant in vcz_mod.iter_variants(
         store,
@@ -192,21 +185,18 @@ def compute_inference_sites(
         pos_list.append(pos)
         allele_list.append(site_alleles)
         anc_idx_list.append(anc_idx)
-        global_idx_list.append(pos_to_global[pos])
 
     if not pos_list:
         return InferenceSites(
             positions=np.zeros(0, dtype=np.int32),
             alleles=np.zeros((0, 0), dtype=object),
             ancestral_allele_index=np.zeros(0, dtype=np.int8),
-            global_indices=np.zeros(0, dtype=np.int32),
         )
 
     return InferenceSites(
         positions=np.array(pos_list, dtype=np.int32),
         alleles=np.stack(allele_list),
         ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
-        global_indices=np.array(global_idx_list, dtype=np.int32),
     )
 
 
@@ -317,7 +307,6 @@ def infer_ancestors(
     final_positions = inf_sites.positions[keep_mask]
     final_alleles = inf_sites.alleles[keep_mask]
     final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
-    final_orig_indices = inf_sites.global_indices[keep_mask]
 
     num_inf = len(final_positions)
     logger.info(
@@ -375,14 +364,14 @@ def infer_ancestors(
         n_local = len(local_mask)
 
         # Create per-interval AncestorBuilder, streaming genotypes from store
-        local_orig_indices = final_orig_indices[local_mask]
+        local_positions = final_positions[local_mask]
         local_anc_indices = final_anc_indices[local_mask]
         local_times = times[local_mask]
         n_ab_sites = n_local + 1  # +1 for terminal
         ab = _tsinfer.AncestorBuilder(num_samples=num_haplotypes, max_sites=n_ab_sites)
 
         for j, gt_row in enumerate(
-            vcz_mod.iter_genotypes(store, local_orig_indices, sample_include)
+            vcz_mod.iter_genotypes(store, local_positions, sample_include)
         ):
             anc_idx = int(local_anc_indices[j])
             is_missing = gt_row < 0
