@@ -41,7 +41,7 @@ class InferenceSites:
     positions: np.ndarray
     alleles: np.ndarray
     ancestral_allele_index: np.ndarray
-    site_mask: np.ndarray
+    global_indices: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +76,12 @@ def _compute_site_stats(
     - times: float64 array of length sum(keep_mask)
     """
     anc_indices = inf_sites.ancestral_allele_index
-    num_inf_sites = len(inf_sites.site_mask)
+    num_inf_sites = len(inf_sites.global_indices)
 
     keep_mask = np.zeros(num_inf_sites, dtype=bool)
     times_list = []
 
-    site_iter = vcz_mod.iter_genotypes(store, inf_sites.site_mask, sample_include)
+    site_iter = vcz_mod.iter_genotypes(store, inf_sites.global_indices, sample_include)
     if progress:
         import tqdm
 
@@ -124,51 +124,89 @@ def _compute_site_stats(
 
 def compute_inference_sites(
     store: zarr.Group,
-    site_mask_arr,
     ancestral_state: AncestralState | None,
+    *,
+    include: str | None = None,
+    exclude: str | None = None,
+    regions: str | None = None,
+    targets: str | None = None,
 ):
     """
-    Return an InferenceSites dataclass for sites that pass the mask and have
-    a valid ancestral allele.
-    """
-    positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-    alleles = np.asarray(store["variant_allele"][:])
-    num_sites = len(positions)
+    Return an InferenceSites dataclass for sites that pass filtering and
+    have a valid ancestral allele.
 
+    Variant filtering (include/exclude/regions/targets) is delegated to
+    vcztools via ``iter_variants``.
+    """
+    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+
+    # Build external ancestral state lookup if configured
+    ann_lookup = None
     if ancestral_state is not None:
         ann_store = vcz_mod.open_store(ancestral_state.path)
         ann_positions = np.asarray(ann_store["variant_position"][:])
         ann_values = np.asarray(ann_store[ancestral_state.field][:])
-        # NOTE: potential perf bottleneck.
         ann_lookup = {
             int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
         }
-        anc_str = np.array(
-            [ann_lookup.get(int(p), "") for p in positions.tolist()], dtype=object
-        )
-    else:
-        anc_str = np.asarray(store["variant_ancestral_allele"][:])
 
-    # Find ancestral allele index at each site (-1 if not found)
-    anc_index = np.full(num_sites, -1, dtype=np.int8)
-    for i in range(num_sites):
-        for j, a in enumerate(alleles[i].tolist()):
-            if a is not None and a != "" and a == str(anc_str[i]):
-                anc_index[i] = j
+    # Iterate variants that pass vcztools filters, collecting metadata
+    fields = ["variant_position", "variant_allele"]
+    if ancestral_state is None:
+        fields.append("variant_ancestral_allele")
+
+    pos_list = []
+    allele_list = []
+    anc_idx_list = []
+    global_idx_list = []
+
+    # Map filtered positions to global row indices
+    pos_to_global = {int(p): i for i, p in enumerate(all_positions.tolist())}
+
+    for variant in vcz_mod.iter_variants(
+        store,
+        fields=fields,
+        include=include,
+        exclude=exclude,
+        regions=regions,
+        targets=targets,
+    ):
+        pos = int(variant["variant_position"])
+        site_alleles = variant["variant_allele"]
+
+        if ann_lookup is not None:
+            anc_str = ann_lookup.get(pos, "")
+        else:
+            anc_str = str(variant["variant_ancestral_allele"])
+
+        # Find ancestral allele index
+        anc_idx = -1
+        for j, a in enumerate(site_alleles.tolist()):
+            if a is not None and a != "" and a == anc_str:
+                anc_idx = j
                 break
 
-    # Build inclusion mask
-    include = np.ones(num_sites, dtype=bool)
-    if site_mask_arr is not None:
-        include &= ~np.asarray(site_mask_arr, dtype=bool)
-    include &= anc_index >= 0
+        if anc_idx < 0:
+            continue
 
-    sel = np.where(include)[0]
+        pos_list.append(pos)
+        allele_list.append(site_alleles)
+        anc_idx_list.append(anc_idx)
+        global_idx_list.append(pos_to_global[pos])
+
+    if not pos_list:
+        return InferenceSites(
+            positions=np.zeros(0, dtype=np.int32),
+            alleles=np.zeros((0, 0), dtype=object),
+            ancestral_allele_index=np.zeros(0, dtype=np.int8),
+            global_indices=np.zeros(0, dtype=np.int32),
+        )
+
     return InferenceSites(
-        positions=positions[sel],
-        alleles=alleles[sel],
-        ancestral_allele_index=anc_index[sel],
-        site_mask=sel.astype(np.int32),
+        positions=np.array(pos_list, dtype=np.int32),
+        alleles=np.stack(allele_list),
+        ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
+        global_indices=np.array(global_idx_list, dtype=np.int32),
     )
 
 
@@ -223,25 +261,30 @@ def infer_ancestors(
     """
     logger.info("Starting ancestor inference")
 
-    # --- 1. Open store and resolve masks ---
+    # --- 1. Open store and resolve filtering ---
     if isinstance(source, zarr.Group):
         store = source
-        site_mask_spec = None
-        sample_mask_spec = None
+        include_expr = None
+        exclude_expr = None
+        samples_str = None
+        regions_str = None
+        targets_str = None
     else:
         store = vcz_mod.open_store(source.path)
-        site_mask_spec = source.site_mask
-        sample_mask_spec = source.sample_mask
+        include_expr = source.include
+        exclude_expr = source.exclude
+        samples_str = source.samples
+        regions_str = source.regions
+        targets_str = source.targets
 
     gt_shape = store["call_genotype"].shape
     num_total_sites, num_samples, ploidy = gt_shape
 
-    sample_mask_arr = vcz_mod.resolve_field(
-        store, sample_mask_spec, "sample_id", num_samples
-    )
-    if sample_mask_arr is not None:
-        sample_include = ~np.asarray(sample_mask_arr, dtype=bool)
-        num_samples_used = int(np.sum(sample_include))
+    samples_selection = vcz_mod.resolve_samples_selection(store, samples_str)
+    if samples_selection is not None:
+        sample_include = np.zeros(num_samples, dtype=bool)
+        sample_include[samples_selection] = True
+        num_samples_used = len(samples_selection)
     else:
         sample_include = None
         num_samples_used = num_samples
@@ -254,12 +297,15 @@ def infer_ancestors(
         num_haplotypes,
     )
 
-    site_mask_arr = vcz_mod.resolve_field(
-        store, site_mask_spec, "variant_position", num_total_sites
-    )
-
     # --- 2. Compute inference sites ---
-    inf_sites = compute_inference_sites(store, site_mask_arr, ancestral_state)
+    inf_sites = compute_inference_sites(
+        store,
+        ancestral_state,
+        include=include_expr,
+        exclude=exclude_expr,
+        regions=regions_str,
+        targets=targets_str,
+    )
     logger.info("Inference sites identified: %d", len(inf_sites.positions))
 
     # --- 3. Pass 1: compute site stats ---
@@ -271,7 +317,7 @@ def infer_ancestors(
     final_positions = inf_sites.positions[keep_mask]
     final_alleles = inf_sites.alleles[keep_mask]
     final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
-    final_orig_indices = inf_sites.site_mask[keep_mask]
+    final_orig_indices = inf_sites.global_indices[keep_mask]
 
     num_inf = len(final_positions)
     logger.info(
