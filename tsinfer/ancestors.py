@@ -148,6 +148,8 @@ def compute_inference_sites(
     pos_list = []
     allele_list = []
     anc_idx_list = []
+    num_filtered = 0
+    num_no_ancestral = 0
 
     for variant in vcz_mod.iter_variants(
         store,
@@ -157,6 +159,7 @@ def compute_inference_sites(
         regions=regions,
         targets=targets,
     ):
+        num_filtered += 1
         pos = int(variant["variant_position"])
         site_alleles = variant["variant_allele"]
 
@@ -173,11 +176,18 @@ def compute_inference_sites(
                 break
 
         if anc_idx < 0:
+            num_no_ancestral += 1
             continue
 
         pos_list.append(pos)
         allele_list.append(site_alleles)
         anc_idx_list.append(anc_idx)
+
+    logger.info(
+        "Sites passing variant filters: %d; skipped %d (no ancestral allele match)",
+        num_filtered,
+        num_no_ancestral,
+    )
 
     if not pos_list:
         return InferenceSites(
@@ -322,26 +332,43 @@ def infer_ancestors(
         samples_str = source.samples
         regions_str = source.regions
         targets_str = source.targets
+        logger.info("Source: %s", source.path)
 
     gt_shape = store["call_genotype"].shape
     num_total_sites, num_samples, ploidy = gt_shape
+    logger.info(
+        "Store: %d sites, %d samples, ploidy %d",
+        num_total_sites,
+        num_samples,
+        ploidy,
+    )
+
+    # Log active filters
+    if include_expr is not None:
+        logger.info("Variant filter (include): %s", include_expr)
+    if exclude_expr is not None:
+        logger.info("Variant filter (exclude): %s", exclude_expr)
+    if regions_str is not None:
+        logger.info("Region filter: %s", regions_str)
+    if targets_str is not None:
+        logger.info("Targets filter: %s", targets_str)
 
     samples_selection = vcz_mod.resolve_samples_selection(store, samples_str)
     if samples_selection is not None:
         sample_include = np.zeros(num_samples, dtype=bool)
         sample_include[samples_selection] = True
         num_samples_used = len(samples_selection)
+        logger.info(
+            "Sample filter: %d of %d samples selected (%d haplotypes)",
+            num_samples_used,
+            num_samples,
+            num_samples_used * ploidy,
+        )
     else:
         sample_include = None
         num_samples_used = num_samples
     num_haplotypes = num_samples_used * ploidy
-    logger.info(
-        "Store: %d sites, %d samples, ploidy %d (%d haplotypes)",
-        num_total_sites,
-        num_samples_used,
-        ploidy,
-        num_haplotypes,
-    )
+    logger.info("Using %d samples, %d haplotypes", num_samples_used, num_haplotypes)
 
     # --- 2. Compute inference sites ---
     inf_sites = compute_inference_sites(
@@ -365,9 +392,18 @@ def infer_ancestors(
     final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
 
     num_inf = len(final_positions)
+    num_dropped = len(inf_sites.positions) - num_inf
     logger.info(
-        "Pass 1 complete: %d sites kept (of %d)", num_inf, len(inf_sites.positions)
+        "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)",
+        num_inf,
+        num_dropped,
     )
+    if num_inf > 0:
+        logger.info(
+            "Inference site range: %d–%d",
+            int(final_positions[0]),
+            int(final_positions[-1]),
+        )
 
     if num_inf == 0:
         seq_len = vcz_mod.sequence_length(store)
@@ -389,7 +425,10 @@ def infer_ancestors(
     )
 
     # --- 5. Pass 2: per-interval ancestor building ---
-    logger.info("Pass 2: building ancestors per interval")
+    if num_threads > 0:
+        logger.info("Pass 2: building ancestors per interval (%d threads)", num_threads)
+    else:
+        logger.info("Pass 2: building ancestors per interval (synchronous)")
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
     writer = vcz_mod.AncestorWriter(
@@ -443,8 +482,15 @@ def infer_ancestors(
                 ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
             ab.add_terminal_site()
 
-            logger.info("Interval %d: %d sites, generating ancestors", i_idx, n_local)
             ancestor_descriptors = list(ab.ancestor_descriptors())
+            logger.info(
+                "Interval %d: %d sites (%d–%d), %d ancestors",
+                i_idx,
+                n_local,
+                int(local_positions[0]),
+                int(local_positions[-1]),
+                len(ancestor_descriptors),
+            )
 
             # Submit all ancestors for this interval to the executor
             futures = []

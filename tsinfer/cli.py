@@ -58,6 +58,9 @@ def _setup_logging(verbose: int) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    # Suppress noisy third-party debug logs
+    logging.getLogger("zarr").setLevel(max(level, logging.WARNING))
+    logging.getLogger("numcodecs").setLevel(max(level, logging.WARNING))
 
 
 def _check_output(path: str | Path, force: bool) -> None:

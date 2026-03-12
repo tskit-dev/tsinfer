@@ -42,6 +42,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 from __future__ import annotations
 
 import logging
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -485,6 +486,7 @@ class AncestorWriter:
         if not self._buffer:
             return
 
+        t0 = _time.monotonic()
         n = len(self._buffer)
         ns = self._num_sites
 
@@ -506,6 +508,13 @@ class AncestorWriter:
 
         self._num_flushed += n
         self._buffer.clear()
+        elapsed = _time.monotonic() - t0
+        logger.debug(
+            "Flushed chunk: %d ancestors (%d total) in %.3fs",
+            n,
+            self._num_flushed,
+            elapsed,
+        )
 
     # -----------------------------------------------------------------
 
@@ -513,6 +522,9 @@ class AncestorWriter:
         """Flush remaining buffer and write final arrays.  Returns the Group."""
         self._flush()
         num_anc = self._num_flushed
+        logger.debug("Finalizing AncestorWriter: %d ancestors total", num_anc)
+
+        t0 = _time.monotonic()
 
         # sample_id — trivial, write once
         ids = np.array([f"ancestor_{i}" for i in range(num_anc)])
@@ -540,6 +552,8 @@ class AncestorWriter:
             ["samples", "focal_alleles"],
         )
 
+        elapsed = _time.monotonic() - t0
+        logger.debug("Finalize complete in %.3fs", elapsed)
         return self._root
 
 
