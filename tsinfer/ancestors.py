@@ -510,20 +510,25 @@ def infer_ancestors(
                 futures.append(future)
                 ancestor_index += 1
 
-            # Consume in submission order for deterministic output
+            # Consume in submission order for deterministic output.
+            # Null out each future after consumption so the
+            # AncestorResult (and its haplotype array) can be freed.
+            consume_iter = range(len(futures))
             if progress:
-                futures = tqdm.tqdm(futures, desc="Interval ancestors", unit="haps")
-            for future in futures:
-                anc = future.result()
-                if anc is None:
-                    continue
-                writer.add_ancestor(
-                    anc.time,
-                    anc.haplotype,
-                    anc.focal_positions,
-                    anc.start_position,
-                    anc.end_position,
+                consume_iter = tqdm.tqdm(
+                    consume_iter, desc="Interval ancestors", unit="haps"
                 )
+            for i in consume_iter:
+                anc = futures[i].result()
+                futures[i] = None
+                if anc is not None:
+                    writer.add_ancestor(
+                        anc.time,
+                        anc.haplotype,
+                        anc.focal_positions,
+                        anc.start_position,
+                        anc.end_position,
+                    )
 
     result = writer.finalize()
     logger.info(
