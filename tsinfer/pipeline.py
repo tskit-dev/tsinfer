@@ -624,7 +624,12 @@ def _split_ultimate(ts: tskit.TreeSequence) -> tskit.TreeSequence:
     return ts
 
 
-def run(cfg: Config, progress: bool = False, **kwargs) -> tskit.TreeSequence:
+def run(
+    cfg: Config,
+    progress: bool = False,
+    num_threads: int = 0,
+    **kwargs,
+) -> tskit.TreeSequence:
     """
     Run the full pipeline: infer_ancestors, match, post_process.
     """
@@ -632,7 +637,11 @@ def run(cfg: Config, progress: bool = False, **kwargs) -> tskit.TreeSequence:
     source_name = cfg.ancestors.sources[0]
     source = cfg.sources[source_name]
     ancestor_store = infer_ancestors(
-        source, cfg.ancestors, cfg.ancestral_state, progress=progress
+        source,
+        cfg.ancestors,
+        cfg.ancestral_state,
+        progress=progress,
+        num_threads=num_threads,
     )
 
     original_path = cfg.ancestors.path
