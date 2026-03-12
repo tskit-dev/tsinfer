@@ -26,6 +26,7 @@ from __future__ import annotations
 import pathlib
 
 import numpy as np
+import pytest
 import zarr
 from helpers import make_sample_vcz
 
@@ -1220,3 +1221,107 @@ class TestProgress:
         )
         anc = infer_ancestors(gt, _cfg())
         assert anc["call_genotype"].shape[1] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Threading
+# ---------------------------------------------------------------------------
+
+
+class TestSynchronousExecutor:
+    def test_submit_returns_completed_future(self):
+        from tsinfer.utils import SynchronousExecutor
+
+        executor = SynchronousExecutor()
+        future = executor.submit(lambda x, y: x + y, 3, 4)
+        assert future.result() == 7
+
+    def test_context_manager(self):
+        from tsinfer.utils import SynchronousExecutor
+
+        with SynchronousExecutor() as executor:
+            future = executor.submit(sorted, [3, 1, 2])
+            assert future.result() == [1, 2, 3]
+
+    def test_exception_propagation(self):
+        from tsinfer.utils import SynchronousExecutor
+
+        def fail():
+            raise ValueError("boom")
+
+        executor = SynchronousExecutor()
+        # SynchronousExecutor executes immediately, so the exception
+        # is raised during submit. This mirrors bio2zarr's behaviour.
+        with pytest.raises(ValueError, match="boom"):
+            executor.submit(fail)
+
+
+class TestThreadedAncestorGeneration:
+    """Verify threaded ancestor generation produces identical output."""
+
+    @staticmethod
+    def _compare_ancestors(a, b):
+        for name in (
+            "call_genotype",
+            "sample_time",
+            "sample_start_position",
+            "sample_end_position",
+            "sample_focal_positions",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(a[name][:]),
+                np.asarray(b[name][:]),
+                err_msg=f"Mismatch in {name}",
+            )
+
+    @pytest.mark.parametrize("num_threads", [1, 2, 3, 5, 15])
+    def test_threaded_matches_synchronous(self, num_threads):
+        """Threaded output is identical to synchronous for various thread counts."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc_sync = infer_ancestors(gt, _cfg(), num_threads=0)
+        anc_threaded = infer_ancestors(gt, _cfg(), num_threads=num_threads)
+        self._compare_ancestors(anc_sync, anc_threaded)
+
+    @pytest.mark.parametrize("num_threads", [1, 2, 3, 5, 15])
+    def test_threaded_multi_interval(self, num_threads):
+        """Threaded mode with multiple genomic intervals matches synchronous."""
+        gt = _haploid_store(
+            [[0, 1], [0, 1], [0, 1], [0, 1]],
+            positions=[100, 200, 800_000, 900_000],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+            seq_len=1_000_000,
+        )
+        anc_sync = infer_ancestors(gt, _cfg(max_gap_length=500_000), num_threads=0)
+        anc_threaded = infer_ancestors(
+            gt, _cfg(max_gap_length=500_000), num_threads=num_threads
+        )
+        self._compare_ancestors(anc_sync, anc_threaded)
+
+    def test_threaded_empty_result(self):
+        """Threaded mode handles all-fixed sites (zero ancestors)."""
+        gt = _haploid_store(
+            [[0, 0], [0, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        anc = infer_ancestors(gt, _cfg(), num_threads=2)
+        assert anc["call_genotype"].shape[1] == 0
+
+    def test_threaded_small_chunk_size(self):
+        """Threaded mode with small chunk size produces same output."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc_sync = infer_ancestors(gt, _cfg(samples_chunk_size=1), num_threads=0)
+        anc_threaded = infer_ancestors(gt, _cfg(samples_chunk_size=1), num_threads=2)
+        self._compare_ancestors(anc_sync, anc_threaded)

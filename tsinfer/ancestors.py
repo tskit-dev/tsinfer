@@ -22,6 +22,7 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 from dataclasses import dataclass
 
@@ -32,6 +33,7 @@ import _tsinfer
 
 from . import vcz as vcz_mod
 from .config import AncestorsConfig, AncestralState, Source
+from .utils import SynchronousExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -224,11 +226,74 @@ def compute_sequence_intervals(
     return np.array(intervals, dtype=np.int32)
 
 
+@dataclass
+class AncestorResult:
+    """Result of building a single ancestor haplotype."""
+
+    index: int
+    time: float
+    haplotype: np.ndarray
+    focal_positions: np.ndarray
+    start_position: int
+    end_position: int
+
+
+def _build_one_ancestor(
+    ab,
+    time,
+    focal_sites,
+    n_ab_sites,
+    n_local,
+    local_mask,
+    final_positions,
+    num_inf,
+    ancestor_index,
+):
+    """
+    Build a single ancestor haplotype from a finalized AncestorBuilder.
+
+    This is the per-ancestor work extracted from the inner loop of Pass 2
+    so it can be submitted to a thread pool. The AncestorBuilder's
+    ``make_ancestor`` reads only from finalized (immutable) builder state
+    and writes into caller-owned arrays, so concurrent calls are safe.
+
+    Returns an :class:`AncestorResult` or ``None`` if the ancestor is
+    all-missing.
+    """
+    focal_arr = np.asarray(focal_sites, dtype=np.int32)
+    a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
+    ab.make_ancestor(focal_arr.tolist(), a)
+    a = a[:n_local]  # trim terminal
+
+    non_missing = np.where(a != -1)[0]
+    if len(non_missing) == 0:
+        return None
+
+    # Map local haplotype to global inference site coordinates
+    global_hap = np.full(num_inf, np.int8(-1), dtype=np.int8)
+    global_hap[local_mask] = a
+
+    start_pos = int(final_positions[local_mask[non_missing[0]]])
+    end_pos = int(final_positions[local_mask[non_missing[-1]]])
+    focal_global = local_mask[focal_arr]
+    focal_pos = final_positions[focal_global]
+
+    return AncestorResult(
+        index=ancestor_index,
+        time=float(time),
+        haplotype=global_hap,
+        focal_positions=focal_pos,
+        start_position=start_pos,
+        end_position=end_pos,
+    )
+
+
 def infer_ancestors(
     source: Source | zarr.Group,
     cfg: AncestorsConfig,
     ancestral_state: AncestralState | None = None,
     progress: bool = False,
+    num_threads: int = 0,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from a samples VCZ store.
@@ -338,6 +403,11 @@ def infer_ancestors(
         variants_chunk_size=cfg.variants_chunk_size,
     )
 
+    if num_threads > 0:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_threads)
+    else:
+        executor = SynchronousExecutor()
+
     interval_range = range(len(seq_intervals))
     if progress:
         import tqdm
@@ -346,57 +416,68 @@ def infer_ancestors(
             interval_range, desc="Pass 2: intervals", unit="intervals"
         )
 
-    for i_idx in interval_range:
-        in_interval = site_interval_idx == i_idx
-        if not np.any(in_interval):
-            continue
-
-        local_mask = np.where(in_interval)[0]
-        n_local = len(local_mask)
-
-        # Create per-interval AncestorBuilder, streaming genotypes from store
-        local_positions = final_positions[local_mask]
-        local_anc_indices = final_anc_indices[local_mask]
-        local_times = times[local_mask]
-        n_ab_sites = n_local + 1  # +1 for terminal
-        ab = _tsinfer.AncestorBuilder(num_samples=num_haplotypes, max_sites=n_ab_sites)
-
-        for j, derived_gt in enumerate(
-            vcz_mod.iter_genotypes(
-                store, local_positions, local_anc_indices, sample_include
-            )
-        ):
-            ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
-        ab.add_terminal_site()
-
-        logger.info("Interval %d: %d sites, generating ancestors", i_idx, n_local)
-        ancestor_descriptors = list(ab.ancestor_descriptors())
-        if progress:
-            ancestor_descriptors = tqdm.tqdm(
-                ancestor_descriptors, desc="Interval ancestors", unit="haps"
-            )
-
-        # Generate ancestors for this interval
-        for time, focal_sites in ancestor_descriptors:
-            focal_arr = np.asarray(focal_sites, dtype=np.int32)
-            a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
-            ab.make_ancestor(focal_arr.tolist(), a)
-            a = a[:n_local]  # trim terminal
-
-            non_missing = np.where(a != -1)[0]
-            if len(non_missing) == 0:
+    ancestor_index = 0
+    with executor:
+        for i_idx in interval_range:
+            in_interval = site_interval_idx == i_idx
+            if not np.any(in_interval):
                 continue
 
-            # Map local haplotype to global inference site coordinates
-            global_hap = np.full(num_inf, np.int8(-1), dtype=np.int8)
-            global_hap[local_mask] = a
+            local_mask = np.where(in_interval)[0]
+            n_local = len(local_mask)
 
-            start_pos = int(final_positions[local_mask[non_missing[0]]])
-            end_pos = int(final_positions[local_mask[non_missing[-1]]])
-            focal_global = local_mask[focal_arr]
-            focal_pos = final_positions[focal_global]
+            # Create per-interval AncestorBuilder, streaming genotypes from store
+            local_positions = final_positions[local_mask]
+            local_anc_indices = final_anc_indices[local_mask]
+            local_times = times[local_mask]
+            n_ab_sites = n_local + 1  # +1 for terminal
+            ab = _tsinfer.AncestorBuilder(
+                num_samples=num_haplotypes, max_sites=n_ab_sites
+            )
 
-            writer.add_ancestor(float(time), global_hap, focal_pos, start_pos, end_pos)
+            for j, derived_gt in enumerate(
+                vcz_mod.iter_genotypes(
+                    store, local_positions, local_anc_indices, sample_include
+                )
+            ):
+                ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
+            ab.add_terminal_site()
+
+            logger.info("Interval %d: %d sites, generating ancestors", i_idx, n_local)
+            ancestor_descriptors = list(ab.ancestor_descriptors())
+
+            # Submit all ancestors for this interval to the executor
+            futures = []
+            for time, focal_sites in ancestor_descriptors:
+                future = executor.submit(
+                    _build_one_ancestor,
+                    ab,
+                    time,
+                    focal_sites,
+                    n_ab_sites,
+                    n_local,
+                    local_mask,
+                    final_positions,
+                    num_inf,
+                    ancestor_index,
+                )
+                futures.append(future)
+                ancestor_index += 1
+
+            # Consume in submission order for deterministic output
+            if progress:
+                futures = tqdm.tqdm(futures, desc="Interval ancestors", unit="haps")
+            for future in futures:
+                anc = future.result()
+                if anc is None:
+                    continue
+                writer.add_ancestor(
+                    anc.time,
+                    anc.haplotype,
+                    anc.focal_positions,
+                    anc.start_position,
+                    anc.end_position,
+                )
 
     result = writer.finalize()
     logger.info(
