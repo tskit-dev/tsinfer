@@ -1406,7 +1406,7 @@ class TestSynchronousExecutor:
 
         executor = SynchronousExecutor()
         # SynchronousExecutor executes immediately, so the exception
-        # is raised during submit. This mirrors bio2zarr's behaviour.
+        # is raised during submit.
         with pytest.raises(ValueError, match="boom"):
             executor.submit(fail)
 
