@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import resource
 from dataclasses import dataclass
 
 import numpy as np
@@ -36,6 +37,12 @@ from .config import AncestorsConfig, AncestralState, Source
 from .utils import SynchronousExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def _memory_usage_mb():
+    """Return current max RSS in MiB (Unix) via the resource module."""
+    # ru_maxrss is in KiB on Linux
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 
 @dataclass
@@ -311,7 +318,7 @@ def infer_ancestors(
     No virtual root is inserted; that is the responsibility of the match step.
     Ancestors are not sorted by time.
     """
-    logger.info("Starting ancestor inference")
+    logger.info("Starting ancestor inference (RSS=%.1fMiB)", _memory_usage_mb())
 
     # --- 1. Open store and resolve filtering ---
     if isinstance(source, zarr.Group):
@@ -390,9 +397,11 @@ def infer_ancestors(
     num_inf = len(final_positions)
     num_dropped = len(inf_sites.positions) - num_inf
     logger.info(
-        "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)",
+        "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)"
+        " (RSS=%.1fMiB)",
         num_inf,
         num_dropped,
+        _memory_usage_mb(),
     )
     if num_inf > 0:
         logger.info(
@@ -422,9 +431,16 @@ def infer_ancestors(
 
     # --- 5. Pass 2: per-interval ancestor building ---
     if num_threads > 0:
-        logger.info("Pass 2: building ancestors per interval (%d threads)", num_threads)
+        logger.info(
+            "Pass 2: building ancestors per interval (%d threads, RSS=%.1fMiB)",
+            num_threads,
+            _memory_usage_mb(),
+        )
     else:
-        logger.info("Pass 2: building ancestors per interval (synchronous)")
+        logger.info(
+            "Pass 2: building ancestors per interval (synchronous, RSS=%.1fMiB)",
+            _memory_usage_mb(),
+        )
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
     writer = vcz_mod.AncestorWriter(
@@ -480,12 +496,13 @@ def infer_ancestors(
 
             ancestor_descriptors = list(ab.ancestor_descriptors())
             logger.info(
-                "Interval %d: %d sites (%d–%d), %d ancestors",
+                "Interval %d: %d sites (%d–%d), %d ancestors (RSS=%.1fMiB)",
                 i_idx,
                 n_local,
                 int(local_positions[0]),
                 int(local_positions[-1]),
                 len(ancestor_descriptors),
+                _memory_usage_mb(),
             )
 
             # Submit all ancestors for this interval to the executor.
@@ -512,13 +529,16 @@ def infer_ancestors(
             # index-aware pending dict ensures deterministic output
             # regardless of completion order.
             completed = concurrent.futures.as_completed(futures)
+            pbar = None
             if progress:
-                completed = tqdm.tqdm(
+                pbar = tqdm.tqdm(
                     completed,
                     total=len(futures),
                     desc="Interval ancestors",
                     unit="haps",
+                    postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
                 )
+                completed = pbar
             for future in completed:
                 anc = future.result()
                 futures.discard(future)
@@ -530,11 +550,14 @@ def infer_ancestors(
                     anc.start_position,
                     anc.end_position,
                 )
+                if pbar is not None:
+                    pbar.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
 
     result = writer.finalize()
     logger.info(
-        "Ancestor inference complete: %d ancestors across %d sites",
+        "Ancestor inference complete: %d ancestors across %d sites (RSS=%.1fMiB)",
         result["call_genotype"].shape[1],
         num_inf,
+        _memory_usage_mb(),
     )
     return result
