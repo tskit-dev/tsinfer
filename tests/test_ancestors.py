@@ -37,6 +37,7 @@ from tsinfer.ancestors import (
 )
 from tsinfer.config import AncestorsConfig, AncestralState
 from tsinfer.vcz import (
+    AncestorWriter,
     iter_genotypes,
     open_group,
     write_empty_ancestor_vcz,
@@ -1012,6 +1013,160 @@ class TestAncestorWriterChunking:
                 if int(fp) == -2:
                     break
                 assert gt_out[pos_to_idx[int(fp)], j] == 1
+
+
+class TestAncestorWriterIndexed:
+    """Test AncestorWriter's index parameter for out-of-order insertion."""
+
+    @staticmethod
+    def _make_writer(num_sites, samples_chunk_size=1000):
+        positions = np.arange(num_sites, dtype=np.int32) * 100
+        alleles = np.array([["A", "T"]] * num_sites)
+        anc_indices = np.zeros(num_sites, dtype=np.int8)
+        seq_intervals = np.array([[0, num_sites * 100]], dtype=np.int32)
+        return AncestorWriter(
+            num_sites,
+            positions,
+            alleles,
+            anc_indices,
+            seq_intervals,
+            store=None,
+            samples_chunk_size=samples_chunk_size,
+        )
+
+    @staticmethod
+    def _make_haplotype(num_sites, focal_idx):
+        """Create a haplotype with derived allele at focal_idx, rest missing."""
+        hap = np.full(num_sites, np.int8(-1), dtype=np.int8)
+        hap[focal_idx] = 1
+        return hap
+
+    @staticmethod
+    def _compare_groups(a, b):
+        for name in (
+            "call_genotype",
+            "sample_time",
+            "sample_start_position",
+            "sample_end_position",
+            "sample_focal_positions",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(a[name][:]),
+                np.asarray(b[name][:]),
+                err_msg=f"Mismatch in {name}",
+            )
+
+    def test_reversed_order(self):
+        """Ancestors inserted in reverse order produce same output as sequential."""
+        ns = 5
+        n_anc = 4
+        w_seq = self._make_writer(ns)
+        w_rev = self._make_writer(ns)
+        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
+        fps = [np.array([i * 100], dtype=np.int32) for i in range(n_anc)]
+        for i in range(n_anc):
+            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        for i in reversed(range(n_anc)):
+            w_rev.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        self._compare_groups(w_seq.finalize(), w_rev.finalize())
+
+    def test_interleaved_order(self):
+        """Ancestors inserted in a shuffled order produce correct output."""
+        ns = 5
+        n_anc = 6
+        order = [3, 0, 5, 1, 4, 2]
+        w_seq = self._make_writer(ns)
+        w_shuf = self._make_writer(ns)
+        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
+        fps = [np.array([i * 100], dtype=np.int32) for i in range(n_anc)]
+        for i in range(n_anc):
+            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        for i in order:
+            w_shuf.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        self._compare_groups(w_seq.finalize(), w_shuf.finalize())
+
+    @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5])
+    def test_chunk_boundary_crossing(self, chunk_size):
+        """Out-of-order insertion with various chunk sizes that don't
+        evenly divide the ancestor count."""
+        ns = 4
+        n_anc = 7  # deliberately not divisible by most chunk sizes
+        order = [6, 2, 0, 4, 1, 5, 3]
+        w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
+        w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
+        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
+        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
+        for i in range(n_anc):
+            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        for i in order:
+            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
+
+    @pytest.mark.parametrize("chunk_size", [1, 2, 3])
+    def test_multi_interval_simulation(self, chunk_size):
+        """Simulate two intervals with non-aligned ancestor counts,
+        inserting out of order within each interval but sequentially
+        across intervals (as the real code does)."""
+        ns = 4
+        # Interval 0: 3 ancestors (indices 0, 1, 2)
+        # Interval 1: 5 ancestors (indices 3, 4, 5, 6, 7)
+        # Total: 8 ancestors, chunk boundary at various points
+        n_anc = 8
+        interval_0_order = [2, 0, 1]
+        interval_1_order = [5, 3, 7, 4, 6]
+        w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
+        w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
+        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
+        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
+        for i in range(n_anc):
+            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        for i in interval_0_order:
+            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        for i in interval_1_order:
+            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
+
+    def test_single_ancestor(self):
+        """Edge case: one ancestor with index=0."""
+        ns = 3
+        w = self._make_writer(ns)
+        hap = self._make_haplotype(ns, 0)
+        fp = np.array([0], dtype=np.int32)
+        w.add_ancestor(0, 1.0, hap, fp, 0, 200)
+        result = w.finalize()
+        assert result["call_genotype"].shape[1] == 1
+
+    def test_chunk_size_one_many_ancestors(self):
+        """chunk_size=1 forces a flush after every ancestor — stress test
+        that indices work when every ancestor is its own chunk."""
+        ns = 3
+        n_anc = 10
+        order = [7, 2, 9, 0, 5, 3, 8, 1, 6, 4]
+        w_seq = self._make_writer(ns, samples_chunk_size=1)
+        w_ooo = self._make_writer(ns, samples_chunk_size=1)
+        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
+        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
+        for i in range(n_anc):
+            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 200)
+        for i in order:
+            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 200)
+        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
+
+    def test_pending_not_drained_until_contiguous(self):
+        """If only index 1 is inserted (skipping 0), nothing should be
+        flushed until index 0 arrives."""
+        ns = 3
+        w = self._make_writer(ns, samples_chunk_size=1)
+        hap = self._make_haplotype(ns, 0)
+        fp = np.array([0], dtype=np.int32)
+        # Insert index 1 first — should not flush
+        w.add_ancestor(1, 1.0, hap, fp, 0, 200)
+        assert w._num_flushed == 0
+        assert len(w._buffer) == 0
+        assert len(w._pending) == 1
+        # Now insert index 0 — both should drain and flush
+        w.add_ancestor(0, 0.0, hap, fp, 0, 200)
+        assert len(w._pending) == 0
 
 
 class TestPerIntervalBuilder:

@@ -429,6 +429,10 @@ class AncestorWriter:
         self._buffer = []
         self._focal_positions_acc = []
         self._num_flushed = 0
+        # For out-of-order insertion: pending ancestors keyed by index,
+        # drained into _buffer in contiguous order.
+        self._pending = {}
+        self._next_index = 0
 
         # --- Build the zarr group and write fixed arrays ---
         self._root = open_group(store)
@@ -470,15 +474,21 @@ class AncestorWriter:
 
     # -----------------------------------------------------------------
 
-    def add_ancestor(self, time, haplotype, focal_positions, start_pos, end_pos):
-        self._buffer.append(
-            (float(time), haplotype.copy(), int(start_pos), int(end_pos))
+    def add_ancestor(self, index, time, haplotype, focal_positions, start_pos, end_pos):
+        self._pending[index] = (
+            float(time),
+            haplotype.copy(),
+            int(start_pos),
+            int(end_pos),
+            np.asarray(focal_positions, dtype=np.int32).copy(),
         )
-        self._focal_positions_acc.append(
-            np.asarray(focal_positions, dtype=np.int32).copy()
-        )
-        if len(self._buffer) >= self._chunk_size:
-            self._flush()
+        while self._next_index in self._pending:
+            t, hap, s, e, fp = self._pending.pop(self._next_index)
+            self._buffer.append((t, hap, s, e))
+            self._focal_positions_acc.append(fp)
+            self._next_index += 1
+            if len(self._buffer) >= self._chunk_size:
+                self._flush()
 
     # -----------------------------------------------------------------
 

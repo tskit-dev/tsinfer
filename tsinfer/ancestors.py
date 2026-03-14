@@ -267,24 +267,20 @@ def _build_one_ancestor(
     ``make_ancestor`` reads only from finalized (immutable) builder state
     and writes into caller-owned arrays, so concurrent calls are safe.
 
-    Returns an :class:`AncestorResult` or ``None`` if the ancestor is
-    all-missing.
+    The C engine always sets focal sites to 1 (derived) and extends
+    outward, so the result is never all-missing.
     """
     focal_arr = np.asarray(focal_sites, dtype=np.int32)
     a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
-    ab.make_ancestor(focal_arr.tolist(), a)
+    start_local, end_local = ab.make_ancestor(focal_arr.tolist(), a)
     a = a[:n_local]  # trim terminal
-
-    non_missing = np.where(a != -1)[0]
-    if len(non_missing) == 0:
-        return None
 
     # Map local haplotype to global inference site coordinates
     global_hap = np.full(num_inf, np.int8(-1), dtype=np.int8)
     global_hap[local_mask] = a
 
-    start_pos = int(final_positions[local_mask[non_missing[0]]])
-    end_pos = int(final_positions[local_mask[non_missing[-1]]])
+    start_pos = int(final_positions[local_mask[start_local]])
+    end_pos = int(final_positions[local_mask[end_local - 1]])
     focal_global = local_mask[focal_arr]
     focal_pos = final_positions[focal_global]
 
@@ -521,14 +517,14 @@ def infer_ancestors(
             for i in consume_iter:
                 anc = futures[i].result()
                 futures[i] = None
-                if anc is not None:
-                    writer.add_ancestor(
-                        anc.time,
-                        anc.haplotype,
-                        anc.focal_positions,
-                        anc.start_position,
-                        anc.end_position,
-                    )
+                writer.add_ancestor(
+                    anc.index,
+                    anc.time,
+                    anc.haplotype,
+                    anc.focal_positions,
+                    anc.start_position,
+                    anc.end_position,
+                )
 
     result = writer.finalize()
     logger.info(
