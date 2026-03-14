@@ -512,13 +512,16 @@ def infer_ancestors(
             ab.add_terminal_site()
 
             ancestor_descriptors = list(ab.ancestor_descriptors())
+            ab_mem_mb = ab.mem_size / (1024 * 1024)
             logger.info(
-                "Interval %d: %d sites (%d–%d), %d ancestors (RSS=%.1fMiB)",
+                "Interval %d: %d sites (%d–%d), %d ancestors "
+                "(builder=%.1fMiB, RSS=%.1fMiB)",
                 i_idx,
                 n_local,
                 int(local_positions[0]),
                 int(local_positions[-1]),
                 len(ancestor_descriptors),
+                ab_mem_mb,
                 _memory_usage_mb(),
             )
 
