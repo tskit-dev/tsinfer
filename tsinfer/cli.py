@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from pathlib import Path
 
 import click
@@ -58,6 +59,9 @@ def _setup_logging(verbose: int) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    # Suppress noisy third-party debug logs
+    logging.getLogger("zarr").setLevel(max(level, logging.WARNING))
+    logging.getLogger("numcodecs").setLevel(max(level, logging.WARNING))
 
 
 def _check_output(path: str | Path, force: bool) -> None:
@@ -113,10 +117,22 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
 
     from .ancestors import infer_ancestors
 
+    if progress and threads <= 0:
+        warnings.warn(
+            "--progress has no effect without --threads; "
+            "ancestor-level progress requires threads >= 1",
+            stacklevel=1,
+        )
     source_name = cfg.ancestors.sources[0]
     source = cfg.sources[source_name]
     logger.info("Inferring ancestors from source '%s'", source_name)
-    infer_ancestors(source, cfg.ancestors, cfg.ancestral_state, progress=progress)
+    infer_ancestors(
+        source,
+        cfg.ancestors,
+        cfg.ancestral_state,
+        progress=progress,
+        num_threads=threads,
+    )
     logger.info("Ancestor inference complete")
 
 
@@ -175,7 +191,7 @@ def run_cmd(config, threads, force, progress, verbose):
     from .pipeline import run as pipeline_run
 
     logger.info("Running full pipeline")
-    ts = pipeline_run(cfg, progress=progress)
+    ts = pipeline_run(cfg, progress=progress, num_threads=threads)
     ts.dump(str(cfg.match.output))
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",

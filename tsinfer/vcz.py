@@ -42,6 +42,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 from __future__ import annotations
 
 import logging
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -428,6 +429,10 @@ class AncestorWriter:
         self._buffer = []
         self._focal_positions_acc = []
         self._num_flushed = 0
+        # For out-of-order insertion: pending ancestors keyed by index,
+        # drained into _buffer in contiguous order.
+        self._pending = {}
+        self._next_index = 0
 
         # --- Build the zarr group and write fixed arrays ---
         self._root = open_group(store)
@@ -469,15 +474,33 @@ class AncestorWriter:
 
     # -----------------------------------------------------------------
 
-    def add_ancestor(self, time, haplotype, focal_positions, start_pos, end_pos):
-        self._buffer.append(
-            (float(time), haplotype.copy(), int(start_pos), int(end_pos))
+    def add_ancestor(self, index, time, haplotype, focal_positions, start_pos, end_pos):
+        self._pending[index] = (
+            float(time),
+            haplotype.copy(),
+            int(start_pos),
+            int(end_pos),
+            np.asarray(focal_positions, dtype=np.int32).copy(),
         )
-        self._focal_positions_acc.append(
-            np.asarray(focal_positions, dtype=np.int32).copy()
+        drained = 0
+        while self._next_index in self._pending:
+            t, hap, s, e, fp = self._pending.pop(self._next_index)
+            self._buffer.append((t, hap, s, e))
+            self._focal_positions_acc.append(fp)
+            self._next_index += 1
+            drained += 1
+            if len(self._buffer) >= self._chunk_size:
+                self._flush()
+        logger.debug(
+            "add_ancestor idx=%d: drained=%d pending=%d buffer=%d "
+            "focal_acc=%d flushed=%d",
+            index,
+            drained,
+            len(self._pending),
+            len(self._buffer),
+            len(self._focal_positions_acc),
+            self._num_flushed,
         )
-        if len(self._buffer) >= self._chunk_size:
-            self._flush()
 
     # -----------------------------------------------------------------
 
@@ -485,6 +508,7 @@ class AncestorWriter:
         if not self._buffer:
             return
 
+        t0 = _time.monotonic()
         n = len(self._buffer)
         ns = self._num_sites
 
@@ -506,6 +530,19 @@ class AncestorWriter:
 
         self._num_flushed += n
         self._buffer.clear()
+        elapsed = _time.monotonic() - t0
+        gt_chunk_mb = gt_chunk.nbytes / (1024 * 1024)
+        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
+        logger.debug(
+            "Flushed chunk: %d ancestors (%d total) in %.3fs; "
+            "gt_chunk=%.1fMiB focal_acc=%.1fMiB (%d entries)",
+            n,
+            self._num_flushed,
+            elapsed,
+            gt_chunk_mb,
+            focal_mb,
+            len(self._focal_positions_acc),
+        )
 
     # -----------------------------------------------------------------
 
@@ -513,6 +550,17 @@ class AncestorWriter:
         """Flush remaining buffer and write final arrays.  Returns the Group."""
         self._flush()
         num_anc = self._num_flushed
+        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
+        logger.debug(
+            "Finalizing AncestorWriter: %d ancestors total; "
+            "focal_acc=%.1fMiB (%d entries) pending=%d",
+            num_anc,
+            focal_mb,
+            len(self._focal_positions_acc),
+            len(self._pending),
+        )
+
+        t0 = _time.monotonic()
 
         # sample_id — trivial, write once
         ids = np.array([f"ancestor_{i}" for i in range(num_anc)])
@@ -540,6 +588,8 @@ class AncestorWriter:
             ["samples", "focal_alleles"],
         )
 
+        elapsed = _time.monotonic() - t0
+        logger.debug("Finalize complete in %.3fs", elapsed)
         return self._root
 
 
