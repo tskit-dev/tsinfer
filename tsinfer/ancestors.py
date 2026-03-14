@@ -95,7 +95,11 @@ def _compute_site_stats(
         import tqdm
 
         site_iter = tqdm.tqdm(
-            site_iter, total=num_inf_sites, desc="Pass 1: site stats", unit="sites"
+            site_iter,
+            total=num_inf_sites,
+            desc="Pass 1: site stats",
+            unit="sites",
+            postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
         )
 
     for i, derived_gt in enumerate(site_iter):
@@ -107,6 +111,9 @@ def _compute_site_stats(
 
         keep_mask[i] = True
         times_list.append(derived_count / num_haplotypes)
+
+        if progress and i % 1000 == 0:
+            site_iter.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
 
     times = (
         np.array(times_list, dtype=np.float64)
@@ -464,7 +471,10 @@ def infer_ancestors(
         import tqdm
 
         interval_range = tqdm.tqdm(
-            interval_range, desc="Pass 2: intervals", unit="intervals"
+            interval_range,
+            desc="Pass 2: intervals",
+            unit="intervals",
+            postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
         )
 
     ancestor_index = 0
@@ -504,6 +514,9 @@ def infer_ancestors(
                 len(ancestor_descriptors),
                 _memory_usage_mb(),
             )
+
+            if progress:
+                interval_range.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
 
             # Submit all ancestors for this interval to the executor.
             # Use a set so we can discard each future after consumption,
