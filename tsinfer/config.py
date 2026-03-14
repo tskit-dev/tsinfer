@@ -113,6 +113,7 @@ class AncestorsConfig:
     max_gap_length: int = 500_000
     samples_chunk_size: int = 1000
     variants_chunk_size: int = 1000
+    genotype_encoding: int = 0  # 0 = eight-bit, 1 = one-bit
 
 
 @dataclass
@@ -202,6 +203,8 @@ class Config:
             lines.append(f"  path = {self.ancestors.path}")
             lines.append(f"  sources = {self.ancestors.sources}")
             lines.append(f"  max_gap_length = {self.ancestors.max_gap_length}")
+            enc = "one_bit" if self.ancestors.genotype_encoding == 1 else "eight_bit"
+            lines.append(f"  genotype_encoding = {enc}")
             lines.append("")
 
         lines.append("[match]")
@@ -350,12 +353,22 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
     if entry is None:
         return None
     try:
+        genotype_encoding = entry.get("genotype_encoding", 0)
+        if isinstance(genotype_encoding, str):
+            _encoding_names = {"eight_bit": 0, "one_bit": 1}
+            if genotype_encoding.lower() not in _encoding_names:
+                raise ValueError(
+                    f"[ancestors] genotype_encoding must be 'eight_bit' or "
+                    f"'one_bit'; got '{genotype_encoding}'"
+                )
+            genotype_encoding = _encoding_names[genotype_encoding.lower()]
         return AncestorsConfig(
             path=_resolve_path(entry["path"], base),
             sources=list(entry["sources"]),
             max_gap_length=int(entry.get("max_gap_length", 500_000)),
             samples_chunk_size=int(entry.get("samples_chunk_size", 1000)),
             variants_chunk_size=int(entry.get("variants_chunk_size", 1000)),
+            genotype_encoding=int(genotype_encoding),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e

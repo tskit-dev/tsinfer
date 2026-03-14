@@ -48,13 +48,19 @@ from tsinfer.vcz import (
 # ---------------------------------------------------------------------------
 
 
-def _cfg(max_gap_length=500_000, samples_chunk_size=1000, variants_chunk_size=1000):
+def _cfg(
+    max_gap_length=500_000,
+    samples_chunk_size=1000,
+    variants_chunk_size=1000,
+    genotype_encoding=0,
+):
     return AncestorsConfig(
         path=None,
         sources=["src"],
         max_gap_length=max_gap_length,
         samples_chunk_size=samples_chunk_size,
         variants_chunk_size=variants_chunk_size,
+        genotype_encoding=genotype_encoding,
     )
 
 
@@ -1480,3 +1486,103 @@ class TestThreadedAncestorGeneration:
         anc_sync = infer_ancestors(gt, _cfg(samples_chunk_size=1), num_threads=0)
         anc_threaded = infer_ancestors(gt, _cfg(samples_chunk_size=1), num_threads=2)
         self._compare_ancestors(anc_sync, anc_threaded)
+
+
+# ---------------------------------------------------------------------------
+# One-bit genotype encoding
+# ---------------------------------------------------------------------------
+
+
+class TestOneBitEncoding:
+    """Verify one-bit encoding produces identical ancestors to eight-bit."""
+
+    @staticmethod
+    def _compare_ancestors(a, b):
+        """Compare two ancestor stores, allowing different ancestor ordering."""
+        gt_a = np.asarray(a["call_genotype"][:])[:, :, 0].T  # (n_anc, n_sites)
+        gt_b = np.asarray(b["call_genotype"][:])[:, :, 0].T
+
+        assert gt_a.shape == gt_b.shape, f"Shape mismatch: {gt_a.shape} vs {gt_b.shape}"
+
+        # Sort rows to compare order-independently (1-bit encoding may
+        # reorder ancestors because internal pattern hashing differs).
+        sorted_a = sorted(gt_a.tolist())
+        sorted_b = sorted(gt_b.tolist())
+        assert sorted_a == sorted_b, "Ancestor haplotypes differ"
+
+        # Times should be the same set (with multiplicity)
+        times_a = sorted(np.asarray(a["sample_time"][:]).tolist())
+        times_b = sorted(np.asarray(b["sample_time"][:]).tolist())
+        np.testing.assert_allclose(times_a, times_b, err_msg="Mismatch in sample_time")
+
+    def test_one_bit_matches_eight_bit(self):
+        """One-bit encoding produces identical output to eight-bit."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc_8bit = infer_ancestors(gt, _cfg(genotype_encoding=0))
+        anc_1bit = infer_ancestors(gt, _cfg(genotype_encoding=1))
+        self._compare_ancestors(anc_8bit, anc_1bit)
+
+    def test_one_bit_multi_interval(self):
+        """One-bit encoding with multiple genomic intervals."""
+        gt = _haploid_store(
+            [[0, 1], [0, 1], [0, 1], [0, 1]],
+            positions=[100, 200, 800_000, 900_000],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+            seq_len=1_000_000,
+        )
+        anc_8bit = infer_ancestors(gt, _cfg(max_gap_length=500_000, genotype_encoding=0))
+        anc_1bit = infer_ancestors(gt, _cfg(max_gap_length=500_000, genotype_encoding=1))
+        self._compare_ancestors(anc_8bit, anc_1bit)
+
+    def test_one_bit_with_threads(self):
+        """One-bit encoding combined with threading."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc_sync = infer_ancestors(gt, _cfg(genotype_encoding=0), num_threads=0)
+        anc_threaded = infer_ancestors(gt, _cfg(genotype_encoding=1), num_threads=3)
+        self._compare_ancestors(anc_sync, anc_threaded)
+
+    def test_one_bit_many_samples(self):
+        """One-bit encoding with >8 haplotypes (exercises multi-byte packing)."""
+        rng = np.random.RandomState(42)
+        n_samples = 20
+        n_sites = 6
+        gt = rng.randint(0, 2, size=(n_sites, n_samples)).astype(np.int8)
+        # Ensure no site is fixed
+        for i in range(n_sites):
+            if gt[i].sum() == 0:
+                gt[i, 0] = 1
+            elif gt[i].sum() == n_samples:
+                gt[i, 0] = 0
+        positions = list(range(100, 100 + n_sites * 100, 100))
+        store = _haploid_store(
+            gt.tolist(),
+            positions=positions,
+            alleles=[["A", "T"]] * n_sites,
+            anc_states=["A"] * n_sites,
+        )
+        anc_8bit = infer_ancestors(store, _cfg(genotype_encoding=0))
+        anc_1bit = infer_ancestors(store, _cfg(genotype_encoding=1))
+        self._compare_ancestors(anc_8bit, anc_1bit)
+
+    def test_one_bit_small_chunk_size(self):
+        """One-bit encoding with small chunk size."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc_8bit = infer_ancestors(gt, _cfg(samples_chunk_size=1, genotype_encoding=0))
+        anc_1bit = infer_ancestors(gt, _cfg(samples_chunk_size=1, genotype_encoding=1))
+        self._compare_ancestors(anc_8bit, anc_1bit)
