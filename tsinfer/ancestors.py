@@ -506,17 +506,19 @@ def infer_ancestors(
                 futures.append(future)
                 ancestor_index += 1
 
-            # Consume in submission order for deterministic output.
-            # Null out each future after consumption so the
-            # AncestorResult (and its haplotype array) can be freed.
-            consume_iter = range(len(futures))
+            # Consume as completed for best throughput. The writer's
+            # index-aware pending dict ensures deterministic output
+            # regardless of completion order.
+            completed = concurrent.futures.as_completed(futures)
             if progress:
-                consume_iter = tqdm.tqdm(
-                    consume_iter, desc="Interval ancestors", unit="haps"
+                completed = tqdm.tqdm(
+                    completed,
+                    total=len(futures),
+                    desc="Interval ancestors",
+                    unit="haps",
                 )
-            for i in consume_iter:
-                anc = futures[i].result()
-                futures[i] = None
+            for future in completed:
+                anc = future.result()
                 writer.add_ancestor(
                     anc.index,
                     anc.time,
