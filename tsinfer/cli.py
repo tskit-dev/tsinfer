@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from pathlib import Path
 
 import click
@@ -116,6 +117,12 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
 
     from .ancestors import infer_ancestors
 
+    if progress and threads <= 0:
+        warnings.warn(
+            "--progress has no effect without --threads; "
+            "ancestor-level progress requires threads >= 1",
+            stacklevel=1,
+        )
     source_name = cfg.ancestors.sources[0]
     source = cfg.sources[source_name]
     logger.info("Inferring ancestors from source '%s'", source_name)
