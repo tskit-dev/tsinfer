@@ -482,13 +482,25 @@ class AncestorWriter:
             int(end_pos),
             np.asarray(focal_positions, dtype=np.int32).copy(),
         )
+        drained = 0
         while self._next_index in self._pending:
             t, hap, s, e, fp = self._pending.pop(self._next_index)
             self._buffer.append((t, hap, s, e))
             self._focal_positions_acc.append(fp)
             self._next_index += 1
+            drained += 1
             if len(self._buffer) >= self._chunk_size:
                 self._flush()
+        logger.debug(
+            "add_ancestor idx=%d: drained=%d pending=%d buffer=%d "
+            "focal_acc=%d flushed=%d",
+            index,
+            drained,
+            len(self._pending),
+            len(self._buffer),
+            len(self._focal_positions_acc),
+            self._num_flushed,
+        )
 
     # -----------------------------------------------------------------
 
@@ -519,11 +531,17 @@ class AncestorWriter:
         self._num_flushed += n
         self._buffer.clear()
         elapsed = _time.monotonic() - t0
+        gt_chunk_mb = gt_chunk.nbytes / (1024 * 1024)
+        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
         logger.debug(
-            "Flushed chunk: %d ancestors (%d total) in %.3fs",
+            "Flushed chunk: %d ancestors (%d total) in %.3fs; "
+            "gt_chunk=%.1fMiB focal_acc=%.1fMiB (%d entries)",
             n,
             self._num_flushed,
             elapsed,
+            gt_chunk_mb,
+            focal_mb,
+            len(self._focal_positions_acc),
         )
 
     # -----------------------------------------------------------------
@@ -532,7 +550,15 @@ class AncestorWriter:
         """Flush remaining buffer and write final arrays.  Returns the Group."""
         self._flush()
         num_anc = self._num_flushed
-        logger.debug("Finalizing AncestorWriter: %d ancestors total", num_anc)
+        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
+        logger.debug(
+            "Finalizing AncestorWriter: %d ancestors total; "
+            "focal_acc=%.1fMiB (%d entries) pending=%d",
+            num_anc,
+            focal_mb,
+            len(self._focal_positions_acc),
+            len(self._pending),
+        )
 
         t0 = _time.monotonic()
 
