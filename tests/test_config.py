@@ -135,10 +135,15 @@ class TestAncestorsConfigConstruction:
         a = AncestorsConfig(path="anc.vcz", sources=["cohort"])
         assert a.sources == ["cohort"]
         assert a.max_gap_length == 500_000
+        assert a.genotype_encoding == 0
 
     def test_custom_gap_length(self):
         a = AncestorsConfig(path="anc.vcz", sources=["cohort"], max_gap_length=1_000)
         assert a.max_gap_length == 1_000
+
+    def test_genotype_encoding_one_bit(self):
+        a = AncestorsConfig(path="anc.vcz", sources=["cohort"], genotype_encoding=1)
+        assert a.genotype_encoding == 1
 
 
 class TestMatchConfigConstruction:
@@ -279,6 +284,39 @@ class TestFromTomlStandard:
         assert cfg.ancestors is not None
         assert cfg.ancestors.sources == ["cohort"]
         assert cfg.ancestors.max_gap_length == 500_000
+        assert cfg.ancestors.genotype_encoding == 0
+
+    def test_ancestors_genotype_encoding_int(self, tmp_path):
+        toml = _STANDARD_TOML.replace(
+            "max_gap_length = 500000",
+            "max_gap_length = 500000\ngenotype_encoding = 1",
+        )
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.ancestors.genotype_encoding == 1
+
+    def test_ancestors_genotype_encoding_string(self, tmp_path):
+        toml = _STANDARD_TOML.replace(
+            "max_gap_length = 500000",
+            'max_gap_length = 500000\ngenotype_encoding = "one_bit"',
+        )
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.ancestors.genotype_encoding == 1
+
+    def test_ancestors_genotype_encoding_eight_bit_string(self, tmp_path):
+        toml = _STANDARD_TOML.replace(
+            "max_gap_length = 500000",
+            'max_gap_length = 500000\ngenotype_encoding = "eight_bit"',
+        )
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.ancestors.genotype_encoding == 0
+
+    def test_ancestors_genotype_encoding_invalid_string(self, tmp_path):
+        toml = _STANDARD_TOML.replace(
+            "max_gap_length = 500000",
+            'max_gap_length = 500000\ngenotype_encoding = "invalid"',
+        )
+        with pytest.raises(ValueError, match="genotype_encoding"):
+            Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_match(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))

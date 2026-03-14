@@ -437,15 +437,20 @@ def infer_ancestors(
     )
 
     # --- 5. Pass 2: per-interval ancestor building ---
+    encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
     if num_threads > 0:
         logger.info(
-            "Pass 2: building ancestors per interval (%d threads, RSS=%.1fMiB)",
+            "Pass 2: building ancestors per interval "
+            "(%d threads, encoding=%s, RSS=%.1fMiB)",
             num_threads,
+            encoding_name,
             _memory_usage_mb(),
         )
     else:
         logger.info(
-            "Pass 2: building ancestors per interval (synchronous, RSS=%.1fMiB)",
+            "Pass 2: building ancestors per interval "
+            "(synchronous, encoding=%s, RSS=%.1fMiB)",
+            encoding_name,
             _memory_usage_mb(),
         )
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
@@ -493,7 +498,9 @@ def infer_ancestors(
             local_times = times[local_mask]
             n_ab_sites = n_local + 1  # +1 for terminal
             ab = _tsinfer.AncestorBuilder(
-                num_samples=num_haplotypes, max_sites=n_ab_sites
+                num_samples=num_haplotypes,
+                max_sites=n_ab_sites,
+                genotype_encoding=cfg.genotype_encoding,
             )
 
             for j, derived_gt in enumerate(
