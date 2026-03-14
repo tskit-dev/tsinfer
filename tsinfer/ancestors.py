@@ -488,8 +488,10 @@ def infer_ancestors(
                 len(ancestor_descriptors),
             )
 
-            # Submit all ancestors for this interval to the executor
-            futures = []
+            # Submit all ancestors for this interval to the executor.
+            # Use a set so we can discard each future after consumption,
+            # freeing the AncestorResult (and its haplotype array).
+            futures = set()
             for time, focal_sites in ancestor_descriptors:
                 future = executor.submit(
                     _build_one_ancestor,
@@ -503,7 +505,7 @@ def infer_ancestors(
                     num_inf,
                     ancestor_index,
                 )
-                futures.append(future)
+                futures.add(future)
                 ancestor_index += 1
 
             # Consume as completed for best throughput. The writer's
@@ -519,6 +521,7 @@ def infer_ancestors(
                 )
             for future in completed:
                 anc = future.result()
+                futures.discard(future)
                 writer.add_ancestor(
                     anc.index,
                     anc.time,
