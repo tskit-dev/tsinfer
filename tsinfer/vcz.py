@@ -474,19 +474,22 @@ class AncestorWriter:
 
     # -----------------------------------------------------------------
 
-    def add_ancestor(self, index, time, haplotype, focal_positions, start_pos, end_pos):
-        self._pending[index] = (
-            float(time),
-            haplotype.copy(),
-            int(start_pos),
-            int(end_pos),
-            np.asarray(focal_positions, dtype=np.int32).copy(),
-        )
+    def add_ancestor(self, ancestor):
+        """
+        Add an :class:`~tsinfer.ancestors.Ancestor` to the writer.
+
+        Ancestors may arrive out of order (when built in parallel).
+        They are buffered by index and drained into the write buffer
+        in sequential order.
+        """
+        self._pending[ancestor.index] = ancestor
         drained = 0
         while self._next_index in self._pending:
-            t, hap, s, e, fp = self._pending.pop(self._next_index)
-            self._buffer.append((t, hap, s, e))
-            self._focal_positions_acc.append(fp)
+            anc = self._pending.pop(self._next_index)
+            self._buffer.append(anc)
+            self._focal_positions_acc.append(
+                np.asarray(anc.focal_positions, dtype=np.int32)
+            )
             self._next_index += 1
             drained += 1
             if len(self._buffer) >= self._chunk_size:
@@ -494,7 +497,7 @@ class AncestorWriter:
         logger.debug(
             "add_ancestor idx=%d: drained=%d pending=%d buffer=%d "
             "focal_acc=%d flushed=%d",
-            index,
+            ancestor.index,
             drained,
             len(self._pending),
             len(self._buffer),
@@ -517,11 +520,11 @@ class AncestorWriter:
         starts = np.empty(n, dtype=np.int32)
         ends = np.empty(n, dtype=np.int32)
 
-        for j, (t, hap, s, e) in enumerate(self._buffer):
-            gt_chunk[:, j, 0] = hap
-            times[j] = t
-            starts[j] = s
-            ends[j] = e
+        for j, anc in enumerate(self._buffer):
+            gt_chunk[anc.start_site_idx : anc.end_site_idx, j, 0] = anc.haplotype
+            times[j] = anc.time
+            starts[j] = anc.start_position
+            ends[j] = anc.end_position
 
         self._root["call_genotype"].append(gt_chunk, axis=1)
         self._root["sample_time"].append(times)

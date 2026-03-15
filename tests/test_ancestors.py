@@ -31,6 +31,7 @@ import zarr
 from helpers import make_sample_vcz
 
 from tsinfer.ancestors import (
+    Ancestor,
     compute_inference_sites,
     compute_sequence_intervals,
     infer_ancestors,
@@ -1041,11 +1042,19 @@ class TestAncestorWriterIndexed:
         )
 
     @staticmethod
-    def _make_haplotype(num_sites, focal_idx):
-        """Create a haplotype with derived allele at focal_idx, rest missing."""
-        hap = np.full(num_sites, np.int8(-1), dtype=np.int8)
-        hap[focal_idx] = 1
-        return hap
+    def _make_ancestor(index, num_sites, focal_idx, start_pos=0, end_pos=400):
+        """Create an Ancestor with derived allele at focal_idx, rest missing."""
+        # The fragment covers just the focal site (single-site fragment).
+        return Ancestor(
+            index=index,
+            time=float(index),
+            haplotype=np.array([1], dtype=np.int8),
+            focal_positions=np.array([focal_idx * 100], dtype=np.int32),
+            start_site_idx=focal_idx,
+            end_site_idx=focal_idx + 1,
+            start_position=start_pos,
+            end_position=end_pos,
+        )
 
     @staticmethod
     def _compare_groups(a, b):
@@ -1068,12 +1077,11 @@ class TestAncestorWriterIndexed:
         n_anc = 4
         w_seq = self._make_writer(ns)
         w_rev = self._make_writer(ns)
-        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
-        fps = [np.array([i * 100], dtype=np.int32) for i in range(n_anc)]
-        for i in range(n_anc):
-            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
-        for i in reversed(range(n_anc)):
-            w_rev.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        ancestors = [self._make_ancestor(i, ns, i % ns) for i in range(n_anc)]
+        for anc in ancestors:
+            w_seq.add_ancestor(anc)
+        for anc in reversed(ancestors):
+            w_rev.add_ancestor(anc)
         self._compare_groups(w_seq.finalize(), w_rev.finalize())
 
     def test_interleaved_order(self):
@@ -1083,12 +1091,11 @@ class TestAncestorWriterIndexed:
         order = [3, 0, 5, 1, 4, 2]
         w_seq = self._make_writer(ns)
         w_shuf = self._make_writer(ns)
-        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
-        fps = [np.array([i * 100], dtype=np.int32) for i in range(n_anc)]
-        for i in range(n_anc):
-            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+        ancestors = [self._make_ancestor(i, ns, i % ns) for i in range(n_anc)]
+        for anc in ancestors:
+            w_seq.add_ancestor(anc)
         for i in order:
-            w_shuf.add_ancestor(i, float(i), haps[i], fps[i], 0, 400)
+            w_shuf.add_ancestor(ancestors[i])
         self._compare_groups(w_seq.finalize(), w_shuf.finalize())
 
     @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5])
@@ -1100,12 +1107,13 @@ class TestAncestorWriterIndexed:
         order = [6, 2, 0, 4, 1, 5, 3]
         w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
         w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
-        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
-        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
-        for i in range(n_anc):
-            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        ancestors = [
+            self._make_ancestor(i, ns, i % ns, end_pos=300) for i in range(n_anc)
+        ]
+        for anc in ancestors:
+            w_seq.add_ancestor(anc)
         for i in order:
-            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+            w_ooo.add_ancestor(ancestors[i])
         self._compare_groups(w_seq.finalize(), w_ooo.finalize())
 
     @pytest.mark.parametrize("chunk_size", [1, 2, 3])
@@ -1122,23 +1130,23 @@ class TestAncestorWriterIndexed:
         interval_1_order = [5, 3, 7, 4, 6]
         w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
         w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
-        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
-        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
-        for i in range(n_anc):
-            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+        ancestors = [
+            self._make_ancestor(i, ns, i % ns, end_pos=300) for i in range(n_anc)
+        ]
+        for anc in ancestors:
+            w_seq.add_ancestor(anc)
         for i in interval_0_order:
-            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+            w_ooo.add_ancestor(ancestors[i])
         for i in interval_1_order:
-            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 300)
+            w_ooo.add_ancestor(ancestors[i])
         self._compare_groups(w_seq.finalize(), w_ooo.finalize())
 
     def test_single_ancestor(self):
         """Edge case: one ancestor with index=0."""
         ns = 3
         w = self._make_writer(ns)
-        hap = self._make_haplotype(ns, 0)
-        fp = np.array([0], dtype=np.int32)
-        w.add_ancestor(0, 1.0, hap, fp, 0, 200)
+        anc = self._make_ancestor(0, ns, 0, end_pos=200)
+        w.add_ancestor(anc)
         result = w.finalize()
         assert result["call_genotype"].shape[1] == 1
 
@@ -1150,12 +1158,13 @@ class TestAncestorWriterIndexed:
         order = [7, 2, 9, 0, 5, 3, 8, 1, 6, 4]
         w_seq = self._make_writer(ns, samples_chunk_size=1)
         w_ooo = self._make_writer(ns, samples_chunk_size=1)
-        haps = [self._make_haplotype(ns, i % ns) for i in range(n_anc)]
-        fps = [np.array([(i % ns) * 100], dtype=np.int32) for i in range(n_anc)]
-        for i in range(n_anc):
-            w_seq.add_ancestor(i, float(i), haps[i], fps[i], 0, 200)
+        ancestors = [
+            self._make_ancestor(i, ns, i % ns, end_pos=200) for i in range(n_anc)
+        ]
+        for anc in ancestors:
+            w_seq.add_ancestor(anc)
         for i in order:
-            w_ooo.add_ancestor(i, float(i), haps[i], fps[i], 0, 200)
+            w_ooo.add_ancestor(ancestors[i])
         self._compare_groups(w_seq.finalize(), w_ooo.finalize())
 
     def test_pending_not_drained_until_contiguous(self):
@@ -1163,15 +1172,15 @@ class TestAncestorWriterIndexed:
         flushed until index 0 arrives."""
         ns = 3
         w = self._make_writer(ns, samples_chunk_size=1)
-        hap = self._make_haplotype(ns, 0)
-        fp = np.array([0], dtype=np.int32)
+        anc1 = self._make_ancestor(1, ns, 0, end_pos=200)
         # Insert index 1 first — should not flush
-        w.add_ancestor(1, 1.0, hap, fp, 0, 200)
+        w.add_ancestor(anc1)
         assert w._num_flushed == 0
         assert len(w._buffer) == 0
         assert len(w._pending) == 1
         # Now insert index 0 — both should drain and flush
-        w.add_ancestor(0, 0.0, hap, fp, 0, 200)
+        anc0 = self._make_ancestor(0, ns, 0, end_pos=200)
+        w.add_ancestor(anc0)
         assert len(w._pending) == 0
 
 
