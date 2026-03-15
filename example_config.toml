@@ -1,0 +1,145 @@
+# Example tsinfer config for 1000 Genomes Project chromosome 20.
+#
+# Assumes input data has been converted to VCZ format using bio2zarr:
+#   bio2zarr vcf2zarr convert 1kgp_chr20.vcf.gz data/1kgp_chr20.vcz
+#
+# Run the full pipeline:
+#   tsinfer run example_config.toml --threads 4 -v
+#
+# Or run steps individually:
+#   tsinfer infer-ancestors example_config.toml --threads 4 -v
+#   tsinfer match example_config.toml --threads 4 -v
+#
+# Paths are resolved relative to this file's directory.
+
+# ============================================================================
+# Sources
+# ============================================================================
+# Each [[source]] block defines a named view over a VCZ store. The same store
+# can appear multiple times with different filters.
+
+[[source]]
+name = "1kgp_chr20"
+path = "data/1kgp_chr20.vcz"
+
+# Variant filters use bcftools-style expressions (via vcztools).
+# Uncomment to restrict to biallelic SNPs with QUAL >= 30:
+# include = "TYPE='snp' && N_ALT=1 && QUAL >= 30"
+
+# Exclude specific variants:
+# exclude = "FILTER != 'PASS'"
+
+# Restrict to a genomic region (half-open coordinates):
+# regions = "chr20:1000000-50000000"
+
+# Restrict to exact target positions (useful for known-site lists):
+# targets = "chr20:1000000-50000000"
+
+# Subset samples by name (comma-separated). Prefix with ^ to exclude:
+# samples = "HG00096,HG00097,HG00099"
+# samples = "^NA12878,NA12891"    # all samples except these two
+
+# Per-sample times. Use a field name in the VCZ store, a constant, or a
+# path to an external VCZ with a matching sample dimension:
+# sample_time = 0                             # constant: all contemporary
+# sample_time = "variant_sample_time"         # field in the source store
+# sample_time = { path = "ages.vcz", field = "sample_time" }  # external
+
+
+# ============================================================================
+# Ancestral state
+# ============================================================================
+# Where to find the ancestral allele for each variant. Required when the
+# source VCZ does not contain a "variant_ancestral_allele" array.
+#
+# For 1000 Genomes, Ensembl provides ancestral allele annotations in a
+# separate VCF/VCZ. The "field" is the array name holding the allele string.
+
+[ancestral_state]
+path = "data/homo_sapiens-chr20.vcz"
+field = "variant_AA"
+
+
+# ============================================================================
+# Ancestors
+# ============================================================================
+# Controls the ancestor-generation step (infer-ancestors).
+
+[ancestors]
+path = "data/ancestors.vcz"          # output path for the ancestor store
+sources = ["1kgp_chr20"]             # which source(s) to build from
+
+# Maximum gap (in base pairs) between adjacent inference sites before
+# splitting into separate intervals.  Sites further apart than this are
+# processed independently, reducing memory for sparse regions.
+# Human chromosomes with uniform coverage: 500 kb works well.
+# For sparser data or non-contiguous targets, try a smaller value.
+max_gap_length = 500_000             # default: 500,000
+
+# Genotype encoding for the C ancestor builder.
+#   "eight_bit"  — one byte per haplotype per site (default, broad compatibility)
+#   "one_bit"    — one bit per haplotype per site (~8x less memory, biallelic only)
+# Use one_bit for large cohorts (>10k samples) to reduce memory pressure.
+genotype_encoding = "eight_bit"
+
+# Zarr chunk sizes for the output ancestor store.  Smaller chunks reduce
+# peak memory when the match step streams ancestors, but add I/O overhead.
+# samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
+# variants_chunk_size = 1000         # default: 1000 (site dimension)
+
+
+# ============================================================================
+# Match
+# ============================================================================
+# Controls the HMM matching step: copies ancestors against the tree, then
+# copies sample haplotypes against the ancestor tree.
+
+[match]
+sources = ["1kgp_chr20"]             # which source(s) to match
+output = "data/output.trees"         # output tree sequence path
+
+# Per-base recombination rate. For humans, ~1.0e-8 is a reasonable genome-
+# wide average.  For more accuracy, supply a genetic map via the Python API
+# (msprime.RateMap), but the TOML config accepts a single float.
+recombination_rate = 1e-8
+
+# Ratio of mismatch to recombination probability in the LS HMM. Higher
+# values make the matcher more willing to introduce mutations rather than
+# recombinations.  1.0 is the default; increase for noisy or ancient data.
+# mismatch_ratio = 1.0               # default: 1.0
+
+# Enable Viterbi path compression. Reduces memory and speeds up matching
+# at the cost of a slightly less optimal Viterbi path. Almost always
+# beneficial; disable only for debugging.
+# path_compression = true             # default: true
+
+# Number of worker threads for the match step.
+# num_threads = 1                     # default: 1
+
+
+# ============================================================================
+# Post-processing
+# ============================================================================
+# Optional cleanup applied after matching.
+
+[post_process]
+# Split the ultimate ancestor (virtual root) into per-tree roots.
+# split_ultimate = true               # default: true
+
+# Erase flanking material outside each sample's first/last informative site.
+# erase_flanks = true                 # default: true
+
+
+# ============================================================================
+# Individual metadata
+# ============================================================================
+# Map VCZ sample-dimensioned arrays into tskit individual metadata.
+# "fields" maps tskit metadata keys to VCZ array names.
+# "population" names a VCZ array whose unique values become tskit populations.
+
+# [individual_metadata]
+# population = "sample_population"
+# [individual_metadata.fields]
+# name = "sample_id"
+# sex = "sample_sex"
+# population_name = "sample_population"
