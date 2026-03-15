@@ -287,17 +287,15 @@ class TestAncestorBuilder:
                 assert str(record.value) == msg
 
     def test_make_ancestor(self):
-        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=3)
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=2)
         ab.add_site(time=1, genotypes=[0, 1])
         ab.add_site(time=2, genotypes=[1, 0])
-        ab.add_terminal_site()
         for _, focal_sites in ab.ancestor_descriptors():
-            a = np.zeros(3, dtype=np.int8)
+            a = np.zeros(2, dtype=np.int8)
             start, end = ab.make_ancestor(focal_sites, a)
             assert start == 0
             assert end == 2
             assert np.all(a[:2] >= 0)
-            assert a[2] == -1
 
     def test_getters(self):
         ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=2)
