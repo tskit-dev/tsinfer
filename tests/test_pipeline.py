@@ -98,7 +98,7 @@ def _infer_and_match(sim_ts, recombination_rate=1e-4):
     """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
     sample_store = ts_to_sample_vcz(sim_ts)
     anc_cfg = AncestorsConfig(path=None, sources=["test"])
-    ancestor_store = infer_ancestors(sample_store, anc_cfg)
+    ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
     cfg = _make_config(sample_store, ancestor_store, recombination_rate)
     return match(cfg)
 
@@ -153,7 +153,7 @@ class TestMatch:
             sequence_length=1000,
         )
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
-        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg)
         assert out_ts.num_nodes > 0
@@ -441,7 +441,7 @@ class TestPipelineLogging:
         sim_ts = _simulate(num_samples=4, random_seed=31)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
-        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         with caplog.at_level(logging.INFO, logger="tsinfer.pipeline"):
             match(cfg)
@@ -463,7 +463,7 @@ class TestPipelineProgress:
         sim_ts = _simulate(num_samples=4, random_seed=33)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
-        ancestor_store = infer_ancestors(sample_store, anc_cfg)
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg, progress=True)
         assert out_ts.num_nodes > 0

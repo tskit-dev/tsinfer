@@ -248,8 +248,6 @@ class AncestorBuilder:
         disagree = np.zeros(self.num_samples, dtype=bool)
 
         for site_index in sites:
-            if self.sites[site_index].terminal:
-                break
             a[site_index] = 0
             last_site = site_index
             g_l = self.get_site_genotypes(site_index)

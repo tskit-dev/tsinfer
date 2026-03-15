@@ -25,9 +25,11 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import resource
+import time
 from dataclasses import dataclass
 
 import numpy as np
+import tqdm as tqdm_mod
 import zarr
 
 import _tsinfer
@@ -88,19 +90,15 @@ def _compute_site_stats(
     keep_mask = np.zeros(num_inf_sites, dtype=bool)
     times_list = []
 
-    site_iter = vcz_mod.iter_genotypes(
-        store, inf_sites.positions, inf_sites.ancestral_allele_index, sample_include
+    site_iter = tqdm_mod.tqdm(
+        vcz_mod.iter_genotypes(
+            store, inf_sites.positions, inf_sites.ancestral_allele_index, sample_include
+        ),
+        total=num_inf_sites,
+        desc="Pass 1: site stats",
+        unit="sites",
+        disable=not progress,
     )
-    if progress:
-        import tqdm
-
-        site_iter = tqdm.tqdm(
-            site_iter,
-            total=num_inf_sites,
-            desc="Pass 1: site stats",
-            unit="sites",
-            postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
-        )
 
     for i, derived_gt in enumerate(site_iter):
         derived_count = int(np.sum(derived_gt == 1))
@@ -111,9 +109,6 @@ def _compute_site_stats(
 
         keep_mask[i] = True
         times_list.append(derived_count / num_haplotypes)
-
-        if progress and i % 1000 == 0:
-            site_iter.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
 
     times = (
         np.array(times_list, dtype=np.float64)
@@ -279,7 +274,7 @@ class Ancestor:
 
 def _build_one_ancestor(
     ab,
-    time,
+    anc_time,
     focal_sites,
     n_ab_sites,
     n_local,
@@ -320,7 +315,7 @@ def _build_one_ancestor(
 
     return Ancestor(
         index=ancestor_index,
-        time=float(time),
+        time=float(anc_time),
         haplotype=fragment,
         focal_positions=focal_pos,
         start_site_idx=start_site_idx,
@@ -330,42 +325,20 @@ def _build_one_ancestor(
     )
 
 
-def infer_ancestors(
-    source: Source | zarr.Group,
-    cfg: AncestorsConfig,
-    ancestral_state: AncestralState | None = None,
-    progress: bool = False,
-    num_threads: int = 0,
-) -> zarr.Group:
+def _open_source(source):
     """
-    Build the ancestor VCZ store from a samples VCZ store.
-
-    Two-pass approach:
-      Pass 1 — Identify inference sites and compute times (chunk-aware).
-      Pass 2 — Per-interval AncestorBuilder instances; stream ancestors to output.
-
-    No virtual root is inserted; that is the responsibility of the match step.
-    Ancestors are not sorted by time.
+    Open the source store, returning a zarr.Group.
     """
-    logger.info("Starting ancestor inference (RSS=%.1fMiB)", _memory_usage_mb())
+    logger.info("Source: %s", source.path)
+    return vcz_mod.open_store(source.path)
 
-    # --- 1. Open store and resolve filtering ---
-    if isinstance(source, zarr.Group):
-        store = source
-        include_expr = None
-        exclude_expr = None
-        samples_str = None
-        regions_str = None
-        targets_str = None
-    else:
-        store = vcz_mod.open_store(source.path)
-        include_expr = source.include
-        exclude_expr = source.exclude
-        samples_str = source.samples
-        regions_str = source.regions
-        targets_str = source.targets
-        logger.info("Source: %s", source.path)
 
+def _resolve_haplotype_count(store, samples_str):
+    """
+    Resolve sample selection and compute haplotype count.
+
+    Returns (num_haplotypes, sample_include).
+    """
     gt_shape = store["call_genotype"].shape
     num_total_sites, num_samples, ploidy = gt_shape
     logger.info(
@@ -374,16 +347,6 @@ def infer_ancestors(
         num_samples,
         ploidy,
     )
-
-    # Log active filters
-    if include_expr is not None:
-        logger.info("Variant filter (include): %s", include_expr)
-    if exclude_expr is not None:
-        logger.info("Variant filter (exclude): %s", exclude_expr)
-    if regions_str is not None:
-        logger.info("Region filter: %s", regions_str)
-    if targets_str is not None:
-        logger.info("Targets filter: %s", targets_str)
 
     samples_selection = vcz_mod.resolve_samples_selection(store, samples_str)
     if samples_selection is not None:
@@ -401,19 +364,16 @@ def infer_ancestors(
         num_samples_used = num_samples
     num_haplotypes = num_samples_used * ploidy
     logger.info("Using %d samples, %d haplotypes", num_samples_used, num_haplotypes)
+    return num_haplotypes, sample_include
 
-    # --- 2. Compute inference sites ---
-    inf_sites = compute_inference_sites(
-        store,
-        ancestral_state,
-        include=include_expr,
-        exclude=exclude_expr,
-        regions=regions_str,
-        targets=targets_str,
-    )
-    logger.info("Inference sites identified: %d", len(inf_sites.positions))
 
-    # --- 3. Pass 1: compute site stats ---
+def _apply_site_stats(store, inf_sites, sample_include, num_haplotypes, progress):
+    """
+    Run Pass 1: compute site stats and filter sites.
+
+    Returns (final_positions, final_alleles, final_anc_indices, times).
+    """
+    t0 = time.monotonic()
     logger.info("Pass 1: computing site stats")
     keep_mask, times = _compute_site_stats(
         store, inf_sites, sample_include, num_haplotypes, progress=progress
@@ -425,11 +385,13 @@ def infer_ancestors(
 
     num_inf = len(final_positions)
     num_dropped = len(inf_sites.positions) - num_inf
+    elapsed = time.monotonic() - t0
     logger.info(
         "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)"
-        " (RSS=%.1fMiB)",
+        " in %.1fs (RSS=%.1fMiB)",
         num_inf,
         num_dropped,
+        elapsed,
         _memory_usage_mb(),
     )
     if num_inf > 0:
@@ -438,6 +400,169 @@ def infer_ancestors(
             int(final_positions[0]),
             int(final_positions[-1]),
         )
+
+    return final_positions, final_alleles, final_anc_indices, times
+
+
+def _process_interval(
+    store,
+    i_idx,
+    local_mask,
+    final_positions,
+    final_anc_indices,
+    times,
+    num_haplotypes,
+    cfg,
+    sample_include,
+    writer,
+    executor,
+    num_threads,
+    ancestor_index,
+    progress,
+):
+    """
+    Process a single sequence interval: load genotypes, build ancestors.
+
+    Returns the updated ancestor_index.
+    """
+    n_local = len(local_mask)
+    local_positions = final_positions[local_mask]
+    local_anc_indices = final_anc_indices[local_mask]
+    local_times = times[local_mask]
+    n_ab_sites = n_local
+    ab = _tsinfer.AncestorBuilder(
+        num_samples=num_haplotypes,
+        max_sites=n_ab_sites,
+        genotype_encoding=cfg.genotype_encoding,
+    )
+
+    gt_iter = tqdm_mod.tqdm(
+        vcz_mod.iter_genotypes(
+            store, local_positions, local_anc_indices, sample_include
+        ),
+        total=n_local,
+        desc=f"Interval {i_idx}: loading sites",
+        unit="sites",
+        disable=not progress,
+    )
+    for j, derived_gt in enumerate(gt_iter):
+        ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
+
+    ancestor_descriptors = list(ab.ancestor_descriptors())
+    ab_mem_mb = ab.mem_size / (1024 * 1024)
+    logger.info(
+        "Interval %d: %d sites (%d–%d), %d ancestors (builder=%.1fMiB, RSS=%.1fMiB)",
+        i_idx,
+        n_local,
+        int(local_positions[0]),
+        int(local_positions[-1]),
+        len(ancestor_descriptors),
+        ab_mem_mb,
+        _memory_usage_mb(),
+    )
+
+    # Build ancestors with bounded in-flight futures, following the
+    # threaded_map pattern from upstream: submit up to max_queued futures,
+    # then drain completed ones before submitting more.  The writer's
+    # index-aware pending dict ensures deterministic output regardless of
+    # completion order.
+    max_queued = max(2 * num_threads, 1)
+    futures = set()
+    n_ancestors = len(ancestor_descriptors)
+    n_consumed = 0
+    pbar = tqdm_mod.tqdm(
+        total=n_ancestors,
+        desc=f"Interval {i_idx}: ancestors",
+        unit="haps",
+        disable=not progress,
+    )
+
+    def _drain_completed(futures, pbar=pbar):
+        nonlocal n_consumed
+        done, futures = concurrent.futures.wait(
+            futures,
+            return_when=concurrent.futures.FIRST_COMPLETED,
+        )
+        for future in done:
+            writer.add_ancestor(future.result())
+            n_consumed += 1
+            pbar.update(1)
+        return futures
+
+    for anc_time, focal_sites in ancestor_descriptors:
+        if len(futures) >= max_queued:
+            futures = _drain_completed(futures)
+        future = executor.submit(
+            _build_one_ancestor,
+            ab,
+            anc_time,
+            focal_sites,
+            n_ab_sites,
+            n_local,
+            local_mask,
+            final_positions,
+            ancestor_index,
+        )
+        futures.add(future)
+        ancestor_index += 1
+
+    while futures:
+        futures = _drain_completed(futures)
+
+    pbar.close()
+    return ancestor_index
+
+
+def infer_ancestors(
+    source: Source,
+    cfg: AncestorsConfig,
+    ancestral_state: AncestralState | None = None,
+    progress: bool = False,
+    num_threads: int = 0,
+) -> zarr.Group:
+    """
+    Build the ancestor VCZ store from a samples VCZ store.
+
+    Two-pass approach:
+      Pass 1 — Identify inference sites and compute times (chunk-aware).
+      Pass 2 — Per-interval AncestorBuilder instances; stream ancestors to output.
+
+    No virtual root is inserted; that is the responsibility of the match step.
+    Ancestors are not sorted by time.
+    """
+    t_start = time.monotonic()
+    logger.info("Starting ancestor inference (RSS=%.1fMiB)", _memory_usage_mb())
+
+    # --- 1. Open store and resolve filtering ---
+    store = _open_source(source)
+
+    if source.include is not None:
+        logger.info("Variant filter (include): %s", source.include)
+    if source.exclude is not None:
+        logger.info("Variant filter (exclude): %s", source.exclude)
+    if source.regions is not None:
+        logger.info("Region filter: %s", source.regions)
+    if source.targets is not None:
+        logger.info("Targets filter: %s", source.targets)
+
+    num_haplotypes, sample_include = _resolve_haplotype_count(store, source.samples)
+
+    # --- 2. Compute inference sites ---
+    inf_sites = compute_inference_sites(
+        store,
+        ancestral_state,
+        include=source.include,
+        exclude=source.exclude,
+        regions=source.regions,
+        targets=source.targets,
+    )
+    logger.info("Inference sites identified: %d", len(inf_sites.positions))
+
+    # --- 3. Pass 1: compute site stats ---
+    final_positions, final_alleles, final_anc_indices, times = _apply_site_stats(
+        store, inf_sites, sample_include, num_haplotypes, progress
+    )
+    num_inf = len(final_positions)
 
     if num_inf == 0:
         seq_len = vcz_mod.sequence_length(store)
@@ -451,7 +576,6 @@ def infer_ancestors(
     seq_intervals = compute_sequence_intervals(
         final_positions, seq_len, cfg.max_gap_length
     )
-
     logger.info(
         "Sequence intervals: %d (max_gap_length=%d)",
         len(seq_intervals),
@@ -459,6 +583,7 @@ def infer_ancestors(
     )
 
     # --- 5. Pass 2: per-interval ancestor building ---
+    t_pass2 = time.monotonic()
     encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
     if num_threads > 0:
         logger.info(
@@ -493,124 +618,41 @@ def infer_ancestors(
     else:
         executor = SynchronousExecutor()
 
-    interval_range = range(len(seq_intervals))
-    if progress:
-        import tqdm
-
-        interval_range = tqdm.tqdm(
-            interval_range,
-            desc="Pass 2: intervals",
-            unit="intervals",
-            postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
-        )
-
     ancestor_index = 0
     with executor:
-        for i_idx in interval_range:
+        for i_idx in range(len(seq_intervals)):
             in_interval = site_interval_idx == i_idx
             if not np.any(in_interval):
                 continue
-
             local_mask = np.where(in_interval)[0]
-            n_local = len(local_mask)
-
-            # Create per-interval AncestorBuilder, streaming genotypes from store
-            local_positions = final_positions[local_mask]
-            local_anc_indices = final_anc_indices[local_mask]
-            local_times = times[local_mask]
-            n_ab_sites = n_local + 1  # +1 for terminal
-            ab = _tsinfer.AncestorBuilder(
-                num_samples=num_haplotypes,
-                max_sites=n_ab_sites,
-                genotype_encoding=cfg.genotype_encoding,
-            )
-
-            for j, derived_gt in enumerate(
-                vcz_mod.iter_genotypes(
-                    store, local_positions, local_anc_indices, sample_include
-                )
-            ):
-                ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
-            ab.add_terminal_site()
-
-            ancestor_descriptors = list(ab.ancestor_descriptors())
-            ab_mem_mb = ab.mem_size / (1024 * 1024)
-            logger.info(
-                "Interval %d: %d sites (%d–%d), %d ancestors "
-                "(builder=%.1fMiB, RSS=%.1fMiB)",
+            ancestor_index = _process_interval(
+                store,
                 i_idx,
-                n_local,
-                int(local_positions[0]),
-                int(local_positions[-1]),
-                len(ancestor_descriptors),
-                ab_mem_mb,
-                _memory_usage_mb(),
+                local_mask,
+                final_positions,
+                final_anc_indices,
+                times,
+                num_haplotypes,
+                cfg,
+                sample_include,
+                writer,
+                executor,
+                num_threads,
+                ancestor_index,
+                progress,
             )
 
-            if progress:
-                interval_range.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
-
-            # Build ancestors with bounded in-flight futures, following the
-            # threaded_map pattern from upstream: submit up to
-            # max_queued futures, then drain completed ones before
-            # submitting more.  The writer's index-aware pending dict
-            # ensures deterministic output regardless of completion order.
-            max_queued = max(2 * num_threads, 1)
-            futures = set()
-            n_ancestors = len(ancestor_descriptors)
-            n_consumed = 0
-            pbar = None
-            if progress:
-                pbar = tqdm.tqdm(
-                    total=n_ancestors,
-                    desc="Interval ancestors",
-                    unit="haps",
-                    postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
-                )
-
-            def _drain_completed(futures, pbar=pbar):
-                nonlocal n_consumed
-                done, futures = concurrent.futures.wait(
-                    futures,
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                for future in done:
-                    writer.add_ancestor(future.result())
-                    n_consumed += 1
-                    if pbar is not None:
-                        pbar.update(1)
-                        pbar.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
-                return futures
-
-            for time, focal_sites in ancestor_descriptors:
-                if len(futures) >= max_queued:
-                    futures = _drain_completed(futures)
-                future = executor.submit(
-                    _build_one_ancestor,
-                    ab,
-                    time,
-                    focal_sites,
-                    n_ab_sites,
-                    n_local,
-                    local_mask,
-                    final_positions,
-                    ancestor_index,
-                )
-                futures.add(future)
-                ancestor_index += 1
-
-            # Drain remaining futures
-            while futures:
-                futures = _drain_completed(futures)
-
-            if pbar is not None:
-                pbar.close()
+    elapsed_pass2 = time.monotonic() - t_pass2
+    logger.info("Pass 2 complete in %.1fs", elapsed_pass2)
 
     result = writer.finalize()
+    elapsed_total = time.monotonic() - t_start
     logger.info(
-        "Ancestor inference complete: %d ancestors across %d sites (RSS=%.1fMiB)",
+        "Ancestor inference complete: %d ancestors across %d sites"
+        " in %.1fs total (RSS=%.1fMiB)",
         result["call_genotype"].shape[1],
         num_inf,
+        elapsed_total,
         _memory_usage_mb(),
     )
     return result
