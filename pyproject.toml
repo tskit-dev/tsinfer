@@ -49,6 +49,7 @@ keywords = [
 ]
 dependencies = [
     "numpy>=2",
+    "psutil",
     "tqdm",
     "humanize",
     "daiquiri",
