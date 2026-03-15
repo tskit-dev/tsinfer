@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import resource
 import time
 from dataclasses import dataclass
 
@@ -42,9 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 def _memory_usage_mb():
-    """Return current max RSS in MiB (Unix) via the resource module."""
-    # ru_maxrss is in KiB on Linux
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    """Return current RSS in MiB."""
+    import psutil
+
+    return psutil.Process().memory_info().rss / (1024 * 1024)
 
 
 @dataclass
