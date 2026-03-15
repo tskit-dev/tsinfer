@@ -251,15 +251,30 @@ def compute_sequence_intervals(
 
 
 @dataclass
-class AncestorResult:
-    """Result of building a single ancestor haplotype."""
+class Ancestor:
+    """
+    A single ancestor haplotype, storing only the active fragment.
+
+    The haplotype covers only the site index range
+    ``[start_site_idx, end_site_idx)``; all other sites are implicitly
+    missing (-1).  Call :meth:`expand_haplotype` to materialise the
+    full-length array (done at flush time in :class:`AncestorWriter`).
+    """
 
     index: int
     time: float
-    haplotype: np.ndarray
+    haplotype: np.ndarray  # fragment: sites[start_site_idx:end_site_idx]
     focal_positions: np.ndarray
-    start_position: int
-    end_position: int
+    start_site_idx: int  # global site index, inclusive
+    end_site_idx: int  # global site index, exclusive
+    start_position: int  # genomic position
+    end_position: int  # genomic position
+
+    def expand_haplotype(self, num_sites):
+        """Return a full-length haplotype array with missing = -1."""
+        full = np.full(num_sites, np.int8(-1), dtype=np.int8)
+        full[self.start_site_idx : self.end_site_idx] = self.haplotype
+        return full
 
 
 def _build_one_ancestor(
@@ -270,7 +285,6 @@ def _build_one_ancestor(
     n_local,
     local_mask,
     final_positions,
-    num_inf,
     ancestor_index,
 ):
     """
@@ -283,26 +297,34 @@ def _build_one_ancestor(
 
     The C engine always sets focal sites to 1 (derived) and extends
     outward, so the result is never all-missing.
+
+    Returns an :class:`Ancestor` storing only the active haplotype
+    fragment (from ``start`` to ``end`` in local coordinates) to
+    minimise memory.
     """
     focal_arr = np.asarray(focal_sites, dtype=np.int32)
     a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
     start_local, end_local = ab.make_ancestor(focal_arr.tolist(), a)
-    a = a[:n_local]  # trim terminal
 
-    # Map local haplotype to global inference site coordinates
-    global_hap = np.full(num_inf, np.int8(-1), dtype=np.int8)
-    global_hap[local_mask] = a
+    # Store only the active fragment (local coords start_local:end_local).
+    # local_mask is contiguous within an interval, so global indices are
+    # also contiguous.
+    fragment = a[start_local:end_local].copy()
+    start_site_idx = int(local_mask[start_local])
+    end_site_idx = int(local_mask[end_local - 1]) + 1
 
-    start_pos = int(final_positions[local_mask[start_local]])
-    end_pos = int(final_positions[local_mask[end_local - 1]])
+    start_pos = int(final_positions[start_site_idx])
+    end_pos = int(final_positions[end_site_idx - 1])
     focal_global = local_mask[focal_arr]
     focal_pos = final_positions[focal_global]
 
-    return AncestorResult(
+    return Ancestor(
         index=ancestor_index,
         time=float(time),
-        haplotype=global_hap,
+        haplotype=fragment,
         focal_positions=focal_pos,
+        start_site_idx=start_site_idx,
+        end_site_idx=end_site_idx,
         start_position=start_pos,
         end_position=end_pos,
     )
@@ -528,11 +550,41 @@ def infer_ancestors(
             if progress:
                 interval_range.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
 
-            # Submit all ancestors for this interval to the executor.
-            # Use a set so we can discard each future after consumption,
-            # freeing the AncestorResult (and its haplotype array).
+            # Build ancestors with bounded in-flight futures, following the
+            # threaded_map pattern from upstream: submit up to
+            # max_queued futures, then drain completed ones before
+            # submitting more.  The writer's index-aware pending dict
+            # ensures deterministic output regardless of completion order.
+            max_queued = max(2 * num_threads, 1)
             futures = set()
+            n_ancestors = len(ancestor_descriptors)
+            n_consumed = 0
+            pbar = None
+            if progress:
+                pbar = tqdm.tqdm(
+                    total=n_ancestors,
+                    desc="Interval ancestors",
+                    unit="haps",
+                    postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
+                )
+
+            def _drain_completed(futures, pbar=pbar):
+                nonlocal n_consumed
+                done, futures = concurrent.futures.wait(
+                    futures,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in done:
+                    writer.add_ancestor(future.result())
+                    n_consumed += 1
+                    if pbar is not None:
+                        pbar.update(1)
+                        pbar.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
+                return futures
+
             for time, focal_sites in ancestor_descriptors:
+                if len(futures) >= max_queued:
+                    futures = _drain_completed(futures)
                 future = executor.submit(
                     _build_one_ancestor,
                     ab,
@@ -542,39 +594,17 @@ def infer_ancestors(
                     n_local,
                     local_mask,
                     final_positions,
-                    num_inf,
                     ancestor_index,
                 )
                 futures.add(future)
                 ancestor_index += 1
 
-            # Consume as completed for best throughput. The writer's
-            # index-aware pending dict ensures deterministic output
-            # regardless of completion order.
-            completed = concurrent.futures.as_completed(futures)
-            pbar = None
-            if progress:
-                pbar = tqdm.tqdm(
-                    completed,
-                    total=len(futures),
-                    desc="Interval ancestors",
-                    unit="haps",
-                    postfix={"RSS": f"{_memory_usage_mb():.0f}MiB"},
-                )
-                completed = pbar
-            for future in completed:
-                anc = future.result()
-                futures.discard(future)
-                writer.add_ancestor(
-                    anc.index,
-                    anc.time,
-                    anc.haplotype,
-                    anc.focal_positions,
-                    anc.start_position,
-                    anc.end_position,
-                )
-                if pbar is not None:
-                    pbar.set_postfix(RSS=f"{_memory_usage_mb():.0f}MiB")
+            # Drain remaining futures
+            while futures:
+                futures = _drain_completed(futures)
+
+            if pbar is not None:
+                pbar.close()
 
     result = writer.finalize()
     logger.info(
