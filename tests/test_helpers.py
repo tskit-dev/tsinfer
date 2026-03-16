@@ -216,7 +216,7 @@ class TestMakeAncestorVcz:
 
     def test_sample_id_default(self):
         vcz = _make_two_ancestor_vcz()
-        assert list(vcz["sample_id"][:]) == ["ancestor_0", "ancestor_1"]
+        assert list(vcz["sample_id"][:]) == ["a0", "a1"]
 
     def test_start_position_derived_from_missing_pattern(self):
         vcz = _make_two_ancestor_vcz()

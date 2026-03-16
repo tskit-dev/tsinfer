@@ -304,7 +304,7 @@ def _make_ancestor_and_sample_stores():
     from helpers import make_ancestor_vcz
 
     positions = np.array([100, 200, 300], dtype=np.int32)
-    # 2 ancestors: ancestor_0 = [0, 1, 0], ancestor_1 = [1, 0, 1]
+    # 2 ancestors: a0 = [0, 1, 0], a1 = [1, 0, 1]
     anc_gt = np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8)
     anc_store = make_ancestor_vcz(
         genotypes=anc_gt,
@@ -352,11 +352,11 @@ class TestHaplotypeReader:
     def test_ancestor_haplotype(self):
         anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
         reader = HaplotypeReader(anc_store, {"test": source}, positions)
-        # ancestor_0 has genotype [0, 1, 0]
+        # a0 has genotype [0, 1, 0]
         job = MatchJob(
             haplotype_index=1,
             source="ancestors",
-            sample_id="ancestor_0",
+            sample_id="a0",
             ploidy_index=0,
             time=0.8,
             start_position=100,
@@ -369,11 +369,11 @@ class TestHaplotypeReader:
     def test_ancestor_haplotype_second(self):
         anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
         reader = HaplotypeReader(anc_store, {"test": source}, positions)
-        # ancestor_1 has genotype [1, 0, 1]
+        # a1 has genotype [1, 0, 1]
         job = MatchJob(
             haplotype_index=2,
             source="ancestors",
-            sample_id="ancestor_1",
+            sample_id="a1",
             ploidy_index=0,
             time=0.6,
             start_position=100,

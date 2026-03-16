@@ -460,7 +460,7 @@ class TestInferAncestorsFormat:
         anc = infer_ancestors(_src(gt), _cfg())
         ids = [str(x) for x in anc["sample_id"][:].tolist()]
         num_anc = anc["call_genotype"].shape[1]
-        assert ids == [f"ancestor_{i}" for i in range(num_anc)]
+        assert ids == [f"a{i}" for i in range(num_anc)]
 
     def test_times_are_positive(self):
         # Times are not required to be sorted (no sort step), but must be positive
