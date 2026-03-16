@@ -22,6 +22,7 @@ Tests for the tsinfer CLI (click commands).
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -358,3 +359,73 @@ class TestPostProcess:
         runner = CliRunner()
         result = runner.invoke(main, ["post-process", "--help"])
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGroups
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGroups:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["compute-groups", "--help"])
+        assert result.exit_code == 0
+        assert "grouping" in result.output.lower()
+
+    def test_outputs_valid_json(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            # First run infer-ancestors to create the ancestor VCZ
+            result = runner.invoke(main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            # Now compute-groups
+            result = runner.invoke(main, ["compute-groups", config_path])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            assert "num_haplotypes" in data
+            assert "num_groups" in data
+            assert "groups" in data
+            assert isinstance(data["groups"], list)
+            assert len(data["groups"]) == data["num_groups"]
+
+    def test_group_structure(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(main, ["compute-groups", config_path])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            # First group should be the virtual root
+            group0 = data["groups"][0]
+            assert group0["index"] == 0
+            assert group0["haplotype_indices"] == [0]
+            assert group0["is_ancestor"] == [True]
+            assert group0["time"] == 1.0
+            # Each group has required fields
+            for g in data["groups"]:
+                assert "index" in g
+                assert "haplotype_indices" in g
+                assert "num_haplotypes" in g
+                assert "is_ancestor" in g
+                assert "time" in g
+                assert g["num_haplotypes"] == len(g["haplotype_indices"])
+                assert len(g["is_ancestor"]) == len(g["haplotype_indices"])
+
+    def test_all_haplotypes_accounted_for(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(main, ["compute-groups", config_path])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            all_indices = set()
+            for g in data["groups"]:
+                all_indices.update(g["haplotype_indices"])
+            assert all_indices == set(range(data["num_haplotypes"]))

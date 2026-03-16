@@ -35,6 +35,7 @@ from .ancestors import infer_ancestors
 from .config import Config
 from .matching import (
     _ts_from_tsb,
+    compute_groups,
 )
 
 logger = logging.getLogger(__name__)
@@ -380,6 +381,68 @@ def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, pl
         population_indices=pop_indices,
         population_names=pop_names,
     )
+
+
+def compute_groups_json(cfg: Config) -> str:
+    """
+    Compute haplotype groups and return as a JSON string.
+
+    Loads haplotype metadata from the ancestor VCZ and all sample sources,
+    runs the grouping algorithm, and returns a JSON description of the
+    groups suitable for inspection or as input to distributed matching.
+    """
+    import json
+    import time
+
+    logger.info("Loading haplotype data")
+    t0 = time.monotonic()
+    hap_data = _collect_haplotypes(cfg)
+    elapsed = time.monotonic() - t0
+    num_anc = int(np.sum(hap_data.is_ancestor))
+    num_samples = len(hap_data.times) - num_anc
+    logger.info(
+        "Loaded %d haplotypes (%d ancestors, %d samples) in %.2fs",
+        len(hap_data.times),
+        num_anc,
+        num_samples,
+        elapsed,
+    )
+
+    logger.info("Computing groups")
+    t0 = time.monotonic()
+    groups = compute_groups(
+        hap_data.times,
+        hap_data.is_ancestor,
+        hap_data.start_positions,
+        hap_data.end_positions,
+    )
+    elapsed = time.monotonic() - t0
+    logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
+
+    logger.info("Serialising JSON")
+    t0 = time.monotonic()
+    group_list = []
+    for i, group_indices in enumerate(groups):
+        indices = [int(x) for x in group_indices]
+        group_list.append(
+            {
+                "index": i,
+                "haplotype_indices": indices,
+                "num_haplotypes": len(indices),
+                "is_ancestor": [bool(hap_data.is_ancestor[j]) for j in indices],
+                "time": float(np.max(hap_data.times[group_indices])),
+            }
+        )
+
+    result = {
+        "num_haplotypes": len(hap_data.times),
+        "num_groups": len(groups),
+        "groups": group_list,
+    }
+    json_str = json.dumps(result, indent=2)
+    elapsed = time.monotonic() - t0
+    logger.info("Serialised %d groups to JSON in %.2fs", len(groups), elapsed)
+    return json_str
 
 
 def match(

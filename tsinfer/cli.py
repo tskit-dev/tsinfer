@@ -27,6 +27,7 @@ Commands:
   match             Run the unified match loop.
   post-process      Post-process a matched tree sequence.
   run               All steps in sequence.
+  compute-groups    Compute and print haplotype grouping as JSON.
   config show       Print resolved config with defaults filled in.
   config check      Validate config and verify all input paths.
 """
@@ -199,6 +200,25 @@ def run_cmd(config, threads, force, progress, verbose):
         ts.num_edges,
         ts.num_sites,
     )
+
+
+# ---------------------------------------------------------------------------
+# Inspection commands
+# ---------------------------------------------------------------------------
+
+
+@main.command("compute-groups")
+@_config_arg
+@_add_options(_runtime_options)
+def compute_groups_cmd(config, threads, force, progress, verbose):
+    """Compute the haplotype grouping and print as JSON."""
+    _setup_logging(verbose)
+    cfg = Config.from_toml(config)
+
+    from .pipeline import compute_groups_json
+
+    result = compute_groups_json(cfg)
+    click.echo(result)
 
 
 # ---------------------------------------------------------------------------
