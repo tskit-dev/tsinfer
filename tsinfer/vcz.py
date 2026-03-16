@@ -584,7 +584,7 @@ class AncestorWriter:
         t0 = _time.monotonic()
 
         # sample_id — trivial, write once
-        ids = np.array([f"ancestor_{i}" for i in range(num_anc)])
+        ids = np.array([f"a{i}" for i in range(num_anc)])
         id_arr = self._root.create_array(
             "sample_id",
             shape=ids.shape,

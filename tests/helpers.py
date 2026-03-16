@@ -209,7 +209,7 @@ def make_ancestor_vcz(
         pairs for regions containing inference sites.
     sample_ids:
         String array of shape (num_ancestors,). Defaults to
-        ``ancestor_0``, ``ancestor_1``, …
+        ``a0``, ``a1``, …
     """
     genotypes = np.asarray(genotypes, dtype=np.int8)
     positions = np.asarray(positions, dtype=np.int32)
@@ -221,7 +221,7 @@ def make_ancestor_vcz(
     num_sites, num_ancestors, _ = genotypes.shape
 
     if sample_ids is None:
-        sample_ids = np.array([f"ancestor_{i}" for i in range(num_ancestors)])
+        sample_ids = np.array([f"a{i}" for i in range(num_ancestors)])
 
     # Derive start/end positions from missing data pattern in genotypes.
     # Within an ancestor's span, values are 0 or 1; flanks are -1.
