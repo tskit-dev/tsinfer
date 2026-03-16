@@ -183,6 +183,8 @@ def make_ancestor_vcz(
     focal_positions: np.ndarray,
     sequence_intervals: np.ndarray,
     sample_ids: np.ndarray | None = None,
+    contig_id: str = "1",
+    contig_length: int = 1000,
 ) -> zarr.Group:
     """
     Build an in-memory ancestor VCZ store.
@@ -247,6 +249,11 @@ def make_ancestor_vcz(
     _arr(root, "sample_end_position", end_positions, ["samples"])
     _arr(root, "sample_focal_positions", focal_positions, ["samples", "focal_alleles"])
     _arr(root, "sequence_intervals", sequence_intervals, ["intervals", "coords"])
+
+    # Contig metadata — required for vcztools compatibility
+    _str_array(root, "contig_id", np.array([contig_id]), ["contigs"])
+    _arr(root, "contig_length", np.array([contig_length], dtype=np.int64), ["contigs"])
+    _arr(root, "variant_contig", np.zeros(num_sites, dtype=np.int8), ["variants"])
 
     return root
 

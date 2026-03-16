@@ -424,6 +424,8 @@ class AncestorWriter:
         store=None,
         samples_chunk_size=1000,
         variants_chunk_size=1000,
+        contig_id="1",
+        contig_length=0,
     ):
         self._num_sites = num_sites
         self._chunk_size = samples_chunk_size
@@ -452,6 +454,21 @@ class AncestorWriter:
             "sequence_intervals",
             seq_intervals,
             ["intervals", "coords"],
+        )
+
+        # Contig metadata — required for vcztools compatibility
+        _str_array(self._root, "contig_id", np.array([contig_id]), ["contigs"])
+        _arr(
+            self._root,
+            "contig_length",
+            np.array([contig_length], dtype=np.int64),
+            ["contigs"],
+        )
+        _arr(
+            self._root,
+            "variant_contig",
+            np.zeros(num_sites, dtype=np.int8),
+            ["variants"],
         )
 
         # --- Ancestor-dimensioned arrays: start empty, append by chunk ---
@@ -749,7 +766,7 @@ class HaplotypeReader:
         return hap
 
 
-def write_empty_ancestor_vcz(seq_intervals, store=None):
+def write_empty_ancestor_vcz(seq_intervals, store=None, contig_id="1", contig_length=0):
     """Return an ancestor VCZ with zero sites and zero ancestors.
 
     Parameters
@@ -758,6 +775,10 @@ def write_empty_ancestor_vcz(seq_intervals, store=None):
         Sequence interval array to write.
     store : str, Path, or None
         Backing store — ``None`` for in-memory, or a filesystem path.
+    contig_id : str
+        Contig name for vcztools compatibility.
+    contig_length : int
+        Contig length in base pairs.
     """
     root = open_group(store)
 
@@ -796,5 +817,10 @@ def write_empty_ancestor_vcz(seq_intervals, store=None):
         ["samples", "focal_alleles"],
     )
     _arr(root, "sequence_intervals", seq_intervals, ["intervals", "coords"])
+
+    # Contig metadata — required for vcztools compatibility
+    _str_array(root, "contig_id", np.array([contig_id]), ["contigs"])
+    _arr(root, "contig_length", np.array([contig_length], dtype=np.int64), ["contigs"])
+    _arr(root, "variant_contig", np.zeros(0, dtype=np.int8), ["variants"])
 
     return root

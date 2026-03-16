@@ -569,7 +569,14 @@ def infer_ancestors(
         seq_intervals = compute_sequence_intervals(
             final_positions, seq_len, cfg.max_gap_length
         )
-        return vcz_mod.write_empty_ancestor_vcz(seq_intervals, store=cfg.path)
+        contig_id = str(store["contig_id"][0])
+        contig_length = int(store["contig_length"][0])
+        return vcz_mod.write_empty_ancestor_vcz(
+            seq_intervals,
+            store=cfg.path,
+            contig_id=contig_id,
+            contig_length=contig_length,
+        )
 
     # --- 4. Compute sequence intervals ---
     seq_len = vcz_mod.sequence_length(store)
@@ -602,6 +609,8 @@ def infer_ancestors(
         )
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
+    contig_id = str(store["contig_id"][0])
+    contig_length = int(store["contig_length"][0])
     writer = vcz_mod.AncestorWriter(
         num_inf,
         final_positions,
@@ -611,6 +620,8 @@ def infer_ancestors(
         store=cfg.path,
         samples_chunk_size=cfg.samples_chunk_size,
         variants_chunk_size=cfg.variants_chunk_size,
+        contig_id=contig_id,
+        contig_length=contig_length,
     )
 
     if num_threads > 0:
