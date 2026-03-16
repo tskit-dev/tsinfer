@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import time as _time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -594,6 +595,158 @@ class AncestorWriter:
         elapsed = _time.monotonic() - t0
         logger.debug("Finalize complete in %.3fs", elapsed)
         return self._root
+
+
+# ---------------------------------------------------------------------------
+# Lazy haplotype reading
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SourceContext:
+    """Cached per-source state for HaplotypeReader."""
+
+    store: zarr.Group
+    position_map: (
+        np.ndarray
+    )  # (n_aligned, 2) int32 — (ancestor_site_idx, source_site_idx)
+    ancestral_allele_index: np.ndarray  # (n_source_sites,) int8
+    sample_id_to_col: dict  # sample_id → column index
+    samples_selection: np.ndarray | None
+
+
+class HaplotypeReader:
+    """Lazily reads and encodes individual haplotypes from VCZ stores."""
+
+    def __init__(self, ancestor_store_path, sources, positions):
+        """
+        Parameters
+        ----------
+        ancestor_store_path : path or zarr.Group
+            Path to ancestor VCZ (or in-memory Group).
+        sources : dict[str, Source]
+            cfg.sources mapping (name → Source).
+        positions : np.ndarray
+            Ancestor variant positions (the reference coordinate system).
+        """
+        self._anc_store = open_store(ancestor_store_path)
+        self._positions = np.asarray(positions, dtype=np.int32)
+        self._sources = sources
+        self._source_contexts: dict[str, _SourceContext] = {}
+        self._num_sites = len(positions)
+
+        # Build ancestor sample_id → column mapping
+        anc_ids = [str(x) for x in self._anc_store["sample_id"][:].tolist()]
+        self._anc_id_to_col = {sid: i for i, sid in enumerate(anc_ids)}
+
+    def _get_source_context(self, source_name: str) -> _SourceContext:
+        if source_name in self._source_contexts:
+            return self._source_contexts[source_name]
+
+        source = self._sources[source_name]
+        store = open_store(source.path)
+
+        # Build sample_id → column mapping (respecting samples_selection)
+        samples_selection = resolve_samples_selection(store, source.samples)
+        raw_ids = store["sample_id"][:]
+        if samples_selection is not None:
+            raw_ids = raw_ids[samples_selection]
+        sample_id_to_col = {str(sid): i for i, sid in enumerate(raw_ids.tolist())}
+
+        # Build position alignment map
+        src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+        src_pos_to_idx = {}
+        for i, p in enumerate(src_positions.tolist()):
+            src_pos_to_idx[p] = i
+
+        anc_idxs = []
+        src_idxs = []
+        for site_idx, pos in enumerate(self._positions.tolist()):
+            if pos in src_pos_to_idx:
+                anc_idxs.append(site_idx)
+                src_idxs.append(src_pos_to_idx[pos])
+        position_map = (
+            np.array(list(zip(anc_idxs, src_idxs)), dtype=np.int32).reshape(-1, 2)
+            if anc_idxs
+            else np.empty((0, 2), dtype=np.int32)
+        )
+
+        # Build ancestral allele index
+        src_alleles = np.asarray(store["variant_allele"][:])
+        num_src_sites = len(src_positions)
+        if "variant_ancestral_allele" in store:
+            src_anc_state = np.asarray(store["variant_ancestral_allele"][:])
+        else:
+            src_anc_state = np.array([str(a[0]) for a in src_alleles], dtype=object)
+
+        ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
+        for i in range(num_src_sites):
+            for j, a in enumerate(src_alleles[i].tolist()):
+                if a and str(a) == str(src_anc_state[i]):
+                    ancestral_allele_index[i] = j
+                    break
+
+        ctx = _SourceContext(
+            store=store,
+            position_map=position_map,
+            ancestral_allele_index=ancestral_allele_index,
+            sample_id_to_col=sample_id_to_col,
+            samples_selection=samples_selection,
+        )
+        self._source_contexts[source_name] = ctx
+        return ctx
+
+    def read_haplotype(self, job) -> np.ndarray:
+        """
+        Read and encode a single haplotype for the given MatchJob.
+
+        Returns (num_ancestor_sites,) int8 array:
+        0=ancestral, 1=derived, -1=missing.
+        """
+        if job.source == "ancestors" and job.sample_id == "virtual_root":
+            return np.zeros(self._num_sites, dtype=np.int8)
+
+        if job.source == "ancestors":
+            anc_col = self._anc_id_to_col[job.sample_id]
+            return np.asarray(
+                self._anc_store["call_genotype"][:, anc_col, 0], dtype=np.int8
+            )
+
+        # Sample source
+        ctx = self._get_source_context(job.source)
+        col = ctx.sample_id_to_col[job.sample_id]
+
+        # Read from the underlying store, applying samples_selection
+        if ctx.samples_selection is not None:
+            # col is relative to the filtered set; map back to store column
+            store_col = int(ctx.samples_selection[col])
+        else:
+            store_col = col
+
+        raw_gt = np.asarray(
+            ctx.store["call_genotype"][:, store_col, job.ploidy_index], dtype=np.int8
+        )
+
+        hap = np.full(self._num_sites, np.int8(-1), dtype=np.int8)
+
+        if len(ctx.position_map) == 0:
+            return hap
+
+        anc_idxs = ctx.position_map[:, 0]
+        src_idxs = ctx.position_map[:, 1]
+        raw = raw_gt[src_idxs]
+        ai = ctx.ancestral_allele_index[src_idxs]
+        valid = ai >= 0
+        raw_v = raw[valid]
+        ai_v = ai[valid]
+        anc_v = anc_idxs[valid]
+        encoded = np.where(
+            raw_v < 0,
+            np.int8(-1),
+            np.where(raw_v == ai_v, np.int8(0), np.int8(1)),
+        )
+        hap[anc_v] = encoded
+        return hap
 
 
 def write_empty_ancestor_vcz(seq_intervals, store=None):
