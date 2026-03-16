@@ -543,6 +543,38 @@ class TestInferAncestorsFormat:
         assert intervals.ndim == 2
         assert intervals.shape[1] == 2
 
+    def test_contig_arrays_present(self):
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+            seq_len=5000,
+            contig_id="chr1",
+        )
+        anc = infer_ancestors(_src(gt), _cfg())
+        assert str(anc["contig_id"][0]) == "chr1"
+        assert int(anc["contig_length"][0]) == 5000
+        num_sites = anc["variant_position"].shape[0]
+        variant_contig = np.asarray(anc["variant_contig"][:])
+        assert variant_contig.shape == (num_sites,)
+        np.testing.assert_array_equal(variant_contig, np.zeros(num_sites, dtype=np.int8))
+
+    def test_contig_arrays_present_empty(self):
+        # All sites are fixed → zero inference sites → empty ancestor VCZ
+        gt = _haploid_store(
+            [[0, 0], [0, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+            seq_len=3000,
+            contig_id="chrX",
+        )
+        anc = infer_ancestors(_src(gt), _cfg())
+        assert str(anc["contig_id"][0]) == "chrX"
+        assert int(anc["contig_length"][0]) == 3000
+        assert anc["variant_contig"].shape == (0,)
+
 
 # ---------------------------------------------------------------------------
 # infer_ancestors — comparison with Python oracle

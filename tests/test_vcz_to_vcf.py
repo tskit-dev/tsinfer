@@ -25,7 +25,7 @@ import bio2zarr.tskit as bzt
 import msprime
 import numpy as np
 import zarr
-from helpers import make_sample_vcz, ts_to_sample_vcz, vcz_to_vcf
+from helpers import make_ancestor_vcz, make_sample_vcz, ts_to_sample_vcz, vcz_to_vcf
 
 
 def _parse_vcf_records(vcf_text: str) -> list[dict]:
@@ -320,3 +320,33 @@ class TestTsToSampleVczMatchesBio2zarr:
                 ref["call_genotype"][:],
                 err_msg=f"call_genotype mismatch for seed={seed}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Ancestor VCZ → VCF round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestAncestorVczToVcf:
+    """Verify that ancestor VCZ stores with contig arrays produce valid VCF."""
+
+    def test_ancestor_vcz_to_vcf(self):
+        gt = np.array([[[0, 1]], [[1, 0]]], dtype=np.int8)
+        vcz = make_ancestor_vcz(
+            genotypes=gt,
+            positions=np.array([100, 200]),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            times=np.array([0.5, 0.3]),
+            focal_positions=np.array([[100], [200]], dtype=np.int32),
+            sequence_intervals=np.array([[100, 201]], dtype=np.int32),
+            contig_id="chr1",
+            contig_length=5000,
+        )
+        vcf = vcz_to_vcf(vcz)
+        assert "##contig=<ID=chr1" in vcf
+        records = _parse_vcf_records(vcf)
+        assert len(records) == 2
+        assert records[0]["CHROM"] == "chr1"
+        assert records[1]["CHROM"] == "chr1"
+        assert records[0]["POS"] == "100"
+        assert records[1]["POS"] == "200"
